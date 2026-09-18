@@ -207,6 +207,7 @@ pub fn build_container_inventory(
             build_container_config_lookup(base_dir, Some(selection.clone())),
             build_container_runtime_inventory(),
             build_environment_process(),
+            Arc::new(HostedStoreObservation),
         )),
         restore,
     }

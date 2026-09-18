@@ -10,12 +10,18 @@
 //! A `retained` record (#1924) is kept whatever the runtime says of its
 //! container: only an explicit `container kill` / `kill_container` moves
 //! it to `stopped`, and only then does the collector see it (round 3 H1,
-//! #2033). The collector never kills: a stopped record is removed through
-//! its own retained `cleanup` (the script set that created it) and then
-//! forgotten, an unrecorded orphan through the selected container
-//! config's `cleanup` — the harness knows no runtime; the scripts
-//! inspect, list and remove. A dry run reports the same judgement
-//! without an effect — on the host or on the registry document.
+//! #2033). A directory that would otherwise be collected — a `stopped`
+//! record's or an unrecorded one — is read for the swarm store its
+//! checkout may host (round 4 M1, #2033): one hosting a created run that
+//! has not ended, or a store that cannot be read, is kept with the run
+//! named, whatever the registry says; so is the signature an older build's
+//! restore left on a retained record (round 4 L3). The collector never
+//! kills: a stopped record is removed through its own retained `cleanup`
+//! (the script set that created it) and then forgotten, an unrecorded
+//! orphan through the selected container config's `cleanup` — the
+//! harness knows no runtime; the scripts inspect, list and remove. A dry
+//! run reports the same judgement without an effect — on the host or on
+//! the registry document.
 //!
 //! Scope is one container config: its own state root (`--state-dir` in
 //! its create argv, compared canonically), under which everything is
@@ -35,12 +41,16 @@ use std::sync::Arc;
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
+use crate::domain::environment_retention::SwarmRunObservation;
 
 use super::super::dto::{
     ContainerRuntimeTarget, DiagnosableContainerConfig, EnvironmentLiveness, GcCandidate, GcKept,
     GcRefused, GcRemoval, GcReport, GcRequest, RuntimeContainer, state_dir_argument,
 };
-use super::super::ports::{ContainerConfigLookup, ContainerRuntimeInventory, EnvironmentProcess};
+use super::super::ports::{
+    ContainerConfigLookup, ContainerRuntimeInventory, EnvironmentProcess, HostedSwarmRunInspection,
+};
+use super::restore_registry::GONE_AT_RESTORE;
 
 /// A directory without a container younger than this is a create that may
 /// still be running its clone: kept, never collected.
@@ -51,6 +61,7 @@ pub struct GcOrphanedEnvironments {
     configs: Arc<dyn ContainerConfigLookup>,
     inventory: Arc<dyn ContainerRuntimeInventory>,
     process: Arc<dyn EnvironmentProcess>,
+    hosted: Arc<dyn HostedSwarmRunInspection>,
 }
 
 impl std::fmt::Debug for GcOrphanedEnvironments {
@@ -139,12 +150,14 @@ impl GcOrphanedEnvironments {
         configs: Arc<dyn ContainerConfigLookup>,
         inventory: Arc<dyn ContainerRuntimeInventory>,
         process: Arc<dyn EnvironmentProcess>,
+        hosted: Arc<dyn HostedSwarmRunInspection>,
     ) -> Self {
         Self {
             registry,
             configs,
             inventory,
             process,
+            hosted,
         }
     }
 
@@ -222,18 +235,26 @@ impl GcOrphanedEnvironments {
                 }
                 judged.insert(dir.environment_id.clone());
                 // The config's own inspect is the authority for a state
-                // dir (it reads the dir's container and asks the runtime).
-                // A dir without a `container` file is not thereby gone
-                // (review F4, #2033): the listing may still name a
-                // container labelled with its id, and that entry's
+                // dir under the config's root (it reads the dir's
+                // container and asks the runtime); under a root the record
+                // alone vouched for, the record's own retained inspect is
+                // (round 4 L2, #2033) — the config's script knows nothing
+                // of that root. A dir without a `container` file is not
+                // thereby gone (review F4, #2033): the listing may still
+                // name a container labelled with its id, and that entry's
                 // liveness stands — running is kept, exited is an orphan
                 // with the container named. Only a dir the listing knows
                 // nothing about is judged container-less.
                 let listed = by_environment.get(dir.environment_id.as_str()).copied();
-                let liveness = match (&dir.container, listed) {
-                    (Some(_), _) => self.inventory.inspect(&config, &dir.environment_id),
-                    (None, Some(container)) if container.running => EnvironmentLiveness::Running,
-                    (None, _) => EnvironmentLiveness::Gone,
+                let own_root = record
+                    .filter(|record| matches!(scope.of(record), Some(RecordScope::OwnRoot(_))));
+                let liveness = match (own_root, &dir.container, listed) {
+                    (Some(record), _, _) => self.process.observe(record),
+                    (None, Some(_), _) => self.inventory.inspect(&config, &dir.environment_id),
+                    (None, None, Some(container)) if container.running => {
+                        EnvironmentLiveness::Running
+                    }
+                    (None, None, _) => EnvironmentLiveness::Gone,
                 };
                 let container_name = dir
                     .container
@@ -279,7 +300,8 @@ impl GcOrphanedEnvironments {
         }
         // Records of this config seen nowhere: one outside the scope is
         // said so; a stopped one with nothing left anywhere is what
-        // remains, and the record alone is forgotten.
+        // remains, and the record alone is forgotten; any other is kept
+        // and said so — never silently skipped (round 4 info, #2033).
         for record in records
             .iter()
             .filter(|record| record.script_name == config.name)
@@ -293,6 +315,15 @@ impl GcOrphanedEnvironments {
                 continue;
             }
             if record.status != EnvironmentStatus::Stopped {
+                report.kept.push(GcKept {
+                    environment_id: record.environment_id.clone(),
+                    reason: format!(
+                        "recorded {} as {}; nothing on disk or in the runtime; not collected: kill it (`quecto container kill {}`) so the record is stopped, then gc",
+                        record.environment_ref,
+                        record.status_label(),
+                        record.environment_ref
+                    ),
+                });
                 continue;
             }
             report.removable.push(GcCandidate {
@@ -430,6 +461,21 @@ impl GcOrphanedEnvironments {
             None => GcRemoval::ConfiguredCleanup {
                 config: config.name.clone(),
             },
+            // An older build's restore relabelled a retained record
+            // `stopped` (round 4 L3): its own `retained` reason under that
+            // status with the restore's last error is the signature; this
+            // build's restore puts it back, and the collector never takes
+            // it meanwhile.
+            Some(record) if relabelled_while_retained(record) => {
+                keep(
+                    report,
+                    format!(
+                        "{container_state}; recorded {} as stopped, but it was retained; relabelled by an older build — kill explicitly to collect (`quecto container ls` restores it to retained first)",
+                        record.environment_ref
+                    ),
+                );
+                return;
+            }
             Some(record) => match record.status {
                 EnvironmentStatus::Stopped => {
                     // Under a root the record alone vouched for, only its
@@ -495,6 +541,26 @@ impl GcOrphanedEnvironments {
                 record.environment_ref
             ),
         };
+        // What the registry calls collectable may still be a swarm's
+        // board and checkout (round 4 M1): the master exited before its
+        // coordinator, nobody retained the box, and the store under the
+        // directory says the run is not over. Read last — only for what
+        // would otherwise go — and kept with the run named.
+        if let Some(hosting) = self.hosted_run_keeps(record, state_dir) {
+            let how = match record {
+                Some(_) => {
+                    "kill explicitly to collect (a stopped record cannot be killed: end the run, or remove the directory by hand)"
+                }
+                None => {
+                    "kill explicitly to collect (nothing records it: end the run, or remove the directory by hand)"
+                }
+            };
+            keep(
+                report,
+                format!("{reason}, but its checkout {hosting}; {how}"),
+            );
+            return;
+        }
         report.removable.push(GcCandidate {
             environment_id: environment_id.to_string(),
             state_dir: state_dir.map(Path::to_path_buf),
@@ -502,6 +568,32 @@ impl GcOrphanedEnvironments {
             removal,
             reason,
         });
+    }
+
+    /// Why the swarm store below a directory keeps it, when it does: it
+    /// hosts a created run that has not ended, or a store that cannot be
+    /// read (kept, as the finalizer keeps it: a destroyed box cannot be
+    /// recovered). Read through the record when there is one (its
+    /// advertised checkout), else below the bare state dir.
+    fn hosted_run_keeps(
+        &self,
+        record: Option<&EnvironmentRecord>,
+        state_dir: Option<&Path>,
+    ) -> Option<String> {
+        let observed = match (record, state_dir) {
+            (Some(record), _) => self.hosted.inspect_hosted_run(record),
+            (None, Some(dir)) => self.hosted.inspect_hosted_run_at(dir),
+            (None, None) => return None,
+        };
+        match observed {
+            SwarmRunObservation::Run(run) if run.created() && !run.ended() => {
+                Some(format!("hosts swarm run {} ({})", run.id, run.describe()))
+            }
+            SwarmRunObservation::Run(_) | SwarmRunObservation::NoStore => None,
+            SwarmRunObservation::Unreadable(error) => Some(format!(
+                "hosts a coordination store that could not be read ({error})"
+            )),
+        }
     }
 
     fn remove(&self, config: &DiagnosableContainerConfig, report: &mut GcReport) {
@@ -559,6 +651,17 @@ impl GcOrphanedEnvironments {
             .map(|dirs| dirs.iter().any(|listed| listed.path == dir))
             .unwrap_or(false)
     }
+}
+
+/// An older build's restore relabelled this record `stopped` while it was
+/// retained (round 4 L3, #2033): the same signature the restore undoes.
+fn relabelled_while_retained(record: &EnvironmentRecord) -> bool {
+    record.status == EnvironmentStatus::Stopped
+        && record
+            .metadata
+            .get("retained")
+            .is_some_and(|v| v.is_string())
+        && record.last_error.as_deref() == Some(GONE_AT_RESTORE)
 }
 
 /// Why a record outside the collector's scope is kept.

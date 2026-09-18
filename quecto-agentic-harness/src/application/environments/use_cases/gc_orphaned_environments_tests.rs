@@ -194,6 +194,7 @@ pub(super) struct Rig {
     pub(super) registry: EnvironmentRegistry,
     pub(super) host: Arc<FakeInventory>,
     pub(super) process: Arc<FakeProcess>,
+    pub(super) hosted: Arc<super::gc_orphaned_environments_hosted_tests::FakeHosted>,
     pub(super) lookup: Result<DiagnosableContainerConfig, String>,
 }
 
@@ -210,6 +211,7 @@ impl Rig {
                 ..Default::default()
             }),
             host,
+            hosted: Arc::default(),
             lookup: Ok(config()),
         }
     }
@@ -219,6 +221,7 @@ impl Rig {
             Arc::new(FakeLookup(self.lookup.clone())),
             self.host.clone(),
             self.process.clone(),
+            self.hosted.clone(),
         )
     }
     pub(super) fn dry_run(&self) -> super::super::dto::GcReport {

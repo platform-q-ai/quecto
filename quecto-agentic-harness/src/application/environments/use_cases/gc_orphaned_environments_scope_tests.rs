@@ -6,7 +6,7 @@
 //! outside the config's state dir: nothing scanned, nothing run.
 use std::path::PathBuf;
 
-use super::super::dto::{EnvironmentStateDir, GcRemoval, GcRequest};
+use super::super::dto::{EnvironmentLiveness, EnvironmentStateDir, GcRemoval, GcRequest};
 use super::gc_orphaned_environments::{CREATE_GRACE_SECS, retained_state_root};
 use super::gc_orphaned_environments_tests::{FakeInventory, Rig, container, record};
 use crate::domain::environment_registry::EnvironmentStatus;
@@ -132,6 +132,8 @@ fn a_root_the_records_own_cleanup_names_is_judged_for_that_record_alone() {
         foreign_dir("/own", "env-liar", Some("quecto-env-liar")),
         foreign_dir("/own", "env-stranger", Some("quecto-env-stranger")),
     ];
+    // Under its own root the record's own inspect is asked (round 4 L2).
+    *rig.process.liveness.lock().unwrap() = vec![("C7".into(), EnvironmentLiveness::Gone)];
     let report = rig.use_case().execute(&GcRequest::default()).unwrap();
     assert_eq!(
         report.state_roots,
