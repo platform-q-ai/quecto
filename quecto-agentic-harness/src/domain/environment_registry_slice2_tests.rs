@@ -21,6 +21,9 @@ fn commit_env(reg: &EnvironmentRegistry, name: Option<&str>) -> String {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     });
     env_ref
 }

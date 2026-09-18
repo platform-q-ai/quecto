@@ -28,6 +28,9 @@ fn build_subagent_info_list_carries_execution_backend_and_environment() {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({ "branch": "pr-42" }),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     });
     let reg = new_registry();
     {

@@ -987,6 +987,10 @@ fn sessions_graph_nodes_are_constructed_only_in_composition() {
     }
 }
 
+/// The one persistence adapter that is not the sessions capability's.
+const ENVIRONMENT_REGISTRY_STORE: &str =
+    "src/infrastructure/persistence/environment_registry_store.rs";
+
 #[test]
 fn one_layout_owns_the_sessions_join_sanitizer_and_file_names() {
     let persistence: Vec<String> = production_files()
@@ -1001,6 +1005,11 @@ fn one_layout_owns_the_sessions_join_sanitizer_and_file_names() {
     ] {
         let owners: BTreeSet<String> = persistence
             .iter()
+            // The environments capability's durable registry (#2024 S4d)
+            // is one `<base_dir>/environments.json` document, not a
+            // session projection: it names its own file and never a
+            // session path.
+            .filter(|path| path.as_str() != ENVIRONMENT_REGISTRY_STORE)
             .filter(|path| {
                 production_code(path)
                     .iter()
@@ -1012,6 +1021,14 @@ fn one_layout_owns_the_sessions_join_sanitizer_and_file_names() {
             owners,
             set(&[LAYOUT_OWNER]),
             "{needle} is formed only by the layout"
+        );
+    }
+    for needle in ["join(\"sessions\")", "\"spill.jsonl\"", ".owner\""] {
+        assert!(
+            !production_code(ENVIRONMENT_REGISTRY_STORE)
+                .iter()
+                .any(|(_, line)| line.contains(needle)),
+            "{ENVIRONMENT_REGISTRY_STORE} forms no session path ({needle})"
         );
     }
     let sanitizer_callers = production_files_calling("sanitize_session_key(");

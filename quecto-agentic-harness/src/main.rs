@@ -20,6 +20,8 @@ fn main() {
             container_config_selection:
                 quecto::composition::container_configs::build_agent_container_config_selection,
             container_doctor: quecto::composition::environments::build_container_doctor,
+            environment_registry: quecto::composition::environments::build_environment_registry,
+            container_inventory: quecto::composition::environments::build_container_inventory,
         },
     ));
 }

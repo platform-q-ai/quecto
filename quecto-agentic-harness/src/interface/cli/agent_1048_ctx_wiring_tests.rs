@@ -48,6 +48,7 @@ fn flags_for_wiring_test() -> AgentFlags {
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
         stdin_is_tty: false,
+        environment_registry: None,
     }
 }
 

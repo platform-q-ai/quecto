@@ -107,6 +107,9 @@ fn rig_with_kill(rows: Vec<(&str, SubagentEntry)>, retained_kill_argv: Vec<Strin
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
+        origin: quecto::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     });
     {
         let mut entries = registry.lock().unwrap();

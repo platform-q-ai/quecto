@@ -143,6 +143,13 @@ fn encode_listing(records: Vec<EnvironmentRecord>) -> ToolResult {
                 "members": record.members,
                 "metadata": record.metadata,
                 "last_error": record.last_error,
+                // Provenance (#2024 S4d): an environment another (or an
+                // earlier) session created, reachable here for a join or
+                // a kill but never torn down by a joiner's exit.
+                "restored": record.origin == crate::domain::environment_registry::EnvironmentOrigin::Restored,
+                "session": record.created_by,
+                "config": record.script_name,
+                "created_at": record.created_at,
             })
         })
         .collect();

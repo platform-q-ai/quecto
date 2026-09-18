@@ -17,6 +17,9 @@ fn record(env_ref: &str, id: &str) -> EnvironmentRecord {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     }
 }
 
@@ -65,7 +68,9 @@ fn lock_poison_recovery_keeps_registry_usable() {
     .join();
 
     // Every accessor must recover from the poisoned lock without losing state.
-    assert_eq!(registry.mint_ref(), "C1");
+    // The committed C1 advanced the counter (#2024 S4d: a seeded ref is
+    // never re-minted), so the next mint is C2.
+    assert_eq!(registry.mint_ref(), "C2");
     registry.commit(record("C2", "env-b"));
     assert_eq!(registry.get("C1").unwrap().environment_id, "env-a");
     assert_eq!(registry.entries().len(), 2);

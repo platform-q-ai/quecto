@@ -3,7 +3,8 @@
 //! effective container config (or the `--config` file's), present each
 //! check with its remedy. Exit 1 when any check failed or the diagnosis
 //! could not be made. The interface resolves no config and runs no
-//! script itself.
+//! script itself. `quecto container ls|kill|gc` (#2024 S4d) live in
+//! `container_inventory.rs` over the composed inventory handles.
 
 use super::CliContext;
 use crate::application::configuration::dto::ConfigSelection;
@@ -20,7 +21,19 @@ use crate::domain::redaction::redact_url_userinfo;
 pub type ContainerDoctorBuilder =
     fn(&std::path::Path, &ConfigSelection) -> std::sync::Arc<DiagnoseContainerRuntime>;
 
-const USAGE: &str = "usage: quecto container doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
+/// Composition's builder of an agent run's durable environment registry
+/// (#2024 S4d): `(base_dir, session key, seed)` — seeded with the base
+/// directory's records for a top-level session, journalling only for a
+/// spawned child.
+pub type EnvironmentRegistryBuilder =
+    fn(&std::path::Path, &str, bool) -> crate::domain::environment_registry::EnvironmentRegistry;
+
+/// Composition's builder of the `container ls|kill|gc` handles (#2024
+/// S4d) over a registry restored from the base directory.
+pub type ContainerInventoryBuilder =
+    fn(&std::path::Path) -> super::container_handles::ContainerInventoryHandles;
+
+pub(super) const USAGE: &str = "usage: quecto container doctor [--name <config>]\n       quecto container ls [--all]\n       quecto container kill <ref|name>\n       quecto container gc [--dry-run] [--state-dir <dir>]...\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
 
 pub(crate) fn cmd_container(
     ctx: &CliContext,
@@ -30,6 +43,9 @@ pub(crate) fn cmd_container(
 ) -> i32 {
     match args.first().map(String::as_str) {
         Some("doctor") => cmd_doctor(ctx, &args[1..], stdout, stderr),
+        Some("ls") => super::container_inventory::cmd_ls(ctx, &args[1..], stdout, stderr),
+        Some("kill") => super::container_inventory::cmd_kill(ctx, &args[1..], stdout, stderr),
+        Some("gc") => super::container_inventory::cmd_gc(ctx, &args[1..], stdout, stderr),
         _ => {
             stderr.push_str(USAGE);
             1

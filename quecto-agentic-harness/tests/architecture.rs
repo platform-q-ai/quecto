@@ -436,7 +436,12 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     "CheckStatus"
                     | "ContainerRuntimeTarget"
                     | "DiagnosableContainerConfig"
-                    | "PreflightCheck",
+                    | "PreflightCheck"
+                    // The liveness and inventory adapters (#2024 S4d)
+                    // answer in the capability's own records.
+                    | "EnvironmentLiveness"
+                    | "EnvironmentStateDir"
+                    | "RuntimeContainer",
                     ..,
                 ] => true,
                 // The spawn tool (#1848) holds the composed change-reasoning-
@@ -4071,6 +4076,13 @@ const ENVIRONMENT_PORTS: &[&str] = &[
     // script's own preflight run without creating an environment.
     "ContainerConfigLookup",
     "ContainerRuntimePreflight",
+    // Durable environments (#2024 S4d): the base directory's registry
+    // store (refs and records), the record's runtime reality through its
+    // retained scripts, and the host's container/state-dir inventory the
+    // collector reads and removes through.
+    "EnvironmentRegistryStore",
+    "EnvironmentProcess",
+    "ContainerRuntimeInventory",
 ];
 
 /// Application environment code may name the domain, its own capability,

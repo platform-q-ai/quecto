@@ -149,6 +149,9 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     /// resolves `container: true` through; `None` refuses new containers.
     pub container_config_selection:
         Option<std::sync::Arc<crate::application::subagents::use_cases::SelectContainerConfig>>,
+    /// Composition's durable environment registry (#2024 S4d) the spawn
+    /// tool commits to; `None` (unit rigs) builds an in-memory one.
+    pub environment_registry: Option<crate::domain::environment_registry::EnvironmentRegistry>,
     /// Composition's builder of the `agent_cmd kill` owner (#1936); `None`
     /// leaves `kill` unavailable.
     pub kill_tool: Option<crate::interface::cli::KillToolBuilder>,
@@ -214,6 +217,7 @@ pub(crate) fn build_tool_runtime(
         parent_config_path,
         effort_control,
         container_config_selection,
+        environment_registry,
         kill_tool,
         disabled_tools,
         inherited_tool_policy,
@@ -310,6 +314,7 @@ pub(crate) fn build_tool_runtime(
             crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
         effort_control,
         container_config_selection,
+        environment_registry,
     });
     // The agent-control use cases — `kill`, the environment member
     // shutdown, the swarm member termination, the spawn lifecycle and the

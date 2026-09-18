@@ -6,6 +6,13 @@
 //! environments this session has committed: hidden environment UUID, optional
 //! name, script/runtime identity, retained script argv, member agent UUIDs,
 //! status, metadata, and last error (#1369 slice 2).
+//!
+//! Since #2024 S4d the registry is durable: every transition is observed by
+//! an optional [`EnvironmentJournal`] the application installs over its
+//! store, refs are allocated through it (unique across every session of one
+//! base directory), and a harness restart seeds the registry with the
+//! records of earlier sessions as *restored* records — reachable for a
+//! join, a listing or a kill, but never torn down by a joiner's exit.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -106,6 +113,30 @@ pub struct EnvironmentRecord {
     pub metadata: serde_json::Value,
     /// Last cleanup error, retained while status is `CleanupFailed`.
     pub last_error: Option<String>,
+    /// Where the record came from (#2024 S4d): created by this session, or
+    /// restored from the durable registry another (or an earlier) session
+    /// wrote.
+    pub origin: EnvironmentOrigin,
+    /// Key of the session that created the environment (empty for a
+    /// session-less run).
+    pub created_by: String,
+    /// Creation time as seconds since the Unix epoch, when the creator
+    /// recorded one.
+    pub created_at: Option<u64>,
+}
+
+/// Whether this session created the environment or inherited it from the
+/// durable registry (#2024 S4d).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EnvironmentOrigin {
+    /// Committed by this session's own create: this session owns its
+    /// final-member teardown.
+    #[default]
+    Created,
+    /// Seeded at startup from the durable registry: members of the creating
+    /// session are unknown here, and a joiner leaving it never triggers the
+    /// final-member kill — only an explicit kill ends it.
+    Restored,
 }
 
 impl EnvironmentRecord {
@@ -128,6 +159,30 @@ impl EnvironmentRecord {
 /// construction (fresh v4 UUID per environment).
 pub fn mint_environment_uuid() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+/// The durable side of the registry (#2024 S4d): where refs are allocated
+/// and where every committed record and transition is written. Installed
+/// by the application over its store; the registry only reports — it never
+/// reads the journal back (restore is the application's, at startup).
+#[derive(Clone)]
+pub struct EnvironmentJournal {
+    /// Allocate the next ref number, unique across every session sharing the
+    /// base directory. `None` means the journal could not allocate; the
+    /// registry then falls back to its in-memory counter (seeded past every
+    /// restored ref) and the caller's account of the failure is the
+    /// journal's own to report.
+    pub allocate_ref: Arc<dyn Fn() -> Option<u64> + Send + Sync>,
+    /// A record was committed or one of its persisted fields changed.
+    pub recorded: Arc<dyn Fn(&EnvironmentRecord) + Send + Sync>,
+    /// A record was removed (a rolled-back create).
+    pub forgotten: Arc<dyn Fn(&str) + Send + Sync>,
+}
+
+impl std::fmt::Debug for EnvironmentJournal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnvironmentJournal").finish_non_exhaustive()
+    }
 }
 
 /// Proof that the caller holds the exclusive right to run this environment's
@@ -164,6 +219,10 @@ struct EnvironmentRegistryState {
 #[derive(Debug, Clone, Default)]
 pub struct EnvironmentRegistry {
     state: Arc<Mutex<EnvironmentRegistryState>>,
+    journal: Option<EnvironmentJournal>,
+    /// Key of the session this registry belongs to; stamped on every
+    /// record it creates.
+    session: Arc<str>,
 }
 
 impl EnvironmentRegistry {
@@ -171,19 +230,91 @@ impl EnvironmentRegistry {
         Self::default()
     }
 
+    /// A registry whose refs and records are durable through `journal`,
+    /// creating records on behalf of `session`.
+    pub fn with_journal(journal: EnvironmentJournal, session: &str) -> Self {
+        Self {
+            state: Arc::default(),
+            journal: Some(journal),
+            session: Arc::from(session),
+        }
+    }
+
+    /// The session this registry creates environments for.
+    pub fn session(&self) -> &str {
+        &self.session
+    }
+
+    /// Whether the registry's refs and records are durable.
+    pub fn is_durable(&self) -> bool {
+        self.journal.is_some()
+    }
+
     /// Mint the next `CN` ref. Refs are monotonic and never reused within a
     /// session, even when the launch they were minted for later fails or the
-    /// environment is stopped.
+    /// environment is stopped. A durable registry allocates through its
+    /// journal, so the ref is unique across every session of the base
+    /// directory; when the journal cannot allocate, the in-memory counter
+    /// (already past every ref seen) takes over.
     pub fn mint_ref(&self) -> String {
+        let allocated = self
+            .journal
+            .as_ref()
+            .and_then(|journal| (journal.allocate_ref)());
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.next_ref += 1;
+        state.next_ref = match allocated {
+            Some(number) if number > state.next_ref => number,
+            _ => state.next_ref + 1,
+        };
         format!("C{}", state.next_ref)
     }
 
-    /// Commit a created environment under its minted ref.
+    /// Commit a created environment under its minted ref. A ref numbered
+    /// beyond the in-memory counter (a restored record) advances it, so a
+    /// journal-less mint never collides with a seeded ref.
     pub fn commit(&self, record: EnvironmentRecord) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.entries.insert(record.environment_ref.clone(), record);
+        if let Some(number) = ref_number(&record.environment_ref) {
+            state.next_ref = state.next_ref.max(number);
+        }
+        state
+            .entries
+            .insert(record.environment_ref.clone(), record.clone());
+        drop(state);
+        self.journal_record(&record);
+    }
+
+    /// Seed the registry with records another session wrote (#2024 S4d):
+    /// they arrive `Restored` with no members (the creating session's
+    /// members are unreachable here). Each is journalled back so a status
+    /// the restore corrected is durable.
+    pub fn restore(&self, records: Vec<EnvironmentRecord>) {
+        for mut record in records {
+            record.origin = EnvironmentOrigin::Restored;
+            record.members.clear();
+            self.commit(record);
+        }
+    }
+
+    fn journal_record(&self, record: &EnvironmentRecord) {
+        if let Some(journal) = &self.journal {
+            (journal.recorded)(record);
+        }
+    }
+
+    /// Report the record under `environment_ref` as changed, after the
+    /// state lock is released.
+    fn journal_ref(&self, environment_ref: &str) {
+        if self.journal.is_none() {
+            return;
+        }
+        let record = {
+            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.entries.get(environment_ref).cloned()
+        };
+        if let Some(record) = record {
+            self.journal_record(&record);
+        }
     }
 
     /// Remove a committed environment. Used only when the launch that
@@ -198,7 +329,14 @@ impl EnvironmentRegistry {
             .inspect_claims
             .retain(|(env_ref, _)| env_ref != environment_ref);
         state.inspect_failures.remove(environment_ref);
-        state.entries.remove(environment_ref)
+        let removed = state.entries.remove(environment_ref);
+        drop(state);
+        if removed.is_some() {
+            if let Some(journal) = &self.journal {
+                (journal.forgotten)(environment_ref);
+            }
+        }
+        removed
     }
 
     pub fn get(&self, environment_ref: &str) -> Option<EnvironmentRecord> {
@@ -318,8 +456,16 @@ impl EnvironmentRegistry {
             .get_mut(environment_ref)
             .ok_or_else(|| EnvironmentLookupError::Unknown(environment_ref.to_string()))?;
         record.members.retain(|m| m != agent_uuid);
-        if record.members.is_empty() && record.status == EnvironmentStatus::Running {
+        // A restored environment is not this session's to tear down: its
+        // creating session may still hold members this registry cannot see,
+        // so a joiner's exit leaves it and only an explicit kill ends it.
+        if record.members.is_empty()
+            && record.status == EnvironmentStatus::Running
+            && record.origin == EnvironmentOrigin::Created
+        {
             record.status = EnvironmentStatus::Killing;
+            drop(state);
+            self.journal_ref(environment_ref);
             Ok(Some(KillClaim {
                 environment_ref: environment_ref.to_string(),
             }))
@@ -342,9 +488,12 @@ impl EnvironmentRegistry {
             | EnvironmentStatus::CleanupFailed
             | EnvironmentStatus::Retained => {
                 record.status = EnvironmentStatus::Killing;
-                Ok(KillClaim {
+                let claim = KillClaim {
                     environment_ref: record.environment_ref.clone(),
-                })
+                };
+                drop(state);
+                self.journal_ref(environment_ref);
+                Ok(claim)
             }
             EnvironmentStatus::Killing => Err(EnvironmentLookupError::Stale(
                 record.environment_ref.clone(),
@@ -368,6 +517,8 @@ impl EnvironmentRegistry {
                 record.last_error = None;
             }
         }
+        drop(state);
+        self.journal_ref(&claim.environment_ref);
     }
 
     /// Claim the exclusive right to run this environment's retained inspect
@@ -414,6 +565,8 @@ impl EnvironmentRegistry {
                 (_, incoming) => record.metadata = incoming,
             }
         }
+        drop(state);
+        self.journal_ref(&claim.environment_ref);
     }
 
     /// Persist an inspect failure truthfully: the actionable error is
@@ -427,6 +580,8 @@ impl EnvironmentRegistry {
                 record.last_error = Some(error.to_string());
             }
         }
+        drop(state);
+        self.journal_ref(&claim.environment_ref);
     }
 
     /// Withhold the claimed final-member kill (#1924): the environment stays
@@ -444,6 +599,8 @@ impl EnvironmentRegistry {
                 record.metadata = serde_json::json!({ "retained": reason });
             }
         }
+        drop(state);
+        self.journal_ref(&claim.environment_ref);
     }
 
     /// Persist a retryable cleanup-failed state with an actionable error.
@@ -453,7 +610,18 @@ impl EnvironmentRegistry {
             record.status = EnvironmentStatus::CleanupFailed;
             record.last_error = Some(error.to_string());
         }
+        drop(state);
+        self.journal_ref(&claim.environment_ref);
     }
+}
+
+/// The number of a `CN` ref; `None` for anything else.
+pub fn ref_number(environment_ref: &str) -> Option<u64> {
+    let digits = environment_ref.strip_prefix('C')?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 #[cfg(test)]

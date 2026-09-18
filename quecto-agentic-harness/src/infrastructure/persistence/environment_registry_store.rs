@@ -1,0 +1,276 @@
+//! The durable environment registry of one base directory (#2024 S4d):
+//! `<base_dir>/environments.json`, one document holding the ref counter
+//! and every record keyed by ref, written atomically (tmp + fsync + rename
+//! through `atomic_write`, 0600) and — because a rename keeps a file whole
+//! but not an *update* — every read → change → write cycle under the same
+//! exclusive `flock` the configuration writer uses (`<base_dir>/locks/…`),
+//! so two sessions allocating a ref or recording at once serialise
+//! instead of overwriting each other. The environments capability's
+//! [`EnvironmentRegistryStore`] port.
+//!
+//! Members are not stored: they belong to the session that launched them.
+//! An unreadable document (corrupt JSON, a newer version) is an error the
+//! restore reports; it is never silently replaced — a write on top of it
+//! fails the same way, so a broken file stops the registry rather than
+//! losing what it held.
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use crate::application::environments::ports::EnvironmentRegistryStore;
+use crate::domain::environment_registry::{
+    EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus, ref_number,
+};
+use crate::infrastructure::atomic_write::atomic_write;
+use crate::infrastructure::config::writer::{exclusive_hold, lock_dir_for};
+
+/// The document's name under the base directory.
+pub const REGISTRY_FILE_NAME: &str = "environments.json";
+
+const DOCUMENT_VERSION: u32 = 1;
+const FILE_MODE: u32 = 0o600;
+
+#[derive(Debug, Clone)]
+pub struct FileEnvironmentRegistryStore {
+    path: PathBuf,
+    lock_dir: PathBuf,
+}
+
+impl FileEnvironmentRegistryStore {
+    pub fn for_base_dir(base_dir: &Path) -> Self {
+        Self {
+            path: base_dir.join(REGISTRY_FILE_NAME),
+            lock_dir: lock_dir_for(base_dir),
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn read(&self) -> Result<Document, String> {
+        match std::fs::read(&self.path) {
+            Ok(bytes) => {
+                let document: Document = serde_json::from_slice(&bytes).map_err(|error| {
+                    format!(
+                        "{} is not a valid environment registry: {error}",
+                        self.path.display()
+                    )
+                })?;
+                if document.version != DOCUMENT_VERSION {
+                    return Err(format!(
+                        "{} is environment registry version {}, this harness reads version {DOCUMENT_VERSION}",
+                        self.path.display(),
+                        document.version
+                    ));
+                }
+                Ok(document)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Document::default()),
+            Err(error) => Err(format!("{}: {error}", self.path.display())),
+        }
+    }
+
+    fn write(&self, document: &Document) -> Result<(), String> {
+        let mut bytes = serde_json::to_vec_pretty(document)
+            .map_err(|error| format!("environment registry could not be encoded: {error}"))?;
+        bytes.push(b'\n');
+        atomic_write(&self.path, &bytes, Some(FILE_MODE))
+            .map_err(|error| format!("{}: {error}", self.path.display()))
+    }
+
+    /// Read, change, write under the exclusive hold.
+    fn update<T>(&self, change: impl FnOnce(&mut Document) -> T) -> Result<T, String> {
+        let _hold = exclusive_hold(&self.lock_dir, &self.path)?;
+        let mut document = self.read()?;
+        let outcome = change(&mut document);
+        self.write(&document)?;
+        Ok(outcome)
+    }
+}
+
+impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
+    fn allocate_ref(&self) -> Result<u64, String> {
+        self.update(|document| {
+            // Never below a ref already on file, whatever the counter says
+            // (a hand-edited or older document).
+            let highest = document
+                .environments
+                .keys()
+                .filter_map(|key| ref_number(key))
+                .max()
+                .unwrap_or(0);
+            document.next_ref = document.next_ref.max(highest) + 1;
+            document.next_ref
+        })
+    }
+
+    fn load(&self) -> Result<Vec<EnvironmentRecord>, String> {
+        let _hold = exclusive_hold(&self.lock_dir, &self.path)?;
+        let document = self.read()?;
+        let mut records: Vec<EnvironmentRecord> = document
+            .environments
+            .into_iter()
+            .map(|(environment_ref, wire)| wire.into_record(environment_ref))
+            .collect();
+        records.sort_by_key(|record| ref_number(&record.environment_ref).unwrap_or(u64::MAX));
+        Ok(records)
+    }
+
+    fn record(&self, record: &EnvironmentRecord) -> Result<(), String> {
+        self.update(|document| {
+            if let Some(number) = ref_number(&record.environment_ref) {
+                document.next_ref = document.next_ref.max(number);
+            }
+            document
+                .environments
+                .insert(record.environment_ref.clone(), RecordWire::from(record));
+        })
+    }
+
+    fn forget(&self, environment_ref: &str) -> Result<(), String> {
+        self.update(|document| {
+            document.environments.remove(environment_ref);
+        })
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct Document {
+    #[serde(default = "current_version")]
+    version: u32,
+    #[serde(default)]
+    next_ref: u64,
+    #[serde(default)]
+    environments: BTreeMap<String, RecordWire>,
+}
+
+fn current_version() -> u32 {
+    DOCUMENT_VERSION
+}
+
+impl Default for Document {
+    fn default() -> Self {
+        Self {
+            version: DOCUMENT_VERSION,
+            next_ref: 0,
+            environments: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct RecordWire {
+    environment_id: String,
+    environment_uuid: String,
+    #[serde(default)]
+    name: Option<String>,
+    workspace_path: PathBuf,
+    #[serde(default)]
+    repository: String,
+    #[serde(default)]
+    config: String,
+    #[serde(default)]
+    exec: Vec<String>,
+    #[serde(default)]
+    kill: Vec<String>,
+    #[serde(default)]
+    cleanup: Vec<String>,
+    #[serde(default)]
+    inspect: Vec<String>,
+    status: StatusWire,
+    #[serde(default)]
+    metadata: serde_json::Value,
+    #[serde(default)]
+    last_error: Option<String>,
+    #[serde(default)]
+    created_by: String,
+    #[serde(default)]
+    created_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum StatusWire {
+    Running,
+    Killing,
+    Stopped,
+    CleanupFailed,
+    Retained,
+}
+
+impl From<&EnvironmentStatus> for StatusWire {
+    fn from(status: &EnvironmentStatus) -> Self {
+        match status {
+            EnvironmentStatus::Running => Self::Running,
+            EnvironmentStatus::Killing => Self::Killing,
+            EnvironmentStatus::Stopped => Self::Stopped,
+            EnvironmentStatus::CleanupFailed => Self::CleanupFailed,
+            EnvironmentStatus::Retained => Self::Retained,
+        }
+    }
+}
+
+impl From<StatusWire> for EnvironmentStatus {
+    fn from(status: StatusWire) -> Self {
+        match status {
+            StatusWire::Running => Self::Running,
+            StatusWire::Killing => Self::Killing,
+            StatusWire::Stopped => Self::Stopped,
+            StatusWire::CleanupFailed => Self::CleanupFailed,
+            StatusWire::Retained => Self::Retained,
+        }
+    }
+}
+
+impl From<&EnvironmentRecord> for RecordWire {
+    fn from(record: &EnvironmentRecord) -> Self {
+        Self {
+            environment_id: record.environment_id.clone(),
+            environment_uuid: record.environment_uuid.clone(),
+            name: record.name.clone(),
+            workspace_path: record.workspace_path.clone(),
+            repository: record.repository.clone(),
+            config: record.script_name.clone(),
+            exec: record.retained_exec_argv.clone(),
+            kill: record.retained_kill_argv.clone(),
+            cleanup: record.retained_cleanup_argv.clone(),
+            inspect: record.retained_inspect_argv.clone(),
+            status: StatusWire::from(&record.status),
+            metadata: record.metadata.clone(),
+            last_error: record.last_error.clone(),
+            created_by: record.created_by.clone(),
+            created_at: record.created_at,
+        }
+    }
+}
+
+impl RecordWire {
+    fn into_record(self, environment_ref: String) -> EnvironmentRecord {
+        EnvironmentRecord {
+            environment_ref,
+            environment_id: self.environment_id,
+            environment_uuid: self.environment_uuid,
+            name: self.name,
+            workspace_path: self.workspace_path,
+            repository: self.repository,
+            script_name: self.config,
+            retained_exec_argv: self.exec,
+            retained_kill_argv: self.kill,
+            retained_cleanup_argv: self.cleanup,
+            retained_inspect_argv: self.inspect,
+            members: Vec::new(),
+            status: self.status.into(),
+            metadata: self.metadata,
+            last_error: self.last_error,
+            // Whoever loads it did not create it here; the restore marks
+            // the origin, the store only carries the creator's key.
+            origin: EnvironmentOrigin::Restored,
+            created_by: self.created_by,
+            created_at: self.created_at,
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "environment_registry_store_tests.rs"]
+mod tests;

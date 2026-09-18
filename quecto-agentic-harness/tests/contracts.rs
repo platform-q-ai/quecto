@@ -53,6 +53,8 @@ mod config_document_writer;
 mod config_validator;
 #[path = "contracts/container_config_lookup.rs"]
 mod container_config_lookup;
+#[path = "contracts/container_runtime_inventory.rs"]
+mod container_runtime_inventory;
 #[path = "contracts/container_runtime_preflight.rs"]
 mod container_runtime_preflight;
 #[path = "contracts/context_spill_store.rs"]
@@ -75,8 +77,12 @@ mod effort_runtime;
 mod effort_vocabulary_source;
 #[path = "contracts/environment_member_shutdown.rs"]
 mod environment_member_shutdown;
+#[path = "contracts/environment_process.rs"]
+mod environment_process;
 #[path = "contracts/environment_process_commands.rs"]
 mod environment_process_commands;
+#[path = "contracts/environment_registry_store.rs"]
+mod environment_registry_store;
 #[path = "contracts/extension.rs"]
 mod extension;
 #[path = "contracts/fleet_settlement.rs"]

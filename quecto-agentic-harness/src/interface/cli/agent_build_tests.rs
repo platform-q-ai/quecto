@@ -66,6 +66,7 @@ fn test_build_agent_from_config_no_config_file() {
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
         stdin_is_tty: false,
+        environment_registry: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -121,6 +122,7 @@ fn test_build_agent_from_config_explicit_missing_errors() {
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
         stdin_is_tty: false,
+        environment_registry: None,
     };
     let mut stderr = String::new();
     // An explicit --config (config_explicit = true) pointing at a missing file
@@ -179,6 +181,7 @@ fn test_build_agent_from_config_invalid_json() {
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
         stdin_is_tty: false,
+        environment_registry: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -239,6 +242,7 @@ fn test_build_agent_from_config_no_providers() {
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
         stdin_is_tty: false,
+        environment_registry: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -299,6 +303,7 @@ fn test_build_agent_from_config_with_model_override() {
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
         stdin_is_tty: false,
+        environment_registry: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");

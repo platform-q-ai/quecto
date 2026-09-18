@@ -332,6 +332,7 @@ fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
         broadcast_tx: None,
         parent_session_name: Some("parent".into()),
         inherited_tool_policy: None,
+        environment_registry: None,
     });
     assert_eq!(built.extensions.len(), 1);
     assert_eq!(built.extensions[0].name(), "quecto:agent-control");
@@ -363,6 +364,7 @@ async fn built_spawn_tool_admits_against_the_returned_harness_lifecycle() {
         broadcast_tx: None,
         parent_session_name: Some("parent".into()),
         inherited_tool_policy: None,
+        environment_registry: None,
     });
     let spawn = built.extensions[0]
         .tools()

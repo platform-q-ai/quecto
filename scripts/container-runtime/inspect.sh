@@ -38,7 +38,13 @@ case "$QUECTO_CONTAINER_ENVIRONMENT_ID" in
 */* | *..*) die "invalid environment id: $QUECTO_CONTAINER_ENVIRONMENT_ID" ;;
 esac
 env_dir="$state_dir/$QUECTO_CONTAINER_ENVIRONMENT_ID"
-[ -d "$env_dir" ] || die "unknown environment: $QUECTO_CONTAINER_ENVIRONMENT_ID"
+if [ ! -d "$env_dir" ]; then
+  # State gone (manual removal, a completed kill whose record outlived it):
+  # a truthful "dead" so a registry restore (#2024 S4d) marks the record
+  # stopped rather than keeping it unverified.
+  jq -cn '{status: "dead", metadata: {cause: "environment-removed"}}'
+  exit 0
+fi
 state_root="$(cd "$state_dir" && pwd -P)"
 env_real="$(cd "$env_dir" && pwd -P)"
 case "$env_real" in

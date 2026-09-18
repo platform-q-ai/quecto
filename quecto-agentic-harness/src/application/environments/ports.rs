@@ -9,8 +9,11 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use std::path::Path;
+
 use crate::application::environments::dto::{
-    ContainerRuntimeTarget, DiagnosableContainerConfig, PreflightCheck,
+    ContainerRuntimeTarget, DiagnosableContainerConfig, EnvironmentLiveness, EnvironmentStateDir,
+    PreflightCheck, RuntimeContainer,
 };
 use crate::domain::environment_registry::EnvironmentRecord;
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
@@ -162,4 +165,46 @@ pub trait ContainerConfigLookup: Send + Sync {
 pub trait ContainerRuntimePreflight: Send + Sync {
     fn preflight(&self, config: &DiagnosableContainerConfig)
     -> Result<Vec<PreflightCheck>, String>;
+}
+
+// ─── Durable environments (#2024 S4d) ────────────────────────────────────────
+
+/// The durable registry of one base directory: every session sharing the
+/// directory allocates its refs and writes its records here, so a `C*` ref
+/// is unique across sessions and outlives the harness that minted it.
+/// Members are never stored: they belong to the session that launched
+/// them. Every operation is synchronous — a record write is small and must
+/// have landed before the launch that committed it returns.
+pub trait EnvironmentRegistryStore: Send + Sync {
+    /// The next never-reused ref number, allocated under an exclusive hold
+    /// so two sessions never receive the same one.
+    fn allocate_ref(&self) -> Result<u64, String>;
+    /// Every record on file, in ref order.
+    fn load(&self) -> Result<Vec<EnvironmentRecord>, String>;
+    /// Write `record` under its ref, replacing what was there.
+    fn record(&self, record: &EnvironmentRecord) -> Result<(), String>;
+    /// Remove the record under `environment_ref` (a rolled-back create).
+    fn forget(&self, environment_ref: &str) -> Result<(), String>;
+}
+
+/// The runtime reality behind a record: its container's liveness through
+/// the retained `inspect` argv, and its retained `cleanup`. Synchronous
+/// (bounded scripts) so a startup restore and the CLI collector can ask
+/// without a runtime.
+pub trait EnvironmentProcess: Send + Sync {
+    fn observe(&self, record: &EnvironmentRecord) -> EnvironmentLiveness;
+    /// Run the retained `cleanup` once; `Err` carries the script's account.
+    fn cleanup(&self, record: &EnvironmentRecord) -> Result<(), String>;
+}
+
+/// The host's inventory of environments outside any registry: the
+/// containers the runtime labels `quecto.environment_id` and the state
+/// directories under a state root, with the removals the collector may
+/// ask for. The adapter removes only a container it listed and only a
+/// directory directly under the root it listed it from.
+pub trait ContainerRuntimeInventory: Send + Sync {
+    fn containers(&self) -> Result<Vec<RuntimeContainer>, String>;
+    fn remove_container(&self, name: &str) -> Result<(), String>;
+    fn environment_dirs(&self, root: &Path) -> Result<Vec<EnvironmentStateDir>, String>;
+    fn remove_environment_dir(&self, root: &Path, dir: &Path) -> Result<(), String>;
 }

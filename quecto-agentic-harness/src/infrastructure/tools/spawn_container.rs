@@ -187,24 +187,7 @@ struct SocketProxyWire {
     argv: Vec<String>,
 }
 
-/// Strict wire parse shared by the create, exec, and inspect result
-/// contracts: UTF-8 only, exactly one JSON value, trailing data rejected.
-/// Unknown-key rejection comes from each wire type's `deny_unknown_fields`.
-/// Returns a plain error string so both launch-path (`DomainError`) and
-/// post-mortem (`String`) callers share one definition.
-pub(super) fn parse_strict_wire<T: serde::de::DeserializeOwned>(
-    stdout: &[u8],
-    operation: &str,
-) -> Result<T, String> {
-    let text = std::str::from_utf8(stdout)
-        .map_err(|e| format!("script-managed {operation} returned non-UTF8 JSON: {e}"))?;
-    let mut de = serde_json::Deserializer::from_str(text);
-    let wire = T::deserialize(&mut de)
-        .map_err(|e| format!("script-managed {operation} returned invalid JSON contract: {e}"))?;
-    de.end()
-        .map_err(|e| format!("script-managed {operation} returned extra JSON data: {e}"))?;
-    Ok(wire)
-}
+pub(super) use crate::infrastructure::processes::containers::retained_scripts::parse_strict_wire;
 
 /// Shared endpoint validation for the create and exec results (#1369 slice
 /// 3): a metadata object plus EXACTLY ONE of a non-empty direct `socket_path`
@@ -418,6 +401,12 @@ async fn spawn_script_managed_child(
         status: crate::domain::environment_registry::EnvironmentStatus::Running,
         metadata: result.metadata.clone(),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: environments.session().to_string(),
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|since| since.as_secs()),
     });
     Ok(PreparedChild {
         swarm_reservation: None,

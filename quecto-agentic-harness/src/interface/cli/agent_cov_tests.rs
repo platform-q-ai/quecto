@@ -448,6 +448,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
         stdin_is_tty: false,
+        environment_registry: None,
     };
     let ctx = CliContext::default();
     let mut stderr = String::new();
@@ -497,6 +498,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
             crate::composition::container_configs::build_agent_container_config_selection,
         ),
         stdin_is_tty: false,
+        environment_registry: None,
     };
     flags.persist = true;
     stderr.clear();

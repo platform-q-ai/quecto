@@ -107,79 +107,30 @@ impl EnvironmentProcessCommands for ScriptEnvironmentCommands {
     }
 }
 
-/// Bound on one retained-inspect invocation. A hung inspect script must not
-/// stall the death pipeline indefinitely: the exit signal (and the awaits it
-/// wakes) fires only after this job finishes, and `classify_dead_socket`'s
-/// grace window is sized just above this bound.
-pub(super) const INSPECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+pub(super) use crate::infrastructure::processes::containers::retained_scripts::INSPECT_TIMEOUT;
 
-/// Inspect script contract: invoked with `QUECTO_CONTAINER_ENVIRONMENT_ID`,
-/// prints one JSON object `{"status": "...", "metadata": {...}}` on stdout.
-/// The result is parsed through the same strict wire path as create/exec:
-/// unknown keys, trailing data, and non-UTF8 output are rejected. The
-/// subprocess is bounded by [`INSPECT_TIMEOUT`]; on timeout it is killed and
-/// an inspect failure is persisted with the retained argv kept for retry.
+/// Inspect script contract: see `retained_scripts::run_inspect_sync_bounded`;
+/// bounded by [`INSPECT_TIMEOUT`] here.
 fn run_inspect_sync(environment_id: &str, argv: &[String]) -> Result<serde_json::Value, String> {
     run_inspect_sync_bounded(environment_id, argv, INSPECT_TIMEOUT)
 }
 
-pub(super) fn run_inspect_sync_bounded(
-    environment_id: &str,
-    argv: &[String],
-    timeout: std::time::Duration,
-) -> Result<serde_json::Value, String> {
-    #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct InspectResultWire {
-        #[serde(default)]
-        status: Option<String>,
-        metadata: serde_json::Value,
-    }
-    let Some((program, args)) = argv.split_first() else {
-        return Err("no retained inspect argv".to_string());
-    };
-    let mut cmd = std::process::Command::new(program);
-    cmd.args(args);
-    cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
-    let output = run_sync_capturing_stderr_tail(cmd, ScriptStdout::Result, timeout)
-        .map_err(|error| format!("retained inspect: {error}; retained argv kept for retry"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "retained inspect exited with {}: {}",
-            output.status, output.stderr_tail
-        ));
-    }
-    let wire: InspectResultWire =
-        super::spawn_container::parse_strict_wire(&output.stdout, "inspect")?;
-    if !wire.metadata.is_object() {
-        return Err("retained inspect result must contain a metadata object".to_string());
-    }
-    let mut metadata = wire.metadata;
-    if let (Some(object), Some(status)) = (metadata.as_object_mut(), wire.status) {
-        object.insert("inspect_status".to_string(), serde_json::json!(status));
-    }
-    Ok(metadata)
-}
+pub(super) use crate::infrastructure::processes::containers::retained_scripts::run_inspect_sync_bounded;
 
 /// The retained-cleanup invocation: best effort by contract, never silent
 /// (#2024 S4b) — a cleanup that fails leaves an environment behind and
 /// its stderr tail is the operator's only lead.
 fn run_script_sync(environment_id: &str, argv: &[String]) {
-    let Some((program, args)) = argv.split_first() else {
+    if argv.is_empty() {
         return;
-    };
-    let mut cmd = std::process::Command::new(program);
-    cmd.args(args);
-    cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
-    match run_sync_capturing_stderr_tail(cmd, ScriptStdout::Discard, std::time::Duration::MAX) {
-        Ok(output) if !output.status.success() => {
-            tracing::warn!(environment_id, "{}", output.failure_message("cleanup"));
-        }
-        Ok(_) => {}
-        // Typically a full pid cgroup: the environment may outlive us.
-        Err(error) => {
-            tracing::warn!(environment_id, %error, "retained container script could not be started")
-        }
+    }
+    if let Err(error) =
+        crate::infrastructure::processes::containers::retained_scripts::run_cleanup_sync(
+            environment_id,
+            argv,
+        )
+    {
+        tracing::warn!(environment_id, "{error}");
     }
 }
 

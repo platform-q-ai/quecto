@@ -38,6 +38,8 @@ fn test_composition() -> CliComposition {
         container_config_selection:
             crate::composition::container_configs::build_agent_container_config_selection,
         container_doctor: crate::composition::environments::build_container_doctor,
+        environment_registry: quecto::composition::environments::build_environment_registry,
+        container_inventory: quecto::composition::environments::build_container_inventory,
     }
 }
 

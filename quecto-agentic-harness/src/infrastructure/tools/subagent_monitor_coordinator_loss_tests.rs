@@ -91,6 +91,9 @@ fn environment(
         status: EnvironmentStatus::Running,
         metadata: json!({ "checkout": checkout.display().to_string() }),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     });
     (environments, env_ref)
 }

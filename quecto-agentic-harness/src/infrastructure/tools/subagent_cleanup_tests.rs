@@ -167,6 +167,9 @@ async fn cleanup_registered_once_stops_the_committed_environment_entry() {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     });
 
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
@@ -229,6 +232,9 @@ fn committed_env_record(
         status: crate::domain::environment_registry::EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     }
 }
 

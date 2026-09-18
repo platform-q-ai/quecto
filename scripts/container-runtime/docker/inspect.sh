@@ -49,7 +49,15 @@ case "$id" in
 */* | *..*) die "invalid environment id: $id" ;;
 esac
 env_dir="$state_dir/$id"
-[ -d "$env_dir" ] || die "unknown environment: $id"
+if [ ! -d "$env_dir" ]; then
+  # The environment's state is gone (a manual `rm -rf`, a completed kill
+  # whose record outlived it): that is a truthful "dead", not an error —
+  # a restore (#2024 S4d) marks the record stopped instead of keeping it
+  # unverified forever.
+  jq -cn --arg cli "$cli" \
+    '{status: "dead", metadata: {runtime: $cli, cause: "environment-removed"}}'
+  exit 0
+fi
 resolved="$(cd "$env_dir" && pwd -P)"
 root="$(cd "$state_dir" && pwd -P)"
 case "$resolved" in

@@ -26,6 +26,9 @@ fn record(reference: &str) -> EnvironmentRecord {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({"reference": reference, "nested": {"values": [1, "two"]}}),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     }
 }
 

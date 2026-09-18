@@ -9,7 +9,11 @@ mod config_flag;
 mod config_loading;
 pub mod configuration_handles;
 mod container;
-pub use container::ContainerDoctorBuilder;
+pub mod container_handles;
+mod container_inventory;
+pub use container::{
+    ContainerDoctorBuilder, ContainerInventoryBuilder, EnvironmentRegistryBuilder,
+};
 mod help;
 mod models;
 pub mod protocol;
@@ -304,6 +308,14 @@ pub struct CliContext {
     /// Composition's container-doctor builder (#2024 S4b); `quecto
     /// container doctor` refuses to run without it.
     pub container_doctor: Option<ContainerDoctorBuilder>,
+    /// Composition's durable environment registry builder (#2024 S4d):
+    /// the registry an agent run's spawn tool commits to, restored from
+    /// and journalled through the base directory. `None` (unit rigs)
+    /// leaves the run with an in-memory registry.
+    pub environment_registry: Option<EnvironmentRegistryBuilder>,
+    /// Composition's container inventory builder (#2024 S4d); `quecto
+    /// container ls|kill|gc` refuse to run without it.
+    pub container_inventory: Option<ContainerInventoryBuilder>,
 }
 
 impl CliContext {
@@ -380,6 +392,8 @@ pub struct CliComposition {
     pub tool_policy_persistence: ToolPolicyPersistenceBuilder,
     pub container_config_selection: ContainerConfigSelectionBuilder,
     pub container_doctor: ContainerDoctorBuilder,
+    pub environment_registry: EnvironmentRegistryBuilder,
+    pub container_inventory: ContainerInventoryBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -410,6 +424,8 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         tool_policy_persistence: Some(composition.tool_policy_persistence),
         container_config_selection: Some(composition.container_config_selection),
         container_doctor: Some(composition.container_doctor),
+        environment_registry: Some(composition.environment_registry),
+        container_inventory: Some(composition.container_inventory),
         ..Default::default()
     };
 

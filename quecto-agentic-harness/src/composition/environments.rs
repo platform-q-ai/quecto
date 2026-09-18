@@ -6,24 +6,35 @@
 //! harness beside its agent-control tools and installed in the slots the
 //! built tools read. And the container-runtime doctor (#2024 S4b): the
 //! create preflight of the effective container config, resolved through
-//! the same launch-policy selection a spawn uses.
+//! the same launch-policy selection a spawn uses. And the durable registry
+//! (#2024 S4d): every session's registry is restored from — and journals
+//! through — the base directory's `environments.json`, and the CLI's
+//! `container ls|kill|gc` run over the same restore.
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::configuration::dto::ConfigSelection;
+use crate::application::environments::dto::RestoredRegistry;
 use crate::application::environments::ports::{
-    ContainerConfigLookup, ContainerRuntimePreflight, EnvironmentMemberShutdown,
+    ContainerConfigLookup, ContainerRuntimeInventory, ContainerRuntimePreflight,
+    EnvironmentMemberShutdown, EnvironmentProcess, EnvironmentRegistryStore, MemberShutdownReport,
+    PortFuture, UnsettledMember,
 };
 use crate::application::environments::use_cases::{
-    DiagnoseContainerRuntime, FinalizeEnvironmentMember, KillEnvironment, ListEnvironmentsQuery,
+    DiagnoseContainerRuntime, FinalizeEnvironmentMember, GcOrphanedEnvironments, KillEnvironment,
+    ListEnvironmentsQuery, RestoreRegistry,
 };
 use crate::domain::environment_registry::EnvironmentRegistry;
 use crate::infrastructure::config::container_config_lookup::SelectedConfigLookup;
+use crate::infrastructure::persistence::environment_registry_store::FileEnvironmentRegistryStore;
+use crate::infrastructure::processes::containers::environment_process::ScriptEnvironmentProcess;
 use crate::infrastructure::processes::containers::preflight::ScriptPreflight;
+use crate::infrastructure::processes::containers::runtime_inventory::RuntimeCliInventory;
 pub use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControl;
 use crate::infrastructure::tools::environment_commands::{
     HostedStoreObservation, ScriptEnvironmentCommands,
 };
+pub use crate::interface::cli::container_handles::ContainerInventoryHandles;
 
 /// The final-member use case over the production script adapters, for one
 /// entry's environment registry. The cleanup jobs already run on a blocking
@@ -82,4 +93,123 @@ pub fn build_container_config_lookup(
 /// The preflight port adapter alone, for the contract suite.
 pub fn build_container_runtime_preflight() -> Arc<dyn ContainerRuntimePreflight> {
     Arc::new(ScriptPreflight)
+}
+
+// ─── Durable registry (#2024 S4d) ────────────────────────────────────────────
+
+/// The durable registry store of `base_dir`, for contracts and the
+/// builders below.
+pub fn build_environment_registry_store(base_dir: &Path) -> Arc<dyn EnvironmentRegistryStore> {
+    Arc::new(FileEnvironmentRegistryStore::for_base_dir(base_dir))
+}
+
+/// The liveness/cleanup adapter over a record's retained scripts.
+pub fn build_environment_process() -> Arc<dyn EnvironmentProcess> {
+    Arc::new(ScriptEnvironmentProcess)
+}
+
+/// The host's container and state-dir inventory (podman/docker on PATH).
+pub fn build_container_runtime_inventory() -> Arc<dyn ContainerRuntimeInventory> {
+    Arc::new(RuntimeCliInventory::from_path())
+}
+
+/// The restore use case over the production adapters for `base_dir`.
+pub fn build_restore_registry(base_dir: &Path) -> RestoreRegistry {
+    RestoreRegistry::new(
+        build_environment_registry_store(base_dir),
+        build_environment_process(),
+    )
+}
+
+/// The session's environment registry (#2024 S4d): durable through
+/// `<base_dir>/environments.json` — refs allocated there, every
+/// transition journalled — and, for a top-level session, seeded with the
+/// records earlier (or concurrent) sessions wrote, each checked against
+/// the runtime. A spawned child journals its own creates but is not
+/// seeded: what it sees of the fleet is its parent's to show. `main`
+/// hands this builder to the CLI; the registry itself is built exactly
+/// once per harness, before the tools that commit to it.
+pub fn build_environment_registry(
+    base_dir: &Path,
+    session: &str,
+    seed: bool,
+) -> EnvironmentRegistry {
+    let restore = build_restore_registry(base_dir);
+    if !seed {
+        return restore.unseeded(session);
+    }
+    let (registry, report) = restore.execute(session);
+    report_restore(&report);
+    registry
+}
+
+fn report_restore(report: &RestoredRegistry) {
+    for line in &report.diagnostics {
+        eprintln!("{line}");
+    }
+    if !report.restored.is_empty() || !report.stopped.is_empty() || !report.unverified.is_empty() {
+        tracing::info!(
+            restored = report.restored.len(),
+            stopped = report.stopped.len(),
+            unverified = report.unverified.len(),
+            "environment registry restored"
+        );
+    }
+    for (environment_ref, reason) in &report.unverified {
+        tracing::warn!(environment_ref, %reason, "restored environment could not be verified against the runtime");
+    }
+}
+
+/// The environment handles `quecto container ls|kill|gc` invoke (#2024
+/// S4d): the listing, the kill and the collector over a registry restored
+/// from `base_dir` for the command's own run (no members of any session
+/// are reachable from here, so a kill settles none and runs the retained
+/// kill directly).
+pub fn build_container_inventory(base_dir: &Path) -> ContainerInventoryHandles {
+    let (registry, restore) = build_restore_registry(base_dir).execute("cli");
+    for line in &restore.diagnostics {
+        eprintln!("{line}");
+    }
+    ContainerInventoryHandles {
+        list: Arc::new(ListEnvironmentsQuery::new(registry.clone())),
+        kill: Arc::new(KillEnvironment::new(
+            registry.clone(),
+            Arc::new(NoReachableMembers),
+            Arc::new(ScriptEnvironmentCommands::default()),
+        )),
+        gc: Arc::new(GcOrphanedEnvironments::new(
+            registry,
+            build_container_runtime_inventory(),
+            build_environment_process(),
+        )),
+        restore,
+    }
+}
+
+/// The CLI holds no session: a member recorded on an environment (none
+/// on a restored record — members are never stored) cannot be asked to
+/// shut down from here, so it is reported unsettled rather than
+/// pretended gone. Pure adaptation, no effect: composition's to define.
+struct NoReachableMembers;
+
+impl EnvironmentMemberShutdown for NoReachableMembers {
+    fn shutdown_members<'a>(
+        &'a self,
+        members: &'a [String],
+    ) -> PortFuture<'a, MemberShutdownReport> {
+        Box::pin(async move {
+            MemberShutdownReport {
+                settled: Vec::new(),
+                unsettled: members
+                    .iter()
+                    .map(|member| UnsettledMember {
+                        member: member.clone(),
+                        detail:
+                            "no session holds this member; kill it from its session or let it exit"
+                                .to_string(),
+                    })
+                    .collect(),
+            }
+        })
+    }
 }

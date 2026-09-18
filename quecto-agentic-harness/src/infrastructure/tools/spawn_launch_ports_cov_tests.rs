@@ -119,6 +119,9 @@ async fn success_names_the_container_config_and_relays_the_selection_diagnostics
             status: crate::domain::environment_registry::EnvironmentStatus::Running,
             metadata: serde_json::json!({}),
             last_error: None,
+            origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+            created_by: String::new(),
+            created_at: None,
         });
     let mut ports = SpawnLaunchPorts::new(&tool);
     let identity = ports.allocate_identity(&config()).unwrap();
@@ -178,6 +181,9 @@ async fn register_into_a_stopped_environment_fails_and_unregisters() {
             status: crate::domain::environment_registry::EnvironmentStatus::Running,
             metadata: serde_json::json!({}),
             last_error: None,
+            origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+            created_by: String::new(),
+            created_at: None,
         });
     let claim = tool.environment_registry.begin_kill(&env_ref).unwrap();
     tool.environment_registry.complete_kill(claim);
