@@ -1424,6 +1424,7 @@ mod catalogue_user_config_steps;
 mod codex_provider_steps;
 mod config_discovery_steps;
 mod config_steps;
+mod container_doctor_steps;
 mod container_mapping_steps;
 mod context_pruning_steps;
 mod delegated_subtree_steps;
