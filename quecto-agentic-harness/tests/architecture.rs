@@ -785,6 +785,7 @@ const TUI_LIB_RS_MODULES: &[&str] = &[
     "inference",
     "protocol",
     "sessions",
+    "setup",
     "shell",
     "workflow",
     "workspace",
@@ -797,6 +798,7 @@ const TUI_TOP_LEVEL_MODULES: &[&str] = &[
     "inference",
     "protocol",
     "sessions",
+    "setup",
     "shell",
     "workflow",
     "workspace",
@@ -824,6 +826,7 @@ fn tui_feature_oriented_architecture_is_documented() {
         "inference",
         "workspace",
         "components",
+        "setup",
     ] {
         let target_bullet = format!("- `{capability}`:");
         assert!(

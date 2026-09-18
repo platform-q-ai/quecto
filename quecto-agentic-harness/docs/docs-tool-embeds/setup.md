@@ -9,6 +9,9 @@ JSON file: every write goes through a `quecto` command that validates the
 result and prints the file it touched (`auth login` prints `Credential stored
 for <provider>` instead of a path).
 
+In the TUI, `/setup` submits this walkthrough for you (`/setup model <id>`,
+`/setup admission`, `/setup podman`, `/setup auth` for one area).
+
 ## Decision tree
 
 | Situation | Page | Goal command | Verify (expected) | Rollback |
