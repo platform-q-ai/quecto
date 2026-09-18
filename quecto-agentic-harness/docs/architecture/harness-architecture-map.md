@@ -108,6 +108,24 @@ the port; `src/composition/container_configs.rs` binds it to the run's own
 configuration selection, and the spawn tool only holds and invokes the
 composed handle (a launcher composed without one refuses new containers).
 
+Container failures are diagnosable (#2024 S4b). Every container script run
+(create/exec in `spawn_container.rs`, the retained inspect/kill/cleanup in
+`environment_commands.rs`) goes through
+`src/infrastructure/processes/containers/script_stderr.rs`, which keeps a
+bounded, sanitised tail of the script's stderr and appends it to the
+`script-managed <op> failed with status …` error (also echoed on the
+harness stderr). `quecto container doctor` is the environments
+capability's `application/environments/use_cases/diagnose_container_runtime.rs`
+over two capability-local ports: `ContainerConfigLookup` (adapted in
+`src/infrastructure/config/container_config_lookup.rs` over the launch
+policy's `SelectContainerConfig`, so the doctor and `spawn` agree on the
+effective config) and `ContainerRuntimePreflight` (adapted in
+`src/infrastructure/processes/containers/preflight.rs`, which runs the
+config's create argv with `--preflight-only` and parses its
+status/check/detail/remedy lines — the checks live in the script, one list
+for the create and the doctor). `composition/environments.rs` builds the
+doctor; `interface/cli/container.rs` parses, invokes it and presents.
+
 ## Persistence and session recovery
 
 **Primary code:** session vocabulary in `src/domain/session.rs`,

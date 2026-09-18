@@ -8,6 +8,8 @@ mod config_cmd;
 mod config_flag;
 mod config_loading;
 pub mod configuration_handles;
+mod container;
+pub use container::ContainerDoctorBuilder;
 mod help;
 mod models;
 pub mod protocol;
@@ -299,6 +301,9 @@ pub struct CliContext {
     /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
     /// run's spawn tool selects container configs through it.
     pub container_config_selection: Option<ContainerConfigSelectionBuilder>,
+    /// Composition's container-doctor builder (#2024 S4b); `quecto
+    /// container doctor` refuses to run without it.
+    pub container_doctor: Option<ContainerDoctorBuilder>,
 }
 
 impl CliContext {
@@ -374,6 +379,7 @@ pub struct CliComposition {
     pub provider_runtime: ProviderRuntimeBuilder,
     pub tool_policy_persistence: ToolPolicyPersistenceBuilder,
     pub container_config_selection: ContainerConfigSelectionBuilder,
+    pub container_doctor: ContainerDoctorBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -403,6 +409,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         provider_runtime: Some(composition.provider_runtime),
         tool_policy_persistence: Some(composition.tool_policy_persistence),
         container_config_selection: Some(composition.container_config_selection),
+        container_doctor: Some(composition.container_doctor),
         ..Default::default()
     };
 
@@ -481,6 +488,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
             "admission-broker" => {
                 admission_broker::cmd_admission_broker(ctx, &args[2..], &mut stdout, &mut stderr)
             }
+            "container" => container::cmd_container(ctx, &args[2..], &mut stdout, &mut stderr),
             "help" | "--help" | "-h" => {
                 help::help_text(&mut stdout);
                 0

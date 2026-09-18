@@ -671,6 +671,7 @@ fn reject_unknown_keys(
 #[path = "config_error.rs"]
 mod error;
 pub use error::ConfigError;
+pub mod container_config_lookup;
 pub mod container_configs;
 pub mod loaders;
 pub mod mapping;

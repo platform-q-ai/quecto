@@ -14,14 +14,14 @@ use std::time::Duration;
 /// Every `tool` message the fake provider saw from the real agent: what
 /// the model was shown as the spawn's result.
 #[derive(Default)]
-struct RealAgentRun {
-    tool_results: Arc<Mutex<Vec<String>>>,
-    exit_code: Option<i32>,
-    stdout: String,
-    stderr: String,
+pub(crate) struct RealAgentRun {
+    pub(crate) tool_results: Arc<Mutex<Vec<String>>>,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
 }
 
-static REAL_AGENT_RUN: Mutex<Option<RealAgentRun>> = Mutex::new(None);
+pub(crate) static REAL_AGENT_RUN: Mutex<Option<RealAgentRun>> = Mutex::new(None);
 
 const SPAWN_MARKER: &str = "SPAWN_CONTAINER_TRUE";
 const REAL_AGENT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -134,7 +134,7 @@ fn overlay_entry(world: &QuectoWorld, repo: &str, default: bool) -> serde_json::
 
 /// `quecto config set --local container_configs.<name> '<entry>'`, the
 /// agent-shaped command: it writes the overlay and records its trust.
-fn config_set_local(world: &mut QuectoWorld, name: &str, entry: &serde_json::Value) {
+pub(crate) fn config_set_local(world: &mut QuectoWorld, name: &str, entry: &serde_json::Value) {
     let output = cli::run_with_output(
         vec![
             "quecto".to_string(),

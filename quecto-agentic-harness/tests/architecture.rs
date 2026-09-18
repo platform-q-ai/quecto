@@ -419,7 +419,24 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "ContainerLaunchConfig"
                     | "EffectiveContainerConfigSet"
                     | "SelectContainerConfigRequest"
+                    // The doctor's lookup rewords the withheld-overlay
+                    // refusal for its own command (#2024 S4b review).
+                    | "SelectContainerConfigError"
                     | "SelectedContainerConfig",
+                    ..,
+                ]
+                // The container-script preflight and the doctor's config
+                // lookup (#2024 S4b) implement the environments capability's
+                // ports in the capability's own diagnosis vocabulary.
+                | [
+                    "crate",
+                    "application",
+                    "environments",
+                    "dto",
+                    "CheckStatus"
+                    | "ContainerRuntimeTarget"
+                    | "DiagnosableContainerConfig"
+                    | "PreflightCheck",
                     ..,
                 ] => true,
                 // The spawn tool (#1848) holds the composed change-reasoning-
@@ -3419,6 +3436,9 @@ fn processes_dependency_allowed(file: &str, path: &str) -> bool {
     match parts.as_slice() {
         ["crate", "domain", ..]
         | ["crate", "application", "subagents", "ports", ..]
+        // The container-script preflight adapter (#2024 S4b) implements
+        // the environments capability's port in its own vocabulary.
+        | ["crate", "application", "environments", "ports" | "dto", ..]
         | ["crate", "infrastructure", "processes", ..]
         | ["crate", "infrastructure", "tools", "subagent_registry", ..] => true,
         ["crate", "application", "admission", "ports", ..]
@@ -4046,6 +4066,11 @@ const ENVIRONMENT_PORTS: &[&str] = &[
     "EnvironmentProcessCommands",
     "HostedSwarmRunObservation",
     "EnvironmentMemberShutdown",
+    // Container-runtime diagnosis (#2024 S4b): the doctor's target
+    // resolved through the launch policy's selection, and the create
+    // script's own preflight run without creating an environment.
+    "ContainerConfigLookup",
+    "ContainerRuntimePreflight",
 ];
 
 /// Application environment code may name the domain, its own capability,

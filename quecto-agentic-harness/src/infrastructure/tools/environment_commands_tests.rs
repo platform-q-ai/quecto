@@ -22,23 +22,22 @@ fn run_kill_sync_reports_missing_argv_and_failures_truthfully() {
 }
 
 /// #1391 review: the inspect subprocess is bounded — a hung script is killed
-/// and reported as a timeout instead of stalling the death pipeline.
+/// and reported as a timeout instead of stalling the death pipeline. The
+/// bound is the shared script runner's (#2024 S4b); this pins the inspect
+/// path's own wording, which names the retry.
 #[test]
-fn output_with_timeout_kills_hung_commands_and_passes_fast_ones() {
-    let mut hung = std::process::Command::new("sleep");
-    hung.arg("30");
+fn inspect_kills_hung_scripts_and_names_the_retry() {
     let started = std::time::Instant::now();
-    let err = super::output_with_timeout(hung, std::time::Duration::from_millis(200)).unwrap_err();
+    let err = super::run_inspect_sync_bounded(
+        "env-x",
+        &["sleep".to_string(), "30".to_string()],
+        std::time::Duration::from_millis(200),
+    )
+    .unwrap_err();
     assert!(err.contains("timed out"), "{err}");
+    assert!(err.contains("retained argv kept for retry"), "{err}");
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
-
-    let mut fast = std::process::Command::new("echo");
-    fast.arg("ok");
-    fast.stdout(std::process::Stdio::piped());
-    fast.stderr(std::process::Stdio::piped());
-    let output = super::output_with_timeout(fast, std::time::Duration::from_secs(5)).unwrap();
-    assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
+    assert!(super::INSPECT_TIMEOUT >= std::time::Duration::from_secs(1));
 }
 
 /// The kill adapter answers the port truthfully whether or not a runtime

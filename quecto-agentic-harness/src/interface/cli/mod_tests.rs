@@ -37,6 +37,7 @@ fn test_composition() -> CliComposition {
         tool_policy_persistence: crate::composition::tool_policy::build_tool_policy_persistence,
         container_config_selection:
             crate::composition::container_configs::build_agent_container_config_selection,
+        container_doctor: crate::composition::environments::build_container_doctor,
     }
 }
 
