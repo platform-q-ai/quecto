@@ -125,6 +125,11 @@ impl AttemptAdmission for RemoteAdmission {
                     // The authority already answered terminally; nothing to cancel.
                     guard.armed = matches!(error, ClientError::Closed);
                     inner.notices.lock().expect("notice map").remove(&sequence);
+                    if matches!(error, ClientError::Unauthorized | ClientError::EpochReset) {
+                        // This attempt fails closed exactly once; the next one
+                        // re-registers (root) or keeps failing closed (child).
+                        inner.forget_credential();
+                    }
                     Err(DomainError::Provider(format!("admission: {error}")))
                 }
             }

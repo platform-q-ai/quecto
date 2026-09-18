@@ -127,13 +127,23 @@ impl ProcessAdmission {
     pub fn directory(&self) -> &Path {
         &self.directory
     }
-    /// The authority epoch this process's current capability was minted in.
+    /// The authority epoch this process's current capability was minted in
+    /// (live: a re-registration after `reset` moves it).
     pub fn epoch(&self) -> u64 {
-        self.link.connection().hello().epoch
+        self.link.epoch()
     }
-    /// Whether the authority connection is currently open.
+    /// Whether the authority link is open *and* holds a live capability.
     pub fn connected(&self) -> bool {
-        self.link.connection().is_open()
+        self.link.connected()
+    }
+    /// Live health of the authority link (#2024 S3).
+    pub fn health(&self) -> super::link::LinkHealth {
+        self.link.health()
+    }
+    /// Be told whenever the link's health may have changed (loss, revocation,
+    /// reconnection, exhaustion), so a projection can push it live.
+    pub fn on_authority_change(&self, hook: super::link::LinkChangeHook) {
+        self.link.on_change(hook);
     }
     /// Directory containing the client socket; the only path a container
     /// child needs mounted.

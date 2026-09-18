@@ -331,6 +331,7 @@ async fn accept_loop(
                         role,
                         commands.clone(),
                         frame_deadline,
+                        shutdown.clone(),
                     ));
                 }
                 Err(error) => {

@@ -77,6 +77,10 @@ pub(super) struct Inner {
     pub(super) notices: Mutex<HashMap<u64, Arc<Notify>>>,
     pub(super) closed: AtomicBool,
     pub(super) closed_notify: Notify,
+    /// Fired whenever the connection's authority standing changes: closed by
+    /// either side, or its capability revoked (#2024 S3). The reconnecting
+    /// link watches it so health is reported live, not at the next attempt.
+    pub(super) state_changed: Notify,
     next_id: AtomicU64,
     next_sequence: AtomicU64,
     hello: OnceLock<Hello>,
@@ -254,6 +258,26 @@ impl Inner {
             notify.1.notify_waiters();
         }
         self.closed_notify.notify_waiters();
+        self.state_changed.notify_waiters();
+    }
+
+    /// The runtime that owns this connection's I/O.
+    pub(super) fn io_handle(&self) -> &tokio::runtime::Handle {
+        &self.io_handle
+    }
+
+    pub(super) fn credential_present(&self) -> bool {
+        self.credential.lock().expect("credential").is_some()
+    }
+
+    /// The authority answered a scoped request with `Unauthorized`/`EpochReset`:
+    /// whatever the notice ordering, this capability is gone. Forget it so the
+    /// link treats the connection as lost (a root re-registers; a child fails
+    /// closed) instead of retrying a dead credential forever.
+    pub(super) fn forget_credential(&self) {
+        if self.credential.lock().expect("credential").take().is_some() {
+            self.state_changed.notify_waiters();
+        }
     }
 
     pub(super) fn hello(&self) -> &Hello {
@@ -293,8 +317,10 @@ impl Inner {
             }
             (None, Body::Revoked) => {
                 // The capability is gone; the connection stays usable so the
-                // owner sees explicit Unauthorized rather than a drop.
+                // owner sees explicit Unauthorized rather than a drop. The
+                // link treats a revoked root as a loss to re-register from.
                 self.credential.lock().expect("credential").take();
+                self.state_changed.notify_waiters();
                 true
             }
             (None, _) => false,
@@ -350,6 +376,7 @@ async fn open(path: &Path, version: u8) -> Result<(Arc<Inner>, JoinHandle<()>), 
         notices: Mutex::new(HashMap::new()),
         closed: AtomicBool::new(false),
         closed_notify: Notify::new(),
+        state_changed: Notify::new(),
         next_id: AtomicU64::new(1),
         next_sequence: AtomicU64::new(1),
         hello: OnceLock::new(),
@@ -479,14 +506,6 @@ impl AuthorityConnection {
     /// per attempt, so a swapped-in reconnection is transparent to them.
     pub(super) fn inner_arc(&self) -> Arc<Inner> {
         self.inner.clone()
-    }
-
-    /// Test-only: mark the connection closed, simulating the peer (a killed
-    /// broker) dropping the socket, so the reconnecting link's loss path is
-    /// exercised without racing a real process death.
-    #[cfg(test)]
-    pub(super) fn close_for_test(&self) {
-        self.inner.close();
     }
 
     /// Mint a root with the owner token read from the authority directory.

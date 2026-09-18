@@ -3,7 +3,7 @@
 use quecto_line_io::{FrameError, read_frame, write_frame};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use super::protocol::*;
 use super::server::Command;
@@ -14,6 +14,7 @@ pub(super) async fn serve(
     role: Role,
     commands: mpsc::UnboundedSender<Command>,
     frame_deadline: std::time::Duration,
+    mut shutdown: watch::Receiver<bool>,
 ) {
     let (read, mut write) = stream.into_split();
     let (notices, mut outbound) = mpsc::unbounded_channel::<Reply>();
@@ -40,10 +41,15 @@ pub(super) async fn serve(
     loop {
         // Idle connections wait indefinitely; once the first byte of a frame
         // has arrived the remainder must follow within the framing deadline.
-        match reader.fill_buf().await {
-            Ok([]) => break,
-            Ok(_) => {}
-            Err(_) => break,
+        // An authority shutdown closes every session (as the process exit
+        // that follows it would), so clients observe the loss at once.
+        tokio::select! {
+            _ = shutdown.changed() => break,
+            filled = reader.fill_buf() => match filled {
+                Ok([]) => break,
+                Ok(_) => {}
+                Err(_) => break,
+            },
         }
         let frame = match tokio::time::timeout(frame_deadline, read_frame(&mut reader, FRAME_CAP))
             .await

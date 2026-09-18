@@ -19,7 +19,7 @@ pub const DEFAULT_BINDING_KEY: &str = "*";
 /// Spelled-out synonym of [`DEFAULT_BINDING_KEY`].
 pub const DEFAULT_BINDING_ALT: &str = "default";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdmissionRuntimeProposal {
     pub policy: AdmissionConfig,
     /// Router provider slot -> explicit endpoint/account alias.

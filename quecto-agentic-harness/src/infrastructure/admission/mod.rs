@@ -17,7 +17,7 @@ pub use admin_adapter::SocketAuthorityAdmin;
 pub use client::{AdminConnection, AuthorityConnection, ClientError, Hello};
 pub use directory::{AuthorityDirectory, SingletonLock};
 pub use journal::FileJournal;
-pub use link::AuthorityLink;
+pub use link::{AuthorityLink, LinkChangeHook, LinkHealth};
 pub use observed_gate::{ActivityHook, AdmissionRecorder, ObservedAdmission};
 pub use process::{
     AdmissionContext, BindingKind, Negotiation, ProcessAdmission, negotiate,
