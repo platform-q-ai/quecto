@@ -408,7 +408,11 @@ stays in `thinking` (or whatever phase it is in) and its `progress` becomes
     ],
     "counters": {"completed": 7, "refused": 0, "cancelled": 1, "abandoned": 0},
     "hidden": 0,
-    "revision": 41
+    "revision": 41,
+    "directory": "/home/me/.quecto/admission",
+    "epoch": 1,
+    "connected": true,
+    "authorityStatus": "connected"
   }
 }
 ```
@@ -423,6 +427,16 @@ stays in `thinking` (or whatever phase it is in) and its `progress` becomes
 | `counters` | object | Lifetime `completed`, `refused`, `cancelled` (wait given up, e.g. `abort`) and `abandoned` (permit dropped without completion) |
 | `hidden` | integer | Live attempts beyond the 64-attempt sample that `longestWaitSeconds` is derived from; when non-zero the longest wait may be under-reported |
 | `revision` | integer | Advances on every admission transition (queued, granted, completed, refused, cancelled, abandoned, cooldown learned); time-derived values are not transitions |
+| `directory` | string \| omitted | The authority directory this process is bound to (#2024 S3); present on `get_state`, omitted on the pushed `admission_state_changed` event |
+| `epoch` | integer \| omitted | The authority epoch this process's capability was minted in; a root re-registers into the current epoch after a broker restart or reset |
+| `connected` | boolean \| omitted | Whether the authority connection is currently open |
+| `authorityStatus` | string \| omitted | `connected`, `reconnecting` (the link lost its broker and a root is re-registering) or `unavailable` (a child whose parent authority is gone); presentation only |
+
+`directory`, `epoch`, `connected` and `authorityStatus` describe the shared
+authority itself (#2024 S3, one host-wide broker). They ride on `get_state`
+whenever the process is bound to an authority, even with no live attempts; the
+`admission_state_changed` event carries only the bounded activity above them.
+The TUI footer renders `authorityStatus` as `admission ✓` / `⟳` / `✗`.
 
 The `waiting` verdict takes precedence over the tool-window verdicts
 (`advancing`, `active`, `quiet`) while any attempt is queued. A changed

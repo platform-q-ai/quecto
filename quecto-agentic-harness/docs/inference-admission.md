@@ -94,6 +94,45 @@ quecto admission-broker status   # JSON: epoch, journal health, per-group counts
 quecto admission-broker reset    # new accounting epoch (see recovery below)
 ```
 
+### One host-wide broker, agent-operable (#2024 S3)
+
+There is one broker per host/user. Repo configs never carry an `admission`
+section (it is global-only), so **children inherit the parent's authority
+unconditionally**: a child launched with a different `--config`, or one whose
+config sets `"admission": null`, binds the capability its parent registered and
+never has to match the published policy (this closes the "restart required"
+failure #2023). `validate_candidate`'s byte-equal check now applies only to a
+root's own live reload.
+
+`status`, `reset`, `run`, `install-service` and `uninstall-service` address the
+**global** config (`<base_dir>/config.json`) or an explicit `--config <path>` /
+`--directory <dir>`, never the working-directory overlay, so the working
+directory no longer changes which broker you address. Every output names the
+directory it addressed.
+
+Install the broker as a systemd *user* service instead of a bare terminal:
+
+```sh
+quecto admission-broker install-service --config ~/.quecto/config.json  # writes the unit, daemon-reload, enable --now
+quecto admission-broker status                                          # verify: directory, epoch, journal_healthy
+quecto admission-broker uninstall-service                              # disable --now and remove the unit
+```
+
+Both are idempotent and report exactly what they did; `--dry-run` prints the
+plan without touching systemd. The unit runs `admission-broker run --config
+<abs config>` with `Restart=on-failure` and `WantedBy=default.target`.
+
+A **default binding** — a `"*"` (or `"default"`) key in `bindings` — catches
+every provider slot with no explicit binding, so adding a provider does not fail
+composition. Its alias must still exist; an explicit slot binding wins over it.
+
+**Sessions survive a broker restart or reset without restarting.** A root
+re-registers automatically on its next attempt (`get_state.admission.
+authorityStatus` moves `reconnecting` → `connected`); in-flight attempts fail
+closed exactly once with a clear error, never a silent bypass, with bounded
+backoff. A child cannot re-register on its own (its capability is gone once the
+epoch or broker changed) and is respawned by its parent.
+
 `run` prints `admission authority ready: <socket>` on stderr. A second `run`
 on the same directory exits with status 3. Stopping the authority does not
 kill sessions, but capabilities live only in the authority process: after a

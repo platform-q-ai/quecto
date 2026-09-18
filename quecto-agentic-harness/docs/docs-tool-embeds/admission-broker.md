@@ -59,7 +59,64 @@ Built-ins are `openai-api`, `openai-oauth`, `anthropic-api`, and
 `anthropic-oauth`; bare `openai`/`anthropic` do not bind them. Custom registry
 providers use their provider key; `openai_compatible` uses its configured prefix.
 Use the same group only for slots actually sharing quota. Credentials/model names
-are not quota identities. A missing binding fails composition explicitly.
+are not quota identities. A missing binding fails composition explicitly, unless
+you add a **default binding**: a `"*"` (or `"default"`) key whose alias catches
+every unlisted slot, so adding a provider does not fail composition for want of a
+new binding. The default alias must itself exist. Example
+`"bindings": { "*": "account" }`. An explicit slot binding still wins over it.
+
+## One host-wide broker, agent-operable (#2024 S3)
+
+There is exactly one broker per host/user; repo configs never carry an
+`admission` section (it is global-only), so children inherit the parent's
+authority unconditionally — a child launched with a different or `"admission":
+null` config binds the capability its parent registered and never has to match
+the published policy. `admission-broker status`, `reset`, `run`,
+`install-service` and `uninstall-service` address the **global** config
+(`<base_dir>/config.json`) or an explicit `--config <path>` / `--directory
+<dir>`, never the working-directory overlay, so the cwd no longer changes which
+broker you address. Every output names the directory it addressed.
+
+### Runbook: enable admission from a prompt (fresh base directory)
+
+1. **Write the section** into the global config with the safe writer (S1 handles
+   nested objects):
+   ```sh
+   quecto config set --global admission '{"groups":{"shared":{"capacity":4,"reserve":1,"min_interval_ms":250,"queue_capacity":64,"queue_timeout_ms":120000,"attempt_timeout_ms":900000,"fallback_base_ms":2000,"max_cooldown_ms":600000}},"aliases":{"account":"shared"},"bindings":{"*":"account"}}'
+   ```
+   Expected: the command exits 0 and `quecto config get --global admission`
+   prints the section back. Rollback: `quecto config set --global admission null`.
+2. **Install the service** (systemd *user* unit `quecto-admission-broker.service`,
+   `Restart=on-failure`, `WantedBy=default.target`):
+   ```sh
+   quecto admission-broker install-service --config ~/.quecto/config.json
+   ```
+   Expected: `applied quecto-admission-broker.service (directory …/admission)`
+   listing "wrote unit …", "reloaded the user daemon", "enabled and started …".
+   It is idempotent: a second run reports "already up to date" and does not
+   rewrite the unit. Use `--dry-run` to print the plan without touching systemd.
+   Rollback: `quecto admission-broker uninstall-service`.
+3. **Verify**:
+   ```sh
+   quecto admission-broker status
+   ```
+   Expected JSON names `directory`, `epoch: 1`, `journal_healthy: true` and zero
+   per-group counts. `status --directory <dir>` for a directory with no broker
+   exits 1 with "not running for directory …".
+4. **Reset** (recover after a stuck/uncertain group): `quecto admission-broker
+   reset` prints `{"directory":…,"epoch":N}` and every session reconnects on its
+   next attempt without restarting the agent — a root re-registers automatically
+   (`authorityStatus: reconnecting` → `connected`); a child is respawned by its
+   parent. A broker restart is likewise survived without restarting sessions.
+5. **Disable**: `quecto admission-broker uninstall-service` (idempotent; a second
+   run reports "no unit to remove"), then `quecto config set --global admission
+   null`.
+
+Troubleshoot: an unreachable authority makes `status` exit 1 naming the
+directory; check the service (`systemctl --user status
+quecto-admission-broker.service`) and that the effective directory matches.
+"restart required" only ever applies to a root whose own section changed on a
+live reload — never to a child (children inherit).
 
 Use the same effective config/base directory for the broker and agents:
 
