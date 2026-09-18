@@ -252,7 +252,9 @@ fn the_definition_carries_one_compact_roster_line_only_when_composed() {
     );
     // #2035: the rule is stated with the way to satisfy it.
     assert!(description.contains("no global default overrides it"));
-    assert!(description.contains("run `quecto container init` first if it shows none"));
+    assert!(description.contains(
+        "a repo without one uses the labelled default; `quecto container init` binds one"
+    ));
     assert!(!description.contains("Available container configs"));
 
     let composed = crate::composition::subagent_lifecycle::compose_launcher(
