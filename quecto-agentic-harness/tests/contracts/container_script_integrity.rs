@@ -88,3 +88,17 @@ fn a_script_outside_the_bundle_gets_no_verdict() {
         "a relative path is not a materialised asset"
     );
 }
+
+/// A path that reaches the bundle through `..` could name an asset under
+/// another spelling; it is refused outright, never waved through as "not
+/// the bundle's" (review round 2).
+#[test]
+fn a_non_normalised_path_into_the_bundle_is_refused() {
+    let (_project, dir) = materialised();
+    let integrity = build_container_script_integrity();
+    let dodged = dir.join("scripts/../scripts/create.sh");
+    assert_eq!(
+        integrity.verify(&dodged),
+        StandardScriptVerdict::Refused("path into the standard bundle is not normalised".into())
+    );
+}
