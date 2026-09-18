@@ -76,14 +76,15 @@ fn observe_and_materialise_tell_missing_identical_and_differing_apart_and_never_
         AssetOutcome::Written
     );
     let path = dir.path().join(&asset.path);
+    // A regular file in its own right, never a link: judged without
+    // following anything.
+    let placed = std::fs::symlink_metadata(&path).unwrap();
+    assert!(placed.file_type().is_file(), "{:?}", placed.file_type());
     assert_eq!(std::fs::read(&path).unwrap(), asset.contents);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(
-            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o755
-        );
+        assert_eq!(placed.permissions().mode() & 0o777, 0o755);
     }
     assert_eq!(
         port.observe(dir.path(), dir.path(), &asset).unwrap(),
@@ -108,6 +109,56 @@ fn observe_and_materialise_tell_missing_identical_and_differing_apart_and_never_
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names, ["create.sh"]);
+}
+
+#[test]
+fn refresh_replaces_a_differing_file_whole_and_otherwise_behaves_as_materialise() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let port = port();
+    let asset = port.catalogue().assets[1].clone();
+    let path = dir.path().join(&asset.path);
+    assert_eq!(
+        port.refresh(dir.path(), dir.path(), &asset).unwrap(),
+        AssetOutcome::Written
+    );
+    assert_eq!(
+        port.refresh(dir.path(), dir.path(), &asset).unwrap(),
+        AssetOutcome::KeptIdentical
+    );
+    std::fs::write(&path, "edited").unwrap();
+    assert_eq!(
+        port.refresh(dir.path(), dir.path(), &asset).unwrap(),
+        AssetOutcome::Refreshed
+    );
+    let refreshed = std::fs::symlink_metadata(&path).unwrap();
+    assert!(refreshed.file_type().is_file());
+    assert_eq!(std::fs::read(&path).unwrap(), asset.contents);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(refreshed.permissions().mode() & 0o777, 0o755);
+    }
+    assert_eq!(
+        port.observe(dir.path(), dir.path(), &asset).unwrap(),
+        AssetState::Identical
+    );
+    let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["create.sh"], "no temporary file remains");
+    #[cfg(unix)]
+    {
+        // A link in the asset's place is refused by a refresh too, and
+        // its target is left alone.
+        std::fs::remove_file(&path).unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::write(&elsewhere, "x").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &path).unwrap();
+        let error = port.refresh(dir.path(), dir.path(), &asset).unwrap_err();
+        assert!(error.contains("symbolic link"), "{error}");
+        assert_eq!(std::fs::read_to_string(&elsewhere).unwrap(), "x");
+    }
 }
 
 #[cfg(unix)]

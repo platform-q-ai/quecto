@@ -9,8 +9,10 @@
 //! owns so the runtime's name never enters this crate). Materialisation
 //! is create-only: a
 //! missing file is written whole (temporary file, fsync, rename, with
-//! its mode); an existing file is compared and left alone; a symbolic
-//! link in the destination's place is refused rather than followed.
+//! its mode); an existing file is compared and left alone — unless the
+//! run is a refresh, which renames the embedded bytes over a differing
+//! file; a symbolic link in the destination's place is refused rather
+//! than followed.
 
 use std::io::Write;
 use std::path::Path;
@@ -105,17 +107,42 @@ impl ContainerAssetStore for EmbeddedStandardAssets {
         dir: &Path,
         asset: &ContainerAsset,
     ) -> Result<AssetOutcome, String> {
-        match self.observe(root, dir, asset)? {
+        self.place(root, dir, asset, false)
+    }
+
+    fn refresh(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetOutcome, String> {
+        self.place(root, dir, asset, true)
+    }
+}
+
+impl EmbeddedStandardAssets {
+    /// Write the asset if missing — or, with `replace`, also over a
+    /// differing regular file (a rename onto it, so a reader sees the old
+    /// bytes or the new, never a torn file).
+    fn place(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+        replace: bool,
+    ) -> Result<AssetOutcome, String> {
+        let replacing = match self.observe(root, dir, asset)? {
             AssetState::Identical => return Ok(AssetOutcome::KeptIdentical),
-            AssetState::Differs => return Ok(AssetOutcome::KeptDiffering),
+            AssetState::Differs if !replace => return Ok(AssetOutcome::KeptDiffering),
+            AssetState::Differs => true,
             AssetState::Refused => {
                 return Err(format!(
                     "{} is not a regular file; refusing to write it",
                     dir.join(&asset.path).display()
                 ));
             }
-            AssetState::Missing => {}
-        }
+            AssetState::Missing => false,
+        };
         let destination = dir.join(&asset.path);
         let parent = destination
             .parent()
@@ -147,6 +174,18 @@ impl ContainerAssetStore for EmbeddedStandardAssets {
                 .map_err(|error| {
                     format!("cannot set the mode of {}: {error}", destination.display())
                 })?;
+        }
+        if replacing {
+            // A refresh renames over the differing file it observed; the
+            // link-check just above bounds the race to the file itself.
+            return match temporary.persist(&destination) {
+                Ok(_) => Ok(AssetOutcome::Refreshed),
+                Err(error) => Err(format!(
+                    "cannot replace {}: {}",
+                    destination.display(),
+                    error.error
+                )),
+            };
         }
         // `persist_noclobber` links the new file in only if nothing took
         // the name meanwhile (a concurrent init): then the other's file

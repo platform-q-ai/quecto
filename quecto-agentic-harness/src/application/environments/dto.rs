@@ -224,12 +224,15 @@ pub enum AssetState {
     Refused,
 }
 
-/// What materialising one asset did: an existing file is never replaced.
+/// What materialising one asset did: an existing file is never replaced
+/// unless the run is a refresh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetOutcome {
     Written,
     KeptIdentical,
     KeptDiffering,
+    /// A differing file was replaced with the embedded bytes (`--refresh`).
+    Refreshed,
 }
 
 /// `quecto container init` as the use case receives it.
@@ -243,6 +246,9 @@ pub struct StandardContainerRequest {
     pub image: Option<String>,
     /// Report what would be written; write nothing.
     pub dry_run: bool,
+    /// `--refresh`: replace a materialised asset whose bytes differ from
+    /// the embedded ones (an edit, an older bundle) instead of keeping it.
+    pub refresh: bool,
 }
 
 /// Where the repository the entry bakes in came from.
@@ -306,8 +312,10 @@ pub struct StandardContainerReport {
     pub written: Vec<std::path::PathBuf>,
     pub kept: Vec<std::path::PathBuf>,
     /// Existing files that differ from the embedded bytes; kept as they
-    /// are (delete one to have init refresh it).
+    /// are (`--refresh` replaces them).
     pub differing: Vec<std::path::PathBuf>,
+    /// Differing files replaced with the embedded bytes (`--refresh`).
+    pub refreshed: Vec<std::path::PathBuf>,
     pub repository: Option<String>,
     pub repository_origin: RepositoryOrigin,
     pub image: String,

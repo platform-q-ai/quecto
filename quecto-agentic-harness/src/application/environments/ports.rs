@@ -228,6 +228,17 @@ pub trait ContainerAssetStore: Send + Sync {
         dir: &Path,
         asset: &ContainerAsset,
     ) -> Result<AssetOutcome, String>;
+
+    /// As `materialise`, but a regular file holding other bytes is
+    /// replaced whole (temporary file, rename) with the embedded ones and
+    /// its mode: `init --refresh`, the way back from an edit or an older
+    /// bundle. The same symbolic-link refusals apply.
+    fn refresh(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetOutcome, String>;
 }
 
 /// The repository a checkout came from: its `origin` remote URL, `None`

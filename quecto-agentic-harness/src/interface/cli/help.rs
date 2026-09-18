@@ -62,7 +62,7 @@ pub(super) fn help_text(out: &mut String) {
     );
     out.push_str("  container   Container runtimes for subagents\n");
     out.push_str(
-        "              init [--project <abs dir>] [--repo <url>] [--image <tag>] [--dry-run]\n",
+        "              init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\n",
     );
     out.push_str(
         "                  Materialise the standard Containerfile and container runtime\n",

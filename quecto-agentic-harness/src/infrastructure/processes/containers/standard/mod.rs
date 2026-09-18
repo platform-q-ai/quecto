@@ -7,4 +7,5 @@
 //! command), never this crate's.
 
 pub mod assets;
+pub mod integrity;
 pub mod workspace_origin;

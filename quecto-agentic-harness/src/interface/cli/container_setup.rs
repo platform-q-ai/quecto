@@ -18,7 +18,7 @@ use crate::application::environments::dto::{
 };
 use crate::domain::redaction::redact_url_userinfo;
 
-const INIT_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--dry-run]\n";
+const INIT_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\n";
 const STATUS_USAGE: &str = "usage: quecto container status [--project <abs dir>]\n";
 
 struct InitArgs {
@@ -26,6 +26,7 @@ struct InitArgs {
     repository: Option<String>,
     image: Option<String>,
     dry_run: bool,
+    refresh: bool,
 }
 
 fn parse_init(args: &[String]) -> Result<InitArgs, String> {
@@ -34,6 +35,7 @@ fn parse_init(args: &[String]) -> Result<InitArgs, String> {
         repository: None,
         image: None,
         dry_run: false,
+        refresh: false,
     };
     let mut rest = args.iter();
     let value = |flag: &str, rest: &mut std::slice::Iter<String>| {
@@ -57,6 +59,7 @@ fn parse_init(args: &[String]) -> Result<InitArgs, String> {
             "--repo" => parsed.repository = Some(value("--repo", &mut rest)?),
             "--image" => parsed.image = Some(value("--image", &mut rest)?),
             "--dry-run" => parsed.dry_run = true,
+            "--refresh" => parsed.refresh = true,
             other => return Err(format!("unknown argument {other}\n{INIT_USAGE}")),
         }
     }
@@ -143,6 +146,7 @@ pub(crate) fn cmd_init(
                 repository: parsed.repository,
                 image: parsed.image,
                 dry_run: parsed.dry_run,
+                refresh: parsed.refresh,
             })
             .map_err(|error| error.to_string())
     });
@@ -178,15 +182,27 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
     for path in &report.kept {
         out.push_str(&format!("  kept   {}\n", path.display()));
     }
-    for path in &report.differing {
+    for path in &report.refreshed {
         out.push_str(&format!(
-            "  kept   {} (differs from the embedded version {}; delete it to refresh)\n",
+            "  {}  {} (replaced with the embedded version {})\n",
+            if report.dry_run {
+                "would refresh"
+            } else {
+                "refreshed"
+            },
             path.display(),
             report.version
         ));
     }
-    if report.written.is_empty() && !report.dry_run {
-        out.push_str("  no files changed (existing files are never replaced)\n");
+    for path in &report.differing {
+        out.push_str(&format!(
+            "  kept   {} (differs from the embedded version {}; a launch refuses it — review the change, then `quecto container init --refresh` restores it)\n",
+            path.display(),
+            report.version
+        ));
+    }
+    if report.written.is_empty() && report.refreshed.is_empty() && !report.dry_run {
+        out.push_str("  no files changed (existing files are never replaced without --refresh)\n");
     }
     let entry = &report.entry;
     let location = entry

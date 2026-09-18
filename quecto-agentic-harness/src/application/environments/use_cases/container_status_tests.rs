@@ -43,6 +43,10 @@ impl ContainerAssetStore for FixedAssets {
     fn materialise(&self, _: &Path, _: &Path, _: &ContainerAsset) -> Result<AssetOutcome, String> {
         unreachable!("status never writes")
     }
+
+    fn refresh(&self, _: &Path, _: &Path, _: &ContainerAsset) -> Result<AssetOutcome, String> {
+        unreachable!("status never writes")
+    }
 }
 
 struct FixedRoster(Result<ContainerConfigRosterReport, String>);

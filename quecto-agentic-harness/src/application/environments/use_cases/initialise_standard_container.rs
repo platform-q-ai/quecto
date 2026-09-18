@@ -161,12 +161,14 @@ impl InitialiseStandardContainer {
         let mut written = Vec::new();
         let mut kept = Vec::new();
         let mut differing = Vec::new();
+        let mut refreshed = Vec::new();
         for (asset, state) in catalogue.assets.iter().zip(observed) {
             let path = assets_dir.join(&asset.path);
             let outcome = if request.dry_run {
                 match state {
                     AssetState::Missing => AssetOutcome::Written,
                     AssetState::Identical => AssetOutcome::KeptIdentical,
+                    AssetState::Differs if request.refresh => AssetOutcome::Refreshed,
                     AssetState::Differs => AssetOutcome::KeptDiffering,
                     AssetState::Refused => {
                         return Err(InitialiseStandardContainerError::Asset {
@@ -177,18 +179,23 @@ impl InitialiseStandardContainer {
                     }
                 }
             } else {
-                self.assets
-                    .materialise(&request.project, &assets_dir, asset)
-                    .map_err(|reason| InitialiseStandardContainerError::Asset {
-                        path: path.clone(),
-                        reason,
-                        entry_written: true,
-                    })?
+                let store = &self.assets;
+                if request.refresh {
+                    store.refresh(&request.project, &assets_dir, asset)
+                } else {
+                    store.materialise(&request.project, &assets_dir, asset)
+                }
+                .map_err(|reason| InitialiseStandardContainerError::Asset {
+                    path: path.clone(),
+                    reason,
+                    entry_written: true,
+                })?
             };
             match outcome {
                 AssetOutcome::Written => written.push(path),
                 AssetOutcome::KeptIdentical => kept.push(path),
                 AssetOutcome::KeptDiffering => differing.push(path),
+                AssetOutcome::Refreshed => refreshed.push(path),
             }
         }
 
@@ -199,6 +206,7 @@ impl InitialiseStandardContainer {
             written,
             kept,
             differing,
+            refreshed,
             repository,
             repository_origin,
             build_command,

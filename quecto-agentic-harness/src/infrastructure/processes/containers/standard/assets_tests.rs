@@ -48,8 +48,10 @@ fn the_catalogue_is_the_official_adapter_set_plus_the_containerfile() {
     assert!(containerfile.contains("ENTRYPOINT []"), "{containerfile}");
 }
 
+#[cfg(unix)]
 #[test]
 fn materialise_writes_missing_files_with_their_mode_and_never_replaces_existing_ones() {
+    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::TempDir::new().unwrap();
     let store = EmbeddedStandardAssets;
     let catalogue = store.catalogue();
@@ -63,15 +65,12 @@ fn materialise_writes_missing_files_with_their_mode_and_never_replaces_existing_
         AssetOutcome::Written
     );
     let path = dir.path().join("scripts/create.sh");
+    // A regular file in its own right (never a link), judged without
+    // following anything.
+    let placed = std::fs::symlink_metadata(&path).unwrap();
+    assert!(placed.file_type().is_file(), "{:?}", placed.file_type());
     assert_eq!(std::fs::read(&path).unwrap(), create.contents);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(
-            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o755
-        );
-    }
+    assert_eq!(placed.permissions().mode() & 0o777, 0o755);
     assert_eq!(
         store.observe(dir.path(), dir.path(), create).unwrap(),
         AssetState::Identical
@@ -95,21 +94,39 @@ fn materialise_writes_missing_files_with_their_mode_and_never_replaces_existing_
         .map(|e| e.unwrap().file_name())
         .collect();
     assert_eq!(leftovers, ["create.sh"], "no temporary file remains");
+    // A refresh replaces the differing file with the embedded bytes and
+    // mode; an identical one is kept; a missing one is written.
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        store.refresh(dir.path(), dir.path(), create).unwrap(),
+        AssetOutcome::Refreshed
+    );
+    let refreshed = std::fs::symlink_metadata(&path).unwrap();
+    assert!(refreshed.file_type().is_file());
+    assert_eq!(std::fs::read(&path).unwrap(), create.contents);
+    assert_eq!(refreshed.permissions().mode() & 0o777, 0o755);
+    assert_eq!(
+        store.refresh(dir.path(), dir.path(), create).unwrap(),
+        AssetOutcome::KeptIdentical
+    );
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(
+        store.refresh(dir.path(), dir.path(), create).unwrap(),
+        AssetOutcome::Written
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path().join("scripts"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(leftovers, ["create.sh"], "no temporary file remains");
     let containerfile = &catalogue.assets[0];
     store
         .materialise(dir.path(), dir.path(), containerfile)
         .unwrap();
-    #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(
-            std::fs::metadata(dir.path().join("Containerfile"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o644
-        );
+        let containerfile = std::fs::symlink_metadata(dir.path().join("Containerfile")).unwrap();
+        assert!(containerfile.file_type().is_file());
+        assert_eq!(containerfile.permissions().mode() & 0o777, 0o644);
     }
 }
 

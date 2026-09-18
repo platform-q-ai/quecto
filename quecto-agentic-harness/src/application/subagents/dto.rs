@@ -475,6 +475,27 @@ pub struct ContainerLaunchConfig {
 }
 
 impl ContainerLaunchConfig {
+    /// The programs the argv sets run (each set's first element), once
+    /// each in `create`, `cleanup`, `exec`, `kill`, `inspect` order: the
+    /// host-side scripts a launch executes.
+    pub fn scripts(&self) -> Vec<std::path::PathBuf> {
+        let mut scripts: Vec<std::path::PathBuf> = Vec::new();
+        for argv in [
+            &self.create,
+            &self.cleanup,
+            &self.exec,
+            &self.kill,
+            &self.inspect,
+        ] {
+            if let Some(first) = argv.first().map(std::path::PathBuf::from)
+                && !scripts.contains(&first)
+            {
+                scripts.push(first);
+            }
+        }
+        scripts
+    }
+
     /// Why launch policy would refuse this entry's argv, if it would:
     /// `create` and `cleanup` are required, and no argument of any set may
     /// be empty or carry a NUL. One rule for the selection and the roster.
@@ -547,6 +568,28 @@ impl fmt::Display for ContainerConfigsError {
 
 impl std::error::Error for ContainerConfigsError {}
 
+/// The standard bundle's verdict on a script a container config's argv
+/// names (#2024 S4e): whether it is one of the bundle's materialised
+/// host-side scripts and, if so, whether it still carries the bytes this
+/// binary embeds. The scripts run on the host before any container
+/// exists, so a launch trusts them only while they are the bundle's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StandardScriptVerdict {
+    /// Not a standard-bundle asset: the entry brought its own script,
+    /// vouched for by the configuration's trust alone.
+    NotStandard,
+    /// The bundle's bytes exactly.
+    Intact,
+    /// A standard asset's path holding other bytes (an edit, a pull,
+    /// another version).
+    Differs,
+    /// A standard asset's path with nothing there.
+    Missing,
+    /// A standard asset's path that cannot be judged (a symbolic link in
+    /// its place or on the way); the reason.
+    Refused(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectContainerConfigRequest {
     pub source: ContainerConfigSource,
@@ -593,6 +636,15 @@ pub enum SelectContainerConfigError {
         name: String,
         what: &'static str,
     },
+    /// A standard-bundle script the entry's argv names no longer carries
+    /// the embedded bytes (or is missing, or cannot be judged): the
+    /// host-side script would run with no trust behind it, so the launch
+    /// is refused until `quecto container init --refresh` restores it.
+    StandardScriptAltered {
+        name: String,
+        script: std::path::PathBuf,
+        verdict: StandardScriptVerdict,
+    },
 }
 
 fn available(names: &[String]) -> String {
@@ -621,7 +673,10 @@ impl SelectContainerConfigError {
             Self::OverlayWithheld { diagnostics }
             | Self::NoDefault { diagnostics, .. }
             | Self::Unknown { diagnostics, .. } => diagnostics,
-            Self::RelativeConfigPath(_) | Self::Unavailable(_) | Self::InvalidArgv { .. } => &[],
+            Self::RelativeConfigPath(_)
+            | Self::Unavailable(_)
+            | Self::InvalidArgv { .. }
+            | Self::StandardScriptAltered { .. } => &[],
         }
     }
 }
@@ -659,6 +714,33 @@ impl fmt::Display for SelectContainerConfigError {
             ),
             Self::InvalidArgv { what, .. } => {
                 write!(f, "invalid container_configs configuration: {what}")
+            }
+            Self::StandardScriptAltered {
+                name,
+                script,
+                verdict,
+            } => {
+                let script = script.display();
+                match verdict {
+                    StandardScriptVerdict::Differs => write!(
+                        f,
+                        "container config '{name}' refused: {script} differs from the standard bundle this quecto embeds; it is a host-side script the launch would run before any container exists, so review the change (git diff) and restore the bundle with `quecto container init --refresh` (or delete the file and run `quecto container init`)"
+                    ),
+                    StandardScriptVerdict::Missing => write!(
+                        f,
+                        "container config '{name}' refused: {script} is missing from the standard bundle; run `quecto container init` to materialise it"
+                    ),
+                    StandardScriptVerdict::Refused(reason) => write!(
+                        f,
+                        "container config '{name}' refused: {script} cannot be judged: {reason}; restore a regular file there and run `quecto container init --refresh`"
+                    ),
+                    StandardScriptVerdict::NotStandard | StandardScriptVerdict::Intact => {
+                        write!(
+                            f,
+                            "container config '{name}' refused: {script} is not the standard bundle's"
+                        )
+                    }
+                }
             }
         }
     }

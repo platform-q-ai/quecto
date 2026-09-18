@@ -242,3 +242,38 @@ Feature: The standard container is landed on master
     And the fake podman run argv should carry "-e QUECTO_SWARM_HOST_PID_NS="
     And the fake podman run argv should carry "quecto-box:local"
     And the fake podman should never have been asked to pull an image
+
+  @done @issue-2024 @container-spawn
+  Scenario: an edited standard script refuses the launch before the host runs it, and init --refresh restores it
+    Given the current directory is a git checkout whose origin remote is a reachable local repository
+    And a controlled PATH whose fake podman reports every image as present
+    And script-managed subagent spawning is available from the checkout with no global container config
+    When I run quecto with arguments "container init"
+    Then the exit code should be 0
+    When the materialised standard create script is edited to record every invocation
+    And I spawn script-managed subagent "standard-tampered" with default selection and no config argument and task "STANDARD_TAMPERED_MARKER"
+    Then the spawn result should fail with "container config 'standard' refused: "
+    And the spawn result should name the materialised "scripts/create.sh" as differing from the standard bundle
+    And the spawn result should fail with "quecto container init --refresh"
+    And the materialised standard create script should never have been invoked
+    When I run the real quecto binary under the controlled PATH with arguments "container status"
+    Then the exit code should be 1
+    And the output should contain "assets:  5 of 5 present, 1 differ from the embedded version 1"
+    And the output should contain "differs "
+    And the output should contain "image:   unknown — container config 'standard' refused: "
+    And the materialised standard create script should never have been invoked
+    When I run the real quecto binary under the controlled PATH with arguments "container doctor"
+    Then the exit code should be 1
+    And the stderr should contain "differs from the standard bundle this quecto embeds"
+    And the materialised standard create script should never have been invoked
+    When I run quecto with arguments "container init --refresh"
+    Then the exit code should be 0
+    And the output should contain "refreshed"
+    And the standard container assets should be materialised under ".quecto/containers/standard" byte-identical to the official adapter
+    When I run the real quecto binary under the controlled PATH with arguments "container doctor"
+    Then the exit code should be 0
+    And the doctor output should name container config "standard"
+    And the doctor output should show no failed check
+    When I run the real quecto binary under the controlled PATH with arguments "container status"
+    Then the exit code should be 0
+    And the output should contain "assets:  present (5 of 5, version 1)"

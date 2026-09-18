@@ -82,6 +82,24 @@ impl ContainerAssetStore for MemoryAssets {
             AssetState::Refused => unreachable!(),
         })
     }
+
+    fn refresh(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetOutcome, String> {
+        match self.observe(root, dir, asset)? {
+            AssetState::Differs => {
+                self.disk
+                    .lock()
+                    .unwrap()
+                    .insert(dir.join(&asset.path), asset.contents.clone());
+                Ok(AssetOutcome::Refreshed)
+            }
+            _ => self.materialise(root, dir, asset),
+        }
+    }
 }
 
 struct FixedOrigin(Result<Option<String>, String>);
@@ -188,6 +206,7 @@ fn request(project: &str) -> StandardContainerRequest {
         repository: None,
         image: None,
         dry_run: false,
+        refresh: false,
     }
 }
 
@@ -320,6 +339,53 @@ fn an_edited_asset_is_kept_and_reported_as_differing() {
         rig.assets.disk.lock().unwrap()
             [Path::new("/p/.quecto/containers/standard/scripts/create.sh")],
         b"edited".to_vec()
+    );
+}
+
+#[test]
+fn refresh_rewrites_a_differing_asset_with_the_embedded_bytes_and_reports_it() {
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    let create = PathBuf::from("/p/.quecto/containers/standard/scripts/create.sh");
+    rig.assets
+        .disk
+        .lock()
+        .unwrap()
+        .insert(create.clone(), b"edited".to_vec());
+    // A dry run says what a refresh would do and touches nothing.
+    let mut dry = request("/p");
+    dry.refresh = true;
+    dry.dry_run = true;
+    let report = rig.use_case.execute(&dry).unwrap();
+    assert_eq!(report.refreshed, std::slice::from_ref(&create));
+    assert!(report.differing.is_empty());
+    assert_eq!(rig.assets.disk.lock().unwrap()[&create], b"edited".to_vec());
+    let mut refresh = request("/p");
+    refresh.refresh = true;
+    let report = rig.use_case.execute(&refresh).unwrap();
+    assert_eq!(report.refreshed, std::slice::from_ref(&create));
+    assert!(report.differing.is_empty());
+    assert_eq!(
+        report.written,
+        [PathBuf::from(
+            "/p/.quecto/containers/standard/Containerfile"
+        )]
+    );
+    assert_eq!(
+        rig.assets.disk.lock().unwrap()[&create],
+        b"#!/bin/sh".to_vec()
+    );
+    // Without --refresh the edit is kept, as before.
+    rig.assets
+        .disk
+        .lock()
+        .unwrap()
+        .insert(create.clone(), b"edited again".to_vec());
+    let report = rig.use_case.execute(&request("/p")).unwrap();
+    assert_eq!(report.differing, std::slice::from_ref(&create));
+    assert!(report.refreshed.is_empty());
+    assert_eq!(
+        rig.assets.disk.lock().unwrap()[&create],
+        b"edited again".to_vec()
     );
 }
 

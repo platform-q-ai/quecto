@@ -35,7 +35,7 @@ pub type ContainerStatusBuilder =
     fn(&std::path::Path, &ConfigSelection) -> std::sync::Arc<ContainerStatus>;
 
 const USAGE: &str = "usage: quecto container doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
-const TOP_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--dry-run]\nusage: quecto container status [--project <abs dir>]\nusage: quecto container doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
+const TOP_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\nusage: quecto container status [--project <abs dir>]\nusage: quecto container doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
 
 pub(crate) fn cmd_container(
     ctx: &CliContext,

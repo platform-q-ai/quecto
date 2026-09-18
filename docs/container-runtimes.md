@@ -587,7 +587,7 @@ no config is hand-edited. Run it from the **repository root** (or pass
 subdirectory, which an agent started at the root never reads.
 
 ```
-quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--dry-run]
+quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]
 quecto container status [--project <abs dir>]
 ```
 
@@ -632,9 +632,12 @@ is written, so a refused init leaves the project untouched):
    appends it before the child command).
 5. Materialises the missing files (the scripts byte-identical to
    `scripts/container-runtime/docker/*.sh`, executable), each written
-   whole (temporary file, fsync, rename) and **never replaced**: an edited
-   file is kept and reported as differing from the embedded version
-   (delete it to have init refresh it). Should a write still fail here (a
+   whole (temporary file, fsync, rename) and **never replaced** unless
+   `--refresh` is given: an edited file is kept and reported as differing
+   from the embedded version — and a launch refuses it (see the trust
+   boundary below); `quecto container init --refresh` renames the
+   embedded bytes over every differing file and reports each as
+   `refreshed`. Should a write still fail here (a
    filesystem race after step 3), the error says the entry was already
    written and how to finish (run init again) or roll back
    (`quecto config unset --local container_configs.standard`).
@@ -645,6 +648,41 @@ is written, so a refused init leaves the project untouched):
    drive whichever runtime the doctor's `runtime-cli` line names).
 
 Running `init` twice changes nothing (no files, byte-identical overlay).
+
+**The trust boundary: host-side scripts.** The overlay's trust record
+covers `.quecto/config.json` — the entry and the argv it names — not the
+files those argv point at. The scripts under
+`.quecto/containers/standard/scripts/` run **on the host**, as the user,
+before any container exists (`create.sh` clones the repository and
+starts the container; `exec.sh`, `inspect.sh` and `kill.sh` drive it),
+so a change to them that arrives with a `git pull` is as consequential as
+a change to the overlay itself. The launch therefore judges them the way
+`status` does: before a create runs, every script the selected entry
+names that lies under a `.quecto/containers/standard/` directory is
+compared with the bytes this quecto embeds, and the launch is refused —
+`spawn container: true` and `quecto container doctor` alike, before the
+host runs anything — when one differs, is missing, or is a symbolic
+link, naming the file and the way back:
+
+```
+container config 'standard' refused: /repo/.quecto/containers/standard/scripts/create.sh differs from the standard bundle this quecto embeds; it is a host-side script the launch would run before any container exists, so review the change (git diff) and restore the bundle with `quecto container init --refresh` (or delete the file and run `quecto container init`)
+```
+
+`quecto container status` keeps listing the file as `differs` (and the
+image line carries the same refusal). Review a pulled change to
+`.quecto/containers/standard/` exactly as you would review one to
+`.quecto/config.json` — `git diff` the directory before `init --refresh`
+— and remember that `--refresh` restores *this binary's* bundle, so a
+newer quecto's assets replace an older one's. An entry that names its
+own scripts elsewhere is vouched for by the overlay's trust alone: the
+integrity check is the standard bundle's, not a general one. The
+Containerfile is not a host-side script and is not checked at launch;
+`status` still reports it. The Containerfile's base is pinned by tag
+(``docker.io/library/debian:trixie-slim`), not by digest: a rebuild can pick up a newer base
+under the same tag. Pin the digest in the materialised Containerfile
+(`FROM debian@sha256:…`) if you need a reproducible base; `status` will
+then list it as `differs`, which is expected and does not affect a
+launch.
 
 **Image approval.** The image only has to exist locally under the tag the
 entry names: the create's preflight checks `podman image exists` /

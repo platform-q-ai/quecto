@@ -510,3 +510,71 @@ fn then_never_pulled(world: &mut QuectoWorld) {
         "podman was asked to pull: {log:?}"
     );
 }
+
+// ─── The trust boundary at launch (#2024 S4e, review F2) ─────────────────────
+
+/// The launcher composed for the checkout, over a global file that
+/// declares no container config, so the standard entry init writes is the
+/// one `container: true` selects.
+#[given(
+    "script-managed subagent spawning is available from the checkout with no global container config"
+)]
+fn given_spawn_from_checkout_no_global_configs(world: &mut QuectoWorld) {
+    crate::container_mapping_steps::given_script_spawn_from_checkout(world, "default".into());
+    let config = PathBuf::from(world.config_path.clone().expect("config path"));
+    let mut document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+    document
+        .as_object_mut()
+        .unwrap()
+        .remove("container_configs");
+    std::fs::write(&config, serde_json::to_string_pretty(&document).unwrap()).unwrap();
+}
+
+fn invocation_marker(world: &QuectoWorld) -> PathBuf {
+    base_path(world).join("create-invoked")
+}
+
+/// The edit a pull or a hand could make: the script records each run in
+/// a marker file and stops, so "never invoked" is a fact about the host
+/// and a regression of the check can never reach the real runtime.
+#[when("the materialised standard create script is edited to record every invocation")]
+fn when_create_script_edited(world: &mut QuectoWorld) {
+    let create = assets_dir(world).join("scripts/create.sh");
+    let original = std::fs::read_to_string(&create).unwrap();
+    let (shebang, rest) = original.split_once('\n').unwrap();
+    std::fs::write(
+        &create,
+        format!(
+            "{shebang}\ntouch '{}'\nexit 99\n{rest}",
+            invocation_marker(world).display()
+        ),
+    )
+    .unwrap();
+}
+
+#[then(
+    expr = "the spawn result should name the materialised {string} as differing from the standard bundle"
+)]
+fn then_spawn_names_differing_script(world: &mut QuectoWorld, relative: String) {
+    let result = world.spawn_result.as_ref().expect("no spawn result");
+    let expected = format!(
+        "{} differs from the standard bundle this quecto embeds",
+        assets_dir(world).join(&relative).display()
+    );
+    assert!(
+        result.is_error && result.content.contains(&expected),
+        "expected {expected:?} in: {}",
+        result.content
+    );
+}
+
+#[then("the materialised standard create script should never have been invoked")]
+fn then_create_never_invoked(world: &mut QuectoWorld) {
+    let marker = invocation_marker(world);
+    assert!(
+        !marker.exists(),
+        "the edited create script ran on the host ({} exists)",
+        marker.display()
+    );
+}

@@ -12,6 +12,13 @@
 # for. Deliberately tool-only: no compiler, no Cargo, no Node — a project
 # that needs a toolchain derives its own image FROM this one and points the
 # entry's `--image` at it.
+#
+# The base is pinned by TAG, not by digest: a rebuild can pick up a newer
+# trixie-slim under the same name. For a reproducible base, pin the digest
+# in your materialised copy (`FROM docker.io/library/debian@sha256:…`);
+# `quecto container status` will then list this file as `differs`, which
+# is expected — the Containerfile is a build input, never run on the
+# host, and a launch does not check it.
 FROM docker.io/library/debian:trixie-slim
 
 ARG DEBIAN_FRONTEND=noninteractive

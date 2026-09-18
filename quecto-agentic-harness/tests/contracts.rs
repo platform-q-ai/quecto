@@ -63,6 +63,8 @@ mod container_config_persistence;
 mod container_config_roster;
 #[path = "contracts/container_runtime_preflight.rs"]
 mod container_runtime_preflight;
+#[path = "contracts/container_script_integrity.rs"]
+mod container_script_integrity;
 #[path = "contracts/context_spill_store.rs"]
 mod context_spill_store;
 #[path = "contracts/credential_status_port.rs"]

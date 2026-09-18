@@ -5,8 +5,9 @@ use super::SelectContainerConfig;
 use crate::application::subagents::dto::{
     ContainerConfigSource, ContainerConfigsError, ContainerLaunchConfig,
     EffectiveContainerConfigSet, SelectContainerConfigError, SelectContainerConfigRequest,
+    StandardScriptVerdict,
 };
-use crate::application::subagents::ports::EffectiveContainerConfigs;
+use crate::application::subagents::ports::{ContainerScriptIntegrity, EffectiveContainerConfigs};
 
 struct FakeConfigs {
     result: Result<EffectiveContainerConfigSet, ContainerConfigsError>,
@@ -37,14 +38,46 @@ fn entry(name: &str, default: bool) -> ContainerLaunchConfig {
     }
 }
 
+/// The bundle's verdict per script path; every other path is not a
+/// standard asset. Records what it was asked.
+#[derive(Default)]
+struct FakeIntegrity {
+    verdicts: Vec<(PathBuf, StandardScriptVerdict)>,
+    asked: Mutex<Vec<PathBuf>>,
+}
+
+impl ContainerScriptIntegrity for FakeIntegrity {
+    fn verify(&self, script: &std::path::Path) -> StandardScriptVerdict {
+        self.asked.lock().unwrap().push(script.to_path_buf());
+        self.verdicts
+            .iter()
+            .find(|(path, _)| path == script)
+            .map(|(_, verdict)| verdict.clone())
+            .unwrap_or(StandardScriptVerdict::NotStandard)
+    }
+}
+
 fn use_case(
     result: Result<EffectiveContainerConfigSet, ContainerConfigsError>,
 ) -> (SelectContainerConfig, Arc<FakeConfigs>) {
+    let (select, fake, _) = use_case_with_integrity(result, FakeIntegrity::default());
+    (select, fake)
+}
+
+fn use_case_with_integrity(
+    result: Result<EffectiveContainerConfigSet, ContainerConfigsError>,
+    integrity: FakeIntegrity,
+) -> (SelectContainerConfig, Arc<FakeConfigs>, Arc<FakeIntegrity>) {
     let fake = Arc::new(FakeConfigs {
         result,
         asked: Mutex::new(Vec::new()),
     });
-    (SelectContainerConfig::new(fake.clone()), fake)
+    let integrity = Arc::new(integrity);
+    (
+        SelectContainerConfig::new(fake.clone(), integrity.clone()),
+        fake,
+        integrity,
+    )
 }
 
 fn set(configs: Vec<ContainerLaunchConfig>, diagnostics: Vec<&str>) -> EffectiveContainerConfigSet {
@@ -355,4 +388,137 @@ fn a_legacy_warning_alone_never_refuses_container_true() {
         .unwrap();
     assert_eq!(selected.config.name, "global");
     assert_eq!(selected.diagnostics.len(), 1);
+}
+
+/// The standard entry as init writes it: every argv names a script under
+/// the bundle directory.
+fn standard_entry() -> ContainerLaunchConfig {
+    let script = |name: &str| format!("/repo/.quecto/containers/standard/scripts/{name}");
+    ContainerLaunchConfig {
+        name: "standard".into(),
+        default: true,
+        create: vec![script("create.sh"), "--repo".into(), "https://x/y".into()],
+        cleanup: vec![script("kill.sh"), "--op".into(), "cleanup".into()],
+        exec: vec![script("exec.sh")],
+        kill: vec![script("kill.sh"), "--op".into(), "kill".into()],
+        inspect: vec![script("inspect.sh")],
+        repo_bound: true,
+        repository: Some("https://x/y".into()),
+    }
+}
+
+#[test]
+fn an_altered_standard_script_refuses_the_selection_naming_the_file_and_the_refresh() {
+    let create = PathBuf::from("/repo/.quecto/containers/standard/scripts/create.sh");
+    let (select, _, integrity) = use_case_with_integrity(
+        Ok(set(vec![standard_entry()], vec![])),
+        FakeIntegrity {
+            verdicts: vec![(create.clone(), StandardScriptVerdict::Differs)],
+            asked: Mutex::new(vec![]),
+        },
+    );
+    let error = select
+        .execute(&request(ContainerConfigSource::LaunchingAgent, None))
+        .unwrap_err();
+    assert_eq!(
+        error,
+        SelectContainerConfigError::StandardScriptAltered {
+            name: "standard".into(),
+            script: create.clone(),
+            verdict: StandardScriptVerdict::Differs,
+        }
+    );
+    let text = error.to_string();
+    assert!(
+        text.contains("container config 'standard' refused: /repo/.quecto/containers/standard/scripts/create.sh differs from the standard bundle this quecto embeds"),
+        "{text}"
+    );
+    assert!(text.contains("host-side"), "{text}");
+    assert!(text.contains("quecto container init --refresh"), "{text}");
+    // The first altered script names the refusal; nothing else is asked.
+    assert_eq!(integrity.asked.lock().unwrap().as_slice(), &[create]);
+}
+
+#[test]
+fn a_missing_or_unjudgeable_standard_script_refuses_too_and_names_init() {
+    let exec = PathBuf::from("/repo/.quecto/containers/standard/scripts/exec.sh");
+    let (select, _, _) = use_case_with_integrity(
+        Ok(set(vec![standard_entry()], vec![])),
+        FakeIntegrity {
+            verdicts: vec![(exec.clone(), StandardScriptVerdict::Missing)],
+            asked: Mutex::new(vec![]),
+        },
+    );
+    let text = select
+        .execute(&request(ContainerConfigSource::LaunchingAgent, None))
+        .unwrap_err()
+        .to_string();
+    assert!(text.contains("exec.sh is missing"), "{text}");
+    assert!(text.contains("quecto container init"), "{text}");
+    let (select, _, _) = use_case_with_integrity(
+        Ok(set(vec![standard_entry()], vec![])),
+        FakeIntegrity {
+            verdicts: vec![(
+                exec,
+                StandardScriptVerdict::Refused("exec.sh is a symbolic link".into()),
+            )],
+            asked: Mutex::new(vec![]),
+        },
+    );
+    let text = select
+        .execute(&request(
+            ContainerConfigSource::LaunchingAgent,
+            Some("standard"),
+        ))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        text.contains("cannot be judged: exec.sh is a symbolic link"),
+        "{text}"
+    );
+}
+
+#[test]
+fn intact_standard_scripts_and_non_standard_entries_launch() {
+    let (select, _, integrity) = use_case_with_integrity(
+        Ok(set(vec![standard_entry(), entry("other", false)], vec![])),
+        FakeIntegrity {
+            verdicts: standard_entry()
+                .scripts()
+                .into_iter()
+                .map(|script| (script, StandardScriptVerdict::Intact))
+                .collect(),
+            asked: Mutex::new(vec![]),
+        },
+    );
+    assert!(
+        select
+            .execute(&request(ContainerConfigSource::LaunchingAgent, None))
+            .is_ok()
+    );
+    assert!(
+        select
+            .execute(&request(
+                ContainerConfigSource::LaunchingAgent,
+                Some("other")
+            ))
+            .is_ok()
+    );
+    // Every script the argv name is asked about, once each (kill.sh
+    // serves `kill` and `cleanup`); a non-standard entry's scripts are
+    // asked about too (the bundle answers NotStandard): the rule is the
+    // bundle's, not a name's.
+    let script =
+        |name: &str| PathBuf::from(format!("/repo/.quecto/containers/standard/scripts/{name}"));
+    assert_eq!(
+        integrity.asked.lock().unwrap().as_slice(),
+        &[
+            script("create.sh"),
+            script("kill.sh"),
+            script("exec.sh"),
+            script("inspect.sh"),
+            PathBuf::from("/bin/create"),
+            PathBuf::from("/bin/cleanup"),
+        ]
+    );
 }

@@ -19,12 +19,13 @@ of them a build. Run them from the repository **root** (or pass
    quecto container init                      # --repo from the checkout's origin remote
    quecto container init --repo <url>         # explicit repository
    quecto container init --image <tag>        # another image tag (default quecto-box:local)
+   quecto container init --refresh            # restore edited scripts to this binary's bundle
    quecto container init --dry-run            # say what would be written
    ```
    It materialises `<project>/.quecto/containers/standard/{Containerfile,
    scripts/create.sh, scripts/exec.sh, scripts/inspect.sh, scripts/kill.sh}`
    (the official adapter scripts, byte-identical; existing files are never
-   replaced) and writes `container_configs.standard` into
+   replaced without `--refresh`) and writes `container_configs.standard` into
    `<project>/.quecto/config.json` through the config writer, so the overlay
    is trusted for exactly those bytes. The entry's argv name the
    materialised scripts, `--state-dir <base dir>/container-environments`,
@@ -73,6 +74,21 @@ standard container at /repo/.quecto/containers/standard
   image:   image quecto-box:local is present
 ready: spawn {"container":true} from an agent in this project
 ```
+**Trust boundary.** The overlay's trust covers `.quecto/config.json`, not
+the scripts it names, and those scripts run on the host before any
+container exists. So a launch (`spawn container: true`, `container
+doctor`) first compares every standard-bundle script the entry names
+with the bytes this binary embeds and refuses — before running anything —
+when one differs, is missing or is a symbolic link:
+`container config 'standard' refused: <path>/scripts/create.sh differs
+from the standard bundle this quecto embeds; … restore the bundle with
+`quecto container init --refresh``. `status` lists the file as `differs`.
+Review a pulled change to `.quecto/containers/standard/` as you would one
+to `.quecto/config.json` (`git diff` it), then `quecto container init
+--refresh`. The Containerfile is not run on the host and is not checked
+at launch; its base is tag-pinned (`debian:trixie-slim`), so pin a digest
+in the materialised file if the build must be reproducible.
+
 Rollback: `quecto config unset --local container_configs.standard` and
 delete `.quecto/containers/standard`.
 
