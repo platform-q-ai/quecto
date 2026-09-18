@@ -6,6 +6,7 @@ use crate::domain::swarm::RunStatus;
 
 fn running_swarm() -> HostedSwarmRun {
     HostedSwarmRun {
+        id: "run-42".to_string(),
         status: RunStatus::Running,
         outcome: None,
         coordinator: "member-42".to_string(),

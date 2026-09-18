@@ -53,6 +53,7 @@ fn workflow_flags() -> AgentFlags {
             crate::composition::container_configs::build_agent_container_config_handles,
         ),
         stdin_is_tty: false,
+        environment_registry: None,
     }
 }
 

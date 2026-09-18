@@ -195,11 +195,14 @@ class Workbench(Tasks):
     def _status(self):
         """Harness-only, membership-free: has a run been created in this container?
         The bootstrap placeholder carries deadline 0; `create` requires a future one.
-        Carries the #1969 membership counts (`members_without_claim`, `members_dead`)."""
+        Carries the #1969 membership counts (`members_without_claim`, `members_dead`)
+        and the run's id, which the supervising session names when it keeps
+        a box for an unfinished run (#2033)."""
         with self.store.transaction() as db:
-            row = db.execute('SELECT status, deadline, coordinator, outcome FROM run').fetchone()
+            row = db.execute('SELECT id, status, deadline, coordinator, outcome FROM run').fetchone()
             counts = member_claim_counts(db, row['coordinator'] if row else None)
-        return dict(counts, status=row['status'] if row else 'setup', deadline=row['deadline'] if row else 0,
+        return dict(counts, id=row['id'] if row else None,
+                    status=row['status'] if row else 'setup', deadline=row['deadline'] if row else 0,
                     coordinator=row['coordinator'] if row else None,
                     outcome=row['outcome'] if row else None)
 
@@ -475,9 +478,9 @@ class Workbench(Tasks):
                     'reason': 'harness exited; execution scope unconfirmed; discard environment'})
                 self._end_by_loss(db, run, 'harness exited; execution scope unconfirmed')
                 lost = True
-            row = db.execute('SELECT status, outcome, deadline, coordinator FROM run').fetchone()
-            return {'status': row['status'], 'outcome': row['outcome'], 'deadline': row['deadline'],
-                    'coordinator': row['coordinator'], 'lost': lost}
+            row = db.execute('SELECT id, status, outcome, deadline, coordinator FROM run').fetchone()
+            return {'id': row['id'], 'status': row['status'], 'outcome': row['outcome'],
+                    'deadline': row['deadline'], 'coordinator': row['coordinator'], 'lost': lost}
 
     def _end_by_loss(self, db, run, reason):
         """A lost harness ends a running run as a pause holding `failed` (#1729);

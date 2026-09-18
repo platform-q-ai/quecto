@@ -467,6 +467,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
                     Some(cwd),
                 ),
                 stderr: &mut stderr,
+                environment_registry: None,
             },
         )
         .expect("runtime builds")

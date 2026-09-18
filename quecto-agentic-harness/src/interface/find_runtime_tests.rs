@@ -63,6 +63,7 @@ fn runtime(
         inherited_tool_policy: inherited,
         workflow: ToolRuntimeWorkflowPolicy::disabled(root, Some(root)),
         stderr: &mut stderr,
+        environment_registry: None,
     })
     .expect("production runtime builds")
 }

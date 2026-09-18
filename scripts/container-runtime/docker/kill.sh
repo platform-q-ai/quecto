@@ -5,7 +5,10 @@
 # Environment: QUECTO_CONTAINER_ENVIRONMENT_ID
 #
 # Removes the environment's container (force) and its state directory,
-# after proving the directory resolves under the trusted state root.
+# after proving the directory resolves under the trusted state root. When
+# the directory is already gone (a completed kill, a collector's pass over
+# an exited container, #2024 S4d) the container the create would have
+# named — `quecto-<environment_id>` — is still removed, for either op.
 set -euo pipefail
 
 log() { printf 'container-runtime-docker kill: %s\n' "$*" >&2; }
@@ -56,7 +59,11 @@ case "$id" in
 esac
 env_dir="$state_dir/$id"
 if [ ! -d "$env_dir" ]; then
-  # Already gone (e.g. cleanup after a kill): succeed idempotently.
+  # State already gone (cleanup after a kill, or a collector removing an
+  # exited container whose directory vanished, #2024 S4d): remove the
+  # container the create script would have named — on the plain `kill`
+  # op too — then succeed idempotently.
+  "$cli" rm -f "quecto-$id" >/dev/null 2>&1 || true
   printf '%s %s\n' "$op" "$id" >>"$state_dir/kill.log" 2>/dev/null || true
   exit 0
 fi
@@ -68,14 +75,17 @@ case "$resolved" in
 esac
 
 container="$(cat "$env_dir/container" 2>/dev/null || true)"
-if [ -n "$container" ]; then
-  # Docker's `rm -f` kills immediately; Podman's sends SIGTERM and waits the
-  # container's stop timeout (10s) before SIGKILL. The parent runs this from
-  # its own SIGTERM handling inside the TUI's two-second exit budget, so
-  # bound the grace: one second for the child to cascade, then SIGKILL.
-  grace=()
-  [ "$cli" = podman ] && grace=(--time 1)
-  "$cli" rm -f "${grace[@]}" "$container" >/dev/null 2>&1 || true
-fi
+# A directory without a recorded container (a create interrupted between
+# the directory and the `container` file, #2033 round 2) still names the
+# container the create would have called: remove it with the directory
+# rather than leave an exited container behind for the collector.
+[ -n "$container" ] || container="quecto-$id"
+# Docker's `rm -f` kills immediately; Podman's sends SIGTERM and waits the
+# container's stop timeout (10s) before SIGKILL. The parent runs this from
+# its own SIGTERM handling inside the TUI's two-second exit budget, so
+# bound the grace: one second for the child to cascade, then SIGKILL.
+grace=()
+[ "$cli" = podman ] && grace=(--time 1)
+"$cli" rm -f "${grace[@]}" "$container" >/dev/null 2>&1 || true
 rm -rf "$env_dir"
 printf '%s %s\n' "$op" "$id" >>"$state_dir/kill.log"

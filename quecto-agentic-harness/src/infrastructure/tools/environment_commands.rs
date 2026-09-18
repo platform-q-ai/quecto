@@ -5,7 +5,7 @@
 //! #1924). Mechanics only: whether and when each runs is decided by the
 //! application use cases.
 use crate::application::environments::ports::{
-    EnvironmentProcessCommands, HostedSwarmRunObservation, PortFuture,
+    EnvironmentProcessCommands, HostedSwarmRunInspection, HostedSwarmRunObservation, PortFuture,
 };
 use crate::domain::environment_registry::EnvironmentRecord;
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
@@ -108,84 +108,30 @@ impl EnvironmentProcessCommands for ScriptEnvironmentCommands {
     }
 }
 
-/// Bound on one retained-inspect invocation. A hung inspect script must not
-/// stall the death pipeline indefinitely: the exit signal (and the awaits it
-/// wakes) fires only after this job finishes, and `classify_dead_socket`'s
-/// grace window is sized just above this bound.
-pub(super) const INSPECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+pub(super) use crate::infrastructure::processes::containers::retained_scripts::INSPECT_TIMEOUT;
 
-/// Inspect script contract: invoked with `QUECTO_CONTAINER_ENVIRONMENT_ID`,
-/// prints one JSON object `{"status": "...", "metadata": {...}}` on stdout.
-/// The result is parsed through the same strict wire path as create/exec:
-/// unknown keys, trailing data, and non-UTF8 output are rejected. The
-/// subprocess is bounded by [`INSPECT_TIMEOUT`]; on timeout it is killed and
-/// an inspect failure is persisted with the retained argv kept for retry.
+/// Inspect script contract: see `retained_scripts::run_inspect_sync_bounded`;
+/// bounded by [`INSPECT_TIMEOUT`] here.
 fn run_inspect_sync(environment_id: &str, argv: &[String]) -> Result<serde_json::Value, String> {
     run_inspect_sync_bounded(environment_id, argv, INSPECT_TIMEOUT)
 }
 
-pub(super) fn run_inspect_sync_bounded(
-    environment_id: &str,
-    argv: &[String],
-    timeout: std::time::Duration,
-) -> Result<serde_json::Value, String> {
-    #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct InspectResultWire {
-        #[serde(default)]
-        status: Option<String>,
-        metadata: serde_json::Value,
-    }
-    let Some((program, args)) = argv.split_first() else {
-        return Err("no retained inspect argv".to_string());
-    };
-    refuse_altered_script(argv).map_err(|reason| format!("retained inspect refused: {reason}"))?;
-    let mut cmd = std::process::Command::new(program);
-    cmd.args(args);
-    cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
-    let output = run_sync_capturing_stderr_tail(cmd, ScriptStdout::Result, timeout)
-        .map_err(|error| format!("retained inspect: {error}; retained argv kept for retry"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "retained inspect exited with {}: {}",
-            output.status, output.stderr_tail
-        ));
-    }
-    let wire: InspectResultWire =
-        super::spawn_container::parse_strict_wire(&output.stdout, "inspect")?;
-    if !wire.metadata.is_object() {
-        return Err("retained inspect result must contain a metadata object".to_string());
-    }
-    let mut metadata = wire.metadata;
-    if let (Some(object), Some(status)) = (metadata.as_object_mut(), wire.status) {
-        object.insert("inspect_status".to_string(), serde_json::json!(status));
-    }
-    Ok(metadata)
-}
+pub(super) use crate::infrastructure::processes::containers::retained_scripts::run_inspect_sync_bounded;
 
 /// The retained-cleanup invocation: best effort by contract, never silent
 /// (#2024 S4b) — a cleanup that fails leaves an environment behind and
 /// its stderr tail is the operator's only lead.
 fn run_script_sync(environment_id: &str, argv: &[String]) {
-    let Some((program, args)) = argv.split_first() else {
-        return;
-    };
-    if let Err(reason) = refuse_altered_script(argv) {
-        tracing::warn!(environment_id, "retained cleanup refused: {reason}");
+    if argv.is_empty() {
         return;
     }
-    let mut cmd = std::process::Command::new(program);
-    cmd.args(args);
-    cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
-    match run_sync_capturing_stderr_tail(cmd, ScriptStdout::Discard, std::time::Duration::MAX) {
-        Ok(output) if !output.status.success() => {
-            tracing::warn!(environment_id, "{}", output.failure_message("cleanup"));
-        }
-        Ok(_) => {}
-        // Typically a full pid cgroup: the environment may outlive us.
-        Err(error) => {
-            tracing::warn!(environment_id, %error, "retained container script could not be started")
-        }
+    if let Err(error) =
+        crate::infrastructure::processes::containers::retained_scripts::run_cleanup_sync(
+            environment_id,
+            argv,
+        )
+    {
+        tracing::warn!(environment_id, "{error}");
     }
 }
 
@@ -253,6 +199,16 @@ fn contained_checkout(
     record: &EnvironmentRecord,
     checkout: &std::path::Path,
 ) -> Option<std::path::PathBuf> {
+    contained_below(&record.workspace_path, checkout)
+}
+
+/// `checkout` resolved, when both it and `root` are absolute and `..`-free
+/// and — symlinks resolved on both sides, so a link under the root pointing
+/// elsewhere cannot lead the host outside it — it lies at or under `root`.
+fn contained_below(
+    root: &std::path::Path,
+    checkout: &std::path::Path,
+) -> Option<std::path::PathBuf> {
     use std::path::Component;
     let plain = |path: &std::path::Path| {
         path.is_absolute()
@@ -260,22 +216,54 @@ fn contained_checkout(
                 .components()
                 .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
     };
-    if !plain(checkout) || !plain(&record.workspace_path) {
+    if !plain(checkout) || !plain(root) {
         return None;
     }
-    // Resolve symlinks on both sides so a link under the workspace pointing
-    // elsewhere cannot lead the host outside it.
     let resolved = std::fs::canonicalize(checkout).ok()?;
-    let workspace = std::fs::canonicalize(&record.workspace_path).ok()?;
-    resolved.starts_with(&workspace).then_some(resolved)
+    let root = std::fs::canonicalize(root).ok()?;
+    resolved.starts_with(&root).then_some(resolved)
 }
 
 fn hosted_store(record: &EnvironmentRecord) -> Option<super::swarm_bridge::HostedStore> {
     hosted_checkout(record).map(super::swarm_bridge::HostedStore::at)
 }
 
+/// The checkout a store may live at below a bare environment state
+/// directory the shipped scripts laid out (`<state_dir>/workspace[/repo]`),
+/// for a directory no record names: the first of the two holding a store,
+/// contained below the state dir the same way a record's checkout is
+/// contained below its workspace.
+fn unrecorded_checkout(state_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let workspace = state_dir.join("workspace");
+    [workspace.join(REPO_CHECKOUT_SUBDIR), workspace]
+        .iter()
+        .filter(|candidate| super::swarm_bridge::store_database(candidate).is_file())
+        .find_map(|candidate| contained_below(state_dir, candidate))
+}
+
+/// One synchronous read of the store at `checkout`, for the environment
+/// named `subject` in the log.
+fn read_hosted_run(checkout: Option<std::path::PathBuf>, subject: &str) -> SwarmRunObservation {
+    let Some(store) = checkout.map(super::swarm_bridge::HostedStore::at) else {
+        return SwarmRunObservation::NoStore;
+    };
+    match store.hosted_run() {
+        Ok(Some(run)) => SwarmRunObservation::Run(run),
+        Ok(None) => SwarmRunObservation::NoStore,
+        Err(error) => {
+            tracing::warn!(
+                environment = %subject,
+                %error,
+                "hosted swarm run could not be observed; environment retained"
+            );
+            SwarmRunObservation::Unreadable(error.to_string())
+        }
+    }
+}
+
 /// The coordination store an environment hosts, read by path from the
-/// supervising session (#1924).
+/// supervising session (#1924) — asynchronously for the finalizer, and
+/// synchronously for the restore and the collector (round 4 M1, #2033).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct HostedStoreObservation;
 
@@ -284,23 +272,7 @@ impl HostedSwarmRunObservation for HostedStoreObservation {
         &'a self,
         record: &'a EnvironmentRecord,
     ) -> PortFuture<'a, SwarmRunObservation> {
-        Box::pin(async move {
-            let Some(store) = hosted_store(record) else {
-                return SwarmRunObservation::NoStore;
-            };
-            match store.hosted_run() {
-                Ok(Some(run)) => SwarmRunObservation::Run(run),
-                Ok(None) => SwarmRunObservation::NoStore,
-                Err(error) => {
-                    tracing::warn!(
-                        environment_id = %record.environment_id,
-                        %error,
-                        "hosted swarm run could not be observed; environment retained"
-                    );
-                    SwarmRunObservation::Unreadable(error.to_string())
-                }
-            }
-        })
+        Box::pin(async move { self.inspect_hosted_run(record) })
     }
 
     fn record_lost_coordinator<'a>(
@@ -315,6 +287,19 @@ impl HostedSwarmRunObservation for HostedStoreObservation {
                 .record_lost_coordinator(&hosted.coordinator)
                 .map_err(|error| error.to_string())
         })
+    }
+}
+
+impl HostedSwarmRunInspection for HostedStoreObservation {
+    fn inspect_hosted_run(&self, record: &EnvironmentRecord) -> SwarmRunObservation {
+        read_hosted_run(hosted_checkout(record), &record.environment_id)
+    }
+
+    fn inspect_hosted_run_at(&self, state_dir: &std::path::Path) -> SwarmRunObservation {
+        read_hosted_run(
+            unrecorded_checkout(state_dir),
+            &state_dir.display().to_string(),
+        )
     }
 }
 

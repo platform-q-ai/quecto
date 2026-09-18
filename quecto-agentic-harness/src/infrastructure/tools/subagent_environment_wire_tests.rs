@@ -28,6 +28,9 @@ fn committed_env_entry(env_ref: &str, proxy: bool) -> SubagentEntry {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({ "branch": "pr-42" }),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     });
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/impl.sock"), 7);
     entry.environment_registry = Some(registry);

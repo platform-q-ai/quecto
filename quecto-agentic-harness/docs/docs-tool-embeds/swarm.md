@@ -35,8 +35,9 @@ containers to evade its limit. See `docs {"name":"subagents"}` for launching.
   coordinator with `"container":{"mode":"new","container_config":"standard"}`.
   Verify: the spawn result names `container_config=standard`; the
   coordinator's `swarm op=create` succeeds; `agent_cmd get_containers` lists
-  the environment `running`. Rollback: `kill_container` (the container is
-  `retained` after a run ends and needs it), then the container-runtime
+  the environment `running`. Rollback: `kill_container` or `quecto container kill <ref|name>`
+  (the container is `retained` after a run ends and needs one of them;
+  `quecto container gc` sweeps exited leftovers), then the container-runtime
   rollback if the repo should lose its config.
 
 ## Python versus external commands

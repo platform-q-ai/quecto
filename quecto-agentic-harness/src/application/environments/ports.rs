@@ -13,10 +13,11 @@ use std::path::{Path, PathBuf};
 
 use crate::application::environments::dto::{
     AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue, ContainerConfigDocument,
-    ContainerConfigEntry, ContainerRuntimeTarget, DiagnosableContainerConfig,
-    PersistedContainerConfig, PreflightCheck,
+    ContainerConfigEntry, ContainerRuntimeTarget, CorrectionOutcome, DiagnosableContainerConfig,
+    EnvironmentLiveness, EnvironmentStateDir, PersistedContainerConfig, PreflightCheck,
+    RuntimeContainer,
 };
-use crate::domain::environment_registry::EnvironmentRecord;
+use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentStatus};
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -69,6 +70,23 @@ pub trait HostedSwarmRunObservation: Send + Sync {
         record: &'a EnvironmentRecord,
         hosted: &'a HostedSwarmRun,
     ) -> PortFuture<'a, Result<CoordinatorLoss, String>>;
+}
+
+/// The swarm run a checkout hosts, read synchronously and without a
+/// session (round 4 M1, #2033): what [`HostedSwarmRunObservation`] learns
+/// for the finalizer, for the startup restore and the CLI collector —
+/// which run without a runtime and must judge a state directory the
+/// registry knows nothing about. Read-only: nothing here records a loss.
+pub trait HostedSwarmRunInspection: Send + Sync {
+    /// The run `record`'s checkout hosts (its advertised checkout, else
+    /// its workspace probed the way the observation port probes it).
+    fn inspect_hosted_run(&self, record: &EnvironmentRecord) -> SwarmRunObservation;
+
+    /// The run hosted below `state_dir` — an environment directory laid
+    /// out by the shipped scripts (`<state_dir>/workspace[/repo]`) that no
+    /// record names. The adapter owns the layout; a directory hosting no
+    /// readable store is `NoStore`.
+    fn inspect_hosted_run_at(&self, state_dir: &Path) -> SwarmRunObservation;
 }
 
 /// How one member's shutdown was settled by the subagent capability.
@@ -166,6 +184,75 @@ pub trait ContainerConfigLookup: Send + Sync {
 pub trait ContainerRuntimePreflight: Send + Sync {
     fn preflight(&self, config: &DiagnosableContainerConfig)
     -> Result<Vec<PreflightCheck>, String>;
+}
+
+// ─── Durable environments (#2024 S4d) ────────────────────────────────────────
+
+/// The durable registry of one base directory: every session sharing the
+/// directory allocates its refs and writes its records here, so a `C*` ref
+/// is unique across sessions and outlives the harness that minted it.
+/// Members are never stored: they belong to the session that launched
+/// them. Every operation is synchronous — a record write is small and must
+/// have landed before the launch that committed it returns.
+pub trait EnvironmentRegistryStore: Send + Sync {
+    /// The next never-reused ref number, allocated under an exclusive hold
+    /// so two sessions never receive the same one.
+    fn allocate_ref(&self) -> Result<u64, String>;
+    /// Every record on file, in ref order.
+    fn load(&self) -> Result<Vec<EnvironmentRecord>, String>;
+    /// Write `record` under its ref, replacing what was there.
+    fn record(&self, record: &EnvironmentRecord) -> Result<(), String>;
+    /// Write `record` only if the record on file still has `expected`
+    /// status (read and written under the exclusive hold): a restore's
+    /// correction must never revert what another session did meanwhile.
+    fn correct(
+        &self,
+        record: &EnvironmentRecord,
+        expected: &EnvironmentStatus,
+    ) -> Result<CorrectionOutcome, String>;
+    /// Remove the record under `environment_ref` (a rolled-back create).
+    fn forget(&self, environment_ref: &str) -> Result<(), String>;
+}
+
+/// The runtime reality behind a record: its container's liveness through
+/// the retained `inspect` argv, and its retained `cleanup`. Synchronous
+/// (bounded scripts) so a startup restore and the CLI collector can ask
+/// without a runtime.
+pub trait EnvironmentProcess: Send + Sync {
+    fn observe(&self, record: &EnvironmentRecord) -> EnvironmentLiveness;
+    /// Run the retained `cleanup` once; `Err` carries the script's account.
+    fn cleanup(&self, record: &EnvironmentRecord) -> Result<(), String>;
+}
+
+/// The host's inventory of environments outside any registry, through a
+/// container config's own scripts (the harness knows no runtime): every
+/// environment the runtime knows (`inspect --list`), the state
+/// directories under a state root, and the removal of one environment by
+/// id (the config's `cleanup`, which takes the container and the state
+/// dir down together).
+pub trait ContainerRuntimeInventory: Send + Sync {
+    fn containers(
+        &self,
+        config: &DiagnosableContainerConfig,
+    ) -> Result<Vec<RuntimeContainer>, String>;
+    /// One environment's liveness through the config's `inspect` argv
+    /// given its id — the authority for a state directory, whatever the
+    /// listing labelled.
+    fn inspect(
+        &self,
+        config: &DiagnosableContainerConfig,
+        environment_id: &str,
+    ) -> EnvironmentLiveness;
+    fn environment_dirs(&self, root: &Path) -> Result<Vec<EnvironmentStateDir>, String>;
+    /// The host's canonical form of a state root (symlinks resolved), so
+    /// two spellings of one directory compare equal (round 3 M1, #2033);
+    /// a root the host cannot resolve is its own canonical form.
+    fn canonical_root(&self, root: &Path) -> std::path::PathBuf;
+    fn remove(
+        &self,
+        config: &DiagnosableContainerConfig,
+        environment_id: &str,
+    ) -> Result<(), String>;
 }
 
 // ─── Container-config discovery (#2024 S4c) ─────────────────────────────────

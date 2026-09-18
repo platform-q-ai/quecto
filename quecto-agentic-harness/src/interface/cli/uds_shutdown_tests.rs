@@ -45,7 +45,7 @@ fn environment_with_kill_script(
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     let registry = EnvironmentRegistry::new();
-    let env_ref = registry.mint_ref();
+    let env_ref = registry.mint_ref().unwrap();
     registry.commit(EnvironmentRecord {
         environment_ref: env_ref.clone(),
         environment_id: "env-termination".to_string(),
@@ -62,6 +62,9 @@ fn environment_with_kill_script(
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     });
     (registry, env_ref)
 }

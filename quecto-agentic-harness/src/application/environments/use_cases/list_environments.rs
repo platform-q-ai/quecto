@@ -22,6 +22,23 @@ impl ListEnvironmentsQuery {
         self.executions.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Why the inventory may be incomplete (round 2 F-B, #2033): the
+    /// durable store could not be read, so only what this session created
+    /// is listed. One line for the caller's diagnostics; none when the
+    /// store read cleanly — or reads cleanly now (round 3 L2): asking
+    /// retries the read, so a repaired document is seen and seeded.
+    pub fn diagnostics(&self) -> Vec<String> {
+        self.registry
+            .read_error()
+            .map(|error| {
+                format!(
+                    "registry unreadable: {error}; only environments this session created are listed"
+                )
+            })
+            .into_iter()
+            .collect()
+    }
+
     /// Returns a detached snapshot in the registry's existing iteration order.
     pub fn execute(&self) -> Vec<EnvironmentRecord> {
         #[cfg(test)]

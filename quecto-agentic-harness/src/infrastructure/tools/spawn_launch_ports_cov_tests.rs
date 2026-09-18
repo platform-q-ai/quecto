@@ -101,7 +101,7 @@ async fn ports_ready_rollback_prompt_uncommit_and_success_paths() {
 #[tokio::test]
 async fn success_names_the_container_config_and_relays_the_selection_diagnostics() {
     let tool = tool();
-    let env_ref = tool.environment_registry.mint_ref();
+    let env_ref = tool.environment_registry.mint_ref().unwrap();
     tool.environment_registry
         .commit(crate::domain::environment_registry::EnvironmentRecord {
             environment_ref: env_ref.clone(),
@@ -119,6 +119,9 @@ async fn success_names_the_container_config_and_relays_the_selection_diagnostics
             status: crate::domain::environment_registry::EnvironmentStatus::Running,
             metadata: serde_json::json!({}),
             last_error: None,
+            origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+            created_by: String::new(),
+            created_at: None,
         });
     let mut ports = SpawnLaunchPorts::new(&tool);
     let identity = ports.allocate_identity(&config()).unwrap();
@@ -160,7 +163,7 @@ async fn success_names_the_container_config_and_relays_the_selection_diagnostics
 async fn register_into_a_stopped_environment_fails_and_unregisters() {
     let (btx, mut brx) = tokio::sync::broadcast::channel::<String>(8);
     let tool = tool().with_event_forwarding(Some(btx), None);
-    let env_ref = tool.environment_registry.mint_ref();
+    let env_ref = tool.environment_registry.mint_ref().unwrap();
     tool.environment_registry
         .commit(crate::domain::environment_registry::EnvironmentRecord {
             environment_ref: env_ref.clone(),
@@ -178,6 +181,9 @@ async fn register_into_a_stopped_environment_fails_and_unregisters() {
             status: crate::domain::environment_registry::EnvironmentStatus::Running,
             metadata: serde_json::json!({}),
             last_error: None,
+            origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+            created_by: String::new(),
+            created_at: None,
         });
     let claim = tool.environment_registry.begin_kill(&env_ref).unwrap();
     tool.environment_registry.complete_kill(claim);

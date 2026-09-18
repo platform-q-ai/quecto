@@ -331,6 +331,9 @@ if [ -n "$admission_dir" ]; then
 fi
 
 env_dir="$(mktemp -d "$state_dir/env-XXXXXXXXXX")" || die "failed to create environment dir under $state_dir"
+# The resolved state root travels on the container as a label so
+# `inspect --list` (#2024 S4d) can list this root's containers alone.
+state_root="$(cd "$state_dir" && pwd -P)"
 environment_id="$(basename "$env_dir")"
 container="quecto-$environment_id"
 # Rollback on any later failure: remove partial state AND any container we
@@ -500,12 +503,14 @@ if [ -n "$secret_env_file" ]; then
   # child as the container's PID 1. Requires /bin/sh in the image.
   "$cli" run --pull=never -d --name "$container" \
     --label "quecto.environment_id=$environment_id" \
+    --label "quecto.state_dir=$state_root" \
     "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
     -w "$child_cwd" \
     "$image" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@" >/dev/null
 else
   "$cli" run --pull=never -d --name "$container" \
     --label "quecto.environment_id=$environment_id" \
+    --label "quecto.state_dir=$state_root" \
     "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
     -w "$child_cwd" \
     "$image" "$@" >/dev/null

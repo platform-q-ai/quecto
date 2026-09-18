@@ -38,6 +38,9 @@ pub(super) fn test_record(env_ref: &str, env_id: &str) -> EnvironmentRecord {
         status: crate::domain::environment_registry::EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     }
 }
 

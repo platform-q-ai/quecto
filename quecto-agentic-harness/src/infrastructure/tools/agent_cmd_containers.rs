@@ -61,7 +61,7 @@ pub(super) async fn execute_container_command(
     }
     match args.get("command").and_then(|v| v.as_str()) {
         Some("get_containers") => match list_environments {
-            Some(query) => encode_listing(query.execute()),
+            Some(query) => encode_listing(query.execute(), query.diagnostics()),
             None => error("environment listing is not available in this session".to_string()),
         },
         Some("get_container_configs") => match list_container_configs {
@@ -139,7 +139,10 @@ fn kill_container_result_json(killed: &KilledEnvironment) -> serde_json::Value {
     result
 }
 
-fn encode_listing(records: Vec<EnvironmentRecord>) -> ToolResult {
+/// `{"containers":[..]}`, plus `"diagnostics":[..]` when the inventory
+/// may be incomplete (round 2 F-B, #2033: the durable registry could not be
+/// read, so the model is told rather than shown an empty fleet).
+fn encode_listing(records: Vec<EnvironmentRecord>, diagnostics: Vec<String>) -> ToolResult {
     let containers: Vec<serde_json::Value> = records
         .iter()
         .map(|record| {
@@ -153,11 +156,22 @@ fn encode_listing(records: Vec<EnvironmentRecord>) -> ToolResult {
                 "members": record.members,
                 "metadata": record.metadata,
                 "last_error": record.last_error,
+                // Provenance (#2024 S4d): an environment another (or an
+                // earlier) session created, reachable here for a join or
+                // a kill but never torn down by a joiner's exit.
+                "restored": record.origin == crate::domain::environment_registry::EnvironmentOrigin::Restored,
+                "session": record.created_by,
+                "config": record.script_name,
+                "created_at": record.created_at,
             })
         })
         .collect();
+    let mut listing = serde_json::json!({"containers": containers});
+    if !diagnostics.is_empty() {
+        listing["diagnostics"] = serde_json::json!(diagnostics);
+    }
     ToolResult {
-        content: serde_json::json!({"containers": containers}).to_string(),
+        content: listing.to_string(),
         is_error: false,
         image_blocks: vec![],
         delivery_metadata: None,

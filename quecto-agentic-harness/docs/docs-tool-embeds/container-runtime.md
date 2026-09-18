@@ -27,7 +27,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
    ```
    Expected (`wrote` per file on a first run, `kept` on a re-run):
    ```
-   standard container bundle (version 1) at /repo/.quecto/containers/standard
+   standard container bundle (version 2) at /repo/.quecto/containers/standard
      wrote  /repo/.quecto/containers/standard/Containerfile
      wrote  /repo/.quecto/containers/standard/scripts/create.sh
      wrote  … exec.sh, inspect.sh, kill.sh
@@ -47,7 +47,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
    ```
    Expected: the last line is `Successfully tagged localhost/quecto-box:local` (docker: `naming to docker.io/library/quecto-box:local`). A docker-only host runs the same command with `docker`: the scripts drive whichever runtime the doctor's `runtime-cli` line names. A project that needs a toolchain derives `FROM quecto-box:local` and passes `--image <tag>` to init.
 3. **Use** — from an agent started in this repository:
-   `spawn {"agent_id":"probe","task":"run pwd and git log -1 --oneline, then exit","container":true}` → the result names `environment_ref=C1 container_config=standard`; `agent_cmd {"agent_id":"*","command":"get_containers"}` lists it `running` with the repository; `agent_cmd {"agent_id":"*","command":"kill_container","ref":"C1"}` ends it (its members are terminated, the config's kill runs once). When the last member of an ordinary environment exits it tears itself down; a swarm container is `retained` until `kill_container`.
+   `spawn {"agent_id":"probe","task":"run pwd and git log -1 --oneline, then exit","container":true}` → the result names `environment_ref=C1 container_config=standard`; `agent_cmd {"agent_id":"*","command":"get_containers"}` lists it `running` with the repository; `agent_cmd {"agent_id":"*","command":"kill_container","ref":"C1"}` ends it (its members are terminated, the config's kill runs once; from the shell, `quecto container kill C1`). When the last member of an ordinary environment exits it tears itself down; a swarm container is `retained` until `kill_container` / `quecto container kill`.
 
 ## Verify
 
@@ -59,7 +59,7 @@ Expected (exit 0; exit 1 — last line `not ready: …` — while any line is no
 
 ```
 standard container at /repo/.quecto/containers/standard
-  assets:  present (5 of 5, version 1)
+  assets:  present (5 of 5, version 2)
   config:  standard (default, overlay) in the effective configuration; --repo https://github.com/org/app.git
   trust:   trusted (the repo-local overlay is applied)
   image:   image quecto-box:local is present
@@ -94,7 +94,7 @@ rm -r .quecto/containers/standard
 podman rmi quecto-box:local                              # optional: the image
 ```
 
-Running environments are unaffected until killed (`kill_container`, or `podman rm -f quecto-env-<id>`). Other repositories are never affected: the overlay is read from the working directory only.
+Running environments are unaffected until killed (`kill_container`, or `quecto container kill <ref|name>` from the shell; `quecto container gc` removes exited leftovers). Other repositories are never affected: the overlay is read from the working directory only.
 
 ## If it fails
 
@@ -126,8 +126,50 @@ The comparison is against *this binary's* bundle, so after upgrading quecto ever
 ## How to find configs and refs
 
 - **Which configs exist for this checkout** (global file plus the trusted overlay): the `spawn` tool description carries one line — `Available container configs: standard (default, repo-bound), quecto (global), …` (`repo-bound` = declared by this repository's overlay; `+N more` folds a long list; `(repo overlay untrusted — run quecto config trust)` means `container: true` is refused until then). Live detail: `agent_cmd {"agent_id":"*","command":"get_container_configs"}` → `{"container_configs":[{"name","default","source":"overlay"|"global","repository","problem","joinable"}],"overlay_withheld":bool,"diagnostics":[…]}` — the `container: true` default first; `repository` is what a new container clones (`null` = sandbox). Operators: `quecto config get --effective container_configs`.
-- **Which environments are running** (for `{"mode":"existing"}` joins and `kill_container`): `agent_cmd {"agent_id":"*","command":"get_containers"}` → `containers[]` with `ref` (`C1`, session-scoped), `name`, `status`, `workspace`, `repository`, `members`. A spawn result names its ref and config: `environment_ref=C1 container_config=<name>`.
+- **Which environments are running** (for `{"mode":"existing"}` joins and `kill_container`): `agent_cmd {"agent_id":"*","command":"get_containers"}` → `containers[]` with `ref` (`C1`, durable per base dir, never reused), `name`, `status`, `workspace`, `repository`, `members`. A spawn result names its ref and config: `environment_ref=C1 container_config=<name>`.
 - **What a new container is**: a fresh clone of the config's `--repo` at its default branch. Your working tree, branch and uncommitted changes are not inside; push a branch and tell the child to fetch/checkout it.
+
+## Environments from earlier sessions
+
+Refs and names are durable per base dir (`<base_dir>/environments.json`):
+a container created by an earlier or concurrent session survives a
+restart and appears in `get_containers` with `restored: true` and
+`session` (its creator), status `empty` (its members are not reachable
+here), `retained`, or `stopped` (its container was gone when this session
+started; other sessions' later changes show after a restart). Join one
+that is `empty`/`retained` with `container: {"mode":"existing","ref":"C1"}`
+(your joiner leaving never tears it down) — `empty` means its creating
+session is still alive (a member harness exits with its parent, and the
+container with it), so this is the concurrent-session case; stop it with `kill_container`
+(`ref` or `name`) — that cuts off any live members of its creating
+session. A `name` still naming a live environment is refused at create.
+From the shell:
+
+```
+quecto container ls [--all]        # live environments (--all: stopped too)
+quecto container kill <ref|name>   # retained kill, record → stopped
+quecto container gc --dry-run      # orphans of this config: container gone/exited AND no record or a stopped one
+quecto container gc [--name <config>]   # remove them (the config's inspect / inspect --list / cleanup)
+```
+
+`gc` keeps a `running`/`cleanup-failed` record, a `retained` one
+whatever its container's state (a retained swarm box has exited by
+design; only `container kill` ends it), a state dir whose container runs
+or cannot be checked, a directory younger than 15 minutes without a
+container (a create in flight), and any stopped or unrecorded directory
+whose checkout still hosts a swarm run that has not ended (`hosts swarm
+run <id> (<status>)`; the board is the run's — kill explicitly, or end
+the run, to collect); it judges the config's `--state-dir` only (a
+record's own retained cleanup may name one more root, for that record
+alone), and `--dry-run` writes nothing — not even to `environments.json`.
+It reports what it removed, kept and why. A `running` record whose box
+exited with an unfinished swarm run inside (the master died before its
+coordinator) is restored `retained`, never `stopped`. A container no
+record names (a harness died between create and journal) exits with its
+parent; while it runs, end it by hand: `podman rm -f
+quecto-<environment-id>`. Clean up after yourself: kill what you created
+when done, and run `quecto container gc --dry-run` when `ls` shows
+stopped leftovers.
 
 ## See also
 

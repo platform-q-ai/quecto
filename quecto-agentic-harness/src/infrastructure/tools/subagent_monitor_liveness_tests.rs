@@ -46,7 +46,7 @@ fn write_inspect_script_with_body(dir: &std::path::Path, body: &str) -> std::pat
 
 fn environment_with_inspect(inspect: Vec<String>) -> (EnvironmentRegistry, String) {
     let environments = EnvironmentRegistry::new();
-    let env_ref = environments.mint_ref();
+    let env_ref = environments.mint_ref().unwrap();
     environments.commit(EnvironmentRecord {
         environment_ref: env_ref.clone(),
         environment_id: "env-live".into(),
@@ -63,6 +63,9 @@ fn environment_with_inspect(inspect: Vec<String>) -> (EnvironmentRegistry, Strin
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     });
     (environments, env_ref)
 }

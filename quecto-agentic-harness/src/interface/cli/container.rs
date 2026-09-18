@@ -4,8 +4,9 @@
 //! check with its remedy. Exit 1 when any check failed or the diagnosis
 //! could not be made. `quecto container init|status` (#2024 S4e) parse
 //! and present the standard bundle's initialisation and standing the
-//! same way (`container_setup.rs`). The interface resolves no config and
-//! runs no script itself.
+//! same way (`container_setup.rs`); `quecto container ls|kill|gc` (#2024
+//! S4d) live in `container_inventory.rs` over the composed inventory
+//! handles. The interface resolves no config and runs no script itself.
 
 use super::CliContext;
 use crate::application::configuration::dto::ConfigSelection;
@@ -24,6 +25,27 @@ use crate::domain::redaction::redact_url_userinfo;
 pub type ContainerDoctorBuilder =
     fn(&std::path::Path, &ConfigSelection) -> std::sync::Arc<DiagnoseContainerRuntime>;
 
+/// Composition's builder of an agent run's durable environment registry
+/// (#2024 S4d): `(base_dir, session key, seed)` — seeded with the base
+/// directory's records for a top-level session, journalling only for a
+/// spawned child.
+pub type EnvironmentRegistryBuilder =
+    fn(&std::path::Path, &str, bool) -> crate::domain::environment_registry::EnvironmentRegistry;
+
+/// Composition's builder of the `container ls|kill|gc` handles (#2024
+/// S4d) over a registry restored from the base directory.
+/// The inventory handles over a registry restored from the base directory
+/// in the given mode (round 3 H1, #2033): correcting for `ls|kill|gc`,
+/// observing for `gc --dry-run`, which must leave the document untouched.
+pub type ContainerInventoryBuilder = fn(
+    &std::path::Path,
+    &ConfigSelection,
+    crate::application::environments::dto::RestoreMode,
+) -> super::container_handles::ContainerInventoryHandles;
+
+const USAGE: &str = "usage: quecto container doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
+pub(super) const TOP_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\nusage: quecto container status [--project <abs dir>]\nusage: quecto container doctor [--name <config>]\nusage: quecto container ls [--all]\nusage: quecto container kill <ref|name>\nusage: quecto container gc [--dry-run] [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
+
 /// Composition's builder of `quecto container init` (#2024 S4e): the
 /// standard bundle materialised below the project and the overlay entry
 /// written through the configuration capability's one write path.
@@ -33,9 +55,6 @@ pub type ContainerInitBuilder =
 /// Composition's builder of `quecto container status` (#2024 S4e).
 pub type ContainerStatusBuilder =
     fn(&std::path::Path, &ConfigSelection) -> std::sync::Arc<ContainerStatus>;
-
-const USAGE: &str = "usage: quecto container doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
-const TOP_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\nusage: quecto container status [--project <abs dir>]\nusage: quecto container doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
 
 pub(crate) fn cmd_container(
     ctx: &CliContext,
@@ -47,6 +66,9 @@ pub(crate) fn cmd_container(
         Some("doctor") => cmd_doctor(ctx, &args[1..], stdout, stderr),
         Some("init") => super::container_setup::cmd_init(ctx, &args[1..], stdout, stderr),
         Some("status") => super::container_setup::cmd_status(ctx, &args[1..], stdout, stderr),
+        Some("ls") => super::container_inventory::cmd_ls(ctx, &args[1..], stdout, stderr),
+        Some("kill") => super::container_inventory::cmd_kill(ctx, &args[1..], stdout, stderr),
+        Some("gc") => super::container_inventory::cmd_gc(ctx, &args[1..], stdout, stderr),
         _ => {
             stderr.push_str(TOP_USAGE);
             1

@@ -205,6 +205,10 @@ pub struct AgentControlToolDeps {
     /// containers.
     pub container_config_selection:
         Option<Arc<crate::application::subagents::use_cases::SelectContainerConfig>>,
+    /// Composition's durable environment registry (#2024 S4d), restored
+    /// from the base directory; `None` in unit rigs, which then run over
+    /// a fresh in-memory registry.
+    pub environment_registry: Option<crate::domain::environment_registry::EnvironmentRegistry>,
     /// Composition's container-config listing (#2024 S4c) over the same
     /// layers: the spawn description's roster line and `agent_cmd
     /// get_container_configs` read it; `None` lists nothing.
@@ -236,7 +240,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
     let harness_lifecycle =
         crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle();
     let (notification_tx, notification_rx) = tokio::sync::mpsc::channel(64);
-    let environment_registry = crate::domain::environment_registry::EnvironmentRegistry::new();
+    let environment_registry = deps.environment_registry.unwrap_or_default();
 
     let mut spawn =
         crate::infrastructure::tools::spawn::SpawnTool::with_base_dir(Vec::new(), deps.base_dir)

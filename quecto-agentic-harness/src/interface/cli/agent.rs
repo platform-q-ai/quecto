@@ -206,6 +206,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         configuration: None,
         admission: None,
         container_configs: None,
+        environment_registry: None,
         stdin_is_tty: false,
         admission_context,
         parent_control,

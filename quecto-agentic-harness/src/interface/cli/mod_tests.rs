@@ -49,6 +49,8 @@ fn test_composition() -> CliComposition {
         container_configs:
             crate::composition::container_configs::build_agent_container_config_handles,
         container_doctor: crate::composition::environments::build_container_doctor,
+        environment_registry: quecto::composition::environments::build_environment_registry,
+        container_inventory: quecto::composition::environments::build_container_inventory,
         container_init: crate::composition::standard_container::build_standard_container_init,
         container_status: crate::composition::standard_container::build_container_status,
     }

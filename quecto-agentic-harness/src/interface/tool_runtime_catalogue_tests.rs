@@ -57,6 +57,7 @@ fn build_runtime_with_entrypoint(
         inherited_tool_policy: None,
         workflow: ToolRuntimeWorkflowPolicy::disabled(tmp.path(), Some(tmp.path())),
         stderr: &mut stderr,
+        environment_registry: None,
     })
     .expect("runtime should build")
 }

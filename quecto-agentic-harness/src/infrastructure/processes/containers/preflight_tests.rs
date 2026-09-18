@@ -13,6 +13,8 @@ fn config(create: Vec<String>) -> DiagnosableContainerConfig {
     DiagnosableContainerConfig {
         name: "official".into(),
         create,
+        inspect: vec![],
+        cleanup: vec![],
         diagnostics: vec![],
     }
 }

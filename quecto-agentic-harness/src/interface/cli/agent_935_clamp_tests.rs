@@ -63,6 +63,7 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
             crate::composition::container_configs::build_agent_container_config_handles,
         ),
         stdin_is_tty: false,
+        environment_registry: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");

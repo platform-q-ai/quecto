@@ -132,7 +132,7 @@ impl EnvironmentMemberShutdown for FakeMembers {
 }
 
 fn committed_env(reg: &EnvironmentRegistry, members: &[&str]) -> String {
-    let env_ref = reg.mint_ref();
+    let env_ref = reg.mint_ref().unwrap();
     reg.commit(EnvironmentRecord {
         environment_ref: env_ref.clone(),
         environment_id: format!("runtime-{env_ref}"),
@@ -149,6 +149,9 @@ fn committed_env(reg: &EnvironmentRegistry, members: &[&str]) -> String {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     });
     env_ref
 }

@@ -124,6 +124,12 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         return Err("agent: retained-context capability not composed".to_string());
     };
     let retention = build_retention(base_dir);
+    // The durable environment registry (#2024 S4d): restored from the base
+    // directory for a top-level session; a spawned child journals its own
+    // creates without inheriting the fleet.
+    let environment_registry = flags
+        .environment_registry
+        .map(|build| build(base_dir, &session_key, !flags.spawned));
     let runtime = crate::interface::shared::build_tool_runtime(
         crate::interface::shared::ToolRuntimeBuildArgs {
             swarm_context: crate::interface::tool_runtime::swarm_context(),
@@ -147,6 +153,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             parent_config_path: Some(config_path.to_path_buf()),
             effort_control: Some(effort_control),
             container_configs: Some(container_configs),
+            environment_registry,
             kill_tool: flags.kill_tool,
             disabled_tools: &flags.disabled_tools,
             inherited_tool_policy: flags.inherited_tool_policy.clone(),

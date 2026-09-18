@@ -44,7 +44,7 @@ fn use_case(registry: EnvironmentRegistry) -> Arc<KillEnvironment> {
 
 fn committed_registry() -> EnvironmentRegistry {
     let registry = EnvironmentRegistry::new();
-    let env_ref = registry.mint_ref();
+    let env_ref = registry.mint_ref().unwrap();
     registry.commit(EnvironmentRecord {
         environment_ref: env_ref,
         environment_id: "env-tool".into(),
@@ -61,6 +61,9 @@ fn committed_registry() -> EnvironmentRegistry {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     });
     registry
 }
@@ -136,6 +139,11 @@ fn listing_and_kill_round_trip_through_the_use_case() {
     let parsed: serde_json::Value = serde_json::from_str(&listing.content).unwrap();
     assert_eq!(parsed["containers"][0]["ref"], "C1");
     assert_eq!(parsed["containers"][0]["status"], "running");
+    // Provenance (#2024 S4d): created here, by this (session-less) registry.
+    assert_eq!(parsed["containers"][0]["restored"], false);
+    assert_eq!(parsed["containers"][0]["session"], "");
+    assert_eq!(parsed["containers"][0]["config"], "default");
+    assert!(parsed["containers"][0]["created_at"].is_null());
 
     let killed = block_on(execute_container_command(
         None,
@@ -224,7 +232,7 @@ fn public_listing_query_only_preserves_complete_wire_objects_and_all_statuses() 
     .enumerate()
     {
         let mut record = committed_registry().get("C1").unwrap();
-        record.environment_ref = registry.mint_ref();
+        record.environment_ref = registry.mint_ref().unwrap();
         record.status = status;
         record.name = (index % 2 == 0).then(|| format!("name-{index}"));
         record.repository = format!("https://example.test/repo-{index}.git");
@@ -244,6 +252,10 @@ fn public_listing_query_only_preserves_complete_wire_objects_and_all_statuses() 
             "members": if index == 1 { Vec::<String>::new() } else { vec!["impl-1517".into(), "rev-a".into()] },
             "metadata": {"index": index, "nested": {"ready": true}},
             "last_error": record.last_error,
+            "restored": false,
+            "session": "",
+            "config": "default",
+            "created_at": null,
         }));
         registry.commit(record);
     }
@@ -304,6 +316,77 @@ fn public_listing_rejection_matrix_never_calls_query() {
         "agent_cmd error: environment listing is not available in this session"
     );
     assert_eq!(query.execution_count(), 0);
+}
+
+#[test]
+fn get_containers_marks_restored_environments_with_their_creating_session() {
+    let registry = EnvironmentRegistry::new();
+    let mut record = committed_registry().get("C1").unwrap();
+    record.created_by = "cli:earlier".into();
+    record.created_at = Some(1_700_000_000);
+    registry.restore(vec![record]);
+    let query = Arc::new(ListEnvironmentsQuery::new(registry));
+    let listing = block_on(execute_container_command(
+        Some(&query),
+        None,
+        None,
+        &serde_json::json!({"agent_id":"*","command":"get_containers"}),
+    ));
+    let parsed: serde_json::Value = serde_json::from_str(&listing.content).unwrap();
+    let entry = &parsed["containers"][0];
+    assert_eq!(entry["restored"], true);
+    assert_eq!(entry["session"], "cli:earlier");
+    assert_eq!(entry["created_at"], 1_700_000_000);
+    assert_eq!(
+        entry["status"], "empty",
+        "members of another session are not listed"
+    );
+}
+
+/// Round 2 F-B (#2033): when the durable registry could not be read the
+/// model is told so in `diagnostics` — an empty fleet would be a lie — and
+/// a kill of a ref the session could not have loaded names the read error.
+#[test]
+fn get_containers_carries_the_registry_read_error_as_a_diagnostic() {
+    use crate::domain::environment_registry::EnvironmentJournal;
+    let journal = EnvironmentJournal {
+        allocate_ref: Arc::new(|| Ok(1)),
+        recorded: Arc::new(|_, _| crate::domain::environment_registry::JournalWrite::Written),
+        forgotten: Arc::new(|_| {}),
+        reload: Arc::new(|| Err("environments.json: corrupt".into())),
+    };
+    let registry = EnvironmentRegistry::unreadable(journal, "s", "environments.json: corrupt");
+    let query = Arc::new(ListEnvironmentsQuery::new(registry.clone()));
+    let kill_use_case = use_case(registry);
+    let listing = block_on(execute_container_command(
+        Some(&query),
+        Some(&kill_use_case),
+        None,
+        &serde_json::json!({"agent_id":"*","command":"get_containers"}),
+    ));
+    assert!(!listing.is_error, "{}", listing.content);
+    let parsed: serde_json::Value = serde_json::from_str(&listing.content).unwrap();
+    assert_eq!(parsed["containers"], serde_json::json!([]));
+    assert_eq!(
+        parsed["diagnostics"],
+        serde_json::json!([
+            "registry unreadable: environments.json: corrupt; only environments this session created are listed"
+        ])
+    );
+    let kill = block_on(execute_container_command(
+        Some(&query),
+        Some(&kill_use_case),
+        None,
+        &serde_json::json!({"agent_id":"*","command":"kill_container","ref":"C7"}),
+    ));
+    assert!(kill.is_error);
+    assert!(
+        kill.content
+            .contains("registry unreadable: environments.json: corrupt"),
+        "{}",
+        kill.content
+    );
+    assert!(!kill.content.contains("unknown"), "{}", kill.content);
 }
 
 struct FixedRoster(crate::application::environments::ports::ContainerConfigRosterReport);

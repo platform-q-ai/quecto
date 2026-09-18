@@ -758,6 +758,17 @@ class WorkbenchBehavior(unittest.TestCase):
             fresh.stop('cancelled', 'nothing to cancel')
         self.assertEqual(fresh._status()['status'], 'setup')
 
+    def test_status_and_loss_receipts_name_the_run(self):
+        # The supervising session names the run it keeps a box for (#2033
+        # round 4 M1): both harness-only receipts carry the run's id.
+        run_id = self.parent.summary()['id']
+        self.assertTrue(run_id)
+        self.assertEqual(self.parent._status()['id'], run_id)
+        self.assertEqual(self.parent._lose_coordinator()['id'], run_id)
+        fresh = Workbench(str(self.root / 'fresh-id.sqlite'), str(self.root), 'boot')
+        fresh._bootstrap(1, 'start-b', '/tmp/b.sock')
+        self.assertTrue(fresh._status()['id'], 'the placeholder run has an id too')
+
     def test_a_lost_coordinator_ends_the_run_as_a_failed_pause_even_while_paused(self):
         self.parent.pause('hold')
         self.worker._confirmed_dead('coordinator')

@@ -55,13 +55,15 @@ Feature: Shared script-managed environments
     And scenario teardown should leave no fixture processes running
 
   @done @container-env
-  Scenario: Ambiguous environment name fails without attempting a join
+  Scenario: A name that still names a live environment is refused at create, never made ambiguous
     Given shared script-managed subagent spawning is available
     And script-managed child "impl-dup-a-slice2" is running in a shared environment named "dup-env" with task "IMPL_DUP_A_MARKER"
-    And script-managed child "impl-dup-b-slice2" is running in a shared environment named "dup-env" with task "IMPL_DUP_B_MARKER"
+    When I spawn script-managed subagent "impl-dup-b-slice2" into a new shared environment named "dup-env" with task "IMPL_DUP_B_MARKER"
+    Then the spawn result should fail because environment name "dup-env" already names "C1"
+    And the script-managed runtime should have created exactly 1 environment
     When I spawn read-only subagent "observer-dup-slice2" into existing environment name "dup-env" with task "OBSERVER_DUP_MARKER"
-    Then the spawn result should fail because environment name "dup-env" is ambiguous
-    And the script-managed runtime should have joined an existing environment exactly 0 times
+    Then the spawn result should not be an error
+    And the spawn result should include environment reference "C1"
     And scenario teardown should leave no fixture processes running
 
   @done @container-env

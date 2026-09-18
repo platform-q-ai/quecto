@@ -382,7 +382,7 @@ printf '{{"environment_id":"env-contract","workspace_path":"%s","metadata":{{}},
         assert!(committed_pids(&tool).is_empty());
         assert!(environments.entries().is_empty());
         // The failed launch still consumed its ref: refs are never reused.
-        assert_eq!(environments.mint_ref(), "C2");
+        assert_eq!(environments.mint_ref().unwrap(), "C2");
     }
 }
 

@@ -71,6 +71,9 @@ pub(crate) struct AgentFlags {
     /// from CliContext; the spawn tool selects container configs through
     /// its selection and, with agent_cmd, lists them through its roster.
     pub(crate) container_configs: Option<crate::interface::cli::ContainerConfigHandlesBuilder>,
+    /// Composition's durable environment registry builder (#2024 S4d),
+    /// from CliContext; the spawn tool commits to the registry it builds.
+    pub(crate) environment_registry: Option<crate::interface::cli::EnvironmentRegistryBuilder>,
     /// Whether stdin is a terminal (from CliContext): the only case in which
     /// an unrecorded overlay may be offered for trust at startup.
     pub(crate) stdin_is_tty: bool,
@@ -98,6 +101,7 @@ impl AgentFlags {
         self.configuration = ctx.configuration;
         self.admission = ctx.admission;
         self.container_configs = ctx.container_configs;
+        self.environment_registry = ctx.environment_registry;
         self.stdin_is_tty = ctx.stdin_is_tty.unwrap_or(false);
     }
 }

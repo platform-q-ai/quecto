@@ -61,6 +61,8 @@ mod container_config_lookup;
 mod container_config_persistence;
 #[path = "contracts/container_config_roster.rs"]
 mod container_config_roster;
+#[path = "contracts/container_runtime_inventory.rs"]
+mod container_runtime_inventory;
 #[path = "contracts/container_runtime_preflight.rs"]
 mod container_runtime_preflight;
 #[path = "contracts/container_script_integrity.rs"]
@@ -85,8 +87,12 @@ mod effort_runtime;
 mod effort_vocabulary_source;
 #[path = "contracts/environment_member_shutdown.rs"]
 mod environment_member_shutdown;
+#[path = "contracts/environment_process.rs"]
+mod environment_process;
 #[path = "contracts/environment_process_commands.rs"]
 mod environment_process_commands;
+#[path = "contracts/environment_registry_store.rs"]
+mod environment_registry_store;
 #[path = "contracts/extension.rs"]
 mod extension;
 #[path = "contracts/fleet_settlement.rs"]
@@ -95,6 +101,8 @@ mod fleet_settlement;
 mod fresh_session_identity_generator;
 #[path = "contracts/historical_roster_source.rs"]
 mod historical_roster_source;
+#[path = "contracts/hosted_swarm_run_inspection.rs"]
+mod hosted_swarm_run_inspection;
 #[path = "contracts/hosted_swarm_run_observation.rs"]
 mod hosted_swarm_run_observation;
 #[path = "contracts/llm_provider.rs"]

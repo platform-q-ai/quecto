@@ -10,8 +10,13 @@ mod config_loading;
 pub mod configuration_handles;
 mod container;
 pub mod container_config_handles;
-pub use container::{ContainerDoctorBuilder, ContainerInitBuilder, ContainerStatusBuilder};
+pub mod container_handles;
+mod container_inventory;
 mod container_setup;
+pub use container::{
+    ContainerDoctorBuilder, ContainerInitBuilder, ContainerInventoryBuilder,
+    ContainerStatusBuilder, EnvironmentRegistryBuilder,
+};
 mod help;
 mod models;
 pub mod protocol;
@@ -306,6 +311,14 @@ pub struct CliContext {
     /// Composition's container-doctor builder (#2024 S4b); `quecto
     /// container doctor` refuses to run without it.
     pub container_doctor: Option<ContainerDoctorBuilder>,
+    /// Composition's durable environment registry builder (#2024 S4d):
+    /// the registry an agent run's spawn tool commits to, restored from
+    /// and journalled through the base directory. `None` (unit rigs)
+    /// leaves the run with an in-memory registry.
+    pub environment_registry: Option<EnvironmentRegistryBuilder>,
+    /// Composition's container inventory builder (#2024 S4d); `quecto
+    /// container ls|kill|gc` refuse to run without it.
+    pub container_inventory: Option<ContainerInventoryBuilder>,
     /// Composition's standard-container builders (#2024 S4e); `quecto
     /// container init|status` refuse to run without them.
     pub container_init: Option<ContainerInitBuilder>,
@@ -386,6 +399,8 @@ pub struct CliComposition {
     pub tool_policy_persistence: ToolPolicyPersistenceBuilder,
     pub container_configs: ContainerConfigHandlesBuilder,
     pub container_doctor: ContainerDoctorBuilder,
+    pub environment_registry: EnvironmentRegistryBuilder,
+    pub container_inventory: ContainerInventoryBuilder,
     pub container_init: ContainerInitBuilder,
     pub container_status: ContainerStatusBuilder,
 }
@@ -418,6 +433,8 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         tool_policy_persistence: Some(composition.tool_policy_persistence),
         container_configs: Some(composition.container_configs),
         container_doctor: Some(composition.container_doctor),
+        environment_registry: Some(composition.environment_registry),
+        container_inventory: Some(composition.container_inventory),
         container_init: Some(composition.container_init),
         container_status: Some(composition.container_status),
         ..Default::default()

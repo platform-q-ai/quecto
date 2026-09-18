@@ -326,6 +326,10 @@ fn query_dependencies_allowed(content: &str) -> bool {
                     | "ListEnvironmentsQuery"
                     | "Self"
                     | "Vec"
+                    // The read-error diagnostic line (round 2 F-B, #2033)
+                    // is a formatted String, still over the registry alone.
+                    | "String"
+                    | "format"
                     | "Clone"
                     | "Debug"
                     | "registry"
@@ -440,6 +444,13 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "ContainerRuntimeTarget"
                     | "DiagnosableContainerConfig"
                     | "PreflightCheck"
+                    // The liveness and inventory adapters (#2024 S4d)
+                    // answer in the capability's own records.
+                    | "EnvironmentLiveness"
+                    | "EnvironmentStateDir"
+                    | "RuntimeContainer"
+                    // … and the registry store's conditional correction.
+                    | "CorrectionOutcome"
                     // Container-config discovery (#2024 S4c): the roster
                     // adapter builds the inventory entries in the
                     // capability's vocabulary; the spawn tool's roster line
@@ -4109,12 +4120,23 @@ fn catalogue_defaults_mapping_is_pure_and_implements_both_ports() {
 const ENVIRONMENT_PORTS: &[&str] = &[
     "EnvironmentProcessCommands",
     "HostedSwarmRunObservation",
+    // The same store read synchronously for the restore and the collector
+    // (round 4 M1, #2033): a box hosting an unfinished run is never
+    // relabelled stopped or collected.
+    "HostedSwarmRunInspection",
     "EnvironmentMemberShutdown",
     // Container-runtime diagnosis (#2024 S4b): the doctor's target
     // resolved through the launch policy's selection, and the create
     // script's own preflight run without creating an environment.
     "ContainerConfigLookup",
     "ContainerRuntimePreflight",
+    // Durable environments (#2024 S4d): the base directory's registry
+    // store (refs and records), the record's runtime reality through its
+    // retained scripts, and the host's container/state-dir inventory the
+    // collector reads and removes through.
+    "EnvironmentRegistryStore",
+    "EnvironmentProcess",
+    "ContainerRuntimeInventory",
     // Container-config discovery (#2024 S4c): the effective set of the
     // launching agent's checkout, each entry with the layer that declared
     // it, for `get_container_configs` and the spawn description's roster.
@@ -4196,6 +4218,7 @@ fn domain_holds_no_environment_use_case_or_effect_port() {
     );
     for path in [
         "src/domain/environment_registry.rs",
+        "src/domain/environment_registry_inspect.rs",
         "src/domain/environment_retention.rs",
     ] {
         let source = production_source(path);

@@ -657,6 +657,52 @@ fn then_env_unknown(world: &mut QuectoWorld, env_ref: String) {
     );
 }
 
+#[when(
+    expr = "I spawn script-managed subagent {string} into a new shared environment named {string} with task {string}"
+)]
+fn when_spawn_new_shared_named(
+    world: &mut QuectoWorld,
+    agent_id: String,
+    name: String,
+    task: String,
+) {
+    execute_env_spawn(
+        world,
+        &agent_id,
+        serde_json::json!({"agent_id":agent_id,"task":task,"container":{"mode":"new","name":name},"read_only":true}),
+    );
+}
+
+#[then(
+    expr = "the spawn result should fail because environment name {string} already names {string}"
+)]
+fn then_name_taken(world: &mut QuectoWorld, name: String, env_ref: String) {
+    let r = world.spawn_result.as_ref().unwrap();
+    assert!(
+        r.is_error
+            && r.content.contains(&format!(
+                "environment name '{name}' already names {env_ref}"
+            )),
+        "expected a name-taken refusal for {name}: {}",
+        r.content
+    );
+}
+
+#[then(
+    expr = "the spawn result should fail because environment name {string} already names more than one live environment"
+)]
+fn then_name_taken_twice(world: &mut QuectoWorld, name: String) {
+    let r = world.spawn_result.as_ref().unwrap();
+    assert!(
+        r.is_error
+            && r.content.contains(&format!(
+                "environment name '{name}' already names more than one live environment"
+            )),
+        "expected a name-taken refusal for {name}: {}",
+        r.content
+    );
+}
+
 #[then(expr = "the spawn result should fail because environment name {string} is ambiguous")]
 fn then_env_ambiguous(world: &mut QuectoWorld, name: String) {
     let r = world.spawn_result.as_ref().unwrap();

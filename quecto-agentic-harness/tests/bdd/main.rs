@@ -919,6 +919,11 @@ pub struct QuectoWorld {
     pub agent_workspaces: std::collections::HashMap<String, String>,
     /// Result of the last get_containers/kill_container command (#1369 slice 2)
     pub container_cmd_result: Option<ToolResult>,
+    /// The session key the persistent-environment rig runs as (#2024 S4d).
+    pub persist_session: Option<String>,
+    /// The durable registry document as a step noted it, for a later
+    /// byte-for-byte comparison (round 3 H1, #2033).
+    pub registry_snapshot: Option<Vec<u8>>,
     /// Members whose termination a scenario staged as owned by another
     /// path that never settles (#1939); released explicitly by a step.
     pub stalled_member_terminations: Vec<quecto::domain::subagent_teardown::DelegatedAgentIdentity>,
@@ -1431,6 +1436,10 @@ mod config_steps;
 mod container_discovery_steps;
 mod container_doctor_steps;
 mod container_mapping_steps;
+mod container_persistence_real_steps;
+mod container_persistence_round3_steps;
+mod container_persistence_round4_steps;
+mod container_persistence_steps;
 mod context_pruning_steps;
 mod delegated_subtree_steps;
 mod e2e_steps;

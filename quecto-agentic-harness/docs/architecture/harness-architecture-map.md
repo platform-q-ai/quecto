@@ -167,6 +167,42 @@ S4b lookup and preflight. `interface/cli/container_setup.rs` parses,
 invokes and presents; the CLI context carries the builders `main` hands
 in.
 
+Environments outlive sessions (#2024 S4d). The domain
+`EnvironmentRegistry` stays the pure aggregate but observes an optional
+`EnvironmentJournal` (closures the application installs — by the letter
+the domain then invokes I/O; it is the one deliberate exception, kept
+because the aggregate must report every transition in the order its lock
+established, and the closures are the application's, installed at
+composition, so the domain still names no store, file or runtime): refs
+are allocated through it (a journal that cannot allocate refuses the
+mint) and every transition is reported after the lock is released — a
+`Restored` record compare-and-set on the status the journal last held,
+so a joiner never reverts its creator's state; records carry their
+provenance (`origin` Created/Restored, `created_by`, `created_at`), and a
+joiner leaving a `Restored` record never claims the final-member kill. The environments capability's
+`use_cases/restore_registry.rs` builds the durable registry for a session
+over two capability-local ports — `EnvironmentRegistryStore` (adapted in
+`src/infrastructure/persistence/environment_registry_store.rs`:
+`<base_dir>/environments.json`, atomic, under the configuration writer's
+`flock`, members never stored) and `EnvironmentProcess` (adapted in
+`src/infrastructure/processes/containers/environment_process.rs` over the
+retained `inspect`/`cleanup` argv, shared with the async command adapter
+through `retained_scripts.rs`) — judging each record against the runtime
+(gone → `stopped`, unverifiable or `killing` → kept and reported). `use_cases/
+gc_orphaned_environments.rs` is `quecto container gc`: over the same
+registry, the doctor's `ContainerConfigLookup` (now also carrying the
+config's `inspect`/`cleanup` argv) and `ContainerRuntimeInventory` (adapted
+in `processes/containers/script_inventory.rs`: `inspect --list`, the state
+root's `env-*` directories, the config's `cleanup`) — the harness names no
+runtime; the scripts list and remove. `composition/environments.rs`
+`build_environment_registry` (handed to the CLI through
+`CliComposition.environment_registry`, seeded for a top-level session,
+journal-only for a spawned child) and `build_container_inventory` (the
+`ContainerInventoryHandles` the interface declares in
+`interface/cli/container_handles.rs`); `interface/cli/container_inventory.rs`
+parses `container ls|kill|gc` and presents. `agent_cmd get_containers`
+carries `restored`, `session`, `config`, `created_at`.
+
 ## Persistence and session recovery
 
 **Primary code:** session vocabulary in `src/domain/session.rs`,

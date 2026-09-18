@@ -108,6 +108,8 @@ fn config() -> DiagnosableContainerConfig {
     DiagnosableContainerConfig {
         name: "standard".into(),
         create: vec!["create".into()],
+        inspect: vec![],
+        cleanup: vec![],
         diagnostics: vec![],
     }
 }

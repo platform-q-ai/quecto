@@ -150,7 +150,7 @@ async fn cleanup_registered_once_stops_the_committed_environment_entry() {
     let script = cleanup_script(&log);
 
     let environments = EnvironmentRegistry::new();
-    let env_ref = environments.mint_ref();
+    let env_ref = environments.mint_ref().unwrap();
     environments.commit(EnvironmentRecord {
         environment_ref: env_ref.clone(),
         environment_id: "env-exit".to_string(),
@@ -167,6 +167,9 @@ async fn cleanup_registered_once_stops_the_committed_environment_entry() {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     });
 
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
@@ -229,6 +232,9 @@ fn committed_env_record(
         status: crate::domain::environment_registry::EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     }
 }
 
@@ -242,7 +248,7 @@ async fn final_joiner_exit_falls_back_to_the_record_retained_cleanup() {
     let script = cleanup_script(&log);
 
     let environments = crate::domain::environment_registry::EnvironmentRegistry::new();
-    let env_ref = environments.mint_ref();
+    let env_ref = environments.mint_ref().unwrap();
     environments.commit(committed_env_record(
         &env_ref,
         vec![],
@@ -327,7 +333,7 @@ async fn launch_rollback_runs_retained_cleanup_instead_of_kill() {
     };
 
     let environments = crate::domain::environment_registry::EnvironmentRegistry::new();
-    let env_ref = environments.mint_ref();
+    let env_ref = environments.mint_ref().unwrap();
     environments.commit(committed_env_record(
         &env_ref,
         vec!["/bin/sh".to_string(), kill.to_string_lossy().to_string()],
@@ -361,7 +367,7 @@ async fn owned_launch_rollback_discards_the_environment_record_entirely() {
     let cleanup = cleanup_script(&cleanup_log);
 
     let environments = crate::domain::environment_registry::EnvironmentRegistry::new();
-    let env_ref = environments.mint_ref();
+    let env_ref = environments.mint_ref().unwrap();
     environments.commit(committed_env_record(
         &env_ref,
         vec![],
@@ -385,7 +391,7 @@ async fn owned_launch_rollback_discards_the_environment_record_entirely() {
     // usable, matching pre-registration rollback. The ref stays consumed.
     assert!(environments.get(&env_ref).is_none());
     assert!(environments.entries().is_empty());
-    assert_eq!(environments.mint_ref(), "C2");
+    assert_eq!(environments.mint_ref().unwrap(), "C2");
 }
 
 fn logging_fail_script(log: &std::path::Path, dir: &std::path::Path) -> String {
@@ -420,7 +426,7 @@ async fn parent_kill_members_are_not_inspected_and_no_error_sticks() {
     let inspect = logging_fail_script(&inspect_log, temp.path());
 
     let environments = EnvironmentRegistry::new();
-    let env_ref = environments.mint_ref();
+    let env_ref = environments.mint_ref().unwrap();
     let mut record = committed_env_record(
         &env_ref,
         vec!["true".into()],

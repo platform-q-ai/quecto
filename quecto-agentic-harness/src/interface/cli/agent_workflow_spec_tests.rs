@@ -46,6 +46,7 @@ fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {
             crate::composition::container_configs::build_agent_container_config_handles,
         ),
         stdin_is_tty: false,
+        environment_registry: None,
     }
 }
 

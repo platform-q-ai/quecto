@@ -26,13 +26,14 @@ pub const BACKEND_SCRIPT: &str = "script";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentEnvironmentWire {
-    /// Session-scoped `CN` ref minted by the environment registry. Display
-    /// label only — refs restart at `C1` in every session, so forwarded
-    /// descendant environments can collide on it. Group on `uuid`.
+    /// `CN` ref minted by the environment registry. Display label only —
+    /// refs are unique per base directory (#2024 S4d), not globally, so
+    /// forwarded descendant environments from another base dir can collide
+    /// on it. Group on `uuid`.
     #[serde(rename = "ref", default)]
     pub environment_ref: String,
     /// Globally-unique environment identity minted at creation (review #1392).
-    /// Unlike the session-scoped `ref`, it never collides across sessions, so
+    /// Unlike the per-base-dir `ref`, it never collides across hosts, so
     /// consumers must group members on it. Empty from older producers.
     #[serde(default)]
     pub uuid: String,

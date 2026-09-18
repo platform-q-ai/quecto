@@ -22,12 +22,15 @@ fn record(env_ref: &str) -> EnvironmentRecord {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({"created": true}),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     }
 }
 
 fn registry_with_member(env_ref: &str, member: &str) -> EnvironmentRegistry {
     let registry = EnvironmentRegistry::new();
-    let minted = registry.mint_ref();
+    let minted = registry.mint_ref().unwrap();
     assert_eq!(minted, env_ref);
     registry.commit(record(env_ref));
     registry.add_member(env_ref, member).unwrap();

@@ -39,9 +39,10 @@ targets fail without guessing.
   does) and must be an absolute path. To find the names in effect run
   `quecto config get --effective container_configs`.
 
-A successful spawn returns a session-scoped environment reference
-(`environment_ref=C1`, `C2`, ...). Refs are minted once per session and
-never reused — a stopped environment stays listed and its ref is retired.
+A successful spawn returns a durable environment reference
+(`environment_ref=C1`, `C2`, ...). Refs are allocated in the base
+directory's registry, unique across every session sharing it, and never
+reused — a stopped environment stays listed and its ref is retired.
 The child then behaves like any other subagent: drive it with normal
 `agent_cmd` operations over its direct or proxy endpoint. Every member of an
 environment shares its reported workspace; each agent keeps its own agent
@@ -49,17 +50,24 @@ UUID, distinct from the environment's hidden UUID.
 
 ## Listing and killing environments (`agent_cmd`)
 
-The session environment registry is authoritative for `CN` ref, optional
-name, runtime id, repository, workspace, retained script set, member agent
-UUIDs, status, metadata, and last error. Two session-level `agent_cmd`
-commands expose it (use `agent_id: "*"`):
+The environment registry is authoritative for `CN` ref, optional name,
+runtime id, repository, workspace, retained script set, member agent
+UUIDs, status, metadata, and last error. It is **durable per base
+directory** (#2024 S4d, `<base_dir>/environments.json`, see "Environments
+outlive sessions" below): refs are allocated there, unique across every
+session sharing the directory, and every transition is written through.
+Two session-level `agent_cmd` commands expose it (use `agent_id: "*"`):
 
-- `get_containers` — lists every environment this session committed with
-  status `running`, `empty` (live, no members), `killing`, `stopped`,
-  `cleanup-failed` (with its `last_error`), or `retained` (a swarm
-  container kept alive after its run ended or lost its coordinator, with
-  `metadata.retained` explaining which; see "Swarm environments are
-  retained"), plus workspace and members.
+- `get_containers` — lists every environment this session committed, and
+  every environment earlier or concurrent sessions of the same base
+  directory recorded (`restored: true`, `session` naming the creator,
+  `config` the container config, `created_at` epoch seconds), with
+  status `running`, `empty` (live, no members — every restored environment
+  starts so: another session's members are not reachable here),
+  `killing`, `stopped`, `cleanup-failed` (with its `last_error`), or
+  `retained` (a swarm container kept alive after its run ended or lost
+  its coordinator, with `metadata.retained` explaining which; see "Swarm
+  environments are retained"), plus workspace and members.
 - `kill_container` with `ref` or `name` — takes the environment's
   exclusive kill claim, asks every member agent to shut down over its own
   control edge (the `shutdown` protocol; a container coordinator's harness
@@ -209,10 +217,189 @@ board and checkout, read the member logs (see the adapter section). A join
 environment (relaunching the coordinator against the surviving store is not
 wired yet, and the paused run refuses activation); a joiner that exits or
 rolls back leaves the record `retained`. A retained environment outlives the
-master session that produced it (the master's shutdown retains it too):
-remove it with `kill_container` from that session while it lives, from a new
-session that joins and kills it, or manually with the adapter's `kill.sh`
-(or `podman rm -f quecto-<environment_id>` plus its state directory).
+master session that produced it (the master's shutdown retains it too), and
+its record outlives the harness: remove it with `kill_container` from that
+session while it lives, from any later session of the same base directory
+(`get_containers` lists it `retained` with `restored: true`;
+`kill_container` by ref or name), from the shell with `quecto container
+kill <ref|name>`, or manually with the adapter's `kill.sh` (or `podman rm -f
+quecto-<environment_id>` plus its state directory) — after which `quecto
+container gc` removes what is left.
+
+## Environments outlive sessions (#2024 S4d)
+
+Every harness keeps its environment registry in
+`<base_dir>/environments.json` (0600, written atomically under the same
+`<base_dir>/locks/` `flock` the configuration writer uses): for each `CN`
+ref the runtime id, name, container config, retained `exec`/`kill`/
+`cleanup`/`inspect` argv, status, workspace, repository, metadata, last
+error, the creating session's key and the creation time. **Members are not
+stored** — they belong to the session that launched them. Refs are
+allocated in the file, so two sessions on one base directory never mint
+the same `C7`, and a ref is never reused after a restart.
+
+At startup a top-level session **restores** the file: each record is
+checked against the runtime through its retained `inspect` — a
+`running`/`cleanup-failed` record whose inspect says `dead` is marked
+`stopped` with `container not found at restore …` as its last error
+(never silently dropped); one whose inspect cannot be run is kept as
+recorded and reported unverified on stderr; a record found `killing` is
+reported as *kill in flight (its session may be live and settling it)*
+and left as it is — nothing here can tell whether that session is dead —
+and an explicit `kill_container` / `quecto container kill` from the new
+session retries it. A **`retained` record is never relabelled** (#1924):
+under the shipped adapter its container has *exited* by design (the
+coordinator was PID 1, the state directory holds the board, checkout and
+unpushed work), so a dead inspect is reported as *retained: container
+exited; only container kill ends it* and the file is left alone —
+`ls` lists it as `retained`, `gc` keeps it, and only `container kill` /
+`kill_container` moves it to `stopped`. A **`running` record whose
+container is gone but whose checkout still hosts a swarm run that has
+not ended** — the master exited (or was killed) *before* its
+coordinator, so nobody finalized the member; the coordinator's harness
+then ran its parent-loss shutdown and the box exited with the board,
+checkout and unpushed work inside — is relabelled **`retained`**, not
+`stopped`, with `metadata.retained` reading `run <id> unfinished
+(<status>); container exited; environment retained for inspection,
+kill_container to remove` (what the finalizer would have recorded had
+the master seen the coordinator go; `ls` prints the note `<ref> retained
+at restore: …`); a store that exists but cannot be read retains too. An
+ended run, the bootstrap placeholder or no store leaves it `stopped` as
+before. A record an **older build's restore relabelled `stopped` while
+it was retained** (recognisable by its own `metadata.retained` under
+`stopped` with the restore's `container not found at restore …` last
+error — an explicit kill clears that error) is restored to `retained`,
+so `container kill` can end it. Restored records carry `restored: true`
+and `session` in `get_containers`. A spawned child
+journals its own creates but is not seeded (its parent shows the fleet).
+A session that started while the file was unreadable retries the read on
+its next lookup (`get_containers`, a join, a kill), so a document
+repaired in place is seen and seeded without a restart — the stale
+diagnostic disappears from the next listing.
+
+**What the file is trusted for.** A record is trusted as written: the
+retained `exec`/`kill`/`cleanup`/`inspect` argv are run verbatim from the
+record, not re-resolved through the configuration in effect now (the
+config's scripts may have moved or changed since; the record's are the
+ones that created the environment). `config` (the config's name) and
+`created_by` are provenance for the listing, not a re-lookup. The one
+exception is the standard bundle's scripts: an `init`-materialised
+`.quecto/container/*.sh` is re-judged against the embedded bundle before
+a join or kill runs it (S4e integrity), whichever record names it. The
+file is 0600 under the base directory — whoever can write it can run
+argv as the harness user, exactly as with the configuration file.
+
+**Durable names are check-then-act.** A create refuses a `name` that
+still names a live environment (this session's or a restored one) by
+reading the registry *before* the create script runs; two sessions
+creating the same name at the same moment can both pass that check, and
+the name is then ambiguous — `mode: existing` by name fails ambiguous and
+`kill_container` by name asks for the ref. Refs are allocated under the
+file lock and never collide. While the registry file is unreadable
+(corrupt, a newer version) the session starts with an empty registry,
+**every container create is refused** (a ref minted from memory could
+collide with one a live session holds) and `quecto container ls|kill|gc`
+refuse in the same words; a session's later journal writes are reported
+on stderr when they fail, never retried silently. Writes to a record
+another session created (a joiner's inspect metadata, its kill) are
+compare-and-set on the status this session last saw on file: when the
+creator has moved the record on meanwhile (say to `retained`), the
+creator's state stands and nothing is reverted.
+
+What a new session can do with a restored environment:
+
+- **list** — `agent_cmd get_containers` (`agent_id: "*"`), or from the
+  shell `quecto container ls` (live ones; `--all` includes `stopped`):
+  `REF NAME CONFIG STATUS REPOSITORY CREATED-BY AGE`.
+- **join** — `spawn {"container": {"mode": "existing", "ref": "C1"}}` (or
+  `"name"`) while it is `running`/`empty`/`retained`; the retained `exec`
+  runs. This is the **concurrent-session** case: the environment's
+  container is still up because the session that created it is still
+  alive (or the environment is `retained`, whose box has exited and
+  which a join does not revive). Under the shipped adapter a member
+  harness runs its parent-loss shutdown and exits when the harness that
+  launched it dies, and the container exits with it — so once the
+  creating session is gone an ordinary environment is `stopped` at the
+  next restore (its container gone), not joinable. A joiner leaving a
+  restored environment **never tears it down** (its creating session may
+  still hold members this session cannot see); only an explicit kill
+  ends it.
+- **kill** — `agent_cmd kill_container` with `ref`/`name`, or `quecto
+  container kill <ref|name>`: no members of another session are asked
+  (none are recorded), the retained `kill` runs once, `stopped` is written
+  through. The creating session, if still alive, sees its member die and
+  runs its own final-member kill after yours — the shipped scripts are
+  idempotent.
+- **collect** — `quecto container gc [--dry-run] [--name <config>]`
+  removes **orphans**: environments whose container is exited or unknown
+  to the runtime **and** that the registry either does not record or
+  records `stopped`. Its scope is the config's `--state-dir` (from its
+  create argv, compared canonically — a symlinked spelling is the same
+  root), under which everything is judged, plus — for a record of that
+  config whose workspace lies under the root its *own* retained
+  `cleanup` argv names — that record's directory alone, removed through
+  that record's cleanup alone. A record's workspace never widens the
+  scan by itself: a record lying anywhere else is reported *outside this
+  config's state dir; not collected* and nothing is scanned or run for
+  it (a doctored `workspace_path` cannot point the config's cleanup at a
+  foreign directory). It lists containers through the config's
+  `inspect --list` (one JSON object per container the create script
+  labelled, so exited containers whose directory is already gone are
+  found too) and removes through the record's retained `cleanup` or the
+  config's `cleanup` — the harness itself names no runtime. A `running`,
+  `killing` or `cleanup-failed` record is always **kept** (with the
+  reason, pointing at `container kill`; one seen nowhere — no directory,
+  no container — is reported the same way, never silently skipped, and
+  a `stopped` one seen nowhere has its record forgotten); a `retained`
+  record is kept **whatever the runtime says of its container** (exited
+  is its normal state; only an explicit kill moves it to `stopped`,
+  after which its leftovers are the collector's); so is any state dir
+  whose container runs (a directory under a root the record's *own*
+  cleanup names is judged by that record's own retained `inspect`, not
+  the config's), and any state dir younger than fifteen minutes with no
+  container recorded yet (a create may be in flight — a directory whose
+  age cannot be read counts as young). What would otherwise be collected
+  — a `stopped` record's directory, or an unrecorded one — is read last
+  for the coordination store its checkout may host (`workspace/repo`,
+  then `workspace`): one hosting a **swarm run that has not ended**, or a
+  store that cannot be read, is **kept** whatever the registry says —
+  `… hosts swarm run <id> (<status>); end the run … before it can be collected` — the
+  board and checkout are the run's; an ended run, the placeholder or no
+  store is collected as before. A record an older build relabelled
+  `stopped` while retained is kept likewise (`was retained; relabelled
+  by an older build`; the next `ls`/`gc` restores it to `retained`, after
+  which `container kill` ends it). `--dry-run` prints the same judgement with
+  **no effect at all** — nothing on the host, and nothing written to
+  `environments.json` (the corrections a restore would write are
+  previewed on stderr as *would be recorded …; not written*); the report
+  lists what was (or would be) removed, what was kept and why, and every
+  failure.
+- **an unrecorded running container** — a harness that died between the
+  create script and the journal write (or whose `environments.json` was
+  moved aside) leaves a container the runtime reports running and no
+  record names. `gc` keeps it (its container runs) and `ls` cannot show
+  it; end it by hand: `podman rm -f quecto-<environment-id>` (docker
+  likewise) and remove `<state-dir>/<environment-id>` — after which
+  `gc` collects nothing further for it. Such a container does not stay
+  up for long on its own: the member harness inside it holds a
+  launch-bound connection to its parent and runs its parent-loss
+  shutdown — and exits — when that parent dies, so the container exits
+  too and `gc` then collects it as an unrecorded exited orphan (unless
+  its checkout hosts an unfinished swarm run, below). Only while the
+  parent lives, or for a script set whose member ignores parent loss,
+  is a hand kill needed.
+
+**Moving `environments.json` aside restarts the refs** (the next create is
+`C1` again) and forgets every environment it recorded: the containers
+themselves keep running, but no session lists, joins or kills them by ref
+any more — they become orphans for `quecto container gc` once they exit
+(or for `podman rm -f` by hand). That is the intended outcome of moving
+the file aside; repair it in place instead when the environments matter.
+
+`quecto container ls|kill|gc` resolve the container config the way the
+doctor and `spawn` do (the working directory's effective configuration, or
+`--config <file>`), restore the registry for their own run, and never
+touch a live environment.
 
 ## Configuration
 
@@ -555,7 +742,21 @@ exactly one JSON object:
 
 `metadata` (required object) is merged over the environment's stored
 metadata and becomes visible via `get_containers`; `status` (optional) is
-recorded as `inspect_status`. The result is parsed with the same strict
+recorded as `inspect_status` — and judged by the registry restore
+(#2024 S4d): `running` keeps the record, `dead`/`exited`/`removed`/
+`stopped` marks it stopped, anything else (or a failed inspect) leaves it
+unverified. A missing environment directory is not an error: the shipped
+Docker/Podman script asks the runtime about `quecto-<environment_id>` and
+reports `running` (cause `state-dir-removed`) or a truthful `dead` (cause
+`environment-removed`); the host-local reference reports `dead`. With
+`--list` appended (no environment id) the script prints one JSON object
+per line for every environment the runtime knows **under this state
+root** (the create labels each container `quecto.state_dir=<root>`) —
+`{"environment_id": "env-…", "container": "quecto-env-…", "status":
+"running"|"dead"}`, `dead` only for a container the runtime calls
+exited/dead/stopped — which is how `quecto container gc` finds exited
+containers whose directory is gone; a script set without `--list` cannot
+serve the collector (the error says so). The result is parsed with the same strict
 wire rules as `create`/`exec`: exactly these fields — unknown keys,
 trailing JSON data, and non-UTF8 output are rejected. A non-zero exit or
 invalid contract persists an actionable inspect error on the environment
@@ -572,7 +773,12 @@ session `C1` ref the create script received). Runs exactly once when a
 launch fails after creation (readiness, registration, or initial-prompt
 failure) — even when a `kill` is configured. For script sets without a
 configured `kill`, the retained `cleanup` argv also serves as the
-final-member teardown fallback.
+final-member teardown fallback. `quecto container gc` also runs it — the
+record's retained argv for a `stopped` record, the selected config's for
+an unrecorded orphan — so it must remove the container **and** the state
+directory, and must succeed when the directory is already gone (the
+shipped `kill.sh --op cleanup` then still removes the container it would
+have named, `quecto-<environment_id>`).
 
 ## The standard container (`quecto container init`) (#2024 S4e)
 
@@ -758,7 +964,7 @@ own image `FROM` this one and passes `--image <tag>` to `init`. The host
 carry a glibc the binary runs on (Debian trixie does for current builds).
 
 `quecto container status` reports, one line each and exit 1 while anything
-is missing: the assets (`present (5 of 5, version 1)`, or which differ or
+is missing: the assets (`present (5 of 5, version 2)`, or which differ or
 are missing), the `standard` entry of the effective set (default or not,
 declared by the overlay or globally, its `--repo`), the trust of the overlay
 (`trusted`, or `withheld` with the remedy; a destination init would refuse,

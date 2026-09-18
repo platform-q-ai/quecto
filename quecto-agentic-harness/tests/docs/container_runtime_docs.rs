@@ -493,3 +493,29 @@ fn docker_create_preflight_precedes_environment_state_and_never_pulls() {
         "create.sh must never pull an image implicitly"
     );
 }
+
+/// Round 3 L1 (#2033): the embed's `init`/`status` examples name the
+/// bundle version the harness ships, never a stale one.
+#[test]
+fn the_container_runtime_embed_examples_name_the_shipped_bundle_version() {
+    use quecto::infrastructure::processes::containers::standard::assets::STANDARD_ASSET_VERSION;
+    let embed =
+        read_workspace_file("quecto-agentic-harness/docs/docs-tool-embeds/container-runtime.md");
+    let shipped = format!("(version {STANDARD_ASSET_VERSION})");
+    assert!(
+        embed.contains(&format!("standard container bundle {shipped} at")),
+        "the init example names the shipped bundle version"
+    );
+    assert!(
+        embed.contains(&format!(
+            "present (5 of 5, version {STANDARD_ASSET_VERSION})"
+        )),
+        "the status example names the shipped bundle version"
+    );
+    for stale in (1..STANDARD_ASSET_VERSION).map(|v| format!("version {v})")) {
+        assert!(
+            !embed.contains(&stale),
+            "stale `{stale}` example in the embed"
+        );
+    }
+}

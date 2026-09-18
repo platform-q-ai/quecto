@@ -90,7 +90,7 @@ fn rig(rows: Vec<(&str, SubagentEntry)>) -> Rig {
 fn rig_with_kill(rows: Vec<(&str, SubagentEntry)>, retained_kill_argv: Vec<String>) -> Rig {
     let registry: SubagentRegistry = Arc::new(Mutex::new(Default::default()));
     let environments = EnvironmentRegistry::new();
-    let env_ref = environments.mint_ref();
+    let env_ref = environments.mint_ref().unwrap();
     environments.commit(EnvironmentRecord {
         environment_ref: env_ref.clone(),
         environment_id: "env-contract".into(),
@@ -107,6 +107,9 @@ fn rig_with_kill(rows: Vec<(&str, SubagentEntry)>, retained_kill_argv: Vec<Strin
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
+        origin: quecto::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
     });
     {
         let mut entries = registry.lock().unwrap();

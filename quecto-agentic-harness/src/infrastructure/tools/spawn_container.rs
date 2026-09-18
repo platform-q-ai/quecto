@@ -197,24 +197,7 @@ struct SocketProxyWire {
     argv: Vec<String>,
 }
 
-/// Strict wire parse shared by the create, exec, and inspect result
-/// contracts: UTF-8 only, exactly one JSON value, trailing data rejected.
-/// Unknown-key rejection comes from each wire type's `deny_unknown_fields`.
-/// Returns a plain error string so both launch-path (`DomainError`) and
-/// post-mortem (`String`) callers share one definition.
-pub(super) fn parse_strict_wire<T: serde::de::DeserializeOwned>(
-    stdout: &[u8],
-    operation: &str,
-) -> Result<T, String> {
-    let text = std::str::from_utf8(stdout)
-        .map_err(|e| format!("script-managed {operation} returned non-UTF8 JSON: {e}"))?;
-    let mut de = serde_json::Deserializer::from_str(text);
-    let wire = T::deserialize(&mut de)
-        .map_err(|e| format!("script-managed {operation} returned invalid JSON contract: {e}"))?;
-    de.end()
-        .map_err(|e| format!("script-managed {operation} returned extra JSON data: {e}"))?;
-    Ok(wire)
-}
+pub(super) use crate::infrastructure::processes::containers::retained_scripts::parse_strict_wire;
 
 /// Shared endpoint validation for the create and exec results (#1369 slice
 /// 3): a metadata object plus EXACTLY ONE of a non-empty direct `socket_path`
@@ -377,7 +360,44 @@ async fn spawn_script_managed_child(
 ) -> Result<PreparedChild, DomainError> {
     let container = &selected.config;
     let config_name = container.name.as_str();
-    let environment_ref = environments.mint_ref();
+    // Names are durable across sessions now (#2024 S4d): a name that
+    // still names a live environment — this session's or a restored one
+    // — would make every later `name` lookup ambiguous, so it is refused
+    // before any ref is minted or script runs.
+    if let Some(name) = environment_name(config) {
+        use crate::domain::environment_registry::{EnvironmentLookupError, EnvironmentTarget};
+        match environments.resolve(&EnvironmentTarget::Name(name.clone())) {
+            Ok(live) => {
+                return Err(DomainError::Tool(format!(
+                    "environment name '{name}' already names {} ({}); pick another name or kill it first",
+                    live.environment_ref,
+                    live.status_label()
+                )));
+            }
+            Err(EnvironmentLookupError::Ambiguous(_)) => {
+                return Err(DomainError::Tool(format!(
+                    "environment name '{name}' already names more than one live environment; pick another name"
+                )));
+            }
+            Err(EnvironmentLookupError::Unknown(_) | EnvironmentLookupError::Stopped(_)) => {}
+            Err(EnvironmentLookupError::Stale(_)) => {}
+            // Whether the name is free cannot be known (round 2 F-B, #2033);
+            // the mint below would refuse the same way, in the same words.
+            Err(error @ EnvironmentLookupError::Unreadable(_)) => {
+                return Err(DomainError::Tool(format!(
+                    "container create refused: {error}; repair (or move aside) the base directory's environments.json and retry"
+                )));
+            }
+        }
+    }
+    // A durable registry that cannot allocate refuses the create (review
+    // F9, #2033): a ref minted from memory could collide with one a live
+    // session holds in the base directory's registry.
+    let environment_ref = environments.mint_ref().map_err(|error| {
+        DomainError::Tool(format!(
+            "container create refused: {error}; repair (or move aside) the base directory's environments.json and retry"
+        ))
+    })?;
     let mut cmd = script_command(&container.create, child.binary, child.cli_args);
     cmd.env("QUECTO_CONTAINER_CONFIG", config_name);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", &environment_ref);
@@ -428,6 +448,12 @@ async fn spawn_script_managed_child(
         status: crate::domain::environment_registry::EnvironmentStatus::Running,
         metadata: result.metadata.clone(),
         last_error: None,
+        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        created_by: environments.session().to_string(),
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|since| since.as_secs()),
     });
     Ok(PreparedChild {
         swarm_reservation: None,

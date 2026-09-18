@@ -19,6 +19,7 @@ die() {
 command -v jq >/dev/null 2>&1 || die "jq is required to encode the inspect result"
 
 state_dir=""
+list=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
   --state-dir)
@@ -26,10 +27,33 @@ while [ "$#" -gt 0 ]; do
     state_dir="$2"
     shift 2
     ;;
+  --list)
+    list=1
+    shift
+    ;;
   *) die "unknown argument: $1" ;;
   esac
 done
 [ -n "$state_dir" ] || die "--state-dir is required"
+if [ "$list" = 1 ]; then
+  # `--list` (#2024 S4d, `quecto container gc`): one JSON object per
+  # environment the runtime knows. The host-local reference knows exactly
+  # the recorded environment directories; status is the recorded pids'
+  # liveness.
+  for dir in "$state_dir"/env-*; do
+    [ -d "$dir" ] || continue
+    id="$(basename "$dir")"
+    status="dead"
+    if [ -f "$dir/children.jsonl" ]; then
+      while IFS= read -r pid; do
+        if kill -0 "$pid" 2>/dev/null; then status="running"; break; fi
+      done < <(jq -r '.pid' "$dir/children.jsonl" 2>/dev/null)
+    fi
+    jq -cn --arg id "$id" --arg status "$status" \
+      '{environment_id: $id, container: $id, status: $status}'
+  done
+  exit 0
+fi
 [ -n "${QUECTO_CONTAINER_ENVIRONMENT_ID:-}" ] || die "QUECTO_CONTAINER_ENVIRONMENT_ID must be set"
 
 # Same trusted-root containment as kill.sh: reject path-shaped ids and prove
@@ -38,7 +62,13 @@ case "$QUECTO_CONTAINER_ENVIRONMENT_ID" in
 */* | *..*) die "invalid environment id: $QUECTO_CONTAINER_ENVIRONMENT_ID" ;;
 esac
 env_dir="$state_dir/$QUECTO_CONTAINER_ENVIRONMENT_ID"
-[ -d "$env_dir" ] || die "unknown environment: $QUECTO_CONTAINER_ENVIRONMENT_ID"
+if [ ! -d "$env_dir" ]; then
+  # State gone (manual removal, a completed kill whose record outlived it):
+  # a truthful "dead" so a registry restore (#2024 S4d) marks the record
+  # stopped rather than keeping it unverified.
+  jq -cn '{status: "dead", metadata: {cause: "environment-removed"}}'
+  exit 0
+fi
 state_root="$(cd "$state_dir" && pwd -P)"
 env_real="$(cd "$env_dir" && pwd -P)"
 case "$env_real" in
