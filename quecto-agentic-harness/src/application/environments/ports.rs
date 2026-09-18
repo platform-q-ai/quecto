@@ -9,6 +9,9 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use crate::application::environments::dto::{
+    ContainerRuntimeTarget, DiagnosableContainerConfig, PreflightCheck,
+};
 use crate::domain::environment_registry::EnvironmentRecord;
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
 
@@ -135,4 +138,28 @@ pub trait EnvironmentMemberShutdown: Send + Sync {
         &'a self,
         members: &'a [String],
     ) -> PortFuture<'a, MemberShutdownReport>;
+}
+
+// ─── Container-runtime diagnosis (#2024 S4b) ─────────────────────────────────
+
+/// The container config a diagnosis targets, resolved the way a launch
+/// resolves it: the effective configuration of the working directory
+/// (its trusted overlay merged over the global file) or an explicit file,
+/// the named entry or the labelled default. Implemented by infrastructure
+/// over the launch policy's selection; composition binds the checkout.
+pub trait ContainerConfigLookup: Send + Sync {
+    fn lookup(&self, target: &ContainerRuntimeTarget)
+    -> Result<DiagnosableContainerConfig, String>;
+}
+
+/// The create script's own preflight, run without creating an
+/// environment: which binaries exist, whether the image is present,
+/// whether the repository is reachable, whether the state dir is
+/// writable. One list of checks serves the create and the doctor, so the
+/// adapter asks the script rather than reimplementing it. `Err` carries
+/// why no checks could be obtained (the script refuses the mode, is
+/// missing, or reported nothing).
+pub trait ContainerRuntimePreflight: Send + Sync {
+    fn preflight(&self, config: &DiagnosableContainerConfig)
+    -> Result<Vec<PreflightCheck>, String>;
 }

@@ -1428,6 +1428,7 @@ mod catalogue_user_config_steps;
 mod codex_provider_steps;
 mod config_discovery_steps;
 mod config_steps;
+mod container_doctor_steps;
 mod container_mapping_steps;
 mod context_pruning_steps;
 mod delegated_subtree_steps;
@@ -1748,6 +1749,8 @@ impl QuectoWorld {
             Some(quecto::composition::tool_policy::build_tool_policy_persistence);
         world.cli_context.container_config_selection =
             Some(quecto::composition::container_configs::build_agent_container_config_selection);
+        world.cli_context.container_doctor =
+            Some(quecto::composition::environments::build_container_doctor);
         world
     }
 }

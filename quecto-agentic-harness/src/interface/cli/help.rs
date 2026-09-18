@@ -60,6 +60,14 @@ pub(super) fn help_text(out: &mut String) {
     out.push_str(
         "              trust [--path <file>]  Approve the repo-local overlay's current content\n",
     );
+    out.push_str("  container   Container runtimes for subagents\n");
+    out.push_str(
+        "              doctor [--name <config>]  Run the effective container config's create\n",
+    );
+    out.push_str(
+        "                  preflight (runtime, jq, git, gh, image, --repo, state dir) without\n",
+    );
+    out.push_str("                  creating an environment; exit 1 when any check fails\n");
     out.push_str("  models      Manage runtime model registry (discover)\n");
     out.push_str("  status      Show status\n");
     out.push_str("  help        Show this help\n");

@@ -3,6 +3,7 @@
 //! direct child. Effects only; no teardown policy lives here.
 
 pub mod child_stderr_tail;
+pub mod containers;
 pub mod direct_child_routing;
 pub mod local;
 pub mod owned_child_supervisor;
