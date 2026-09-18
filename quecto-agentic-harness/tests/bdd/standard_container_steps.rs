@@ -86,6 +86,26 @@ fn given_checkout_with_named_origin(world: &mut QuectoWorld, url: String) {
     git(&checkout, &["remote", "add", "origin", &url]);
 }
 
+#[given(expr = "the checkout's {string} is a symbolic link to a directory outside the checkout")]
+fn given_symlinked_dir(world: &mut QuectoWorld, relative: String) {
+    let outside = base_path(world).join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    let link = checkout(world).join(&relative);
+    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+}
+
+#[then("the directory outside the checkout should still be empty")]
+fn then_outside_empty(world: &mut QuectoWorld) {
+    let outside = base_path(world).join("outside");
+    let entries: Vec<_> = std::fs::read_dir(&outside)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert!(entries.is_empty(), "{entries:?}");
+}
+
 #[given("the current directory is a git checkout without an origin remote")]
 fn given_checkout_without_origin(world: &mut QuectoWorld) {
     ensure_temp_dir(world);

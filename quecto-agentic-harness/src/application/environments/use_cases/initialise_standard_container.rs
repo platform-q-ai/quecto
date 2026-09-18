@@ -88,15 +88,21 @@ impl InitialiseStandardContainer {
                 .origin(&request.project)
                 .map_err(InitialiseStandardContainerError::Origin)?
             {
-                Some(url) if url_carries_userinfo(&url) => {
-                    return Err(InitialiseStandardContainerError::OriginCarriesCredentials(
-                        crate::domain::redaction::redact_url_userinfo(&url),
-                    ));
-                }
                 Some(url) => (Some(url), RepositoryOrigin::CheckoutOrigin),
                 None => (None, RepositoryOrigin::Sandbox),
             },
         };
+        if let Some(url) = repository
+            .as_deref()
+            .filter(|url| url_carries_password(url))
+        {
+            return Err(
+                InitialiseStandardContainerError::RepositoryCarriesCredentials {
+                    url: crate::domain::redaction::redact_url_userinfo(url),
+                    origin: repository_origin,
+                },
+            );
+        }
         let roster = self
             .roster
             .roster()
@@ -131,8 +137,17 @@ impl InitialiseStandardContainer {
             existing_default.is_none(),
         );
 
-        // The entry first: it is the refusal-prone write, and an asset
-        // failure after it is healed by running init again.
+        // Every destination is judged before anything is written: a
+        // symbolic link on the way, a directory in a file's place, is a
+        // refusal that leaves the project untouched (a dry run and a
+        // status see the same).
+        let observed: Vec<AssetState> = catalogue
+            .assets
+            .iter()
+            .map(|asset| self.observe(&request.project, &assets_dir, asset, false))
+            .collect::<Result<_, _>>()?;
+        // The entry next: it is the other refusal-prone write; an asset
+        // failure after it (a race with the filesystem) names the way out.
         let path = if request.dry_run {
             self.persistence.location()
         } else {
@@ -146,10 +161,10 @@ impl InitialiseStandardContainer {
         let mut written = Vec::new();
         let mut kept = Vec::new();
         let mut differing = Vec::new();
-        for asset in &catalogue.assets {
+        for (asset, state) in catalogue.assets.iter().zip(observed) {
             let path = assets_dir.join(&asset.path);
             let outcome = if request.dry_run {
-                match self.observe(&assets_dir, asset)? {
+                match state {
                     AssetState::Missing => AssetOutcome::Written,
                     AssetState::Identical => AssetOutcome::KeptIdentical,
                     AssetState::Differs => AssetOutcome::KeptDiffering,
@@ -157,6 +172,7 @@ impl InitialiseStandardContainer {
                         return Err(InitialiseStandardContainerError::Asset {
                             path,
                             reason: "the destination is not a regular file".into(),
+                            entry_written: false,
                         });
                     }
                 }
@@ -166,6 +182,7 @@ impl InitialiseStandardContainer {
                     .map_err(|reason| InitialiseStandardContainerError::Asset {
                         path: path.clone(),
                         reason,
+                        entry_written: true,
                     })?
             };
             match outcome {
@@ -199,15 +216,18 @@ impl InitialiseStandardContainer {
 
     fn observe(
         &self,
+        root: &Path,
         assets_dir: &Path,
         asset: &ContainerAsset,
+        entry_written: bool,
     ) -> Result<AssetState, InitialiseStandardContainerError> {
-        self.assets.observe(assets_dir, asset).map_err(|reason| {
-            InitialiseStandardContainerError::Asset {
+        self.assets
+            .observe(root, assets_dir, asset)
+            .map_err(|reason| InitialiseStandardContainerError::Asset {
                 path: assets_dir.join(&asset.path),
                 reason,
-            }
-        })
+                entry_written,
+            })
     }
 
     /// The entry: every argv names the materialised script by absolute
@@ -251,11 +271,13 @@ impl InitialiseStandardContainer {
     }
 }
 
-/// `scheme://user[:password]@host/…`: credentials in the URL's userinfo.
-fn url_carries_userinfo(url: &str) -> bool {
+/// `scheme://user:password@host/…`: a password (or token) in the URL's
+/// userinfo. A bare user (`ssh://git@host/…`) names an account, not a
+/// secret, and is the everyday ssh form.
+fn url_carries_password(url: &str) -> bool {
     url.split_once("://")
-        .map(|(_, rest)| rest.split('/').next().unwrap_or("").contains('@'))
-        .unwrap_or(false)
+        .and_then(|(_, rest)| rest.split('/').next()?.rsplit_once('@'))
+        .is_some_and(|(userinfo, _)| userinfo.contains(':'))
 }
 
 impl std::fmt::Debug for InitialiseStandardContainer {

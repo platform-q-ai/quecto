@@ -48,7 +48,7 @@ impl ContainerStatus {
             .assets
             .iter()
             .map(|asset| {
-                let state = match self.assets.observe(&assets_dir, asset) {
+                let state = match self.assets.observe(project, &assets_dir, asset) {
                     Ok(state) => state,
                     // A destination that cannot be judged (a symbolic
                     // link, a directory in a file's place) is not

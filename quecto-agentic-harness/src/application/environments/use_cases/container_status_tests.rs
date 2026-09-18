@@ -32,7 +32,7 @@ impl ContainerAssetStore for FixedAssets {
         }
     }
 
-    fn observe(&self, _: &Path, asset: &ContainerAsset) -> Result<AssetState, String> {
+    fn observe(&self, _: &Path, _: &Path, asset: &ContainerAsset) -> Result<AssetState, String> {
         let index: usize = asset.path[1..].parse().unwrap();
         match self.0[index] {
             AssetState::Refused => Err(format!("{} is a symbolic link", asset.path)),

@@ -68,7 +68,7 @@ fn observe_and_materialise_tell_missing_identical_and_differing_apart_and_never_
     let port = port();
     let asset = port.catalogue().assets[1].clone();
     assert_eq!(
-        port.observe(dir.path(), &asset).unwrap(),
+        port.observe(dir.path(), dir.path(), &asset).unwrap(),
         AssetState::Missing
     );
     assert_eq!(
@@ -86,7 +86,7 @@ fn observe_and_materialise_tell_missing_identical_and_differing_apart_and_never_
         );
     }
     assert_eq!(
-        port.observe(dir.path(), &asset).unwrap(),
+        port.observe(dir.path(), dir.path(), &asset).unwrap(),
         AssetState::Identical
     );
     assert_eq!(
@@ -95,7 +95,7 @@ fn observe_and_materialise_tell_missing_identical_and_differing_apart_and_never_
     );
     std::fs::write(&path, "edited").unwrap();
     assert_eq!(
-        port.observe(dir.path(), &asset).unwrap(),
+        port.observe(dir.path(), dir.path(), &asset).unwrap(),
         AssetState::Differs
     );
     assert_eq!(
@@ -122,6 +122,11 @@ fn a_symbolic_link_in_a_directorys_place_below_the_root_is_refused() {
     std::fs::create_dir_all(&project).unwrap();
     std::os::unix::fs::symlink(&elsewhere, project.join(".quecto")).unwrap();
     let bundle = project.join(".quecto/containers/standard");
+    let error = port.observe(&project, &bundle, &asset).unwrap_err();
+    assert!(
+        error.contains("symbolic link"),
+        "observe refuses too: {error}"
+    );
     let error = port.materialise(&project, &bundle, &asset).unwrap_err();
     assert!(error.contains("symbolic link"), "{error}");
     assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
@@ -137,7 +142,7 @@ fn a_symbolic_link_in_an_assets_place_is_refused() {
     std::fs::write(&elsewhere, "x").unwrap();
     std::os::unix::fs::symlink(&elsewhere, dir.path().join("Containerfile")).unwrap();
     assert!(
-        port.observe(dir.path(), &asset)
+        port.observe(dir.path(), dir.path(), &asset)
             .unwrap_err()
             .contains("symbolic link")
     );

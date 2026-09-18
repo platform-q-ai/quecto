@@ -96,6 +96,11 @@ fn project_selection(
     ctx: &CliContext,
     project: Option<PathBuf>,
 ) -> Result<(PathBuf, ConfigSelection), String> {
+    if ctx.config_path.is_some() {
+        return Err(
+            "container init/status work on the project's repo-local overlay, which an explicit --config replaces; run without --config".to_string(),
+        );
+    }
     let project = match project.or_else(|| ctx.cwd.clone()) {
         Some(path) => path,
         None => return Err("the working directory is unknown; pass --project".to_string()),

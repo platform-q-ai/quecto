@@ -28,14 +28,17 @@ of them a build. Run them from the repository **root** (or pass
    `<project>/.quecto/config.json` through the config writer, so the overlay
    is trusted for exactly those bytes. The entry's argv name the
    materialised scripts, `--state-dir <base dir>/container-environments`,
-   `--repo <origin>` (omitted = sandbox, and init says so; an origin with
-   `user:token@` embedded is refused — pass a credential-free `--repo`),
+   `--repo <origin>` (omitted = sandbox, and init says so; a URL with a
+   password or token embedded — `user:secret@host` — is refused from
+   either source, so use a credential-free URL; `ssh://git@host/…` is
+   fine),
    `--image <tag>`; it is the default unless another entry already is (then
    init adds it without the label and says so — select it with
    `container: {"mode":"new","container_config":"standard"}` and diagnose
    it with `quecto container doctor --name standard`). An untrusted overlay,
-   whatever it declares, is refused before anything is written (`quecto
-   config trust` first); init never adopts one. Run it again any time: it
+   whatever it declares, a symbolic link anywhere on the way to the
+   bundle, and an explicit `--config` are refused before anything is
+   written (`quecto config trust` first); init never adopts an overlay. Run it again any time: it
    is idempotent.
 2. **Build the image** — exactly the command init printed (a create never
    builds or pulls):

@@ -325,13 +325,20 @@ pub enum InitialiseStandardContainerError {
     /// The quecto base directory (where the state dir goes) is not
     /// absolute; the argv written must not depend on a later cwd.
     BaseDirNotAbsolute(std::path::PathBuf),
-    /// The checkout's `origin` URL embeds credentials; init refuses to
-    /// bake them into the shareable overlay.
-    OriginCarriesCredentials(String),
-    /// An asset could not be observed or written.
+    /// The repository URL (`--repo`, or the checkout's `origin`) embeds a
+    /// password or token; init refuses to bake it into the shareable
+    /// overlay. The URL is carried redacted.
+    RepositoryCarriesCredentials {
+        url: String,
+        origin: RepositoryOrigin,
+    },
+    /// An asset could not be observed or written. `entry_written` says
+    /// the overlay entry already landed before the failure, so the
+    /// message tells the operator how to finish or roll back.
     Asset {
         path: std::path::PathBuf,
         reason: String,
+        entry_written: bool,
     },
     /// The checkout's origin could not be read.
     Origin(String),
@@ -355,11 +362,28 @@ impl std::fmt::Display for InitialiseStandardContainerError {
                 "the quecto base directory must be an absolute path: {}",
                 path.display()
             ),
-            Self::OriginCarriesCredentials(url) => write!(
+            Self::RepositoryCarriesCredentials { url, origin } => write!(
                 f,
-                "the checkout's origin remote {url} carries credentials (user:token@host); init will not bake them into the repo-local overlay — pass --repo <url without them>"
+                "{} {url} carries credentials (user:password@host); init will not bake them into the repo-local overlay — use a URL without them (a credential helper, an ssh key or `gh auth login` supplies them at clone time)",
+                match origin {
+                    RepositoryOrigin::Explicit => "the --repo URL",
+                    _ => "the checkout's origin remote",
+                }
             ),
-            Self::Asset { path, reason } => write!(f, "asset {}: {reason}", path.display()),
+            Self::Asset {
+                path,
+                reason,
+                entry_written: false,
+            } => write!(f, "asset {}: {reason}", path.display()),
+            Self::Asset {
+                path,
+                reason,
+                entry_written: true,
+            } => write!(
+                f,
+                "asset {}: {reason}; the overlay entry container_configs.standard was already written — fix the path and run init again, or roll back with `quecto config unset --local container_configs.standard`",
+                path.display()
+            ),
             Self::Origin(reason) => write!(f, "cannot read the checkout's origin: {reason}"),
             Self::Configuration(reason) => write!(f, "{reason}"),
             Self::Persist(reason) => write!(f, "{reason}"),

@@ -591,31 +591,32 @@ quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--dr
 quecto container status [--project <abs dir>]
 ```
 
-What `init` does, in order (a refusal leaves the project untouched):
+What `init` does, in order (every refusal below happens before anything
+is written, so a refused init leaves the project untouched):
 
 1. Resolves the repository: `--repo`, else the checkout's `origin` remote
    (`git remote get-url origin`), else none — a **sandbox** entry (empty
-   workspace, no clone), which the output names as such.
-   An origin that embeds credentials (`https://user:token@host/…`) is
-   refused — the overlay is a shareable repository file — pass `--repo`
-   with a credential-free URL instead.
+   workspace, no clone), which the output names as such. A URL that embeds
+   a password or token (`https://user:secret@host/…`, from either source)
+   is refused — the overlay is a shareable repository file; a bare user
+   (`ssh://git@host/…`) is fine.
 2. Asks the configuration writer whether it would accept the write, and
    reads the effective container-config set (global file plus the trusted
    overlay). An overlay that exists but is **not trusted**, whatever it
    declares, is refused with the way out (`quecto config trust`), on a
-   `--dry-run` too: init never adopts content it did not write. If another
+   `--dry-run` too: init never adopts content it did not write. An
+   explicit `--config` is refused (it replaces the overlay). If another
    entry is already the default, the standard entry is added **without**
    the `default` label and the output says so, with the `container:
    {"mode":"new","container_config":"standard"}` selector and `quecto
    container doctor --name standard`.
-3. Materialises `<project>/.quecto/containers/standard/` —
-   `Containerfile`, `scripts/create.sh`, `scripts/exec.sh`,
-   `scripts/inspect.sh`, `scripts/kill.sh` (the scripts byte-identical to
-   `scripts/container-runtime/docker/*.sh`, executable). Files are written
-   whole (temporary file, fsync, rename) and **never replaced**: an edited
-   file is kept and reported as differing from the embedded version
-   (delete it to have init refresh it). A symbolic link in a file's place
-   is refused.
+3. Judges every destination under `<project>/.quecto/containers/standard/`
+   — `Containerfile`, `scripts/create.sh`, `scripts/exec.sh`,
+   `scripts/inspect.sh`, `scripts/kill.sh`: missing, identical to the
+   embedded bytes, or differing. A symbolic link in a file's place or in
+   any directory on the way from the project down (`.quecto`,
+   `containers`, `standard`, `scripts`) is refused, not followed; `status`
+   and `--dry-run` see the same and report it as `refused`.
 4. Writes `container_configs.standard` into `<project>/.quecto/config.json`
    through the configuration writer (`quecto config set --local` path):
    exclusive hold, validated as a layer and as the merge, trust recorded
@@ -625,7 +626,15 @@ What `init` does, in order (a refusal leaves the project untouched):
    `--image quecto-box:local` (or `--image` as given); `kill`/`cleanup`
    carry `--op kill`/`--op cleanup`; no argv ends with `--` (the launcher
    appends it before the child command).
-5. Prints the files, the entry and the one step left — the exact build
+5. Materialises the missing files (the scripts byte-identical to
+   `scripts/container-runtime/docker/*.sh`, executable), each written
+   whole (temporary file, fsync, rename) and **never replaced**: an edited
+   file is kept and reported as differing from the embedded version
+   (delete it to have init refresh it). Should a write still fail here (a
+   filesystem race after step 3), the error says the entry was already
+   written and how to finish (run init again) or roll back
+   (`quecto config unset --local container_configs.standard`).
+6. Prints the files, the entry and the one step left — the exact build
    command:
    `podman build -t quecto-box:local -f <project>/.quecto/containers/standard/Containerfile <project>/.quecto/containers/standard`
    (on a docker-only host, the same command with `docker`: the scripts

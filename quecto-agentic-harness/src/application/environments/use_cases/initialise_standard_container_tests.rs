@@ -16,6 +16,8 @@ use crate::application::environments::ports::{
 /// An in-memory bundle: the "disk" is a map of path → bytes.
 struct MemoryAssets {
     disk: Mutex<BTreeMap<PathBuf, Vec<u8>>>,
+    /// Destinations `observe` refuses (a symbolic link in their place).
+    refuse: Mutex<std::collections::BTreeSet<PathBuf>>,
 }
 
 fn catalogue() -> ContainerAssetCatalogue {
@@ -42,14 +44,16 @@ impl ContainerAssetStore for MemoryAssets {
         catalogue()
     }
 
-    fn observe(&self, dir: &Path, asset: &ContainerAsset) -> Result<AssetState, String> {
-        Ok(
-            match self.disk.lock().unwrap().get(&dir.join(&asset.path)) {
-                None => AssetState::Missing,
-                Some(bytes) if *bytes == asset.contents => AssetState::Identical,
-                Some(_) => AssetState::Differs,
-            },
-        )
+    fn observe(&self, _: &Path, dir: &Path, asset: &ContainerAsset) -> Result<AssetState, String> {
+        let path = dir.join(&asset.path);
+        if self.refuse.lock().unwrap().contains(&path) {
+            return Err(format!("{} is a symbolic link", path.display()));
+        }
+        Ok(match self.disk.lock().unwrap().get(&path) {
+            None => AssetState::Missing,
+            Some(bytes) if *bytes == asset.contents => AssetState::Identical,
+            Some(_) => AssetState::Differs,
+        })
     }
 
     fn materialise(
@@ -64,7 +68,7 @@ impl ContainerAssetStore for MemoryAssets {
             dir.display(),
             root.display()
         );
-        let state = self.observe(dir, asset)?;
+        let state = self.observe(root, dir, asset)?;
         Ok(match state {
             AssetState::Missing => {
                 self.disk
@@ -158,6 +162,7 @@ fn build_rig(
 ) -> Rig {
     let assets = Arc::new(MemoryAssets {
         disk: Mutex::new(BTreeMap::new()),
+        refuse: Mutex::new(Default::default()),
     });
     let persistence = Arc::new(RecordingPersistence {
         written: Mutex::new(vec![]),
@@ -447,21 +452,69 @@ fn an_origin_with_credentials_is_refused_and_never_written() {
     );
     let error = rig.use_case.execute(&request("/p")).unwrap_err();
     let text = error.to_string();
+    assert!(text.contains("checkout's origin remote"), "{text}");
     assert!(text.contains("carries credentials"), "{text}");
     assert!(text.contains("https://***@example.test/r.git"), "{text}");
     assert!(!text.contains("tok123"), "{text}");
     assert!(rig.persistence.written.lock().unwrap().is_empty());
     assert!(rig.assets.disk.lock().unwrap().is_empty());
-    // An explicit --repo with credentials is the operator's call.
+    // An explicit --repo with credentials is refused the same way.
     let mut explicit = request("/p");
     explicit.repository = Some("https://user:tok123@example.test/r.git".into());
-    assert!(rig.use_case.execute(&explicit).is_ok());
+    let text = rig.use_case.execute(&explicit).unwrap_err().to_string();
+    assert!(text.contains("the --repo URL"), "{text}");
+    assert!(!text.contains("tok123"), "{text}");
+    // A bare user in the ssh form names an account, not a secret.
+    let rig = build_rig(
+        Ok(Some("ssh://git@example.test/org/repo.git".into())),
+        ContainerConfigRosterReport::default(),
+        None,
+    );
+    let report = rig.use_case.execute(&request("/p")).unwrap();
+    assert_eq!(
+        report.repository.as_deref(),
+        Some("ssh://git@example.test/org/repo.git")
+    );
+}
+
+#[test]
+fn a_refused_destination_is_found_before_the_entry_is_written() {
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    rig.assets.refuse.lock().unwrap().insert(PathBuf::from(
+        "/p/.quecto/containers/standard/scripts/create.sh",
+    ));
+    for dry_run in [true, false] {
+        let mut req = request("/p");
+        req.dry_run = dry_run;
+        let error = rig.use_case.execute(&req).unwrap_err();
+        let text = error.to_string();
+        assert!(text.contains("is a symbolic link"), "{text}");
+        assert!(!text.contains("already written"), "{text}");
+        assert!(rig.persistence.written.lock().unwrap().is_empty());
+        assert!(rig.assets.disk.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn an_asset_failure_after_the_entry_landed_names_the_way_out() {
+    let error = InitialiseStandardContainerError::Asset {
+        path: PathBuf::from("/p/x"),
+        reason: "disk full".into(),
+        entry_written: true,
+    }
+    .to_string();
+    assert!(error.contains("already written"), "{error}");
+    assert!(
+        error.contains("quecto config unset --local container_configs.standard"),
+        "{error}"
+    );
 }
 
 #[test]
 fn a_relative_base_dir_is_refused() {
     let assets = Arc::new(MemoryAssets {
         disk: Mutex::new(BTreeMap::new()),
+        refuse: Mutex::new(Default::default()),
     });
     let use_case = InitialiseStandardContainer::new(
         assets,

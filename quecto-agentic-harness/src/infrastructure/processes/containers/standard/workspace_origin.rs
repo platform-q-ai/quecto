@@ -22,6 +22,11 @@ impl WorkspaceOrigin for GitWorkspaceOrigin {
             .arg(checkout)
             .args(["remote", "get-url", "origin"])
             .env("GIT_TERMINAL_PROMPT", "0")
+            // The checkout asked about is `-C <checkout>`, never a
+            // repository the process environment points at.
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_COMMON_DIR")
             .stdin(Stdio::null())
             .output()
             .map_err(|error| format!("cannot run git: {error}"))?;

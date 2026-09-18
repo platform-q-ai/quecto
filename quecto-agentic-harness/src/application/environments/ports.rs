@@ -207,7 +207,16 @@ pub struct ContainerConfigRosterReport {
 pub trait ContainerAssetStore: Send + Sync {
     fn catalogue(&self) -> ContainerAssetCatalogue;
 
-    fn observe(&self, dir: &Path, asset: &ContainerAsset) -> Result<AssetState, String>;
+    /// What the destination of `asset` below `dir` holds; `Err` when it
+    /// cannot be judged or written through (a symbolic link in the
+    /// file's place or in any directory between `root` and it), so a
+    /// dry run and a status see exactly what a materialise would refuse.
+    fn observe(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetState, String>;
 
     /// Write `asset` below `dir`, which lies below `root` (the project):
     /// no directory between `root` (exclusive) and the asset may be a

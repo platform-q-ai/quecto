@@ -24,6 +24,12 @@ use crate::application::environments::ports::ContainerAssetStore;
 /// bundle a project carries.
 pub const STANDARD_ASSET_VERSION: u32 = 1;
 
+// The scripts are symbolic links to `scripts/container-runtime/` in the
+// workspace, resolved by `include_str!` at compile time: one source for
+// the repository's copy and the embedded one. `cargo install --path` and
+// workspace builds see them; a `cargo package` of this crate alone would
+// not carry the link targets, and a checkout with `core.symlinks=false`
+// would embed the link text — neither is a supported build of this crate.
 const CONTAINERFILE: &str = include_str!("../../../../../assets/standard-container/Containerfile");
 const BUILD_COMMAND: &str = include_str!("../../../../../assets/standard-container/build-command");
 const CREATE: &str = include_str!("../../../../../assets/standard-container/scripts/create.sh");
@@ -60,8 +66,16 @@ impl ContainerAssetStore for EmbeddedStandardAssets {
         }
     }
 
-    fn observe(&self, dir: &Path, asset: &ContainerAsset) -> Result<AssetState, String> {
+    fn observe(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetState, String> {
         let destination = dir.join(&asset.path);
+        if let Some(parent) = destination.parent() {
+            refuse_symlinked_directories(root, parent)?;
+        }
         match std::fs::symlink_metadata(&destination) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(AssetState::Missing),
             Err(error) => Err(format!("cannot stat {}: {error}", destination.display())),
@@ -91,7 +105,7 @@ impl ContainerAssetStore for EmbeddedStandardAssets {
         dir: &Path,
         asset: &ContainerAsset,
     ) -> Result<AssetOutcome, String> {
-        match self.observe(dir, asset)? {
+        match self.observe(root, dir, asset)? {
             AssetState::Identical => return Ok(AssetOutcome::KeptIdentical),
             AssetState::Differs => return Ok(AssetOutcome::KeptDiffering),
             AssetState::Refused => {
@@ -140,7 +154,7 @@ impl ContainerAssetStore for EmbeddedStandardAssets {
         match temporary.persist_noclobber(&destination) {
             Ok(_) => Ok(AssetOutcome::Written),
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-                self.observe(dir, asset).map(|state| match state {
+                self.observe(root, dir, asset).map(|state| match state {
                     AssetState::Differs => AssetOutcome::KeptDiffering,
                     _ => AssetOutcome::KeptIdentical,
                 })

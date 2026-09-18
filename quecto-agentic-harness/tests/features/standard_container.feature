@@ -97,15 +97,50 @@ Feature: The standard container is landed on master
     And no standard container asset should exist under ".quecto/containers/standard"
 
   @done @issue-2024
-  Scenario: an origin remote that embeds credentials is refused rather than written into the overlay
+  Scenario: an origin remote that embeds a password is refused rather than written into the overlay
     Given the current directory is a git checkout whose origin remote is "https://user:ghp_secret@example.test/x/y"
     When I run quecto with arguments "container init"
     Then the exit code should be 1
-    And the stderr should contain "carries credentials"
-    And the stderr should contain "https://***@example.test/x/y"
+    And the stderr should contain "checkout's origin remote https://***@example.test/x/y carries credentials"
     And the output should not contain "ghp_secret"
     And the checkout should carry no overlay
     And no standard container asset should exist under ".quecto/containers/standard"
+    When I run quecto with arguments "container init --repo https://user:ghp_other@example.test/x/y"
+    Then the exit code should be 1
+    And the stderr should contain "the --repo URL https://***@example.test/x/y carries credentials"
+    And the output should not contain "ghp_other"
+
+  @done @issue-2024
+  Scenario: an ssh origin with a bare user is a repository, not a credential
+    Given the current directory is a git checkout whose origin remote is "ssh://git@example.test/org/repo.git"
+    When I run quecto with arguments "container init"
+    Then the exit code should be 0
+    And the overlay entry "standard" create argv should carry "--repo" "ssh://git@example.test/org/repo.git"
+
+  @done @issue-2024
+  Scenario: a symbolic link in the bundle's place is refused by dry-run, init and status alike, before anything is written
+    Given the current directory is a git checkout whose origin remote is a reachable local repository
+    And the checkout's ".quecto/containers" is a symbolic link to a directory outside the checkout
+    When I run quecto with arguments "container init --dry-run"
+    Then the exit code should be 1
+    And the stderr should contain "is a symbolic link"
+    When I run quecto with arguments "container init"
+    Then the exit code should be 1
+    And the stderr should contain "is a symbolic link"
+    And the stderr should not contain "already written"
+    And the checkout should carry no overlay
+    And the directory outside the checkout should still be empty
+    When I run quecto with arguments "container status"
+    Then the exit code should be 1
+    And the output should contain "refused"
+    And the output should contain "is a symbolic link"
+
+  @done @issue-2024
+  Scenario: init refuses to run under an explicit --config
+    Given the current directory is a git checkout whose origin remote is a reachable local repository
+    When I run quecto with arguments "--config /dev/null container init"
+    Then the exit code should be 1
+    And the stderr should contain "run without --config"
 
   @done @issue-2024
   Scenario: init beside an existing default tells the agent how to select the entry and diagnose it by name

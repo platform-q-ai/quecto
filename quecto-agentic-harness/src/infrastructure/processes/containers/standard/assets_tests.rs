@@ -55,7 +55,7 @@ fn materialise_writes_missing_files_with_their_mode_and_never_replaces_existing_
     let catalogue = store.catalogue();
     let create = &catalogue.assets[1];
     assert_eq!(
-        store.observe(dir.path(), create).unwrap(),
+        store.observe(dir.path(), dir.path(), create).unwrap(),
         AssetState::Missing
     );
     assert_eq!(
@@ -73,7 +73,7 @@ fn materialise_writes_missing_files_with_their_mode_and_never_replaces_existing_
         );
     }
     assert_eq!(
-        store.observe(dir.path(), create).unwrap(),
+        store.observe(dir.path(), dir.path(), create).unwrap(),
         AssetState::Identical
     );
     assert_eq!(
@@ -82,7 +82,7 @@ fn materialise_writes_missing_files_with_their_mode_and_never_replaces_existing_
     );
     std::fs::write(&path, "edited").unwrap();
     assert_eq!(
-        store.observe(dir.path(), create).unwrap(),
+        store.observe(dir.path(), dir.path(), create).unwrap(),
         AssetState::Differs
     );
     assert_eq!(
@@ -122,7 +122,9 @@ fn a_symbolic_link_in_an_assets_place_is_refused_not_followed() {
     let target = dir.path().join("elsewhere");
     std::fs::write(&target, "x").unwrap();
     std::os::unix::fs::symlink(&target, dir.path().join("Containerfile")).unwrap();
-    let error = store.observe(dir.path(), containerfile).unwrap_err();
+    let error = store
+        .observe(dir.path(), dir.path(), containerfile)
+        .unwrap_err();
     assert!(error.contains("symbolic link"), "{error}");
     let error = store
         .materialise(dir.path(), dir.path(), containerfile)
@@ -167,6 +169,8 @@ fn a_symbolic_link_between_the_root_and_the_bundle_is_refused() {
     std::fs::create_dir_all(project.join(".quecto")).unwrap();
     std::os::unix::fs::symlink(&elsewhere, project.join(".quecto/containers")).unwrap();
     let bundle = project.join(".quecto/containers/standard");
+    let error = store.observe(&project, &bundle, create).unwrap_err();
+    assert!(error.contains("containers is a symbolic link"), "{error}");
     let error = store.materialise(&project, &bundle, create).unwrap_err();
     assert!(error.contains("containers is a symbolic link"), "{error}");
     assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
