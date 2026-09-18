@@ -23,7 +23,9 @@ into**: the master picks a `container_configs` entry by name —
 effective names for the master's checkout, and the spawn tool description
 carries the same roster — and launches the coordinator with
 `"container": {"mode":"new","container_config":"<name>"}` (`"container": true`
-selects the labelled default). That entry determines the image, repository
+selects this repo's `standard` entry when one exists — no global default
+overrides it; run `quecto container init` first if the roster shows none —
+else the labelled default). That entry determines the image, repository
 and environment; swarm does not select a special image or start a separate
 service. Workers are then spawned by the coordinator with `container`
 omitted (a local spawn inside the shared container). **Only the official

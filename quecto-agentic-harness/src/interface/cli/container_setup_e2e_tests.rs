@@ -268,7 +268,9 @@ fn init_materialises_the_bundle_writes_the_trusted_entry_and_status_is_then_read
     );
     assert!(out.contains("(trusted for exactly these bytes)"), "{out}");
     assert!(
-        out.contains("default: true — `spawn container: true` selects it"),
+        out.contains(
+            "default: true — this repo's default: `spawn container: true` selects it in this repo"
+        ),
         "{out}"
     );
     assert!(
@@ -484,23 +486,33 @@ fn a_sandbox_checkout_and_a_global_default_are_both_said_and_the_preflight_refus
         out.contains("sandbox: no --repo (the checkout has no origin remote and none was given)"),
         "{out}"
     );
-    assert!(out.contains("not the default: corp is already the default; select it with container: {\"mode\":\"new\",\"container_config\":\"standard\"}"), "{out}");
+    assert!(out.contains("default: true — this repo's default"), "{out}");
     assert!(
-        out.contains("2. quecto container doctor --name standard   — every check ✓"),
+        out.contains("the global default corp does not apply in this repo (the global file is untouched; other repos keep it)"),
+        "{out}"
+    );
+    assert!(!out.contains("displaced default:"), "{out}");
+    assert!(
+        out.contains("2. quecto container doctor   — every check ✓"),
         "{out}"
     );
     assert!(
-        out.contains(
-            "3. spawn {\"agent_id\":\"probe\",\"task\":\"run pwd\",\"container\":{\"mode\":\"new\",\"container_config\":\"standard\"}}"
-        ),
+        out.contains("3. spawn {\"agent_id\":\"probe\",\"task\":\"run pwd\",\"container\":true}"),
         "{out}"
     );
-    assert!(
-        rig.overlay()["container_configs"]["standard"]
-            .get("default")
-            .is_none(),
+    assert_eq!(
+        rig.overlay()["container_configs"]["standard"]["default"],
+        serde_json::json!(true),
         "{}",
         rig.overlay()
+    );
+    let global: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.base_dir.join("config.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        global["container_configs"]["corp"]["default"],
+        serde_json::json!(true),
+        "the global file is untouched"
     );
 
     let again = rig.run(&ctx, &["container", "init"]);
@@ -522,7 +534,11 @@ fn a_sandbox_checkout_and_a_global_default_are_both_said_and_the_preflight_refus
     let status = rig.run(&ctx, &["container", "status"]);
     assert_eq!(status.exit_code, 1);
     let out = &status.stdout;
-    assert!(out.contains("config:  standard (not default, overlay) in the effective configuration; sandbox (no --repo)"), "{out}");
+    assert!(out.contains("config:  standard (default, overlay) in the effective configuration; sandbox (no --repo)"), "{out}");
+    assert!(
+        out.contains("this repo's default: `spawn container: true` selects it whatever the global file labels"),
+        "{out}"
+    );
     assert!(
         out.contains("image:   unknown — the create script refuses --preflight-only"),
         "{out}"

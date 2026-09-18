@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use super::InitialiseStandardContainer;
 use super::rig_tests::*;
-use crate::application::environments::dto::{InitialiseStandardContainerError, RepositoryOrigin};
+use crate::application::environments::dto::{
+    ContainerConfigEntry, ContainerConfigLayer, InitialiseStandardContainerError, RepositoryOrigin,
+};
 use crate::application::environments::ports::ContainerConfigRosterReport;
 
 #[test]
@@ -38,8 +40,8 @@ fn writes_the_bundle_and_a_default_entry_naming_the_materialised_scripts() {
         report.build_command,
         "build -t quecto-box:local /p/.quecto/containers/standard"
     );
-    assert!(report.entry.default);
-    assert_eq!(report.entry.existing_default, None);
+    assert_eq!(report.entry.displaced_default, None);
+    assert_eq!(report.entry.overridden_global_default, None);
     assert_eq!(
         report.entry.path.as_deref(),
         Some(Path::new("/p/.quecto/config.json"))
@@ -103,7 +105,14 @@ fn a_second_init_keeps_every_asset_and_rewrites_the_same_entry() {
     let second = rig.use_case.execute(&request("/p")).unwrap();
     assert!(second.written.is_empty());
     assert_eq!(second.kept.len(), 2);
-    assert!(second.entry.default, "our own default stays the default");
+    assert_eq!(
+        second.entry.displaced_default, None,
+        "our own label is not a displacement"
+    );
+    assert!(
+        second.entry.entry.default,
+        "our own default stays the default"
+    );
     let written = rig.persistence.written.lock().unwrap();
     assert_eq!(written[0].1, written[1].1);
     assert_eq!(first.entry.entry, second.entry.entry);
@@ -131,7 +140,7 @@ fn an_edited_asset_is_kept_and_reported_as_differing() {
 }
 
 #[test]
-fn an_existing_default_keeps_its_label_and_ours_is_added_without_it() {
+fn a_global_default_is_overridden_for_this_repo_and_named_but_never_displaced() {
     let rig = build_rig(
         Ok(Some("u".into())),
         ContainerConfigRosterReport {
@@ -141,10 +150,90 @@ fn an_existing_default_keeps_its_label_and_ours_is_added_without_it() {
         None,
     );
     let report = rig.use_case.execute(&request("/p")).unwrap();
-    assert!(!report.entry.default);
-    assert_eq!(report.entry.existing_default.as_deref(), Some("other"));
+    assert!(
+        report.entry.entry.default,
+        "standard is always written as the default"
+    );
+    assert_eq!(report.entry.displaced_default, None);
+    assert_eq!(
+        report.entry.overridden_global_default.as_deref(),
+        Some("other")
+    );
     let written = rig.persistence.written.lock().unwrap();
-    assert!(!written[0].1.default);
+    assert!(written[0].1.default);
+    assert_eq!(
+        rig.persistence.displaced.lock().unwrap().as_slice(),
+        &[None],
+        "a global label is overridden by the merge, never displaced"
+    );
+}
+
+#[test]
+fn an_overlay_entry_carrying_the_default_label_is_displaced_in_the_same_write_and_named() {
+    let rig = build_rig(
+        Ok(Some("u".into())),
+        ContainerConfigRosterReport {
+            configs: vec![
+                entry("global", false),
+                ContainerConfigEntry {
+                    layer: ContainerConfigLayer::Overlay,
+                    ..entry("r", true)
+                },
+            ],
+            ..Default::default()
+        },
+        None,
+    );
+    let report = rig.use_case.execute(&request("/p")).unwrap();
+    assert!(report.entry.entry.default);
+    assert_eq!(report.entry.displaced_default.as_deref(), Some("r"));
+    assert_eq!(report.entry.overridden_global_default, None);
+    assert_eq!(
+        rig.persistence.displaced.lock().unwrap().as_slice(),
+        &[Some("r".to_string())]
+    );
+}
+
+#[test]
+fn a_dry_run_names_what_it_would_displace_without_writing() {
+    let rig = build_rig(
+        Ok(Some("u".into())),
+        ContainerConfigRosterReport {
+            configs: vec![ContainerConfigEntry {
+                layer: ContainerConfigLayer::Overlay,
+                ..entry("r", true)
+            }],
+            ..Default::default()
+        },
+        None,
+    );
+    let mut dry = request("/p");
+    dry.dry_run = true;
+    let report = rig.use_case.execute(&dry).unwrap();
+    assert_eq!(report.entry.displaced_default.as_deref(), Some("r"));
+    assert!(rig.persistence.written.lock().unwrap().is_empty());
+}
+
+#[test]
+fn our_own_overlay_label_is_neither_displaced_nor_an_override() {
+    let rig = build_rig(
+        Ok(Some("u".into())),
+        ContainerConfigRosterReport {
+            configs: vec![ContainerConfigEntry {
+                layer: ContainerConfigLayer::Overlay,
+                ..entry("standard", true)
+            }],
+            ..Default::default()
+        },
+        None,
+    );
+    let report = rig.use_case.execute(&request("/p")).unwrap();
+    assert_eq!(report.entry.displaced_default, None);
+    assert_eq!(report.entry.overridden_global_default, None);
+    assert_eq!(
+        rig.persistence.displaced.lock().unwrap().as_slice(),
+        &[None]
+    );
 }
 
 #[test]

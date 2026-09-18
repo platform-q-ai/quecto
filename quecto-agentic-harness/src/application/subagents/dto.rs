@@ -535,12 +535,28 @@ pub struct EffectiveContainerConfigSet {
     pub overlay_withheld: bool,
 }
 
+/// The name of the entry `quecto container init` writes into a repo's
+/// overlay (#2035): when the launching agent's checkout declares it, it
+/// is that repo's default — `container: true` selects it whatever entry
+/// the global file or another overlay entry labels `"default": true`.
+/// The environments capability spells the same name in its own constant;
+/// the contract suite holds the two equal.
+pub const REPO_STANDARD_CONTAINER: &str = "standard";
+
 impl EffectiveContainerConfigSet {
     /// The configured names, sorted.
     pub fn names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.configs.iter().map(|c| c.name.clone()).collect();
         names.sort_unstable();
         names
+    }
+
+    /// The checkout's own `standard` entry (#2035): declared by its
+    /// applied overlay, never a global entry of that name.
+    pub fn repo_standard(&self) -> Option<&ContainerLaunchConfig> {
+        self.configs
+            .iter()
+            .find(|config| config.repo_bound && config.name == REPO_STANDARD_CONTAINER)
     }
 }
 
@@ -573,7 +589,8 @@ pub use super::standard_script::StandardScriptVerdict;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectContainerConfigRequest {
     pub source: ContainerConfigSource,
-    /// `container_config: "<name>"`; `None` selects the labelled default.
+    /// `container_config: "<name>"`; `None` selects the checkout's
+    /// repo-bound `standard` entry, else the labelled default.
     pub name: Option<String>,
 }
 

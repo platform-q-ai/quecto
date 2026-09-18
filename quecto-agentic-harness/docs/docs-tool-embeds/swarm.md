@@ -14,7 +14,9 @@ containers to evade its limit. See `docs {"name":"subagents"}` for launching.
   the names (the spawn description's roster line shows the same set) — and
   names it
   explicitly: `spawn {"agent_id":"coordinator","task":"…","container":{"mode":"new","container_config":"<name>"}}`
-  (`"container": true` = the labelled default). The result's
+  (`"container": true` = this repo's `standard` entry when one exists — no
+  global default overrides it; run `quecto container init` first if the
+  roster shows none — else the labelled default). The result's
   `container_config=<name>` confirms the choice; a new container is a fresh
   clone of that config's `--repo`, not the master's working tree.
 - **Workers are spawned with `container` omitted** (a local spawn inside the

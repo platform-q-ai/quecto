@@ -15,6 +15,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use serde_json::Value;
+
 use crate::application::configuration::dto::{
     ConfigLayer, ConfigPatch, ConfigPatchError, ConfigSelection, OverlayState,
 };
@@ -70,18 +72,57 @@ impl ContainerConfigPersistence for OverlayContainerConfigWriter {
         }
     }
 
+    /// One patch: `container_configs.<name>` alone, or — when another
+    /// overlay entry's default label must go with it (#2035) — the whole
+    /// `container_configs` section as the overlay declares it, that
+    /// entry's label removed and ours set, so the merge validated is the
+    /// one that lands (two patches would leave an invalid merge between
+    /// them wherever the displaced entry was the only default).
     fn persist(
         &self,
         name: &str,
         entry: &ContainerConfigDocument,
+        displace_default: Option<&str>,
     ) -> Result<PersistedContainerConfig, String> {
+        let (key_path, value) = match displace_default {
+            None => (format!("container_configs.{name}"), entry_document(entry)),
+            Some(displaced) => {
+                // The trust refusal first, in its own words: an untrusted
+                // overlay reports no document, which must not read as "no
+                // such entry". The section is read here, OUTSIDE the
+                // patch's exclusive hold (the patch takes a value, not a
+                // mutation), so a `config set --local` that lands between
+                // this read and the write below is overwritten by the
+                // section read here — a window the single-key path does
+                // not have. Init is an operator command; closing it means
+                // a held read-mutate-write in the configuration capability.
+                self.check()?;
+                let mut section = self.overlay_section()?;
+                let other = match section.get_mut(displaced) {
+                    Some(Value::Object(other)) => other,
+                    Some(_) => {
+                        return Err(format!(
+                            "cannot move the default label from container_configs.{displaced}: the repo-local overlay's entry is not an object"
+                        ));
+                    }
+                    None => {
+                        return Err(format!(
+                            "cannot move the default label from container_configs.{displaced}: the repo-local overlay declares no such entry"
+                        ));
+                    }
+                };
+                other.remove("default");
+                section.insert(name.to_string(), entry_document(entry));
+                ("container_configs".to_string(), Value::Object(section))
+            }
+        };
         let receipt = self
             .patch
             .execute(ConfigPatch {
                 selection: self.selection.clone(),
                 layer: ConfigLayer::Overlay,
-                key_path: format!("container_configs.{name}"),
-                value: entry_document(entry),
+                key_path,
+                value,
             })
             .map_err(|error| error.to_string())?;
         Ok(PersistedContainerConfig {
@@ -98,6 +139,14 @@ impl ContainerConfigPersistence for OverlayContainerConfigWriter {
     /// overlay document the resolution reports (a withheld overlay is
     /// refused by `check` before this is consulted).
     fn existing(&self, name: &str) -> Result<Option<ContainerConfigDocument>, String> {
+        Ok(self.overlay_section()?.get(name).map(document_entry))
+    }
+}
+
+impl OverlayContainerConfigWriter {
+    /// The overlay's `container_configs` section as the applied overlay
+    /// document spells it (empty when absent), every entry verbatim.
+    fn overlay_section(&self) -> Result<serde_json::Map<String, Value>, String> {
         let effective = self
             .resolve
             .execute(&self.selection)
@@ -106,8 +155,9 @@ impl ContainerConfigPersistence for OverlayContainerConfigWriter {
             .overlay_document
             .as_ref()
             .and_then(|overlay| overlay.get("container_configs"))
-            .and_then(|section| section.get(name))
-            .map(document_entry))
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default())
     }
 }
 

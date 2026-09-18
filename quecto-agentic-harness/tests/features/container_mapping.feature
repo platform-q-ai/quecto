@@ -112,3 +112,37 @@ Feature: A repository binds itself to a container config through its overlay
     Then the spawn result should not be an error
     And the script-managed runtime should have used container script "default"
     And the script-managed runtime should have received no repository
+
+  # #2035: a repo-bound `standard` entry is the repo's default by rule,
+  # not by label — no default elsewhere overrides it.
+  @done @issue-2035 @container-spawn
+  Scenario: A repo-bound standard entry without the default label is still what container true selects over the global default
+    Given the checkout adds non-default container config "standard" with repository "https://example.test/repo-std" through quecto config set --local
+    When I spawn script-managed subagent "container-standard-unlabelled" with default selection and no config argument and task "CONTAINER_STANDARD_UNLABELLED_MARKER"
+    Then the spawn result should not be an error
+    And the spawn result should name container config "standard"
+    And the spawn result should carry no configuration diagnostics
+    And the script-managed runtime should have used container script "standard"
+    And the script-managed runtime should have received repository "https://example.test/repo-std"
+
+  @done @issue-2035 @container-spawn
+  Scenario: A repo-bound standard entry wins over another overlay entry that carries the default label
+    Given the checkout adds non-default container config "standard" with repository "https://example.test/repo-std" through quecto config set --local
+    And the checkout binds itself to container config "r" with repository "https://example.test/repo-r" through quecto config set --local
+    When the launcher is composed for the checkout with container discovery
+    Then the spawn description should carry the roster line "Available container configs: standard (default, repo-bound), alternate (global), default (global), r (repo-bound)."
+    When I spawn script-managed subagent "container-standard-over-r" with default selection and no config argument and task "CONTAINER_STANDARD_OVER_R_MARKER"
+    Then the spawn result should not be an error
+    And the spawn result should name container config "standard"
+    And the script-managed runtime should have received repository "https://example.test/repo-std"
+    When I spawn script-managed subagent "container-named-r-beside-standard" with script "r" and no config argument and task "CONTAINER_NAMED_R_BESIDE_STANDARD_MARKER"
+    Then the spawn result should not be an error
+    And the spawn result should name container config "r"
+
+  @done @issue-2035 @container-spawn
+  Scenario: A global entry named standard is not the repo's and the global default label still decides
+    Given the global configuration also declares non-default container config "standard"
+    When I spawn script-managed subagent "container-global-standard" with default selection and no config argument and task "CONTAINER_GLOBAL_STANDARD_MARKER"
+    Then the spawn result should not be an error
+    And the spawn result should name container config "default"
+    And the script-managed runtime should have used container script "default"

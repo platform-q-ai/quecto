@@ -2,8 +2,13 @@
 //! line (#2024 S4c): the container configs the launching agent can name,
 //! as launch policy would honour them. The port reports the effective set
 //! of the agent's checkout (global file plus its trusted overlay); this
-//! query owns the rules an agent relies on: the `container: true` default
-//! comes first and is the ONLY entry marked default; while the checkout's
+//! query owns the rules an agent relies on, mirroring launch policy
+//! (the contract suite holds the two equal): the `container: true`
+//! default comes first and is the ONLY entry marked default; the
+//! checkout's own `standard` entry, when its applied overlay declares
+//! one, is that default whatever the labels say (#2035) — a launchable
+//! one is marked, an unlabelled one is diagnosed with the remedy, a
+//! broken one leaves no default rather than a label's; while the checkout's
 //! overlay is withheld (untrusted, refused or unparseable and able to have
 //! changed the set) no entry is marked default — an implicit selection is
 //! refused until `quecto config trust`, and the diagnostics say so; an
@@ -15,7 +20,9 @@
 
 use std::sync::Arc;
 
-use crate::application::environments::dto::ContainerConfigInventory;
+use crate::application::environments::dto::{
+    ContainerConfigInventory, ContainerConfigLayer, STANDARD_CONTAINER_CONFIG,
+};
 use crate::application::environments::ports::ContainerConfigRoster;
 
 pub struct ListContainerConfigs {
@@ -60,14 +67,38 @@ impl ListContainerConfigs {
                 entry.default = false;
             }
         }
-        if defaults.len() > 1 {
-            diagnostics.push(format!(
-                "multiple container configs are labeled \"default\": true ({}); container: true is refused until exactly one is",
-                defaults.join(", ")
-            ));
-            for entry in &mut configs {
-                entry.default = false;
+        // A withheld overlay contributes no entry, so no repo-bound
+        // standard can be present then; the filter says so for a report
+        // that claims otherwise (every label was cleared above).
+        let repo_standard = configs
+            .iter()
+            .position(|entry| {
+                entry.layer == ContainerConfigLayer::Overlay
+                    && entry.name == STANDARD_CONTAINER_CONFIG
+            })
+            .filter(|_| !report.overlay_withheld);
+        match repo_standard {
+            Some(index) => {
+                let launchable = configs[index].problem.is_none();
+                if launchable && !configs[index].default {
+                    diagnostics.push(format!(
+                        "container config '{STANDARD_CONTAINER_CONFIG}' is this repo's default (container: true selects it) although its overlay entry carries no \"default\": true label (removed with `quecto config unset --local`); restore the label with `quecto container init --refresh` or `quecto config set --local container_configs.{STANDARD_CONTAINER_CONFIG}.default true`"
+                    ));
+                }
+                for (position, entry) in configs.iter_mut().enumerate() {
+                    entry.default = position == index && launchable;
+                }
             }
+            None if defaults.len() > 1 => {
+                diagnostics.push(format!(
+                    "multiple container configs are labeled \"default\": true ({}); container: true is refused until exactly one is",
+                    defaults.join(", ")
+                ));
+                for entry in &mut configs {
+                    entry.default = false;
+                }
+            }
+            None => {}
         }
         configs.sort_by(|a, b| b.default.cmp(&a.default).then_with(|| a.name.cmp(&b.name)));
         Ok(ContainerConfigInventory {

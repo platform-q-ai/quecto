@@ -172,3 +172,111 @@ fn the_revision_is_the_ports() {
     ))));
     assert_eq!(query.revision(), "fixed");
 }
+
+// ─── A repo-bound `standard` entry is the repo's default (#2035) ─────────────
+
+fn inventory(
+    configs: Vec<ContainerConfigEntry>,
+) -> crate::application::environments::dto::ContainerConfigInventory {
+    ListContainerConfigs::new(Arc::new(FixedRoster(Ok(ContainerConfigRosterReport {
+        configs,
+        overlay_withheld: false,
+        diagnostics: vec![],
+    }))))
+    .execute()
+    .unwrap()
+}
+
+#[test]
+fn an_overlay_standard_entry_is_the_default_over_a_labelled_global_default() {
+    let inventory = inventory(vec![
+        entry("quecto", true, ContainerConfigLayer::Global),
+        entry("standard", false, ContainerConfigLayer::Overlay),
+    ]);
+    assert_eq!(names(&inventory), ["standard", "quecto"]);
+    assert_eq!(
+        inventory.default_entry().map(|e| e.name.as_str()),
+        Some("standard")
+    );
+    assert!(!inventory.configs[1].default, "the global label is cleared");
+    assert_eq!(
+        inventory.diagnostics,
+        vec![
+            "container config 'standard' is this repo's default (container: true selects it) although its overlay entry carries no \"default\": true label (removed with `quecto config unset --local`); restore the label with `quecto container init --refresh` or `quecto config set --local container_configs.standard.default true`".to_string()
+        ]
+    );
+}
+
+#[test]
+fn an_overlay_standard_entry_is_the_default_over_a_labelled_overlay_default_without_a_diagnostic() {
+    let inventory = inventory(vec![
+        entry("r", true, ContainerConfigLayer::Overlay),
+        entry("standard", true, ContainerConfigLayer::Overlay),
+        entry("quecto", false, ContainerConfigLayer::Global),
+    ]);
+    assert_eq!(names(&inventory), ["standard", "quecto", "r"]);
+    assert_eq!(
+        inventory.default_entry().map(|e| e.name.as_str()),
+        Some("standard")
+    );
+    assert!(
+        inventory.diagnostics.is_empty(),
+        "labels do not matter beside the repo's standard: {:?}",
+        inventory.diagnostics
+    );
+}
+
+#[test]
+fn a_global_entry_named_standard_is_not_the_repos_and_the_label_decides() {
+    let inventory = inventory(vec![
+        entry("standard", false, ContainerConfigLayer::Global),
+        entry("quecto", true, ContainerConfigLayer::Global),
+    ]);
+    assert_eq!(
+        inventory.default_entry().map(|e| e.name.as_str()),
+        Some("quecto")
+    );
+    assert!(inventory.diagnostics.is_empty());
+}
+
+#[test]
+fn a_broken_overlay_standard_entry_marks_no_default_rather_than_falling_back_to_a_label() {
+    let mut broken = entry("standard", true, ContainerConfigLayer::Overlay);
+    broken.problem = Some("create argv is empty".into());
+    let inventory = inventory(vec![
+        entry("quecto", true, ContainerConfigLayer::Global),
+        broken,
+    ]);
+    assert_eq!(inventory.default_entry(), None);
+    assert!(
+        inventory
+            .diagnostics
+            .iter()
+            .any(|line| line.contains("cannot launch as configured: create argv is empty")),
+        "{:?}",
+        inventory.diagnostics
+    );
+}
+
+#[test]
+fn a_withheld_overlay_marks_no_default_even_with_a_standard_entry_reported() {
+    let query = ListContainerConfigs::new(Arc::new(FixedRoster(Ok(ContainerConfigRosterReport {
+        configs: vec![
+            entry("quecto", true, ContainerConfigLayer::Global),
+            entry("standard", true, ContainerConfigLayer::Overlay),
+        ],
+        overlay_withheld: true,
+        diagnostics: vec!["untrusted".into()],
+    }))));
+    let inventory = query.execute().unwrap();
+    assert_eq!(inventory.default_entry(), None);
+    // A withheld overlay contributes no entry, so this report shape is one
+    // no adapter produces; the rule still steps aside and the pre-existing
+    // multiple-defaults diagnostic is kept, never dropped.
+    assert_eq!(inventory.diagnostics[0], "untrusted");
+    assert!(
+        inventory.diagnostics[1].starts_with("multiple container configs are labeled"),
+        "{:?}",
+        inventory.diagnostics
+    );
+}

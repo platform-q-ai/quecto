@@ -167,7 +167,8 @@ pub trait EnvironmentMemberShutdown: Send + Sync {
 /// The container config a diagnosis targets, resolved the way a launch
 /// resolves it: the effective configuration of the working directory
 /// (its trusted overlay merged over the global file) or an explicit file,
-/// the named entry or the labelled default. Implemented by infrastructure
+/// the named entry or what `container: true` selects (the repo-bound
+/// `standard`, else the labelled default). Implemented by infrastructure
 /// over the launch policy's selection; composition binds the checkout.
 pub trait ContainerConfigLookup: Send + Sync {
     fn lookup(&self, target: &ContainerRuntimeTarget)
@@ -352,10 +353,16 @@ pub trait ContainerConfigPersistence: Send + Sync {
     /// is written. Nothing is written.
     fn check(&self) -> Result<(), String>;
 
+    /// Write `container_configs.<name>` as `entry`; when
+    /// `displace_default` names another overlay entry, its `"default":
+    /// true` label is removed in the same write (#2035: the merge accepts
+    /// one default, so the two changes must land together). Naming an
+    /// entry the overlay does not declare is an error, nothing written.
     fn persist(
         &self,
         name: &str,
         entry: &ContainerConfigDocument,
+        displace_default: Option<&str>,
     ) -> Result<PersistedContainerConfig, String>;
 
     /// The overlay file a persist would write, when the run has one.

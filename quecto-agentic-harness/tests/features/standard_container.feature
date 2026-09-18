@@ -59,15 +59,38 @@ Feature: The standard container is landed on master
     And the output should contain "rewrote: --image mine:2 (was mine:1)"
     And the output should contain "podman build -t mine:2 -f"
 
-  @done @issue-2024
-  Scenario: init beside an existing default adds the entry without the default label and says so
+  @done @issue-2035
+  Scenario: init beside a global default makes standard this repo's default and says which global label no longer applies
     Given the current directory is a git checkout whose origin remote is a reachable local repository
     And the global configuration already labels container config "other" as the default
     When I run quecto with arguments "container init"
     Then the exit code should be 0
-    And the overlay entry "standard" should not be the default
-    And the effective default container config should still be "other"
-    And the output should contain "not the default: other is already the default"
+    And the overlay entry "standard" should be the default
+    And the effective default container config should still be "standard"
+    And the output should contain "default: true — this repo's default"
+    And the output should contain "the global default other does not apply in this repo"
+    And the output should not contain "displaced default:"
+
+  @done @issue-2035
+  Scenario: init over an overlay that labels another entry default moves the label to standard and names what it displaced
+    Given the current directory is a git checkout whose origin remote is a reachable local repository
+    And the checkout binds itself to default container config "r" with repository "https://example.test/repo-r" through quecto config set --local
+    When I run quecto with arguments "container init --dry-run"
+    Then the exit code should be 0
+    And the output should contain "displaced default: r (the overlay entry would lose its"
+    And the overlay entry "r" should be the default
+    When I run quecto with arguments "container init"
+    Then the exit code should be 0
+    And the overlay entry "standard" should be the default
+    And the overlay entry "r" should not be the default
+    And the overlay entry "r" create argv should carry "--repo" "https://example.test/repo-r"
+    And the effective default container config should still be "standard"
+    And the output should contain "displaced default: r"
+    When I run quecto with arguments "container init"
+    Then the exit code should be 0
+    And the output should not contain "displaced default:"
+    And the overlay entry "standard" should be the default
+    And the overlay entry "r" should not be the default
 
   @done @issue-2024
   Scenario: init without an origin remote writes a sandbox entry and says so
@@ -204,15 +227,16 @@ Feature: The standard container is landed on master
     Then the exit code should be 1
     And the stderr should contain "run without --config"
 
-  @done @issue-2024
-  Scenario: init beside an existing default tells the agent how to select the entry and diagnose it by name
+  @done @issue-2035
+  Scenario: init beside a global default tells the agent that container true selects standard here
     Given the current directory is a git checkout whose origin remote is a reachable local repository
     And the global configuration already labels container config "other" as the default
     When I run quecto with arguments "container init"
     Then the exit code should be 0
-    And the output should contain "select it with container: {"
-    And the output should contain "container_config"
-    And the output should contain "quecto container doctor --name standard"
+    And the output should contain "`spawn container: true` selects it in this repo"
+    And the output should not contain "select it with container: {"
+    And the output should contain "quecto container doctor   — every check"
+    And the output should contain ":true} from an agent in this project"
 
   @done @issue-2024
   Scenario: status before init says what is missing
@@ -350,4 +374,60 @@ Feature: The standard container is landed on master
     Then the container command result should not be an error
     And the container listing should include "C1" with status "stopped" and 0 members
     And the fake podman should have been asked to remove the container
+    And scenario teardown should leave no fixture processes running
+
+  # #2035: a repo's standard container is its default. The label in the
+  # overlay is how init says so; the rule in launch policy is why no label
+  # elsewhere — the global file's, another overlay entry's, or the
+  # label's own removal by hand — changes what `container: true` selects.
+  @done @issue-2035 @container-spawn @serial
+  Scenario: the repo's standard container is selected by container true whatever the global file or the overlay labels default
+    Given the current directory is a git checkout whose origin remote is a reachable local repository
+    And a controlled PATH whose fake podman reports every image as present and runs each container's command on the host
+    And script-managed subagent spawning through the fake podman is available from the checkout with global default script "default"
+    When I run quecto with arguments "container init"
+    Then the exit code should be 0
+    And the output should contain "default: true — this repo's default"
+    And the output should contain "the global default default does not apply in this repo"
+    And the spawn description should carry the roster line "Available container configs: standard (default, repo-bound), alternate (global), default (global)."
+    When I spawn script-managed subagent "standard-rule-1" with default selection and no config argument and task "STANDARD_RULE_1_MARKER"
+    Then the spawn result should not be an error
+    And the spawn result should name container config "standard"
+    And the fake podman should have been asked to run the child 1 times
+    When I kill container "C1"
+    Then the container command result should not be an error
+    When the global configuration is hand-edited to label container config "quecto" as its default
+    And I spawn script-managed subagent "standard-rule-2" with default selection and no config argument and task "STANDARD_RULE_2_MARKER"
+    Then the spawn result should not be an error
+    And the spawn result should name container config "standard"
+    And the fake podman should have been asked to run the child 2 times
+    And the spawn description should carry the roster line "Available container configs: standard (default, repo-bound), alternate (global), default (global), quecto (global)."
+    When I kill container "C2"
+    Then the container command result should not be an error
+    When the overlay entry "standard" is un-defaulted through quecto config unset --local
+    Then the overlay entry "standard" should not be the default
+    And the effective default container config should still be "quecto"
+    When I spawn script-managed subagent "standard-rule-3" with default selection and no config argument and task "STANDARD_RULE_3_MARKER"
+    Then the spawn result should not be an error
+    And the spawn result should name container config "standard"
+    And the fake podman should have been asked to run the child 3 times
+    And the spawn description should carry the roster line "Available container configs: standard (default, repo-bound), alternate (global), default (global), quecto (global)."
+    When I kill container "C3"
+    Then the container command result should not be an error
+    When I run the real quecto binary under the controlled PATH with arguments "container status"
+    Then the exit code should be 0
+    And the output should contain "config:  standard (default by rule, overlay) in"
+    And the output should contain "note:    the overlay's standard entry lost its"
+    And the output should contain "container: true still selects it (a repo's standard container is its default)"
+    And the output should contain "quecto container init --refresh"
+    And the output should contain "quecto config set --local container_configs.standard.default true"
+    When I run quecto with arguments "container init --refresh"
+    Then the exit code should be 0
+    And the overlay entry "standard" should be the default
+    And the output should not contain "displaced default:"
+    When I run the real quecto binary under the controlled PATH with arguments "container status"
+    Then the exit code should be 0
+    And the output should contain "config:  standard (default, overlay) in"
+    And the output should contain "this repo's default"
+    And the output should not contain "lost its"
     And scenario teardown should leave no fixture processes running

@@ -93,7 +93,7 @@ fn the_overlay_writer_checks_persists_reads_back_and_names_its_location() {
     port.check().unwrap();
     assert_eq!(port.existing("standard").unwrap(), None);
 
-    let receipt = port.persist("standard", &entry(true)).unwrap();
+    let receipt = port.persist("standard", &entry(true), None).unwrap();
     assert_eq!(receipt.path, rig.overlay());
     assert!(receipt.created);
     assert_eq!(port.existing("standard").unwrap(), Some(entry(true)));
@@ -101,14 +101,14 @@ fn the_overlay_writer_checks_persists_reads_back_and_names_its_location() {
 
     let mut changed = entry(true);
     changed.create[2] = "https://x/z".into();
-    let receipt = port.persist("standard", &changed).unwrap();
+    let receipt = port.persist("standard", &changed, None).unwrap();
     assert!(!receipt.created);
     assert_eq!(port.existing("standard").unwrap(), Some(changed));
 
     // The write goes through the configuration capability's own
     // validation: an entry set without a default is its refusal, in its
     // words, and the overlay keeps the entry it had.
-    let refusal = port.persist("standard", &entry(false)).unwrap_err();
+    let refusal = port.persist("standard", &entry(false), None).unwrap_err();
     assert!(
         refusal.contains("no container config is labeled"),
         "{refusal}"
@@ -128,7 +128,7 @@ fn a_non_default_entry_is_written_without_the_label_beside_the_global_default() 
     )
     .unwrap();
     let port = build_container_config_persistence(&rig.base_dir, &rig.selection());
-    port.persist("standard", &entry(false)).unwrap();
+    port.persist("standard", &entry(false), None).unwrap();
     let written: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(rig.overlay()).unwrap()).unwrap();
     assert!(
@@ -152,7 +152,7 @@ fn the_overlay_writer_refuses_an_untrusted_overlay_and_a_selection_without_a_loc
     let port = build_container_config_persistence(&rig.base_dir, &rig.selection());
     let refusal = port.check().unwrap_err();
     assert!(refusal.contains("not trusted"), "{refusal}");
-    let refusal = port.persist("standard", &entry(true)).unwrap_err();
+    let refusal = port.persist("standard", &entry(true), None).unwrap_err();
     assert!(refusal.contains("not trusted"), "{refusal}");
     assert!(
         !std::fs::read_to_string(rig.overlay())
@@ -175,7 +175,7 @@ fn the_overlay_writer_refuses_an_untrusted_overlay_and_a_selection_without_a_loc
     assert_eq!(port.location(), None);
     let refusal = port.check().unwrap_err();
     assert!(refusal.contains("overlay"), "{refusal}");
-    let refusal = port.persist("standard", &entry(true)).unwrap_err();
+    let refusal = port.persist("standard", &entry(true), None).unwrap_err();
     assert!(refusal.contains("overlay"), "{refusal}");
     assert_eq!(port.existing("standard").unwrap(), None);
 }

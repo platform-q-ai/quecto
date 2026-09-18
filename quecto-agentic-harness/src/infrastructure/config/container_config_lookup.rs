@@ -2,8 +2,9 @@
 //! the environments capability's [`ContainerConfigLookup`] port over the
 //! composed launch-policy selection, so `quecto container doctor` and
 //! `spawn container: true` agree on which entry the working directory's
-//! effective configuration labels as default, which names exist, and
-//! which overlay diagnostics apply.
+//! effective configuration selects by default (its repo-bound `standard`,
+//! else the labelled one), which names exist, and which overlay
+//! diagnostics apply.
 use std::sync::Arc;
 
 use crate::application::environments::dto::{ContainerRuntimeTarget, DiagnosableContainerConfig};

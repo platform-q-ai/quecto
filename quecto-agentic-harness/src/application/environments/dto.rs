@@ -8,7 +8,8 @@
 /// `--config` file composition bound).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ContainerRuntimeTarget {
-    /// `--name <config>`; `None` selects the labelled default.
+    /// `--name <config>`; `None` selects what `container: true` would
+    /// (the repo-bound `standard`, else the labelled default).
     pub name: Option<String>,
 }
 
@@ -224,7 +225,8 @@ pub struct GcRequest {
     /// Report without removing anything.
     pub dry_run: bool,
     /// The container config whose scripts list and remove unrecorded
-    /// environments (`--name`; `None` is the labelled default). The
+    /// environments (`--name`; `None` is what `container: true` selects:
+    /// the repo-bound `standard`, else the labelled default). The
     /// collector scans that config's own state root and the roots the
     /// records it created imply — never another config's directories.
     pub config: Option<String>,
@@ -321,10 +323,13 @@ impl ContainerConfigLayer {
 pub struct ContainerConfigEntry {
     pub name: String,
     /// What `container: true` selects — exactly as launch policy would:
-    /// false on every entry while the checkout's overlay is withheld
-    /// (the default is then unknown and an implicit selection refused),
-    /// on an entry a launch would refuse, and on all of them when more
-    /// than one is labelled default.
+    /// the checkout's own `standard` entry whatever the labels say
+    /// (#2035); false on every entry while the checkout's overlay is
+    /// withheld (the default is then unknown and an implicit selection
+    /// refused), on an entry a launch would refuse, and on all of them
+    /// when more than one is labelled default and no repo-bound
+    /// `standard` exists. (In the roster port's report it is still the
+    /// raw label.)
     pub default: bool,
     pub layer: ContainerConfigLayer,
     /// The repository a new environment clones, when the config bakes
@@ -531,11 +536,15 @@ pub struct StandardEntryOutcome {
     /// The overlay file the entry lives in; `None` on a dry run without
     /// a known location.
     pub path: Option<std::path::PathBuf>,
-    /// Whether the entry carries `"default": true`.
-    pub default: bool,
-    /// The name of the entry that is already the default, when ours is
-    /// not.
-    pub existing_default: Option<String>,
+    /// The overlay entry that carried the `"default": true` label before
+    /// this init and lost it to `standard` in the same write (#2035; on a
+    /// dry run, the entry that would).
+    pub displaced_default: Option<String>,
+    /// The global entry labelled default in the *effective* set, which
+    /// the repo's standard now overrides here (the global file is
+    /// untouched). `None` when the overlay already labelled another entry
+    /// (the merge had un-defaulted the global one before init looked).
+    pub overridden_global_default: Option<String>,
     /// The entry as written, so the presenter can show it verbatim.
     pub entry: ContainerConfigDocument,
 }
@@ -657,6 +666,28 @@ impl std::fmt::Display for InitialiseStandardContainerError {
 
 impl std::error::Error for InitialiseStandardContainerError {}
 
+/// What the `standard` entry is to `container: true` in this project
+/// (#2035): the checkout's own entry is its default by rule, label or
+/// not; a global entry of that name is nobody's standard and goes by its
+/// label like any other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StandardDefault {
+    /// The overlay declares it with the label init writes.
+    RepoDefault,
+    /// The overlay declares it but the label was removed (through
+    /// `quecto config unset --local`, which keeps the overlay trusted —
+    /// possible only while another entry carries a label, since a merge
+    /// with no default is refused): still selected by rule; the status
+    /// says how to restore the label.
+    LabelRemoved,
+    /// The overlay declares it but a launch refuses it as configured (a
+    /// missing or unsafe argv, carried as the entry's `problem`): no rule
+    /// or label makes it selectable.
+    Refused,
+    /// The global file (or the explicit `--config` file) declares it.
+    GlobalEntry { labelled: bool },
+}
+
 /// `quecto container status`: where the standard bundle stands for a
 /// project.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -666,6 +697,8 @@ pub struct StandardContainerStatus {
     pub assets: Vec<(std::path::PathBuf, AssetState)>,
     /// The `standard` entry of the effective set, when present.
     pub entry: Option<ContainerConfigEntry>,
+    /// What that entry is to `container: true` here; `None` without one.
+    pub standard_default: Option<StandardDefault>,
     /// The checkout's overlay was not applied (untrusted or refused).
     pub overlay_withheld: bool,
     pub diagnostics: Vec<String>,
