@@ -72,6 +72,7 @@ const USE_CASES: &[&str] = &[
     "RewindConversation",
     "SaveSession",
     "SelectConfig",
+    "SelectContainerConfig",
     "SettleDelegatedChild",
     "SettleDelegatedChildPorts",
     "StartFreshConversation",

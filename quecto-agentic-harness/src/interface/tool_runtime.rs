@@ -145,6 +145,10 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     /// an explicit-model `effort` against.
     pub effort_control:
         Option<std::sync::Arc<crate::application::catalogue::use_cases::ChangeReasoningEffort>>,
+    /// Composition's container-config selection (#2024 S4a) the spawn tool
+    /// resolves `container: true` through; `None` refuses new containers.
+    pub container_config_selection:
+        Option<std::sync::Arc<crate::application::subagents::use_cases::SelectContainerConfig>>,
     /// Composition's builder of the `agent_cmd kill` owner (#1936); `None`
     /// leaves `kill` unavailable.
     pub kill_tool: Option<crate::interface::cli::KillToolBuilder>,
@@ -209,6 +213,7 @@ pub(crate) fn build_tool_runtime(
         parent_session_name,
         parent_config_path,
         effort_control,
+        container_config_selection,
         kill_tool,
         disabled_tools,
         inherited_tool_policy,
@@ -304,6 +309,7 @@ pub(crate) fn build_tool_runtime(
         owned_child_supervisor:
             crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
         effort_control,
+        container_config_selection,
     });
     // The agent-control use cases — `kill`, the environment member
     // shutdown, the swarm member termination, the spawn lifecycle and the

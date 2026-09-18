@@ -34,6 +34,9 @@ fn test_status_shows_summary() {
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
+        container_config_selection: Some(
+            crate::composition::container_configs::build_agent_container_config_selection,
+        ),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(
@@ -80,6 +83,9 @@ fn test_status_respects_global_config_flag() {
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
+        container_config_selection: Some(
+            crate::composition::container_configs::build_agent_container_config_selection,
+        ),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(
@@ -127,6 +133,9 @@ fn test_status_no_config_uses_defaults() {
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
+        container_config_selection: Some(
+            crate::composition::container_configs::build_agent_container_config_selection,
+        ),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(
@@ -155,6 +164,9 @@ fn test_status_redacts_api_keys() {
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
+        container_config_selection: Some(
+            crate::composition::container_configs::build_agent_container_config_selection,
+        ),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(
@@ -184,6 +196,9 @@ fn test_status_both_providers_configured() {
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
+        container_config_selection: Some(
+            crate::composition::container_configs::build_agent_container_config_selection,
+        ),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(
@@ -207,6 +222,9 @@ fn test_status_explicit_missing_config_fails() {
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
+        container_config_selection: Some(
+            crate::composition::container_configs::build_agent_container_config_selection,
+        ),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(
@@ -244,6 +262,9 @@ fn test_status_invalid_config_fails() {
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
+        container_config_selection: Some(
+            crate::composition::container_configs::build_agent_container_config_selection,
+        ),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(

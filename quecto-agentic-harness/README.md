@@ -513,15 +513,22 @@ reload: the last-good runtime is kept. `quecto-tui` sessions never prompt for
 trust; run `quecto config trust` in the project directory and the next turn
 picks it up.
 
-**Container spawns are not on the overlay yet (#2024 S4).** A `spawn` with
-`container: true` still loads `container_configs` from the base file plus the
-*separate* repo-local container mechanism of
-[Container runtimes](../docs/container-runtimes.md), with its own trust record
-(`container-config-trust.json` under the state directory) and its own
-`[y/N]` prompt; `quecto config trust` does not approve container scripts for
-that path. S4 folds container spawning onto the effective configuration and
-this trust record. Until then, treat `container_configs` in an overlay as
-visible to `config get --effective` and `status` but not yet to `spawn`.
+**Container spawns read the effective configuration.** A `spawn` with
+`container: true` (or a named `container_config`) selects from the
+`container_configs` a run in the agent's working directory would load — the
+global file with the trusted overlay merged entry-wise, resolved fresh at
+every spawn — so a repository binds itself to a container config with
+`quecto config set --local container_configs.<name> '{"default":true,…}'`
+and rolls back with `quecto config unset --local container_configs.<name>`.
+There is no separate container trust record or `[y/N]` prompt: `quecto
+config trust` is the one approval, and an untrusted overlay contributes
+nothing — `container: true` is then refused with the diagnostic in the tool
+result, a named `container_config` launches from the global set and carries
+it (the spawn also prints it to stderr, as `status` does). The binding
+applies only to runs started without `--config` and never inside a
+container child, which is started with the global file. The pre-#2024
+`container-config-trust.json` is not read; approve such an overlay once with
+`quecto config trust`. See [Container runtimes](../docs/container-runtimes.md).
 
 Subagents: a locally spawned subagent inherits the parent's working directory
 and performs its own discovery there — the same global file and, when trusted,

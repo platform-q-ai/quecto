@@ -205,11 +205,20 @@ impl ResolveEffectiveConfig {
             OverlayTrust::Untrusted { fingerprint } => match self.checked_overlay(path, &bytes) {
                 Ok(overlay) if self.trust.offer(path, fingerprint, &bytes) => overlay,
                 checked => {
+                    // The withheld document's top-level keys travel with
+                    // the report: a reader may learn what the overlay
+                    // declares without any of it being applied. A document
+                    // the checks refused declares nothing.
+                    let sections = checked
+                        .as_ref()
+                        .map(|overlay| overlay.keys().cloned().collect())
+                        .unwrap_or_default();
                     return Ok((
                         global,
                         report(OverlayState::Untrusted {
                             fingerprint: fingerprint.clone(),
                             problem: checked.err().map(|error| error.to_string()),
+                            sections,
                         }),
                     ));
                 }

@@ -53,6 +53,12 @@ impl SpawnTool {
     pub fn notify_tx(&self) -> Option<&NotificationTx> {
         self.notify_tx.as_ref()
     }
+
+    /// The base directory this tool launches children with (the quecto
+    /// home, where the overlay trust record lives), never a checkout.
+    pub fn base_dir(&self) -> &std::path::Path {
+        &self.base_dir
+    }
 }
 
 #[cfg(test)]

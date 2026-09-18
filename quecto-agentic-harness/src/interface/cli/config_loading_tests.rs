@@ -22,6 +22,7 @@ fn diagnostics_name_the_untrusted_overlay_and_the_retired_file() {
         Some(OverlayState::Untrusted {
             fingerprint: "abc".into(),
             problem: None,
+            sections: Vec::new(),
         }),
         true,
     ));
@@ -38,6 +39,7 @@ fn diagnostics_carry_the_check_failure_of_an_untrusted_overlay_and_a_refusal() {
         Some(OverlayState::Untrusted {
             fingerprint: "abc".into(),
             problem: Some("`providers` is global-only".into()),
+            sections: Vec::new(),
         }),
         false,
     ));
@@ -78,6 +80,7 @@ fn the_overlay_summary_reports_each_state() {
             Some(OverlayState::Untrusted {
                 fingerprint: "x".into(),
                 problem: None,
+                sections: Vec::new(),
             }),
             false
         )),

@@ -49,6 +49,9 @@ fn workflow_flags() -> AgentFlags {
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
+        container_config_selection: Some(
+            crate::composition::container_configs::build_agent_container_config_selection,
+        ),
         stdin_is_tty: false,
     }
 }
@@ -89,6 +92,11 @@ fn build(
             None,
         )
         .effort,
+        container_config_selection:
+            crate::composition::container_configs::build_container_config_selection(
+                std::path::Path::new("/nonexistent-base"),
+                None,
+            ),
         config_path: tmp.path(),
         config,
         http_client: &reqwest::Client::new(),

@@ -5,8 +5,13 @@
 //! Built once per harness beside its agent-control tools and installed in
 //! the spawn tool's lifecycle slot; fixtures that launch through their own
 //! `SpawnTool` build the same graph over their own registry.
+use std::path::Path;
 use std::sync::Arc;
 
+use crate::application::configuration::dto::{
+    ConfigLayers, ConfigSelection, ConfigSelectionRequest,
+};
+use crate::application::configuration::use_cases::SelectConfig;
 use crate::application::subagents::use_cases::{
     CompensateFailedLaunch, CompensateFailedLaunchPorts, ObserveOwnedChildExit,
 };
@@ -45,13 +50,49 @@ pub fn build_lifecycle_use_cases(
 }
 
 /// Install the lifecycle use cases in a launcher over its own registry,
-/// event stream and notification channel: integration launchers and BDD
-/// fixtures that build a `SpawnTool` outside the agent-control build.
+/// event stream and notification channel, and the container-config
+/// selection (#2024 S4a) over the launcher's parent config path with no
+/// checkout overlay: integration launchers and BDD fixtures that build a
+/// `SpawnTool` outside the agent-control build. A launcher with no parent
+/// config path gets a selection with no launching-agent source, so a
+/// container spawn that names no file fails with the clear error.
 pub fn compose_launcher(tool: SpawnTool) -> SpawnTool {
+    let selection = tool.parent_config_path().map(|global| {
+        ConfigSelection::Layered(ConfigLayers {
+            global: global.to_path_buf(),
+            overlay: None,
+            legacy_local: None,
+        })
+    });
+    compose_launcher_with_selection(tool, selection)
+}
+
+/// As [`compose_launcher`], for a launcher whose agent works in
+/// `checkout`: the parent config path is the global file and
+/// `<checkout>/.quecto/config.json` its overlay, discovered as the agent
+/// build discovers them for the working directory.
+pub fn compose_launcher_in_checkout(tool: SpawnTool, checkout: &Path) -> SpawnTool {
+    let selection = tool.parent_config_path().map(|global| {
+        SelectConfig::new().execute(ConfigSelectionRequest {
+            explicit: None,
+            working_directory: Some(checkout.to_path_buf()),
+            global: global.to_path_buf(),
+        })
+    });
+    compose_launcher_with_selection(tool, selection)
+}
+
+fn compose_launcher_with_selection(
+    tool: SpawnTool,
+    selection: Option<ConfigSelection>,
+) -> SpawnTool {
     let use_cases = build_lifecycle_use_cases(
         tool.registry().clone(),
         tool.broadcast_tx().cloned(),
         tool.notify_tx().cloned(),
     );
+    let container_configs =
+        super::container_configs::build_container_config_selection(tool.base_dir(), selection);
     tool.with_lifecycle_use_cases(use_cases)
+        .with_container_config_selection(Some(container_configs))
 }

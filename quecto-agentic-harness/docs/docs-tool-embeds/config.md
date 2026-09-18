@@ -90,9 +90,27 @@ quecto config unset agents.defaults.effort
 
 `quecto config get --effective agents.defaults.model` then prints the global value. `rm ./.quecto/config.json` removes every repository setting at once.
 
+## Runbook: bind this repository to a container config
+
+**Preconditions**: a container runtime script set (the shipped Docker/Podman adapter or your own, see `docs/container-runtimes.md`) with absolute script paths; the repository URL the container should clone. Find the names already configured with `quecto config get --effective container_configs`.
+
+**Do** (writes `./.quecto/config.json` and records its trust; `"default": true` makes it the config `container: true` selects here and un-defaults the global entries for runs in this directory):
+
+```
+quecto config set --local container_configs.app '{"default":true,"create":["/abs/path/create.sh","--state-dir","/abs/state","--repo","https://github.com/org/app"],"cleanup":["/abs/path/cleanup.sh"],"exec":["/abs/path/exec.sh","--state-dir","/abs/state"],"kill":["/abs/path/kill.sh","--state-dir","/abs/state"],"inspect":["/abs/path/inspect.sh","--state-dir","/abs/state"]}'
+```
+
+Omit `"default":true` to add a config that is only selected by name (`container: {"mode":"new","container_config":"app"}`). A merge that would leave no default, or two, is refused before the file is written.
+
+**Verify**: `quecto config get --effective container_configs` shows `app` with `"default": true` and the global entries un-defaulted; `quecto status` shows `Overlay: … (trusted)`. Then `spawn {"agent_id":"…","task":"…","container":true}` from an agent started in this directory: the result names `environment_ref=C1 container_config=app` and `agent_cmd get_containers` lists the repository the create script reported.
+
+**Scope**: the binding applies only to runs started in this directory *without* `--config` (an explicit `--config` file replaces both layers, as a spawn `config` argument does), and never inside a container child — the child is started with the global file and has no checkout overlay to bind. An overlay that is not trusted (hand-written, or committed by someone else) is not applied: `container: true` is then refused with the diagnostic in the tool result (it names the overlay and `quecto config trust`) when the overlay could have changed the default — it declares `container_configs`, is unparseable or fails the trust checks, or is refused as a symbolic link; an untrusted overlay that declares no `container_configs` (one that only pins `agents.defaults`) launches the global default with the diagnostic as a warning. A named `container_config` launches from the global set and carries the same diagnostic (a name only the withheld overlay defines is `unknown container config`, diagnostic appended); `quecto config trust` from this directory, after review, is the one approval.
+
+**Rollback**: `quecto config unset --local container_configs.app` (the global default applies again), or `rm ./.quecto/config.json` to drop the whole overlay. Other repositories are never affected: the overlay is read from the working directory only.
+
 ## Rules that matter mid-task
 
 - Configuration is read at startup and on reload; a running agent re-reads the base file and the overlay (and, while an overlay exists, the trust record) before the next turn, `set_model`, or a forced `reload`. What a reload carries into the running loop is the **providers** and the **tool policy**: a `config set` of `tools.policy.entries…` or of a provider endpoint from a task takes effect for the next turn of this run. `agents.defaults.model` and `agents.defaults.effort` written now do **not** change the running loop's model or effort — use `set_model` / `set_effort` for this run; the file value applies to the next run and to every subagent spawned locally afterwards. Removing the overlay follows the same rule. Do not create or edit configuration unless the task is to change Quecto's configuration, and say so in your report when you do.
 - Local subagents inherit your working directory and perform their own discovery there (same global file, same overlay when trusted); a parent's explicit `--config` is not forwarded to them (pass `config` in the spawn call, or set `QUECTO_RUNTIME_CONFIG_PATH`, to pin one). Container subagents are handed the parent's base file; the overlay is not forwarded into containers.
 - `set_tool_policy … persist` over UDS writes `tools.policy.entries` of the base file through the same writer; it never touches the overlay, and an entry the overlay already defines is refused with the `quecto config set` command to run instead.
-- **Container spawns do not read the overlay yet (#2024 S4).** `spawn` with `container: true` loads `container_configs` from the base file plus the separate repo-local container mechanism (its own trust record and prompt; `quecto config trust` does not cover it). `container_configs` in an overlay are visible to `config get --effective` and `status` today, not to `spawn`. See `docs {"name": "subagents"}`.
+- **Container spawns read the effective configuration.** `spawn` with `container: true` (or a named `container_config`) selects from the `container_configs` a run in your working directory would load: the base file with the trusted overlay merged entry-wise, resolved fresh at every spawn (no reload needed). An untrusted or refused overlay contributes nothing and the same stderr diagnostic as `status` says so. There is no separate container trust record or prompt: `quecto config trust` is the one approval. An explicit `config` argument in the spawn call replaces both layers, like `--config`. See the runbook below and `docs {"name": "subagents"}`.

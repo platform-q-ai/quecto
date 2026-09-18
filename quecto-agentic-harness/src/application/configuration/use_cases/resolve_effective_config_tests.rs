@@ -90,6 +90,8 @@ fn an_untrusted_overlay_is_reported_and_not_applied() {
             state: OverlayState::Untrusted {
                 fingerprint: "fp-41".into(),
                 problem: None,
+                // What the withheld document declares, without applying it.
+                sections: vec!["agents".to_string()],
             }
         })
     );
@@ -116,6 +118,7 @@ fn an_untrusted_overlay_that_trust_would_refuse_reports_why() {
             state:
                 OverlayState::Untrusted {
                     problem: Some(problem),
+                    sections,
                     ..
                 },
             ..
@@ -123,6 +126,10 @@ fn an_untrusted_overlay_that_trust_would_refuse_reports_why() {
         else {
             panic!("{content}: expected an untrusted report with a problem");
         };
+        assert!(
+            sections.is_empty(),
+            "{content}: a refused document declares nothing"
+        );
         assert!(problem.contains(expected), "{content}: {problem}");
         assert!(
             problem.contains(OVERLAY),

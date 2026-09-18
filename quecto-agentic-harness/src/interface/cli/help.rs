@@ -55,6 +55,9 @@ pub(super) fn help_text(out: &mut String) {
     );
     out.push_str("                  the repo-local ./.quecto/config.json overlay)\n");
     out.push_str(
+        "              unset <dotted.path> [--global|--local]  Remove a key (same layers)\n",
+    );
+    out.push_str(
         "              trust [--path <file>]  Approve the repo-local overlay's current content\n",
     );
     out.push_str("  models      Manage runtime model registry (discover)\n");

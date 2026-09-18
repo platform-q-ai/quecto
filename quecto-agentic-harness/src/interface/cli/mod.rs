@@ -350,6 +350,17 @@ pub type ToolPolicyPersistenceBuilder = fn(
 )
     -> crate::application::agent_loop::ToolPolicyPersistence;
 
+/// Composition's builder of the spawn tool's container-config selection
+/// (#2024 S4a): launch policy over the run's own configuration selection,
+/// so `container: true` resolves against the working directory's trusted
+/// overlay. Injected through the CLI context; the interface never
+/// composes the selection or reads a container config itself.
+pub type ContainerConfigSelectionBuilder =
+    fn(
+        &std::path::Path,
+        &ConfigSelection,
+    ) -> std::sync::Arc<crate::application::subagents::use_cases::SelectContainerConfig>;
+
 /// Composition's builder of the configuration handles (#1966, #2024):
 /// which files a run loads, the effective merge, and the one safe write
 /// path. Injected through the CLI context; the interface never probes or
@@ -427,6 +438,10 @@ pub struct CliContext {
     /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
     /// run refuses to start without it.
     pub tool_policy_persistence: Option<ToolPolicyPersistenceBuilder>,
+    /// Composition's container-config selection builder (#2024 S4a), from
+    /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
+    /// run's spawn tool selects container configs through it.
+    pub container_config_selection: Option<ContainerConfigSelectionBuilder>,
 }
 
 impl CliContext {
@@ -501,6 +516,7 @@ pub struct CliComposition {
     pub catalogue: CatalogueHandlesBuilder,
     pub provider_runtime: ProviderRuntimeBuilder,
     pub tool_policy_persistence: ToolPolicyPersistenceBuilder,
+    pub container_config_selection: ContainerConfigSelectionBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -529,6 +545,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         catalogue: Some(composition.catalogue),
         provider_runtime: Some(composition.provider_runtime),
         tool_policy_persistence: Some(composition.tool_policy_persistence),
+        container_config_selection: Some(composition.container_config_selection),
         ..Default::default()
     };
 

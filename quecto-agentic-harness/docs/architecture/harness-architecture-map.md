@@ -93,6 +93,21 @@ Important invariants before Phase 4:
 - `get_subagents` reports enough identity/state to rebuild the unit tree; and
 - exited children remain inspectable long enough for result recovery.
 
+Container config selection (#2024 S4a) is launch policy, not tool plumbing:
+`src/application/subagents/use_cases/select_container_config.rs` picks the
+named or labelled-default entry (enumerating the live names on every refusal
+and rejecting unrunnable argv) from the set its `EffectiveContainerConfigs`
+port returns — the configuration capability's *effective* configuration for
+the launching agent's checkout (trusted overlay merged entry-wise, untrusted
+overlay reported and not applied — withholding the implicit default only
+when it is refused, unparseable or failing the trust checks, or declares `container_configs`, judged in
+`composition/container_configs.rs` on the resolver's parsed top-level keys)
+or an explicit spawn `config` file, which
+replaces the layers. `src/infrastructure/config/container_configs.rs` adapts
+the port; `src/composition/container_configs.rs` binds it to the run's own
+configuration selection, and the spawn tool only holds and invokes the
+composed handle (a launcher composed without one refuses new containers).
+
 ## Persistence and session recovery
 
 **Primary code:** session vocabulary in `src/domain/session.rs`,
@@ -246,9 +261,12 @@ absence; `read_overlay` refuses a symbolic link at `.quecto` or at the file,
 stated once), `mapping.rs` (document → `Config` with every load-time validation,
 the env overrides, the validator adapter, `realize_config`),
 `persistence.rs` (the overlay trust record `<base_dir>/config-overlay-trust.json`,
-canonical path + sha256, shared primitives with the container-config overlay
-in `repo_local_container_config.rs`; the interactive prompt shows the
-document, bounded), and `writer/` (the JSON document writer: existing
+canonical path + sha256 — since #2024 S4a the one record that also gates the
+`container_configs` a spawn selects from; the interactive prompt shows the
+document, bounded), `container_configs.rs` (the subagent capability's
+`EffectiveContainerConfigs` port over the effective configuration, bound by
+`composition/container_configs.rs` to the launching agent's own selection),
+and `writer/` (the JSON document writer: existing
 indentation kept, tmp + fsync + rename via `atomic_write`, an exclusive
 `flock` on `<base_dir>/locks/<sha256 of the document's canonical path>.lock`
 — never beside the document, so a refused write of a not-yet-existing
