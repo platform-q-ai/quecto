@@ -20,6 +20,8 @@ fn main() {
             container_configs:
                 quecto::composition::container_configs::build_agent_container_config_handles,
             container_doctor: quecto::composition::environments::build_container_doctor,
+            container_init: quecto::composition::standard_container::build_standard_container_init,
+            container_status: quecto::composition::standard_container::build_container_status,
         },
     ));
 }

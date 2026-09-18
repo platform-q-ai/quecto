@@ -144,6 +144,29 @@ status/check/detail/remedy lines — the checks live in the script, one list
 for the create and the doctor). `composition/environments.rs` builds the
 doctor; `interface/cli/container.rs` parses, invokes it and presents.
 
+The standard container is landed (#2024 S4e). `quecto container init` is
+the environments capability's
+`application/environments/use_cases/initialise_standard_container.rs`
+over three capability-local ports: `ContainerAssetStore` (adapted in
+`src/infrastructure/processes/containers/standard/assets.rs`, which embeds
+`assets/standard-container/Containerfile` and the official
+`scripts/container-runtime/docker/*.sh` byte-for-byte and materialises a
+missing file whole, never replacing one), `WorkspaceOrigin`
+(`standard/workspace_origin.rs`, `git remote get-url origin`) and
+`ContainerConfigPersistence` — mapped in `composition/standard_container.rs`
+onto the configuration capability's `PatchConfiguration` (the
+`catalogue_defaults.rs` pattern: the two capabilities never name each
+other; the entry goes through the one write path with trust recorded for
+its bytes). The use case owns the bundle location
+(`<project>/.quecto/containers/standard`), the entry (argv naming the
+materialised scripts, `--state-dir`, `--repo`, `--image`) and the default
+rule (only when the effective set — read through `ContainerConfigRoster`
+— has no other default). `quecto container status` is
+`use_cases/container_status.rs` over the asset store, the roster, the
+S4b lookup and preflight. `interface/cli/container_setup.rs` parses,
+invokes and presents; the CLI context carries the builders `main` hands
+in.
+
 ## Persistence and session recovery
 
 **Primary code:** session vocabulary in `src/domain/session.rs`,

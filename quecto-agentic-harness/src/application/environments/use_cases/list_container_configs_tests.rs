@@ -83,6 +83,7 @@ fn an_empty_set_lists_nothing() {
     let inventory = query.execute().unwrap();
     assert!(inventory.configs.is_empty());
     assert!(inventory.default_entry().is_none());
+    assert_eq!(format!("{query:?}"), "ListContainerConfigs { .. }");
 }
 
 #[test]

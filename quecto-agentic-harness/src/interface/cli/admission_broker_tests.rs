@@ -228,3 +228,95 @@ fn an_explicit_directory_is_validated_and_run_honours_or_refuses_it() {
     assert!(error.contains("does not match"), "{error}");
     assert!(error.contains(&authority.display().to_string()), "{error}");
 }
+
+#[test]
+fn a_dry_run_install_and_uninstall_plan_without_touching_the_service() {
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = ctx(temp.path());
+    let authority = temp.path().join("authority");
+    let config = ENABLED.replace("DIR", &format!("{:?}", authority.to_string_lossy()));
+    std::fs::write(temp.path().join("config.json"), config).unwrap();
+    let (code, out, err) = run(&ctx, &["install-service", "--dry-run"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.starts_with(&format!(
+            "admission-broker: would apply quecto-admission-broker.service (directory {})\n",
+            authority.display()
+        )),
+        "{out}"
+    );
+    assert!(out.contains("  - (dry run) "), "{out}");
+    assert!(!authority.exists(), "a dry run creates nothing: {out}");
+    let (code, out, err) = run(&ctx, &["uninstall-service", "--dry-run"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("would apply"), "{out}");
+    assert!(out.contains("  - (dry run) "), "{out}");
+    // Without an admission section there is nothing to address.
+    std::fs::write(temp.path().join("config.json"), "{}").unwrap();
+    let (code, _, err) = run(&ctx, &["install-service", "--dry-run"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("no `admission` section"), "{err}");
+    let (code, _, err) = run(&ctx, &["uninstall-service", "--dry-run"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("no `admission` section"), "{err}");
+}
+
+#[test]
+fn every_service_action_has_a_line_and_the_unit_config_path_is_absolute() {
+    use crate::application::admission::dto::{ServiceAction, ServiceReport};
+    let path = std::path::PathBuf::from("/u/quecto.service");
+    let report = ServiceReport {
+        directory: "/d".into(),
+        unit: "quecto.service".into(),
+        unit_path: path.clone(),
+        dry_run: false,
+        actions: vec![
+            ServiceAction::WroteUnit { path: path.clone() },
+            ServiceAction::UnitUnchanged { path: path.clone() },
+            ServiceAction::RemovedUnit { path: path.clone() },
+            ServiceAction::NoUnitToRemove { path },
+            ServiceAction::DaemonReloaded,
+            ServiceAction::EnabledAndStarted {
+                unit: "quecto.service".into(),
+            },
+            ServiceAction::Restarted {
+                unit: "quecto.service".into(),
+            },
+            ServiceAction::DisabledAndStopped {
+                unit: "quecto.service".into(),
+            },
+            ServiceAction::NothingToDisable {
+                unit: "quecto.service".into(),
+            },
+            ServiceAction::Planned {
+                description: "write unit".into(),
+            },
+        ],
+    };
+    let mut out = String::new();
+    print_service_report(&report, &mut out);
+    assert_eq!(
+        out,
+        "admission-broker: applied quecto.service (directory /d)\n\
+         \x20 - wrote unit /u/quecto.service\n\
+         \x20 - unit /u/quecto.service already up to date\n\
+         \x20 - removed unit /u/quecto.service\n\
+         \x20 - no unit to remove at /u/quecto.service\n\
+         \x20 - reloaded the user daemon\n\
+         \x20 - enabled and started quecto.service\n\
+         \x20 - restarted quecto.service on the rewritten unit\n\
+         \x20 - disabled and stopped quecto.service\n\
+         \x20 - quecto.service was not enabled\n\
+         \x20 - (dry run) write unit\n"
+    );
+
+    let temp = tempfile::tempdir().unwrap();
+    let mut relative = ctx(temp.path());
+    relative.config_path = Some("relative/config.json".into());
+    let opts = parse_args(&[], &mut String::new()).unwrap();
+    let resolved = install_config_path(&relative, &opts).unwrap();
+    assert!(resolved.is_absolute(), "{}", resolved.display());
+    assert!(resolved.ends_with("relative/config.json"));
+    let absolute = install_config_path(&ctx(temp.path()), &opts).unwrap();
+    assert_eq!(absolute, temp.path().join("config.json"));
+}

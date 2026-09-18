@@ -156,7 +156,7 @@ pub(crate) fn config_set_local(world: &mut QuectoWorld, name: &str, entry: &serd
 #[given(
     expr = "script-managed subagent spawning is available from a checkout with global default script {string}"
 )]
-fn given_script_spawn_from_checkout(world: &mut QuectoWorld, script: String) {
+pub(crate) fn given_script_spawn_from_checkout(world: &mut QuectoWorld, script: String) {
     given_script_spawn(world, script, None, None);
     let base = base_path(world);
     let parent_config = PathBuf::from(world.config_path.clone().expect("config path"));

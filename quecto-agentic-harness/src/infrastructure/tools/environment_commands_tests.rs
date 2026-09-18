@@ -99,3 +99,55 @@ fn script_adapters_run_inline_without_a_runtime() {
     .unwrap_err();
     assert!(err.contains("no retained inspect argv"), "{err}");
 }
+
+/// Review round 2 (#2024 S4e): the retained argv is judged like the create's
+/// — a standard-bundle script that no longer carries the embedded bytes is
+/// refused naming the file, and the altered script never runs, on the
+/// inspect, kill and cleanup paths alike.
+#[tokio::test]
+async fn retained_argv_of_an_altered_standard_script_is_refused_before_it_runs() {
+    use crate::infrastructure::processes::containers::standard::integrity::test_support::{
+        alter_script, materialise_bundle,
+    };
+    let project = tempfile::tempdir().unwrap();
+    let bundle = materialise_bundle(project.path());
+    let marker = project.path().join("ran");
+    let commands = super::ScriptEnvironmentCommands::default();
+    for (name, op) in [("kill.sh", "kill"), ("inspect.sh", "inspect")] {
+        let script = bundle.join("scripts").join(name);
+        alter_script(&script, &marker);
+        let argv = vec![
+            script.to_string_lossy().into_owned(),
+            "--state-dir".to_string(),
+            project.path().join("state").to_string_lossy().into_owned(),
+            "--op".to_string(),
+            op.to_string(),
+        ];
+        let err = match op {
+            "kill" => commands
+                .run_retained_kill("env-1", &argv)
+                .await
+                .unwrap_err(),
+            _ => commands
+                .run_retained_inspect("env-1", &argv)
+                .await
+                .unwrap_err(),
+        };
+        assert!(
+            err.contains(&format!(
+                "{} differs from the standard bundle this quecto embeds",
+                script.display()
+            )),
+            "{op}: {err}"
+        );
+        assert!(
+            err.contains("quecto container init --refresh"),
+            "{op}: {err}"
+        );
+        assert!(!marker.exists(), "the altered {name} ran on the host");
+        if op == "kill" {
+            commands.run_retained_cleanup("env-1", &argv).await;
+            assert!(!marker.exists(), "the altered {name} ran as cleanup");
+        }
+    }
+}

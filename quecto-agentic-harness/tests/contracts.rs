@@ -51,14 +51,20 @@ mod config_document_store;
 mod config_document_writer;
 #[path = "contracts/config_validator.rs"]
 mod config_validator;
+#[path = "contracts/container_asset_store.rs"]
+mod container_asset_store;
 #[path = "contracts/container_config_default_equivalence.rs"]
 mod container_config_default_equivalence;
 #[path = "contracts/container_config_lookup.rs"]
 mod container_config_lookup;
+#[path = "contracts/container_config_persistence.rs"]
+mod container_config_persistence;
 #[path = "contracts/container_config_roster.rs"]
 mod container_config_roster;
 #[path = "contracts/container_runtime_preflight.rs"]
 mod container_runtime_preflight;
+#[path = "contracts/container_script_integrity.rs"]
+mod container_script_integrity;
 #[path = "contracts/context_spill_store.rs"]
 mod context_spill_store;
 #[path = "contracts/credential_status_port.rs"]
@@ -217,3 +223,5 @@ mod workflow_run_source;
 mod session_home_catalogue;
 #[path = "contracts/workspace_discovery.rs"]
 mod workspace_discovery;
+#[path = "contracts/workspace_origin.rs"]
+mod workspace_origin;

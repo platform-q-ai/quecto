@@ -15,6 +15,7 @@ use quecto::application::subagents::dto::{
 };
 use quecto::application::subagents::ports::EffectiveContainerConfigs;
 use quecto::application::subagents::use_cases::SelectContainerConfig;
+use quecto::composition::container_configs::build_container_script_integrity;
 use quecto::infrastructure::config::container_config_roster::EffectiveConfigRoster;
 
 struct InMemory(EffectiveContainerConfigSet);
@@ -63,7 +64,7 @@ fn both(set: EffectiveContainerConfigSet) -> (Option<String>, Option<String>) {
         .unwrap()
         .default_entry()
         .map(|entry| entry.name.clone());
-    let selected = SelectContainerConfig::new(configs)
+    let selected = SelectContainerConfig::new(configs, build_container_script_integrity())
         .execute(&SelectContainerConfigRequest {
             source: ContainerConfigSource::LaunchingAgent,
             name: None,

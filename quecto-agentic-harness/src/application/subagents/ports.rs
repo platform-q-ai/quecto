@@ -499,3 +499,16 @@ pub trait EffectiveContainerConfigs: Send + Sync {
         crate::application::subagents::dto::ContainerConfigsError,
     >;
 }
+
+/// The standard bundle's verdict on a host-side script a container config
+/// names (#2024 S4e): the launch policy asks it for every script of the
+/// selected entry and refuses the launch when a standard asset no longer
+/// carries the embedded bytes. Implemented by infrastructure over the
+/// embedded bundle; a script outside the bundle's layout is
+/// `NotStandard` and the configuration's trust alone vouches for it.
+pub trait ContainerScriptIntegrity: Send + Sync {
+    fn verify(
+        &self,
+        script: &std::path::Path,
+    ) -> crate::application::subagents::dto::StandardScriptVerdict;
+}

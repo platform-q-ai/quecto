@@ -13,23 +13,33 @@
 //! an agent can offer the menu, and an unknown name or missing default
 //! carries the layer diagnostics too (a withheld overlay is the likely
 //! reason the entry is absent); a selected entry must carry runnable
-//! `create` and `cleanup` argv with no empty or NUL-bearing argument.
+//! `create` and `cleanup` argv with no empty or NUL-bearing argument;
+//! and every script of the selected entry that is a standard-bundle
+//! asset (#2024 S4e) must still carry the bytes this binary embeds —
+//! those scripts run on the host before any container exists, and the
+//! overlay's trust covers the entry, not the files it names — else the
+//! launch is refused naming the file and the refresh, through the
+//! [`ContainerScriptIntegrity`] port.
 
 use std::sync::Arc;
 
 use crate::application::subagents::dto::{
     ContainerConfigSource, ContainerLaunchConfig, SelectContainerConfigError,
-    SelectContainerConfigRequest, SelectedContainerConfig,
+    SelectContainerConfigRequest, SelectedContainerConfig, StandardScriptVerdict,
 };
-use crate::application::subagents::ports::EffectiveContainerConfigs;
+use crate::application::subagents::ports::{ContainerScriptIntegrity, EffectiveContainerConfigs};
 
 pub struct SelectContainerConfig {
     configs: Arc<dyn EffectiveContainerConfigs>,
+    integrity: Arc<dyn ContainerScriptIntegrity>,
 }
 
 impl SelectContainerConfig {
-    pub fn new(configs: Arc<dyn EffectiveContainerConfigs>) -> Self {
-        Self { configs }
+    pub fn new(
+        configs: Arc<dyn EffectiveContainerConfigs>,
+        integrity: Arc<dyn ContainerScriptIntegrity>,
+    ) -> Self {
+        Self { configs, integrity }
     }
 
     pub fn execute(
@@ -81,10 +91,36 @@ impl SelectContainerConfig {
             }
         };
         validate_argv(config)?;
+        self.verify_standard_scripts(config)?;
         Ok(SelectedContainerConfig {
             config: config.clone(),
             diagnostics: set.diagnostics,
         })
+    }
+}
+
+impl SelectContainerConfig {
+    /// Every script the entry names that belongs to the standard bundle
+    /// must be intact; the first that is not names the refusal.
+    fn verify_standard_scripts(
+        &self,
+        config: &ContainerLaunchConfig,
+    ) -> Result<(), SelectContainerConfigError> {
+        for script in config.scripts() {
+            match self.integrity.verify(&script) {
+                StandardScriptVerdict::NotStandard | StandardScriptVerdict::Intact => {}
+                verdict @ (StandardScriptVerdict::Differs
+                | StandardScriptVerdict::Missing
+                | StandardScriptVerdict::Refused(_)) => {
+                    return Err(SelectContainerConfigError::StandardScriptAltered {
+                        name: config.name.clone(),
+                        script,
+                        verdict,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 }
 

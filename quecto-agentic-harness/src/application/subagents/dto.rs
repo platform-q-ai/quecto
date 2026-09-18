@@ -475,6 +475,27 @@ pub struct ContainerLaunchConfig {
 }
 
 impl ContainerLaunchConfig {
+    /// The programs the argv sets run (each set's first element), once
+    /// each in `create`, `cleanup`, `exec`, `kill`, `inspect` order: the
+    /// host-side scripts a launch executes.
+    pub fn scripts(&self) -> Vec<std::path::PathBuf> {
+        let mut scripts: Vec<std::path::PathBuf> = Vec::new();
+        for argv in [
+            &self.create,
+            &self.cleanup,
+            &self.exec,
+            &self.kill,
+            &self.inspect,
+        ] {
+            if let Some(first) = argv.first().map(std::path::PathBuf::from)
+                && !scripts.contains(&first)
+            {
+                scripts.push(first);
+            }
+        }
+        scripts
+    }
+
     /// Why launch policy would refuse this entry's argv, if it would:
     /// `create` and `cleanup` are required, and no argument of any set may
     /// be empty or carry a NUL. One rule for the selection and the roster.
@@ -547,6 +568,8 @@ impl fmt::Display for ContainerConfigsError {
 
 impl std::error::Error for ContainerConfigsError {}
 
+pub use super::standard_script::StandardScriptVerdict;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectContainerConfigRequest {
     pub source: ContainerConfigSource,
@@ -593,6 +616,15 @@ pub enum SelectContainerConfigError {
         name: String,
         what: &'static str,
     },
+    /// A standard-bundle script the entry's argv names no longer carries
+    /// the embedded bytes (or is missing, or cannot be judged): the
+    /// host-side script would run with no trust behind it, so the launch
+    /// is refused until `quecto container init --refresh` restores it.
+    StandardScriptAltered {
+        name: String,
+        script: std::path::PathBuf,
+        verdict: StandardScriptVerdict,
+    },
 }
 
 fn available(names: &[String]) -> String {
@@ -621,7 +653,10 @@ impl SelectContainerConfigError {
             Self::OverlayWithheld { diagnostics }
             | Self::NoDefault { diagnostics, .. }
             | Self::Unknown { diagnostics, .. } => diagnostics,
-            Self::RelativeConfigPath(_) | Self::Unavailable(_) | Self::InvalidArgv { .. } => &[],
+            Self::RelativeConfigPath(_)
+            | Self::Unavailable(_)
+            | Self::InvalidArgv { .. }
+            | Self::StandardScriptAltered { .. } => &[],
         }
     }
 }
@@ -659,6 +694,16 @@ impl fmt::Display for SelectContainerConfigError {
             ),
             Self::InvalidArgv { what, .. } => {
                 write!(f, "invalid container_configs configuration: {what}")
+            }
+            Self::StandardScriptAltered {
+                name,
+                script,
+                verdict,
+            } => {
+                let reason = verdict.refusal(script).unwrap_or_else(|| {
+                    format!("{} is not the standard bundle's", script.display())
+                });
+                write!(f, "container config '{name}' refused: {reason}")
             }
         }
     }

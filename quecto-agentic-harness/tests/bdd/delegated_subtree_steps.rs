@@ -36,6 +36,17 @@ pub(crate) struct DelegatedSubtreeState {
     previous_env: Vec<(&'static str, Option<std::ffi::OsString>)>,
 }
 
+impl DelegatedSubtreeState {
+    /// Override one process variable for the rest of the scenario (the
+    /// scripts a launch runs inherit it), restored at teardown. `@serial`
+    /// scenarios only: the process environment is shared.
+    pub(crate) fn override_env(&mut self, name: &'static str, value: &std::ffi::OsStr) {
+        self.previous_env.push((name, std::env::var_os(name)));
+        // SAFETY: @serial scenario; set before any child is launched.
+        unsafe { std::env::set_var(name, value) };
+    }
+}
+
 impl Drop for DelegatedSubtreeState {
     fn drop(&mut self) {
         for (name, previous) in self.previous_env.drain(..) {

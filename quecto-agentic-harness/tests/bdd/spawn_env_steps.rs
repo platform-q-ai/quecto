@@ -194,8 +194,16 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
     world.notify_rx = Some(notify_rx);
     world.spawn_broadcast_rx = Some(broadcast_rx);
 
-    // Rebuild the AgentCmdTool with environment control sharing the
-    // SpawnTool's session environment registry, mirroring composition wiring.
+    wire_environment_control(world, Some(broadcast_tx));
+}
+
+/// Rebuild the AgentCmdTool with environment control sharing the
+/// SpawnTool's session environment registry, mirroring composition wiring,
+/// so `kill_container` and `get_containers` see what the spawn committed.
+pub(crate) fn wire_environment_control(
+    world: &mut QuectoWorld,
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+) {
     let environment_registry = world
         .spawn_tool
         .as_ref()
@@ -210,8 +218,7 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
     // One termination graph (#1939): `kill` and `kill_container` share it,
     // so an environment's members are asked to shut down through the same
     // claim ladder an operator kill walks.
-    let owners =
-        crate::agent_cmd_tool_steps::termination_owners(&subagent_registry, Some(broadcast_tx));
+    let owners = crate::agent_cmd_tool_steps::termination_owners(&subagent_registry, broadcast_tx);
     let environment_control = quecto::composition::environments::build_environment_control(
         environment_registry,
         owners.member_shutdown.clone(),

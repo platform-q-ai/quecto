@@ -46,7 +46,10 @@ pub fn build_container_config_handles(
 ) -> ContainerConfigHandles {
     let configs = build_effective_container_configs(base_dir, launching_agent.clone());
     ContainerConfigHandles {
-        selection: Arc::new(SelectContainerConfig::new(configs.clone())),
+        selection: Arc::new(SelectContainerConfig::new(
+            configs.clone(),
+            build_container_script_integrity(),
+        )),
         roster: Arc::new(ListContainerConfigs::new(Arc::new(
             EffectiveConfigRoster::new(configs, roster_revision_probe(base_dir, launching_agent)),
         ))),
@@ -95,6 +98,16 @@ pub fn build_container_config_roster(
         build_effective_container_configs(base_dir, launching_agent.clone()),
         roster_revision_probe(base_dir, launching_agent),
     ))
+}
+
+/// The standard bundle's script-integrity port adapter (#2024 S4e): the
+/// launch refuses a materialised standard script that no longer carries
+/// the embedded bytes.
+pub fn build_container_script_integrity()
+-> Arc<dyn crate::application::subagents::ports::ContainerScriptIntegrity> {
+    Arc::new(
+        crate::infrastructure::processes::containers::standard::integrity::EmbeddedScriptIntegrity,
+    )
 }
 
 /// The port adapter alone, for the contract suite.

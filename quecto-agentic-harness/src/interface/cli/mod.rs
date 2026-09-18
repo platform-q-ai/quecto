@@ -10,7 +10,8 @@ mod config_loading;
 pub mod configuration_handles;
 mod container;
 pub mod container_config_handles;
-pub use container::ContainerDoctorBuilder;
+pub use container::{ContainerDoctorBuilder, ContainerInitBuilder, ContainerStatusBuilder};
+mod container_setup;
 mod help;
 mod models;
 pub mod protocol;
@@ -305,6 +306,10 @@ pub struct CliContext {
     /// Composition's container-doctor builder (#2024 S4b); `quecto
     /// container doctor` refuses to run without it.
     pub container_doctor: Option<ContainerDoctorBuilder>,
+    /// Composition's standard-container builders (#2024 S4e); `quecto
+    /// container init|status` refuse to run without them.
+    pub container_init: Option<ContainerInitBuilder>,
+    pub container_status: Option<ContainerStatusBuilder>,
 }
 
 impl CliContext {
@@ -381,6 +386,8 @@ pub struct CliComposition {
     pub tool_policy_persistence: ToolPolicyPersistenceBuilder,
     pub container_configs: ContainerConfigHandlesBuilder,
     pub container_doctor: ContainerDoctorBuilder,
+    pub container_init: ContainerInitBuilder,
+    pub container_status: ContainerStatusBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -411,6 +418,8 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         tool_policy_persistence: Some(composition.tool_policy_persistence),
         container_configs: Some(composition.container_configs),
         container_doctor: Some(composition.container_doctor),
+        container_init: Some(composition.container_init),
+        container_status: Some(composition.container_status),
         ..Default::default()
     };
 

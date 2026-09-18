@@ -12,6 +12,7 @@ use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, Swar
 use crate::infrastructure::processes::containers::script_stderr::{
     ScriptStdout, run_sync_capturing_stderr_tail,
 };
+use crate::infrastructure::processes::containers::standard::integrity::refuse_altered_script;
 
 /// The retained script argv run against the environment's runtime id.
 /// By default every invocation is offloaded to a blocking worker when a
@@ -138,6 +139,7 @@ pub(super) fn run_inspect_sync_bounded(
     let Some((program, args)) = argv.split_first() else {
         return Err("no retained inspect argv".to_string());
     };
+    refuse_altered_script(argv).map_err(|reason| format!("retained inspect refused: {reason}"))?;
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
@@ -168,6 +170,10 @@ fn run_script_sync(environment_id: &str, argv: &[String]) {
     let Some((program, args)) = argv.split_first() else {
         return;
     };
+    if let Err(reason) = refuse_altered_script(argv) {
+        tracing::warn!(environment_id, "retained cleanup refused: {reason}");
+        return;
+    }
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
@@ -185,10 +191,13 @@ fn run_script_sync(environment_id: &str, argv: &[String]) {
 
 /// The retained-kill invocation: argv exec, `QUECTO_CONTAINER_ENVIRONMENT_ID`,
 /// stderr kept as a bounded tail. The environment is stopped only on success.
+/// An altered standard script is refused before it runs (the use case
+/// leaves the retryable `cleanup-failed` state with the reason).
 pub(super) fn run_kill_sync(environment_id: &str, argv: &[String]) -> Result<(), String> {
     let Some((program, args)) = argv.split_first() else {
         return Err("no retained kill argv".to_string());
     };
+    refuse_altered_script(argv).map_err(|reason| format!("retained kill refused: {reason}"))?;
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
