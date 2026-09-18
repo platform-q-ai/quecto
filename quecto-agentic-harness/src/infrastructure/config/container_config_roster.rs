@@ -29,9 +29,14 @@ impl EffectiveConfigRoster {
     }
 }
 
-/// A revision token over `paths`: each file's modification time and
-/// length (or its absence), in order. Metadata only — no file is read.
+/// A revision token over `paths`: each file's modification time, length,
+/// inode-change time and inode number (or its absence), in order. Metadata
+/// only — no file is read. The ctime and inode catch what a coarse-tick
+/// mtime and an unchanged length miss: a same-length rewrite within one
+/// timestamp tick still moves the ctime, and an atomic replace (write to
+/// a temp file, rename over) lands on a new inode.
 pub fn file_revision(paths: &[PathBuf]) -> String {
+    use std::os::unix::fs::MetadataExt;
     paths
         .iter()
         .map(|path| match std::fs::metadata(path) {
@@ -42,7 +47,14 @@ pub fn file_revision(paths: &[PathBuf]) -> String {
                     .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|since| since.as_nanos())
                     .unwrap_or_default();
-                format!("{}@{modified}:{}", path.display(), meta.len())
+                format!(
+                    "{}@{modified}:{}:{}.{}:{}",
+                    path.display(),
+                    meta.len(),
+                    meta.ctime(),
+                    meta.ctime_nsec(),
+                    meta.ino()
+                )
             }
             Err(_) => format!("{}@absent", path.display()),
         })
@@ -69,7 +81,12 @@ impl ContainerConfigRoster for EffectiveConfigRoster {
                     } else {
                         ContainerConfigLayer::Global
                     },
-                    repository: config.repository,
+                    // A `--repo https://user:token@host/…` argv must not
+                    // hand its token to every agent that lists the roster.
+                    repository: config
+                        .repository
+                        .as_deref()
+                        .map(crate::domain::redaction::redact_url_userinfo),
                     joinable: !config.exec.is_empty(),
                 })
                 .collect(),

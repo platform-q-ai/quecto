@@ -276,3 +276,40 @@ fn the_definition_carries_one_compact_roster_line_only_when_composed() {
         assert!(description.contains(needle), "missing {needle:?}");
     }
 }
+
+/// The model-facing budget for one tool description; the spawn and swarm
+/// descriptions are the two long ones and each is pinned with headroom
+/// so a doc edit cannot silently grow them past what the model reads well.
+const DESCRIPTION_BUDGET_BYTES: usize = 8_192;
+
+#[test]
+fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
+    use crate::application::tools::ports::Tool;
+    let dir = tempfile::TempDir::new().unwrap();
+    let cfg = dir.path().join("config.json");
+    std::fs::write(
+        &cfg,
+        r#"{"container_configs":{
+            "quecto":{"default":true,"create":["/bin/true"],"cleanup":["/bin/true"]},
+            "alpha":{"create":["/bin/true"],"cleanup":["/bin/true"]}}}"#,
+    )
+    .unwrap();
+    let spawn = crate::composition::subagent_lifecycle::compose_launcher(
+        crate::infrastructure::tools::spawn::SpawnTool::new(vec![])
+            .with_parent_config_path(Some(cfg)),
+    )
+    .definition()
+    .description;
+    let spawn_len = spawn.len();
+    // The roster line is the one variable part: a full 120-character
+    // roster (up to four bytes a character) must still fit.
+    assert!(
+        spawn_len + ROSTER_LINE_MAX_CHARS * 4 <= DESCRIPTION_BUDGET_BYTES,
+        "spawn description is {spawn_len} bytes"
+    );
+    let swarm_len = include_str!("swarm_helpers/tool_description.txt").len();
+    assert!(
+        swarm_len <= DESCRIPTION_BUDGET_BYTES,
+        "swarm description is {swarm_len} bytes"
+    );
+}

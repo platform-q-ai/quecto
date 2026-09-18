@@ -4,7 +4,8 @@
 //! merged entry-wise; an overlay entry is reported as declared by the
 //! overlay (repo-bound), a global one as global, a same-name overlay entry
 //! shadows the global one and is repo-bound; the repository is the create
-//! argv's `--repo`, `None` for a sandbox; an untrusted overlay that
+//! argv's `--repo` with any URL userinfo redacted, `None` for a sandbox;
+//! an untrusted overlay that
 //! declares `container_configs` reports the global set as withheld with
 //! the trust diagnostic; a roster composed without a selection reports so;
 //! `joinable` follows the `exec` argv; the revision token changes when a
@@ -200,6 +201,28 @@ fn a_roster_composed_without_a_selection_reports_so() {
 }
 
 #[test]
+fn a_repo_url_with_userinfo_is_reported_with_the_token_redacted() {
+    let rig = Rig::new();
+    rig.write_overlay(serde_json::json!({
+        "secret": entry(true, Some("https://user:ghp_secret@host.test/x/y.git")),
+    }));
+    rig.trust_overlay();
+    let report = rig.under_test(true).roster().unwrap();
+    let secret = report
+        .configs
+        .iter()
+        .find(|e| e.name == "secret")
+        .unwrap_or_else(|| panic!("no secret: {:?}", report.configs));
+    assert_eq!(
+        secret.repository.as_deref(),
+        Some("https://***@host.test/x/y.git")
+    );
+    let whole = format!("{report:?}");
+    assert!(!whole.contains("ghp_secret"), "token leaked: {whole}");
+    assert!(!whole.contains("user:"), "userinfo leaked: {whole}");
+}
+
+#[test]
 fn joinable_follows_the_exec_argv() {
     let rig = Rig::new();
     let mut with_exec = entry(false, None);
@@ -250,6 +273,22 @@ fn the_revision_changes_when_a_layer_or_the_trust_record_is_written_and_is_stabl
         roster.revision(),
         after_trust,
         "a global write moves the revision"
+    );
+    // A same-length rewrite that lands within one timestamp tick still
+    // moves the token (inode change time / inode), so a cached roster
+    // line cannot outlive an atomic replace of a layer.
+    let before_rewrite = roster.revision();
+    let global = rig.base_dir.join("config.json");
+    let same_length = std::fs::read_to_string(&global)
+        .unwrap()
+        .replace("global.test/g2", "global.test/g3");
+    let tmp = rig.base_dir.join("config.json.tmp");
+    std::fs::write(&tmp, same_length).unwrap();
+    std::fs::rename(&tmp, &global).unwrap();
+    assert_ne!(
+        roster.revision(),
+        before_rewrite,
+        "an atomic same-length replace moves the revision"
     );
     // No read of the configuration is needed to answer: an unparseable
     // global file still yields a revision.

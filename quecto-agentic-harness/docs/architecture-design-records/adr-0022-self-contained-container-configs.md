@@ -43,7 +43,15 @@ change from the architecture side.
   form, #2024 S4c restored it bounded), `agent_cmd get_container_configs`
   returns the effective set with each entry's layer and repository live,
   selection errors enumerate the live names, and operators run
-  `quecto config get --effective container_configs`.
+  `quecto config get --effective container_configs`. Three application
+  ports read the one configuration adapter for this: the launch policy's
+  `EffectiveContainerConfigs` (the raw effective set, `subagents`), the
+  doctor's `ContainerConfigLookup` (one entry for a diagnosis, S4b) and
+  the inventory's `ContainerConfigRoster` (the set as the roster and
+  `get_container_configs` present it, S4c). Each is shaped by its use
+  case's question rather than by the file; the roster and lookup are thin
+  adapters over the launch port, and a contract test pins that what the
+  roster marks default is what `container: true` launches.
 - **Selection errors teach.** Unknown-name and label-validation errors
   list the configured names so an agent can offer the menu and confirm
   instead of dead-ending.

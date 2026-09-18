@@ -37,18 +37,17 @@ With `container_configs` configured, `spawn` can place a child in an isolated co
 
 **Run a subagent in this repo's container** (six steps):
 1. `agent_cmd {"agent_id":"*","command":"get_container_configs"}` → `container_configs[]` with `name`, `default`, `source` (`overlay` = repo-bound, `global`), `repository`, `problem`; `joinable`; the spawn description's `Available container configs:` line shows the same set.
-2. `spawn {"agent_id":"…","task":"…","container":true}` (the default entry) — or `"container":{"mode":"new","container_config":"<name>"}`.
+2. `spawn {"agent_id":"…","task":"…","container":true}` (the default entry) — or `"container":{"mode":"new","container_config":"<name>","name"?}` (`name` for later joins/kills).
 3. Read `container_config=<name>` in the result; confirm it is the repo meant.
 4. On failure the error quotes the script's stderr; run `quecto container doctor` here, apply the remedy, retry.
 5. `overlay_withheld: true` / `container: true refused` → the overlay is untrusted, refused or unparseable; `diagnostics` names which (`quecto config trust` for untrusted), then retry.
 6. Follow the completion sequence above; `get_containers` lists the environment (`ref` for joins).
 
-- Match the user's phrasing to a name: "spawn the quecto container" → `container: {"mode":"new","container_config":"quecto"}`; if ambiguous, offer the names. Runbook: `docs {"name": "container-runtime"}`.
+- Match the user's phrasing to a config name; if ambiguous, offer the names. Runbook: `docs {"name": "container-runtime"}`.
 - **This repository's container**: effective configs = the global file's plus the working directory's trusted `.quecto/config.json` overlay, merged entry-wise (an overlay `"default": true` un-defaults global entries). Bind: `quecto config set --local container_configs.<name> '{"default":true,…}'`; undo: `config unset --local`. Only for runs started without `--config`, never inside a container child. See `docs {"name": "config"}`.
 - An untrusted overlay is not applied: `container: true` is **refused** when it declares `container_configs`, is unparseable, fails the trust checks or is a symlink; one without `container_configs` launches the global default with a warning. A named `container_config` launches from the global set, diagnostic in the result.
-- `{"mode":"new","container_config"?,"name"?}` — a named config, optional name for later joins/kills.
 - New-container spawns read the effective configuration at every spawn; you normally need no `config`. An explicit `config` replaces both layers and must be an absolute path. Joins use the retained config.
-- Success returns `environment_ref=C1 container_config=<name>` (ref session-scoped). The child is a normal subagent.
+- Success returns `environment_ref=C1 container_config=<name>` (ref session-scoped); the child is a normal subagent.
 - Add a teammate to a running environment: `container: {"mode":"existing","ref":"C1"}` (or `"name"`); refs come from `get_containers`.
 - `agent_cmd get_containers` (`agent_id: "*"`) lists every environment with status (`running`/`empty`/`killing`/`stopped`/`cleanup-failed`/`retained`), workspace, and members. `kill_container` with `ref` or `name` stops one: all members are terminated and the config's kill runs exactly once; the result carries the ref and up to 20 member ids (`omitted_agents` on overflow); a failed kill is retryable.
 - When the last member of an ordinary environment exits, it tears itself down. A swarm container is `retained` after the run ends (`metadata.retained` says why) for inspection; it needs `kill_container`.
@@ -79,7 +78,7 @@ control receipt and action report (transport acceptance does not prove handling)
 For progress, ask the coordinator to inspect `swarm` `op=summary`; retrieve its
 report with `agent_cmd` `get_report` (`export_raw:true` for raw artifacts).
 Generic agent state is not the task board. A terminal coordinator permits read-only swarm reports and supervisor-channel
-export; never ask for Python inbox/ack execution after completion. Request the
+export only. Request the
 final revision, criterion evidence and blockers; preserve artifacts (under
 `artifact_base`) before teardown.
 Typed `agent_cmd` `swarm_control` actions `pause`, `resume`, `close`, `extend`, `status`, `usage_budget` bypass the model queue; every end of a swarm run is a pause only these controls resume or close.
