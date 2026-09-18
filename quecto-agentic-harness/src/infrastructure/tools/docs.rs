@@ -42,6 +42,10 @@ const EMBEDDED_DOCS: &[(&str, &str)] = &[
         include_str!("../../../docs/docs-tool-embeds/config.md"),
     ),
     (
+        "container-runtime",
+        include_str!("../../../docs/docs-tool-embeds/container-runtime.md"),
+    ),
+    (
         "context",
         include_str!("../../../docs/docs-tool-embeds/context.md"),
     ),

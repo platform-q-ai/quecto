@@ -39,6 +39,7 @@ const USE_CASES: &[&str] = &[
     "CompensateFailedLaunch",
     "CompensateFailedLaunchPorts",
     "DepartingChildren",
+    "DiagnoseContainerRuntime",
     "ExecuteHarnessShutdown",
     "ExecuteHarnessShutdownPorts",
     "ExportSessionReport",

@@ -325,10 +325,10 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "signal-0 liveness observation of a session lock holder",
     ),
     (
-        "src/infrastructure/tools/environment_commands.rs",
+        "src/infrastructure/processes/containers/script_stderr.rs",
         &["kill("],
-        "the retained-environment command adapter ending its own script Child \
-         on timeout (#1924 retained `inspect`/`kill`/`cleanup` argv)",
+        "the container-script runner ending its own script Child on timeout \
+         (#1924 retained `inspect` argv, #2024 S4b create preflight)",
     ),
     (
         "src/infrastructure/tools/grep.rs",
@@ -461,6 +461,8 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/subagents/use_cases/compensate_failed_launch.rs",
     "src/application/subagents/use_cases/select_container_config.rs",
     "src/application/environments/ports.rs",
+    "src/application/environments/dto.rs",
+    "src/application/environments/use_cases/diagnose_container_runtime.rs",
     "src/application/environments/use_cases/kill_environment.rs",
     "src/application/environments/use_cases/finalize_environment_member.rs",
     "src/application/swarm/mod.rs",

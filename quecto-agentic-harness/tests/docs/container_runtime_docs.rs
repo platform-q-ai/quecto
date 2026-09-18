@@ -84,6 +84,14 @@ fn canonical_doc_covers_the_documented_contract_surface() {
         "`kill_container`",
         "`get_containers`",
         "`cleanup`",
+        // diagnosable failures (#2024 S4b): stderr tail in the error, the
+        // preflight mode's wire shape, the doctor runbook.
+        "script-managed create failed with status",
+        "`--preflight-only`",
+        "status<TAB>check<TAB>detail<TAB>remedy",
+        "quecto container doctor",
+        "## Troubleshooting (runbook)",
+        "never pulls implicitly",
     ] {
         assert!(
             doc.contains(required),
@@ -136,6 +144,14 @@ fn docker_adapter_keeps_its_load_bearing_properties() {
     // QUECTO_BASE_DIR warning (overriding it broke OAuth providers).
     let create = read_workspace_file(DOCKER_SCRIPTS[0]);
     for needle in [
+        // #2024 S4b: one preflight list before any environment state, with
+        // distinct exit codes, no implicit pull, and the doctor's mode.
+        "--preflight-only",
+        "EXIT_NO_IMAGE",
+        "EXIT_REPO_UNREACHABLE",
+        "image exists",
+        "git ls-remote --exit-code",
+        "GIT_TERMINAL_PROMPT=0",
         "QUECTO_DOCKER_IMAGE",
         "--image",
         "\"$cli\" rm -f",
@@ -431,5 +447,31 @@ fn docker_create_advertises_the_members_checkout_in_metadata() {
     assert!(
         env_assignments(&argv).contains(&format!("QUECTO_SWARM_CHECKOUT={checkout}").as_str()),
         "metadata.checkout matches the swarm checkout handed to members: {argv:?}"
+    );
+}
+
+/// The preflight of the official create script precedes the environment
+/// mktemp: a failed check can never leak an unreported environment dir,
+/// and a create never pulls an image implicitly.
+#[test]
+fn docker_create_preflight_precedes_environment_state_and_never_pulls() {
+    let create = read_workspace_file(DOCKER_SCRIPTS[0]);
+    let preflight = create
+        .find("# --- Preflight")
+        .expect("create.sh has a preflight section");
+    let mktemp = create
+        .find("mktemp -d \"$state_dir/env-")
+        .expect("create.sh mints the environment dir with mktemp");
+    assert!(
+        preflight < mktemp,
+        "the preflight runs before any environment state exists"
+    );
+    let preflight_only_exit = create
+        .find("if [ \"$preflight_only\" = 1 ]; then")
+        .expect("create.sh exits after the checks in --preflight-only mode");
+    assert!(preflight_only_exit < mktemp);
+    assert!(
+        !create.contains("\"$cli\" pull") && !create.contains("podman pull \"$image\""),
+        "create.sh must never pull an image implicitly"
     );
 }

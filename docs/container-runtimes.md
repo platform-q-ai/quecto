@@ -418,7 +418,24 @@ exactly one JSON object to stdout:
 `environment_id`, `workspace_path`, and `metadata` are required, plus
 exactly one of `socket_path` or `socket_proxy` (see "Endpoints and
 liveness"). Extra JSON data after the object is rejected. A non-zero exit
-or an invalid contract fails the launch and rolls back.
+or an invalid contract fails the launch and rolls back. **Logs and
+diagnostics go to stderr**: the last 4 KiB of the script's stderr (with
+terminal escapes and control characters removed) are appended to the tool
+error after the exit status — `script-managed create failed with status
+exit status: 6: … image quecto-box:local is not present …` — and echoed on
+the parent harness's stderr, so a `die` message reaches both the model and
+the operator (#2024 S4b). The same applies to `exec`, and to the retained
+`inspect`, `kill` and `cleanup` scripts (a failed cleanup is logged with
+its tail).
+
+A create script may also implement the preflight mode the doctor drives:
+invoked with `--preflight-only` appended to its configured argv and **no**
+child command after `--`, it evaluates every prerequisite without creating
+anything and prints one line per check on stdout,
+`status<TAB>check<TAB>detail<TAB>remedy` with `status` one of `ok`,
+`warn`, `fail`, exiting non-zero when any check failed. The official
+Docker/Podman adapter implements it (see "Troubleshooting"); a script that
+does not is reported as such by `quecto container doctor`.
 
 The create result must contain exactly these fields — unknown keys are
 rejected. When the config cloned a repository, the script should report it
@@ -654,6 +671,19 @@ Design properties:
   runtime default of 2048 is exhausted by an in-container `cargo test`,
   after which every fork fails and the environment dies with all its
   members.
+- **Preflight before any state exists (#2024 S4b).** `create.sh` runs one
+  list of checks — runtime CLI (`podman`/`docker`, `QUECTO_CONTAINER_CLI`),
+  `jq`, `git` (when `--repo` is given), `gh` (a warning only: without it
+  members get no GitHub token), the image present in the local store
+  (`podman image exists` / `docker image inspect`; **never an implicit
+  pull**), `--repo` reachable (`git ls-remote`, bounded by
+  `QUECTO_REPO_CHECK_TIMEOUT`, default 15 s, no credential prompt), and the
+  state dir writable and owned by the current user — before the
+  environment directory is created. A normal create dies at the first
+  failure with a message that names the remedy and a distinct exit code
+  (2 usage, 3 no runtime, 4 no jq, 5 no git, 6 image missing, 7 `--repo`
+  unreachable, 8 state dir); `--preflight-only` evaluates every check and
+  prints the tab-separated report `quecto container doctor` presents.
 - **Rollback and containment.** `create.sh` installs an ERR trap that removes
   partial state and `docker rm -f`s any container it managed to start; every
   destructive operation proves the environment id contains no path
@@ -738,6 +768,58 @@ CI has no container runtime, so the Docker/Podman adapter is not exercised by
 the CI BDD lanes; it is verified manually against local rootless Podman, and its
 shape (existence, fail-fast mode, contract needles, cross-links) is pinned
 by `quecto-agentic-harness/tests/docs/container_runtime_docs.rs`.
+
+## Troubleshooting (runbook)
+
+Every container failure now carries the script's own words; the first
+move is always the same: read the tool error (or the harness stderr),
+then run the doctor from the directory the agent runs in and apply the
+remedy it prints.
+
+```
+quecto container doctor                 # the effective default config of this directory
+quecto container doctor --name <config> # a named entry
+quecto container doctor --config <file> # that file's entries, ignoring the overlay
+```
+
+The doctor resolves the container config exactly as `spawn container:
+true` does (global file plus the directory's trusted `.quecto/config.json`
+overlay; an untrusted overlay that declares `container_configs` is
+reported and withheld), runs the create script's `--preflight-only` mode
+**without creating an environment**, prints one line per check
+(`✓` passed, `!` warning, `✗` failed) with a `remedy:` line under each
+warning or failure, and exits 1 when any check failed:
+
+```
+container config "quecto" (create: /…/docker/create.sh --state-dir /var/tmp/envs --repo https://github.com/you/project)
+  ✓ runtime-cli  podman at /usr/bin/podman
+  ✓ jq           jq at /usr/bin/jq
+  ✓ git          git at /usr/bin/git
+  ✓ gh           gh at /usr/bin/gh
+  ✗ image        image quecto-box:local is not present in the local podman store
+    remedy: build it (podman build -t quecto-box:local <dir with its Containerfile>) or pull it (podman pull quecto-box:local); create never pulls implicitly
+  ✓ repo         --repo https://github.com/you/project is reachable
+  ✓ state-dir    state dir /var/tmp/envs is writable and owned by the current user
+1 check failed, 0 warnings
+```
+
+| Symptom (tool error / stderr) | Doctor line | Remedy |
+| --- | --- | --- |
+| `script-managed create failed with status exit status: 3: … no container runtime on PATH` | `✗ runtime-cli` | Install rootless Podman (preferred) or Docker and put it on PATH, or set `QUECTO_CONTAINER_CLI`. |
+| `… status exit status: 4: … jq is not on PATH` | `✗ jq` | Install `jq`. |
+| `… status exit status: 5: … git is not on PATH` | `✗ git` | Install `git` (only needed for configs with `--repo`). |
+| `… gh is not on PATH: members will have no GitHub token` (a warning; the create proceeds) | `! gh` | Install `gh` and run `gh auth login` so members can push and use the GitHub API. |
+| `… status exit status: 6: … image quecto-box:local is not present` | `✗ image` | Build the image (`podman build -t quecto-box:local <dir>`) or pull it; the scripts never pull implicitly. Change `--image` / `QUECTO_DOCKER_IMAGE` if another image was meant. |
+| `… status exit status: 7: … --repo <url> is unreachable: fatal: …` | `✗ repo` | Check the URL and your credentials (`ssh` key or `gh auth login`); fix `--repo` in the config's create argv. |
+| `… status exit status: 8: … state dir <dir> is not owned by the current user` / `cannot be created` | `✗ state-dir` | Point `--state-dir` at a directory you own. |
+| `unknown container config '<name>' (available container configs: …)` | (doctor refuses too) | Pick a listed name, or bind the repository: `quecto config set --local container_configs.<name> '{…,"default":true}'`. |
+| `container: true refused: the checkout's repo-local config overlay was not applied` | (doctor refuses too) | Review `.quecto/config.json`, then `quecto config trust` in that directory. |
+| `container config '<name>': create script … does not support --preflight-only` | — | The config's create script predates the preflight contract; use the official adapter or add the mode to your script (see "Script contract"). |
+| `… status exit status: 1: …` after the preflight (clone, `podman run`) | all `✓` | Read the quoted stderr: the clone or the runtime refused. The create rolled its environment back; `kill.log` in the state dir lists every kill/cleanup. |
+| `script-managed exec failed with status …: …` | — | The join's own stderr is quoted; the environment may have exited — `agent_cmd get_containers` shows its status. |
+
+Eight create-then-rollback cycles in one afternoon with nothing but
+`status 1` to show for them is what this runbook replaces (#2024).
 
 ## How to author another runtime adapter
 

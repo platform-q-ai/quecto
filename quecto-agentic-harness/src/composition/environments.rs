@@ -18,7 +18,7 @@ use crate::application::environments::use_cases::{
     DiagnoseContainerRuntime, FinalizeEnvironmentMember, KillEnvironment, ListEnvironmentsQuery,
 };
 use crate::domain::environment_registry::EnvironmentRegistry;
-use crate::infrastructure::processes::containers::config_lookup::SelectedConfigLookup;
+use crate::infrastructure::config::container_config_lookup::SelectedConfigLookup;
 use crate::infrastructure::processes::containers::preflight::ScriptPreflight;
 pub use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControl;
 use crate::infrastructure::tools::environment_commands::{

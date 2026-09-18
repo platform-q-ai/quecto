@@ -1,7 +1,7 @@
 //! The create script's own preflight behind the environments capability's
 //! [`ContainerRuntimePreflight`] port (#2024 S4b). The config's `create`
 //! argv is run with `--preflight-only` appended and no child command: a
-//! conforming script (the official Docker/Podman adapter) evaluates every
+//! conforming script (the official adapter set) evaluates every
 //! check and prints one `status<TAB>check<TAB>detail<TAB>remedy` line per
 //! check on stdout; a script that predates the mode refuses the unknown
 //! flag, and its refusal — with its stderr — is the report.
