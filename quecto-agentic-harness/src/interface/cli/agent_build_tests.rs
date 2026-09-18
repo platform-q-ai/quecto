@@ -340,3 +340,6 @@ fn test_agent_with_both_providers_reaches_session() {
     assert!(!out.stderr.contains("config not found"));
     assert!(!out.stderr.contains("no LLM providers"));
 }
+
+#[path = "agent_container_selection_tests.rs"]
+mod container_selection_tests;
