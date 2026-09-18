@@ -285,7 +285,7 @@ fn cmd_reset(ctx: &CliContext, opts: &BrokerArgs, stdout: &mut String, stderr: &
             );
             stdout.push('\n');
             stderr.push_str(&format!(
-                "admission-broker: reset acknowledged for {}: old-epoch remote work is no longer claimed bounded; every session reconnects\n",
+                "admission-broker: reset acknowledged for {}: old-epoch remote work is no longer claimed bounded; roots re-register on their next attempt, children fail closed and must be respawned\n",
                 report.directory.display()
             ));
             0

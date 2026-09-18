@@ -118,30 +118,51 @@ quecto admission-broker status                                          # verify
 quecto admission-broker uninstall-service                              # disable --now and remove the unit
 ```
 
-Both are idempotent and report exactly what they did; `--dry-run` prints the
-plan without touching systemd. The unit runs `admission-broker run --config
-<abs config>` with `Restart=on-failure` and `WantedBy=default.target`.
+Both are idempotent and report exactly what they did; a changed unit is
+rewritten and the service restarted on it; `--dry-run` prints the plan without
+touching systemd. The unit runs `admission-broker run --config "<abs config>"`
+(paths quoted) with `After=basic.target` (never `After=default.target`, which
+would cycle with `WantedBy=default.target` and drop the job at login),
+`Restart=on-failure`, and `RestartPreventExitStatus=3` so a `Busy` exit (another
+broker holds the lock) does not loop.
 
 A **default binding** — a `"*"` (or `"default"`) key in `bindings` — catches
 every provider slot with no explicit binding, so adding a provider does not fail
 composition. Its alias must still exist; an explicit slot binding wins over it.
 
-**Sessions survive a broker restart or reset without restarting.** A root
-re-registers automatically on its next attempt (`get_state.admission.
-authorityStatus` moves `reconnecting` → `connected`); in-flight attempts fail
-closed exactly once with a clear error, never a silent bypass, with bounded
-backoff. A child cannot re-register on its own (its capability is gone once the
-epoch or broker changed) and is respawned by its parent.
+**Roots survive a broker restart or reset without restarting; children fail
+closed and are respawned.** Every gate of a process routes through one
+`AuthorityLink`. A loss is a closed socket (broker died) *or* a revoked
+capability (`reset` keeps sockets open and revokes every credential). A root
+link re-registers on its next attempt or spawn with the owner token currently
+on disk, with bounded jittered backoff (8 tries, ≈10 s); `get_state.admission`
+and every pushed `admission_state_changed` carry `authorityStatus` live:
+`reconnecting` from the moment of the loss, `connected` once re-registered
+(`epoch` moves after a reset), `unavailable` when reconnection was exhausted
+(retried on the next attempt) or when the broker came back publishing a
+**different policy** — the session composed against the old one, so it fails
+closed with "restart required" permanently. An attempt in flight at the loss
+fails closed exactly once with a clear `admission: …` error; nothing ever runs
+unadmitted. A child link has no reconnect: its `authorityStatus` becomes
+`unavailable` and its next attempt fails closed once
+(`admission refused: capability revoked by an authority reset; a child cannot
+re-register on its own — its parent must respawn it`, or
+`admission authority connection closed` after a broker death). The parent sees
+the child's `agent_error`, the forwarded `admission_state_changed` with
+`authorityStatus: "unavailable"`, and `agent_cmd get_state` with the same plus
+`counters.refused`; it spawns a replacement (its own link re-registers first,
+minting the new child in the current epoch).
 
 `run` prints `admission authority ready: <socket>` on stderr. A second `run`
-on the same directory exits with status 3. Stopping the authority does not
-kill sessions, but capabilities live only in the authority process: after a
-restart every running session's next attempt fails explicitly and the session
-must be restarted to register again. A ledger that is missing after prior
-operation is refused; `run --accept-missing-ledger` explicitly starts an
-empty one. Roots are minted with the owner token at `<directory>/root.token`
-(0600, outside `client/`), so a process that only sees the client directory
-can bind a pre-registered child capability but never promote itself to a root.
+on the same directory exits with status 3; `run --directory` must name the
+config's own directory or is refused. Stopping the authority does not kill
+sessions; capabilities live only in the authority process, so after a restart
+roots re-register and children fail closed as above. A ledger that is missing
+after prior operation is refused; `run --accept-missing-ledger` explicitly
+starts an empty one. Roots are minted with the owner token at
+`<directory>/root.token` (0600, outside `client/`), so a process that only sees
+the client directory can bind a pre-registered child capability but never
+promote itself to a root.
 
 Every `quecto agent` started with the section configured registers itself as
 a root at the authority before composing its provider. If the authority is
@@ -173,10 +194,13 @@ authority root with an empty tmpfs and re-exposes only `client/`.
   remote work may still be running. The same session reconnecting and
   completing the attempt clears it.
 - An authority restart keeps the epoch and turns outstanding work into
-  orphaned uncertain occupancy; it never restarts with an empty ledger.
+  orphaned uncertain occupancy; it never restarts with an empty ledger. Roots
+  reconnect and re-register; children fail closed and are respawned.
 - `quecto admission-broker reset` starts a new epoch, revokes every
-  capability (sessions must restart) and explicitly gives up any claim that
-  old remote work is bounded. Cooldown and pacing deadlines survive the reset.
+  capability (roots re-register on their next attempt; children fail closed
+  once and are respawned by their parents) and explicitly gives up any claim
+  that old remote work is bounded. Cooldown and pacing deadlines survive the
+  reset.
 
 ## Observing admission
 
@@ -236,8 +260,10 @@ Quarantine (a group has stopped granting):
 2. If that session is still alive and reconnects with the same capability,
    completing the attempt clears the entry; wait for it.
 3. Otherwise `quecto admission-broker reset` starts a new epoch. It revokes
-   every capability, so every session must restart, and it gives up the claim
-   that the old remote work is bounded. Cooldown and pacing deadlines survive.
+   every capability — roots re-register on their next prompt without an agent
+   restart, children fail closed once and must be respawned by their parents —
+   and it gives up the claim that the old remote work is bounded. Cooldown and
+   pacing deadlines survive.
 4. A group in cooldown (`get_state` `admission.groups[].cooldown`) needs no
    action: the deadline came from the provider's own advice. `unavailable`
    means the provider advised beyond the configured maximum; treat it as a

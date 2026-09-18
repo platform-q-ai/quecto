@@ -86,15 +86,21 @@ broker you address. Every output names the directory it addressed.
    ```
    Expected: the command exits 0 and `quecto config get --global admission`
    prints the section back. Rollback: `quecto config set --global admission null`.
-2. **Install the service** (systemd *user* unit `quecto-admission-broker.service`,
-   `Restart=on-failure`, `WantedBy=default.target`):
+2. **Install the service** (systemd *user* unit `quecto-admission-broker.service`:
+   `After=basic.target`, `Restart=on-failure`, `RestartPreventExitStatus=3`,
+   `WantedBy=default.target`, quoted absolute paths):
    ```sh
    quecto admission-broker install-service --config ~/.quecto/config.json
    ```
    Expected: `applied quecto-admission-broker.service (directory …/admission)`
    listing "wrote unit …", "reloaded the user daemon", "enabled and started …".
    It is idempotent: a second run reports "already up to date" and does not
-   rewrite the unit. Use `--dry-run` to print the plan without touching systemd.
+   rewrite the unit; a run with a changed binary or config path rewrites the
+   unit and reports "restarted … on the rewritten unit". Use `--dry-run` to
+   print the plan without touching systemd. Exit status 3 (`Busy`: another
+   broker — say a foreground `run` — holds the directory lock) is not
+   restarted: stop the other broker, then `systemctl --user restart
+   quecto-admission-broker.service`.
    Rollback: `quecto admission-broker uninstall-service`.
 3. **Verify**:
    ```sh
@@ -104,10 +110,8 @@ broker you address. Every output names the directory it addressed.
    per-group counts. `status --directory <dir>` for a directory with no broker
    exits 1 with "not running for directory …".
 4. **Reset** (recover after a stuck/uncertain group): `quecto admission-broker
-   reset` prints `{"directory":…,"epoch":N}` and every session reconnects on its
-   next attempt without restarting the agent — a root re-registers automatically
-   (`authorityStatus: reconnecting` → `connected`); a child is respawned by its
-   parent. A broker restart is likewise survived without restarting sessions.
+   reset` prints `{"directory":…,"epoch":N}`. Roots keep running; children are
+   respawned — see "Recovery: reset and broker restart" below.
 5. **Disable**: `quecto admission-broker uninstall-service` (idempotent; a second
    run reports "no unit to remove"), then `quecto config set --global admission
    null`.
@@ -115,8 +119,42 @@ broker you address. Every output names the directory it addressed.
 Troubleshoot: an unreachable authority makes `status` exit 1 naming the
 directory; check the service (`systemctl --user status
 quecto-admission-broker.service`) and that the effective directory matches.
-"restart required" only ever applies to a root whose own section changed on a
-live reload — never to a child (children inherit).
+"restart required" only ever applies to a root: its own section changed on a
+live reload, or the broker came back publishing a different policy — never to
+a child (children inherit).
+
+### Recovery: reset and broker restart (what each process does, what you see)
+
+A **root session** (a top-level `quecto agent`) survives both a broker restart
+and a `reset` without being restarted. Its link notices the loss at once —
+`get_state.admission` and the pushed `admission_state_changed` carry
+`authorityStatus: "reconnecting"` (TUI footer `admission ⟳`) — and its next
+prompt (or spawn) re-registers with the owner token on disk, with bounded,
+jittered backoff (8 tries, about ten seconds), then runs: `authorityStatus:
+"connected"`, and after a reset `epoch` is the new one. An attempt that was
+in flight when the broker went away fails closed exactly once with an
+`admission: …` provider error; nothing runs unadmitted. Two ways a root stays
+down: reconnection exhausted (broker still not back: `authorityStatus:
+"unavailable"`, retried on the next attempt), or the broker came back with a
+**different policy** — the session composed against the old one, so it fails
+closed with "restart required" and stays `unavailable` until the agent is
+restarted.
+
+A **child** (spawned by a parent, bound to a parent-registered capability)
+cannot re-register on its own. After a `reset` its `authorityStatus` is
+`"unavailable"` and its next prompt fails closed once with
+`admission refused: capability revoked by an authority reset; a child cannot
+re-register on its own — its parent must respawn it` (after a broker death:
+`admission authority connection closed`). It is never silently admitted.
+
+What the **parent** sees, and does: the child's turn ends with an
+`agent_error` carrying that message (visible through `agent_cmd get_messages`
+and on the child's event stream); the child's forwarded
+`admission_state_changed` and `agent_cmd get_state <uuid>` show
+`admission.authorityStatus: "unavailable"` with `counters.refused` incremented.
+Spawn a replacement for that task — the parent's own link re-registers first,
+so the new child is minted a capability in the current epoch — and do not
+re-prompt the old child. Roots and the broker itself need nothing.
 
 Use the same effective config/base directory for the broker and agents:
 
@@ -128,9 +166,13 @@ quecto admission-broker status
 
 `run` stays foreground until SIGTERM/SIGINT and prints
 `admission authority ready: <socket>`. A second broker on the directory exits
-with status 3. Start the broker before agents; restart agents after configuration
-changes (admission policy cannot change by live reload). Fresh status has
-`journal_healthy: true`, an epoch, and zero per-group counts.
+with status 3. `run --directory <dir>` is accepted only when `<dir>` is the
+directory the config names (it cannot serve a policy on its own) and refused
+loudly otherwise. Start the broker before agents; restart agents after
+configuration changes (admission policy cannot change by live reload; a broker
+restarted with a changed policy makes running roots fail closed with "restart
+required"). Fresh status has `journal_healthy: true`, an epoch, and zero
+per-group counts.
 
 ## Parallel spawn and queue inspection
 
@@ -228,13 +270,14 @@ Recovery is an operator decision:
 quecto admission-broker reset
 ```
 
-Reset starts a new epoch and revokes every capability: restart every session.
-It explicitly gives up the claim that old remote work is bounded. Cooldown and
-pacing deadlines survive reset. A broker restart preserves journaled occupancy
-and turns outstanding work uncertain; existing sessions must restart to register
-again. A missing ledger after prior operation is refused;
-`run --accept-missing-ledger` explicitly accepts starting empty, not safe recovery
-of old remote work. Do not delete the journal to clear a queue.
+Reset starts a new epoch and revokes every capability. It explicitly gives up
+the claim that old remote work is bounded. Cooldown and pacing deadlines survive
+reset. Roots re-register on their next attempt; children fail closed once and
+are respawned by their parents (see "Recovery: reset and broker restart"). A
+broker restart preserves journaled occupancy and turns outstanding work
+uncertain; roots reconnect the same way. A missing ledger after prior operation
+is refused; `run --accept-missing-ledger` explicitly accepts starting empty, not
+safe recovery of old remote work. Do not delete the journal to clear a queue.
 
 To disable admission deliberately, remove the whole section and restart all
 agents before stopping the broker; removing selected bindings is not a bypass.

@@ -164,6 +164,22 @@ pub fn canonical_admission_forward(
     if let Some(longest) = number("longestWaitSeconds") {
         view["longestWaitSeconds"] = serde_json::json!(longest);
     }
+    // Authority health (#2024 S3): a closed vocabulary, so a parent sees a
+    // child whose capability is gone (`unavailable` after a reset) and can
+    // respawn it; the child's directory path is not forwarded.
+    if let Some(status) = admission
+        .get("authorityStatus")
+        .and_then(|s| s.as_str())
+        .filter(|s| matches!(*s, "connected" | "reconnecting" | "unavailable"))
+    {
+        view["authorityStatus"] = serde_json::json!(status);
+        if let Some(connected) = admission.get("connected").and_then(|c| c.as_bool()) {
+            view["connected"] = serde_json::json!(connected);
+        }
+        if let Some(epoch) = number("epoch") {
+            view["epoch"] = serde_json::json!(epoch);
+        }
+    }
     if let Some(counters) = admission.get("counters").and_then(|c| c.as_object()) {
         let counter = |key: &str| counters.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
         view["counters"] = serde_json::json!({
