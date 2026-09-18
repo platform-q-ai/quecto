@@ -35,7 +35,7 @@ quecto auth login --provider anthropic --token sk-ant-…      # → Credential 
 From an agent, **always pass `--token`**: without it (or with `--oauth`,
 which is the same thing) the command starts the browser OAuth flow and
 blocks until the callback arrives on `localhost:1455` — a tool call never
-returns from it. That flow, and `--device-code` (openai only: prints a URL
+returns from it. That flow, and `--device-code` (openai and custom `models.json` providers; anthropic refuses: prints a URL
 and a code, then waits), are for a human at a terminal. Ask the user for
 the key; do not echo it back, do not write it into any file yourself. Environment variables `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
 also work for one process. The store takes priority over

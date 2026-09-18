@@ -88,8 +88,10 @@ rm ./.quecto/config.json                             # drop every repo setting a
 
 `unset` removes the key in the layer named (default: overlay); a key that layer
 does not set is an error naming the layer, exit 1, nothing written. Setting a
-key to `null` is not a rollback: in the overlay it *overrides* the global value
-with null. Emptied parent objects are kept.
+key to `null` is not a rollback: the writer refuses it for string keys
+(`invalid type: null, expected a string`) and, where a key accepts null, the
+overlay then *overrides* the global value with null — use `unset`. Emptied
+parent objects are kept.
 
 ## If it fails
 
