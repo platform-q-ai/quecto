@@ -82,6 +82,22 @@ pub(crate) fn redact_secrets(input: &str) -> String {
     PATTERNS.replace_all(input, "[REDACTED]").into_owned()
 }
 
+/// The userinfo of a URL (`scheme://user:token@host/…`), in whatever text
+/// it appears.
+static URL_USERINFO: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"(://)[^/\s]+@").expect("static URL userinfo regex is valid")
+});
+
+/// Replace the userinfo of every URL in `input` with `***`, keeping the
+/// scheme, host, port and path: a container config's `--repo
+/// https://user:ghp_…@host/x/y` must be nameable in a preflight line, a
+/// doctor header or a spawn error without handing the token to the model,
+/// the terminal or a log (#2024 S4b review). Text without a URL is
+/// returned unchanged.
+pub fn redact_url_userinfo(input: &str) -> String {
+    URL_USERINFO.replace_all(input, "${1}***@").into_owned()
+}
+
 #[cfg(test)]
 #[path = "redaction_tests.rs"]
 mod tests;
