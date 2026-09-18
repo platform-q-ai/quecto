@@ -19,6 +19,10 @@ mod finalize_environment_member_retention_tests;
 #[cfg(test)]
 mod finalize_environment_member_tests;
 #[cfg(test)]
+mod gc_orphaned_environments_tests;
+#[cfg(test)]
 mod kill_environment_tests;
 #[cfg(test)]
 mod list_environments_tests;
+#[cfg(test)]
+mod restore_registry_tests;

@@ -136,6 +136,11 @@ fn listing_and_kill_round_trip_through_the_use_case() {
     let parsed: serde_json::Value = serde_json::from_str(&listing.content).unwrap();
     assert_eq!(parsed["containers"][0]["ref"], "C1");
     assert_eq!(parsed["containers"][0]["status"], "running");
+    // Provenance (#2024 S4d): created here, by this (session-less) registry.
+    assert_eq!(parsed["containers"][0]["restored"], false);
+    assert_eq!(parsed["containers"][0]["session"], "");
+    assert_eq!(parsed["containers"][0]["config"], "default");
+    assert!(parsed["containers"][0]["created_at"].is_null());
 
     let killed = block_on(execute_container_command(
         None,
@@ -242,6 +247,10 @@ fn public_listing_query_only_preserves_complete_wire_objects_and_all_statuses() 
             "members": if index == 1 { Vec::<String>::new() } else { vec!["impl-1517".into(), "rev-a".into()] },
             "metadata": {"index": index, "nested": {"ready": true}},
             "last_error": record.last_error,
+            "restored": false,
+            "session": "",
+            "config": "default",
+            "created_at": null,
         }));
         registry.commit(record);
     }
@@ -302,4 +311,28 @@ fn public_listing_rejection_matrix_never_calls_query() {
         "agent_cmd error: environment listing is not available in this session"
     );
     assert_eq!(query.execution_count(), 0);
+}
+
+#[test]
+fn get_containers_marks_restored_environments_with_their_creating_session() {
+    let registry = EnvironmentRegistry::new();
+    let mut record = committed_registry().get("C1").unwrap();
+    record.created_by = "cli:earlier".into();
+    record.created_at = Some(1_700_000_000);
+    registry.restore(vec![record]);
+    let query = Arc::new(ListEnvironmentsQuery::new(registry));
+    let listing = block_on(execute_container_command(
+        Some(&query),
+        None,
+        &serde_json::json!({"agent_id":"*","command":"get_containers"}),
+    ));
+    let parsed: serde_json::Value = serde_json::from_str(&listing.content).unwrap();
+    let entry = &parsed["containers"][0];
+    assert_eq!(entry["restored"], true);
+    assert_eq!(entry["session"], "cli:earlier");
+    assert_eq!(entry["created_at"], 1_700_000_000);
+    assert_eq!(
+        entry["status"], "empty",
+        "members of another session are not listed"
+    );
 }

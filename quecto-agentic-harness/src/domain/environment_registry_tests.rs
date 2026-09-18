@@ -115,3 +115,129 @@ fn lock_poison_recovery_covers_member_kill_and_inspect_paths() {
         EnvironmentStatus::Stopped
     );
 }
+
+// ─── Durable registry (#2024 S4d) ────────────────────────────────────────────
+
+fn test_journal() -> (
+    EnvironmentJournal,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Vec<String>>>,
+) {
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let forgotten = Arc::new(Mutex::new(Vec::new()));
+    let counter = Arc::new(Mutex::new(10u64));
+    let journal = EnvironmentJournal {
+        allocate_ref: Arc::new({
+            let counter = counter.clone();
+            move || {
+                let mut counter = counter.lock().unwrap();
+                *counter += 1;
+                Some(*counter)
+            }
+        }),
+        recorded: Arc::new({
+            let recorded = recorded.clone();
+            move |record: &EnvironmentRecord| {
+                recorded.lock().unwrap().push(format!(
+                    "{}:{}",
+                    record.environment_ref,
+                    record.status_label()
+                ))
+            }
+        }),
+        forgotten: Arc::new({
+            let forgotten = forgotten.clone();
+            move |env_ref: &str| forgotten.lock().unwrap().push(env_ref.to_string())
+        }),
+    };
+    (journal, recorded, forgotten)
+}
+
+#[test]
+fn a_journalled_registry_allocates_through_the_journal_and_reports_every_transition() {
+    let (journal, recorded, forgotten) = test_journal();
+    let registry = EnvironmentRegistry::with_journal(journal, "cli:one");
+    assert!(registry.is_durable());
+    assert_eq!(registry.session(), "cli:one");
+    assert_eq!(registry.mint_ref(), "C11");
+    assert_eq!(registry.mint_ref(), "C12");
+    registry.commit(record("C12", "env-a"));
+    registry.add_member("C12", "m1").unwrap();
+    let claim = registry.remove_member("C12", "m1").unwrap().unwrap();
+    registry.retain(claim, "run ended");
+    let claim = registry.begin_kill("C12").unwrap();
+    registry.fail_kill(claim, "boom");
+    let inspect = registry.begin_inspect("C12", "m1").unwrap();
+    registry.record_inspect_failure(inspect, "no inspect");
+    let claim = registry.begin_kill("C12").unwrap();
+    registry.complete_kill(claim);
+    registry.remove("C12");
+    assert_eq!(
+        recorded.lock().unwrap().as_slice(),
+        [
+            "C12:empty",
+            "C12:killing",
+            "C12:retained",
+            "C12:killing",
+            "C12:cleanup-failed",
+            "C12:cleanup-failed",
+            "C12:killing",
+            "C12:stopped",
+        ]
+    );
+    assert_eq!(forgotten.lock().unwrap().as_slice(), ["C12"]);
+    assert!(format!("{registry:?}").contains("EnvironmentJournal"));
+}
+
+#[test]
+fn a_journal_that_cannot_allocate_falls_back_to_the_counter_past_every_seen_ref() {
+    let (mut journal, _, _) = test_journal();
+    journal.allocate_ref = Arc::new(|| None);
+    let registry = EnvironmentRegistry::with_journal(journal, "s");
+    registry.restore(vec![record("C7", "env-seven")]);
+    assert_eq!(registry.mint_ref(), "C8");
+    // A journal answering below the counter never moves it backwards.
+    let (mut journal, _, _) = test_journal();
+    journal.allocate_ref = Arc::new(|| Some(1));
+    let registry = EnvironmentRegistry::with_journal(journal, "s");
+    registry.commit(record("C3", "env-three"));
+    assert_eq!(registry.mint_ref(), "C4");
+}
+
+#[test]
+fn restored_records_arrive_without_members_and_are_never_torn_down_by_a_joiner() {
+    let (journal, recorded, _) = test_journal();
+    let registry = EnvironmentRegistry::with_journal(journal, "s");
+    let mut seeded = record("C2", "env-two");
+    seeded.members = vec!["stale".into()];
+    registry.restore(vec![seeded]);
+    let restored = registry.get("C2").unwrap();
+    assert_eq!(restored.origin, EnvironmentOrigin::Restored);
+    assert!(restored.members.is_empty());
+    assert_eq!(recorded.lock().unwrap().as_slice(), ["C2:empty"]);
+    registry.add_member("C2", "joiner").unwrap();
+    assert!(
+        registry.remove_member("C2", "joiner").unwrap().is_none(),
+        "a joiner leaving a restored environment claims no kill"
+    );
+    assert_eq!(
+        registry.get("C2").unwrap().status,
+        EnvironmentStatus::Running
+    );
+    // An explicit kill still ends it.
+    let claim = registry.begin_kill("C2").unwrap();
+    registry.complete_kill(claim);
+    assert_eq!(
+        registry.get("C2").unwrap().status,
+        EnvironmentStatus::Stopped
+    );
+}
+
+#[test]
+fn ref_numbers_parse_only_well_formed_refs() {
+    assert_eq!(ref_number("C12"), Some(12));
+    assert_eq!(ref_number("C"), None);
+    assert_eq!(ref_number("C1a"), None);
+    assert_eq!(ref_number("D1"), None);
+    assert_eq!(ref_number(""), None);
+}
