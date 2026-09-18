@@ -15,6 +15,7 @@ for <provider>` instead of a path).
 |---|---|---|---|---|
 | First install: no credential yet | `docs {"name": "models"}` | `quecto auth login --provider openai --token <key>` (or `--provider anthropic`; always `--token` from an agent — without it the browser OAuth flow blocks the call) | `quecto auth status` → `openai (token) — active` | `quecto auth logout --provider openai` |
 | New repo: a setting for this repo only, global untouched | `docs {"name": "config"}` | `quecto config set <dotted.key> <json>` | `quecto config get --effective <dotted.key>` prints the value; `quecto status` → `Overlay: <repo>/.quecto/config.json (trusted)` | `quecto config unset <dotted.key>`; `rm .quecto/config.json` drops the whole overlay |
+| `quecto status` says `Overlay: … (untrusted)` (a hand-written or pulled overlay) | `docs {"name": "config"}` | review it: `quecto config get --local`, then `quecto config trust` | `quecto status` → `Overlay: <repo>/.quecto/config.json (trusted)` | `rm .quecto/config.json` |
 | Pin the default model (and effort) for this repo | `docs {"name": "models"}` | `quecto config set agents.defaults.model '"<provider/model>"'` | `quecto config get --effective agents.defaults.model` → `"<provider/model>"`; optionally one model call: `quecto agent --no-session -m "Reply with exactly OK"` prints `OK` | `quecto config unset agents.defaults.model` |
 | Enable the admission broker (one per host) | `docs {"name": "admission-broker"}` | `quecto config set --global admission '{"groups":…,"aliases":…,"bindings":…}'` (the exact JSON is on that page; `{}` is refused) then `quecto admission-broker install-service` (`--dry-run` first) | `quecto admission-broker status` → `{"directory":…,"epoch":1,"journal_healthy":true,…}` | `quecto config unset --global admission`, restart agents, then `quecto admission-broker uninstall-service --directory <base_dir>/admission` |
 | A podman/docker container for this app | `docs {"name": "container-runtime"}` | `quecto container init`, then the `podman build …` line it prints | `quecto container status` → last line `ready: spawn {"container":true} …`; `quecto container doctor` → no `✗` line, exit 0 (`! gh` is a warning) | `quecto config unset --local container_configs.standard`; `rm -r .quecto/containers/standard` |
@@ -62,5 +63,5 @@ prints the two config paths on its `Config:` and `Overlay:` lines.
 - Your own running session keeps its model and admission state until it is
   restarted: a pinned model applies to the next run, an enabled broker to
   agents started after it. Say so instead of claiming the current session changed.
-- Don't run `quecto admission-broker run` from a tool call (it stays in the
+- Do not run `quecto admission-broker run` from a tool call (it stays in the
   foreground and dies with the tool); use `install-service`.

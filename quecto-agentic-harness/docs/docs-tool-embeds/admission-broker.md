@@ -131,7 +131,7 @@ This order keeps sessions admitted until they are restarted; the uninstall stops
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| ``admission-broker: config … not found; no `admission` section to address`` / ``no `admission` section is configured; nothing to address (or pass --directory)`` | step 1 not done, or another base dir | `quecto config get --global admission`; check `QUECTO_BASE_DIR` |
+| ``admission-broker: config … not found; no `admission` section to address`` / ``no `admission` section is configured; nothing to address (or pass --directory)`` | step 1 not done, or another base dir | `quecto config get --global admission`; check `QUECTO_BASE_DIR`; or the section was removed while the unit stays: `systemctl --user status quecto-admission-broker.service`, then `quecto admission-broker uninstall-service --directory <base_dir>/admission` |
 | ``cannot change `admission` in …/.quecto/config.json: `admission` is global-only; use --global`` | `config set` without `--global` | add `--global` |
 | `refusing to write …: the result is not a valid configuration: …` | a group field missing, `reserve >= capacity`, `fallback_base_ms > max_cooldown_ms`, an alias without a group, a binding to an unknown alias | fix the JSON; the file is unchanged |
 | `status` → `not running for directory … (admission transport failure: connect …/admin.sock: No such file or directory (os error 2))`, exit 1 | broker not started, or a different directory than the one you expect | `systemctl --user status quecto-admission-broker.service`; `journalctl --user -u quecto-admission-broker.service -n 50`; the directory addressed is in the error line itself (`quecto config get --global admission.directory` answers only when you set it explicitly; unset = `<base_dir>/admission`) |
