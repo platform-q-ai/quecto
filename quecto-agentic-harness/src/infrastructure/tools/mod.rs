@@ -31,6 +31,7 @@ mod registry_uds;
 pub mod spawn;
 mod spawn_binary;
 mod spawn_container;
+pub mod spawn_discovery;
 mod spawn_entry;
 mod spawn_inherited_policy;
 mod spawn_input;

@@ -98,3 +98,62 @@ impl std::fmt::Display for DiagnoseContainerRuntimeError {
 }
 
 impl std::error::Error for DiagnoseContainerRuntimeError {}
+
+// ─── Container-config discovery (#2024 S4c) ─────────────────────────────────
+
+/// Which configuration layer declared a container config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerConfigLayer {
+    /// The launching agent's checkout, through its applied
+    /// `.quecto/config.json` overlay (repo-bound).
+    Overlay,
+    /// The global file (or the explicit `--config` file).
+    Global,
+}
+
+impl ContainerConfigLayer {
+    /// The wire word agents read (`overlay`, `global`).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Overlay => "overlay",
+            Self::Global => "global",
+        }
+    }
+}
+
+/// One container config as the inventory presents it: what an agent needs
+/// to choose one, never the argv (which is operator territory).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerConfigEntry {
+    pub name: String,
+    /// What `container: true` selects. False on every entry while the
+    /// checkout's overlay is withheld: the default is then unknown to
+    /// launch policy and an implicit selection is refused.
+    pub default: bool,
+    pub layer: ContainerConfigLayer,
+    /// The repository a new environment clones, when the config bakes
+    /// one in; `None` for a sandbox (empty workspace).
+    pub repository: Option<String>,
+}
+
+/// The container configs in effect for the launching agent (#2024 S4c),
+/// as the inventory reports them: the `container: true` default first,
+/// then the rest by name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerConfigInventory {
+    pub configs: Vec<ContainerConfigEntry>,
+    /// The checkout has an overlay that was NOT applied and could have
+    /// changed the set: `configs` is the global set alone, no entry is
+    /// the default, and `diagnostics` says how to trust the overlay.
+    pub overlay_withheld: bool,
+    /// The configuration layer diagnostics (an untrusted or refused
+    /// overlay, a retired local file), one line each.
+    pub diagnostics: Vec<String>,
+}
+
+impl ContainerConfigInventory {
+    /// The entry `container: true` selects, if any.
+    pub fn default_entry(&self) -> Option<&ContainerConfigEntry> {
+        self.configs.iter().find(|entry| entry.default)
+    }
+}

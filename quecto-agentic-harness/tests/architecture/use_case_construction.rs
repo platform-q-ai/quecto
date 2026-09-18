@@ -51,6 +51,7 @@ const USE_CASES: &[&str] = &[
     "KillDelegatedAgent",
     "KillDelegatedAgentPorts",
     "KillEnvironment",
+    "ListContainerConfigs",
     "ListEnvironmentsQuery",
     "ListModels",
     "ListRetainedContext",

@@ -9,6 +9,10 @@ pub struct EffectiveConfig {
     /// The global (or explicit) document with a trusted overlay merged in.
     pub document: serde_json::Value,
     pub sources: ConfigSources,
+    /// The applied overlay's own document (resolved and checked, before
+    /// the merge), so a reader can tell which entries of a merged section
+    /// the checkout contributed; `None` when no overlay was applied.
+    pub overlay_document: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// Which files contributed to the effective configuration.

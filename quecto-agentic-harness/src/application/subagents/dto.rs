@@ -452,7 +452,10 @@ pub enum ContainerConfigSource {
 }
 
 /// One named container config as launch policy sees it: the argv sets a
-/// script-managed runtime runs, and whether `container: true` selects it.
+/// script-managed runtime runs, whether `container: true` selects it, and
+/// what an agent choosing between entries needs to know (#2024 S4c):
+/// whether the checkout's applied overlay declared it, and the repository
+/// its create argv bakes in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerLaunchConfig {
     pub name: String,
@@ -462,6 +465,13 @@ pub struct ContainerLaunchConfig {
     pub exec: Vec<String>,
     pub kill: Vec<String>,
     pub inspect: Vec<String>,
+    /// Declared by the launching agent's checkout through its applied
+    /// `.quecto/config.json` overlay (repo-bound), not by the global file.
+    pub repo_bound: bool,
+    /// The repository the create argv bakes in (`--repo <url>` for the
+    /// shipped scripts); `None` for a sandbox config or an adapter whose
+    /// argv names none in that form.
+    pub repository: Option<String>,
 }
 
 /// The container configs in effect for a source, sorted by name, and the

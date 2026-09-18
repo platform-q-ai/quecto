@@ -433,7 +433,14 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     "CheckStatus"
                     | "ContainerRuntimeTarget"
                     | "DiagnosableContainerConfig"
-                    | "PreflightCheck",
+                    | "PreflightCheck"
+                    // Container-config discovery (#2024 S4c): the roster
+                    // adapter builds the inventory entries in the
+                    // capability's vocabulary; the spawn tool's roster line
+                    // presents the listing's inventory.
+                    | "ContainerConfigEntry"
+                    | "ContainerConfigInventory"
+                    | "ContainerConfigLayer",
                     ..,
                 ] => true,
                 // The spawn tool (#1848) holds the composed change-reasoning-
@@ -480,7 +487,11 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "KillEnvironment"
                     | "KilledEnvironment"
                     | "KillEnvironmentError"
-                    | "FinalizeEnvironmentMember",
+                    | "FinalizeEnvironmentMember"
+                    // The spawn and agent_cmd tools (#2024 S4c) hold the
+                    // composed container-config listing: the description's
+                    // roster line and `get_container_configs` invoke it.
+                    | "ListContainerConfigs",
                     ..,
                 ] => true,
                 // The launch port moved out of the domain into its capability
@@ -4068,6 +4079,10 @@ const ENVIRONMENT_PORTS: &[&str] = &[
     // script's own preflight run without creating an environment.
     "ContainerConfigLookup",
     "ContainerRuntimePreflight",
+    // Container-config discovery (#2024 S4c): the effective set of the
+    // launching agent's checkout, each entry with the layer that declared
+    // it, for `get_container_configs` and the spawn description's roster.
+    "ContainerConfigRoster",
 ];
 
 /// Application environment code may name the domain, its own capability,

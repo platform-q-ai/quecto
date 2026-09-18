@@ -10,7 +10,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::application::environments::dto::{
-    ContainerRuntimeTarget, DiagnosableContainerConfig, PreflightCheck,
+    ContainerConfigEntry, ContainerRuntimeTarget, DiagnosableContainerConfig, PreflightCheck,
 };
 use crate::domain::environment_registry::EnvironmentRecord;
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
@@ -162,4 +162,25 @@ pub trait ContainerConfigLookup: Send + Sync {
 pub trait ContainerRuntimePreflight: Send + Sync {
     fn preflight(&self, config: &DiagnosableContainerConfig)
     -> Result<Vec<PreflightCheck>, String>;
+}
+
+// ─── Container-config discovery (#2024 S4c) ─────────────────────────────────
+
+/// The raw effective container-config set of the launching agent, read the
+/// way a launch reads it: the global file with the checkout's trusted
+/// overlay merged in, each entry marked with the layer that declared it,
+/// plus whether an overlay was withheld and the layer diagnostics. The
+/// adapter reports the set as configured; the listing use case owns the
+/// rules over it (default visibility, ordering). `Err` carries why no set
+/// could be read (no configuration composed, an invalid file).
+pub trait ContainerConfigRoster: Send + Sync {
+    fn roster(&self) -> Result<ContainerConfigRosterReport, String>;
+}
+
+/// What the roster port reports before the listing rules are applied.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ContainerConfigRosterReport {
+    pub configs: Vec<ContainerConfigEntry>,
+    pub overlay_withheld: bool,
+    pub diagnostics: Vec<String>,
 }
