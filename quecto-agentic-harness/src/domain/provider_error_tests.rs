@@ -412,7 +412,49 @@ fn admission_rules_apply_only_to_admission_prefixed_errors() {
         "HTTP 503 Service Unavailable: admission transport failure mentioned in body",
     ));
     assert_eq!(class, ProviderErrorClass::Server);
-    // Other admission outcomes still take the generic paths.
-    let class = classify_provider_error(&provider("admission: admission request cancelled"));
-    assert_eq!(class, ProviderErrorClass::Cancelled);
+    // The catch-all is anchored on the `admission: ` prefix, not on the word.
+    let class = classify_provider_error(&provider("admission denied by upstream (HTTP 401)"));
+    assert_eq!(class, ProviderErrorClass::Auth);
+}
+
+/// Every rendering the admission client can produce (`ClientError`'s
+/// `Display`) has a deliberate class; none reaches the keyword paths, where
+/// "authority" would match `auth` and trigger an OAuth refresh + resend.
+#[test]
+fn every_admission_client_error_rendering_is_classified_by_rule() {
+    use ProviderErrorClass::*;
+    let renderings = [
+        ("admission capability rejected", Admission),
+        ("unsupported admission protocol: v9", Admission),
+        ("admission refused: scope not registered", Admission),
+        ("admission ledger not durable", Admission),
+        ("admission request cancelled", Cancelled),
+        ("admission queue wait deadline elapsed", Admission),
+        // EpochReset: terminal for this attempt; the next one re-registers.
+        ("admission authority was reset", Admission),
+        // Closed: the broker died mid-wait; the link reconnects and the
+        // retry re-enters the gate.
+        ("admission authority connection closed", Network),
+        ("admission protocol violation: reply without id", Admission),
+        ("admission transport failure: broken pipe", Network),
+    ];
+    for (rendering, expected) in renderings {
+        let msg = format!("admission: {rendering}");
+        let class = classify_provider_error(&provider(&msg));
+        assert_eq!(class, expected, "{msg}");
+        assert_ne!(class, Auth, "{msg}");
+    }
+}
+
+#[test]
+fn unknown_admission_messages_never_reach_the_keyword_paths() {
+    for msg in [
+        "admission: unexpected reply Ready",
+        "admission: authority unreachable, connection refused",
+        "admission: unauthorized",
+    ] {
+        let class = classify_provider_error(&provider(msg));
+        assert_eq!(class, ProviderErrorClass::Admission, "{msg}");
+        assert!(!class.is_retryable(), "{msg}");
+    }
 }

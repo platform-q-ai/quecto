@@ -148,12 +148,23 @@ unadmitted. A child link has no reconnect: its `authorityStatus` becomes
 (`admission refused: capability revoked by an authority reset; a child cannot
 re-register on its own — its parent must respawn it`, or
 `admission authority connection closed` after a broker death). "Once" is a
-classification rule, not luck: `admission refused: …` and
-`admission capability rejected` map to the terminal `admission` provider-error
-class (no provider retry, no malformed-request repair, no credential hint),
-while `admission transport failure: …` is retryable `network`. The `admission`
-class is additive on the audit wire (`AuditEvent::ProviderError.class`), like
-`empty_stream`. The parent sees
+classification rule, not luck, and the rule is exhaustive over every
+`admission: …` message the gate can raise — none reaches the generic keyword
+classifier, where "authority" would read as an auth failure and the OAuth
+decorator would refresh and re-send (a second admission attempt).
+`admission refused: …`, `admission capability rejected`,
+`admission authority was reset` (an acquire queued across a reset; the next
+attempt re-registers), `admission queue wait deadline elapsed`,
+`admission ledger not durable`, `admission protocol violation: …`,
+`unsupported admission protocol: …` and any other `admission: …` message map
+to the terminal `admission` provider-error class (no provider retry, no
+malformed-request repair, no credential hint). `admission request cancelled`
+is the caller's own `cancelled`. `admission transport failure: …` and
+`admission authority connection closed` (the broker died while this attempt
+waited) are retryable `network`: the retry is a fresh attempt that acquires
+at the gate again over the link's reconnect, never a resend around it. The
+`admission` class is additive on the audit wire
+(`AuditEvent::ProviderError.class`), like `empty_stream`. The parent sees
 the child's `agent_error`, the forwarded `admission_state_changed` with
 `authorityStatus: "unavailable"`, and `agent_cmd get_state` with the same plus
 `counters.refused`; it spawns a replacement (its own link re-registers first,

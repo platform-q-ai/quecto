@@ -223,8 +223,11 @@ fn is_transient_chat_endpoint_denial(lowered: &str) -> bool {
 }
 
 /// Errors raised by the inference-admission gate (#2024 S3) before any
-/// provider request is made, prefixed `admission: ` by the remote gate. They
-/// are classified by what the gate said, not by incidental keywords:
+/// provider request is made, prefixed `admission: ` by the remote gate. The
+/// rule is exhaustive over the admission client's error renderings and never
+/// falls through to the keyword paths: "authority" contains `auth`, and an
+/// `Auth` class would give re-authenticate advice and make the OAuth
+/// decorator refresh and *re-send* — a second admission attempt.
 ///
 /// * `admission refused: …` — a policy or capability decision (a child whose
 ///   capability was revoked, a root facing a changed policy, a refused scope):
@@ -234,22 +237,36 @@ fn is_transient_chat_endpoint_denial(lowered: &str) -> bool {
 ///   re-sent); the message itself says what to do (respawn, restart).
 /// * `admission capability rejected` — the authority no longer honours this
 ///   process's credential: terminal `Admission`, for the same reason.
+/// * `admission authority was reset` — the acquire was queued across an
+///   authority reset: terminal for this attempt; the next one re-registers.
+/// * `admission queue wait deadline elapsed`, `admission ledger not durable`,
+///   `admission protocol violation: …`, `unsupported admission protocol: …` —
+///   the gate could not admit this attempt: terminal `Admission`.
+/// * `admission request cancelled` — the caller's own cancellation.
 /// * `admission transport failure: …` — the link to the broker failed (socket
 ///   gone, reconnection exhausted): retryable `Network`, since a later attempt
 ///   reconnects when the broker is back.
-///
-/// Any other admission message falls through to the generic classification.
+/// * `admission authority connection closed` — the broker went away while
+///   this attempt waited: retryable `Network`. The retry re-enters the gate
+///   (each leaf attempt acquires afresh) over the link's reconnect; it never
+///   resends around it.
+/// * anything else with the prefix — terminal `Admission`.
 fn classify_admission_error(msg: &str) -> Option<ProviderErrorClass> {
     let detail = msg.strip_prefix("admission: ")?;
-    if detail.starts_with("admission refused:")
-        || detail.starts_with("admission capability rejected")
+    Some(if detail.starts_with("admission request cancelled") {
+        ProviderErrorClass::Cancelled
+    } else if detail.starts_with("admission transport failure")
+        || detail.starts_with("admission authority connection closed")
     {
-        Some(ProviderErrorClass::Admission)
-    } else if detail.starts_with("admission transport failure") {
-        Some(ProviderErrorClass::Network)
+        ProviderErrorClass::Network
     } else {
-        None
-    }
+        // `admission refused:`, `admission capability rejected`,
+        // `admission authority was reset`, `admission queue wait deadline
+        // elapsed`, `admission ledger not durable`, `admission protocol
+        // violation:`, `unsupported admission protocol:` and any rendering
+        // added later: terminal, and never the keyword paths.
+        ProviderErrorClass::Admission
+    })
 }
 
 fn classify_keyword_paths(lowered: &str) -> ProviderErrorClass {
