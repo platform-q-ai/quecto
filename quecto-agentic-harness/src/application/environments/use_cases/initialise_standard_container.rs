@@ -366,5 +366,11 @@ impl std::fmt::Debug for InitialiseStandardContainer {
 }
 
 #[cfg(test)]
+#[path = "initialise_standard_container_review_tests.rs"]
+mod review_tests;
+#[cfg(test)]
 #[path = "initialise_standard_container_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "initialise_standard_container_tests_rig.rs"]
+mod tests_rig;
