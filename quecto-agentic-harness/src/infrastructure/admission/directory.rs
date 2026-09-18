@@ -61,6 +61,20 @@ impl AuthorityDirectory {
         }
     }
 
+    /// The owner-only check alone, for a path an operator named explicitly
+    /// (`--directory`): it must be a directory owned by the current user and
+    /// closed to group/other. Nothing is created.
+    pub fn check_private_path(path: &Path) -> io::Result<()> {
+        let meta = fs::symlink_metadata(path)?;
+        if !meta.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{} is not a directory", path.display()),
+            ));
+        }
+        check_private(path, &meta)
+    }
+
     pub fn path(&self) -> &Path {
         &self.root
     }

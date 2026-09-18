@@ -31,25 +31,43 @@ pub(super) fn negotiate_from_flags(
     )
 }
 
+/// The plan for this process: a child inherits whatever its own config says
+/// (the section is global-only and the parent already composed against the
+/// published policy, so even an invalid section in the child's explicit
+/// `--config` is not its concern); a root's section is validated here so an
+/// invalid one stops startup rather than composition.
+pub(super) fn plan(
+    config: &Config,
+    admission_context: Option<&Path>,
+    negotiate_use_case: &NegotiateAuthority,
+) -> Result<NegotiationPlan, String> {
+    let configured_directory = if admission_context.is_some() {
+        None
+    } else {
+        config
+            .admission_proposal()
+            .map_err(|error| error.to_string())?
+            .map(|(directory, _)| directory)
+    };
+    Ok(negotiate_use_case.execute(NegotiationInputs {
+        configured_directory,
+        inherited_context: admission_context.map(Path::to_path_buf),
+    }))
+}
+
 pub(super) fn negotiate(
     config: &Config,
     admission_context: Option<&Path>,
     negotiate_use_case: &NegotiateAuthority,
     stderr: &mut String,
 ) -> bool {
-    // The configured authority directory, if any; an invalid section stops
-    // startup here rather than at composition.
-    let configured_directory = match config.admission_proposal() {
-        Ok(configured) => configured.map(|(directory, _)| directory),
+    let plan = match plan(config, admission_context, negotiate_use_case) {
+        Ok(plan) => plan,
         Err(error) => {
             stderr.push_str(&format!("agent: {error}\n"));
             return false;
         }
     };
-    let plan = negotiate_use_case.execute(NegotiationInputs {
-        configured_directory,
-        inherited_context: admission_context.map(Path::to_path_buf),
-    });
     let negotiation = match plan {
         NegotiationPlan::Disabled => return true,
         NegotiationPlan::Root { directory } => Negotiation::Root { directory },
@@ -68,3 +86,7 @@ pub(super) fn negotiate(
 pub(crate) fn shutdown() {
     process::shutdown(std::time::Duration::from_secs(3));
 }
+
+#[cfg(test)]
+#[path = "admission_startup_tests.rs"]
+mod tests;

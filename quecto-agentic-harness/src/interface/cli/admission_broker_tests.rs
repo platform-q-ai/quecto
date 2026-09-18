@@ -166,3 +166,62 @@ fn run_until_serves_then_stops_and_refuses_a_second_authority() {
     assert!(out.contains("stopped"), "{out}");
     assert!(!dir.client_socket().exists(), "sockets removed on stop");
 }
+
+/// Lows (#2024 S3 review): an explicit `--directory` is validated like the
+/// config path (absolute, never the base directory or an ancestor of it,
+/// owner-only when it exists), and `run --directory X --config Y` is
+/// accepted when X is the directory Y configures and refused loudly when not.
+#[test]
+fn an_explicit_directory_is_validated_and_run_honours_or_refuses_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = ctx(temp.path());
+    let authority = temp.path().join("authority");
+    let config = ENABLED.replace("DIR", &format!("{:?}", authority.to_string_lossy()));
+    std::fs::write(temp.path().join("config.json"), config).unwrap();
+
+    let (code, _, err) = run(&ctx, &["status", "--directory", "relative/dir"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("absolute"), "{err}");
+    let base = temp.path().to_str().unwrap();
+    let (code, _, err) = run(&ctx, &["status", "--directory", base]);
+    assert_eq!(code, 1);
+    assert!(err.contains("base directory"), "{err}");
+    let parent = temp.path().parent().unwrap().to_str().unwrap();
+    let (code, _, err) = run(&ctx, &["status", "--directory", parent]);
+    assert_eq!(code, 1);
+    assert!(err.contains("ancestor"), "{err}");
+    let shared = temp.path().join("shared");
+    std::fs::create_dir(&shared).unwrap();
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (code, _, err) = run(&ctx, &["status", "--directory", shared.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(err.contains("0700"), "{err}");
+    // A valid, absent directory is simply not running.
+    let (code, _, err) = run(
+        &ctx,
+        &["status", "--directory", authority.to_str().unwrap()],
+    );
+    assert_eq!(code, 1);
+    assert!(err.contains("not running"), "{err}");
+
+    // `run`: the global extractor already moved `--config` into the context
+    // (as `quecto --config Y admission-broker run --directory X` does), so a
+    // matching --directory is accepted and a different one refused.
+    let opts = parse_args(
+        &["--directory".to_string(), authority.display().to_string()],
+        &mut String::new(),
+    )
+    .unwrap();
+    let (directory, _) = run_plan(&ctx, &opts).expect("matching --directory is honoured");
+    assert_eq!(directory, authority);
+    let other = temp.path().join("other");
+    let opts = parse_args(
+        &["--directory".to_string(), other.display().to_string()],
+        &mut String::new(),
+    )
+    .unwrap();
+    let error = run_plan(&ctx, &opts).unwrap_err();
+    assert!(error.contains("does not match"), "{error}");
+    assert!(error.contains(&authority.display().to_string()), "{error}");
+}

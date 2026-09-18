@@ -27,8 +27,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::client::{AuthorityConnection, ClientError, Inner};
+use super::client::{AuthorityConnection, ClientError, Inner, expect_credential};
 use super::directory::AuthorityDirectory;
+use super::protocol::Op;
+use crate::application::ports::Credential;
 use crate::domain::inference_admission::WorkloadClass;
 use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
 
@@ -206,6 +208,13 @@ impl AuthorityLink {
         } else {
             LinkHealth::Unavailable
         }
+    }
+
+    /// Register a descendant under this process's capability on the live
+    /// connection (reconnecting a root first, as an attempt would).
+    pub async fn register_child(&self) -> Result<Credential, ClientError> {
+        let inner = self.live_inner().await?;
+        expect_credential(inner.call(Op::RegisterChild).await?)
     }
 
     #[cfg(test)]

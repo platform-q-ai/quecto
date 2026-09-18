@@ -109,6 +109,11 @@ impl ProcessAdmission {
     pub fn connection(&self) -> Arc<AuthorityConnection> {
         self.link.connection()
     }
+    /// Register a descendant through the link (#2024 S3): a root whose broker
+    /// restarted or was reset re-registers first; a child fails closed.
+    pub async fn register_child(&self) -> Result<Credential, ClientError> {
+        self.link.register_child().await
+    }
     pub fn runtime_context(&self) -> &Arc<AdmissionRuntimeContext> {
         &self.context
     }

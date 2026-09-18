@@ -218,10 +218,11 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             let admission_dir = match admission.as_ref() {
                 Some(admission) => {
                     let agent_uuid = self.agent_uuid.as_ref().expect("identity allocated");
-                    let credential =
-                        admission.connection().register_child().await.map_err(|e| {
-                            DomainError::Tool(format!("admission child registration failed: {e}"))
-                        })?;
+                    // Through the link: a root re-registers after a broker
+                    // restart/reset instead of failing on a revoked connection.
+                    let credential = admission.register_child().await.map_err(|e| {
+                        DomainError::Tool(format!("admission child registration failed: {e}"))
+                    })?;
                     let path = self.tool.socket_dir.join(child_sidecar_filename(
                         "quecto-admission",
                         agent_uuid,

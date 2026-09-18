@@ -278,3 +278,40 @@ fn a_root_never_inherits_and_a_child_always_does() {
     assert!(child.connected());
     rt.block_on(server.shutdown());
 }
+
+/// A parent registers descendants through the link, so a spawn after a
+/// broker restart or `reset` re-registers the root first instead of failing
+/// on the revoked connection (review low, #2024 S3).
+#[test]
+fn a_root_registers_children_through_the_reconnecting_link() {
+    let rt = runtime();
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("authority");
+    let server = rt
+        .block_on(AuthorityServer::start(
+            AuthorityDirectory::open(&directory).unwrap(),
+            proposal(),
+        ))
+        .unwrap();
+    let root = negotiate(Negotiation::Root {
+        directory: directory.clone(),
+    })
+    .unwrap();
+    let before = rt.block_on(root.register_child()).unwrap();
+    assert_eq!(before.scope.epoch, 1);
+    let admin = rt
+        .block_on(AdminConnection::connect(&server.directory().admin_socket()))
+        .unwrap();
+    assert_eq!(rt.block_on(admin.reset()).unwrap(), 2);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while root.connected() {
+        assert!(std::time::Instant::now() < deadline, "revocation observed");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let after = rt
+        .block_on(root.register_child())
+        .expect("re-registered root mints a child in the new epoch");
+    assert_eq!(after.scope.epoch, 2);
+    assert!(root.connected());
+    rt.block_on(server.shutdown());
+}

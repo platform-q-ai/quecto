@@ -87,18 +87,56 @@ fn global_config_path(ctx: &CliContext, opts: &BrokerArgs) -> PathBuf {
 /// `<base_dir>/admission` when no section is configured).
 fn resolve_directory(ctx: &CliContext, opts: &BrokerArgs) -> Result<PathBuf, String> {
     if let Some(directory) = &opts.directory {
-        if !directory.is_absolute() {
-            return Err(format!(
-                "admission-broker: --directory {} must be absolute",
-                directory.display()
-            ));
-        }
+        validate_explicit_directory(&ctx.base_dir(), directory)?;
         return Ok(directory.clone());
     }
     // Without an explicit --directory, the global config (never the cwd
     // overlay) names the broker to address. No configured `admission` section
     // means there is no broker to address: error rather than guessing the
     // default directory, so `status`/`reset` are unambiguous.
+    configured_directory(ctx, opts).map(|(directory, _)| directory)
+}
+
+/// An explicit `--directory` gets the checks a configured directory gets:
+/// absolute; never the base directory or one of its ancestors (the base
+/// directory is mounted into containers, which would expose the journal,
+/// admin socket and owner token); and, when it exists, owner-only.
+fn validate_explicit_directory(
+    base_dir: &std::path::Path,
+    directory: &std::path::Path,
+) -> Result<(), String> {
+    if !directory.is_absolute() {
+        return Err(format!(
+            "admission-broker: --directory {} must be absolute",
+            directory.display()
+        ));
+    }
+    if base_dir.starts_with(directory) {
+        return Err(format!(
+            "admission-broker: --directory {} is the base directory or one of its ancestors; use a subdirectory such as {}",
+            directory.display(),
+            crate::infrastructure::config_admission::default_admission_directory(base_dir)
+                .display()
+        ));
+    }
+    if directory.exists() {
+        AuthorityDirectory::check_private_path(directory)
+            .map_err(|e| format!("admission-broker: --directory {e}"))?;
+    }
+    Ok(())
+}
+
+/// The directory and proposal the addressed global config configures.
+fn configured_directory(
+    ctx: &CliContext,
+    opts: &BrokerArgs,
+) -> Result<
+    (
+        PathBuf,
+        crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal,
+    ),
+    String,
+> {
     let base_dir = ctx.base_dir();
     let config_path = global_config_path(ctx, opts);
     if !config_path.exists() {
@@ -116,13 +154,41 @@ fn resolve_directory(ctx: &CliContext, opts: &BrokerArgs) -> Result<PathBuf, Str
         })?
         .with_admission_base_dir(&base_dir);
     match config.admission_proposal() {
-        Ok(Some((directory, _))) => Ok(directory),
+        Ok(Some(configured)) => Ok(configured),
         Ok(None) => Err(
             "admission-broker: no `admission` section is configured; nothing to address (or pass --directory)"
                 .to_string(),
         ),
         Err(error) => Err(format!("admission-broker: {error}")),
     }
+}
+
+/// What `run` serves: the addressed config's proposal at its configured
+/// directory. `run` cannot serve a policy from `--directory` alone, so an
+/// explicit `--directory` is honoured only when it names that directory and
+/// refused loudly otherwise (never silently ignored).
+fn run_plan(
+    ctx: &CliContext,
+    opts: &BrokerArgs,
+) -> Result<
+    (
+        PathBuf,
+        crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal,
+    ),
+    String,
+> {
+    let (directory, proposal) = configured_directory(ctx, opts)?;
+    if let Some(explicit) = &opts.directory {
+        validate_explicit_directory(&ctx.base_dir(), explicit)?;
+        if explicit != &directory {
+            return Err(format!(
+                "admission-broker: run serves the config's admission.directory {}; --directory {} does not match it (edit the config or omit --directory)",
+                directory.display(),
+                explicit.display()
+            ));
+        }
+    }
+    Ok((directory, proposal))
 }
 
 pub(crate) fn cmd_admission_broker(
@@ -395,43 +461,10 @@ fn status_json(report: &crate::application::admission::dto::AuthorityReport) -> 
 }
 
 fn cmd_run(ctx: &CliContext, opts: &BrokerArgs, stdout: &mut String, stderr: &mut String) -> i32 {
-    let base_dir = ctx.base_dir();
-    // `run` needs the full proposal, so it loads the global config (or an
-    // explicit --config); `--directory` alone cannot serve a policy.
-    let config_path = global_config_path(ctx, opts);
-    if opts.directory.is_some() && opts.config.is_none() {
-        stderr.push_str(
-            "admission-broker: run needs a config (--config or the global file), not just --directory\n",
-        );
-        return 1;
-    }
-    if !config_path.exists() {
-        stderr.push_str(&format!(
-            "admission-broker: config {} not found; nothing to serve\n",
-            config_path.display()
-        ));
-        return 1;
-    }
-    let config = match Config::load(config_path.to_str().unwrap_or("")) {
-        Ok(config) => config.with_admission_base_dir(&base_dir),
+    let (directory, proposal) = match run_plan(ctx, opts) {
+        Ok(plan) => plan,
         Err(error) => {
-            stderr.push_str(&format!(
-                "admission-broker: failed to load config {}: {error}\n",
-                config_path.display()
-            ));
-            return 1;
-        }
-    };
-    let (directory, proposal) = match config.admission_proposal() {
-        Ok(Some(configured)) => configured,
-        Ok(None) => {
-            stderr.push_str(
-                "admission-broker: no `admission` section is configured; nothing to serve\n",
-            );
-            return 1;
-        }
-        Err(error) => {
-            stderr.push_str(&format!("admission-broker: {error}\n"));
+            stderr.push_str(&format!("{error}\n"));
             return 1;
         }
     };

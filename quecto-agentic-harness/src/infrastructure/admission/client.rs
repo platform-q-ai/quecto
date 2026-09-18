@@ -431,7 +431,7 @@ fn expect_state(body: Body) -> Result<RequestState, ClientError> {
     }
 }
 
-fn expect_credential(body: Body) -> Result<Credential, ClientError> {
+pub(super) fn expect_credential(body: Body) -> Result<Credential, ClientError> {
     match body {
         Body::Credential { credential } => Ok(credential.into()),
         other => Err(ClientError::Protocol(format!(
