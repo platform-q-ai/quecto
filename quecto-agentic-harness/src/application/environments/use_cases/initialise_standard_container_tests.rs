@@ -498,7 +498,6 @@ fn the_build_command_quotes_a_bundle_directory_the_shell_would_split_or_expand()
         report.build_command, "build -t mine:1 /plain/dir/.quecto/containers/standard",
         "a plain path is left bare"
     );
-    let mut request = request;
     request.image = Some("my image".into());
     let report = rig.use_case.execute(&request).unwrap();
     assert_eq!(
