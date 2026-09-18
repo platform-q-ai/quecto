@@ -14,6 +14,16 @@
 //! (round 3 H1, #2033): under the shipped adapter its container has
 //! exited by design, only an explicit kill ends it, and calling it
 //! `stopped` would hand its state dir to the collector — it is reported.
+//! A `running` record whose container is gone but whose checkout hosts an
+//! **unfinished** swarm run (the master exited before its coordinator
+//! did, so nobody finalized the member; the in-container harness then ran
+//! its parent-loss shutdown and the box exited) is relabelled `retained`
+//! with the reason the finalizer would have recorded, never `stopped`
+//! (round 4 M1, #2033); a store that cannot be read retains as the
+//! finalizer would too. And a record an older build relabelled `stopped`
+//! while it was retained — recognisable by its `metadata.retained` under a
+//! `stopped` status with the restore's own last error — is restored to
+//! `retained`, so an explicit kill can end it (round 4 L3).
 //! The restored records arrive without members and are never torn down
 //! by a joiner's exit. A correction is written **conditionally** — only
 //! while the record on file still has the status that was loaded — so a
@@ -31,13 +41,16 @@ use crate::domain::environment_registry::{
     EnvironmentJournal, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, JournalWrite,
 };
 
+use crate::domain::environment_retention::{HostedSwarmRun, SwarmRunObservation};
+
 use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, RestoreMode, RestoredRegistry};
-use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore};
+use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore, HostedSwarmRunInspection};
 
 #[derive(Clone)]
 pub struct RestoreRegistry {
     store: Arc<dyn EnvironmentRegistryStore>,
     process: Arc<dyn EnvironmentProcess>,
+    hosted: Arc<dyn HostedSwarmRunInspection>,
 }
 
 impl std::fmt::Debug for RestoreRegistry {
@@ -57,12 +70,38 @@ pub const KILL_IN_FLIGHT: &str =
 /// unverified at restore (round 3 H1, #2033): that is its normal state.
 pub const RETAINED_EXITED: &str = "retained: container exited; only container kill ends it";
 
+/// The reason a record an older build relabelled `stopped` while it was
+/// retained is restored to `retained` (round 4 L3, #2033).
+pub const RELABELLED_BY_OLDER_BUILD: &str = "was retained; relabelled stopped by an older build's restore — restored to retained; kill explicitly to collect";
+
+const KEPT: &str = "environment retained for inspection, kill_container to remove";
+
+/// The `metadata.retained` reason for a gone container whose checkout
+/// hosts an unfinished run (round 4 M1, #2033): what the finalizer would
+/// have recorded had the master seen the coordinator go.
+pub fn unfinished_run_reason(run: &HostedSwarmRun) -> String {
+    format!(
+        "run {} unfinished ({}); container exited; {KEPT}",
+        run.id,
+        run.describe()
+    )
+}
+
+fn unreadable_store_reason(error: &str) -> String {
+    format!("coordination store could not be read ({error}); container exited; {KEPT}")
+}
+
 impl RestoreRegistry {
     pub fn new(
         store: Arc<dyn EnvironmentRegistryStore>,
         process: Arc<dyn EnvironmentProcess>,
+        hosted: Arc<dyn HostedSwarmRunInspection>,
     ) -> Self {
-        Self { store, process }
+        Self {
+            store,
+            process,
+            hosted,
+        }
     }
 
     /// The journal a durable registry writes through: refs from the store
@@ -94,6 +133,7 @@ impl RestoreRegistry {
                 tracing::info!(
                     restored = report.restored.len(),
                     stopped = report.stopped.len(),
+                    retained = report.retained.len(),
                     unverified = report.unverified.len(),
                     "durable environment registry readable again; seeded"
                 );
@@ -212,11 +252,15 @@ impl RestoreRegistry {
                 continue;
             }
             if mode == RestoreMode::Observe {
+                let why = judged
+                    .last_error
+                    .as_deref()
+                    .or_else(|| judged.metadata.get("retained").and_then(|v| v.as_str()))
+                    .unwrap_or("corrected");
                 report.diagnostics.push(format!(
-                    "{} would be recorded {} ({}); not written: this restore only observes",
+                    "{} would be recorded {} ({why}); not written: this restore only observes",
                     judged.environment_ref,
                     judged.status_label(),
-                    judged.last_error.as_deref().unwrap_or("corrected")
                 ));
                 restored.push(judged);
                 continue;
@@ -253,6 +297,19 @@ impl RestoreRegistry {
     fn judge(&self, record: &mut EnvironmentRecord, report: &mut RestoredRegistry) -> bool {
         let environment_ref = record.environment_ref.clone();
         match record.status {
+            // An older build relabelled a retained record at restore
+            // (round 4 L3): the record's own `retained` reason under a
+            // `stopped` status with this restore's last error is that
+            // build's signature and nothing else's (an explicit kill
+            // clears the last error). Restored, so a kill can end it.
+            EnvironmentStatus::Stopped if relabelled_by_older_build(record) => {
+                record.status = EnvironmentStatus::Retained;
+                record.last_error = None;
+                report
+                    .retained
+                    .push((environment_ref, RELABELLED_BY_OLDER_BUILD.to_string()));
+                true
+            }
             EnvironmentStatus::Stopped => false,
             EnvironmentStatus::Killing => {
                 // Whether its session is still settling the kill cannot
@@ -280,6 +337,26 @@ impl RestoreRegistry {
                             .push((environment_ref, RETAINED_EXITED.to_string()));
                         false
                     }
+                    // The master exited before its coordinator did (round 4
+                    // M1): nobody finalized the member, the in-container
+                    // harness ran its parent-loss shutdown and the box
+                    // exited with the run unfinished. What the finalizer
+                    // would have decided is decided here.
+                    (EnvironmentLiveness::Gone, EnvironmentStatus::Running) => {
+                        match self.retention_of_gone(record) {
+                            Some(reason) => {
+                                record.retain_with(&reason);
+                                record.last_error = None;
+                                report.retained.push((environment_ref, reason));
+                            }
+                            None => {
+                                record.status = EnvironmentStatus::Stopped;
+                                record.last_error = Some(GONE_AT_RESTORE.to_string());
+                                report.stopped.push(environment_ref);
+                            }
+                        }
+                        true
+                    }
                     (EnvironmentLiveness::Gone, _) => {
                         record.status = EnvironmentStatus::Stopped;
                         record.last_error = Some(GONE_AT_RESTORE.to_string());
@@ -294,6 +371,32 @@ impl RestoreRegistry {
             }
         }
     }
+
+    /// Why a `running` record whose container is gone is retained rather
+    /// than stopped, when it is: its checkout hosts a created run that has
+    /// not ended, or a store that cannot be read (retained, as the
+    /// finalizer retains it: a destroyed box cannot be recovered). An
+    /// ended run, the bootstrap placeholder or no store: `None`.
+    fn retention_of_gone(&self, record: &EnvironmentRecord) -> Option<String> {
+        match self.hosted.inspect_hosted_run(record) {
+            SwarmRunObservation::Run(run) if run.created() && !run.ended() => {
+                Some(unfinished_run_reason(&run))
+            }
+            SwarmRunObservation::Run(_) | SwarmRunObservation::NoStore => None,
+            SwarmRunObservation::Unreadable(error) => Some(unreadable_store_reason(&error)),
+        }
+    }
+}
+
+/// An older build's restore relabelled this record `stopped` while it was
+/// retained (round 4 L3, #2033).
+fn relabelled_by_older_build(record: &EnvironmentRecord) -> bool {
+    record.status == EnvironmentStatus::Stopped
+        && record
+            .metadata
+            .get("retained")
+            .is_some_and(|v| v.is_string())
+        && record.last_error.as_deref() == Some(GONE_AT_RESTORE)
 }
 
 /// How a store that could not be read is reported.

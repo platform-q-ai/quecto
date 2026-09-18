@@ -118,6 +118,7 @@ pub fn build_restore_registry(base_dir: &Path) -> RestoreRegistry {
     RestoreRegistry::new(
         build_environment_registry_store(base_dir),
         build_environment_process(),
+        Arc::new(HostedStoreObservation),
     )
 }
 
@@ -152,13 +153,21 @@ fn report_restore(report: &RestoredRegistry) {
     for line in &report.diagnostics {
         eprintln!("{line}");
     }
-    if !report.restored.is_empty() || !report.stopped.is_empty() || !report.unverified.is_empty() {
+    if !report.restored.is_empty()
+        || !report.stopped.is_empty()
+        || !report.retained.is_empty()
+        || !report.unverified.is_empty()
+    {
         tracing::info!(
             restored = report.restored.len(),
             stopped = report.stopped.len(),
+            retained = report.retained.len(),
             unverified = report.unverified.len(),
             "environment registry restored"
         );
+    }
+    for (environment_ref, reason) in &report.retained {
+        eprintln!("{environment_ref} retained at restore: {reason}");
     }
     for (environment_ref, reason) in &report.unverified {
         tracing::warn!(environment_ref, %reason, "restored environment could not be verified against the runtime");

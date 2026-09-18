@@ -5,13 +5,13 @@ use crate::domain::environment_registry::EnvironmentOrigin;
 use crate::infrastructure::persistence::environment_registry_store::FileEnvironmentRegistryStore;
 use crate::interface::cli::CliOutput;
 
-fn run(args: &[&str], ctx: &CliContext) -> CliOutput {
+pub(super) fn run(args: &[&str], ctx: &CliContext) -> CliOutput {
     let mut argv = vec!["quecto".to_string()];
     argv.extend(args.iter().map(|s| s.to_string()));
     crate::interface::cli::run_with_output(argv, ctx)
 }
 
-fn script(dir: &std::path::Path, name: &str, body: &str) -> Vec<String> {
+pub(super) fn script(dir: &std::path::Path, name: &str, body: &str) -> Vec<String> {
     let path = dir.join(name);
     std::fs::write(&path, format!("{body}\n")).unwrap();
     vec!["bash".to_string(), path.to_string_lossy().into_owned()]
@@ -374,7 +374,8 @@ fn an_unreadable_registry_refuses_gc_and_fails_ls_naming_the_read_error() {
 /// dead, holding a `retained` `C1` and a `running` `C3` (both with state
 /// dirs), and a global config whose `official` container config lists
 /// nothing and removes through a recording cleanup.
-fn composed_with_exited_containers() -> (tempfile::TempDir, CliContext, std::path::PathBuf) {
+pub(super) fn composed_with_exited_containers()
+-> (tempfile::TempDir, CliContext, std::path::PathBuf) {
     let (dir, mut ctx, _) = composed();
     let base = ctx.base_dir();
     let state = dir.path().join("state");

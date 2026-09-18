@@ -1,20 +1,55 @@
 use std::sync::{Arc, Mutex};
 
 use super::super::dto::{CorrectionOutcome, EnvironmentLiveness};
-use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore};
+use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore, HostedSwarmRunInspection};
 use super::{GONE_AT_RESTORE, KILL_IN_FLIGHT, RETAINED_EXITED, RestoreRegistry};
 use crate::domain::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };
+use crate::domain::environment_retention::SwarmRunObservation;
+
+/// The hosted store as the restore reads it: one observation per ref
+/// (`NoStore` for any other), and which refs were asked.
+pub(super) struct FakeHosted {
+    pub(super) by_ref: Mutex<Vec<(String, SwarmRunObservation)>>,
+    pub(super) asked: Mutex<Vec<String>>,
+}
+
+impl HostedSwarmRunInspection for FakeHosted {
+    fn inspect_hosted_run(&self, record: &EnvironmentRecord) -> SwarmRunObservation {
+        self.asked
+            .lock()
+            .unwrap()
+            .push(record.environment_ref.clone());
+        self.by_ref
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(r, _)| r == &record.environment_ref)
+            .map(|(_, o)| o.clone())
+            .unwrap_or(SwarmRunObservation::NoStore)
+    }
+    fn inspect_hosted_run_at(&self, _state_dir: &std::path::Path) -> SwarmRunObservation {
+        panic!("the restore never judges a bare state dir")
+    }
+}
+
+/// No environment hosts a store.
+pub(super) fn no_hosted() -> Arc<FakeHosted> {
+    Arc::new(FakeHosted {
+        by_ref: Mutex::new(vec![]),
+        asked: Mutex::new(vec![]),
+    })
+}
 
 #[derive(Default)]
-struct FakeStore {
-    records: Mutex<Vec<EnvironmentRecord>>,
+pub(super) struct FakeStore {
+    pub(super) records: Mutex<Vec<EnvironmentRecord>>,
     next: Mutex<u64>,
     fail_load: std::sync::atomic::AtomicBool,
     fail_writes: bool,
     forgotten: Mutex<Vec<String>>,
-    corrections: Mutex<Vec<String>>,
+    pub(super) corrections: Mutex<Vec<String>>,
 }
 
 impl EnvironmentRegistryStore for FakeStore {
@@ -99,7 +134,7 @@ impl EnvironmentProcess for FakeProcess {
     }
 }
 
-fn record(reference: &str, status: EnvironmentStatus) -> EnvironmentRecord {
+pub(super) fn record(reference: &str, status: EnvironmentStatus) -> EnvironmentRecord {
     EnvironmentRecord {
         environment_ref: reference.into(),
         environment_id: format!("env-{reference}"),
@@ -122,13 +157,13 @@ fn record(reference: &str, status: EnvironmentStatus) -> EnvironmentRecord {
     }
 }
 
-fn store_with(records: Vec<EnvironmentRecord>) -> Arc<FakeStore> {
+pub(super) fn store_with(records: Vec<EnvironmentRecord>) -> Arc<FakeStore> {
     let store = FakeStore::default();
     *store.records.lock().unwrap() = records;
     Arc::new(store)
 }
 
-fn process(
+pub(super) fn process(
     f: impl Fn(&EnvironmentRecord) -> EnvironmentLiveness + Send + Sync + 'static,
 ) -> Arc<dyn EnvironmentProcess> {
     Arc::new(FakeProcess(Box::new(f)))
@@ -148,7 +183,8 @@ fn live_records_are_restored_without_members_gone_ones_stopped_and_unknown_kept(
         "C3" => EnvironmentLiveness::Unknown("script missing".into()),
         other => panic!("stopped records are never inspected: {other}"),
     });
-    let (registry, report) = RestoreRegistry::new(store.clone(), process).execute("cli:two");
+    let (registry, report) =
+        RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:two");
     assert_eq!(report.restored, ["C1"]);
     assert_eq!(report.stopped, ["C2"]);
     assert_eq!(
@@ -198,7 +234,7 @@ fn live_records_are_restored_without_members_gone_ones_stopped_and_unknown_kept(
 fn a_kill_in_flight_is_reported_not_relabelled_and_an_explicit_kill_retries_it() {
     let store = store_with(vec![record("C1", EnvironmentStatus::Killing)]);
     let process = process(|_| panic!("a killing record is not inspected"));
-    let (registry, report) = RestoreRegistry::new(store.clone(), process).execute("s");
+    let (registry, report) = RestoreRegistry::new(store.clone(), process, no_hosted()).execute("s");
     assert!(report.restored.is_empty(), "{report:?}");
     assert_eq!(report.unverified.len(), 1, "{report:?}");
     assert_eq!(report.unverified[0].0, "C1");
@@ -227,7 +263,7 @@ fn an_unreadable_store_yields_an_empty_registry_that_still_allocates_through_the
         ..Default::default()
     });
     let process = process(|_| EnvironmentLiveness::Running);
-    let (registry, report) = RestoreRegistry::new(store.clone(), process).execute("s");
+    let (registry, report) = RestoreRegistry::new(store.clone(), process, no_hosted()).execute("s");
     assert!(registry.entries().is_empty());
     assert!(report.diagnostics.is_empty(), "{report:?}");
     let read_error = report.read_error.as_deref().expect("read error reported");
@@ -251,7 +287,7 @@ fn an_unreadable_store_yields_an_empty_registry_that_still_allocates_through_the
 fn the_journal_writes_every_transition_and_forgets_a_rolled_back_create() {
     let store = store_with(vec![]);
     let process = process(|_| EnvironmentLiveness::Running);
-    let (registry, _) = RestoreRegistry::new(store.clone(), process).execute("s");
+    let (registry, _) = RestoreRegistry::new(store.clone(), process, no_hosted()).execute("s");
     let reference = registry.mint_ref().unwrap();
     assert_eq!(reference, "C1");
     let mut created = record(&reference, EnvironmentStatus::Running);
@@ -282,7 +318,7 @@ fn a_failing_store_never_panics_and_refuses_to_mint() {
         ..Default::default()
     });
     let process = process(|_| EnvironmentLiveness::Running);
-    let (registry, _) = RestoreRegistry::new(store, process).execute("s");
+    let (registry, _) = RestoreRegistry::new(store, process, no_hosted()).execute("s");
     let refused = registry.mint_ref().unwrap_err();
     assert!(refused.to_string().contains("disk full"), "{refused}");
     assert!(registry.mint_ref().is_err());
@@ -296,7 +332,7 @@ fn a_failing_store_never_panics_and_refuses_to_mint() {
 fn an_unseeded_registry_journals_but_inherits_nothing() {
     let store = store_with(vec![record("C5", EnvironmentStatus::Running)]);
     let process = process(|_| panic!("nothing is inspected"));
-    let registry = RestoreRegistry::new(store.clone(), process).unseeded("child");
+    let registry = RestoreRegistry::new(store.clone(), process, no_hosted()).unseeded("child");
     assert!(registry.entries().is_empty());
     assert_eq!(registry.session(), "child");
     // Refs still come from the shared store: no collision with C5.
@@ -309,7 +345,7 @@ fn an_unseeded_registry_journals_but_inherits_nothing() {
 fn the_restore_debug_is_opaque_over_its_ports() {
     let store = store_with(vec![]);
     let process = process(|_| EnvironmentLiveness::Running);
-    let shown = format!("{:?}", RestoreRegistry::new(store, process));
+    let shown = format!("{:?}", RestoreRegistry::new(store, process, no_hosted()));
     assert_eq!(shown, "RestoreRegistry { .. }");
 }
 
@@ -358,6 +394,7 @@ fn a_correction_another_session_overtook_is_not_written_and_their_state_is_seede
             inner: inner.clone(),
         }),
         process,
+        no_hosted(),
     )
     .execute("s");
     assert!(inner.corrections.lock().unwrap().is_empty());
@@ -386,7 +423,7 @@ fn a_correction_another_session_overtook_is_not_written_and_their_state_is_seede
 fn a_retained_record_whose_container_exited_stays_retained_and_is_reported() {
     let store = store_with(vec![record("C1", EnvironmentStatus::Retained)]);
     let process = process(|_| EnvironmentLiveness::Gone);
-    let (registry, report) = RestoreRegistry::new(store.clone(), process).execute("s");
+    let (registry, report) = RestoreRegistry::new(store.clone(), process, no_hosted()).execute("s");
     assert!(report.stopped.is_empty(), "{report:?}");
     assert!(report.restored.is_empty(), "{report:?}");
     assert_eq!(
@@ -404,7 +441,7 @@ fn a_retained_record_whose_container_exited_stays_retained_and_is_reported() {
     // A retained record whose container still runs is restored as live.
     let store = store_with(vec![record("C2", EnvironmentStatus::Retained)]);
     let live = self::process(|_| EnvironmentLiveness::Running);
-    let (_, report) = RestoreRegistry::new(store, live).execute("s");
+    let (_, report) = RestoreRegistry::new(store, live, no_hosted()).execute("s");
     assert_eq!(report.restored, ["C2"]);
 }
 
@@ -418,7 +455,8 @@ fn an_observing_restore_seeds_its_corrections_in_memory_and_writes_none() {
         record("C2", EnvironmentStatus::Retained),
     ]);
     let process = process(|_| EnvironmentLiveness::Gone);
-    let (registry, report) = RestoreRegistry::new(store.clone(), process).observe("cli");
+    let (registry, report) =
+        RestoreRegistry::new(store.clone(), process, no_hosted()).observe("cli");
     assert_eq!(report.stopped, ["C1"]);
     assert!(
         report.diagnostics.iter().any(|d| d.starts_with("C1 ")
@@ -462,7 +500,7 @@ fn a_store_repaired_in_place_is_seen_on_the_next_lookup_without_a_restart() {
         "C1" => EnvironmentLiveness::Running,
         _ => EnvironmentLiveness::Gone,
     });
-    let (registry, report) = RestoreRegistry::new(store.clone(), process).execute("s");
+    let (registry, report) = RestoreRegistry::new(store.clone(), process, no_hosted()).execute("s");
     assert!(report.read_error.is_some());
     let query = super::ListEnvironmentsQuery::new(registry.clone());
     assert_eq!(query.diagnostics().len(), 1, "unreadable: reported");

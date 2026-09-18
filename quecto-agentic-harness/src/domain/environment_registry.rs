@@ -159,6 +159,18 @@ impl EnvironmentRecord {
             EnvironmentStatus::Retained => "retained",
         }
     }
+
+    /// Mark the record retained (#1924): `Retained`, no members, `reason`
+    /// under `metadata.retained` (the one key that says why a box is kept).
+    pub fn retain_with(&mut self, reason: &str) {
+        self.status = EnvironmentStatus::Retained;
+        self.members.clear();
+        if let Some(object) = self.metadata.as_object_mut() {
+            object.insert("retained".to_string(), serde_json::json!(reason));
+        } else {
+            self.metadata = serde_json::json!({ "retained": reason });
+        }
+    }
 }
 
 /// Mint the hidden environment UUID committed with each new environment.
@@ -682,13 +694,7 @@ impl EnvironmentRegistry {
         state.kill_claims.remove(&claim.environment_ref);
         if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
             debug_assert_eq!(record.status, EnvironmentStatus::Killing);
-            record.status = EnvironmentStatus::Retained;
-            record.members.clear();
-            if let Some(object) = record.metadata.as_object_mut() {
-                object.insert("retained".to_string(), serde_json::json!(reason));
-            } else {
-                record.metadata = serde_json::json!({ "retained": reason });
-            }
+            record.retain_with(reason);
         }
         drop(state);
         self.journal_ref(&claim.environment_ref);

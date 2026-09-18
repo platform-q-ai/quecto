@@ -85,6 +85,11 @@ pub(crate) fn cmd_ls(
                 .collect();
             present_table(&shown, all, records.len(), stdout);
             present_restore_notes(&handles, stderr);
+            for (environment_ref, reason) in &handles.restore.retained {
+                stderr.push_str(&format!(
+                    "note: {environment_ref} retained at restore: {reason}\n"
+                ));
+            }
             for (environment_ref, reason) in &handles.restore.unverified {
                 stderr.push_str(&format!(
                     "note: {environment_ref} could not be verified against the runtime: {reason}\n"
@@ -360,6 +365,9 @@ fn present_gc(report: &GcReport, stdout: &mut String) {
     }
 }
 
+#[cfg(test)]
+#[path = "container_inventory_hosted_tests.rs"]
+mod hosted_tests;
 #[cfg(test)]
 #[path = "container_inventory_tests.rs"]
 mod tests;

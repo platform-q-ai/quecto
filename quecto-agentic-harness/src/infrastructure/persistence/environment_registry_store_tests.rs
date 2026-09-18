@@ -178,7 +178,11 @@ fn a_joiners_write_on_a_restored_record_never_reverts_the_creators_status() {
     let dir = tempfile::TempDir::new().unwrap();
     let store: Arc<dyn EnvironmentRegistryStore> =
         Arc::new(FileEnvironmentRegistryStore::for_base_dir(dir.path()));
-    let restore = RestoreRegistry::new(store.clone(), Arc::new(AlwaysRunning));
+    let restore = RestoreRegistry::new(
+        store.clone(),
+        Arc::new(AlwaysRunning),
+        Arc::new(crate::infrastructure::tools::environment_commands::HostedStoreObservation),
+    );
     // The creator's session: its own record, one member.
     let creator = restore.unseeded("creator");
     let mut created = record("C1", EnvironmentStatus::Running);

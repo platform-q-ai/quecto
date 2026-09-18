@@ -20,7 +20,10 @@ pub use initialise_standard_container::{InitialiseStandardContainer, STATE_DIR_N
 pub use kill_environment::{KillEnvironment, KillEnvironmentError, KilledEnvironment};
 pub use list_container_configs::ListContainerConfigs;
 pub use list_environments::ListEnvironmentsQuery;
-pub use restore_registry::{GONE_AT_RESTORE, KILL_IN_FLIGHT, RETAINED_EXITED, RestoreRegistry};
+pub use restore_registry::{
+    GONE_AT_RESTORE, KILL_IN_FLIGHT, RELABELLED_BY_OLDER_BUILD, RETAINED_EXITED, RestoreRegistry,
+    unfinished_run_reason,
+};
 
 #[cfg(test)]
 mod finalize_environment_member_retention_tests;
@@ -36,5 +39,7 @@ mod kill_environment_tests;
 mod list_container_configs_tests;
 #[cfg(test)]
 mod list_environments_tests;
+#[cfg(test)]
+mod restore_registry_hosted_tests;
 #[cfg(test)]
 mod restore_registry_tests;
