@@ -150,12 +150,18 @@ quecto container gc --dry-run      # orphans of this config: container gone/exit
 quecto container gc [--name <config>]   # remove them (the config's inspect / inspect --list / cleanup)
 ```
 
-`gc` keeps a `running`/`retained`/`cleanup-failed` record, a state dir
-whose container runs or cannot be checked, and a directory younger than
-15 minutes without a container (a create in flight); it reports what it
-removed, kept and why. Clean up after yourself: kill what you created
-when done, and run `quecto container gc --dry-run` when `ls` shows
-stopped leftovers.
+`gc` keeps a `running`/`cleanup-failed` record, a `retained` one
+whatever its container's state (a retained swarm box has exited by
+design; only `container kill` ends it), a state dir whose container runs
+or cannot be checked, and a directory younger than 15 minutes without a
+container (a create in flight); it judges the config's `--state-dir`
+only (a record's own retained cleanup may name one more root, for that
+record alone), and `--dry-run` writes nothing — not even to
+`environments.json`. It reports what it removed, kept and why. A
+container no record names (a harness died between create and journal)
+is ended by hand: `podman rm -f quecto-<environment-id>`. Clean up after
+yourself: kill what you created when done, and run `quecto container gc
+--dry-run` when `ls` shows stopped leftovers.
 
 ## See also
 

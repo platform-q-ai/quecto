@@ -240,16 +240,26 @@ the same `C7`, and a ref is never reused after a restart.
 
 At startup a top-level session **restores** the file: each record is
 checked against the runtime through its retained `inspect` — a
-`running`/`retained`/`cleanup-failed` record whose inspect says `dead` is
-marked `stopped` with `container not found at restore …` as its last
-error (never silently dropped); one whose inspect cannot be run is kept as
+`running`/`cleanup-failed` record whose inspect says `dead` is marked
+`stopped` with `container not found at restore …` as its last error
+(never silently dropped); one whose inspect cannot be run is kept as
 recorded and reported unverified on stderr; a record found `killing` is
 reported as *kill in flight (its session may be live and settling it)*
 and left as it is — nothing here can tell whether that session is dead —
 and an explicit `kill_container` / `quecto container kill` from the new
-session retries it. Restored records carry `restored: true` and `session`
-in `get_containers`. A spawned child journals its own creates but is not
-seeded (its parent shows the fleet).
+session retries it. A **`retained` record is never relabelled** (#1924):
+under the shipped adapter its container has *exited* by design (the
+coordinator was PID 1, the state directory holds the board, checkout and
+unpushed work), so a dead inspect is reported as *retained: container
+exited; only container kill ends it* and the file is left alone —
+`ls` lists it as `retained`, `gc` keeps it, and only `container kill` /
+`kill_container` moves it to `stopped`. Restored records carry
+`restored: true` and `session` in `get_containers`. A spawned child
+journals its own creates but is not seeded (its parent shows the fleet).
+A session that started while the file was unreadable retries the read on
+its next lookup (`get_containers`, a join, a kill), so a document
+repaired in place is seen and seeded without a restart — the stale
+diagnostic disappears from the next listing.
 
 **What the file is trusted for.** A record is trusted as written: the
 retained `exec`/`kill`/`cleanup`/`inspect` argv are run verbatim from the
@@ -299,19 +309,44 @@ What a new session can do with a restored environment:
 - **collect** — `quecto container gc [--dry-run] [--name <config>]`
   removes **orphans**: environments whose container is exited or unknown
   to the runtime **and** that the registry either does not record or
-  records `stopped`. It scans the config's `--state-dir` (from its create
-  argv) and every root a record implies; it lists containers through the config's
+  records `stopped`. Its scope is the config's `--state-dir` (from its
+  create argv, compared canonically — a symlinked spelling is the same
+  root), under which everything is judged, plus — for a record of that
+  config whose workspace lies under the root its *own* retained
+  `cleanup` argv names — that record's directory alone, removed through
+  that record's cleanup alone. A record's workspace never widens the
+  scan by itself: a record lying anywhere else is reported *outside this
+  config's state dir; not collected* and nothing is scanned or run for
+  it (a doctored `workspace_path` cannot point the config's cleanup at a
+  foreign directory). It lists containers through the config's
   `inspect --list` (one JSON object per container the create script
   labelled, so exited containers whose directory is already gone are
   found too) and removes through the record's retained `cleanup` or the
   config's `cleanup` — the harness itself names no runtime. A `running`,
-  `retained`, `killing` or `cleanup-failed` record is always **kept**
-  (with the reason, pointing at `container kill`); so is any state dir
-  whose container runs, and any state dir younger than fifteen minutes with
-  no container recorded yet (a create may be in flight — a directory
-  whose age cannot be read counts as young). `--dry-run` prints the same
-  judgement without an effect; the report lists what was (or would be)
-  removed, what was kept and why, and every failure.
+  `killing` or `cleanup-failed` record is always **kept** (with the
+  reason, pointing at `container kill`); a `retained` record is kept
+  **whatever the runtime says of its container** (exited is its normal
+  state; only an explicit kill moves it to `stopped`, after which its
+  leftovers are the collector's); so is any state dir whose container
+  runs, and any state dir younger than fifteen minutes with no container
+  recorded yet (a create may be in flight — a directory whose age cannot
+  be read counts as young). `--dry-run` prints the same judgement with
+  **no effect at all** — nothing on the host, and nothing written to
+  `environments.json` (the corrections a restore would write are
+  previewed on stderr as *would be recorded …; not written*); the report
+  lists what was (or would be) removed, what was kept and why, and every
+  failure.
+- **an unrecorded running container** — a harness that died between the
+  create script and the journal write (or whose `environments.json` was
+  moved aside) leaves a container the runtime reports running and no
+  record names. `gc` keeps it (its container runs) and `ls` cannot show
+  it; end it by hand: `podman rm -f quecto-<environment-id>` (docker
+  likewise) and remove `<state-dir>/<environment-id>` — after which
+  `gc` collects nothing further for it. This is the pre-existing
+  child-outlives-parent behaviour: a member harness inside a container
+  keeps running when its parent dies without cleanup (the container's
+  init reaps only its own grandchildren), and only a kill through the
+  record — or the runtime by hand — ends it.
 
 **Moving `environments.json` aside restarts the refs** (the next create is
 `C1` again) and forgets every environment it recorded: the containers
