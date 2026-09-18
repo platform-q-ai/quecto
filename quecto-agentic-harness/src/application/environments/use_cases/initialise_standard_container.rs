@@ -17,9 +17,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::application::environments::dto::{
-    AssetOutcome, AssetState, ContainerAsset, InitialiseStandardContainerError, RepositoryOrigin,
-    STANDARD_CONTAINER_CONFIG, STANDARD_CONTAINER_DIR, STANDARD_CONTAINER_IMAGE,
-    StandardContainerReport, StandardContainerRequest, StandardEntryOutcome,
+    AssetOutcome, AssetState, ContainerAsset, ContainerConfigDocument,
+    InitialiseStandardContainerError, RepositoryOrigin, STANDARD_CONTAINER_CONFIG,
+    STANDARD_CONTAINER_DIR, STANDARD_CONTAINER_IMAGE, StandardContainerReport,
+    StandardContainerRequest, StandardEntryOutcome,
 };
 use crate::application::environments::ports::{
     ContainerAssetStore, ContainerConfigPersistence, ContainerConfigRoster, WorkspaceOrigin,
@@ -143,7 +144,7 @@ impl InitialiseStandardContainer {
         } else {
             Some(
                 self.persistence
-                    .persist(STANDARD_CONTAINER_CONFIG, entry.clone())
+                    .persist(STANDARD_CONTAINER_CONFIG, &entry)
                     .map_err(InitialiseStandardContainerError::Persist)?
                     .path,
             )
@@ -191,43 +192,34 @@ impl InitialiseStandardContainer {
         repository: Option<&str>,
         image: &str,
         default: bool,
-    ) -> serde_json::Value {
+    ) -> ContainerConfigDocument {
         let script = |name: &str| assets_dir.join(name).to_string_lossy().into_owned();
         let state_dir = self
             .base_dir
             .join(STATE_DIR_NAME)
             .to_string_lossy()
             .into_owned();
-        let mut create = vec![
-            script(CREATE_SCRIPT),
-            "--state-dir".into(),
-            state_dir.clone(),
-        ];
+        let with_state =
+            |name: &str| vec![script(name), "--state-dir".to_string(), state_dir.clone()];
+        let mut create = with_state(CREATE_SCRIPT);
         if let Some(repository) = repository {
             create.push("--repo".into());
             create.push(repository.to_string());
         }
         create.push("--image".into());
         create.push(image.to_string());
-        let with_state =
-            |name: &str| vec![script(name), "--state-dir".to_string(), state_dir.clone()];
         let mut kill = with_state(KILL_SCRIPT);
         kill.extend(["--op".to_string(), "kill".to_string()]);
         let mut cleanup = with_state(KILL_SCRIPT);
         cleanup.extend(["--op".to_string(), "cleanup".to_string()]);
-        let mut entry = serde_json::Map::new();
-        if default {
-            entry.insert("default".into(), serde_json::Value::Bool(true));
+        ContainerConfigDocument {
+            default,
+            create,
+            exec: with_state(EXEC_SCRIPT),
+            inspect: with_state(INSPECT_SCRIPT),
+            kill,
+            cleanup,
         }
-        entry.insert("create".into(), serde_json::json!(create));
-        entry.insert("exec".into(), serde_json::json!(with_state(EXEC_SCRIPT)));
-        entry.insert(
-            "inspect".into(),
-            serde_json::json!(with_state(INSPECT_SCRIPT)),
-        );
-        entry.insert("kill".into(), serde_json::json!(kill));
-        entry.insert("cleanup".into(), serde_json::json!(cleanup));
-        serde_json::Value::Object(entry)
     }
 }
 

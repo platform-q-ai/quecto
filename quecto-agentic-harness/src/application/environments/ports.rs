@@ -12,8 +12,9 @@ use std::pin::Pin;
 use std::path::{Path, PathBuf};
 
 use crate::application::environments::dto::{
-    AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue, ContainerConfigEntry,
-    ContainerRuntimeTarget, DiagnosableContainerConfig, PersistedContainerConfig, PreflightCheck,
+    AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue, ContainerConfigDocument,
+    ContainerConfigEntry, ContainerRuntimeTarget, DiagnosableContainerConfig,
+    PersistedContainerConfig, PreflightCheck,
 };
 use crate::domain::environment_registry::EnvironmentRecord;
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
@@ -227,7 +228,7 @@ pub trait ContainerConfigPersistence: Send + Sync {
     fn persist(
         &self,
         name: &str,
-        entry: serde_json::Value,
+        entry: &ContainerConfigDocument,
     ) -> Result<PersistedContainerConfig, String>;
 
     /// The overlay file a persist would write, when the run has one.

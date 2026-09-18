@@ -44,7 +44,16 @@ fn parse_init(args: &[String]) -> Result<InitArgs, String> {
     };
     while let Some(arg) = rest.next() {
         match arg.as_str() {
-            "--project" => parsed.project = Some(PathBuf::from(value("--project", &mut rest)?)),
+            "--project" => {
+                let project = PathBuf::from(value("--project", &mut rest)?);
+                if !project.is_absolute() {
+                    return Err(format!(
+                        "--project must be an absolute path: {}\n{INIT_USAGE}",
+                        project.display()
+                    ));
+                }
+                parsed.project = Some(project);
+            }
             "--repo" => parsed.repository = Some(value("--repo", &mut rest)?),
             "--image" => parsed.image = Some(value("--image", &mut rest)?),
             "--dry-run" => parsed.dry_run = true,
@@ -73,37 +82,22 @@ fn parse_status(args: &[String]) -> Result<Option<PathBuf>, String> {
 }
 
 /// The project the command works on, and the configuration selection its
-/// overlay belongs to: `--project` (absolute) or the working directory.
+/// overlay belongs to: `--project` or the working directory, canonical.
 /// A `--project` elsewhere than the working directory selects THAT
 /// directory's layers, so the overlay written is the project's.
 fn project_selection(
     ctx: &CliContext,
     project: Option<PathBuf>,
 ) -> Result<(PathBuf, ConfigSelection), String> {
-    let project = match project {
-        Some(path) => {
-            if !path.is_absolute() {
-                return Err(format!(
-                    "--project must be an absolute path: {}",
-                    path.display()
-                ));
-            }
-            path
-        }
-        None => ctx
-            .cwd
-            .clone()
-            .ok_or_else(|| "the working directory is unknown; pass --project".to_string())?,
+    let project = match project.or_else(|| ctx.cwd.clone()) {
+        Some(path) => path,
+        None => return Err("the working directory is unknown; pass --project".to_string()),
     };
     let project = std::fs::canonicalize(&project)
         .map_err(|error| format!("project {} is not accessible: {error}", project.display()))?;
-    let selection = if ctx.cwd.as_deref() == Some(project.as_path()) {
-        ctx.config_selection()?
-    } else {
-        let mut for_project = ctx.clone();
-        for_project.cwd = Some(project.clone());
-        for_project.config_selection()?
-    };
+    let mut for_project = ctx.clone();
+    for_project.cwd = Some(project.clone());
+    let selection = for_project.config_selection()?;
     Ok((project, selection))
 }
 

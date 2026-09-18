@@ -37,7 +37,11 @@ fn init_and_status_parse_their_flags_and_refuse_unknown_ones() {
         ),
         (
             &["container", "frobnicate"][..],
-            "usage: quecto container <init|status|doctor>",
+            "usage: quecto container init",
+        ),
+        (
+            &["container", "status", "--project", "rel"][..],
+            "--project must be an absolute path",
         ),
     ] {
         let output = run(args, &ctx);

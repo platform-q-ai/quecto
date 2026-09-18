@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use super::InitialiseStandardContainer;
 use crate::application::environments::dto::{
-    AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue, ContainerConfigEntry,
-    ContainerConfigLayer, InitialiseStandardContainerError, PersistedContainerConfig,
-    RepositoryOrigin, StandardContainerRequest,
+    AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue, ContainerConfigDocument,
+    ContainerConfigEntry, ContainerConfigLayer, InitialiseStandardContainerError,
+    PersistedContainerConfig, RepositoryOrigin, StandardContainerRequest,
 };
 use crate::application::environments::ports::{
     ContainerAssetStore, ContainerConfigPersistence, ContainerConfigRoster,
@@ -89,7 +89,7 @@ impl ContainerConfigRoster for FixedRoster {
 
 #[derive(Default)]
 struct RecordingPersistence {
-    written: Mutex<Vec<(String, serde_json::Value)>>,
+    written: Mutex<Vec<(String, ContainerConfigDocument)>>,
     refuse: Option<String>,
 }
 
@@ -97,12 +97,15 @@ impl ContainerConfigPersistence for RecordingPersistence {
     fn persist(
         &self,
         name: &str,
-        entry: serde_json::Value,
+        entry: &ContainerConfigDocument,
     ) -> Result<PersistedContainerConfig, String> {
         if let Some(reason) = &self.refuse {
             return Err(reason.clone());
         }
-        self.written.lock().unwrap().push((name.to_string(), entry));
+        self.written
+            .lock()
+            .unwrap()
+            .push((name.to_string(), entry.clone()));
         Ok(PersistedContainerConfig {
             path: PathBuf::from("/p/.quecto/config.json"),
             created: true,
@@ -131,7 +134,7 @@ struct Rig {
     use_case: InitialiseStandardContainer,
 }
 
-fn rig(
+fn build_rig(
     origin: Result<Option<String>, String>,
     roster: ContainerConfigRosterReport,
     refuse: Option<String>,
@@ -166,18 +169,18 @@ fn request(project: &str) -> StandardContainerRequest {
     }
 }
 
-fn argv(entry: &serde_json::Value, key: &str) -> Vec<String> {
-    entry[key]
-        .as_array()
+fn argv(entry: &ContainerConfigDocument, key: &str) -> Vec<String> {
+    entry
+        .argvs()
+        .into_iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, argv)| argv.to_vec())
         .unwrap()
-        .iter()
-        .map(|v| v.as_str().unwrap().to_string())
-        .collect()
 }
 
 #[test]
 fn writes_the_bundle_and_a_default_entry_naming_the_materialised_scripts() {
-    let rig = rig(
+    let rig = build_rig(
         Ok(Some("https://example.test/origin".into())),
         ContainerConfigRosterReport::default(),
         None,
@@ -211,7 +214,7 @@ fn writes_the_bundle_and_a_default_entry_naming_the_materialised_scripts() {
     let written = rig.persistence.written.lock().unwrap();
     let (name, entry) = &written[0];
     assert_eq!(name, "standard");
-    assert_eq!(entry["default"], serde_json::json!(true));
+    assert!(entry.default);
     assert_eq!(
         argv(entry, "create"),
         [
@@ -255,7 +258,7 @@ fn writes_the_bundle_and_a_default_entry_naming_the_materialised_scripts() {
 
 #[test]
 fn a_second_init_keeps_every_asset_and_rewrites_the_same_entry() {
-    let rig = rig(
+    let rig = build_rig(
         Ok(Some("https://example.test/origin".into())),
         ContainerConfigRosterReport {
             configs: vec![entry("standard", true)],
@@ -275,7 +278,7 @@ fn a_second_init_keeps_every_asset_and_rewrites_the_same_entry() {
 
 #[test]
 fn an_edited_asset_is_kept_and_reported_as_differing() {
-    let rig = rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
     rig.assets.disk.lock().unwrap().insert(
         PathBuf::from("/p/.quecto/containers/standard/scripts/create.sh"),
         b"edited".to_vec(),
@@ -296,7 +299,7 @@ fn an_edited_asset_is_kept_and_reported_as_differing() {
 
 #[test]
 fn an_existing_default_keeps_its_label_and_ours_is_added_without_it() {
-    let rig = rig(
+    let rig = build_rig(
         Ok(Some("u".into())),
         ContainerConfigRosterReport {
             configs: vec![entry("other", true), entry("more", false)],
@@ -308,12 +311,12 @@ fn an_existing_default_keeps_its_label_and_ours_is_added_without_it() {
     assert!(!report.entry.default);
     assert_eq!(report.entry.existing_default.as_deref(), Some("other"));
     let written = rig.persistence.written.lock().unwrap();
-    assert!(written[0].1.get("default").is_none());
+    assert!(!written[0].1.default);
 }
 
 #[test]
 fn an_explicit_repo_wins_and_no_origin_means_a_sandbox() {
-    let rig = rig(
+    let rig = build_rig(
         Ok(Some("https://example.test/origin".into())),
         ContainerConfigRosterReport::default(),
         None,
@@ -326,7 +329,7 @@ fn an_explicit_repo_wins_and_no_origin_means_a_sandbox() {
         argv(&report.entry.entry, "create").contains(&"https://example.test/explicit".to_string())
     );
 
-    let rig = rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
     let report = rig.use_case.execute(&request("/p")).unwrap();
     assert_eq!(report.repository_origin, RepositoryOrigin::Sandbox);
     assert_eq!(report.repository, None);
@@ -337,7 +340,7 @@ fn an_explicit_repo_wins_and_no_origin_means_a_sandbox() {
 
 #[test]
 fn an_explicit_image_is_baked_into_the_create_argv() {
-    let rig = rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
     let mut with_image = request("/p");
     with_image.image = Some("localhost/quecto-standard:test".into());
     let report = rig.use_case.execute(&with_image).unwrap();
@@ -351,7 +354,7 @@ fn an_explicit_image_is_baked_into_the_create_argv() {
 
 #[test]
 fn a_dry_run_writes_nothing_and_reports_what_it_would() {
-    let rig = rig(
+    let rig = build_rig(
         Ok(Some("u".into())),
         ContainerConfigRosterReport::default(),
         None,
@@ -371,7 +374,7 @@ fn a_dry_run_writes_nothing_and_reports_what_it_would() {
 
 #[test]
 fn a_withheld_overlay_refuses_before_any_asset_is_written() {
-    let rig = rig(
+    let rig = build_rig(
         Ok(None),
         ContainerConfigRosterReport {
             configs: vec![],
@@ -391,7 +394,7 @@ fn a_withheld_overlay_refuses_before_any_asset_is_written() {
 
 #[test]
 fn a_persist_refusal_is_the_configuration_capabilitys_own_words() {
-    let rig = rig(
+    let rig = build_rig(
         Ok(None),
         ContainerConfigRosterReport::default(),
         Some("overlay /p/.quecto/config.json is not trusted (sha256 abc)".into()),
@@ -405,13 +408,13 @@ fn a_persist_refusal_is_the_configuration_capabilitys_own_words() {
 
 #[test]
 fn a_relative_project_and_an_unreadable_origin_are_errors() {
-    let rig = rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
     let error = rig.use_case.execute(&request("relative")).unwrap_err();
     assert!(matches!(
         error,
         InitialiseStandardContainerError::ProjectNotAbsolute(_)
     ));
-    let rig = rig(
+    let rig = build_rig(
         Err("git is not on PATH".into()),
         ContainerConfigRosterReport::default(),
         None,

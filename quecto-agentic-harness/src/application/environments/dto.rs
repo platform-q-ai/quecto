@@ -239,6 +239,33 @@ pub enum RepositoryOrigin {
     Sandbox,
 }
 
+/// A `container_configs.<name>` entry as init writes it: every argv
+/// names the materialised script by absolute path; `default` is the
+/// `"default": true` label. Composition maps it onto the configuration
+/// document; the use case never handles JSON.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ContainerConfigDocument {
+    pub default: bool,
+    pub create: Vec<String>,
+    pub exec: Vec<String>,
+    pub inspect: Vec<String>,
+    pub kill: Vec<String>,
+    pub cleanup: Vec<String>,
+}
+
+impl ContainerConfigDocument {
+    /// Every argv with its key, in the order the entry lists them.
+    pub fn argvs(&self) -> [(&'static str, &[String]); 5] {
+        [
+            ("create", &self.create),
+            ("exec", &self.exec),
+            ("inspect", &self.inspect),
+            ("kill", &self.kill),
+            ("cleanup", &self.cleanup),
+        ]
+    }
+}
+
 /// The config entry init wrote (or would write).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StandardEntryOutcome {
@@ -252,7 +279,7 @@ pub struct StandardEntryOutcome {
     /// not.
     pub existing_default: Option<String>,
     /// The entry as written, so the presenter can show it verbatim.
-    pub entry: serde_json::Value,
+    pub entry: ContainerConfigDocument,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

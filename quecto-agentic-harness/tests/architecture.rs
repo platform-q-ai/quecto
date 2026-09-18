@@ -443,7 +443,13 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     // presents the listing's inventory.
                     | "ContainerConfigEntry"
                     | "ContainerConfigInventory"
-                    | "ContainerConfigLayer",
+                    | "ContainerConfigLayer"
+                    // The standard bundle (#2024 S4e): the embedded asset
+                    // store answers in the capability's asset vocabulary.
+                    | "AssetOutcome"
+                    | "AssetState"
+                    | "ContainerAsset"
+                    | "ContainerAssetCatalogue",
                     ..,
                 ] => true,
                 // The spawn tool (#1848) holds the composed change-reasoning-
@@ -4086,6 +4092,13 @@ const ENVIRONMENT_PORTS: &[&str] = &[
     // launching agent's checkout, each entry with the layer that declared
     // it, for `get_container_configs` and the spawn description's roster.
     "ContainerConfigRoster",
+    // The standard container (#2024 S4e): the embedded bundle and its
+    // materialisation, the checkout's origin remote, and the overlay entry
+    // written through the configuration capability's one write path
+    // (mapped in composition, in the manner of `catalogue_defaults.rs`).
+    "ContainerAssetStore",
+    "WorkspaceOrigin",
+    "ContainerConfigPersistence",
 ];
 
 /// Application environment code may name the domain, its own capability,

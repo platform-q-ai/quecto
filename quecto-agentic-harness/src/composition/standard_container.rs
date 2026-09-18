@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use crate::application::configuration::dto::{ConfigLayer, ConfigPatch, ConfigSelection};
 use crate::application::configuration::use_cases::PatchConfiguration;
-use crate::application::environments::dto::PersistedContainerConfig;
+use crate::application::environments::dto::{ContainerConfigDocument, PersistedContainerConfig};
 use crate::application::environments::ports::ContainerConfigPersistence;
 use crate::application::environments::use_cases::{ContainerStatus, InitialiseStandardContainer};
 use crate::infrastructure::processes::containers::standard::assets::EmbeddedStandardAssets;
@@ -41,7 +41,7 @@ impl ContainerConfigPersistence for OverlayContainerConfigWriter {
     fn persist(
         &self,
         name: &str,
-        entry: serde_json::Value,
+        entry: &ContainerConfigDocument,
     ) -> Result<PersistedContainerConfig, String> {
         let receipt = self
             .patch
@@ -49,7 +49,7 @@ impl ContainerConfigPersistence for OverlayContainerConfigWriter {
                 selection: self.selection.clone(),
                 layer: ConfigLayer::Overlay,
                 key_path: format!("container_configs.{name}"),
-                value: entry,
+                value: entry_document(entry),
             })
             .map_err(|error| error.to_string())?;
         Ok(PersistedContainerConfig {
@@ -61,6 +61,27 @@ impl ContainerConfigPersistence for OverlayContainerConfigWriter {
     fn location(&self) -> Option<std::path::PathBuf> {
         self.selection.overlay_path().map(Path::to_path_buf)
     }
+}
+
+/// The entry as the configuration schema spells it: the `default` label
+/// only when set (an absent label is how a non-default entry is written),
+/// then each argv under its key.
+pub fn entry_document(entry: &ContainerConfigDocument) -> serde_json::Value {
+    let mut document = serde_json::Map::new();
+    if entry.default {
+        document.insert("default".into(), serde_json::Value::Bool(true));
+    }
+    for (key, argv) in entry.argvs() {
+        document.insert(
+            key.into(),
+            serde_json::Value::Array(
+                argv.iter()
+                    .map(|arg| serde_json::Value::String(arg.clone()))
+                    .collect(),
+            ),
+        );
+    }
+    serde_json::Value::Object(document)
 }
 
 impl std::fmt::Debug for OverlayContainerConfigWriter {
