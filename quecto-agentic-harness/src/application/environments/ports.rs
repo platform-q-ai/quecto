@@ -227,6 +227,10 @@ pub trait ContainerRuntimeInventory: Send + Sync {
         environment_id: &str,
     ) -> EnvironmentLiveness;
     fn environment_dirs(&self, root: &Path) -> Result<Vec<EnvironmentStateDir>, String>;
+    /// The host's canonical form of a state root (symlinks resolved), so
+    /// two spellings of one directory compare equal (round 3 M1, #2033);
+    /// a root the host cannot resolve is its own canonical form.
+    fn canonical_root(&self, root: &Path) -> std::path::PathBuf;
     fn remove(
         &self,
         config: &DiagnosableContainerConfig,

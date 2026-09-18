@@ -18,11 +18,16 @@
 //! without an effect — on the host or on the registry document.
 //!
 //! Scope is one container config: its own state root (`--state-dir` in
-//! its create argv) plus the roots implied by the records that config
-//! created. Nothing under another config's root is judged, so a cleanup
-//! always runs against the root its script knows. Containers the config's
-//! `inspect --list` reports (labelled with that root) are judged even when
-//! their state dir is already gone.
+//! its create argv, compared canonically), under which everything is
+//! judged, plus — for a record of that config whose workspace lies under
+//! a root its *own* retained cleanup names — that record's directory
+//! alone, removed through that record's cleanup alone (round 3 M1,
+//! #2033). A record's workspace never widens the scan by itself: one
+//! that lies anywhere else is reported as outside the config's state dir
+//! and nothing is scanned or run for it, so the config's cleanup only
+//! ever runs against the root its script knows. Containers the config's
+//! `inspect --list` reports (labelled with that root) are judged even
+//! when their state dir is already gone.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,7 +38,7 @@ use crate::domain::environment_registry::{
 
 use super::super::dto::{
     ContainerRuntimeTarget, DiagnosableContainerConfig, EnvironmentLiveness, GcCandidate, GcKept,
-    GcRefused, GcRemoval, GcReport, GcRequest, RuntimeContainer,
+    GcRefused, GcRemoval, GcReport, GcRequest, RuntimeContainer, state_dir_argument,
 };
 use super::super::ports::{ContainerConfigLookup, ContainerRuntimeInventory, EnvironmentProcess};
 
@@ -70,6 +75,48 @@ pub fn implied_state_root(record: &EnvironmentRecord) -> Option<PathBuf> {
         })
         .and_then(Path::parent)
         .map(Path::to_path_buf)
+}
+
+/// The state root a record's own retained cleanup names (`--state-dir`):
+/// the one root beyond the config's a record may vouch for (round 3 M1,
+/// #2033), since that is the root its cleanup removes under.
+pub fn retained_state_root(record: &EnvironmentRecord) -> Option<PathBuf> {
+    state_dir_argument(&record.retained_cleanup_argv)
+}
+
+/// Where a record of the collector's config lives relative to its scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RecordScope {
+    /// Under the config's own state root: judged with everything there.
+    ConfigRoot,
+    /// Under the root its own retained cleanup names: its directory is
+    /// judged alone and removed through that cleanup alone.
+    OwnRoot(PathBuf),
+    /// Anywhere else — the record vouches for nothing there: reported,
+    /// never scanned or removed. Carries where the workspace implies.
+    Outside(PathBuf),
+}
+
+/// The collector's scope for one run: the config, its root and where
+/// each of its records stands.
+struct Scope<'a> {
+    config: &'a DiagnosableContainerConfig,
+    config_root: Option<PathBuf>,
+    /// By environment ref, for every record of this config.
+    records: BTreeMap<&'a str, RecordScope>,
+}
+
+impl Scope<'_> {
+    fn of(&self, record: &EnvironmentRecord) -> Option<&RecordScope> {
+        self.records.get(record.environment_ref.as_str())
+    }
+
+    fn root_named(&self) -> String {
+        match &self.config_root {
+            Some(root) => root.display().to_string(),
+            None => "(none named by its create argv)".to_string(),
+        }
+    }
 }
 
 /// Everything known about one environment id before it is judged.
@@ -125,13 +172,12 @@ impl GcOrphanedEnvironments {
             .map(|record| (record.environment_id.as_str(), record))
             .collect();
 
-        let mut roots: BTreeSet<PathBuf> = config.state_root().into_iter().collect();
-        roots.extend(
-            records
-                .iter()
-                .filter(|record| record.script_name == config.name)
-                .filter_map(implied_state_root),
-        );
+        let scope = self.scope(&config, &records);
+        let mut roots: BTreeSet<PathBuf> = scope.config_root.clone().into_iter().collect();
+        roots.extend(scope.records.values().filter_map(|s| match s {
+            RecordScope::OwnRoot(root) => Some(root.clone()),
+            RecordScope::ConfigRoot | RecordScope::Outside(_) => None,
+        }));
         report.state_roots = roots.iter().cloned().collect();
 
         let containers = match self.inventory.containers(&config) {
@@ -163,6 +209,17 @@ impl GcOrphanedEnvironments {
                 }
             };
             for dir in dirs {
+                let record = by_id.get(dir.environment_id.as_str()).copied();
+                // Under a root a record vouched for, that record's
+                // directory is the only one judged (round 3 M1): the
+                // rest of the root is not this config's.
+                if Some(root) != scope.config_root.as_ref()
+                    && !record.is_some_and(|record| {
+                        scope.of(record) == Some(&RecordScope::OwnRoot(root.clone()))
+                    })
+                {
+                    continue;
+                }
                 judged.insert(dir.environment_id.clone());
                 // The config's own inspect is the authority for a state
                 // dir (it reads the dir's container and asks the runtime).
@@ -188,10 +245,10 @@ impl GcOrphanedEnvironments {
                         state_dir: Some(&dir.path),
                         container_name,
                         liveness,
-                        record: by_id.get(dir.environment_id.as_str()).copied(),
+                        record,
                         age_secs: dir.age_secs,
                     },
-                    &config,
+                    &scope,
                     &mut report,
                 );
             }
@@ -216,18 +273,28 @@ impl GcOrphanedEnvironments {
                     record: by_id.get(container.environment_id.as_str()).copied(),
                     age_secs: None,
                 },
-                &config,
+                &scope,
                 &mut report,
             );
         }
-        // Stopped records of this config with nothing left anywhere: the
-        // record alone is what remains.
+        // Records of this config seen nowhere: one outside the scope is
+        // said so; a stopped one with nothing left anywhere is what
+        // remains, and the record alone is forgotten.
         for record in records
             .iter()
             .filter(|record| record.script_name == config.name)
-            .filter(|record| record.status == EnvironmentStatus::Stopped)
             .filter(|record| judged.insert(record.environment_id.clone()))
         {
+            if let Some(RecordScope::Outside(at)) = scope.of(record) {
+                report.kept.push(GcKept {
+                    environment_id: record.environment_id.clone(),
+                    reason: outside_reason(record, at, &scope, "not seen"),
+                });
+                continue;
+            }
+            if record.status != EnvironmentStatus::Stopped {
+                continue;
+            }
             report.removable.push(GcCandidate {
                 environment_id: record.environment_id.clone(),
                 state_dir: None,
@@ -247,13 +314,47 @@ impl GcOrphanedEnvironments {
         Ok(report)
     }
 
-    /// One environment's verdict from its state dir, container and record.
-    fn judge(
+    /// Where each record of `config` stands (round 3 M1, #2033): under
+    /// the config's root (compared canonically through the host), under
+    /// the root its own retained cleanup names, or outside — a workspace
+    /// alone vouches for nothing.
+    fn scope<'a>(
         &self,
-        sighting: Sighting<'_>,
-        config: &DiagnosableContainerConfig,
-        report: &mut GcReport,
-    ) {
+        config: &'a DiagnosableContainerConfig,
+        records: &'a [EnvironmentRecord],
+    ) -> Scope<'a> {
+        let config_root = config.state_root();
+        let canonical = config_root
+            .as_deref()
+            .map(|root| self.inventory.canonical_root(root));
+        let scope_of = |record: &EnvironmentRecord| match implied_state_root(record) {
+            Some(root)
+                if config_root.as_ref() == Some(&root)
+                    || canonical
+                        .as_ref()
+                        .is_some_and(|c| c == &self.inventory.canonical_root(&root)) =>
+            {
+                RecordScope::ConfigRoot
+            }
+            Some(root) if retained_state_root(record).as_ref() == Some(&root) => {
+                RecordScope::OwnRoot(root)
+            }
+            Some(root) => RecordScope::Outside(root),
+            None => RecordScope::Outside(record.workspace_path.clone()),
+        };
+        Scope {
+            config,
+            records: records
+                .iter()
+                .filter(|record| record.script_name == config.name)
+                .map(|record| (record.environment_ref.as_str(), scope_of(record)))
+                .collect(),
+            config_root,
+        }
+    }
+
+    /// One environment's verdict from its state dir, container and record.
+    fn judge(&self, sighting: Sighting<'_>, scope: &Scope<'_>, report: &mut GcReport) {
         let Sighting {
             environment_id,
             state_dir,
@@ -262,12 +363,31 @@ impl GcOrphanedEnvironments {
             record,
             age_secs,
         } = sighting;
+        let config = scope.config;
         let keep = |report: &mut GcReport, reason: String| {
             report.kept.push(GcKept {
                 environment_id: environment_id.to_string(),
                 reason,
             })
         };
+        // A record of this config living outside its scope is reported
+        // whatever else was seen of it (round 3 M1): no cleanup — its own
+        // or the config's — runs against a root nobody vouched for.
+        if let Some(record) = record
+            && let Some(RecordScope::Outside(at)) = scope.of(record)
+        {
+            let seen = match (&liveness, container_name) {
+                (EnvironmentLiveness::Running, Some(name)) => format!("container {name} running"),
+                (EnvironmentLiveness::Running, None) => "reported running".to_string(),
+                (EnvironmentLiveness::Gone, Some(name)) => {
+                    format!("container {name} gone or exited")
+                }
+                (EnvironmentLiveness::Gone, None) => "no container".to_string(),
+                (EnvironmentLiveness::Unknown(reason), _) => format!("liveness unknown: {reason}"),
+            };
+            keep(report, outside_reason(record, at, scope, &seen));
+            return;
+        }
         let container_state = match (&liveness, container_name) {
             (EnvironmentLiveness::Running, Some(name)) => {
                 keep(report, format!("container {name} is running"));
@@ -312,7 +432,13 @@ impl GcOrphanedEnvironments {
             },
             Some(record) => match record.status {
                 EnvironmentStatus::Stopped => {
-                    if record.retained_cleanup_argv.is_empty() {
+                    // Under a root the record alone vouched for, only its
+                    // own cleanup may remove (round 3 M1); the config's
+                    // cleanup serves a record without one under the
+                    // config's own root only.
+                    let own_root = matches!(scope.of(record), Some(RecordScope::OwnRoot(_)));
+                    debug_assert!(!own_root || !record.retained_cleanup_argv.is_empty());
+                    if record.retained_cleanup_argv.is_empty() && !own_root {
                         GcRemoval::ConfiguredCleanup {
                             config: config.name.clone(),
                         }
@@ -433,4 +559,14 @@ impl GcOrphanedEnvironments {
             .map(|dirs| dirs.iter().any(|listed| listed.path == dir))
             .unwrap_or(false)
     }
+}
+
+/// Why a record outside the collector's scope is kept.
+fn outside_reason(record: &EnvironmentRecord, at: &Path, scope: &Scope<'_>, seen: &str) -> String {
+    format!(
+        "recorded {} at {} ({seen}); outside this config's state dir {}; not collected",
+        record.environment_ref,
+        at.display(),
+        scope.root_named()
+    )
 }

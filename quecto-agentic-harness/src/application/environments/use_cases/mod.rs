@@ -13,7 +13,9 @@ mod restore_registry;
 pub use container_status::ContainerStatus;
 pub use diagnose_container_runtime::DiagnoseContainerRuntime;
 pub use finalize_environment_member::FinalizeEnvironmentMember;
-pub use gc_orphaned_environments::{CREATE_GRACE_SECS, GcOrphanedEnvironments, implied_state_root};
+pub use gc_orphaned_environments::{
+    CREATE_GRACE_SECS, GcOrphanedEnvironments, implied_state_root, retained_state_root,
+};
 pub use initialise_standard_container::{InitialiseStandardContainer, STATE_DIR_NAME};
 pub use kill_environment::{KillEnvironment, KillEnvironmentError, KilledEnvironment};
 pub use list_container_configs::ListContainerConfigs;
@@ -24,6 +26,8 @@ pub use restore_registry::{GONE_AT_RESTORE, KILL_IN_FLIGHT, RETAINED_EXITED, Res
 mod finalize_environment_member_retention_tests;
 #[cfg(test)]
 mod finalize_environment_member_tests;
+#[cfg(test)]
+mod gc_orphaned_environments_scope_tests;
 #[cfg(test)]
 mod gc_orphaned_environments_tests;
 #[cfg(test)]

@@ -166,6 +166,10 @@ impl ContainerRuntimeInventory for ScriptInventory {
         Ok(dirs)
     }
 
+    fn canonical_root(&self, root: &Path) -> std::path::PathBuf {
+        std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
+    }
+
     fn remove(
         &self,
         config: &DiagnosableContainerConfig,

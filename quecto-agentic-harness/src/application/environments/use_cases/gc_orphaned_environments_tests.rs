@@ -11,7 +11,7 @@ use crate::domain::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
 
-struct FakeLookup(Result<DiagnosableContainerConfig, String>);
+pub(super) struct FakeLookup(Result<DiagnosableContainerConfig, String>);
 
 impl ContainerConfigLookup for FakeLookup {
     fn lookup(
@@ -30,15 +30,20 @@ impl ContainerConfigLookup for FakeLookup {
 /// The fake host: state dirs with their inspect verdict, the listing,
 /// what was removed.
 #[derive(Default)]
-struct FakeInventory {
-    containers: Mutex<Vec<RuntimeContainer>>,
-    dirs: Mutex<Vec<EnvironmentStateDir>>,
+pub(super) struct FakeInventory {
+    pub(super) containers: Mutex<Vec<RuntimeContainer>>,
+    pub(super) dirs: Mutex<Vec<EnvironmentStateDir>>,
     /// The config's inspect verdict per environment id (default: gone).
-    liveness: Mutex<Vec<(String, EnvironmentLiveness)>>,
-    fail_list: bool,
-    removed: Mutex<Vec<String>>,
+    pub(super) liveness: Mutex<Vec<(String, EnvironmentLiveness)>>,
+    pub(super) fail_list: bool,
+    pub(super) removed: Mutex<Vec<String>>,
     /// Ids whose cleanup leaves the dir behind.
-    stubborn: Vec<String>,
+    pub(super) stubborn: Vec<String>,
+    /// Roots the host resolves to another path (a symlinked state dir);
+    /// every other root is its own canonical form.
+    pub(super) aliases: Vec<(PathBuf, PathBuf)>,
+    /// The roots whose directories were listed, in order.
+    pub(super) scanned: Mutex<Vec<PathBuf>>,
 }
 
 impl ContainerRuntimeInventory for FakeInventory {
@@ -60,7 +65,15 @@ impl ContainerRuntimeInventory for FakeInventory {
             .map(|(_, l)| l.clone())
             .unwrap_or(EnvironmentLiveness::Gone)
     }
+    fn canonical_root(&self, root: &Path) -> PathBuf {
+        self.aliases
+            .iter()
+            .find(|(alias, _)| alias == root)
+            .map(|(_, target)| target.clone())
+            .unwrap_or_else(|| root.to_path_buf())
+    }
     fn environment_dirs(&self, root: &Path) -> Result<Vec<EnvironmentStateDir>, String> {
+        self.scanned.lock().unwrap().push(root.to_path_buf());
         if root == Path::new("/unreadable") {
             return Err("permission denied".into());
         }
@@ -92,10 +105,10 @@ impl ContainerRuntimeInventory for FakeInventory {
 }
 
 #[derive(Default)]
-struct FakeProcess {
-    liveness: Mutex<Vec<(String, EnvironmentLiveness)>>,
-    cleaned: Mutex<Vec<String>>,
-    host: Option<Arc<FakeInventory>>,
+pub(super) struct FakeProcess {
+    pub(super) liveness: Mutex<Vec<(String, EnvironmentLiveness)>>,
+    pub(super) cleaned: Mutex<Vec<String>>,
+    pub(super) host: Option<Arc<FakeInventory>>,
 }
 
 impl EnvironmentProcess for FakeProcess {
@@ -127,7 +140,7 @@ impl EnvironmentProcess for FakeProcess {
     }
 }
 
-fn config() -> DiagnosableContainerConfig {
+pub(super) fn config() -> DiagnosableContainerConfig {
     DiagnosableContainerConfig {
         name: "box".into(),
         create: vec!["create".into(), "--state-dir".into(), "/s".into()],
@@ -137,7 +150,7 @@ fn config() -> DiagnosableContainerConfig {
     }
 }
 
-fn record(reference: &str, id: &str, status: EnvironmentStatus) -> EnvironmentRecord {
+pub(super) fn record(reference: &str, id: &str, status: EnvironmentStatus) -> EnvironmentRecord {
     EnvironmentRecord {
         environment_ref: reference.into(),
         environment_id: id.into(),
@@ -160,7 +173,7 @@ fn record(reference: &str, id: &str, status: EnvironmentStatus) -> EnvironmentRe
     }
 }
 
-fn dir(id: &str, container: Option<&str>) -> EnvironmentStateDir {
+pub(super) fn dir(id: &str, container: Option<&str>) -> EnvironmentStateDir {
     EnvironmentStateDir {
         path: PathBuf::from("/s").join(id),
         environment_id: id.into(),
@@ -169,7 +182,7 @@ fn dir(id: &str, container: Option<&str>) -> EnvironmentStateDir {
     }
 }
 
-fn container(id: &str, running: bool) -> RuntimeContainer {
+pub(super) fn container(id: &str, running: bool) -> RuntimeContainer {
     RuntimeContainer {
         environment_id: id.into(),
         container: format!("quecto-{id}"),
@@ -177,18 +190,18 @@ fn container(id: &str, running: bool) -> RuntimeContainer {
     }
 }
 
-struct Rig {
-    registry: EnvironmentRegistry,
-    host: Arc<FakeInventory>,
-    process: Arc<FakeProcess>,
-    lookup: Result<DiagnosableContainerConfig, String>,
+pub(super) struct Rig {
+    pub(super) registry: EnvironmentRegistry,
+    pub(super) host: Arc<FakeInventory>,
+    pub(super) process: Arc<FakeProcess>,
+    pub(super) lookup: Result<DiagnosableContainerConfig, String>,
 }
 
 impl Rig {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self::over(FakeInventory::default())
     }
-    fn over(host: FakeInventory) -> Self {
+    pub(super) fn over(host: FakeInventory) -> Self {
         let host = Arc::new(host);
         Self {
             registry: EnvironmentRegistry::new(),
@@ -200,7 +213,7 @@ impl Rig {
             lookup: Ok(config()),
         }
     }
-    fn use_case(&self) -> GcOrphanedEnvironments {
+    pub(super) fn use_case(&self) -> GcOrphanedEnvironments {
         GcOrphanedEnvironments::new(
             self.registry.clone(),
             Arc::new(FakeLookup(self.lookup.clone())),
@@ -208,7 +221,7 @@ impl Rig {
             self.process.clone(),
         )
     }
-    fn dry_run(&self) -> super::super::dto::GcReport {
+    pub(super) fn dry_run(&self) -> super::super::dto::GcReport {
         self.use_case()
             .execute(&GcRequest {
                 dry_run: true,

@@ -7,7 +7,9 @@
 //! `environment_dirs` lists the `env-*` directories directly under a root
 //! with the container each names (a missing root is empty, not an error);
 //! `remove` runs the config's `cleanup` argv for one well-formed
-//! environment id and reports the script's failure in its own words.
+//! environment id and reports the script's failure in its own words;
+//! `canonical_root` is the host's resolved form of a root (a symlink
+//! names its target) and a root that cannot be resolved is itself.
 use std::path::Path;
 use std::sync::Arc;
 
@@ -185,4 +187,24 @@ esac"#,
         port().inspect(&inspecting, "../env-live"),
         EnvironmentLiveness::Unknown(reason) if reason.contains("not an environment id")
     ));
+}
+
+/// Round 3 M1 (#2033): the collector compares a record's root with the
+/// config's canonically, so a state dir reached through a symlink is the
+/// same root — and a root that does not exist resolves to itself.
+#[test]
+fn canonical_root_resolves_a_symlink_and_leaves_a_missing_root_as_it_is() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let real = dir.path().join("state");
+    std::fs::create_dir_all(&real).unwrap();
+    let link = dir.path().join("state-link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let port = port();
+    assert_eq!(port.canonical_root(&link), port.canonical_root(&real));
+    assert_eq!(
+        port.canonical_root(&link),
+        std::fs::canonicalize(&real).unwrap()
+    );
+    let missing = dir.path().join("nowhere");
+    assert_eq!(port.canonical_root(&missing), missing);
 }

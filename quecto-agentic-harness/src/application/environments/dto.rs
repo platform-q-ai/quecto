@@ -31,20 +31,26 @@ impl DiagnosableContainerConfig {
     /// scripts' convention (`--state-dir <dir>` before any `--`); `None`
     /// for a script set that keeps its state elsewhere.
     pub fn state_root(&self) -> Option<std::path::PathBuf> {
-        let mut argv = self.create.iter();
-        while let Some(arg) = argv.next() {
-            if arg == "--" {
-                return None;
-            }
-            if arg == "--state-dir" {
-                return argv
-                    .next()
-                    .filter(|value| !value.is_empty() && *value != "--")
-                    .map(std::path::PathBuf::from);
-            }
-        }
-        None
+        state_dir_argument(&self.create)
     }
+}
+
+/// The `--state-dir <dir>` an argv names before any `--`, by the shipped
+/// scripts' convention; `None` when it names none.
+pub fn state_dir_argument(argv: &[String]) -> Option<std::path::PathBuf> {
+    let mut argv = argv.iter();
+    while let Some(arg) = argv.next() {
+        if arg == "--" {
+            return None;
+        }
+        if arg == "--state-dir" {
+            return argv
+                .next()
+                .filter(|value| !value.is_empty() && *value != "--")
+                .map(std::path::PathBuf::from);
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
