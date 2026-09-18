@@ -66,8 +66,7 @@ static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
         },
         SlashCommand {
             name: "setup".into(),
-            description: "Ask the agent to walk through quecto setup (model|admission|podman|auth)"
-                .into(),
+            description: "Ask the agent to walk through quecto setup (or one area: model|admission|container|auth)".into(),
         },
         SlashCommand {
             name: "workflow".into(),

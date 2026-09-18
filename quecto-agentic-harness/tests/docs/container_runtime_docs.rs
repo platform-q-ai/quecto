@@ -326,7 +326,19 @@ fn scan_rust_sources(dir: &Path, offenders: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read src dir").flatten() {
         let path = entry.path();
         if path.is_dir() {
-            scan_rust_sources(&path, offenders);
+            // The TUI's `/setup` prompt templates (#2024 S6) are user-facing
+            // text that quotes the `container-runtime` runbook (`/setup
+            // podman`, "the `podman build …` line init prints"); they hold
+            // no runtime logic. Only that leaf module is exempt.
+            let is_tui_setup_prompts = path.file_name().is_some_and(|n| n == "setup")
+                && path
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(Path::file_name)
+                    .is_some_and(|n| n == "quecto-tui");
+            if !is_tui_setup_prompts {
+                scan_rust_sources(&path, offenders);
+            }
         } else if path.extension().is_some_and(|e| e == "rs")
             // In-tree test modules may use runtime names as inert fixture
             // data (e.g. exec-allowlist matching examples); the boundary
