@@ -1438,6 +1438,7 @@ mod container_doctor_steps;
 mod container_mapping_steps;
 mod container_persistence_real_steps;
 mod container_persistence_round3_steps;
+mod container_persistence_round4_steps;
 mod container_persistence_steps;
 mod context_pruning_steps;
 mod delegated_subtree_steps;

@@ -45,7 +45,7 @@ fn operations_on(world: &QuectoWorld, id: &str) -> Vec<String> {
 /// A record another session left, with the fake script set's argv
 /// retained (the persistence rig's scripts) and a state dir laid out the
 /// way the scripts lay one out under `root`.
-fn plant(
+pub(crate) fn plant(
     world: &QuectoWorld,
     env_ref: &str,
     name: &str,

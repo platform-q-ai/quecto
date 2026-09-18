@@ -352,7 +352,7 @@ fn given_orphan_with_exited_container(world: &mut QuectoWorld, id: String) {
 
 /// Make a planted directory older than the collector's create grace, so
 /// it reads as abandoned rather than as a create in flight.
-fn age_dir(dir: &std::path::Path) {
+pub(crate) fn age_dir(dir: &std::path::Path) {
     let status = std::process::Command::new("touch")
         .args(["-d", "2 hours ago"])
         .arg(dir)

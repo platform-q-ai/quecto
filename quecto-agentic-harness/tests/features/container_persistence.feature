@@ -239,3 +239,58 @@ Feature: Environments outlive sessions
     And the fake runtime should still know the exited container of "C6"
     And the durable environment registry should record "C6" with status "stopped" created by "elsewhere"
     And the state dir should no longer contain "env-orphan06"
+
+  @done @issue-2024 @container-env
+  Scenario: A master that exits before its coordinator leaves a box hosting an unfinished run; it is restored retained, kept by gc and ended only by container kill
+    Given script-managed child "impl-swarm-exit" is running in a shared environment with task "IMPL_SWARM_EXIT_MARKER"
+    And the coordinator of "C1" has created a swarm run in its checkout
+    # The master is gone before its coordinator: nobody finalizes the member,
+    # the in-container harness runs its parent-loss shutdown, the box exits.
+    And the fake runtime loses the container of "C1" behind the harness's back
+    When I run quecto with arguments "container ls"
+    Then the exit code should be 0
+    And the container table should list "C1" with name "-" status "retained" config "default" and created-by "session-one"
+    And stderr should carry the retained-at-restore note for "C1" naming its unfinished run
+    And the durable environment registry should record "C1" with status "retained" created by "session-one"
+    When the harness is restarted as session "session-two"
+    And I run container command "get_containers"
+    Then the container command result should not be an error
+    And the container listing should include "C1" with status "retained" and 0 members
+    And the container listing entry "C1" should be retained because its run is unfinished
+    When I run quecto with arguments "container gc --dry-run"
+    Then the exit code should be 0
+    And the gc report should keep the environment of "C1" as retained until an explicit kill
+    When I run quecto with arguments "container gc"
+    Then the exit code should be 0
+    And the gc report should keep the environment of "C1" as retained until an explicit kill
+    And the state dir should still contain the environment of "C1"
+    And the swarm store of "C1" should still hold its unfinished run
+    And the persistent runtime should never have removed the environment of "C1"
+    When I run quecto with arguments "container kill C1"
+    Then the exit code should be 0
+    And the output should contain "killed C1"
+    And the durable environment registry should record "C1" with status "stopped" created by "session-one"
+    And the state dir should no longer contain the environment of "C1"
+    And scenario teardown should leave no fixture processes running
+
+  @done @issue-2024 @container-env
+  Scenario: quecto container gc keeps a stopped record's directory and an unrecorded directory whose checkout hosts an unfinished swarm run
+    Given script-managed child "impl-gc-swarm" is running in a shared environment with task "IMPL_GC_SWARM_MARKER"
+    And the durable environment registry also records a stopped environment "C5" named "old-swarm" whose state dir hosts an unfinished swarm run and whose fake container has exited
+    And an orphaned environment state dir "env-orphan07" with an exited fake container is planted in the state dir
+    And the state dir of "env-orphan07" hosts an unfinished swarm run
+    And an orphaned environment state dir "env-orphan08" with an exited fake container is planted in the state dir
+    When I run quecto with arguments "container gc --dry-run"
+    Then the exit code should be 0
+    And the gc report should keep the environment of "C5" because it hosts an unfinished swarm run
+    And the gc report should keep "env-orphan07" because it hosts an unfinished swarm run
+    And the gc report should list "env-orphan08" as removable
+    When I run quecto with arguments "container gc"
+    Then the exit code should be 0
+    And the gc report should keep the environment of "C5" because it hosts an unfinished swarm run
+    And the gc report should keep "env-orphan07" because it hosts an unfinished swarm run
+    And the state dir should still contain the environment of "C5"
+    And the state dir should still contain "env-orphan07"
+    And the state dir should no longer contain "env-orphan08"
+    And the persistent runtime should never have removed the environment of "C5"
+    And the durable environment registry should record "C5" with status "stopped" created by "elsewhere"
