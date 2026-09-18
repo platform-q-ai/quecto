@@ -360,6 +360,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `sessions/resume_rows.rs` | `sessions` discovery-row projection: order, stable IDs, safe copy, eligible-key allowlist (#2009) |
 | `sessions/controller_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `sessions/mod.rs` | `sessions` (relocated, #1257 Phase 5) |
+| `setup/mod.rs` | `setup` walkthrough prompt templates + `/setup` variant parser (#2024 S6; pure text, no filesystem/UDS/policy) |
 | `shell/app.rs` | `shell` composition root (relocated, #1257 Phase 6) |
 | `shell/app_commands.rs` | `shell` top-level command routing (relocated, #1257 Phase 6) |
 | `shell/app_conversation_characterization_tests/mod.rs` | `shell` conversation characterization test module split for line budget (#1231) |
@@ -408,7 +409,6 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/tool_policy.rs` | `shell` live tool/profile policy modal controller (#1334 PR 4) |
 | `shell/tui_harness.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_layout.rs` | `shell` harness layout probes split for line budget (#1465) |
-| `setup/mod.rs` | `setup` walkthrough prompt templates + `/setup` variant parser (#2024 S6; pure text, no filesystem/UDS/policy) |
 | `shell/tui_harness_sourced.rs` | `shell` fan-in/feed-task harness drivers for the #1462 seam |
 | `shell/tui_harness_tabs.rs` | `shell` multi-tab paint/activity harness drivers (#1466) |
 | `shell/tui_harness_tool_policy.rs` | `shell` tool policy test-harness event helpers (#1334 PR 4) |

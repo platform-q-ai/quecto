@@ -20,7 +20,7 @@ async fn setup_submits_the_walkthrough_as_the_user_turn() {
 #[tokio::test]
 async fn setup_model_variant_names_the_model() {
     let mut h = TuiHarness::new().await;
-    h.app_mut().handle_submit("/setup   model   prov/m-1 ");
+    h.app_mut().handle_submit("/setup\tmodel   prov/m-1 ");
     let expected = setup_walkthrough_prompt(&SetupArea::Model("prov/m-1".into()));
     assert_eq!(h.active_user_entries(), vec![expected]);
 }

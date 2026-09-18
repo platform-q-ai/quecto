@@ -95,7 +95,10 @@ impl App {
                     }
                     return;
                 }
-                _ if trimmed == "/setup" || trimmed.starts_with("/setup ") => {
+                _ if trimmed.strip_prefix("/setup").is_some_and(|rest| {
+                    rest.is_empty() || rest.starts_with(char::is_whitespace)
+                }) =>
+                {
                     // #2024 S6: the TUI only composes the walkthrough text; the
                     // agent reads the docs pages and asks before writing.
                     match crate::setup::SetupCommand::parse(&trimmed["/setup".len()..]) {
