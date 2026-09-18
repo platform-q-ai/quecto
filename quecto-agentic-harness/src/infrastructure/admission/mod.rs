@@ -11,6 +11,7 @@ pub mod protocol;
 pub mod remote_gate;
 pub mod secret;
 mod server;
+mod server_actor;
 mod session;
 
 pub use admin_adapter::SocketAuthorityAdmin;
