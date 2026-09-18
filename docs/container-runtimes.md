@@ -260,16 +260,20 @@ S4c): the `spawn` tool description carries one bounded roster line
 (`Available container configs: <name> (default, repo-bound|global), …`,
 at most 120 characters, the tail folded into `+N more`; a withheld overlay
 adds `(repo overlay untrusted — run quecto config trust)`; one entry alone
-over the budget is cut with an ellipsis), rendered whenever the tool
-definitions are built (registration and every rebuild); and
+over the budget is cut with an ellipsis), re-rendered whenever a
+configuration layer or the trust record changes (the tool definitions are
+rendered for every model call, so the line is cached against the files'
+metadata); and
 `agent_cmd {"agent_id":"*","command":"get_container_configs"}` returns the
 same effective set with detail, live at each call:
-`{"container_configs":[{"name","default","source":"overlay"|"global","repository","problem"}],"overlay_withheld":bool,"diagnostics":[…]}`
+`{"container_configs":[{"name","default","source":"overlay"|"global","repository","problem","joinable"}],"overlay_withheld":bool,"diagnostics":[…]}`
 — the `container: true` default first; `default` is what a launch would
 honour (none while the overlay is withheld, none when more than one entry
 is labelled, never an entry with a `problem` — a missing or unsafe argv,
 diagnosed in `diagnostics`); `source` says which layer declared the entry,
-`repository` is the create argv's `--repo` (`null` for a sandbox). Operators
+`repository` is the create argv's `--repo` (`null` for a sandbox),
+`joinable` whether the config carries an `exec` argv for
+`{"mode":"existing"}` joins. Operators
 see the same set with `quecto config get --effective container_configs`.
 
 The container config in effect when an environment is **created** is

@@ -20,7 +20,10 @@ pub fn roster_line(query: Option<&ListContainerConfigs>) -> Option<String> {
     let query = query?;
     Some(match query.execute() {
         Ok(inventory) => format_roster_line(&inventory),
-        Err(reason) => fit(format!("{ROSTER_PREFIX}none readable ({reason})"), ""),
+        Err(reason) => fit(
+            format!("{ROSTER_PREFIX}none readable ({})", one_line(&reason)),
+            "",
+        ),
     })
 }
 
@@ -45,10 +48,11 @@ pub fn format_roster_line(inventory: &ContainerConfigInventory) -> String {
                 ContainerConfigLayer::Overlay => "repo-bound",
                 ContainerConfigLayer::Global => "global",
             };
+            let name = one_line(&entry.name);
             if entry.default {
-                format!("{} (default, {layer})", entry.name)
+                format!("{name} (default, {layer})")
             } else {
-                format!("{} ({layer})", entry.name)
+                format!("{name} ({layer})")
             }
         })
         .collect();
@@ -65,10 +69,21 @@ pub fn format_roster_line(inventory: &ContainerConfigInventory) -> String {
             return line;
         }
         if shown == 1 {
-            return fit(format!("{ROSTER_PREFIX}{}", entries[0]), note);
+            let tail = if hidden > 0 {
+                format!(", +{hidden} more{note}")
+            } else {
+                note.to_string()
+            };
+            return fit(format!("{ROSTER_PREFIX}{}", entries[0]), &tail);
         }
         shown -= 1;
     }
+}
+
+/// Whitespace runs (newlines included) collapsed to one space: the line
+/// stays one line whatever a config name or an error carries.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// `body` + `note` + `.`, the body cut (with an ellipsis) when the whole

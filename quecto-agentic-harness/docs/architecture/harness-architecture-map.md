@@ -120,8 +120,10 @@ adapts the port over the launch policy's `EffectiveContainerConfigs`
 overlay document `EffectiveConfig.overlay_document` now exposes, and
 `repository` read from the create argv). `composition/container_configs.rs`
 builds `ContainerConfigHandles { selection, roster }` over one adapter;
-the spawn tool renders `roster` once into its description
-(`infrastructure/tools/spawn_discovery.rs`, one line ≤120 chars) and
+the spawn tool renders `roster` into its description
+(`infrastructure/tools/spawn_discovery.rs`, one line ≤120 chars), cached
+against the port's revision token (file metadata of the layers and the
+trust record) because `definition()` is rendered for every model call, and
 `agent_cmd get_container_configs` (`agent_cmd_containers.rs`) encodes it.
 
 Container failures are diagnosable (#2024 S4b). Every container script run

@@ -44,13 +44,34 @@ pub fn build_container_config_handles(
     base_dir: &Path,
     launching_agent: Option<ConfigSelection>,
 ) -> ContainerConfigHandles {
-    let configs = build_effective_container_configs(base_dir, launching_agent);
+    let configs = build_effective_container_configs(base_dir, launching_agent.clone());
     ContainerConfigHandles {
         selection: Arc::new(SelectContainerConfig::new(configs.clone())),
         roster: Arc::new(ListContainerConfigs::new(Arc::new(
-            EffectiveConfigRoster::new(configs),
+            EffectiveConfigRoster::new(configs, roster_revision_probe(base_dir, launching_agent)),
         ))),
     }
+}
+
+/// The files whose change could change the roster: the launching agent's
+/// configuration layers (base, overlay, retired local file) and the trust
+/// record under `base_dir`. Probed by metadata only, on every render.
+fn roster_revision_probe(
+    base_dir: &Path,
+    launching_agent: Option<ConfigSelection>,
+) -> crate::infrastructure::config::container_config_roster::RosterRevisionProbe {
+    let mut paths =
+        vec![base_dir.join(crate::infrastructure::config::persistence::TRUST_RECORD_FILE_NAME)];
+    match launching_agent {
+        Some(ConfigSelection::Explicit(path)) => paths.push(path),
+        Some(ConfigSelection::Layered(layers)) => {
+            paths.push(layers.global);
+            paths.extend(layers.overlay);
+            paths.extend(layers.legacy_local);
+        }
+        None => {}
+    }
+    Arc::new(move || crate::infrastructure::config::container_config_roster::file_revision(&paths))
 }
 
 /// The handles an agent run's spawn and agent_cmd tools hold (#2024 S4a,
@@ -71,7 +92,8 @@ pub fn build_container_config_roster(
     launching_agent: Option<ConfigSelection>,
 ) -> Arc<dyn crate::application::environments::ports::ContainerConfigRoster> {
     Arc::new(EffectiveConfigRoster::new(
-        build_effective_container_configs(base_dir, launching_agent),
+        build_effective_container_configs(base_dir, launching_agent.clone()),
+        roster_revision_probe(base_dir, launching_agent),
     ))
 }
 

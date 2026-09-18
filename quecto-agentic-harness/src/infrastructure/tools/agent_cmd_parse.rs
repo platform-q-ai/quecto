@@ -261,6 +261,8 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
         "get_subagents_all" => {
             return Err("get_subagents_all is handled locally, not via UDS".to_string());
         }
+        // Intercepted by `is_container_command` before this point; the arm
+        // keeps the list and the match honest should a caller bypass it.
         "get_containers" | "get_container_configs" | "kill_container" => {
             return Err(format!("{command} is handled locally, not via UDS"));
         }

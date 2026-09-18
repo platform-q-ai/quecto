@@ -37,7 +37,8 @@ change from the architecture side.
   selection (`container_config: "<name>"`) never consults labels, but is
   reachable only through a config that passed load validation.
 - **Agents can see the menu.** The spawn tool description carries one
-  bounded session-start roster line (`Available container configs: …`,
+  bounded roster line, current as of the last configuration change
+  (`Available container configs: …`,
   ≤120 characters, `+N more` when folded; #1525 removed the unbounded
   form, #2024 S4c restored it bounded), `agent_cmd get_container_configs`
   returns the effective set with each entry's layer and repository live,

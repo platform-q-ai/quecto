@@ -139,6 +139,9 @@ pub struct ContainerConfigEntry {
     /// Why a launch would refuse this entry as configured (a missing or
     /// unsafe argv); `None` when it is launchable.
     pub problem: Option<String>,
+    /// Whether an environment created from it can be joined later
+    /// (`{"mode":"existing"}`): the config carries an `exec` argv.
+    pub joinable: bool,
 }
 
 /// The container configs in effect for the launching agent (#2024 S4c),

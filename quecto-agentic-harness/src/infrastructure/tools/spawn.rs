@@ -122,6 +122,11 @@ pub struct SpawnTool {
     /// (unit rigs) leaves the description without a roster.
     pub(super) container_config_roster:
         Option<Arc<crate::application::environments::use_cases::ListContainerConfigs>>,
+    /// The roster line last rendered, keyed by the listing's revision
+    /// token: `definition()` is on the per-turn path (the tool catalogue
+    /// is rendered for every model call), so the configuration is read
+    /// again only when a layer or the trust record changed.
+    pub(super) roster_line: Mutex<Option<(String, String)>>,
     /// The one owner of every process this tool spawns (#1935): the
     /// process-wide supervisor unless composition injects another, so no
     /// tool ever owns a throwaway supervisor whose drop abandons reaps.
@@ -181,6 +186,7 @@ impl SpawnTool {
             parent_config_path: None,
             container_config_selection: None,
             container_config_roster: None,
+            roster_line: Mutex::new(None),
             supervisor:
                 crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
             harness_lifecycle: super::harness_lifecycle::new_shared_harness_lifecycle(),
@@ -206,6 +212,7 @@ impl SpawnTool {
             parent_config_path: None,
             container_config_selection: None,
             container_config_roster: None,
+            roster_line: Mutex::new(None),
             supervisor:
                 crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
             harness_lifecycle: super::harness_lifecycle::new_shared_harness_lifecycle(),
@@ -257,6 +264,23 @@ impl SpawnTool {
     ) -> Self {
         self.container_config_roster = roster;
         self
+    }
+
+    /// The roster line for the listing's current revision: re-rendered
+    /// (one configuration read) only when the revision changed since the
+    /// last render.
+    fn cached_roster_line(&self) -> Option<String> {
+        let roster = self.container_config_roster.as_deref()?;
+        let revision = roster.revision();
+        let mut cache = self.roster_line.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((cached_revision, line)) = cache.as_ref()
+            && *cached_revision == revision
+        {
+            return Some(line.clone());
+        }
+        let line = super::spawn_discovery::roster_line(Some(roster))?;
+        *cache = Some((revision, line.clone()));
+        Some(line)
     }
 
     /// The composed listing, for whoever builds `agent_cmd` beside this
@@ -589,7 +613,8 @@ impl Tool for SpawnTool {
     }
 
     fn definition(&self) -> ToolDefinition {
-        let roster = super::spawn_discovery::roster_line(self.container_config_roster.as_deref())
+        let roster = self
+            .cached_roster_line()
             .map(|line| format!("\n{line}"))
             .unwrap_or_default();
         ToolDefinition {

@@ -6,7 +6,9 @@
 //! shadows the global one and is repo-bound; the repository is the create
 //! argv's `--repo`, `None` for a sandbox; an untrusted overlay that
 //! declares `container_configs` reports the global set as withheld with
-//! the trust diagnostic; a roster composed without a selection reports so.
+//! the trust diagnostic; a roster composed without a selection reports so;
+//! `joinable` follows the `exec` argv; the revision token changes when a
+//! layer or the trust record is written and is stable otherwise.
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -195,4 +197,63 @@ fn a_roster_composed_without_a_selection_reports_so() {
         error,
         "container spawn requires --config so container_configs can be loaded"
     );
+}
+
+#[test]
+fn joinable_follows_the_exec_argv() {
+    let rig = Rig::new();
+    let mut with_exec = entry(false, None);
+    with_exec["exec"] = serde_json::json!(["/bin/exec"]);
+    rig.write_overlay(serde_json::json!({"joinable": with_exec}));
+    rig.trust_overlay();
+    let report = rig.under_test(true).roster().unwrap();
+    let joinable: Vec<(&str, bool)> = report
+        .configs
+        .iter()
+        .map(|e| (e.name.as_str(), e.joinable))
+        .collect();
+    assert!(joinable.contains(&("joinable", true)), "{joinable:?}");
+    assert!(joinable.contains(&("global", false)), "{joinable:?}");
+    assert!(report.configs.iter().all(|e| e.problem.is_none()));
+}
+
+#[test]
+fn the_revision_changes_when_a_layer_or_the_trust_record_is_written_and_is_stable_otherwise() {
+    let rig = Rig::new();
+    let roster = rig.under_test(true);
+    let initial = roster.revision();
+    assert_eq!(roster.revision(), initial, "stable without a write");
+    // A metadata change (a later mtime or another length) is what the
+    // probe sees; sleep past coarse filesystem timestamps.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    rig.write_overlay(serde_json::json!({"repo": entry(true, Some("https://repo.test/r"))}));
+    let after_overlay = roster.revision();
+    assert_ne!(
+        after_overlay, initial,
+        "an overlay write moves the revision"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    rig.trust_overlay();
+    let after_trust = roster.revision();
+    assert_ne!(
+        after_trust, after_overlay,
+        "a trust record write moves the revision"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(
+        rig.base_dir.join("config.json"),
+        serde_json::json!({"container_configs": {"global": entry(true, Some("https://global.test/g2"))}})
+            .to_string(),
+    )
+    .unwrap();
+    assert_ne!(
+        roster.revision(),
+        after_trust,
+        "a global write moves the revision"
+    );
+    // No read of the configuration is needed to answer: an unparseable
+    // global file still yields a revision.
+    std::fs::write(rig.base_dir.join("config.json"), "{not json").unwrap();
+    assert!(!roster.revision().is_empty());
+    assert!(roster.roster().is_err());
 }

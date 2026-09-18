@@ -314,6 +314,10 @@ impl crate::application::environments::ports::ContainerConfigRoster for FixedRos
     ) -> Result<crate::application::environments::ports::ContainerConfigRosterReport, String> {
         Ok(self.0.clone())
     }
+
+    fn revision(&self) -> String {
+        "fixed".into()
+    }
 }
 
 #[test]
@@ -342,6 +346,7 @@ fn get_container_configs_encodes_the_inventory_and_needs_wiring() {
                     layer: ContainerConfigLayer::Global,
                     repository: None,
                     problem: None,
+                    joinable: false,
                 },
                 ContainerConfigEntry {
                     name: "r".into(),
@@ -349,6 +354,7 @@ fn get_container_configs_encodes_the_inventory_and_needs_wiring() {
                     layer: ContainerConfigLayer::Overlay,
                     repository: Some("https://example.test/r".into()),
                     problem: None,
+                    joinable: false,
                 },
             ],
             overlay_withheld: false,
@@ -362,8 +368,8 @@ fn get_container_configs_encodes_the_inventory_and_needs_wiring() {
         parsed,
         serde_json::json!({
             "container_configs": [
-                {"name":"r","default":true,"source":"overlay","repository":"https://example.test/r","problem":null},
-                {"name":"alpha","default":false,"source":"global","repository":null,"problem":null}
+                {"name":"r","default":true,"source":"overlay","repository":"https://example.test/r","problem":null,"joinable":false},
+                {"name":"alpha","default":false,"source":"global","repository":null,"problem":null,"joinable":false}
             ],
             "overlay_withheld": false,
             "diagnostics": ["warning: legacy"]

@@ -175,6 +175,13 @@ pub trait ContainerRuntimePreflight: Send + Sync {
 /// could be read (no configuration composed, an invalid file).
 pub trait ContainerConfigRoster: Send + Sync {
     fn roster(&self) -> Result<ContainerConfigRosterReport, String>;
+
+    /// An opaque token that changes whenever the roster could have
+    /// changed (a configuration layer or the trust record was written)
+    /// and is otherwise stable — cheap enough to ask for on every render,
+    /// so a presenter can cache the rendered roster against it instead of
+    /// reading the configuration each time.
+    fn revision(&self) -> String;
 }
 
 /// What the roster port reports before the listing rules are applied.

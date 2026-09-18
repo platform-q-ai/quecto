@@ -10,6 +10,10 @@ impl ContainerConfigRoster for FixedRoster {
     fn roster(&self) -> Result<ContainerConfigRosterReport, String> {
         self.0.clone()
     }
+
+    fn revision(&self) -> String {
+        "fixed".into()
+    }
 }
 
 fn entry(name: &str, default: bool, layer: ContainerConfigLayer) -> ContainerConfigEntry {
@@ -19,6 +23,7 @@ fn entry(name: &str, default: bool, layer: ContainerConfigLayer) -> ContainerCon
         layer,
         repository: Some(format!("https://example.test/{name}")),
         problem: None,
+        joinable: true,
     }
 }
 
@@ -138,4 +143,31 @@ fn more_than_one_labelled_default_marks_none_and_is_diagnosed() {
         "{:?}",
         inventory.diagnostics
     );
+}
+
+#[test]
+fn a_broken_default_still_counts_toward_multiple_defaults_as_a_launch_would() {
+    let mut broken = entry("broken", true, ContainerConfigLayer::Global);
+    broken.problem = Some("missing create argv".into());
+    let query = ListContainerConfigs::new(Arc::new(FixedRoster(Ok(ContainerConfigRosterReport {
+        configs: vec![broken, entry("ok", true, ContainerConfigLayer::Global)],
+        overlay_withheld: false,
+        diagnostics: vec![],
+    }))));
+    let inventory = query.execute().unwrap();
+    assert!(inventory.default_entry().is_none(), "{inventory:?}");
+    assert_eq!(
+        inventory.diagnostics.len(),
+        2,
+        "{:?}",
+        inventory.diagnostics
+    );
+}
+
+#[test]
+fn the_revision_is_the_ports() {
+    let query = ListContainerConfigs::new(Arc::new(FixedRoster(Ok(
+        ContainerConfigRosterReport::default(),
+    ))));
+    assert_eq!(query.revision(), "fixed");
 }

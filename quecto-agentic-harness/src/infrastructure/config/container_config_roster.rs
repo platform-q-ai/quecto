@@ -5,6 +5,7 @@
 //! `spawn container: true` agree on which entries exist for the launching
 //! agent's checkout, which the overlay declared, and whether the overlay
 //! was withheld.
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::application::environments::dto::{ContainerConfigEntry, ContainerConfigLayer};
@@ -12,14 +13,41 @@ use crate::application::environments::ports::{ContainerConfigRoster, ContainerCo
 use crate::application::subagents::dto::ContainerConfigSource;
 use crate::application::subagents::ports::EffectiveContainerConfigs;
 
+/// Composition's cheap probe of the files the roster is read from: the
+/// configuration layers and the trust record. Its value changes when any
+/// of them is written, created or removed.
+pub type RosterRevisionProbe = Arc<dyn Fn() -> String + Send + Sync>;
+
 pub struct EffectiveConfigRoster {
     configs: Arc<dyn EffectiveContainerConfigs>,
+    revision: RosterRevisionProbe,
 }
 
 impl EffectiveConfigRoster {
-    pub fn new(configs: Arc<dyn EffectiveContainerConfigs>) -> Self {
-        Self { configs }
+    pub fn new(configs: Arc<dyn EffectiveContainerConfigs>, revision: RosterRevisionProbe) -> Self {
+        Self { configs, revision }
     }
+}
+
+/// A revision token over `paths`: each file's modification time and
+/// length (or its absence), in order. Metadata only — no file is read.
+pub fn file_revision(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|path| match std::fs::metadata(path) {
+            Ok(meta) => {
+                let modified = meta
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|since| since.as_nanos())
+                    .unwrap_or_default();
+                format!("{}@{modified}:{}", path.display(), meta.len())
+            }
+            Err(_) => format!("{}@absent", path.display()),
+        })
+        .collect::<Vec<_>>()
+        .join(";")
 }
 
 impl ContainerConfigRoster for EffectiveConfigRoster {
@@ -42,11 +70,16 @@ impl ContainerConfigRoster for EffectiveConfigRoster {
                         ContainerConfigLayer::Global
                     },
                     repository: config.repository,
+                    joinable: !config.exec.is_empty(),
                 })
                 .collect(),
             overlay_withheld: set.overlay_withheld,
             diagnostics: set.diagnostics,
         })
+    }
+
+    fn revision(&self) -> String {
+        (self.revision)()
     }
 }
 

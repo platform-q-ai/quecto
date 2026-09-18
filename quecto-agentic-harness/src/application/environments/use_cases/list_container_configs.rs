@@ -27,10 +27,25 @@ impl ListContainerConfigs {
         Self { roster }
     }
 
+    /// The roster's revision token: a presenter caches its rendering
+    /// against it (see the port).
+    pub fn revision(&self) -> String {
+        self.roster.revision()
+    }
+
     pub fn execute(&self) -> Result<ContainerConfigInventory, String> {
         let report = self.roster.roster()?;
         let mut configs = report.configs;
         let mut diagnostics = report.diagnostics;
+        // Counted as configured, before any rule clears a flag: launch
+        // policy refuses the implicit selection whenever the configured
+        // set labels more than one default, broken entries included.
+        let mut defaults: Vec<String> = configs
+            .iter()
+            .filter(|entry| entry.default)
+            .map(|entry| entry.name.clone())
+            .collect();
+        defaults.sort_unstable();
         if report.overlay_withheld {
             for entry in &mut configs {
                 entry.default = false;
@@ -45,12 +60,6 @@ impl ListContainerConfigs {
                 entry.default = false;
             }
         }
-        let mut defaults: Vec<String> = configs
-            .iter()
-            .filter(|entry| entry.default)
-            .map(|entry| entry.name.clone())
-            .collect();
-        defaults.sort_unstable();
         if defaults.len() > 1 {
             diagnostics.push(format!(
                 "multiple container configs are labeled \"default\": true ({}); container: true is refused until exactly one is",

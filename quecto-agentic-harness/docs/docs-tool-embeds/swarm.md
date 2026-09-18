@@ -11,8 +11,8 @@ containers to evade its limit. See `docs {"name":"subagents"}` for launching.
 - **The swarm runs in the container the coordinator was spawned into.** There
   is no swarm image or swarm config: the host master picks a `container_configs`
   entry — `agent_cmd {"agent_id":"*","command":"get_container_configs"}` lists
-  the names live (the spawn description's roster line shows the same set as
-  of the last tool-definition build) — and names it
+  the names (the spawn description's roster line shows the same set) — and
+  names it
   explicitly: `spawn {"agent_id":"coordinator","task":"…","container":{"mode":"new","container_config":"<name>"}}`
   (`"container": true` = the labelled default). The result's
   `container_config=<name>` confirms the choice; a new container is a fresh

@@ -14,6 +14,7 @@ fn entry(name: &str, default: bool, layer: ContainerConfigLayer) -> ContainerCon
         layer,
         repository: None,
         problem: None,
+        joinable: false,
     }
 }
 
@@ -126,7 +127,11 @@ struct Failing;
 
 impl ContainerConfigRoster for Failing {
     fn roster(&self) -> Result<ContainerConfigRosterReport, String> {
-        Err("f".repeat(300))
+        Err(format!("line one\nline two {}", "f".repeat(300)))
+    }
+
+    fn revision(&self) -> String {
+        "r".into()
     }
 }
 
@@ -134,8 +139,91 @@ impl ContainerConfigRoster for Failing {
 fn an_unreadable_configuration_still_yields_a_bounded_line() {
     let query = ListContainerConfigs::new(Arc::new(Failing));
     let line = roster_line(Some(&query)).unwrap();
-    assert!(line.starts_with("Available container configs: none readable (fff"));
+    assert!(line.starts_with("Available container configs: none readable (line one line two fff"));
+    assert!(!line.contains('\n'));
     assert!(line.chars().count() <= ROSTER_LINE_MAX_CHARS, "{line}");
     assert!(line.ends_with("…."), "{line}");
     assert!(roster_line(None).is_none());
+}
+
+#[test]
+fn the_hidden_count_survives_when_the_first_entry_alone_overflows() {
+    let line = format_roster_line(&inventory(
+        vec![
+            entry(&"a".repeat(100), false, ContainerConfigLayer::Global),
+            entry("b", false, ContainerConfigLayer::Global),
+            entry("c", false, ContainerConfigLayer::Global),
+        ],
+        true,
+    ));
+    assert!(line.chars().count() <= ROSTER_LINE_MAX_CHARS, "{line}");
+    assert!(
+        line.ends_with("…, +2 more (repo overlay untrusted — run quecto config trust)."),
+        "{line}"
+    );
+}
+
+#[test]
+fn names_with_newlines_keep_the_roster_on_one_line() {
+    let line = format_roster_line(&inventory(
+        vec![entry("odd\nname", true, ContainerConfigLayer::Global)],
+        false,
+    ));
+    assert_eq!(
+        line,
+        "Available container configs: odd name (default, global)."
+    );
+}
+
+/// A roster whose revision the test moves; counts how often the listing
+/// is actually read.
+struct Counting {
+    revision: std::sync::Mutex<String>,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl ContainerConfigRoster for Counting {
+    fn roster(&self) -> Result<ContainerConfigRosterReport, String> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(ContainerConfigRosterReport {
+            configs: vec![entry(
+                &format!("rev-{}", self.revision.lock().unwrap()),
+                true,
+                ContainerConfigLayer::Global,
+            )],
+            overlay_withheld: false,
+            diagnostics: vec![],
+        })
+    }
+
+    fn revision(&self) -> String {
+        self.revision.lock().unwrap().clone()
+    }
+}
+
+#[test]
+fn the_spawn_definition_reads_the_configuration_only_when_the_revision_changes() {
+    use crate::application::tools::ports::Tool;
+    let counting = Arc::new(Counting {
+        revision: std::sync::Mutex::new("1".into()),
+        reads: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let tool = crate::infrastructure::tools::spawn::SpawnTool::new(vec![])
+        .with_container_config_roster(Some(Arc::new(ListContainerConfigs::new(counting.clone()))));
+    for _ in 0..5 {
+        let description = tool.definition().description;
+        assert!(
+            description.contains("rev-1 (default, global)"),
+            "{description}"
+        );
+    }
+    assert_eq!(counting.reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+    *counting.revision.lock().unwrap() = "2".into();
+    let description = tool.definition().description;
+    assert!(
+        description.contains("rev-2 (default, global)"),
+        "{description}"
+    );
+    assert!(!description.contains("rev-1"), "{description}");
+    assert_eq!(counting.reads.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
