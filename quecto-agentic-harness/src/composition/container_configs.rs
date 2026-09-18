@@ -95,18 +95,42 @@ fn resolve(
             | EffectiveConfigError::InvalidMerge { .. } => error.to_string(),
         })?;
     let diagnostics = effective.sources.diagnostics();
-    let overlay_withheld = effective.sources.overlay.as_ref().is_some_and(|report| {
-        matches!(
-            report.state,
-            OverlayState::Untrusted { .. } | OverlayState::Refused { .. }
-        )
-    });
+    let overlay_withheld = effective
+        .sources
+        .overlay
+        .as_ref()
+        .is_some_and(|report| withholds_container_configs(&report.state));
     let config = (handles.realize)(effective.document, &HashMap::new())?;
     Ok(ResolvedConfig {
         config,
         diagnostics,
         overlay_withheld,
     })
+}
+
+/// Whether an overlay that was not applied leaves the default container
+/// config unknown: a refused document (not a regular file) or one the
+/// checks turned away declares nothing knowable; an untrusted document
+/// that parsed withholds the default only when it carries a
+/// `container_configs` section — an overlay that only pins, say,
+/// `agents.defaults` cannot have changed it, so its diagnostic travels as
+/// a warning and the global default launches. Judged on the resolver's
+/// already-parsed top-level keys; nothing of the overlay is applied.
+fn withholds_container_configs(state: &OverlayState) -> bool {
+    match state {
+        OverlayState::Refused { .. }
+        | OverlayState::Untrusted {
+            problem: Some(_), ..
+        } => true,
+        OverlayState::Untrusted {
+            problem: None,
+            sections,
+            ..
+        } => sections
+            .iter()
+            .any(|section| section == "container_configs"),
+        OverlayState::Applied | OverlayState::Absent => false,
+    }
 }
 
 #[cfg(test)]

@@ -154,6 +154,72 @@ fn an_untrusted_overlay_is_not_applied_and_travels_as_the_configuration_diagnost
 }
 
 #[test]
+fn an_untrusted_overlay_without_container_configs_warns_and_keeps_the_global_default() {
+    // A checkout whose overlay only pins `agents.defaults` (#2024 S2)
+    // cannot have changed the default container config, so a fresh clone
+    // or non-tty run is not refused: the global default launches and the
+    // untrusted-overlay diagnostic travels as a warning.
+    let rig = Rig::new();
+    std::fs::write(
+        rig.overlay(),
+        serde_json::json!({"agents": {"defaults": {"model": "pinned"}}}).to_string(),
+    )
+    .unwrap();
+    let configs = build_effective_container_configs(&rig.base_dir, Some(rig.selection()))
+        .effective_container_configs(&ContainerConfigSource::LaunchingAgent)
+        .unwrap();
+    assert!(!configs.overlay_withheld);
+    assert_eq!(configs.diagnostics.len(), 1, "{:?}", configs.diagnostics);
+    assert!(
+        configs.diagnostics[0].contains("is not trusted"),
+        "{:?}",
+        configs.diagnostics
+    );
+    assert_eq!(rig.select(None).unwrap(), "global");
+}
+
+#[test]
+fn an_untrusted_overlay_that_is_refused_or_unparseable_withholds_the_default() {
+    // Content the checks refuse (here: unparseable) and a document the
+    // store refuses outright (a symlink) declare nothing knowable, so the
+    // default stays unknown and `container: true` is refused.
+    let rig = Rig::new();
+    std::fs::write(rig.overlay(), "{not json").unwrap();
+    let configs = build_effective_container_configs(&rig.base_dir, Some(rig.selection()))
+        .effective_container_configs(&ContainerConfigSource::LaunchingAgent)
+        .unwrap();
+    assert!(configs.overlay_withheld, "{:?}", configs.diagnostics);
+    assert!(
+        rig.select(None)
+            .unwrap_err()
+            .starts_with("container: true refused")
+    );
+
+    std::fs::remove_file(rig.overlay()).unwrap();
+    let target = rig.checkout.join("elsewhere.json");
+    std::fs::write(
+        &target,
+        serde_json::json!({"agents": {"defaults": {"model": "pinned"}}}).to_string(),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&target, rig.overlay()).unwrap();
+    let configs = build_effective_container_configs(&rig.base_dir, Some(rig.selection()))
+        .effective_container_configs(&ContainerConfigSource::LaunchingAgent)
+        .unwrap();
+    assert!(configs.overlay_withheld, "{:?}", configs.diagnostics);
+    assert!(
+        configs.diagnostics[0].contains("was not applied"),
+        "{:?}",
+        configs.diagnostics
+    );
+    assert!(
+        rig.select(None)
+            .unwrap_err()
+            .starts_with("container: true refused")
+    );
+}
+
+#[test]
 fn an_explicit_file_replaces_the_layers_and_ignores_the_overlay() {
     let rig = Rig::new();
     rig.write_overlay(serde_json::json!({"repo": entry(true, "https://repo.test/r")}));
