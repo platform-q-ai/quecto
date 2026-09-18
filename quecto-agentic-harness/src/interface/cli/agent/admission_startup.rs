@@ -11,6 +11,26 @@ use crate::application::admission::use_cases::NegotiateAuthority;
 use crate::infrastructure::admission::{Negotiation, process};
 use crate::infrastructure::config::Config;
 
+/// Build the composed negotiation use case from the agent flags and run it
+/// (#2024 S3). Keeps `agent.rs` free of the capability-not-composed plumbing.
+pub(super) fn negotiate_from_flags(
+    config: &Config,
+    flags: &super::AgentFlags,
+    stderr: &mut String,
+) -> bool {
+    let Some(build_admission) = flags.admission else {
+        stderr.push_str("agent: admission capability not composed\n");
+        return false;
+    };
+    let handles = build_admission();
+    negotiate(
+        config,
+        flags.admission_context.as_deref(),
+        &handles.negotiate,
+        stderr,
+    )
+}
+
 pub(super) fn negotiate(
     config: &Config,
     admission_context: Option<&Path>,
