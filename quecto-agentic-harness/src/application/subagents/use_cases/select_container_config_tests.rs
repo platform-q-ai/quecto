@@ -73,11 +73,9 @@ fn use_case_with_integrity(
         asked: Mutex::new(Vec::new()),
     });
     let integrity = Arc::new(integrity);
-    (
-        SelectContainerConfig::new(fake.clone(), integrity.clone()),
-        fake,
-        integrity,
-    )
+    let select = SelectContainerConfig::new(fake.clone(), integrity.clone());
+    assert_eq!(format!("{select:?}"), "SelectContainerConfig { .. }");
+    (select, fake, integrity)
 }
 
 fn set(configs: Vec<ContainerLaunchConfig>, diagnostics: Vec<&str>) -> EffectiveContainerConfigSet {

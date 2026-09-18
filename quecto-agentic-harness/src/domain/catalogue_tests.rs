@@ -236,6 +236,16 @@ fn resolve_upserts_by_stable_identity_keeping_position() {
         snapshot.entries()[2].reference().qualified_id(),
         "custom/local"
     );
+    // A projection narrows the entries, never the generation.
+    let narrowed = snapshot.filtered(|entry| entry.reference().provider().as_str() != "custom");
+    assert_eq!(narrowed.generation(), 7);
+    assert_eq!(narrowed.entries().len(), 2);
+    assert!(
+        narrowed
+            .entries()
+            .iter()
+            .all(|entry| entry.reference().provider().as_str() != "custom")
+    );
     let found = snapshot
         .find(&ModelRef::parse("custom", "local").unwrap())
         .unwrap();

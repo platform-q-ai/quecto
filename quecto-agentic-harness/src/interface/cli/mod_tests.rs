@@ -220,3 +220,67 @@ fn composed_context_layers_the_working_directory_overlay_over_the_global_config(
         out.stdout
     );
 }
+
+#[test]
+fn the_repl_runs_setup_commands_refuses_the_rest_and_no_arguments_at_all_means_the_repl() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(dir.path().to_path_buf()),
+        cwd: Some(dir.path().to_path_buf()),
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        ..Default::default()
+    };
+    // Piped input: no banner, no prompt; a command's stdout and stderr
+    // both reach the writer; a non-zero command code becomes the exit
+    // code; `exit` ends the loop before the lines after it.
+    let output = run_repl_with_output(
+        &ctx,
+        &[],
+        b"\nstatus\nagent -m hi\n/help\nexit\nstatus\n",
+        false,
+    );
+    assert_eq!(output.exit_code, 0, "{}", output.stdout);
+    assert_eq!(output.stdout.matches("quecto Status\n").count(), 1);
+    assert!(
+        output.stdout.contains(&format!(
+            "Config:    {}",
+            dir.path().join("config.json").display()
+        )),
+        "{}",
+        output.stdout
+    );
+    assert!(
+        output.stdout.contains("Unsupported REPL command"),
+        "{}",
+        output.stdout
+    );
+    assert!(
+        !output.stdout.contains("Setup & Configuration"),
+        "{}",
+        output.stdout
+    );
+
+    // A terminal gets the banner and the prompt; a command the REPL
+    // delegates but that fails (`models` with no argument it knows)
+    // leaves the tty session's exit code at 0.
+    let output = run_repl_with_output(&ctx, &[], b"models --nope\n", true);
+    assert!(output.stdout.starts_with("quecto v"), "{}", output.stdout);
+    assert!(output.stdout.contains("> "), "{}", output.stdout);
+    assert_eq!(output.exit_code, 0, "{}", output.stdout);
+    let piped = run_repl_with_output(&ctx, &[], b"models --nope\n", false);
+    assert_ne!(piped.exit_code, 0, "{}", piped.stdout);
+
+    // Agent flags on the REPL are gone.
+    let refused = run_repl_with_output(&ctx, &["-m".to_string()], b"", false);
+    assert_eq!(refused.exit_code, 1);
+    assert!(
+        refused.stderr.contains("use `quecto agent`"),
+        "{}",
+        refused.stderr
+    );
+
+    // No arguments: the REPL over empty input exits at once.
+    let bare = run_with_output(vec!["quecto".to_string()], &ctx);
+    assert_eq!(bare.exit_code, 0);
+    assert!(bare.stdout.is_empty(), "{}", bare.stdout);
+}

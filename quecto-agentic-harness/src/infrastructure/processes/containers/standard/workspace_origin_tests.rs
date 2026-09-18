@@ -29,3 +29,23 @@ fn the_origin_url_is_read_and_its_absence_is_none() {
     let missing = dir.path().join("nope");
     assert_eq!(GitWorkspaceOrigin.origin(&missing).unwrap(), None);
 }
+
+#[test]
+fn the_toplevel_is_the_checkout_root_from_anywhere_below_it_and_none_outside_one() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    assert_eq!(GitWorkspaceOrigin.toplevel(&root).unwrap(), None);
+    git(&root, &["init", "-q"]);
+    assert_eq!(
+        GitWorkspaceOrigin.toplevel(&root).unwrap().as_deref(),
+        Some(root.as_path())
+    );
+    let below = root.join("a/b");
+    std::fs::create_dir_all(&below).unwrap();
+    assert_eq!(
+        GitWorkspaceOrigin.toplevel(&below).unwrap().as_deref(),
+        Some(root.as_path())
+    );
+    let missing = root.join("nope");
+    assert_eq!(GitWorkspaceOrigin.toplevel(&missing).unwrap(), None);
+}

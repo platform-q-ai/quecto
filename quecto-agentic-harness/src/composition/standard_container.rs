@@ -226,3 +226,7 @@ pub fn build_workspace_origin() -> Arc<dyn crate::application::environments::por
 {
     Arc::new(GitWorkspaceOrigin)
 }
+
+#[cfg(test)]
+#[path = "standard_container_tests.rs"]
+mod tests;

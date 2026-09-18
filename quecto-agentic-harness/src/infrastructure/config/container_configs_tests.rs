@@ -31,3 +31,24 @@ fn the_repo_is_the_value_after_repo_before_the_child_separator() {
     assert_eq!(repository_from_argv(&argv(&["/c", "--repo", ""])), None);
     assert_eq!(repository_from_argv(&argv(&["/c"])), None);
 }
+
+#[test]
+fn the_adapter_says_whether_a_launching_agent_is_composed_without_naming_its_loaders() {
+    use std::sync::Arc;
+
+    use super::{ContainerConfigsFromEffectiveConfig, ExplicitConfigLoader};
+    let explicit: ExplicitConfigLoader = Arc::new(|_| Err("never asked".to_string()));
+    let without = ContainerConfigsFromEffectiveConfig::new(None, explicit.clone());
+    assert_eq!(
+        format!("{without:?}"),
+        "ContainerConfigsFromEffectiveConfig { launching_agent: false, .. }"
+    );
+    let with = ContainerConfigsFromEffectiveConfig::new(
+        Some(Arc::new(|| Err("never asked".to_string()))),
+        explicit,
+    );
+    assert_eq!(
+        format!("{with:?}"),
+        "ContainerConfigsFromEffectiveConfig { launching_agent: true, .. }"
+    );
+}

@@ -192,3 +192,102 @@ fn a_symbolic_link_between_the_root_and_the_bundle_is_refused() {
     assert!(error.contains("containers is a symbolic link"), "{error}");
     assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
 }
+
+#[cfg(unix)]
+#[test]
+fn a_directory_in_an_assets_place_and_a_file_in_a_directorys_place_are_refused() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = EmbeddedStandardAssets;
+    let catalogue = store.catalogue();
+    let containerfile = &catalogue.assets[0];
+    let create = &catalogue.assets[1];
+    // A directory where the Containerfile goes: not a regular file, so
+    // neither judged nor written.
+    std::fs::create_dir_all(dir.path().join("Containerfile")).unwrap();
+    let error = store
+        .observe(dir.path(), dir.path(), containerfile)
+        .unwrap_err();
+    assert!(
+        error.contains("exists but is not a regular file"),
+        "{error}"
+    );
+    let error = store
+        .materialise(dir.path(), dir.path(), containerfile)
+        .unwrap_err();
+    assert!(
+        error.contains("exists but is not a regular file"),
+        "{error}"
+    );
+    assert!(dir.path().join("Containerfile").is_dir());
+    // A regular file where `scripts/` goes: the destination below it
+    // cannot even be judged (ENOTDIR), and the failure names it.
+    std::fs::write(dir.path().join("scripts"), "in the way").unwrap();
+    let error = store
+        .materialise(dir.path(), dir.path(), create)
+        .unwrap_err();
+    assert!(
+        error.contains(&format!(
+            "cannot stat {}",
+            dir.path().join("scripts/create.sh").display()
+        )),
+        "{error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("scripts")).unwrap(),
+        "in the way"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_asset_is_an_error_that_names_the_file() {
+    use std::os::unix::fs::PermissionsExt;
+    // Root reads anything: the check has nothing to observe there.
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = EmbeddedStandardAssets;
+    let containerfile = &store.catalogue().assets[0];
+    let path = dir.path().join("Containerfile");
+    std::fs::write(&path, "x").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let error = store
+        .observe(dir.path(), dir.path(), containerfile)
+        .unwrap_err();
+    assert!(
+        error.contains(&format!("cannot read {}", path.display())),
+        "{error}"
+    );
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_bundle_directory_that_cannot_be_written_is_an_error_that_names_it() {
+    use std::os::unix::fs::PermissionsExt;
+    // Root writes anywhere: the check has nothing to observe there.
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = EmbeddedStandardAssets;
+    let containerfile = &store.catalogue().assets[0];
+    let bundle = dir.path().join("bundle");
+    std::fs::create_dir_all(&bundle).unwrap();
+    std::fs::set_permissions(&bundle, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let error = store
+        .materialise(dir.path(), &bundle, containerfile)
+        .unwrap_err();
+    assert!(
+        error.contains(&format!(
+            "cannot create a temporary file in {}",
+            bundle.display()
+        )),
+        "{error}"
+    );
+    std::fs::set_permissions(&bundle, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(std::fs::read_dir(&bundle).unwrap().next().is_none());
+}

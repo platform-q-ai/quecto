@@ -428,5 +428,8 @@ fn present_status(status: &StandardContainerStatus, out: &mut String) {
 }
 
 #[cfg(test)]
+#[path = "container_setup_e2e_tests.rs"]
+mod e2e_tests;
+#[cfg(test)]
 #[path = "container_setup_tests.rs"]
 mod tests;

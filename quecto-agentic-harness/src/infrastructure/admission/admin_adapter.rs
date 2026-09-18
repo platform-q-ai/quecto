@@ -100,3 +100,7 @@ impl AuthorityAdmin for SocketAuthorityAdmin {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "admin_adapter_tests.rs"]
+mod tests;

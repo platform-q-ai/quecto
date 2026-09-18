@@ -370,3 +370,17 @@ async fn a_repeated_signal_past_the_budget_forces_the_exit() {
     assert!(repeats.forced);
     assert!(forced.load(std::sync::atomic::Ordering::SeqCst));
 }
+
+#[test]
+fn the_settled_outcome_is_logged_by_its_kind_alone() {
+    use crate::interface::uds::subagent_teardown::presenter::AckWriteError;
+    assert_eq!(super::summary(&ControllerOutcome::Ignored), "ignored");
+    assert_eq!(
+        super::summary(&ControllerOutcome::Rejected {
+            command: "shutdown",
+            detail: "no token".into(),
+            written: Err(AckWriteError("closed".into())),
+        }),
+        "rejected"
+    );
+}
