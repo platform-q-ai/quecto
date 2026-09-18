@@ -27,7 +27,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
    ```
    Expected (`wrote` per file on a first run, `kept` on a re-run):
    ```
-   standard container bundle (version 1) at /repo/.quecto/containers/standard
+   standard container bundle (version 2) at /repo/.quecto/containers/standard
      wrote  /repo/.quecto/containers/standard/Containerfile
      wrote  /repo/.quecto/containers/standard/scripts/create.sh
      wrote  … exec.sh, inspect.sh, kill.sh
@@ -59,7 +59,7 @@ Expected (exit 0; exit 1 — last line `not ready: …` — while any line is no
 
 ```
 standard container at /repo/.quecto/containers/standard
-  assets:  present (5 of 5, version 1)
+  assets:  present (5 of 5, version 2)
   config:  standard (default, overlay) in the effective configuration; --repo https://github.com/org/app.git
   trust:   trusted (the repo-local overlay is applied)
   image:   image quecto-box:local is present
