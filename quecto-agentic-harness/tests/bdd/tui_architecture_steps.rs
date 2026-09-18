@@ -31,6 +31,7 @@ fn then_tui_feature_architecture_document_lists_capabilities(_world: &mut Quecto
         "protocol",
         "conversation",
         "sessions",
+        "setup",
         "agents",
         "workflow",
         "inference",
@@ -369,11 +370,12 @@ fn then_tui_library_root_exposes_only_layers(_world: &mut QuectoWorld) {
             "inference",
             "protocol",
             "sessions",
+            "setup",
             "shell",
             "workflow",
             "workspace",
         ],
-        "../quecto-tui/src/lib.rs should expose exactly the final feature module set (#1257 Phase 6)"
+        "../quecto-tui/src/lib.rs should expose exactly the final feature module set (#1257 Phase 6, + setup #2024 S6)"
     );
     assert!(
         !content.contains("#[path ="),
@@ -425,6 +427,7 @@ fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
                 | "inference"
                 | "protocol"
                 | "sessions"
+                | "setup"
                 | "shell"
                 | "workflow"
                 | "workspace"
