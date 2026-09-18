@@ -64,6 +64,8 @@ Feature: Environments outlive sessions
     And I kill subagent "observer-keep"
     Then the persistent runtime should have killed an environment exactly 0 times
     And the container listing should include "C1" with status "empty" and 0 members
+    When I kill container "C1"
+    Then the persistent runtime should have killed an environment exactly 1 time
     And scenario teardown should leave no fixture processes running
 
   @done @issue-2024 @container-env
@@ -84,7 +86,10 @@ Feature: Environments outlive sessions
     When I run quecto with arguments "container kill cli-kill-env"
     Then the exit code should be 0
     And the output should contain "killed C1"
-    And the persistent runtime should have killed an environment exactly 1 time
+    # The creating session is still alive here: it sees its member die and
+    # runs its own final-member kill after the CLI's (the scripts are
+    # idempotent), so at least one kill — never zero.
+    And the persistent runtime should have killed an environment at least 1 time
     And the durable environment registry should record "C1" with status "stopped" created by "session-one"
     When I run quecto with arguments "container kill C1"
     Then the exit code should be 1
