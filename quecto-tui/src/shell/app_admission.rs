@@ -82,13 +82,17 @@ impl App {
             .master_session
             .footer
             .set_admission(label.clone(), view.compact_label());
-        // Broker health (#2024 S3): shown whenever the agent reports an
-        // authority status, independent of whether an attempt is waiting.
-        let health = view.authority_badge();
-        self.ac_mut()
-            .master_session
-            .footer
-            .set_admission_health(health);
+        // Broker health (#2024 S3): update only when the agent reported an
+        // authority status. The pushed `admission_state_changed` event carries
+        // activity without an authorityStatus, so it must not clear the badge
+        // that the last `get_state` established; only a fresh status or a
+        // cleared master view changes it.
+        if let Some(health) = view.authority_badge() {
+            self.ac_mut()
+                .master_session
+                .footer
+                .set_admission_health(Some(health));
+        }
         match label.filter(|_| waiting) {
             Some(label) => {
                 let message = format!("⏳ {} (Esc to interrupt)", capitalize(&label));
