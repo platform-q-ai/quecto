@@ -31,11 +31,12 @@ pub const PREFLIGHT_ONLY_FLAG: &str = "--preflight-only";
 /// bounded well under this, so a hang here is a stuck runtime CLI.
 const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// The checks every shipped create script (`scripts/container-runtime/
-/// create.sh` and `docker/create.sh`) reports on every run, whatever its
-/// flags: the host-local set has no runtime CLI or image to check, so
-/// these are the common set. `state-dir` is the last check of both, so a
-/// successful report without it was cut short.
+/// The checks every shipped create script (the host-local reference set
+/// and the official container adapter under `scripts/container-runtime/`)
+/// reports on every run, whatever its flags: the host-local set has no
+/// runtime CLI or image to check, so these are the common set.
+/// `state-dir` is the last check of both, so a successful report without
+/// it was cut short.
 pub const MANDATORY_CHECKS: &[&str] = &["jq", "git", "repo", "state-dir"];
 
 #[derive(Debug, Default, Clone, Copy)]
