@@ -4120,6 +4120,10 @@ fn catalogue_defaults_mapping_is_pure_and_implements_both_ports() {
 const ENVIRONMENT_PORTS: &[&str] = &[
     "EnvironmentProcessCommands",
     "HostedSwarmRunObservation",
+    // The same store read synchronously for the restore and the collector
+    // (round 4 M1, #2033): a box hosting an unfinished run is never
+    // relabelled stopped or collected.
+    "HostedSwarmRunInspection",
     "EnvironmentMemberShutdown",
     // Container-runtime diagnosis (#2024 S4b): the doctor's target
     // resolved through the launch policy's selection, and the create

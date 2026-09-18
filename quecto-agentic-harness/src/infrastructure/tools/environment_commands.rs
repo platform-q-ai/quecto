@@ -5,7 +5,7 @@
 //! #1924). Mechanics only: whether and when each runs is decided by the
 //! application use cases.
 use crate::application::environments::ports::{
-    EnvironmentProcessCommands, HostedSwarmRunObservation, PortFuture,
+    EnvironmentProcessCommands, HostedSwarmRunInspection, HostedSwarmRunObservation, PortFuture,
 };
 use crate::domain::environment_registry::EnvironmentRecord;
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
@@ -199,6 +199,16 @@ fn contained_checkout(
     record: &EnvironmentRecord,
     checkout: &std::path::Path,
 ) -> Option<std::path::PathBuf> {
+    contained_below(&record.workspace_path, checkout)
+}
+
+/// `checkout` resolved, when both it and `root` are absolute and `..`-free
+/// and — symlinks resolved on both sides, so a link under the root pointing
+/// elsewhere cannot lead the host outside it — it lies at or under `root`.
+fn contained_below(
+    root: &std::path::Path,
+    checkout: &std::path::Path,
+) -> Option<std::path::PathBuf> {
     use std::path::Component;
     let plain = |path: &std::path::Path| {
         path.is_absolute()
@@ -206,22 +216,54 @@ fn contained_checkout(
                 .components()
                 .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
     };
-    if !plain(checkout) || !plain(&record.workspace_path) {
+    if !plain(checkout) || !plain(root) {
         return None;
     }
-    // Resolve symlinks on both sides so a link under the workspace pointing
-    // elsewhere cannot lead the host outside it.
     let resolved = std::fs::canonicalize(checkout).ok()?;
-    let workspace = std::fs::canonicalize(&record.workspace_path).ok()?;
-    resolved.starts_with(&workspace).then_some(resolved)
+    let root = std::fs::canonicalize(root).ok()?;
+    resolved.starts_with(&root).then_some(resolved)
 }
 
 fn hosted_store(record: &EnvironmentRecord) -> Option<super::swarm_bridge::HostedStore> {
     hosted_checkout(record).map(super::swarm_bridge::HostedStore::at)
 }
 
+/// The checkout a store may live at below a bare environment state
+/// directory the shipped scripts laid out (`<state_dir>/workspace[/repo]`),
+/// for a directory no record names: the first of the two holding a store,
+/// contained below the state dir the same way a record's checkout is
+/// contained below its workspace.
+fn unrecorded_checkout(state_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let workspace = state_dir.join("workspace");
+    [workspace.join(REPO_CHECKOUT_SUBDIR), workspace]
+        .iter()
+        .filter(|candidate| super::swarm_bridge::store_database(candidate).is_file())
+        .find_map(|candidate| contained_below(state_dir, candidate))
+}
+
+/// One synchronous read of the store at `checkout`, for the environment
+/// named `subject` in the log.
+fn read_hosted_run(checkout: Option<std::path::PathBuf>, subject: &str) -> SwarmRunObservation {
+    let Some(store) = checkout.map(super::swarm_bridge::HostedStore::at) else {
+        return SwarmRunObservation::NoStore;
+    };
+    match store.hosted_run() {
+        Ok(Some(run)) => SwarmRunObservation::Run(run),
+        Ok(None) => SwarmRunObservation::NoStore,
+        Err(error) => {
+            tracing::warn!(
+                environment = %subject,
+                %error,
+                "hosted swarm run could not be observed; environment retained"
+            );
+            SwarmRunObservation::Unreadable(error.to_string())
+        }
+    }
+}
+
 /// The coordination store an environment hosts, read by path from the
-/// supervising session (#1924).
+/// supervising session (#1924) — asynchronously for the finalizer, and
+/// synchronously for the restore and the collector (round 4 M1, #2033).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct HostedStoreObservation;
 
@@ -230,23 +272,7 @@ impl HostedSwarmRunObservation for HostedStoreObservation {
         &'a self,
         record: &'a EnvironmentRecord,
     ) -> PortFuture<'a, SwarmRunObservation> {
-        Box::pin(async move {
-            let Some(store) = hosted_store(record) else {
-                return SwarmRunObservation::NoStore;
-            };
-            match store.hosted_run() {
-                Ok(Some(run)) => SwarmRunObservation::Run(run),
-                Ok(None) => SwarmRunObservation::NoStore,
-                Err(error) => {
-                    tracing::warn!(
-                        environment_id = %record.environment_id,
-                        %error,
-                        "hosted swarm run could not be observed; environment retained"
-                    );
-                    SwarmRunObservation::Unreadable(error.to_string())
-                }
-            }
-        })
+        Box::pin(async move { self.inspect_hosted_run(record) })
     }
 
     fn record_lost_coordinator<'a>(
@@ -261,6 +287,19 @@ impl HostedSwarmRunObservation for HostedStoreObservation {
                 .record_lost_coordinator(&hosted.coordinator)
                 .map_err(|error| error.to_string())
         })
+    }
+}
+
+impl HostedSwarmRunInspection for HostedStoreObservation {
+    fn inspect_hosted_run(&self, record: &EnvironmentRecord) -> SwarmRunObservation {
+        read_hosted_run(hosted_checkout(record), &record.environment_id)
+    }
+
+    fn inspect_hosted_run_at(&self, state_dir: &std::path::Path) -> SwarmRunObservation {
+        read_hosted_run(
+            unrecorded_checkout(state_dir),
+            &state_dir.display().to_string(),
+        )
     }
 }
 

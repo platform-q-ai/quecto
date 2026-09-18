@@ -72,6 +72,23 @@ pub trait HostedSwarmRunObservation: Send + Sync {
     ) -> PortFuture<'a, Result<CoordinatorLoss, String>>;
 }
 
+/// The swarm run a checkout hosts, read synchronously and without a
+/// session (round 4 M1, #2033): what [`HostedSwarmRunObservation`] learns
+/// for the finalizer, for the startup restore and the CLI collector —
+/// which run without a runtime and must judge a state directory the
+/// registry knows nothing about. Read-only: nothing here records a loss.
+pub trait HostedSwarmRunInspection: Send + Sync {
+    /// The run `record`'s checkout hosts (its advertised checkout, else
+    /// its workspace probed the way the observation port probes it).
+    fn inspect_hosted_run(&self, record: &EnvironmentRecord) -> SwarmRunObservation;
+
+    /// The run hosted below `state_dir` — an environment directory laid
+    /// out by the shipped scripts (`<state_dir>/workspace[/repo]`) that no
+    /// record names. The adapter owns the layout; a directory hosting no
+    /// readable store is `NoStore`.
+    fn inspect_hosted_run_at(&self, state_dir: &Path) -> SwarmRunObservation;
+}
+
 /// How one member's shutdown was settled by the subagent capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemberShutdownResult {

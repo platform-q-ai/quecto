@@ -101,6 +101,8 @@ mod fleet_settlement;
 mod fresh_session_identity_generator;
 #[path = "contracts/historical_roster_source.rs"]
 mod historical_roster_source;
+#[path = "contracts/hosted_swarm_run_inspection.rs"]
+mod hosted_swarm_run_inspection;
 #[path = "contracts/hosted_swarm_run_observation.rs"]
 mod hosted_swarm_run_observation;
 #[path = "contracts/llm_provider.rs"]
