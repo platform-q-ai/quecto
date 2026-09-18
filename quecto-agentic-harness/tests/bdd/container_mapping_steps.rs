@@ -8,6 +8,94 @@
 use super::*;
 
 use crate::spawn_tool_steps::{execute_spawn_json_without_config, given_script_spawn};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// Every `tool` message the fake provider saw from the real agent: what
+/// the model was shown as the spawn's result.
+#[derive(Default)]
+struct RealAgentRun {
+    tool_results: Arc<Mutex<Vec<String>>>,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+static REAL_AGENT_RUN: Mutex<Option<RealAgentRun>> = Mutex::new(None);
+
+const SPAWN_MARKER: &str = "SPAWN_CONTAINER_TRUE";
+const REAL_AGENT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// A provider whose first answer to a user turn carrying [`SPAWN_MARKER`]
+/// is one `spawn {"container": true}` tool call, and whose every other
+/// answer (the spawned child's turns included) is a plain reply. The
+/// `tool` messages of every request are captured.
+fn mount_spawning_provider(server: &wiremock::MockServer, seen: Arc<Mutex<Vec<String>>>) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(move |request: &wiremock::Request| {
+                let input: serde_json::Value = request.body_json().unwrap();
+                let messages = input["messages"].as_array().cloned().unwrap_or_default();
+                for tool_message in messages.iter().filter(|m| m["role"] == "tool") {
+                    if let Some(content) = tool_message["content"].as_str() {
+                        let mut seen = seen.lock().unwrap();
+                        if !seen.iter().any(|s| s == content) {
+                            seen.push(content.to_string());
+                        }
+                    }
+                }
+                let is_spawner = messages.iter().any(|m| {
+                    m["role"] == "user"
+                        && m["content"]
+                            .as_str()
+                            .is_some_and(|content| content.contains(SPAWN_MARKER))
+                });
+                let tool_results = messages.iter().filter(|m| m["role"] == "tool").count();
+                let (delta, finish) = if is_spawner && tool_results == 0 {
+                    let arguments = serde_json::json!({
+                        "agent_id": "container-child", "task": "wait", "container": true, "read_only": true
+                    })
+                    .to_string();
+                    (
+                        serde_json::json!({"tool_calls": [{
+                            "index": 0, "id": "call-container", "type": "function",
+                            "function": {"name": "spawn", "arguments": arguments}
+                        }]}),
+                        "tool_calls",
+                    )
+                } else {
+                    (serde_json::json!({"content": "REAL_AGENT_DONE"}), "stop")
+                };
+                if input["stream"] == true {
+                    let chunk = serde_json::json!({
+                        "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13}
+                    });
+                    wiremock::ResponseTemplate::new(200).set_body_raw(
+                        format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+                        "text/event-stream",
+                    )
+                } else {
+                    let mut message = delta.clone();
+                    message["role"] = serde_json::json!("assistant");
+                    wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                        "id": "chatcmpl-real-agent", "object": "chat.completion",
+                        "choices": [{"index": 0, "message": message, "finish_reason": finish}],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13}
+                    }))
+                }
+            })
+            .mount(server),
+    );
+    world_runtime_keep(rt);
+}
+
+/// The runtimes a leaked mock server lives on must outlive the scenario.
+fn world_runtime_keep(rt: tokio::runtime::Runtime) {
+    std::mem::forget(rt);
+}
 
 /// The checkout the launching agent works in: the world's hermetic cwd,
 /// which `quecto config set --local` writes the overlay into.
@@ -275,5 +363,95 @@ fn given_checkout_unbinds(world: &mut QuectoWorld, name: String) {
         output.exit_code, 0,
         "quecto config unset --local failed:\nstdout: {}\nstderr: {}",
         output.stdout, output.stderr
+    );
+}
+
+#[when(
+    "a real quecto agent started in the checkout is driven by a fake provider to spawn container true"
+)]
+fn when_real_agent_spawns_container_true(world: &mut QuectoWorld) {
+    // The real binary, the same one the fixture's create script launches
+    // as the container child (QUECTO_CHILD_BINARY, set by the Background).
+    let binary = PathBuf::from(std::env::var_os("QUECTO_CHILD_BINARY").expect("child binary"));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(wiremock::MockServer::start());
+    mount_spawning_provider(&server, seen.clone());
+    let uri = server.uri();
+    std::mem::forget(server);
+    world_runtime_keep(rt);
+    // The global file the real agent (and its container child) loads: the
+    // fixture's container_configs, the provider pointed at this scenario's
+    // fake endpoint.
+    let config_path = PathBuf::from(world.config_path.clone().expect("config path"));
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    config["providers"]["openai"]["api_base"] = serde_json::json!(uri);
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+    let checkout = checkout(world);
+    let mut child = std::process::Command::new(&binary)
+        .args(["agent", "-m", SPAWN_MARKER, "--no-session"])
+        .current_dir(&checkout)
+        .env("QUECTO_BASE_DIR", base_path(world))
+        .env("QUECTO_CHILD_BINARY", &binary)
+        .env_remove("QUECTO_RUNTIME_CONFIG_PATH")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("start the real quecto agent");
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("poll the real agent") {
+            break status;
+        }
+        assert!(
+            started.elapsed() < REAL_AGENT_TIMEOUT,
+            "the real agent did not exit within {REAL_AGENT_TIMEOUT:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let output = child
+        .wait_with_output()
+        .expect("collect the real agent's output");
+    *REAL_AGENT_RUN.lock().unwrap() = Some(RealAgentRun {
+        tool_results: seen,
+        exit_code: status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    });
+}
+
+#[then("the real agent should have exited successfully")]
+fn then_real_agent_exited_ok(_world: &mut QuectoWorld) {
+    let run = REAL_AGENT_RUN.lock().unwrap();
+    let run = run.as_ref().expect("the real agent ran");
+    assert_eq!(
+        run.exit_code,
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        run.stdout,
+        run.stderr
+    );
+    assert!(
+        run.stdout.contains("REAL_AGENT_DONE"),
+        "stdout: {}\nstderr: {}",
+        run.stdout,
+        run.stderr
+    );
+}
+
+#[then(expr = "the tool result the fake provider received should name container config {string}")]
+fn then_provider_saw_container_config(_world: &mut QuectoWorld, name: String) {
+    let run = REAL_AGENT_RUN.lock().unwrap();
+    let run = run.as_ref().expect("the real agent ran");
+    let results = run.tool_results.lock().unwrap();
+    let expected = format!(" container_config={name} ");
+    assert!(
+        results
+            .iter()
+            .any(|content| content.contains("is running (uuid=") && content.contains(&expected)),
+        "expected a spawn result with {expected:?} among the tool results the model saw: {results:?}\nstderr: {}",
+        run.stderr
     );
 }

@@ -20,6 +20,15 @@ Feature: A repository binds itself to a container config through its overlay
     And the script-managed runtime should have received repository "https://example.test/repo-r"
     And child "container-repo-r" should receive "CONTAINER_REPO_R_MARKER"
 
+  @done @issue-2024 @container-spawn @serial
+  Scenario: A real quecto agent started in the bound checkout spawns its overlay's container
+    Given the checkout binds itself to container config "r" with repository "https://example.test/repo-r" through quecto config set --local
+    When a real quecto agent started in the checkout is driven by a fake provider to spawn container true
+    Then the real agent should have exited successfully
+    And the script-managed runtime should have used container script "r"
+    And the script-managed runtime should have received repository "https://example.test/repo-r"
+    And the tool result the fake provider received should name container config "r"
+
   @done @issue-2024 @container-spawn
   Scenario: A checkout without an overlay keeps the global default
     When I spawn script-managed subagent "container-no-overlay" with default selection and no config argument and task "CONTAINER_NO_OVERLAY_MARKER"
