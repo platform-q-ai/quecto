@@ -18,8 +18,9 @@ pub(super) fn help_text(out: &mut String) {
     );
     out.push_str("                   with ./.quecto/config.json merged over it when trusted)\n");
     out.push_str("\nCommands:\n");
-    out.push_str("  admission-broker run|status|reset\n");
+    out.push_str("  admission-broker run|status|reset|install-service|uninstall-service\n");
     out.push_str("              Shared inference admission authority (requires an `admission` config section)\n");
+    out.push_str("              status|reset [--config <file>|--directory <dir>]; install-service [--config <file>] [--dry-run]\n");
     out.push_str("  agent       Run a one-shot agent session (-m required)\n");
     out.push_str("              Options: -s <name>  Named session (default: \"default\")\n");
     out.push_str("                       --no-session  Ephemeral mode — nothing saved or loaded\n");

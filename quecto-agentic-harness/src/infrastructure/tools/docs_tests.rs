@@ -256,3 +256,133 @@ async fn admission_broker_manual_is_discoverable_and_actionable() {
         }
     }
 }
+
+/// #2024 S5: the `setup` index is the first page of the manual and routes
+/// every situation to one area page, one goal command, one verification
+/// and one rollback — all of them concrete commands.
+#[tokio::test]
+async fn setup_index_is_first_and_routes_every_area() {
+    let tool = DocsTool::new();
+    let toc = tool.execute("{}").await.unwrap();
+    let first = toc
+        .content
+        .lines()
+        .find(|line| line.starts_with("- "))
+        .expect("table of contents lists pages");
+    assert!(
+        first.starts_with("- setup — Setting up quecto"),
+        "setup must be listed first: {first}"
+    );
+    assert!(tool.definition().description.contains("setup"));
+    let doc = lookup_doc("setup").expect("setup embed");
+    assert!(doc.len() < 10_000, "setup index is {} B", doc.len());
+    for needle in [
+        "quecto auth login --provider",
+        "quecto auth status",
+        "quecto config set agents.defaults.model",
+        "quecto config get --effective agents.defaults.model",
+        "quecto config unset agents.defaults.model",
+        "quecto config set --global admission",
+        "quecto admission-broker install-service",
+        "quecto admission-broker status",
+        "quecto admission-broker uninstall-service",
+        "quecto container init",
+        "quecto container doctor",
+        "quecto container status",
+        "quecto config unset --local container_configs.standard",
+        "docs {\"name\": \"config\"}",
+        "docs {\"name\": \"models\"}",
+        "docs {\"name\": \"admission-broker\"}",
+        "docs {\"name\": \"container-runtime\"}",
+        "docs {\"name\": \"swarm\"}",
+        "--show-secrets",
+        "QUECTO_BASE_DIR",
+    ] {
+        assert!(doc.contains(needle), "setup index misses {needle}");
+    }
+}
+
+/// #2024 S5: the four area pages are runbooks of one fixed shape, so an
+/// agent that follows one literally always knows what to run, what to
+/// expect, and how to undo it.
+#[test]
+fn area_pages_share_the_runbook_shape() {
+    for name in ["config", "models", "admission-broker", "container-runtime"] {
+        let doc = lookup_doc(name).expect("area embed");
+        for heading in [
+            "## Preconditions",
+            "## Do",
+            "## Verify",
+            "## Rollback",
+            "## If it fails",
+        ] {
+            assert!(doc.contains(heading), "{name} embed lacks {heading}");
+        }
+        assert!(
+            !doc.contains("container-config-trust"),
+            "{name} names the retired container trust record"
+        );
+    }
+    let models = lookup_doc("models").expect("models embed");
+    for needle in [
+        "quecto auth login --provider openai --token",
+        "quecto auth login --provider anthropic --token",
+        "--oauth",
+        "--device-code",
+        "quecto auth status",
+        "quecto auth logout --provider",
+        "quecto models discover",
+        "~/.quecto/models.json",
+        "quecto config set agents.defaults.model",
+        "quecto config set --global agents.defaults.model",
+        "\"persist\":\"local\"",
+    ] {
+        assert!(models.contains(needle), "models embed misses {needle}");
+    }
+    let config = lookup_doc("config").expect("config embed");
+    for needle in [
+        "quecto config trust",
+        "quecto config get --local",
+        "quecto config get --global",
+        "Overlay: ",
+        "(trusted)",
+        "(untrusted)",
+        "config-overlay-trust.json",
+        "global-only",
+    ] {
+        assert!(config.contains(needle), "config embed misses {needle}");
+    }
+    let container = lookup_doc("container-runtime").expect("container-runtime embed");
+    for needle in [
+        "quecto container init",
+        "podman build -t quecto-box:local",
+        "quecto container status",
+        "quecto container doctor",
+        "\"container\":true",
+        "get_containers",
+        "kill_container",
+        "init --refresh",
+        "## Trust boundary",
+        "## Upgrades",
+    ] {
+        assert!(
+            container.contains(needle),
+            "container-runtime embed misses {needle}"
+        );
+    }
+    let admission = lookup_doc("admission-broker").expect("admission-broker embed");
+    for needle in [
+        "quecto config set --global admission",
+        "quecto admission-broker install-service --dry-run",
+        "quecto admission-broker uninstall-service",
+        "quecto config unset --global admission",
+        "\"bindings\":{\"*\":\"account\"}",
+        "systemctl --user status quecto-admission-broker.service",
+        "not running for directory",
+    ] {
+        assert!(
+            admission.contains(needle),
+            "admission-broker embed misses {needle}"
+        );
+    }
+}

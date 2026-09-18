@@ -5,9 +5,10 @@ sessions and subagents for one user on one host. It is **disabled by default**:
 omitting `admission` leaves inference unbounded by this broker. When configured,
 an unreachable authority is an error, never an unbounded fallback.
 
-## Configure and start
+## Configuration reference
 
-Example config fragment (illustrative values, not vendor-safe defaults):
+The runbook (Preconditions → Do → Verify → Rollback → If it fails) is below;
+this section explains the fields. Example fragment (illustrative values, not vendor-safe defaults):
 
 ```json
 {
@@ -74,56 +75,72 @@ null` config binds the capability its parent registered and never has to match
 the published policy. `admission-broker status`, `reset`, `run`,
 `install-service` and `uninstall-service` address the **global** config
 (`<base_dir>/config.json`) or an explicit `--config <path>` / `--directory
-<dir>`, never the working-directory overlay, so the cwd no longer changes which
+<dir>`, never the working-directory overlay, so the cwd does not change which
 broker you address. Every output names the directory it addressed.
 
-### Runbook: enable admission from a prompt (fresh base directory)
+## Preconditions
 
-1. **Write the section** into the global config with the safe writer (S1 handles
-   nested objects):
-   ```sh
+- Linux with a systemd *user* session (`systemctl --user status` answers) for `install-service`; without one, run the broker under your own supervisor with `quecto admission-broker run --config <abs global config>`.
+- `quecto status` exits 0; its `Config:` line is the global file the section goes into (`QUECTO_BASE_DIR` moves it and the default `<base_dir>/admission` directory). The directory path must be short enough for a Unix socket (under ~100 characters).
+- No other broker holds `<base_dir>/admission` (a foreground `quecto admission-broker run` in a terminal, say): `quecto admission-broker status` → `not running for directory …`, exit 1, before you start.
+- You know which provider slots the runtime constructs; with a default binding (`"*"`) you need not list them.
+
+## Do
+
+1. **Write the section** into the global file (values are illustrative — measure your own; every group field is required):
+   ```
    quecto config set --global admission '{"groups":{"shared":{"capacity":4,"reserve":1,"min_interval_ms":250,"queue_capacity":64,"queue_timeout_ms":120000,"attempt_timeout_ms":900000,"fallback_base_ms":2000,"max_cooldown_ms":600000}},"aliases":{"account":"shared"},"bindings":{"*":"account"}}'
    ```
-   Expected: the command exits 0 and `quecto config get --global admission`
-   prints the section back. Rollback: `quecto config set --global admission null`.
-2. **Install the service** (systemd *user* unit `quecto-admission-broker.service`:
-   `After=basic.target`, `Restart=on-failure`, `RestartPreventExitStatus=3`,
-   `WantedBy=default.target`, quoted absolute paths):
-   ```sh
-   quecto admission-broker install-service --config ~/.quecto/config.json
+   Expected: `set admission in /home/me/.quecto/config.json`, exit 0. Never write it into a repo overlay (refused: global-only).
+2. **Plan, then install the service** (systemd user unit `quecto-admission-broker.service`: `ExecStart=… admission-broker run --config "<abs>"`, `After=basic.target`, `Restart=on-failure`, `RestartPreventExitStatus=3`, `WantedBy=default.target`):
    ```
-   Expected: `applied quecto-admission-broker.service (directory …/admission)`
-   listing "wrote unit …", "reloaded the user daemon", "enabled and started …".
-   It is idempotent: a second run reports "already up to date" and does not
-   rewrite the unit; a run with a changed binary or config path rewrites the
-   unit and reports "restarted … on the rewritten unit". Use `--dry-run` to
-   print the plan without touching systemd. Exit status 3 (`Busy`: another
-   broker — say a foreground `run` — holds the directory lock) is not
-   restarted: stop the other broker, then `systemctl --user restart
-   quecto-admission-broker.service`.
-   Rollback: `quecto admission-broker uninstall-service`.
-3. **Verify**:
-   ```sh
-   quecto admission-broker status
+   quecto admission-broker install-service --dry-run
+   quecto admission-broker install-service
    ```
-   Expected JSON names `directory`, `epoch: 1`, `journal_healthy: true` and zero
-   per-group counts. `status --directory <dir>` for a directory with no broker
-   exits 1 with "not running for directory …".
-4. **Reset** (recover after a stuck/uncertain group): `quecto admission-broker
-   reset` prints `{"directory":…,"epoch":N}`. Roots keep running; children are
-   respawned — see "Recovery: reset and broker restart" below.
-5. **Disable**: `quecto admission-broker uninstall-service` (idempotent; a second
-   run reports "no unit to remove"), then `quecto config set --global admission
-   null`.
+   Expected dry run:
+   ```
+   admission-broker: would apply quecto-admission-broker.service (directory /home/me/.quecto/admission)
+     - (dry run) write unit /home/me/.config/systemd/user/quecto-admission-broker.service
+     - (dry run) systemctl --user daemon-reload && enable --now quecto-admission-broker.service
+   ```
+   Expected install: `applied quecto-admission-broker.service (directory …/admission)` with "wrote unit …", "reloaded the user daemon", "enabled and started …". Idempotent: a second run reports "already up to date"; a changed binary or config path rewrites the unit and reports "restarted … on the rewritten unit". `--config <abs path>` pins another global file. Do not run `quecto admission-broker run` from a tool call: it stays in the foreground and ends with the call.
+3. **Restart agents** you want bounded: sessions started before the section existed compose without admission and keep running unbounded until restarted (a live reload never switches admission on or off — it reports the change and keeps the last-good runtime). Say this in your report; it includes the session you are running in.
 
-Troubleshoot: an unreachable authority makes `status` exit 1 naming the
-directory; check the service (`systemctl --user status
-quecto-admission-broker.service`) and that the effective directory matches.
-"restart required" only ever applies to a root: its own section changed on a
-live reload, or the broker came back publishing a different policy — never to
-a child (children inherit).
+## Verify
 
-### Recovery: reset and broker restart (what each process does, what you see)
+```
+quecto admission-broker status
+```
+
+Expected: `{"directory":"/home/me/.quecto/admission","epoch":1,"journal_healthy":true,"live_scopes":0,"groups":{"shared":{"active":0,"queued":0,"uncertain":0,"cooldown_until_ms":0,"unavailable":false}}}`, exit 0 (`epoch` grows by one per `reset`; `live_scopes` counts registered sessions). Then `systemctl --user status quecto-admission-broker.service` → `active (running)`, and a fresh `quecto agent --no-session -m "Reply with exactly OK"` → `OK` while `status` shows `live_scopes` back to 0 after it exits. In a session, `get_state.admission` carries `directory`, `epoch`, `connected: true`, `authorityStatus: "connected"`; the TUI footer shows the broker health.
+
+## Rollback
+
+```
+quecto admission-broker uninstall-service        # → applied … "disabled and stopped …", "removed unit …" (second run: "no unit to remove at …")
+quecto config unset --global admission           # → unset admission in /home/me/.quecto/config.json
+```
+
+Then restart agents (they composed against the policy). Order matters: remove the section and restart agents *before* stopping the broker if sessions must stay admitted until the end; removing selected bindings is not a bypass. `quecto config set --global admission null` also disables (the key stays, as null).
+
+## If it fails
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `admission-broker: config … not found; no \`admission\` section to address` / `no \`admission\` section is configured; nothing to address (or pass --directory)` | step 1 not done, or another base dir | `quecto config get --global admission`; check `QUECTO_BASE_DIR` |
+| `refusing to write …: \`admission\` is global-only …` | `config set` without `--global` | add `--global` |
+| `refusing to write …: the result is not a valid configuration: …` | a group field missing, `reserve >= capacity`, `fallback_base_ms > max_cooldown_ms`, an alias without a group, a binding to an unknown alias | fix the JSON; the file is unchanged |
+| `status` → `not running for directory … (admission transport failure: connect …/admin.sock: No such file or directory)`, exit 1 | broker not started, or a different directory than the one you expect | `systemctl --user status quecto-admission-broker.service`; `journalctl --user -u quecto-admission-broker.service -n 50`; compare the directory with `quecto config get --global admission.directory` |
+| `… path must be shorter than SUN_LEN` | the admission directory path is too long for a Unix socket | set `admission.directory` to a short absolute path outside the base dir's ancestors, reinstall |
+| `another admission authority owns …/authority.lock`, exit 3 (service not restarted: `RestartPreventExitStatus=3`) | a foreground `run` or an old service holds the lock | stop it, then `systemctl --user restart quecto-admission-broker.service` |
+| `install-service` → `systemctl` errors | no systemd user session (container, ssh without lingering) | `loginctl enable-linger $USER`, or supervise `quecto admission-broker run --config <abs>` yourself |
+| a new agent exits with `admission negotiation failed: admission authority unreachable at …/client/admission.sock … start \`quecto admission-broker run\` or remove the admission section` | section present, broker down | start the service, or roll back |
+| a session reports "restart required" | a root's own section changed on live reload, or the broker came back with a different policy | restart that session (never a child: children inherit) |
+| `journal_healthy: false` | the journal file is unwritable or corrupt | fix permissions/storage under the directory; never delete the journal to clear a queue |
+
+Recovery from a stuck or uncertain group is `quecto admission-broker reset` → `{"directory":…,"epoch":N}` plus a stderr warning; roots keep running, children are respawned — see below.
+
+## Recovery: reset and broker restart (what each process does, what you see)
 
 A **root session** (a top-level `quecto agent`) survives both a broker restart
 and a `reset` without being restarted. Its link notices the loss at once —
@@ -156,23 +173,18 @@ Spawn a replacement for that task — the parent's own link re-registers first,
 so the new child is minted a capability in the current epoch — and do not
 re-prompt the old child. Roots and the broker itself need nothing.
 
-Use the same effective config/base directory for the broker and agents:
+Foreground alternative (a terminal or your own supervisor, not a tool call):
 
 ```sh
-quecto admission-broker run
-# In another terminal:
-quecto admission-broker status
+quecto admission-broker run          # → admission authority ready: <dir>/client/admission.sock ; stays until SIGTERM/SIGINT
+quecto admission-broker status       # from another terminal
 ```
 
-`run` stays foreground until SIGTERM/SIGINT and prints
-`admission authority ready: <socket>`. A second broker on the directory exits
-with status 3. `run --directory <dir>` is accepted only when `<dir>` is the
-directory the config names (it cannot serve a policy on its own) and refused
-loudly otherwise. Start the broker before agents; restart agents after
-configuration changes (admission policy cannot change by live reload; a broker
-restarted with a changed policy makes running roots fail closed with "restart
-required"). Fresh status has `journal_healthy: true`, an epoch, and zero
-per-group counts.
+A second broker on the directory exits with status 3. `run --directory <dir>`
+is accepted only when `<dir>` is the directory the config names. Start the
+broker before agents; restart agents after policy changes (admission policy
+cannot change by live reload; a broker restarted with a changed policy makes
+running roots fail closed with "restart required").
 
 ## Parallel spawn and queue inspection
 

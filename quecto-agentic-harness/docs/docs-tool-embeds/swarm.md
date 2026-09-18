@@ -26,6 +26,17 @@ containers to evade its limit. See `docs {"name":"subagents"}` for launching.
   host: `swarm` there fails with `swarm is container-only`. A config on the
   wrong adapter fails at `op=create`, not at spawn — check the config's
   `create` argv first (`quecto config get --effective container_configs`).
+- **Setup (preconditions → verify).** The standard container written by
+  `quecto container init` is that adapter (its `create.sh` sets
+  `QUECTO_SWARM_CONTAINER=isolated-pid-v1` and the checkout): follow
+  `docs {"name": "container-runtime"}` until `quecto container status` ends
+  with `ready:` and `quecto container doctor` exits 0, then spawn the
+  coordinator with `"container":{"mode":"new","container_config":"standard"}`.
+  Verify: the spawn result names `container_config=standard`; the
+  coordinator's `swarm op=create` succeeds; `agent_cmd get_containers` lists
+  the environment `running`. Rollback: `kill_container` (the container is
+  `retained` after a run ends and needs it), then the container-runtime
+  rollback if the repo should lose its config.
 
 ## Python versus external commands
 
