@@ -235,6 +235,16 @@ fn an_unreadable_store_yields_an_empty_registry_that_still_allocates_through_the
     assert!(read_error.contains("corrupt"), "{report:?}");
     assert_eq!(registry.mint_ref().unwrap(), "C1");
     assert_eq!(*store.next.lock().unwrap(), 1);
+    // Round 2 F-B (#2033): the registry carries the error — a lookup of
+    // a ref it could not have loaded answers with it, not `unknown`.
+    assert_eq!(registry.read_error(), Some(read_error));
+    let lookup = registry
+        .resolve(&crate::domain::environment_registry::EnvironmentTarget::Ref("C7".into()))
+        .unwrap_err();
+    assert_eq!(
+        lookup.to_string(),
+        format!("registry unreadable: {read_error}")
+    );
 }
 
 #[test]

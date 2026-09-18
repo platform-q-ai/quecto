@@ -120,17 +120,21 @@ impl RestoreRegistry {
     /// nothing this session creates can collide with what it could not
     /// read — creates are refused instead (review F9, #2033).
     pub fn execute(&self, session: &str) -> (EnvironmentRegistry, RestoredRegistry) {
-        let registry = EnvironmentRegistry::with_journal(self.journal(), session);
         let mut report = RestoredRegistry::default();
         let records = match self.store.load() {
             Ok(records) => records,
             Err(error) => {
-                report.read_error = Some(format!(
-                    "durable environment registry could not be read: {error}"
-                ));
+                let read_error = format!("durable environment registry could not be read: {error}");
+                // The registry carries the error itself (round 2 F-B,
+                // #2033): the model's listing shows it and a lookup of
+                // anything this session did not create answers with it.
+                let registry =
+                    EnvironmentRegistry::unreadable(self.journal(), session, &read_error);
+                report.read_error = Some(read_error);
                 return (registry, report);
             }
         };
+        let registry = EnvironmentRegistry::with_journal(self.journal(), session);
         let mut restored = Vec::with_capacity(records.len());
         for record in records {
             let loaded_status = record.status.clone();

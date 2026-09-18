@@ -381,6 +381,13 @@ async fn spawn_script_managed_child(
             }
             Err(EnvironmentLookupError::Unknown(_) | EnvironmentLookupError::Stopped(_)) => {}
             Err(EnvironmentLookupError::Stale(_)) => {}
+            // Whether the name is free cannot be known (round 2 F-B, #2033);
+            // the mint below would refuse the same way, in the same words.
+            Err(error @ EnvironmentLookupError::Unreadable(_)) => {
+                return Err(DomainError::Tool(format!(
+                    "container create refused: {error}; repair (or move aside) the base directory's environments.json and retry"
+                )));
+            }
         }
     }
     // A durable registry that cannot allocate refuses the create (review

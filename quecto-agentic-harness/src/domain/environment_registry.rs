@@ -55,6 +55,10 @@ pub enum EnvironmentLookupError {
     Ambiguous(String),
     Stopped(String),
     Stale(String),
+    /// The durable registry could not be read at startup (round 2 F-B,
+    /// #2033): a target this session did not create is not unknown, it is
+    /// unknowable, and the store's own account says why.
+    Unreadable(String),
 }
 
 impl std::fmt::Display for EnvironmentLookupError {
@@ -67,6 +71,7 @@ impl std::fmt::Display for EnvironmentLookupError {
                 f,
                 "environment '{t}' is stale: cleanup is pending or failed; retry kill_container"
             ),
+            Self::Unreadable(error) => write!(f, "registry unreadable: {error}"),
         }
     }
 }
@@ -248,6 +253,11 @@ struct EnvironmentRegistryState {
     /// what was loaded, then what this registry last wrote (or learnt it
     /// was superseded by). The expectation each journal write is made on.
     journalled: BTreeMap<String, EnvironmentStatus>,
+    /// Refs whose [`KillClaim`] this session holds. While one is
+    /// outstanding the claim is the authority on the record's status: a
+    /// journal write it supersedes updates what the journal is known to
+    /// hold, never the in-memory `killing` (round 2 F-A, #2033).
+    kill_claims: std::collections::BTreeSet<String>,
 }
 
 /// Cloneable handle to one session's environment registry.
@@ -263,6 +273,11 @@ pub struct EnvironmentRegistry {
     /// Key of the session this registry belongs to; stamped on every
     /// record it creates.
     session: Arc<str>,
+    /// Why the durable store could not be read at startup (round 2 F-B,
+    /// #2033): set, the registry holds only what this session created,
+    /// every other lookup answers with this error, and the listing
+    /// carries it as a diagnostic.
+    read_error: Option<Arc<str>>,
 }
 
 impl EnvironmentRegistry {
@@ -278,7 +293,26 @@ impl EnvironmentRegistry {
             journal: Some(journal),
             journal_order: Arc::default(),
             session: Arc::from(session),
+            read_error: None,
         }
+    }
+
+    /// A durable registry whose store could not be read (round 2 F-B,
+    /// #2033): it journals what this session creates like any other, but
+    /// resolves nothing it did not create — those lookups answer with
+    /// `error`, the store's own account — and reports the error through
+    /// [`Self::read_error`].
+    pub fn unreadable(journal: EnvironmentJournal, session: &str, error: &str) -> Self {
+        Self {
+            read_error: Some(Arc::from(error)),
+            ..Self::with_journal(journal, session)
+        }
+    }
+
+    /// Why the durable store could not be read at startup, when it could
+    /// not: what the listing shows and every miss answers with.
+    pub fn read_error(&self) -> Option<&str> {
+        self.read_error.as_deref()
     }
 
     /// The session this registry creates environments for.
@@ -381,12 +415,26 @@ impl EnvironmentRegistry {
         if record.origin != EnvironmentOrigin::Restored {
             return;
         }
-        let known = match outcome {
-            JournalWrite::Written => record.status,
-            JournalWrite::Superseded { current } => current,
+        let (known, adopt) = match outcome {
+            JournalWrite::Written => (record.status, false),
+            JournalWrite::Superseded { current } => (current, true),
             JournalWrite::Unavailable => return,
         };
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        // What superseded the write stands in memory as well (round 2
+        // F-A, #2033): a later non-transition write (an inspect outcome)
+        // then carries the file's status, never a stale one back onto the
+        // file, and the listing shows what stands. Except while this
+        // session holds the record's kill claim — the claim is the
+        // authority until `complete_kill`/`fail_kill`/`retain` settle it
+        // (a claim's write superseded by a `stopped` elsewhere still
+        // settles as this session's kill found things).
+        if adopt
+            && !state.kill_claims.contains(environment_ref)
+            && let Some(record) = state.entries.get_mut(environment_ref)
+        {
+            record.status = known.clone();
+        }
         state.journalled.insert(environment_ref.to_string(), known);
     }
 
@@ -402,6 +450,7 @@ impl EnvironmentRegistry {
             .inspect_claims
             .retain(|(env_ref, _)| env_ref != environment_ref);
         state.inspect_failures.remove(environment_ref);
+        state.kill_claims.remove(environment_ref);
         let removed = state.entries.remove(environment_ref);
         drop(state);
         if removed.is_some()
@@ -429,7 +478,14 @@ impl EnvironmentRegistry {
         target: &EnvironmentTarget,
     ) -> Result<EnvironmentRecord, EnvironmentLookupError> {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        Self::resolve_locked(&state, target)
+        match (Self::resolve_locked(&state, target), &self.read_error) {
+            // Nothing is known of what the store holds: a miss is not an
+            // unknown target, it is the store's read error (round 2 F-B).
+            (Err(EnvironmentLookupError::Unknown(_)), Some(error)) => {
+                Err(EnvironmentLookupError::Unreadable(error.to_string()))
+            }
+            (resolved, _) => resolved,
+        }
     }
 
     /// Resolve a target for joining: the environment must be live. Stopped
@@ -538,6 +594,7 @@ impl EnvironmentRegistry {
             && record.origin == EnvironmentOrigin::Created
         {
             record.status = EnvironmentStatus::Killing;
+            state.kill_claims.insert(environment_ref.to_string());
             drop(state);
             self.journal_ref(environment_ref);
             Ok(Some(KillClaim {
@@ -572,6 +629,7 @@ impl EnvironmentRegistry {
             let claim = KillClaim {
                 environment_ref: record.environment_ref.clone(),
             };
+            state.kill_claims.insert(environment_ref.to_string());
             drop(state);
             self.journal_ref(environment_ref);
             return Ok(claim);
@@ -596,6 +654,7 @@ impl EnvironmentRegistry {
         // A successful kill clears a previous KILL error, but never a
         // truthfully persisted inspect failure (#1369 slice 3).
         let keep_error = state.inspect_failures.contains(&claim.environment_ref);
+        state.kill_claims.remove(&claim.environment_ref);
         if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
             record.status = EnvironmentStatus::Stopped;
             record.members.clear();
@@ -675,6 +734,7 @@ impl EnvironmentRegistry {
     /// `retained`, until an explicit `kill_container`.
     pub fn retain(&self, claim: KillClaim, reason: &str) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.kill_claims.remove(&claim.environment_ref);
         if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
             debug_assert_eq!(record.status, EnvironmentStatus::Killing);
             record.status = EnvironmentStatus::Retained;
@@ -692,6 +752,7 @@ impl EnvironmentRegistry {
     /// Persist a retryable cleanup-failed state with an actionable error.
     pub fn fail_kill(&self, claim: KillClaim, error: &str) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.kill_claims.remove(&claim.environment_ref);
         if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
             record.status = EnvironmentStatus::CleanupFailed;
             record.last_error = Some(error.to_string());

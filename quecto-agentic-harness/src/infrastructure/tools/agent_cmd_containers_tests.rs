@@ -343,6 +343,51 @@ fn get_containers_marks_restored_environments_with_their_creating_session() {
     );
 }
 
+/// Round 2 F-B (#2033): when the durable registry could not be read the
+/// model is told so in `diagnostics` — an empty fleet would be a lie — and
+/// a kill of a ref the session could not have loaded names the read error.
+#[test]
+fn get_containers_carries_the_registry_read_error_as_a_diagnostic() {
+    use crate::domain::environment_registry::EnvironmentJournal;
+    let journal = EnvironmentJournal {
+        allocate_ref: Arc::new(|| Ok(1)),
+        recorded: Arc::new(|_, _| crate::domain::environment_registry::JournalWrite::Written),
+        forgotten: Arc::new(|_| {}),
+    };
+    let registry = EnvironmentRegistry::unreadable(journal, "s", "environments.json: corrupt");
+    let query = Arc::new(ListEnvironmentsQuery::new(registry.clone()));
+    let kill_use_case = use_case(registry);
+    let listing = block_on(execute_container_command(
+        Some(&query),
+        Some(&kill_use_case),
+        None,
+        &serde_json::json!({"agent_id":"*","command":"get_containers"}),
+    ));
+    assert!(!listing.is_error, "{}", listing.content);
+    let parsed: serde_json::Value = serde_json::from_str(&listing.content).unwrap();
+    assert_eq!(parsed["containers"], serde_json::json!([]));
+    assert_eq!(
+        parsed["diagnostics"],
+        serde_json::json!([
+            "registry unreadable: environments.json: corrupt; only environments this session created are listed"
+        ])
+    );
+    let kill = block_on(execute_container_command(
+        Some(&query),
+        Some(&kill_use_case),
+        None,
+        &serde_json::json!({"agent_id":"*","command":"kill_container","ref":"C7"}),
+    ));
+    assert!(kill.is_error);
+    assert!(
+        kill.content
+            .contains("registry unreadable: environments.json: corrupt"),
+        "{}",
+        kill.content
+    );
+    assert!(!kill.content.contains("unknown"), "{}", kill.content);
+}
+
 struct FixedRoster(crate::application::environments::ports::ContainerConfigRosterReport);
 
 impl crate::application::environments::ports::ContainerConfigRoster for FixedRoster {

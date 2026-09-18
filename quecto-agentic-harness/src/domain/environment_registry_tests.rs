@@ -305,6 +305,17 @@ fn restored_records_are_journalled_compare_and_set_on_the_last_known_status() {
     let claim = registry.begin_inspect("C2", "observer-2").unwrap();
     registry.record_inspect_failure(claim, "late");
     *superseded.lock().unwrap() = false;
+    // Round 2 F-A (#2033): what superseded the write is adopted in memory
+    // too, so a later non-transition write carries the file's status —
+    // never the stale `running` back onto a `retained` record — and the
+    // listing shows what stands on file.
+    assert_eq!(
+        registry.get("C2").unwrap().status,
+        EnvironmentStatus::Retained,
+        "the superseding status is adopted in memory"
+    );
+    let claim = registry.begin_inspect("C2", "observer-3").unwrap();
+    registry.record_inspect_failure(claim, "later");
     let claim = registry.begin_kill("C2").unwrap();
     registry.complete_kill(claim);
     assert_eq!(
@@ -313,8 +324,129 @@ fn restored_records_are_journalled_compare_and_set_on_the_last_known_status() {
             "C9:empty?-",
             "C2:running?empty",
             "C2:running?empty",
+            "C2:retained?retained",
             "C2:killing?retained",
             "C2:stopped?killing",
         ]
+    );
+}
+
+/// Round 2 F-A (#2033): while this session holds the kill claim, a
+/// superseded write does not overwrite `killing` in memory — the claim is
+/// the authority until `complete_kill`/`fail_kill` settle it, and the
+/// settling write expects what superseded the claim's write.
+#[test]
+fn a_superseded_write_never_overwrites_an_outstanding_kill_claim() {
+    for settle_by_failure in [false, true] {
+        let (mut journal, recorded, _) = test_journal();
+        let superseded = Arc::new(Mutex::new(false));
+        journal.recorded = Arc::new({
+            let recorded = recorded.clone();
+            let superseded = superseded.clone();
+            move |record: &EnvironmentRecord, expected: Option<&EnvironmentStatus>| {
+                recorded.lock().unwrap().push(format!(
+                    "{}:{}?{}",
+                    record.environment_ref,
+                    record.status_label(),
+                    expected.map(expected_label).unwrap_or("-")
+                ));
+                if *superseded.lock().unwrap() {
+                    JournalWrite::Superseded {
+                        current: EnvironmentStatus::Stopped,
+                    }
+                } else {
+                    JournalWrite::Written
+                }
+            }
+        });
+        let registry = EnvironmentRegistry::with_journal(journal, "joiner");
+        registry.restore(vec![record("C2", "env-two")]);
+        *superseded.lock().unwrap() = true;
+        let claim = registry.begin_kill("C2").unwrap();
+        assert_eq!(
+            registry.get("C2").unwrap().status,
+            EnvironmentStatus::Killing,
+            "the claim holder's killing stands while the claim is outstanding"
+        );
+        *superseded.lock().unwrap() = false;
+        if settle_by_failure {
+            registry.fail_kill(claim, "boom");
+            assert_eq!(
+                registry.get("C2").unwrap().status,
+                EnvironmentStatus::CleanupFailed
+            );
+            assert_eq!(
+                recorded.lock().unwrap().as_slice(),
+                ["C2:killing?empty", "C2:cleanup-failed?stopped"]
+            );
+        } else {
+            registry.complete_kill(claim);
+            assert_eq!(
+                registry.get("C2").unwrap().status,
+                EnvironmentStatus::Stopped
+            );
+            assert_eq!(
+                recorded.lock().unwrap().as_slice(),
+                ["C2:killing?empty", "C2:stopped?stopped"]
+            );
+        }
+        // The claim is settled: a later superseded write adopts again.
+        *superseded.lock().unwrap() = true;
+        let claim = registry.begin_inspect("C2", "late").unwrap();
+        registry.record_inspect_failure(claim, "late");
+        assert_eq!(
+            registry.get("C2").unwrap().status,
+            EnvironmentStatus::Stopped
+        );
+    }
+}
+
+/// Round 2 F-B (#2033): a registry whose durable store could not be read
+/// says so on every lookup that would otherwise answer `unknown` — nothing
+/// is known, which is not the same as nothing existing — and carries the
+/// error for the listing.
+#[test]
+fn an_unreadable_registry_answers_lookups_with_the_read_error_not_unknown() {
+    let (journal, _, _) = test_journal();
+    let registry =
+        EnvironmentRegistry::unreadable(journal, "s", "environments.json: permission denied");
+    assert_eq!(
+        registry.read_error(),
+        Some("environments.json: permission denied")
+    );
+    let by_ref = registry
+        .resolve(&EnvironmentTarget::Ref("C3".into()))
+        .unwrap_err();
+    assert_eq!(
+        by_ref,
+        EnvironmentLookupError::Unreadable("environments.json: permission denied".into())
+    );
+    assert_eq!(
+        by_ref.to_string(),
+        "registry unreadable: environments.json: permission denied"
+    );
+    assert!(matches!(
+        registry
+            .resolve_joinable(&EnvironmentTarget::Name("box".into()))
+            .unwrap_err(),
+        EnvironmentLookupError::Unreadable(_)
+    ));
+    // What this session itself committed still resolves.
+    registry.commit(record("C1", "env-one"));
+    assert_eq!(
+        registry
+            .resolve(&EnvironmentTarget::Ref("C1".into()))
+            .unwrap()
+            .environment_id,
+        "env-one"
+    );
+    // A readable registry keeps answering unknown.
+    let readable = EnvironmentRegistry::new();
+    assert_eq!(readable.read_error(), None);
+    assert_eq!(
+        readable
+            .resolve(&EnvironmentTarget::Ref("C3".into()))
+            .unwrap_err(),
+        EnvironmentLookupError::Unknown("C3".into())
     );
 }
