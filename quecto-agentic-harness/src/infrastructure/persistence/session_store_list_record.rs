@@ -1,6 +1,6 @@
-//! One admitted record of the summary walk: the cached summary when its
-//! signature is unchanged, else one header read validated against the
-//! layout. Every skip is logged — a hand-renamed or symlinked file, an
+//! One admitted record of the summary walk: what the cache holds for its
+//! unchanged stamp — a summary or a remembered failure — else one header
+//! read validated against the layout. Every skip is logged — a hand-renamed or symlinked file, an
 //! unreadable or invalid one, a file replaced mid-read — so no record ever
 //! vanishes from the list silently.
 use crate::domain::message::Role;
@@ -25,14 +25,26 @@ pub(super) fn summary_of(
             return None;
         }
     };
-    if let Some((_, summary)) = cache
-        .entries
-        .get(path)
-        .filter(|(version, _)| *version == before)
-    {
-        return Some(summary.clone());
+    if let Some((_, known)) = cache.entries.get(path).filter(|(at, _)| *at == before) {
+        // A version that could not be summarised is not read again either.
+        return known.clone();
     }
     cache.reads += 1;
+    let summary = read_summary(layout, path, &before);
+    if !stamp(path).is_ok_and(|after| before == after) {
+        skipped(path, "session file changed while listing", &"retry");
+        return None;
+    }
+    let version = (before, summary.clone());
+    cache.entries.insert(path.to_path_buf(), version);
+    summary
+}
+
+fn read_summary(
+    layout: &FlatSessionLayout,
+    path: &std::path::Path,
+    stamp: &[u64],
+) -> Option<SessionSummary> {
     let content = match std::fs::read_to_string(path) {
         Ok(content) => content,
         Err(error) => {
@@ -49,22 +61,11 @@ pub(super) fn summary_of(
     };
     let identity = SessionIdentity::from_persisted_key(header.key.as_ref());
     if layout.session_file(&identity) != path {
-        skipped(
-            path,
-            "session file name does not match its key",
-            &format_args!("key {:?}", header.key),
-        );
+        let key = format!("key {:?}", header.key);
+        skipped(path, "session file name does not match its key", &key);
         return None;
     }
-    if !stamp(path).is_ok_and(|after| before == after) {
-        skipped(path, "session file changed while listing", &"retry");
-        return None;
-    }
-    let summary = summarize(header, identity, &before);
-    cache
-        .entries
-        .insert(path.to_path_buf(), (before, summary.clone()));
-    Some(summary)
+    Some(summarize(header, identity, stamp))
 }
 
 fn skipped(path: &std::path::Path, why: &str, detail: &dyn std::fmt::Display) {

@@ -116,6 +116,18 @@ async fn the_metadata_query_sees_exactly_the_sessions_and_homes_a_listing_sees()
             "{pass}: {:?}",
             snapshot.diagnostics
         );
+        // R1-H4: a sidecar that needs repair is named, as a record is.
+        let sidecar = world.layout.home_file(&identity("cli:broken"));
+        let sidecar = sidecar.file_name().unwrap().to_string_lossy().into_owned();
+        let repairs = snapshot.diagnostics.iter();
+        let repairs: Vec<_> = repairs
+            .filter(|d| d.contains("home needs repair"))
+            .collect();
+        assert_eq!(repairs.len(), 1, "{pass}: {repairs:?}");
+        assert!(
+            repairs[0].starts_with(&format!("{sidecar}: home needs repair: ")),
+            "{pass}: {repairs:?}"
+        );
     }
 }
 
@@ -312,6 +324,40 @@ async fn two_thousand_records_are_searched_without_reading_a_transcript() {
         store.save(&session).await.unwrap();
         store.release(&id);
     }
+    // R1-H1: two records that can never be summarised strictly — one neither
+    // half can parse (an unterminated snapshot), one large append cut short
+    // (the walk lists it, the strict catalogue rejects it). A failure is
+    // cached by stamp exactly as a success is.
+    let rot = layout.session_file(&identity("chat-rot"));
+    std::fs::write(
+        &rot,
+        br#"{"key":"chat-rot","messages":[{"role":"user","content":"AAAA"#,
+    )
+    .unwrap();
+    let cut_id = identity("chat-cut");
+    let mut cut = Session::new(cut_id.clone());
+    cut.messages.push(Message::user("cut short title"));
+    store.save(&cut).await.unwrap();
+    store.release(&cut_id);
+    let cut = layout.session_file(&cut_id);
+    let mut bytes = std::fs::read(&cut).unwrap();
+    bytes.extend_from_slice(
+        b"\n{\"type\":\"append\",\"messages\":[{\"role\":\"user\",\"content\":\"",
+    );
+    bytes.extend(std::iter::repeat_n(b'A', 2 << 20));
+    std::fs::write(&cut, bytes).unwrap();
+    let named_once = |found: &SearchSessionMetadataResult, pass: &str| {
+        for file in [&rot, &cut] {
+            let name = file.file_name().unwrap().to_string_lossy().into_owned();
+            let lines = found.freshness.diagnostics.iter();
+            let named = lines.filter(|d| d.starts_with(&name)).count();
+            assert_eq!(
+                named, 1,
+                "{pass}: {name}: {:?}",
+                found.freshness.diagnostics
+            );
+        }
+    };
     let catalogue = Arc::new(FileSessionHomeCatalogue::with_store(store.clone()));
     let mut home = session_home_in(store.clone(), Ok(here.clone()));
     home.catalogue = catalogue.clone();
@@ -322,12 +368,17 @@ async fn two_thousand_records_are_searched_without_reading_a_transcript() {
         ..Default::default()
     };
     let first = warm.search(&ask("number-0042")).await.unwrap();
-    assert_eq!((first.rows.len(), first.searched), (1, count));
+    assert_eq!((first.rows.len(), first.searched), (1, count + 1));
+    named_once(&first, "first");
     let reads = (
         catalogue.transcript_reads(),
         store.summary_transcript_reads(),
     );
-    assert_eq!(reads.0, count, "a fresh index validates each record once");
+    assert_eq!(
+        reads,
+        (count + 2, count + 2),
+        "a fresh index validates each record once, the two bad ones included"
+    );
     let started = std::time::Instant::now();
     for (query, expected) in [
         ("number-19", 100),
@@ -337,6 +388,7 @@ async fn two_thousand_records_are_searched_without_reading_a_transcript() {
     ] {
         let found = warm.search(&ask(query)).await.unwrap();
         assert_eq!(found.total_matches, expected, "{query}");
+        named_once(&found, query);
     }
     let elapsed = started.elapsed();
     assert_eq!(
@@ -359,6 +411,13 @@ async fn two_thousand_records_are_searched_without_reading_a_transcript() {
     let cold = SearchSessionMetadata::new(home);
     let found = cold.search(&ask("number-1999")).await.unwrap();
     assert_eq!(found.rows.len(), 1);
+    named_once(&found, "cold");
+    let cut_row = cold.search(&ask("cut short")).await.unwrap();
+    assert_eq!(
+        keys(&cut_row),
+        ["chat-cut"],
+        "a rejected record stays findable"
+    );
     assert_eq!(found.rows[0].session.home, SessionHomeScope::LegacyUnscoped);
     assert_eq!(
         (

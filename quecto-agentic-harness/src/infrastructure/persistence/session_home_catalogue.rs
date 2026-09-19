@@ -30,6 +30,12 @@ mod session_home_catalogue_index;
 use session_home_catalogue_index::{Catalogue, HomeEntry, IndexEntry, IndexHome, SummaryEntry};
 #[path = "session_home_catalogue_metadata.rs"]
 mod session_home_catalogue_metadata;
+#[path = "session_home_catalogue_rejections.rs"]
+pub(super) mod session_home_catalogue_rejections;
+use session_home_catalogue_rejections::{RejectedEntry, RejectedIndex, Rejections};
+#[path = "session_home_catalogue_seed.rs"]
+mod session_home_catalogue_seed;
+pub(super) use session_home_catalogue_seed::{WalkEntries, persisted_walk};
 
 #[derive(Clone)]
 pub struct FileSessionHomeCatalogue {
@@ -37,6 +43,8 @@ pub struct FileSessionHomeCatalogue {
     store: std::sync::Arc<FileSessionStore>,
     published: std::sync::Arc<std::sync::Mutex<Published>>,
     projection: std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, Projection>>>,
+    /// Records rejected at a stamp (R1-H1); never locked with `projection`.
+    rejections: std::sync::Arc<std::sync::Mutex<Rejections>>,
     transcript_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 /// One validated record, keyed in the projection by the identity's own
@@ -91,6 +99,7 @@ impl FileSessionHomeCatalogue {
             store,
             published: Default::default(),
             projection: Default::default(),
+            rejections: Default::default(),
             transcript_reads: Default::default(),
         }
     }
@@ -105,18 +114,19 @@ impl FileSessionHomeCatalogue {
             diagnostics: Vec::new(),
             rebuilt: false,
         };
-        let mut records = BTreeMap::new();
+        let (mut records, mut rejected) = (BTreeMap::new(), RejectedIndex::new());
         let entries = match std::fs::read_dir(self.layout.sessions_dir()) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok((Catalogue::new(records), result));
+                return Ok((Catalogue::new(records, rejected), result));
             }
             Err(e) => return Err(error(e)),
         };
         for entry in entries {
             match entry {
                 Ok(entry) if FlatSessionLayout::is_session_record(&entry.path()) => {
-                    self.scan_record(entry.path(), &mut records, &mut result)
+                    let path = entry.path();
+                    rejected.extend(self.scan_record(&path, &mut records, &mut result));
                 }
                 Ok(_) => (),
                 Err(e) => result
@@ -126,7 +136,24 @@ impl FileSessionHomeCatalogue {
         }
         self.publish_stable_rows(&mut records, &mut result)?;
         result.entries.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok((Catalogue::new(records), result))
+        Ok((Catalogue::new(records, rejected), result))
+    }
+    /// The index entry of a record this scan found rejected at its stamp,
+    /// with what the store's walk made of that same version.
+    fn rejected_entry(&self, path: &std::path::Path) -> Option<(String, RejectedEntry)> {
+        let (name, stamp, reason) = self.rejections.lock().ok()?.entry(path)?;
+        // Only a rejection of the version on disk now (not a changed file).
+        self::stamp(path)
+            .is_ok_and(|now| now == stamp)
+            .then_some(())?;
+        let listed = self.store.summary_at(path, &stamp);
+        let entry = RejectedEntry {
+            unlisted: self.store.unlisted_at(path, &stamp),
+            listed: listed.map(|s| (s.key, s.title, s.message_count)),
+            reason,
+            stamp,
+        };
+        Some((name, entry))
     }
     fn publish_stable_rows(
         &self,
@@ -160,27 +187,34 @@ impl FileSessionHomeCatalogue {
             }
         });
         projection.retain(|path, _| path.exists());
+        drop(projection);
+        self.rejections.lock().map_err(error)?.retain_existing();
         Ok(())
     }
     fn scan_record(
         &self,
-        path: PathBuf,
+        path: &PathBuf,
         records: &mut Records,
         result: &mut HomeCatalogueSnapshot,
-    ) {
-        match self.projected_identity(&path) {
+    ) -> Option<(String, RejectedEntry)> {
+        match self.projected_identity(path) {
             Ok(identity) => {
-                let home = self.observe_home(&path, &identity, records);
+                let home = self.observe_home(path, &identity, records);
                 debug_assert!(
                     indexed_home_matches(records, &identity, &home),
                     "published home observation must match its index entry"
                 );
                 if let SessionHomeScope::Unavailable(reason) = &home {
+                    // Named like a record (R1-H4): N broken sidecars are N
+                    // distinguishable lines.
+                    let sidecar = self.layout.home_file(&identity);
+                    let file = sidecar.file_name().unwrap_or_default().to_string_lossy();
                     result
                         .diagnostics
-                        .push(format!("home needs repair: {reason}"));
+                        .push(format!("{file}: home needs repair: {reason}"));
                 }
                 result.entries.push((identity, home));
+                None
             }
             // Name the record file (basename only) so a corrupt legacy
             // transcript can be found and repaired from the diagnostic alone.
@@ -192,6 +226,7 @@ impl FileSessionHomeCatalogue {
                 result
                     .diagnostics
                     .push(format!("{file}: session record unavailable: {e}"));
+                self.rejected_entry(path)
             }
         }
     }
@@ -202,28 +237,35 @@ impl FileSessionHomeCatalogue {
         if let Some(identity) = self.cached_if_current(path, &before)? {
             return Ok(identity);
         }
+        let rejected = self.rejections.lock().map_err(error)?.at(path, &before);
+        if let Some(rejection) = rejected {
+            return Err(rejection);
+        }
         self.transcript_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let bytes = std::fs::read(path).map_err(error)?;
-        let identity = identity_from_transcript(&bytes, path, &self.layout)?;
-        super::session_store::session_store_catalogue::validate_catalogue_record(&bytes)?;
-        debug_assert_eq!(self.layout.session_file(&identity), *path);
-        let after = stamp(path)?;
-        if before == after {
-            self.projection.lock().map_err(error)?.insert(
-                path.clone(),
-                Projection {
+        let outcome = session_home_catalogue_rejections::read_validated(path, &self.layout);
+        // Success and failure alike are remembered only for a stable file.
+        let after = session_home_catalogue_rejections::stable(path, &before)?;
+        match outcome {
+            Ok(identity) => {
+                let entry = IndexEntry {
+                    stamp: after,
+                    home: None,
+                    summary: None,
+                };
+                let projected = Projection {
                     identity: identity.clone(),
-                    entry: IndexEntry {
-                        stamp: after,
-                        home: None,
-                        summary: None,
-                    },
-                },
-            );
-            Ok(identity)
-        } else {
-            Err(error("session changed during catalogue validation"))
+                    entry,
+                };
+                let mut projection = self.projection.lock().map_err(error)?;
+                projection.insert(path.clone(), projected);
+                Ok(identity)
+            }
+            Err(rejection) => {
+                let mut rejections = self.rejections.lock().map_err(error)?;
+                rejections.record(path, after, &rejection);
+                Err(rejection)
+            }
         }
     }
     fn cached_if_current(
@@ -302,10 +344,13 @@ impl FileSessionHomeCatalogue {
     /// is keyed by its own identity's layout path and reused only while the
     /// file still carries the recorded stamp.
     fn seed_projection(&self, index: &Catalogue) -> Result<(), DomainError> {
+        let mut rejections = self.rejections.lock().map_err(error)?;
+        rejections.seed(&self.layout, &index.rejected);
+        drop(rejections);
         let mut projection = self.projection.lock().map_err(error)?;
         projection.clear();
         for (key, entry) in &index.records {
-            let identity = SessionIdentity::from_persisted_key(key.as_str());
+            let identity = persisted_identity(key.as_str());
             if identity.persisted_key().is_some() && entry.stamp.len() == STAMP_LEN {
                 projection.insert(
                     self.layout.session_file(&identity),
@@ -319,72 +364,10 @@ impl FileSessionHomeCatalogue {
         Ok(())
     }
 }
-/// The listing summaries the persisted index carries, keyed by record path
-/// with the stamp each was validated at, for the store's summary walk to seed
-/// from; an absent, unreadable or incompatible index seeds nothing. The walk
-/// re-stamps every file, so a stale entry is read again, never trusted.
-pub(super) fn persisted_summaries(
-    layout: &FlatSessionLayout,
-) -> BTreeMap<PathBuf, (Vec<u64>, crate::domain::session::SessionSummary)> {
-    let Ok(bytes) = std::fs::read(layout.home_catalogue_file()) else {
-        return BTreeMap::new();
-    };
-    let Ok(index) = Catalogue::decode(&bytes) else {
-        return BTreeMap::new();
-    };
-    index
-        .records
-        .into_iter()
-        .filter_map(|(key, entry)| {
-            let summary = entry.summary?;
-            let identity = SessionIdentity::from_persisted_key(key.as_str());
-            if identity.persisted_key().is_none() || entry.stamp.len() != STAMP_LEN {
-                return None;
-            }
-            let path = layout.session_file(&identity);
-            let summary = crate::domain::session::SessionSummary {
-                key,
-                identity,
-                title: summary.title,
-                message_count: summary.message_count,
-                updated_unix_secs: Some(entry.stamp[4]),
-            };
-            Some((path, (entry.stamp, summary)))
-        })
-        .collect()
-}
-fn identity_from_transcript(
-    bytes: &[u8],
-    path: &std::path::Path,
-    layout: &FlatSessionLayout,
-) -> Result<SessionIdentity, DomainError> {
-    let value: serde_json::Value = match serde_json::from_slice(bytes) {
-        Ok(value) => value,
-        Err(_) => first_jsonl_value(bytes)?,
-    };
-    let key = value
-        .get("key")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| error("record has no key"))?;
-    let identity = SessionIdentity::from_persisted_key(key);
-    if layout.session_file(&identity) == path && identity.persisted_key().is_some() {
-        Ok(identity)
-    } else {
-        Err(error("record identity does not match layout"))
-    }
-}
-fn first_jsonl_value(bytes: &[u8]) -> Result<serde_json::Value, DomainError> {
-    // Validate every JSONL record: an in-flight partial append must never
-    // publish a row based only on its intact snapshot header.
-    let mut values = serde_json::Deserializer::from_slice(bytes).into_iter::<serde_json::Value>();
-    let first = values
-        .next()
-        .ok_or_else(|| error("empty session"))?
-        .map_err(error)?;
-    for value in values {
-        value.map_err(error)?;
-    }
-    Ok(first)
+/// The one raw-key conversion of the catalogue and its child modules: a key
+/// read from a record or the index, trusted only once its layout path agrees.
+fn persisted_identity(key: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(key)
 }
 /// A row without an entry (an exact fallback observation) is no mismatch.
 fn indexed_home_matches(
@@ -444,7 +427,10 @@ impl SessionHomeCatalogue for FileSessionHomeCatalogue {
                 let cached = disk.as_ref().map(|bytes| Catalogue::decode(bytes));
                 match &cached {
                     Some(Ok(index)) => self.seed_projection(index)?,
-                    _ => self.projection.lock().map_err(error)?.clear(),
+                    _ => {
+                        self.projection.lock().map_err(error)?.clear();
+                        self.rejections.lock().map_err(error)?.clear();
+                    }
                 }
                 cached
             }

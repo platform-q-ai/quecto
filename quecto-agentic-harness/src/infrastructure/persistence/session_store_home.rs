@@ -138,7 +138,17 @@ impl FileSessionStore {
         path: &Path,
         stamp: &[u64],
     ) -> Option<crate::domain::session::SessionSummary> {
-        self.summaries.lock().ok()?.summary_at(path, stamp).cloned()
+        let walk = self.summaries.lock().ok()?;
+        walk.version_at(path, stamp).flatten().cloned()
+    }
+    /// The walk saw `path` at exactly `stamp` and could not summarise it.
+    pub(in crate::infrastructure::persistence) fn unlisted_at(
+        &self,
+        path: &Path,
+        stamp: &[u64],
+    ) -> bool {
+        let walk = self.summaries.lock().ok();
+        walk.is_some_and(|walk| walk.version_at(path, stamp) == Some(None))
     }
     pub fn read_home(&self, identity: &SessionIdentity) -> Result<SessionHomeScope, DomainError> {
         match std::fs::read(self.layout.home_file(identity)) {
