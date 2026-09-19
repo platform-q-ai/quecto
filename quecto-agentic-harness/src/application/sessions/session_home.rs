@@ -1,12 +1,42 @@
 //! Shared observations, not a transaction owner. Call admission under the store claim.
 use crate::application::sessions::dto::resume_saved_session::ResumeDisposition;
 use crate::application::sessions::ports::session_home::{SessionHomeCatalogue, WorkspaceDiscovery};
+use crate::domain::resume_decision::ResumeDecisionKind;
 use crate::domain::{
     error::DomainError,
     session_home::{HomeAdmission, SessionHome, SessionHomeScope},
     session_identity::SessionIdentity,
 };
 use std::{path::PathBuf, sync::Arc};
+
+/// Why a saved home does not admit a restore in this runtime (#2011).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HomeObstacle {
+    /// The user can decide: the kind, and why the home was not observable.
+    Decision(ResumeDecisionKind, Option<String>),
+    /// This runtime's own execution directory is undiscoverable: no decision
+    /// made here could be validated against it.
+    CurrentUnavailable(String),
+}
+
+impl HomeObstacle {
+    fn decision(kind: ResumeDecisionKind) -> Self {
+        Self::Decision(kind, None)
+    }
+
+    pub fn into_disposition(self) -> ResumeDisposition {
+        use ResumeDecisionKind as Kind;
+        match self {
+            Self::Decision(Kind::LegacyUnscoped, _) => ResumeDisposition::LegacyUnscoped,
+            Self::Decision(Kind::HomeChanged, _) => ResumeDisposition::HomeChanged,
+            Self::Decision(Kind::CrossFolder, _) => ResumeDisposition::DifferentExecutionDirectory,
+            Self::Decision(Kind::HomeMissing | Kind::HomeUnknown, detail) => {
+                ResumeDisposition::Unavailable(detail.unwrap_or_default())
+            }
+            Self::CurrentUnavailable(reason) => ResumeDisposition::Unavailable(reason),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct SessionHomeContext {
@@ -41,31 +71,49 @@ impl SessionHomeContext {
     }
 
     /// The one admission decision: fresh current facts, the saved authority
-    /// re-observed at its own directory, and the domain rule over both.
-    pub async fn admit(&self, scope: &SessionHomeScope) -> Result<(), ResumeDisposition> {
+    /// re-observed at its own directory, and the domain rule over both. Every
+    /// input is an affirmative observation: one that is missing, ambiguous or
+    /// denied yields an obstacle, never an admission.
+    pub async fn classify(&self, scope: &SessionHomeScope) -> Result<(), HomeObstacle> {
         let current = self
             .current()
             .await
-            .map_err(|error| ResumeDisposition::Unavailable(error.to_string()))?;
+            .map_err(|error| HomeObstacle::CurrentUnavailable(error.to_string()))?;
         let saved = match scope {
             SessionHomeScope::Scoped(saved) => saved,
-            SessionHomeScope::LegacyUnscoped => return Err(ResumeDisposition::LegacyUnscoped),
+            SessionHomeScope::LegacyUnscoped => {
+                return Err(HomeObstacle::decision(ResumeDecisionKind::LegacyUnscoped));
+            }
             SessionHomeScope::Unavailable(reason) => {
-                return Err(ResumeDisposition::Unavailable(reason.clone()));
+                return Err(HomeObstacle::Decision(
+                    ResumeDecisionKind::HomeUnknown,
+                    Some(reason.clone()),
+                ));
             }
         };
         let observed = self
             .discovery
             .discover_async(&saved.execution_dir)
             .await
-            .map_err(|error| ResumeDisposition::Unavailable(error.to_string()))?;
+            .map_err(|error| {
+                HomeObstacle::Decision(ResumeDecisionKind::HomeMissing, Some(error.to_string()))
+            })?;
         match SessionHome::admission(saved, &observed, &current) {
             HomeAdmission::Eligible => Ok(()),
-            HomeAdmission::HomeChanged => Err(ResumeDisposition::HomeChanged),
+            HomeAdmission::HomeChanged => {
+                Err(HomeObstacle::decision(ResumeDecisionKind::HomeChanged))
+            }
             HomeAdmission::DifferentExecutionDirectory => {
-                Err(ResumeDisposition::DifferentExecutionDirectory)
+                Err(HomeObstacle::decision(ResumeDecisionKind::CrossFolder))
             }
         }
+    }
+
+    /// [`Self::classify`] as the startup disposition (#2009).
+    pub async fn admit(&self, scope: &SessionHomeScope) -> Result<(), ResumeDisposition> {
+        self.classify(scope)
+            .await
+            .map_err(HomeObstacle::into_disposition)
     }
 
     pub async fn eligible(&self, scope: &SessionHomeScope) -> bool {
@@ -76,3 +124,7 @@ impl SessionHomeContext {
         self.catalogue.record_new(identity, &self.current().await?)
     }
 }
+
+#[cfg(test)]
+#[path = "session_home_tests.rs"]
+mod tests;

@@ -20,6 +20,28 @@ impl From<SessionListScopeCommand> for crate::application::sessions::dto::Sessio
     }
 }
 
+/// The explicit action of `resume_session` (#2011) on the wire. Its spelling
+/// is the domain's one table (`ResumeAction::name` / `from_name`): any other
+/// spelling is rejected at the protocol boundary, and no second table can
+/// drift from the names every answer carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResumeActionCommand(pub crate::domain::resume_decision::ResumeAction);
+
+impl Serialize for ResumeActionCommand {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0.name())
+    }
+}
+
+impl<'de> Deserialize<'de> for ResumeActionCommand {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        crate::domain::resume_decision::ResumeAction::from_name(&name)
+            .map(Self)
+            .ok_or_else(|| serde::de::Error::custom("unknown resume action"))
+    }
+}
+
 // ─── Commands (stdin) ────────────────────────────────────────────────────────
 /// A command received over the UDS socket.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -150,11 +172,22 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
-    /// Switch the active UDS session to a persisted CLI session.
+    /// Switch the active UDS session to a persisted session by exact key,
+    /// or answer one explicit action of a resume decision (#2011). Absent
+    /// `action` is a restore; `expectedHomeVersion` is the version the client
+    /// was shown.
     ResumeSession {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         session: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action: Option<ResumeActionCommand>,
+        #[serde(
+            default,
+            rename = "expectedHomeVersion",
+            skip_serializing_if = "Option::is_none"
+        )]
+        expected_home_version: Option<String>,
     },
     /// Switch the active model at runtime.
     ///

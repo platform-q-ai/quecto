@@ -198,13 +198,14 @@ impl App {
         manifest_path: &std::path::Path,
     ) {
         // Presentation coordination is the sessions feature's: rows, IDs,
-        // safe copy and the eligible allowlist come back projected.
+        // safe copy and the listed home versions come back projected.
         let rows = crate::sessions::resume_rows::ResumeRows::project(
             session_payloads::parse_resume_sessions(data),
             session_payloads::has_session_entries(data),
             format_unix_minutes,
         );
-        self.ac_mut().sessions.eligible_keys = rows.eligible_keys;
+        self.ac_mut().sessions.home_versions = rows.home_versions;
+        self.ac_mut().sessions.listed_titles = rows.titles;
         self.open_resume_selector_with_workspaces(rows.items, manifest_path, rows.empty_hint);
     }
 
@@ -526,6 +527,15 @@ impl App {
                     .unwrap_or_else(|| " ".repeat(panel_width));
                 *line = format!("{cell}{divider} {line}");
             }
+        }
+
+        // The resume decision dialog (#2011) is laid over the WHOLE frame, the
+        // agents pane included: inside the body pane a 40-column terminal
+        // would leave it ten columns.
+        let full_width = self.terminal.width;
+        if let Some(dialog) = &mut self.ac_mut().sessions.resume_decision {
+            let (dialog_lines, overlay_width) = dialog.render_overlay(full_width, height);
+            Self::composite_centered(&mut lines, &dialog_lines, overlay_width, full_width, height);
         }
 
         // Store rendered lines for text selection extraction (#528).

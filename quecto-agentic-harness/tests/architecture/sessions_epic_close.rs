@@ -209,6 +209,11 @@ const SESSION_STORE_HOLDERS: &[&str] = &[
     "src/application/sessions/use_cases/resume_saved_session.rs",
     // #2009 admission holds the target's claim guard beside the owner.
     "src/application/sessions/use_cases/resume_saved_session_admission.rs",
+    // #2011 the eligibility collaborators read the target through the
+    // owner's store: the effect-free pre-flight and the claimed load — and
+    // (review R2-H3) the same existence check opens an action's refusal order.
+    "src/application/sessions/use_cases/resume_saved_session_action.rs",
+    "src/application/sessions/use_cases/resume_saved_session_decision.rs",
     "src/application/sessions/use_cases/save_session.rs",
     // #2009 home acquisition runs on the save owner's existing path.
     "src/application/sessions/use_cases/save_session_home.rs",

@@ -316,8 +316,25 @@ async fn new_session_updates_tools_and_clears_new_spill_key() {
 async fn resume_blocked_while_streaming() {
     let mut fx = Fixture::new();
     fx.session.set_streaming(true);
+    let key = fx.current_session_key();
+    let (tx, mut rx) = tokio::sync::broadcast::channel(8);
     let mut ctx = fx.ctx();
+    ctx.broadcast_tx = Some(tx);
     assert!(!handle_resume_session(&mut ctx, Some("rs"), "resume_session", "other".into()).await);
+    // Typed like every other resume refusal (#2011 R1-H2), and nothing moved.
+    let answer: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+    assert_eq!(answer["id"], "rs");
+    assert_eq!(answer["success"], false);
+    assert_eq!(
+        answer["data"],
+        serde_json::json!({"outcome": "refused", "code": "busy"})
+    );
+    assert_eq!(
+        answer["error"],
+        "cannot resume a session while agent is running"
+    );
+    assert!(rx.try_recv().is_err(), "nothing else is announced");
+    assert_eq!(ctx.sessions.current_session_key().await, key);
 }
 
 #[tokio::test]
@@ -431,7 +448,10 @@ async fn resume_loads_chat_session_by_full_key() {
     fx.store.save(&saved).await.unwrap();
     {
         let mut ctx = fx.ctx();
-        assert!(!handle_resume_session(&mut ctx, Some("rs"), "resume_session", key.clone()).await);
+        assert!(
+            !handle_resume_session(&mut ctx, Some("rs"), "resume_session", key.clone().into())
+                .await
+        );
     }
     assert_eq!(fx.current_session_key(), key);
     assert_eq!(fx.messages.len(), 1);
@@ -592,6 +612,8 @@ async fn dispatch_routes_resume_session_ephemeral() {
     let cmd = AgentCommand::ResumeSession {
         id: None,
         session: "x".into(),
+        action: None,
+        expected_home_version: None,
     };
     let mut ctx = fx.ctx();
     assert!(!dispatch_command(cmd, &mut ctx).await);
@@ -660,4 +682,32 @@ async fn dispatch_ext_command_unregister_unknown_noop() {
     };
     let mut ctx = fx.ctx();
     assert!(!dispatch_ext_command(cmd, &mut ctx, None, "unregister_tools").await);
+}
+
+/// #2011: a cancel, an explicit action and a never-issued version token are
+/// each answered without replacing the session or claiming the target.
+#[tokio::test]
+async fn resume_cancel_action_and_stale_token_change_nothing() {
+    use crate::domain::resume_decision::ResumeAction;
+    use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
+    let mut fx = Fixture::new();
+    let before = fx.current_session_key();
+    for (action, version) in [
+        (Some(ResumeAction::Cancel), None),
+        (Some(ResumeAction::ForkCurrent), None),
+        (None, Some("not-a-version".to_string())),
+    ] {
+        let fields = ResumeFields {
+            session: "other".into(),
+            action,
+            expected_home_version: version,
+        };
+        let mut ctx = fx.ctx();
+        assert!(!handle_resume_session(&mut ctx, Some("rs"), "resume_session", fields).await);
+    }
+    assert_eq!(fx.current_session_key(), before);
+    let competing = FileSessionStore::new(FlatSessionLayout::new(fx._tmp.path()));
+    competing
+        .claim(&id(Session::build_key("cli", "other")))
+        .expect("no refusal retains a claim on the target");
 }

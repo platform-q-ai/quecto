@@ -1,7 +1,6 @@
-//! Presenter of the scoped `list_sessions` response (#2009): rows carry
-//! only application-approved metadata — home state, execution path and the
-//! backend's eligibility — with untrusted persisted text bounded and
-//! control characters replaced. Nothing here infers eligibility.
+//! Presenter of the scoped `list_sessions` response (#2009, #2011): rows carry
+//! only application-approved metadata — home state and version, execution path,
+//! the backend's eligibility — with untrusted text bounded and made safe.
 use super::session_summary_to_json;
 
 /// Present only application-approved metadata; never infer resume eligibility here.
@@ -26,6 +25,7 @@ pub(in crate::interface::cli) fn discovery_json(
             value["homeState"] = serde_json::json!(state);
             value["executionPath"] = serde_json::json!(execution_path);
             value["resumeEligible"] = serde_json::json!(row.resume_eligible);
+            value["homeVersion"] = serde_json::json!(row.home_version().as_str());
             value
         })
         .collect();
@@ -37,13 +37,9 @@ pub(in crate::interface::cli) fn discovery_json(
     })
 }
 
-/// Untrusted persisted metadata is bounded and cannot inject terminal controls.
-pub(super) fn safe_display(raw: &str) -> String {
-    raw.chars()
-        .take(4096)
-        .map(|ch| if ch.is_control() { '\u{fffd}' } else { ch })
-        .collect()
-}
+#[path = "uds_safe_display.rs"]
+mod uds_safe_display;
+pub(in crate::interface::cli) use uds_safe_display::safe_display;
 
 #[cfg(test)]
 #[path = "uds_dispatch_discovery_tests.rs"]

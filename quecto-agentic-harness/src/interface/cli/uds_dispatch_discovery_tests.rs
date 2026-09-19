@@ -32,6 +32,18 @@ fn discovery_preserves_identity_and_authoritative_admission() {
         serde_json::Value::Null
     );
     assert_eq!(value["sessions"][0]["resumeEligible"], false);
+    // The row's own version — this identity's, this home's — and no other.
+    assert_eq!(
+        value["sessions"][0]["homeVersion"],
+        result.sessions[0].home_version().as_str()
+    );
+    assert_eq!(
+        result.sessions[0].home_version(),
+        crate::domain::resume_decision::HomeVersion::of(
+            &result.sessions[0].summary.identity,
+            &result.sessions[0].home
+        )
+    );
     assert_eq!(value["sessions"][0]["title"], "unsafe�title");
     assert_eq!(value["diagnostics"][0], "repair�required");
     assert_eq!(value["rebuilt"], true);

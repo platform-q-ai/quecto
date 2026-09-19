@@ -7,16 +7,57 @@ pub(crate) struct SessionsFlow {
     pub(super) resume_selector: Option<ResumePicker>,
     pub(super) pending_list_id: Option<String>,
     pub(super) scope: crate::protocol::session_payloads::SessionListScope,
-    pub(super) eligible_keys: std::collections::BTreeSet<String>,
+    /// The home version each listed row was shown at (#2011), by key.
+    pub(super) home_versions: std::collections::BTreeMap<String, String>,
+    /// The title each listed row was shown with, by key: a decision dialog
+    /// names the session the way the picker did.
+    pub(super) listed_titles: std::collections::BTreeMap<String, String>,
+    /// The decision dialog of a session that cannot simply be restored (#2011).
+    pub(super) resume_decision: Option<crate::sessions::resume_decision::ResumeDecisionDialog>,
+    /// The picker selection's key and listed version, consumed by its send.
+    pub(super) selected_home_version: Option<(String, String)>,
     /// Discovery diagnostics already toasted in this process (#2018).
     pub(super) shown_diagnostics: std::collections::BTreeSet<String>,
     /// Session stats fallback to learn real context window for current session/model.
     pub(super) context_stats_requested: bool,
 }
 
+impl SessionsFlow {
+    /// A sessions modal owns the keyboard: the decision dialog or the picker.
+    pub(super) fn has_modal(&self) -> bool {
+        self.resume_decision.is_some() || self.resume_selector.is_some()
+    }
+}
+
 impl super::App {
+    /// Route a key to the decision dialog (#2011). Cancel and Escape close it
+    /// and send nothing; an unavailable action is pointed at its reason and the dialog
+    /// stays; an available one sends identity, action and version.
+    fn handle_resume_decision_key(&mut self, key: &Key) {
+        use crate::sessions::resume_decision::ResumeDecisionEvent;
+        let Some(dialog) = self.ac_mut().sessions.resume_decision.as_mut() else {
+            return;
+        };
+        match dialog.handle_key(key) {
+            ResumeDecisionEvent::Pending => {}
+            ResumeDecisionEvent::Cancelled => self.ac_mut().sessions.resume_decision = None,
+            // The reason is under the cursor already: the toast only points at it.
+            ResumeDecisionEvent::Unavailable => self.notify(
+                crate::sessions::resume_decision::UNAVAILABLE_POINTER,
+                NotifyLevel::Warning,
+            ),
+            ResumeDecisionEvent::Chosen(selection) => {
+                self.ac_mut().sessions.resume_decision = None;
+                self.send_resume_selection(selection);
+            }
+        }
+    }
+
     pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
         use crate::sessions::resume_picker::ResumePickerEvent;
+        if self.ac().sessions.resume_decision.is_some() {
+            return self.handle_resume_decision_key(key);
+        }
         // The shell prefixes the agents pane after rendering this body-local overlay.
         let key = match key {
             Key::MousePress(x, y) => {
@@ -37,12 +78,14 @@ impl super::App {
                 let key = choice
                     .strip_prefix(crate::sessions::resume_rows::SESSION_ROW_PREFIX)
                     .unwrap_or(&choice);
-                if self.ac().sessions.eligible_keys.contains(key) {
-                    self.ac_mut().sessions.resume_selector = None;
-                    self.apply_resume_selection(&choice);
-                } else {
-                    self.notify("Resume unavailable. Open original / Fork / Locate unavailable; Cancel with Escape.", NotifyLevel::Warning);
-                }
+                // Every row is asked of the harness, with the version it was
+                // listed at: an eligible one restores, any other is answered
+                // with the typed decision. Nothing is decided here.
+                let version = self.ac().sessions.home_versions.get(key).cloned();
+                self.ac_mut().sessions.selected_home_version =
+                    version.map(|version| (key.to_string(), version));
+                self.ac_mut().sessions.resume_selector = None;
+                self.apply_resume_selection(&choice);
             }
             ResumePickerEvent::Dismissed => {
                 self.ac_mut().sessions.resume_selector = None;

@@ -96,10 +96,50 @@ async fn scoped_discovery_discards_old_answers_and_cancel_never_restores() {
     );
     a.handle_session_list_response(Some(&current), Some(data));
     assert!(a.ac().sessions.resume_selector.is_some());
+    // #2011: an ineligible row is not decided here — the harness is asked and
+    // answers with the typed decision; Escape there restores and sends nothing.
+    // What replaced the client-side block: from the send until the harness
+    // answers `resumed`, nothing local changes — identity, chat, manifest.
+    a.ac_mut().session_key = Some("cli:showing".into());
+    a.ac_mut()
+        .master_session
+        .chat
+        .add_entry(crate::components::chat::ChatEntry::User {
+            text: "the conversation on screen".into(),
+        });
+    let snapshot = |a: &mut App| {
+        let chat = a.ac_mut().master_session.chat.render(120).join("\n");
+        (a.ac().session_key.clone(), chat, a.ac().durability_writes)
+    };
+    let before = snapshot(a);
+    assert!(
+        before.1.contains("the conversation on screen"),
+        "{before:?}"
+    );
     a.handle_resume_selector_key(&Key::Enter);
-    assert!(a.ac().pending_session_resume_id.is_none());
-    a.handle_resume_selector_key(&Key::Escape);
+    let asked = a.ac().pending_session_resume_id.clone().expect("asked");
     assert!(a.ac().sessions.resume_selector.is_none());
+    assert_eq!(snapshot(a), before, "sending changes nothing");
+    let decision = serde_json::json!({
+        "outcome": "decision", "code": "decision_required", "session": "foreign",
+        "sessionKey": "foreign", "kind": "cross_folder", "homeVersion": "h1-0123456789abcdef",
+        "executionPath": "/elsewhere", "detail": null,
+        "actions": [{"action": "cancel", "available": true, "reason": null}],
+    });
+    a.handle_response(
+        Some(asked),
+        "resume_session".into(),
+        false,
+        Some(decision),
+        Some("session resume unavailable".into()),
+    );
+    assert!(a.ac().sessions.resume_decision.is_some());
+    assert!(a.ac().pending_session_resume_id.is_none());
+    assert_eq!(snapshot(a), before, "a decision changes nothing");
+    a.handle_resume_selector_key(&Key::Escape);
+    assert!(a.ac().sessions.resume_decision.is_none());
+    assert!(a.ac().pending_session_resume_id.is_none());
+    assert_eq!(snapshot(a), before, "Escape changes nothing");
     a.handle_session_list_response(Some(&current), Some(serde_json::json!({"sessions":[]})));
     assert!(a.ac().sessions.resume_selector.is_none());
 }

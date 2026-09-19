@@ -416,11 +416,15 @@ fn command_list_sessions_serializes() {
 fn command_resume_session_serializes() {
     let cmd = Command::ResumeSession {
         id: Some("resume".into()),
-        session: "work".into(),
+        resume: crate::protocol::resume_decision_payloads::ResumeSelection::exact("work"),
     };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"type\":\"resume_session\""));
     assert!(json.contains("\"session\":\"work\""));
+    assert!(
+        !json.contains("action") && !json.contains("expectedHomeVersion"),
+        "{json}"
+    );
 }
 
 // --- Event deserialization edge cases ---

@@ -27,8 +27,8 @@ use super::clear_conversation::visible_message_count;
 use super::{DepartingChildren, SaveSession};
 use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::dto::{
-    ResumeSavedSessionError, ResumeTarget, SaveTrigger, SavedSessionResumed, SessionTransition,
-    StartupSessionOpened,
+    ResumeActionCapabilities, ResumeOutcome, ResumeRequest, ResumeSavedSessionError, SaveTrigger,
+    SavedSessionResumed, SessionTransition, StartupSessionOpened,
 };
 use crate::application::sessions::ports::{FleetSettlement, SessionStore, SessionSwitchRuntime};
 use crate::application::sessions::session_home::SessionHomeContext;
@@ -44,13 +44,18 @@ pub struct ResumeSavedSession {
     children: Arc<DepartingChildren>,
     /// A `--no-session` loop: nothing is claimed, loaded or resumed.
     ephemeral: bool,
-    /// Scope admission (#2009) is mandatory: no loop resumes without it.
-    home: SessionHomeContext,
+    /// Scope admission (#2009) and the executable actions (#2011).
+    eligibility: Eligibility,
 }
 
 #[path = "resume_saved_session_admission.rs"]
 mod resume_saved_session_admission;
-use resume_saved_session_admission::{PendingClaim, admit_home};
+use resume_saved_session_admission::PendingClaim;
+#[path = "resume_saved_session_action.rs"]
+mod resume_saved_session_action;
+#[path = "resume_saved_session_decision.rs"]
+mod resume_saved_session_decision;
+use resume_saved_session_decision::{Admitted, Eligibility, admit};
 #[path = "resume_saved_session_startup.rs"]
 mod resume_saved_session_startup;
 use resume_saved_session_startup::{admit_at_startup, admit_new_at_startup};
@@ -70,24 +75,43 @@ impl ResumeSavedSession {
             store,
             children,
             ephemeral,
-            home,
+            eligibility: Eligibility {
+                home,
+                capabilities: ResumeActionCapabilities::cancel_only(),
+            },
         }
     }
 
-    /// Leave the current session for the saved session `raw_target` names.
-    /// `messages` is the loop's live conversation; `fleet` the loop's fleet
-    /// teardown, if it has one; `runtime` the loop runtime the switch moves.
+    /// Declare the explicit actions whose executor composition wired.
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: ResumeActionCapabilities) -> Self {
+        self.eligibility.capabilities = capabilities;
+        self
+    }
+
+    /// Answer a resume request (#2011): [`admit`] settles a cancel and hands
+    /// any other action to `refuse`, both before any effect; a restore leaves
+    /// the current session for the exact target. `fleet` is the loop's teardown,
+    /// if any; `runtime` the loop runtime the switch moves. The effect-free
+    /// pre-flight spares a miss the settlement; the claimed re-check decides.
     pub async fn execute(
         &self,
-        raw_target: &str,
+        request: &ResumeRequest,
         messages: &mut Vec<Message>,
         fleet: Option<&dyn FleetSettlement>,
         runtime: &mut dyn SessionSwitchRuntime,
-    ) -> Result<SavedSessionResumed, ResumeSavedSessionError> {
-        if self.ephemeral {
-            return Err(ResumeSavedSessionError::Ephemeral);
-        }
-        let target = ResumeTarget::parse(raw_target)?;
+    ) -> Result<ResumeOutcome, ResumeSavedSessionError> {
+        let expected = request.expected_home_version.as_ref();
+        let store = self.store.as_ref();
+        let checks = &self.eligibility;
+        let target = match admit(self.ephemeral, request)? {
+            Admitted::Cancelled(name) => return Ok(ResumeOutcome::Cancelled { name }),
+            Admitted::Act(to, act) => return Err(checks.refuse(store, &to, expected, act).await),
+            Admitted::Restore(target) => target,
+        };
+        let old_identity = self.state.read().await.identity().clone();
+        let own = old_identity == target.identity;
+        (checks.preflight(store, &target, expected, own)).await?;
         let transition = SessionTransition::Resume;
         self.children
             .settle(fleet, transition)
@@ -97,13 +121,12 @@ impl ResumeSavedSession {
             .save(messages, SaveTrigger::Routine)
             .await
             .map_err(ResumeSavedSessionError::Save)?;
-        let old_identity = self.state.read().await.identity().clone();
         self.store
             .claim(&target.identity)
             .map_err(ResumeSavedSessionError::Claim)?;
         let mut claim = PendingClaim::new(self.store.clone(), target.identity.clone());
-        claim.release = old_identity != target.identity;
-        let loaded = self.load_claimed(&target).await?;
+        claim.release = !own;
+        let loaded = checks.load_claimed(store, &target, expected).await?;
         self.children
             .note_persisted_rows_are_history(loaded.subagent_roster.len());
         if let Err(refused) = self.children.reset_roster(transition) {
@@ -132,27 +155,12 @@ impl ResumeSavedSession {
             let spill_store = state.conversation().spill_store().cloned();
             state.switch_to(target.identity.clone(), spill_store, messages)
         };
-        Ok(SavedSessionResumed {
+        Ok(ResumeOutcome::Resumed(SavedSessionResumed {
             name: target.name,
             identity: target.identity,
             message_count: messages.len(),
             ledger,
-        })
-    }
-
-    /// Read the claimed target; on `Err` the guard releases a claim not the loop's own.
-    async fn load_claimed(
-        &self,
-        target: &ResumeTarget,
-    ) -> Result<Session, ResumeSavedSessionError> {
-        match self.store.load(&target.identity).await {
-            Ok(Some(session)) => {
-                admit_home(&self.home, &target.identity).await?;
-                Ok(session)
-            }
-            Ok(None) => Err(ResumeSavedSessionError::NotFound(target.name.clone())),
-            Err(err) => Err(ResumeSavedSessionError::Load(err)),
-        }
+        }))
     }
 
     /// Open the session the loop was composed on, at startup: claim it
@@ -170,11 +178,11 @@ impl ResumeSavedSession {
             let mut claim = PendingClaim::new(self.store.clone(), identity.clone());
             let session = match self.store.load(&identity).await {
                 Ok(Some(session)) => {
-                    admit_at_startup(&self.home, &identity).await?;
+                    admit_at_startup(&self.eligibility.home, &identity).await?;
                     session
                 }
                 Ok(None) => {
-                    admit_new_at_startup(&self.home, &identity).await?;
+                    admit_new_at_startup(&self.eligibility.home, &identity).await?;
                     Session::new(identity.clone())
                 }
                 Err(err) => {
@@ -192,14 +200,6 @@ impl ResumeSavedSession {
             messages: session.messages,
             workflow_run: session.workflow_run,
         })
-    }
-}
-
-impl std::fmt::Debug for ResumeSavedSession {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ResumeSavedSession")
-            .field("ephemeral", &self.ephemeral)
-            .finish_non_exhaustive()
     }
 }
 

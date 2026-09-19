@@ -8,6 +8,7 @@ use super::super::start_fresh_rig::{FreshOptions, FreshRig, OLD_KEY, build_fresh
 use crate::application::sessions::dto::{
     FleetSettlementOutcome, ResumeSavedSessionError, SessionTransitionRefused,
 };
+use crate::application::sessions::dto::{ResumeOutcome, ResumeRequest, SavedSessionResumed};
 use crate::domain::ids::AgentUuid;
 use crate::domain::message::Message;
 use crate::domain::session::{
@@ -17,6 +18,14 @@ use crate::domain::session_identity::SessionIdentity;
 use crate::domain::workflow::WorkflowRunPersisted;
 
 const TARGET: &str = "cli:saved";
+
+/// A restore request that was not refused resumed.
+fn resumed(outcome: ResumeOutcome) -> SavedSessionResumed {
+    match outcome {
+        ResumeOutcome::Resumed(resumed) => resumed,
+        ResumeOutcome::Cancelled { name } => panic!("{name} was cancelled, not resumed"),
+    }
+}
 
 fn conversation(prompt: &str) -> Vec<Message> {
     let mut messages = vec![Message::user("q1"), Message::assistant("a1", vec![])];
@@ -85,11 +94,17 @@ async fn success_runs_every_baseline_step_in_order_and_restores_history_and_work
     let fleet = rig.settled_fleet();
     let mut runtime = rig.runtime();
 
-    let resumed = rig
+    let outcome = rig
         .resume
-        .execute("saved", &mut messages, Some(&fleet), &mut runtime)
+        .execute(
+            &ResumeRequest::restore("saved"),
+            &mut messages,
+            Some(&fleet),
+            &mut runtime,
+        )
         .await
         .expect("resumed");
+    let resumed = resumed(outcome);
 
     assert_eq!(
         rig.journal(),
@@ -153,7 +168,12 @@ async fn a_target_without_a_saved_workflow_resets_the_engine() {
     let mut messages = conversation("");
     let mut runtime = rig.runtime();
     rig.resume
-        .execute("saved", &mut messages, None, &mut runtime)
+        .execute(
+            &ResumeRequest::restore("saved"),
+            &mut messages,
+            None,
+            &mut runtime,
+        )
         .await
         .expect("resumed");
     assert!(rig.journal().contains(&"workflow.reset".to_string()));
@@ -176,7 +196,7 @@ async fn an_ephemeral_loop_refuses_before_touching_anything() {
     let err = rig
         .resume
         .execute(
-            "saved",
+            &ResumeRequest::restore("saved"),
             &mut messages,
             Some(&rig.settled_fleet()),
             &mut runtime,
@@ -197,7 +217,7 @@ async fn an_invalid_name_refuses_before_the_fleet_runs() {
     let err = rig
         .resume
         .execute(
-            "bad name!",
+            &ResumeRequest::restore("bad name!"),
             &mut messages,
             Some(&rig.settled_fleet()),
             &mut runtime,
@@ -224,7 +244,12 @@ async fn an_unsettled_child_refuses_before_the_save_and_the_claim() {
     let mut runtime = rig.runtime();
     let err = rig
         .resume
-        .execute("saved", &mut messages, Some(&fleet), &mut runtime)
+        .execute(
+            &ResumeRequest::restore("saved"),
+            &mut messages,
+            Some(&fleet),
+            &mut runtime,
+        )
         .await
         .expect_err("refused");
     assert!(matches!(
@@ -248,7 +273,7 @@ async fn a_failed_save_refuses_before_the_claim_with_the_fleet_already_run() {
     let err = rig
         .resume
         .execute(
-            "saved",
+            &ResumeRequest::restore("saved"),
             &mut messages,
             Some(&rig.settled_fleet()),
             &mut runtime,
@@ -274,7 +299,12 @@ async fn a_target_owned_elsewhere_is_refused_at_the_claim_and_nothing_is_release
     let mut runtime = rig.runtime();
     let err = rig
         .resume
-        .execute("saved", &mut messages, None, &mut runtime)
+        .execute(
+            &ResumeRequest::restore("saved"),
+            &mut messages,
+            None,
+            &mut runtime,
+        )
         .await
         .expect_err("refused");
     assert!(matches!(err, ResumeSavedSessionError::Claim(_)));
@@ -295,27 +325,26 @@ async fn a_target_owned_elsewhere_is_refused_at_the_claim_and_nothing_is_release
 }
 
 #[tokio::test]
-async fn a_missing_target_releases_the_claim_just_taken_and_keeps_the_session() {
+async fn a_missing_target_is_answered_before_any_effect_and_keeps_the_session() {
     let rig = build_fresh_rig(FreshOptions::default());
     let mut messages = conversation("");
     rig.record(&messages);
     let mut runtime = rig.runtime();
     let err = rig
         .resume
-        .execute("cli:gone", &mut messages, None, &mut runtime)
+        .execute(
+            &ResumeRequest::restore("cli:gone"),
+            &mut messages,
+            None,
+            &mut runtime,
+        )
         .await
         .expect_err("refused");
     assert!(matches!(err, ResumeSavedSessionError::NotFound(_)));
     assert_eq!(err.to_string(), "session not found: cli:gone");
-    assert_eq!(
-        rig.journal(),
-        [
-            "store.save_clean_delta",
-            "store.claim(cli:gone)",
-            "store.load(cli:gone)",
-            "store.release(cli:gone)@active=cli:departing",
-        ]
-    );
+    // #2011: known absent by the pre-flight — no save, no claim to release.
+    // The miss under the claim is pinned in the pre-flight tests.
+    assert_eq!(rig.journal(), Vec::<String>::new());
     assert_eq!(rig.identity(), OLD_KEY);
     assert_eq!(messages.len(), 2);
     assert!(rig.resolves(&messages[0]));
@@ -330,7 +359,12 @@ async fn a_load_error_releases_the_claim_just_taken_and_keeps_the_session() {
     let mut runtime = rig.runtime();
     let err = rig
         .resume
-        .execute("saved", &mut messages, None, &mut runtime)
+        .execute(
+            &ResumeRequest::restore("saved"),
+            &mut messages,
+            None,
+            &mut runtime,
+        )
         .await
         .expect_err("refused");
     assert!(matches!(err, ResumeSavedSessionError::Load(_)));
@@ -357,7 +391,7 @@ async fn live_rows_after_settlement_release_the_claim_and_keep_the_roster() {
     let err = rig
         .resume
         .execute(
-            "saved",
+            &ResumeRequest::restore("saved"),
             &mut messages,
             Some(&rig.settled_fleet()),
             &mut runtime,
@@ -393,7 +427,12 @@ async fn a_live_row_without_a_fleet_refuses_before_anything() {
     let mut runtime = rig.runtime();
     let err = rig
         .resume
-        .execute("saved", &mut messages, None, &mut runtime)
+        .execute(
+            &ResumeRequest::restore("saved"),
+            &mut messages,
+            None,
+            &mut runtime,
+        )
         .await
         .expect_err("refused");
     assert_eq!(
@@ -414,11 +453,17 @@ async fn resuming_the_current_key_releases_nothing_and_still_restores() {
     });
     let mut messages = conversation("");
     let mut runtime = rig.runtime();
-    let resumed = rig
+    let outcome = rig
         .resume
-        .execute("departing", &mut messages, None, &mut runtime)
+        .execute(
+            &ResumeRequest::restore("departing"),
+            &mut messages,
+            None,
+            &mut runtime,
+        )
         .await
         .expect("resumed");
+    let resumed = resumed(outcome);
     assert_eq!(resumed.identity.runtime_key(), OLD_KEY);
     assert!(
         rig.store.released.lock().unwrap().is_empty(),
@@ -464,7 +509,12 @@ async fn refused_on_its_own_key(
         settled.then_some(&fleet as &dyn crate::application::sessions::ports::FleetSettlement);
     let err = rig
         .resume
-        .execute("departing", &mut messages, fleet, &mut runtime)
+        .execute(
+            &ResumeRequest::restore("departing"),
+            &mut messages,
+            fleet,
+            &mut runtime,
+        )
         .await
         .expect_err("refused");
     assert_eq!(rig.identity(), OLD_KEY);
@@ -510,8 +560,8 @@ async fn a_scope_refusal_for_the_current_key_keeps_the_loops_own_claim() {
     };
     let rig = rig_on_its_own_key(options, true);
     let (err, journal) = refused_on_its_own_key(&rig, false).await;
-    assert!(matches!(err, ResumeSavedSessionError::Scope(_)), "{err}");
-    assert_eq!(journal.last().unwrap(), "store.load(cli:departing)");
+    assert!(matches!(err, ResumeSavedSessionError::Decision(_)), "{err}");
+    assert_eq!(journal, Vec::<String>::new(), "decided by the pre-flight");
 }
 
 #[tokio::test]
@@ -528,10 +578,13 @@ async fn a_kept_roster_for_the_current_key_keeps_the_loops_own_claim() {
     assert_eq!(rig.roster.unwrap().records.load(Ordering::SeqCst), 3);
 }
 
-/// The counterpart: a scope refusal of another key releases the claim the
-/// step just took.
+/// The counterpart for another key: since #2011 a home that refuses from the
+/// start is decided by the effect-free pre-flight — no settlement, no save
+/// and no claim to release. The refusal under the claim (a home that changes
+/// after the pre-flight), its release and the own-key exception are pinned in
+/// `resume_saved_session_decision_tests.rs`.
 #[tokio::test]
-async fn a_scope_refusal_of_another_key_releases_the_claim_just_taken() {
+async fn a_scope_refusal_of_another_key_takes_no_claim_at_all() {
     let rig = rig_with_target(FreshOptions {
         legacy_homes: true,
         ..FreshOptions::default()
@@ -540,14 +593,17 @@ async fn a_scope_refusal_of_another_key_releases_the_claim_just_taken() {
     let mut runtime = rig.runtime();
     let err = rig
         .resume
-        .execute("saved", &mut messages, None, &mut runtime)
+        .execute(
+            &ResumeRequest::restore("saved"),
+            &mut messages,
+            None,
+            &mut runtime,
+        )
         .await
         .expect_err("refused");
-    assert!(matches!(err, ResumeSavedSessionError::Scope(_)), "{err}");
-    assert_eq!(
-        rig.journal().last().unwrap(),
-        "store.release(cli:saved)@active=cli:departing"
-    );
+    assert!(matches!(err, ResumeSavedSessionError::Decision(_)), "{err}");
+    assert_eq!(rig.journal(), Vec::<String>::new());
+    assert!(rig.store.claimed.lock().unwrap().is_empty());
     assert_eq!(rig.identity(), OLD_KEY);
 }
 
@@ -563,11 +619,17 @@ async fn every_accepted_spelling_reaches_the_store_under_its_identity() {
             .seed(Session::new(SessionIdentity::from_persisted_key(key)));
         let mut messages = conversation("");
         let mut runtime = rig.runtime();
-        let resumed = rig
+        let outcome = rig
             .resume
-            .execute(spelled, &mut messages, None, &mut runtime)
+            .execute(
+                &ResumeRequest::restore(spelled),
+                &mut messages,
+                None,
+                &mut runtime,
+            )
             .await
             .unwrap_or_else(|e| panic!("{spelled}: {e}"));
+        let resumed = resumed(outcome);
         assert_eq!(resumed.identity.runtime_key(), key);
         assert_eq!(resumed.name, spelled);
         assert_eq!(rig.store.claimed.lock().unwrap().as_slice(), [key]);
@@ -582,7 +644,12 @@ async fn a_killing_exit_armed_for_the_departing_session_is_dropped_by_the_switch
     let mut messages = conversation("");
     let mut runtime = rig.runtime();
     rig.resume
-        .execute("saved", &mut messages, None, &mut runtime)
+        .execute(
+            &ResumeRequest::restore("saved"),
+            &mut messages,
+            None,
+            &mut runtime,
+        )
         .await
         .expect("resumed");
     assert!(!rig.state.read().await.killing_exit());

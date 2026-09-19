@@ -69,6 +69,9 @@ pub(crate) struct ConnectionState {
     /// answer clears the resume latches; foreign answers (another client
     /// resuming the shared agent) still refresh the view (#1726).
     pub(crate) pending_session_resume_id: Option<String>,
+    /// Whether the resume in flight carried an explicit action (#2011): only
+    /// such a request can be what an "unknown resume action" parse error is about.
+    pub(crate) pending_session_resume_acts: bool,
     /// Test seam: durable registry/manifest writes made through this tab.
     #[cfg(any(test, feature = "test-harness"))]
     pub(crate) durability_writes: usize,
@@ -192,6 +195,7 @@ impl ConnectionState {
             session_key: None,
             pending_session_resume: None,
             pending_session_resume_id: None,
+            pending_session_resume_acts: false,
             #[cfg(any(test, feature = "test-harness"))]
             durability_writes: 0,
             pending_attach: false,
@@ -321,6 +325,7 @@ impl App {
     pub(crate) fn close_tab_switch_overlays(&mut self) {
         let conn = self.active_conn_mut();
         conn.sessions.resume_selector = None;
+        conn.sessions.resume_decision = None;
         conn.rewind.selector = None;
         self.autocomplete.dismiss();
         self.workspace.files_autocomplete.dismiss();

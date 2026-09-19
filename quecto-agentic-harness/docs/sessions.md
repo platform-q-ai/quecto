@@ -260,6 +260,80 @@ admission rechecks it after ownership admission for both explicit resume and
 startup; a discovery group is not permission to execute history in another
 directory.
 
+#### Typed resume decisions (#2011)
+
+`ResumeSavedSession::execute` takes a `ResumeRequest` (exact target, intent,
+optional expected `HomeVersion`) and answers a `ResumeOutcome` (`Resumed`,
+`Cancelled`) or a typed `ResumeSavedSessionError`, each with a stable `code()`.
+A target that exists but does not admit a restore is answered with
+`Decision(ResumeDecision)`: the `ResumeDecisionKind` (`CrossFolder`,
+`HomeMissing`, `HomeChanged`, `HomeUnknown`, `LegacyUnscoped`), the home version
+it was decided on, and the offers of the domain's one affirmative table
+(`ResumeDecisionKind::offered_actions`: Open original / Fork current / Cancel;
+Locate / Fork current / Cancel; Associate / Cancel). Each offer's availability
+comes from `ResumeActionCapabilities` — the set of actions whose executor is
+composed (`composition/resume_capabilities.rs`; `cancel_only()` until #2012,
+#2013 and #2014 add theirs there). An explicit action is refused before any
+effect and is never substituted. `Eligibility::refuse`
+(`use_cases/resume_saved_session_action.rs`) answers it in one fixed order:
+the target exists (`NotFound`; the loop's own key has no exception — an action
+saves nothing), it names a version (`HomeVersionRequired`: an action acts on
+the authority the client was shown), that version is the authority's
+(`StaleHomeVersion` — another session's token included), the decision kind
+offers the action (`ActionNotOffered`, also for any action on a session that
+simply restores), and its executor is composed (`ActionUnavailable` with the
+reason — text for people, no tracker numbers — or `ActionExecutedElsewhere`
+once its own transaction exists).
+
+**Hand-off to the executors (#2012–#2014).** `ActionExecutedElsewhere` is the
+contract of those slices: a capability composed in `resume_capabilities.rs`
+makes the dialog row selectable at once, so the same change must route the
+action in the dispatch before this owner —
+`every_composed_capability_has_a_dispatch_route`
+(`uds_dispatch_resume_picker_tests.rs`) asks each action of a session whose
+decision offers it and fails a flip that lands alone. An executor that routes
+its action before this owner no longer passes through `refuse`, so it
+must itself keep the same order: (a) the existence pre-flight, (b) the token,
+required and re-checked **under the target's claim** (the pre-flight here is
+effect-free and claims nothing), and (c) that the decision kind it observes
+under that claim offers the action. The token of an uninterpretable home is
+bound to the identity and the category only, never to the reader's error text,
+so it survives a harness upgrade that rewords the error — and authorizes a
+write over *any* uninterpretable content of that one record.
+
+`Cancel` has no effect at all and needs no version; its `success:true` answer
+is broadcast like every response, which a pre-#2011 peer client misreads as a
+restore (a false notice, no state change — see `uds-protocol.md`). The
+interface's idle gate is the typed refusal `Busy` — a defensive guard: turns
+and dispatch share one task, so a mid-turn request is queued and **executes
+after the turn**, and the guard is unreachable today. `SessionHomeContext::classify` is the one classification (`admit`, the
+startup disposition, is derived from it); an undiscoverable current directory
+is the refusal `CurrentScopeUnavailable`, never a decision. The collaborators
+in `use_cases/resume_saved_session_decision.rs` run the same `decide` twice: an
+effect-free pre-flight — it asks `SessionStore::exists` (no transcript is read)
+and answers an absent target `NotFound`, a decision or a stale selection at
+once, so none of them settles a child, saves or claims anything (the loop's own
+key is excepted from the early `NotFound`: the departing save may be what first
+writes it) — and the authoritative re-check under the target's
+claim, where a changed `HomeVersion` is `StaleHomeVersion` and the claim is
+released (the loop's own key excepted, #1995). Exact-key resolution reads the
+`.home` authority and never the derived index. `HomeVersion::of(identity, scope)` is a pure,
+process-stable digest of the session identity and the authoritative scope
+(legacy and uninterpretable states included — the latter by category, not by
+error wording): two sessions — two legacy
+records, two sessions saved in one folder — never share a token, so #2014 can
+authorize a write of exactly the record a token names. A `list_sessions` row
+carries `ListedSession::home_version()`, the same function over the listed
+home; the contract `resume_decision_listing.rs` pins row version == authority
+version for every home state, cold and index-seeded, and that a well-formed
+lying index yields only `StaleHomeVersion`. The wire action names are the
+domain's one table (`ResumeAction::name` / `from_name`; the protocol type
+parses through it). The UDS edge is `interface/uds/sessions/
+resume_session_controller.rs` (wire fields → request) and
+`interface/cli/uds_dispatch_resume.rs` (typed answers, untrusted text made
+safe); the TUI renders the decision in `sessions/resume_decision.rs`, never
+infers availability, and sends identity + action + version.
+
 ### DTOs and the active session
 
 `src/application/sessions/dto/` carries requests, results and errors as domain

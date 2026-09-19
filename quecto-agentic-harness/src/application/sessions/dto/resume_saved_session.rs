@@ -5,47 +5,20 @@ use super::{SaveSessionError, SessionTransitionRefused};
 use crate::application::sessions::conversation_ledger::LedgerAdvance;
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
-use crate::domain::session::USER_CHAT_PREFIX;
 use crate::domain::session_identity::SessionIdentity;
 use crate::domain::workflow::WorkflowRunPersisted;
 #[path = "resume_disposition.rs"]
 mod resume_disposition;
-use super::StartupRefusal;
+use super::{ResumeDecision, StartupRefusal};
+use crate::domain::resume_decision::ResumeAction;
 pub use resume_disposition::ResumeDisposition;
-
-/// The saved session a client asked to resume: the name as the client
-/// spelled it (trimmed; echoed in the acknowledgement and the not-found
-/// refusal) and the identity it denotes. The accepted variants, each
-/// admitted affirmatively: a full user-chat key (`chat-…`, the `/resume`
-/// picker's selection), an already-qualified legacy `cli:<name>` key (kept
-/// as it is, never re-prefixed), and a typed legacy `<name>` (a `cli:<name>`
-/// session). Every other spelling is refused; the allowlist is the domain's
-/// session-name allowlist and admits no new character.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResumeTarget {
-    pub name: String,
-    pub identity: SessionIdentity,
-}
-
-impl ResumeTarget {
-    pub fn parse(raw: &str) -> Result<Self, ResumeSavedSessionError> {
-        let name = raw.trim();
-        let identity = if let Some(suffix) = name.strip_prefix("cli:")
-            && SessionIdentity::is_valid_cli_name(suffix)
-        {
-            SessionIdentity::named_cli(suffix)
-        } else if name.starts_with(USER_CHAT_PREFIX) {
-            SessionIdentity::user_chat(name)
-        } else {
-            SessionIdentity::named_cli(name)
-        }
-        .map_err(|_| ResumeSavedSessionError::InvalidName)?;
-        Ok(Self {
-            name: name.to_string(),
-            identity,
-        })
-    }
-}
+#[path = "resume_target.rs"]
+mod resume_target;
+pub use resume_target::ResumeTarget;
+#[path = "resume_refusal_code.rs"]
+mod resume_refusal_code;
+#[path = "resume_refusal_text.rs"]
+mod resume_refusal_text;
 
 /// A saved session was resumed: the departing one was settled and saved,
 /// the target claimed and loaded, its history and workflow restored, and
@@ -55,16 +28,14 @@ pub struct SavedSessionResumed {
     /// The name as the client spelled it.
     pub name: String,
     pub identity: SessionIdentity,
-    /// The live conversation's length after the restore, injected prompt
-    /// included (what the acknowledgement has always reported).
+    /// The live conversation's length after the restore, injected prompt included.
     pub message_count: usize,
     /// The ledger position after the switch, for the transports to announce.
     pub ledger: LedgerAdvance,
 }
 
-/// What opening the loop's session at startup yielded: the persisted
-/// conversation (empty for a new or ephemeral session) and the workflow run
-/// recorded with it, if any.
+/// What opening the loop's session at startup yielded: the persisted conversation
+/// (empty for a new or ephemeral session) and the workflow run recorded with it.
 #[derive(Debug, Clone)]
 pub struct StartupSessionOpened {
     pub messages: Vec<Message>,
@@ -77,11 +48,29 @@ pub struct StartupSessionOpened {
 /// loop's own never (#1995); children the fleet already settled stay settled.
 #[derive(Debug)]
 pub enum ResumeSavedSessionError {
+    /// The agent is running a turn: the interface admits no resume (#2011).
+    Busy,
     /// A `--no-session` loop resumes nothing.
     Ephemeral,
     /// The target is not one of the accepted spellings.
     InvalidName,
-    Scope(ResumeDisposition),
+    /// The target exists and its home does not admit a restore here (#2011).
+    Decision(Box<ResumeDecision>),
+    /// The home changed since the client was shown it (#2011).
+    StaleHomeVersion,
+    /// This runtime's own execution directory cannot be discovered (#2011).
+    CurrentScopeUnavailable(String),
+    /// An explicit action must name the home version it was decided on.
+    HomeVersionRequired(ResumeAction),
+    /// The target's decision kind (or plain restorability) never offers `action`.
+    ActionNotOffered(ResumeAction),
+    /// No executor of `action` is composed; nothing else was done instead.
+    ActionUnavailable {
+        action: ResumeAction,
+        reason: String,
+    },
+    /// `action` has its own transaction; this owner restores and nothing else.
+    ActionExecutedElsewhere(ResumeAction),
     /// The loop's own composed session does not admit at startup (#2009).
     StartupScope(StartupRefusal),
     Refused(SessionTransitionRefused),
@@ -93,27 +82,6 @@ pub enum ResumeSavedSessionError {
     NotFound(String),
     /// The target could not be read.
     Load(DomainError),
-}
-
-impl std::fmt::Display for ResumeSavedSessionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Ephemeral => f.write_str("cannot resume sessions in ephemeral mode"),
-            Self::InvalidName => {
-                f.write_str("session name must contain only alphanumeric, '-', or '_'")
-            }
-            Self::Scope(disposition) => write!(
-                f,
-                "session resume unavailable: {disposition}; Cancel (open/fork/locate are unavailable)"
-            ),
-            Self::StartupScope(refusal) => write!(f, "{refusal}"),
-            Self::Refused(refused) => write!(f, "{refused}"),
-            Self::Save(error) => write!(f, "failed to save current session: {error}"),
-            Self::Claim(error) => write!(f, "{error}"),
-            Self::NotFound(name) => write!(f, "session not found: {name}"),
-            Self::Load(error) => write!(f, "failed to load session: {error}"),
-        }
-    }
 }
 
 impl std::error::Error for ResumeSavedSessionError {}

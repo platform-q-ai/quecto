@@ -349,6 +349,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/model_payloads.rs` | `protocol` mapper feeding `models` (relocated, #1257 Phase 2) |
 | `protocol/presentation_payloads.rs` | `protocol` typed mapping for turn, history, spawn, and tool display payloads (#1257 Phase 6) |
 | `protocol/range_accumulator.rs` | `protocol` (relocated, #1257 Phase 2) |
+| `protocol/resume_decision_payloads.rs` | `protocol` typed `resume_session` exchange: the selection sent (identity, action, expected home version) and the affirmative answer mapper — a restore only for `resumed` (or no outcome, a pre-#2011 harness), cancelled, decision, refusal, and `Unrecognized` for every other success, which changes nothing locally (#2011) |
 | `protocol/session_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/state_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/admission_payloads.rs` | `protocol` inference-admission view mapper (#1679 P4) |
@@ -357,7 +358,10 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/workflow_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `sessions/resume_picker.rs` | `sessions` (scope-aware presentation, #2009) |
 | `sessions/discovery_diagnostics.rs` | `sessions` discovery-diagnostic toast policy: once per process, batches summarised (#2018) |
-| `sessions/resume_rows.rs` | `sessions` discovery-row projection: order, stable IDs, safe copy, eligible-key allowlist (#2009) |
+| `sessions/resume_decision.rs` | `sessions` resume decision dialog, laid over the whole terminal frame (not the body pane): the title the user picked with its key beneath, the recorded folder and the harness's detail under it, harness-offered actions in order, every unavailable one marked at every width and never sent (Enter toasts a short pointer at the reason under the cursor); Cancel, Escape and Ctrl-C send nothing; untrusted text made safe (controls, bidi, every invisible character, bounded combining marks), a folder bounded from both ends; the reason takes the free rows, sections are shed by importance, and with many offers or a very low terminal the list scrolls so the border survives (#2011) |
+| `sessions/resume_decision_wording.rs` | `sessions` dialog words: long and short titles and action labels in plain language, the footer, the unavailable mark — the widest wording that fits every row, a clipped label ending in an ellipsis (#2011) |
+| `sessions/resume_decision_layout.rs` | `sessions` pure dialog text layout: whole-word wrap, bounded sections with a marked cut, a folder path that keeps both ends on screen and when bounded to 512 characters (#2011) |
+| `sessions/resume_rows.rs` | `sessions` discovery-row projection: order, stable IDs, safe copy, the home version and the title each row was listed with, and why Enter on an ineligible row opens options ("Saved in another folder" / "No folder on record") (#2009, #2011) |
 | `sessions/controller_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `sessions/mod.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `setup/mod.rs` | `setup` walkthrough prompt templates + `/setup` variant parser (#2024 S6; pure text, no filesystem/UDS/policy) |

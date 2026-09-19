@@ -6,7 +6,8 @@
 
 use super::{
     AnsiSegment, ansi_segments, ansi_segments_legacy_csi, sanitize_control,
-    sanitize_control_keep_newlines, sanitize_control_truncated, strip_ansi,
+    sanitize_control_keep_newlines, sanitize_control_truncated, sanitize_untrusted_label,
+    strip_ansi,
 };
 
 // ── ansi_segments: classification ─────────────────────────────────────────
@@ -231,4 +232,47 @@ fn legacy_csi_tail_stops_at_next_escape() {
             AnsiSegment::Text("z"),
         ]
     );
+}
+
+// ── untrusted labels (#2011 review R2-H2, R2-T6, R2-T11) ───────────────────
+
+/// Every character that is invisible and hides, splits or reorders a label is
+/// dropped — not only the zero-width set: the soft hyphen, the grapheme
+/// joiner, the Mongolian selectors, line/paragraph separators, the invisible
+/// operators, interlinear annotations, variation selectors and tag characters.
+#[test]
+fn an_untrusted_label_drops_every_invisible_character() {
+    let invisible = ['\u{ad}', '\u{34f}', '\u{61c}', '\u{feff}']
+        .into_iter()
+        .chain('\u{180b}'..='\u{180f}')
+        .chain('\u{200b}'..='\u{200f}')
+        .chain('\u{2028}'..='\u{202e}')
+        .chain('\u{2060}'..='\u{206f}')
+        .chain('\u{fe00}'..='\u{fe0f}')
+        .chain('\u{fff9}'..='\u{fffb}')
+        .chain('\u{e0000}'..='\u{e007f}')
+        .chain('\u{e0100}'..='\u{e01ef}');
+    for ch in invisible {
+        let label = sanitize_untrusted_label(&format!("a{ch}b"), 64);
+        assert_eq!(label, "ab", "U+{:04X}", ch as u32);
+    }
+    // Chat prose keeps its joiners and selectors: only labels are this strict.
+    assert_eq!(sanitize_control("a\u{200d}\u{fe0f}b"), "a\u{200d}\u{fe0f}b");
+}
+
+/// A combining-mark flood cannot overdraw the rows around a label: at most
+/// two marks follow a base character; ordinary accents are untouched.
+#[test]
+fn an_untrusted_label_bounds_combining_marks_per_base_character() {
+    let flood = format!("/p/a{}/tail", "\u{301}".repeat(3000));
+    assert_eq!(
+        sanitize_untrusted_label(&flood, 512),
+        "/p/a\u{301}\u{301}/tail"
+    );
+    assert_eq!(
+        sanitize_untrusted_label("e\u{301}a\u{308}\u{304}", 64),
+        "e\u{301}a\u{308}\u{304}"
+    );
+    // A label that opens with marks has no base for them to sit on.
+    assert_eq!(sanitize_untrusted_label("\u{301}\u{301}\u{301}x", 64), "x");
 }
