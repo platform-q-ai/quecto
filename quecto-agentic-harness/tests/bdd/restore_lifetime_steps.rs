@@ -340,6 +340,7 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             notification_rx: None,
             subagent_registry: Some(registry_for_loop),
             harness_lifecycle: None,
+            environment_reconciliation: None,
             workflow_state,
             workflow_config,
             broadcast_tx,

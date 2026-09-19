@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry, KillClaim};
 use crate::domain::environment_retention::{
     MemberFinalizeMode, SwarmRunObservation, loss_reason, retains_environment, retention_reason,
-    unrecorded_loss_reason,
+    stops_runtime_preserving_workspace, unrecorded_loss_reason,
 };
 
 use super::super::ports::{EnvironmentProcessCommands, HostedSwarmRunObservation};
@@ -66,7 +66,12 @@ impl FinalizeEnvironmentMember {
             SwarmRunObservation::NoStore
         };
         if retains_environment(mode, &observed) {
-            self.retain(claim, &record, mode, &observed).await;
+            if stops_runtime_preserving_workspace(mode, &observed) {
+                self.stop_preserving_workspace(claim, &record, mode, &observed)
+                    .await;
+            } else {
+                self.retain(claim, &record, mode, &observed).await;
+            }
             return;
         }
 
@@ -82,6 +87,40 @@ impl FinalizeEnvironmentMember {
         {
             Ok(()) => self.registry.complete_kill(claim),
             Err(e) => self.registry.fail_kill(claim, &e),
+        }
+    }
+
+    /// Retire a completed swarm's runtime without destroying its state. The
+    /// final-member removal already proved there are no other live environment
+    /// members and minted the exclusive claim; the pure policy additionally
+    /// proved a created, successful terminal outcome. Failure is retryable as
+    /// retained data, never destructive cleanup.
+    async fn stop_preserving_workspace(
+        &self,
+        claim: KillClaim,
+        record: &EnvironmentRecord,
+        mode: MemberFinalizeMode,
+        observed: &SwarmRunObservation,
+    ) {
+        debug_assert!(
+            record.members.is_empty(),
+            "final cleanup claim requires no members"
+        );
+        debug_assert!(stops_runtime_preserving_workspace(mode, observed));
+        if record.retained_kill_argv.is_empty() {
+            self.registry.fail_stop(
+                claim,
+                "completed swarm runtime does not advertise preserving stop support",
+            );
+            return;
+        }
+        match self
+            .commands
+            .run_retained_stop(&record.environment_id, &record.retained_kill_argv)
+            .await
+        {
+            Ok(()) => self.registry.complete_stop(claim),
+            Err(error) => self.registry.fail_stop(claim, &error),
         }
     }
 

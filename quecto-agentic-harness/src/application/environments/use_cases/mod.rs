@@ -9,6 +9,7 @@ mod kill_environment;
 mod list_container_configs;
 mod list_environments;
 mod restore_registry;
+mod stop_environment;
 
 pub use container_status::ContainerStatus;
 pub use diagnose_container_runtime::DiagnoseContainerRuntime;
@@ -21,9 +22,10 @@ pub use kill_environment::{KillEnvironment, KillEnvironmentError, KilledEnvironm
 pub use list_container_configs::ListContainerConfigs;
 pub use list_environments::ListEnvironmentsQuery;
 pub use restore_registry::{
-    GONE_AT_RESTORE, KILL_IN_FLIGHT, RELABELLED_BY_OLDER_BUILD, RETAINED_EXITED, RestoreRegistry,
-    unfinished_run_reason,
+    GONE_AT_RESTORE, KILL_IN_FLIGHT, PreparedRegistry, RELABELLED_BY_OLDER_BUILD, RETAINED_EXITED,
+    ReconcileRegistry, RestoreRegistry, unfinished_run_reason,
 };
+pub use stop_environment::{PreservedEnvironment, StopEnvironment, StopEnvironmentError};
 
 #[cfg(test)]
 mod finalize_environment_member_retention_tests;
@@ -45,3 +47,5 @@ mod list_environments_tests;
 mod restore_registry_hosted_tests;
 #[cfg(test)]
 mod restore_registry_tests;
+#[cfg(test)]
+mod stop_environment_tests;

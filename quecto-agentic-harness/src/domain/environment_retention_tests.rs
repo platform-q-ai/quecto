@@ -69,6 +69,51 @@ fn retention_policy_holds_for_every_created_run_on_exit_and_parent_kill() {
 }
 
 #[test]
+fn preserving_stop_policy_requires_affirmative_created_success() {
+    let run = SwarmRunObservation::Run;
+    for mode in [MemberFinalizeMode::Exit, MemberFinalizeMode::ParentKill] {
+        for successful in [
+            with_status(RunStatus::Succeeded, None),
+            with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
+        ] {
+            assert!(stops_runtime_preserving_workspace(mode, &run(successful)));
+        }
+        for active_or_recoverable in [
+            running_swarm(),
+            with_status(RunStatus::Paused, None),
+            with_status(RunStatus::Paused, Some(RunStatus::Blocked)),
+            with_status(RunStatus::Failed, None),
+            with_status(RunStatus::Cancelled, None),
+            with_status(RunStatus::BudgetExhausted, None),
+        ] {
+            assert!(!stops_runtime_preserving_workspace(
+                mode,
+                &run(active_or_recoverable)
+            ));
+        }
+        let placeholder = HostedSwarmRun {
+            status: RunStatus::Succeeded,
+            deadline: 0.0,
+            ..running_swarm()
+        };
+        assert!(!stops_runtime_preserving_workspace(mode, &run(placeholder)));
+        assert!(!stops_runtime_preserving_workspace(
+            mode,
+            &SwarmRunObservation::Unreadable("locked".into())
+        ));
+    }
+    for rollback in [
+        MemberFinalizeMode::LaunchRollback,
+        MemberFinalizeMode::LaunchRollbackOwned,
+    ] {
+        assert!(!stops_runtime_preserving_workspace(
+            rollback,
+            &run(with_status(RunStatus::Succeeded, None))
+        ));
+    }
+}
+
+#[test]
 fn retention_reasons_name_how_the_run_ended() {
     let exit = MemberFinalizeMode::Exit;
     let text = |run| retention_reason(exit, &SwarmRunObservation::Run(run));

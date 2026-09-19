@@ -10,7 +10,7 @@ use crate::application::environments::ports::{
 };
 use crate::application::environments::use_cases::FinalizeEnvironmentMember;
 use crate::domain::environment_registry::{
-    EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
+    EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, EnvironmentTarget,
 };
 use crate::domain::environment_retention::{
     CoordinatorLoss, HostedSwarmRun, MemberFinalizeMode, SwarmRunObservation,
@@ -34,6 +34,7 @@ struct HostedRunPort {
     observed: SwarmRunObservation,
     loss_error: Option<String>,
     losses: Mutex<Vec<String>>,
+    stops: Mutex<Vec<ScriptCall>>,
     kills: Mutex<Vec<ScriptCall>>,
     cleanups: Mutex<Vec<ScriptCall>>,
 }
@@ -48,6 +49,7 @@ impl HostedRunPort {
             observed,
             loss_error: None,
             losses: Mutex::new(Vec::new()),
+            stops: Mutex::new(Vec::new()),
             kills: Mutex::new(Vec::new()),
             cleanups: Mutex::new(Vec::new()),
         }
@@ -97,6 +99,20 @@ impl EnvironmentProcessCommands for HostedRunPort {
         _argv: &'a [String],
     ) -> PortFuture<'a, Result<serde_json::Value, String>> {
         Box::pin(async { Ok(serde_json::json!({})) })
+    }
+
+    fn run_retained_stop<'a>(
+        &'a self,
+        environment_id: &'a str,
+        argv: &'a [String],
+    ) -> PortFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.stops.lock().unwrap().push(ScriptCall {
+                environment_id: environment_id.to_string(),
+                argv: argv.to_vec(),
+            });
+            Ok(())
+        })
     }
 
     fn run_retained_kill<'a>(
@@ -208,14 +224,37 @@ fn coordinator_exit_from_a_plain_pause_is_a_loss() {
 }
 
 #[test]
-fn coordinator_exit_after_an_orderly_end_retains_without_quarantine() {
-    // The user's decision: every swarm end keeps its container. A run
-    // already paused holding an outcome, closed, or cancelled is not a loss.
+fn final_member_after_success_automatically_stops_runtime_and_preserves_workspace() {
+    for hosted in [
+        with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
+        with_status(RunStatus::Succeeded, None),
+    ] {
+        let port = Arc::new(HostedRunPort::hosting(Some(hosted)));
+        let (registry, env_ref) = finalize(port.clone(), MemberFinalizeMode::Exit);
+        assert_eq!(port.stops.lock().unwrap().len(), 1);
+        assert!(port.kills.lock().unwrap().is_empty());
+        assert!(port.losses.lock().unwrap().is_empty());
+        let record = registry.get(&env_ref).unwrap();
+        assert_eq!(record.status, EnvironmentStatus::Preserved);
+        assert_eq!(
+            record.workspace_path,
+            std::path::PathBuf::from(format!("/ws/{env_ref}"))
+        );
+        assert!(
+            registry
+                .resolve_joinable(&EnvironmentTarget::Ref(env_ref.clone()))
+                .is_err()
+        );
+        assert!(
+            registry.begin_kill(&env_ref).is_ok(),
+            "later explicit discard"
+        );
+    }
+}
+
+#[test]
+fn non_success_orderly_end_retains_without_quarantine_or_runtime_stop() {
     let cases = [
-        (
-            with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
-            "run ended: succeeded",
-        ),
         (
             with_status(RunStatus::Paused, Some(RunStatus::Blocked)),
             "run ended: blocked",
@@ -228,10 +267,6 @@ fn coordinator_exit_after_an_orderly_end_retains_without_quarantine() {
             with_status(RunStatus::Paused, Some(RunStatus::BudgetExhausted)),
             "run ended: budget-exhausted",
         ),
-        (
-            with_status(RunStatus::Succeeded, None),
-            "run closed: succeeded",
-        ),
         (with_status(RunStatus::Blocked, None), "run closed: blocked"),
         (
             with_status(RunStatus::Cancelled, None),
@@ -242,6 +277,7 @@ fn coordinator_exit_after_an_orderly_end_retains_without_quarantine() {
         assert!(hosted.ended(), "{hosted:?}");
         let port = Arc::new(HostedRunPort::hosting(Some(hosted.clone())));
         let (registry, env_ref) = finalize(port.clone(), MemberFinalizeMode::Exit);
+        assert!(port.stops.lock().unwrap().is_empty(), "{hosted:?}");
         assert!(port.kills.lock().unwrap().is_empty(), "{hosted:?}");
         assert!(
             port.losses.lock().unwrap().is_empty(),
@@ -293,6 +329,13 @@ fn a_run_that_ends_between_observation_and_the_loss_record_is_reported_orderly()
         ) -> PortFuture<'a, Result<serde_json::Value, String>> {
             self.0.run_retained_inspect(environment_id, argv)
         }
+        fn run_retained_stop<'a>(
+            &'a self,
+            environment_id: &'a str,
+            argv: &'a [String],
+        ) -> PortFuture<'a, Result<(), String>> {
+            self.0.run_retained_stop(environment_id, argv)
+        }
         fn run_retained_kill<'a>(
             &'a self,
             environment_id: &'a str,
@@ -341,29 +384,40 @@ fn coordinator_exit_still_retains_when_the_store_refuses_the_loss_record() {
 }
 
 #[test]
-fn supervisor_kill_of_the_coordinator_retains_without_a_loss_record() {
-    // agent_cmd kill of the member, or the master's own shutdown: the box
-    // the master was told it could inspect must survive, and a deliberate
-    // kill is not a lost harness.
+fn supervisor_kill_retains_running_or_plain_paused_coordinator() {
+    // A supervisor action is not evidence that active responsibilities ended.
     for hosted in [
         running_swarm(),
-        with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
-        with_status(RunStatus::Succeeded, None),
+        with_status(RunStatus::Paused, None),
+        with_status(RunStatus::Paused, Some(RunStatus::Blocked)),
     ] {
         let port = Arc::new(HostedRunPort::hosting(Some(hosted.clone())));
         let (registry, env_ref) = finalize(port.clone(), MemberFinalizeMode::ParentKill);
+        assert!(port.stops.lock().unwrap().is_empty(), "{hosted:?}");
         assert!(port.kills.lock().unwrap().is_empty(), "{hosted:?}");
         assert!(port.losses.lock().unwrap().is_empty(), "{hosted:?}");
         assert_eq!(
             registry.get(&env_ref).unwrap().status,
             EnvironmentStatus::Retained
         );
-        let reason = reason(&registry, &env_ref);
-        assert!(
-            reason.starts_with("coordinator killed by supervisor; run "),
-            "{reason}"
+        assert!(reason(&registry, &env_ref).starts_with("coordinator killed by supervisor; run "));
+    }
+}
+
+#[test]
+fn supervisor_kill_after_affirmative_success_stops_runtime_but_preserves_workspace() {
+    for hosted in [
+        with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
+        with_status(RunStatus::Succeeded, None),
+    ] {
+        let port = Arc::new(HostedRunPort::hosting(Some(hosted)));
+        let (registry, env_ref) = finalize(port.clone(), MemberFinalizeMode::ParentKill);
+        assert_eq!(port.stops.lock().unwrap().len(), 1);
+        assert!(port.kills.lock().unwrap().is_empty());
+        assert_eq!(
+            registry.get(&env_ref).unwrap().status,
+            EnvironmentStatus::Preserved
         );
-        assert!(registry.begin_kill(&env_ref).is_ok());
     }
 }
 

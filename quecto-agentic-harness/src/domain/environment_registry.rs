@@ -33,11 +33,13 @@ pub enum EnvironmentStatus {
     CleanupFailed,
     /// Emptied after its swarm run ended or lost its coordinator (#1924): the
     /// final-member kill was deliberately withheld so the board, checkout and
-    /// unpushed work survive for inspection. Killable only by an explicit
-    /// `kill_container`; a join is admitted for inspection but never revives
-    /// it (no automatic teardown can follow), so a rolled-back or exited
-    /// joiner leaves it retained.
+    /// unpushed work survive for inspection. Killable by explicit control.
     Retained,
+    /// Runtime processes are gone, while the workspace and environment state
+    /// are deliberately preserved for data recovery. This state is terminal
+    /// for execution and therefore never joinable; only an explicit
+    /// `kill_container` discards its preserved data.
+    Preserved,
 }
 
 /// How a caller addresses an existing environment.
@@ -157,6 +159,7 @@ impl EnvironmentRecord {
             EnvironmentStatus::Stopped => "stopped",
             EnvironmentStatus::CleanupFailed => "cleanup-failed",
             EnvironmentStatus::Retained => "retained",
+            EnvironmentStatus::Preserved => "preserved",
         }
     }
 
@@ -395,6 +398,39 @@ impl EnvironmentRegistry {
         }
     }
 
+    /// Apply a deferred startup reconciliation only while the in-memory
+    /// record is still the restored snapshot that was inspected. A join,
+    /// kill, stop or another reconciliation that changed its status wins;
+    /// slow startup inspection can never overwrite that newer transition.
+    ///
+    /// The durable store has already performed its own status compare-and-set
+    /// before this call. Consequently the adopted status becomes the status
+    /// known to be journalled, and no second store write is issued here.
+    pub fn reconcile_restored(
+        &self,
+        expected: EnvironmentStatus,
+        mut judged: EnvironmentRecord,
+    ) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(current) = state.entries.get(&judged.environment_ref) else {
+            return false;
+        };
+        if current.origin != EnvironmentOrigin::Restored || current.status != expected {
+            return false;
+        }
+
+        // Reconciliation judges runtime/store facts, not session membership.
+        // Preserve members that joined while inspection was outside the lock.
+        judged.members.clone_from(&current.members);
+        judged.origin = EnvironmentOrigin::Restored;
+        let environment_ref = judged.environment_ref.clone();
+        state
+            .journalled
+            .insert(environment_ref.clone(), judged.status.clone());
+        state.entries.insert(environment_ref, judged);
+        true
+    }
+
     /// Report the record under `environment_ref` as changed, after the
     /// state lock is released: the snapshot and the write happen under
     /// the journal order lock, so a later transition never reaches the
@@ -518,9 +554,9 @@ impl EnvironmentRegistry {
         let record = self.resolve(target)?;
         match record.status {
             EnvironmentStatus::Running | EnvironmentStatus::Retained => Ok(record),
-            EnvironmentStatus::Stopped => Err(EnvironmentLookupError::Stopped(
-                record.environment_ref.clone(),
-            )),
+            EnvironmentStatus::Stopped | EnvironmentStatus::Preserved => Err(
+                EnvironmentLookupError::Stopped(record.environment_ref.clone()),
+            ),
             EnvironmentStatus::Killing | EnvironmentStatus::CleanupFailed => Err(
                 EnvironmentLookupError::Stale(record.environment_ref.clone()),
             ),
@@ -542,11 +578,12 @@ impl EnvironmentRegistry {
                 // a name freed by a stopped environment can be reused without
                 // a false ambiguity for the rest of the session.
                 let named = |r: &&EnvironmentRecord| r.name.as_deref() == Some(name.as_str());
-                let mut live = state
-                    .entries
-                    .values()
-                    .filter(named)
-                    .filter(|r| r.status != EnvironmentStatus::Stopped);
+                let mut live = state.entries.values().filter(named).filter(|r| {
+                    !matches!(
+                        r.status,
+                        EnvironmentStatus::Stopped | EnvironmentStatus::Preserved
+                    )
+                });
                 match (live.next(), live.next()) {
                     (Some(record), None) => Ok(record.clone()),
                     (Some(_), Some(_)) => Err(EnvironmentLookupError::Ambiguous(name.clone())),
@@ -583,9 +620,9 @@ impl EnvironmentRegistry {
                 }
                 Ok(())
             }
-            EnvironmentStatus::Stopped => Err(EnvironmentLookupError::Stopped(
-                record.environment_ref.clone(),
-            )),
+            EnvironmentStatus::Stopped | EnvironmentStatus::Preserved => Err(
+                EnvironmentLookupError::Stopped(record.environment_ref.clone()),
+            ),
             EnvironmentStatus::Killing | EnvironmentStatus::CleanupFailed => Err(
                 EnvironmentLookupError::Stale(record.environment_ref.clone()),
             ),
@@ -640,7 +677,8 @@ impl EnvironmentRegistry {
         let claimable = match record.status {
             EnvironmentStatus::Running
             | EnvironmentStatus::CleanupFailed
-            | EnvironmentStatus::Retained => true,
+            | EnvironmentStatus::Retained
+            | EnvironmentStatus::Preserved => true,
             EnvironmentStatus::Killing => record.origin == EnvironmentOrigin::Restored,
             EnvironmentStatus::Stopped => false,
         };
@@ -662,10 +700,69 @@ impl EnvironmentRegistry {
             EnvironmentStatus::Killing
             | EnvironmentStatus::Running
             | EnvironmentStatus::CleanupFailed
-            | EnvironmentStatus::Retained => Err(EnvironmentLookupError::Stale(
+            | EnvironmentStatus::Retained
+            | EnvironmentStatus::Preserved => Err(EnvironmentLookupError::Stale(
                 record.environment_ref.clone(),
             )),
         }
+    }
+
+    /// Claim a retained environment for a non-destructive runtime stop.
+    /// Only the affirmative `Retained` state is eligible: a live or uncertain
+    /// environment is never stopped merely because it has no negative flag.
+    pub fn begin_stop(&self, environment_ref: &str) -> Result<KillClaim, EnvironmentLookupError> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let record = state
+            .entries
+            .get_mut(environment_ref)
+            .ok_or_else(|| EnvironmentLookupError::Unknown(environment_ref.to_string()))?;
+        if record.status != EnvironmentStatus::Retained {
+            return match record.status {
+                EnvironmentStatus::Stopped | EnvironmentStatus::Preserved => Err(
+                    EnvironmentLookupError::Stopped(record.environment_ref.clone()),
+                ),
+                EnvironmentStatus::Running
+                | EnvironmentStatus::Killing
+                | EnvironmentStatus::CleanupFailed
+                | EnvironmentStatus::Retained => Err(EnvironmentLookupError::Stale(
+                    record.environment_ref.clone(),
+                )),
+            };
+        }
+        record.status = EnvironmentStatus::Killing;
+        if let Some(metadata) = record.metadata.as_object_mut() {
+            metadata.insert("stop_in_progress".to_string(), serde_json::json!(true));
+        }
+        let claim = KillClaim {
+            environment_ref: record.environment_ref.clone(),
+        };
+        state.kill_claims.insert(environment_ref.to_string());
+        drop(state);
+        self.journal_ref(environment_ref);
+        Ok(claim)
+    }
+
+    /// Commit data-preserved after a successful runtime stop. The claim uses
+    /// the same exclusive lane as destructive kill, so the two effects cannot
+    /// race. The workspace and metadata remain untouched.
+    pub fn complete_stop(&self, claim: KillClaim) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.kill_claims.remove(&claim.environment_ref);
+        if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
+            debug_assert_eq!(record.status, EnvironmentStatus::Killing);
+            record.status = EnvironmentStatus::Preserved;
+            record.members.clear();
+            record.last_error = None;
+            if let Some(metadata) = record.metadata.as_object_mut() {
+                metadata.remove("stop_in_progress");
+                metadata.insert(
+                    "preserved".to_string(),
+                    serde_json::json!("runtime stopped; workspace retained for data recovery"),
+                );
+            }
+        }
+        drop(state);
+        self.journal_ref(&claim.environment_ref);
     }
 
     /// Commit stopped after a successful kill. Members are gone by definition.
@@ -695,6 +792,24 @@ impl EnvironmentRegistry {
         if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
             debug_assert_eq!(record.status, EnvironmentStatus::Killing);
             record.retain_with(reason);
+        }
+        drop(state);
+        self.journal_ref(&claim.environment_ref);
+    }
+
+    /// Release a failed non-destructive stop for retry without widening the
+    /// destructive-kill state machine. The environment returns to `Retained`;
+    /// its data and the actionable stop error remain visible.
+    pub fn fail_stop(&self, claim: KillClaim, error: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.kill_claims.remove(&claim.environment_ref);
+        if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
+            debug_assert_eq!(record.status, EnvironmentStatus::Killing);
+            record.status = EnvironmentStatus::Retained;
+            record.last_error = Some(error.to_string());
+            if let Some(metadata) = record.metadata.as_object_mut() {
+                metadata.remove("stop_in_progress");
+            }
         }
         drop(state);
         self.journal_ref(&claim.environment_ref);

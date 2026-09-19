@@ -16,6 +16,8 @@ pub(super) struct ToolRegistryBuild {
     pub(super) harness_lifecycle:
         Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
     pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
+    pub(super) environment_reconciliation:
+        Option<crate::application::environments::use_cases::ReconcileRegistry>,
     pub(super) workspace: std::path::PathBuf,
 }
 
@@ -127,9 +129,12 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
     // The durable environment registry (#2024 S4d): restored from the base
     // directory for a top-level session; a spawned child journals its own
     // creates without inheriting the fleet.
-    let environment_registry = flags
+    let mut environment_registry = flags
         .environment_registry
         .map(|build| build(base_dir, &session_key, !flags.spawned));
+    let environment_reconciliation = environment_registry
+        .as_mut()
+        .and_then(|build| build.reconciliation.take());
     let runtime = crate::interface::shared::build_tool_runtime(
         crate::interface::shared::ToolRuntimeBuildArgs {
             swarm_context: crate::interface::tool_runtime::swarm_context(),
@@ -153,7 +158,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             parent_config_path: Some(config_path.to_path_buf()),
             effort_control: Some(effort_control),
             container_configs: Some(container_configs),
-            environment_registry,
+            environment_registry: environment_registry.map(|build| build.registry),
             kill_tool: flags.kill_tool,
             disabled_tools: &flags.disabled_tools,
             inherited_tool_policy: flags.inherited_tool_policy.clone(),
@@ -191,6 +196,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         subagent_registry: runtime.subagent_registry,
         harness_lifecycle: runtime.harness_lifecycle,
         workflow_state: runtime.workflow_state,
+        environment_reconciliation,
         workspace,
     })
 }

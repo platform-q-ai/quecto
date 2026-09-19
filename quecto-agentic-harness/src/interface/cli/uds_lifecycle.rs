@@ -51,6 +51,10 @@ pub struct UdsLoopArgs<'a> {
     /// teardown graph freezes it. `None` builds a private one.
     pub harness_lifecycle:
         Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
+    /// Blocking durable-environment inspection, launched only after the
+    /// listener is bound and its readiness announcement has been emitted.
+    pub environment_reconciliation:
+        Option<crate::application::environments::use_cases::ReconcileRegistry>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     /// Pre-created broadcast channel for workflow event emission (#598).
@@ -93,6 +97,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         notification_rx,
         subagent_registry,
         harness_lifecycle,
+        environment_reconciliation,
         workflow_state,
         workflow_config,
         broadcast_tx,
@@ -157,6 +162,12 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         };
         eprint!("{}", super::uds_wire::socket_announcement(&socket_path));
         let _guard = SocketGuard(socket_path);
+        if let Some(reconciliation) = environment_reconciliation {
+            tokio::task::spawn_blocking(move || {
+                let report = reconciliation.execute();
+                crate::composition::environments::report_environment_reconciliation(&report);
+            });
+        }
         super::uds_multi::multi_client_loop(
             MultiClientArgs {
                 agent,

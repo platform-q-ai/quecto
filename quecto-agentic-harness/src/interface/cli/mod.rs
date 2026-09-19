@@ -15,7 +15,7 @@ mod container_inventory;
 mod container_setup;
 pub use container::{
     ContainerDoctorBuilder, ContainerInitBuilder, ContainerInventoryBuilder,
-    ContainerStatusBuilder, EnvironmentRegistryBuilder,
+    ContainerStatusBuilder, EnvironmentRegistryBuild, EnvironmentRegistryBuilder,
 };
 mod help;
 mod models;

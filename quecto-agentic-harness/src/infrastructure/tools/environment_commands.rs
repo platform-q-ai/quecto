@@ -77,6 +77,19 @@ impl EnvironmentProcessCommands for ScriptEnvironmentCommands {
         })
     }
 
+    fn run_retained_stop<'a>(
+        &'a self,
+        environment_id: &'a str,
+        argv: &'a [String],
+    ) -> PortFuture<'a, Result<(), String>> {
+        let environment_id = environment_id.to_owned();
+        let argv = argv.to_vec();
+        Box::pin(async move {
+            self.blocking(move || run_stop_sync(&environment_id, &argv))
+                .await?
+        })
+    }
+
     fn run_retained_kill<'a>(
         &'a self,
         environment_id: &'a str,
@@ -135,25 +148,54 @@ fn run_script_sync(environment_id: &str, argv: &[String]) {
     }
 }
 
+/// Derive the supported shipped adapter's stop operation from its retained
+/// kill argv. This affirmative shape guard refuses arbitrary third-party
+/// scripts: they must explicitly implement the `--op stop` protocol rather
+/// than accidentally receiving an unknown operation.
+fn stop_argv(kill_argv: &[String]) -> Result<Vec<String>, String> {
+    let mut argv = kill_argv.to_vec();
+    let Some(position) = argv.iter().position(|arg| arg == "--op") else {
+        return Err("retained runtime does not advertise the --op stop protocol".to_string());
+    };
+    let Some(operation) = argv.get_mut(position + 1) else {
+        return Err("retained runtime has an incomplete --op argument".to_string());
+    };
+    if operation != "kill" {
+        return Err("retained runtime does not advertise the --op kill/stop protocol".to_string());
+    }
+    *operation = "stop".to_string();
+    Ok(argv)
+}
+
+fn run_stop_sync(environment_id: &str, kill_argv: &[String]) -> Result<(), String> {
+    let argv = stop_argv(kill_argv)?;
+    run_control_sync(environment_id, &argv, "stop")
+}
+
 /// The retained-kill invocation: argv exec, `QUECTO_CONTAINER_ENVIRONMENT_ID`,
 /// stderr kept as a bounded tail. The environment is stopped only on success.
 /// An altered standard script is refused before it runs (the use case
 /// leaves the retryable `cleanup-failed` state with the reason).
 pub(super) fn run_kill_sync(environment_id: &str, argv: &[String]) -> Result<(), String> {
+    run_control_sync(environment_id, argv, "kill")
+}
+
+fn run_control_sync(environment_id: &str, argv: &[String], operation: &str) -> Result<(), String> {
     let Some((program, args)) = argv.split_first() else {
-        return Err("no retained kill argv".to_string());
+        return Err(format!("no retained {operation} argv"));
     };
-    refuse_altered_script(argv).map_err(|reason| format!("retained kill refused: {reason}"))?;
+    refuse_altered_script(argv)
+        .map_err(|reason| format!("retained {operation} refused: {reason}"))?;
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
     match run_sync_capturing_stderr_tail(cmd, ScriptStdout::Discard, std::time::Duration::MAX) {
         Ok(output) if output.status.success() => Ok(()),
         Ok(output) => Err(format!(
-            "retained kill exited with {}: {}",
+            "retained {operation} exited with {}: {}",
             output.status, output.stderr_tail
         )),
-        Err(error) => Err(format!("failed to invoke retained kill: {error}")),
+        Err(error) => Err(format!("failed to invoke retained {operation}: {error}")),
     }
 }
 

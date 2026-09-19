@@ -42,4 +42,5 @@ mod swarm_agent_loop;
 mod swarm_coordination;
 mod swarm_product_contract;
 mod uds_event_reader;
+mod uds_startup_reconciliation;
 mod uds_termination;

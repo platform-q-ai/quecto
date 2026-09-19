@@ -52,6 +52,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -n "$state_dir" ] || die "--state-dir is required"
+case "$op" in stop | kill | cleanup) ;; *) die "unknown --op: $op" ;; esac
 id="${QUECTO_CONTAINER_ENVIRONMENT_ID:-}"
 [ -n "$id" ] || die "QUECTO_CONTAINER_ENVIRONMENT_ID must be set"
 case "$id" in
@@ -59,10 +60,9 @@ case "$id" in
 esac
 env_dir="$state_dir/$id"
 if [ ! -d "$env_dir" ]; then
-  # State already gone (cleanup after a kill, or a collector removing an
-  # exited container whose directory vanished, #2024 S4d): remove the
-  # container the create script would have named — on the plain `kill`
-  # op too — then succeed idempotently.
+  # A preserving stop cannot succeed without the directory it promises to
+  # preserve. Destructive kill/cleanup remain idempotent when state is gone.
+  [ "$op" != stop ] || die "unknown environment: $id"
   "$cli" rm -f "quecto-$id" >/dev/null 2>&1 || true
   printf '%s %s\n' "$op" "$id" >>"$state_dir/kill.log" 2>/dev/null || true
   exit 0
@@ -86,6 +86,17 @@ container="$(cat "$env_dir/container" 2>/dev/null || true)"
 # bound the grace: one second for the child to cascade, then SIGKILL.
 grace=()
 [ "$cli" = podman ] && grace=(--time 1)
-"$cli" rm -f "${grace[@]}" "$container" >/dev/null 2>&1 || true
-rm -rf "$env_dir"
+if [ "$op" = stop ]; then
+  # Stop is truthful and retryable: unlike destructive cleanup, failure to
+  # retire the runtime is not swallowed. The state directory is never removed.
+  if "$cli" inspect "$container" >/dev/null 2>&1; then
+    "$cli" rm -f "${grace[@]}" "$container" >/dev/null
+  fi
+  tmp="$env_dir/.runtime-stopped.$$"
+  printf 'stopped\n' >"$tmp"
+  mv -f "$tmp" "$env_dir/runtime-stopped"
+else
+  "$cli" rm -f "${grace[@]}" "$container" >/dev/null 2>&1 || true
+  rm -rf "$env_dir"
+fi
 printf '%s %s\n' "$op" "$id" >>"$state_dir/kill.log"

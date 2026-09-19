@@ -24,6 +24,89 @@ fn record(env_ref: &str, id: &str) -> EnvironmentRecord {
 }
 
 #[test]
+fn deferred_reconciliation_applies_only_to_unchanged_restored_status_and_preserves_members() {
+    let registry = EnvironmentRegistry::new();
+    let mut restored = record("C1", "runtime-1");
+    restored.status = EnvironmentStatus::Running;
+    registry.restore(vec![restored.clone()]);
+    registry.add_member("C1", "joined-during-inspect").unwrap();
+
+    let mut judged = restored.clone();
+    judged.status = EnvironmentStatus::Retained;
+    assert!(registry.reconcile_restored(EnvironmentStatus::Running, judged));
+    let applied = registry.get("C1").unwrap();
+    assert_eq!(applied.status, EnvironmentStatus::Retained);
+    assert_eq!(applied.members, ["joined-during-inspect"]);
+
+    let mut stale = restored;
+    stale.status = EnvironmentStatus::Stopped;
+    assert!(!registry.reconcile_restored(EnvironmentStatus::Running, stale));
+    assert_eq!(
+        registry.get("C1").unwrap().status,
+        EnvironmentStatus::Retained
+    );
+}
+
+#[test]
+fn deferred_reconciliation_never_changes_a_created_record() {
+    let registry = EnvironmentRegistry::new();
+    let created = record("C1", "runtime-1");
+    registry.commit(created.clone());
+    let mut judged = created;
+    judged.status = EnvironmentStatus::Stopped;
+
+    assert!(!registry.reconcile_restored(EnvironmentStatus::Running, judged));
+    assert_eq!(
+        registry.get("C1").unwrap().status,
+        EnvironmentStatus::Running
+    );
+}
+
+#[test]
+fn preserved_is_non_joinable_but_explicitly_killable() {
+    let registry = EnvironmentRegistry::new();
+    let mut environment = record("C1", "runtime-1");
+    environment.status = EnvironmentStatus::Retained;
+    registry.commit(environment);
+
+    let claim = registry.begin_stop("C1").unwrap();
+    registry.complete_stop(claim);
+    let preserved = registry.get("C1").unwrap();
+    assert_eq!(preserved.status, EnvironmentStatus::Preserved);
+    assert!(preserved.members.is_empty());
+    assert_eq!(preserved.status_label(), "preserved");
+    assert!(
+        registry
+            .resolve_joinable(&EnvironmentTarget::Ref("C1".into()))
+            .is_err()
+    );
+
+    let discard = registry.begin_kill("C1").unwrap();
+    registry.complete_kill(discard);
+    assert_eq!(
+        registry.get("C1").unwrap().status,
+        EnvironmentStatus::Stopped
+    );
+}
+
+#[test]
+fn stop_eligibility_is_an_affirmative_retained_allowlist() {
+    for status in [
+        EnvironmentStatus::Running,
+        EnvironmentStatus::Killing,
+        EnvironmentStatus::Stopped,
+        EnvironmentStatus::CleanupFailed,
+        EnvironmentStatus::Preserved,
+    ] {
+        let registry = EnvironmentRegistry::new();
+        let mut environment = record("C1", "runtime-1");
+        environment.status = status;
+        registry.commit(environment);
+        assert!(registry.begin_stop("C1").is_err());
+    }
+}
+
+#[test]
 fn refs_are_monotonic_never_reused_and_scoped_per_registry() {
     let registry = EnvironmentRegistry::new();
     let first = registry.mint_ref().unwrap();

@@ -25,12 +25,19 @@ use crate::domain::redaction::redact_url_userinfo;
 pub type ContainerDoctorBuilder =
     fn(&std::path::Path, &ConfigSelection) -> std::sync::Arc<DiagnoseContainerRuntime>;
 
+/// The fast result of composing an agent run's durable environment registry.
+/// The optional slow reconciliation is owned by the interface until its UDS
+/// control socket is bound and announced.
+pub struct EnvironmentRegistryBuild {
+    pub registry: crate::domain::environment_registry::EnvironmentRegistry,
+    pub reconciliation: Option<crate::application::environments::use_cases::ReconcileRegistry>,
+}
+
 /// Composition's builder of an agent run's durable environment registry
-/// (#2024 S4d): `(base_dir, session key, seed)` — seeded with the base
-/// directory's records for a top-level session, journalling only for a
-/// spawned child.
-pub type EnvironmentRegistryBuilder =
-    fn(&std::path::Path, &str, bool) -> crate::domain::environment_registry::EnvironmentRegistry;
+/// (#2024 S4d): `(base_dir, session key, seed)` — load/seed only for a
+/// top-level session, journalling only for a spawned child. Runtime inspection
+/// is returned as a distinct job so it cannot delay control-socket readiness.
+pub type EnvironmentRegistryBuilder = fn(&std::path::Path, &str, bool) -> EnvironmentRegistryBuild;
 
 /// Composition's builder of the `container ls|kill|gc` handles (#2024
 /// S4d) over a registry restored from the base directory.

@@ -40,7 +40,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -n "$state_dir" ] || die "--state-dir is required"
-case "$op" in kill | cleanup) ;; *) die "unknown --op: $op" ;; esac
+case "$op" in stop | kill | cleanup) ;; *) die "unknown --op: $op" ;; esac
 [ -n "${QUECTO_CONTAINER_ENVIRONMENT_ID:-}" ] || die "QUECTO_CONTAINER_ENVIRONMENT_ID must be set"
 
 env_dir="$state_dir/$QUECTO_CONTAINER_ENVIRONMENT_ID"
@@ -71,14 +71,26 @@ if [ -f "$env_dir/children.jsonl" ]; then
     kill -9 "$pid" 2>/dev/null || true
   done < <(jq -r '.pid' "$env_dir/children.jsonl")
 fi
-if [ "$op" = "cleanup" ]; then
+case "$op" in
+stop)
+  # Runtime retirement is deliberately non-destructive: the full state dir,
+  # checkout, swarm board and logs remain available for data recovery. The
+  # marker lets startup reconciliation distinguish a completed stop whose
+  # registry receipt was lost from an uncertain runtime observation.
+  tmp="$env_real/.runtime-stopped.$$"
+  printf 'stopped\n' >"$tmp"
+  mv -f "$tmp" "$env_real/runtime-stopped"
+  ;;
+cleanup)
   # cleanup is terminal: remove the ENTIRE per-environment state directory so
   # the state root does not accrete one directory per environment forever.
-  # `kill` keeps the metadata (ref/kill.log/children.jsonl) for the cleanup
-  # that follows it and for post-mortem inspection.
   rm -rf "$env_real"
-else
+  ;;
+kill)
+  # Destructive explicit kill keeps the small adapter metadata for the later
+  # cleanup pass but discards the workspace.
   rm -rf "$env_real/workspace"
-fi
+  ;;
+esac
 # ------------------------------------------------------------------------
 log "$op completed for $QUECTO_CONTAINER_ENVIRONMENT_ID"

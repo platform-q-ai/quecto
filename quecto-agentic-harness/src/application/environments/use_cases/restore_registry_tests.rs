@@ -170,6 +170,48 @@ pub(super) fn process(
 }
 
 #[test]
+fn prepare_is_script_free_and_reconciliation_is_explicit() {
+    let store = store_with(vec![record("C1", EnvironmentStatus::Running)]);
+    let observations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = Arc::clone(&observations);
+    let process = process(move |_| {
+        observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        EnvironmentLiveness::Running
+    });
+
+    let prepared = RestoreRegistry::new(store, process, no_hosted()).prepare("cli:two");
+    assert_eq!(observations.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let seeded = prepared.registry.get("C1").expect("raw record is seeded");
+    assert_eq!(seeded.origin, EnvironmentOrigin::Restored);
+    assert!(seeded.members.is_empty());
+
+    let report = prepared
+        .reconciliation
+        .expect("top-level readable restore has a slow phase")
+        .execute();
+    assert_eq!(observations.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(report.restored, ["C1"]);
+}
+
+#[test]
+fn unreadable_prepare_preserves_defensive_registry_semantics_without_a_job() {
+    let store = store_with(vec![record("C1", EnvironmentStatus::Running)]);
+    store
+        .fail_load
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let prepared = RestoreRegistry::new(
+        store,
+        process(|_| panic!("an unreadable store has nothing to inspect")),
+        no_hosted(),
+    )
+    .prepare("cli:two");
+
+    assert!(prepared.reconciliation.is_none());
+    assert!(prepared.report.read_error.is_some());
+    assert!(prepared.registry.read_error().is_some());
+}
+
+#[test]
 fn live_records_are_restored_without_members_gone_ones_stopped_and_unknown_kept() {
     let store = store_with(vec![
         record("C1", EnvironmentStatus::Running),

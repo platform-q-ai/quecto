@@ -231,6 +231,7 @@ enum StatusWire {
     Stopped,
     CleanupFailed,
     Retained,
+    Preserved,
 }
 
 impl From<&EnvironmentStatus> for StatusWire {
@@ -241,6 +242,7 @@ impl From<&EnvironmentStatus> for StatusWire {
             EnvironmentStatus::Stopped => Self::Stopped,
             EnvironmentStatus::CleanupFailed => Self::CleanupFailed,
             EnvironmentStatus::Retained => Self::Retained,
+            EnvironmentStatus::Preserved => Self::Preserved,
         }
     }
 }
@@ -253,6 +255,7 @@ impl From<StatusWire> for EnvironmentStatus {
             StatusWire::Stopped => Self::Stopped,
             StatusWire::CleanupFailed => Self::CleanupFailed,
             StatusWire::Retained => Self::Retained,
+            StatusWire::Preserved => Self::Preserved,
         }
     }
 }

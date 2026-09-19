@@ -134,14 +134,29 @@ pub fn build_environment_registry(
     base_dir: &Path,
     session: &str,
     seed: bool,
-) -> EnvironmentRegistry {
+) -> crate::interface::cli::EnvironmentRegistryBuild {
+    use crate::interface::cli::EnvironmentRegistryBuild;
+
     let restore = build_restore_registry(base_dir);
     if !seed {
-        return restore.unseeded(session);
+        return EnvironmentRegistryBuild {
+            registry: restore.unseeded(session),
+            reconciliation: None,
+        };
     }
-    let (registry, report) = restore.execute(session);
-    report_restore(&report);
-    registry
+    let prepared = restore.prepare(session);
+    report_restore(&prepared.report);
+    EnvironmentRegistryBuild {
+        registry: prepared.registry,
+        reconciliation: prepared.reconciliation,
+    }
+}
+
+/// Present the result of an asynchronous agent-startup reconciliation.
+/// Kept in composition so the interface owns neither logging policy nor
+/// environment-domain report formatting.
+pub fn report_environment_reconciliation(report: &RestoredRegistry) {
+    report_restore(report);
 }
 
 fn report_restore(report: &RestoredRegistry) {
