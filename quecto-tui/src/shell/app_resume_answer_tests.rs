@@ -63,8 +63,7 @@ async fn a_success_that_is_not_a_restore_changes_nothing_locally() {
         assert!(
             notes
                 .iter()
-                .any(|note| note.contains("does not understand")
-                    && note.contains("nothing was changed")),
+                .any(|note| note.starts_with("Nothing changed: update quecto-tui")),
             "{outcome}: a plain message: {notes:?}"
         );
     }
@@ -160,12 +159,26 @@ async fn a_peers_refusal_toasts_nothing_here() {
     assert_eq!(h.app_mut().notifications.messages().len(), before + 1);
 }
 
+/// Send an explicit action of a decision (what only a newer TUI/harness pair
+/// can disagree about).
+async fn send_an_action(h: &mut super::super::super::tui_harness::TuiHarness) -> String {
+    use crate::protocol::resume_decision_payloads::{ResumeAction, ResumeSelection};
+    h.app_mut().ac_mut().agent_connected = true;
+    h.app_mut().ac_mut().session_key = Some("cli:local".into());
+    let mut selection = ResumeSelection::exact("cli:foreign");
+    selection.action = Some(ResumeAction::OpenOriginal);
+    selection.expected_home_version = Some("h1-0123456789abcdef".into());
+    h.app_mut().send_resume_selection(selection);
+    let _ = h.drain_commands().await;
+    h.app_mut().ac().pending_session_resume_id.clone().unwrap()
+}
+
 /// Review R1-T8 / R1-H11: an action the harness does not know is answered by
 /// the UNCORRELATED `parse_error` — no id will ever settle the request. The
 /// TUI settles it on that error, changes nothing and says so; an unrelated
 /// parse error, or one with no resume in flight, touches nothing.
 #[tokio::test]
-async fn an_uncorrelated_parse_error_settles_the_resume_in_flight() {
+async fn an_uncorrelated_parse_error_settles_the_action_in_flight() {
     let mut h = harness().await;
     let unknown_action = Some("unknown resume action at line 1 column 80".to_string());
     h.app_mut().handle_response(
@@ -179,10 +192,7 @@ async fn an_uncorrelated_parse_error_settles_the_resume_in_flight() {
         h.app_mut().notifications.messages().is_empty(),
         "nothing in flight"
     );
-    h.app_mut().ac_mut().agent_connected = true;
-    h.app_mut().ac_mut().session_key = Some("cli:local".into());
-    h.app_mut().send_resume_session("cli:foreign");
-    let _ = h.drain_commands().await;
+    send_an_action(&mut h).await;
     let before = local_state(&mut h);
     let unrelated = Some("missing field `message` at line 1 column 20".to_string());
     h.app_mut()
@@ -191,6 +201,16 @@ async fn an_uncorrelated_parse_error_settles_the_resume_in_flight() {
         h.app_mut().ac().pending_session_resume_id.is_some(),
         "not a resume's"
     );
+    // Should a parse error ever carry an id, another request's is not ours.
+    let foreign = Some("tab9:resume-1".to_string());
+    h.app_mut().handle_response(
+        foreign,
+        "parse_error".into(),
+        false,
+        None,
+        unknown_action.clone(),
+    );
+    assert!(h.app_mut().ac().pending_session_resume_id.is_some());
     h.app_mut()
         .handle_response(None, "parse_error".into(), false, None, unknown_action);
     assert!(
@@ -203,6 +223,63 @@ async fn an_uncorrelated_parse_error_settles_the_resume_in_flight() {
         notes.iter().any(|note| note.contains("Resume failed")),
         "{notes:?}"
     );
+}
+
+/// Review R2-T5: `parse_error` is broadcast. A PEER's "unknown resume action"
+/// cannot be about this tab's plain restore — which carried no action — so it
+/// settles nothing, toasts nothing, and this tab's own decision still opens.
+#[tokio::test]
+async fn a_peers_unknown_action_parse_error_leaves_a_plain_restore_in_flight() {
+    let mut h = harness().await;
+    h.app_mut().ac_mut().agent_connected = true;
+    h.app_mut().send_resume_session("cli:alpha");
+    let id = h.app_mut().ac().pending_session_resume_id.clone().unwrap();
+    let _ = h.drain_commands().await;
+    let peers = Some("parse error: unknown resume action at line 1 column 60".to_string());
+    h.app_mut()
+        .handle_response(None, "parse_error".into(), false, None, peers);
+    assert_eq!(
+        h.app_mut().ac().pending_session_resume_id.as_deref(),
+        Some(id.as_str()),
+        "still in flight"
+    );
+    assert!(h.app_mut().notifications.messages().is_empty());
+    let decision = json!({
+        "outcome": "decision", "code": "decision_required",
+        "session": "cli:alpha", "sessionKey": "cli:alpha",
+        "kind": "cross_folder", "homeVersion": "h1-0123456789abcdef",
+        "executionPath": "/work/a", "detail": null,
+        "actions": [{"action": "cancel", "available": true, "reason": null}],
+    });
+    h.app_mut().handle_response(
+        Some(id),
+        "resume_session".into(),
+        false,
+        Some(decision),
+        None,
+    );
+    assert!(h.app_mut().ac().sessions.resume_decision.is_some());
+    // An action sent next is this tab's again; a restore after it is not.
+    h.app_mut().ac_mut().sessions.resume_decision = None;
+    send_an_action(&mut h).await;
+    assert!(h.app_mut().ac().pending_session_resume_acts);
+    h.app_mut().send_resume_session("cli:alpha");
+    assert!(!h.app_mut().ac().pending_session_resume_acts);
+}
+
+/// Review R2-T7: a stale list is one truncated toast line — the instruction
+/// comes first and nobody is told about a "home".
+#[tokio::test]
+async fn a_stale_list_toast_puts_the_instruction_first() {
+    let mut h = harness().await;
+    asked_and_answered_with(
+        &mut h,
+        false,
+        json!({"outcome": "refused", "code": "stale_home_version"}),
+    )
+    .await;
+    let notes = h.app_mut().notifications.messages();
+    assert_eq!(notes, ["List out of date — reopen /resume and pick again"]);
 }
 
 /// Review R1-T10: Ctrl-C in the dialog is Escape — it closes, sends nothing

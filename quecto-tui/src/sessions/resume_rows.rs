@@ -6,14 +6,21 @@ use crate::components::select_list::SelectItem;
 use crate::protocol::session_payloads::ResumeSessionSummary;
 
 pub const SESSION_ROW_PREFIX: &str = "session:";
-const NO_HOME: &str = "Unassociated / unavailable home";
+const NO_HOME: &str = "No folder on record";
 const ELIGIBLE: &str = "Resume";
-const INELIGIBLE: &str = "Needs a decision (Enter)";
+/// Why Enter on the row restores nothing at once, in the picker's own words
+/// ("Local Folder" / "All Folders"): the session lives in another folder, or
+/// no folder is on record for it (the row already says so where a folder
+/// would be).
+const ELSEWHERE: &str = "Saved in another folder — Enter for options";
+const NO_FOLDER: &str = "Enter for options";
 
 pub struct ResumeRows {
     pub items: Vec<SelectItem>,
     /// The home version each row was listed at (#2011), echoed on selection.
     pub home_versions: std::collections::BTreeMap<String, String>,
+    /// The title each row is shown with, for the decision dialog to repeat.
+    pub titles: std::collections::BTreeMap<String, String>,
     /// The status line to show when there is nothing to pick.
     pub empty_hint: Option<&'static str>,
 }
@@ -36,6 +43,10 @@ impl ResumeRows {
             .iter()
             .filter_map(|s| Some((s.key.clone(), s.home_version.clone()?)))
             .collect();
+        let titles = sessions
+            .iter()
+            .map(|s| (s.key.clone(), s.title.clone()))
+            .collect();
         let items = sessions
             .into_iter()
             .map(|session| {
@@ -43,10 +54,10 @@ impl ResumeRows {
                     .updated_unix_secs
                     .map(&when)
                     .unwrap_or_else(|| "unknown time".to_string());
-                let action = if session.resume_eligible {
-                    ELIGIBLE
-                } else {
-                    INELIGIBLE
+                let action = match (session.resume_eligible, &session.execution_dir) {
+                    (true, _) => ELIGIBLE,
+                    (false, Some(_)) => ELSEWHERE,
+                    (false, None) => NO_FOLDER,
                 };
                 SelectItem {
                     value: format!("{SESSION_ROW_PREFIX}{}", session.key),
@@ -62,6 +73,7 @@ impl ResumeRows {
         Self {
             items,
             home_versions,
+            titles,
             empty_hint,
         }
     }

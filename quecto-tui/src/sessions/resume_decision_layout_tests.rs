@@ -52,3 +52,17 @@ fn a_path_keeps_both_ends_and_fits_its_lines() {
     assert!(wide.iter().all(|line| visible_width(line) <= 6), "{wide:?}");
     assert!(!path_lines("/ab", 0, 0).is_empty());
 }
+
+/// Review R2-T2: a bound keeps BOTH ends — never a head-only cut.
+#[test]
+fn a_bound_drops_the_middle_and_keeps_both_ends() {
+    assert_eq!(bounded_ends("short", 512), "short");
+    assert_eq!(bounded_ends("abcdefghij", 10), "abcdefghij");
+    assert_eq!(bounded_ends("abcdefghijk", 10), "abcd…ghijk");
+    let long = format!("/home/u/{}project-ONE", "deep/".repeat(120));
+    let bounded = bounded_ends(&long, 512);
+    assert_eq!(bounded.chars().count(), 512);
+    assert!(bounded.starts_with("/home/u/deep/") && bounded.ends_with("/project-ONE"));
+    assert_eq!(bounded_ends("äöüäöüäöü", 4), "ä…öü");
+    assert_eq!(bounded_ends("abc", 0), "…");
+}

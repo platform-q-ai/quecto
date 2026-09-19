@@ -46,12 +46,13 @@ fn rows_are_newest_first_with_stable_ids_and_their_listed_versions() {
     assert!(old.contains("/repo · t10 (3 msgs) · Resume"), "{old}");
     let new = rows.items[0].description.as_deref().unwrap();
     assert!(
-        new.contains("/elsewhere") && new.ends_with("Needs a decision (Enter)"),
+        new.contains("/elsewhere") && new.ends_with("Saved in another folder — Enter for options"),
         "{new}"
     );
     let undated = rows.items[2].description.as_deref().unwrap();
     assert!(
-        undated.contains("Unassociated / unavailable home · unknown time"),
+        undated.starts_with("No folder on record · unknown time")
+            && undated.ends_with(" · Enter for options"),
         "{undated}"
     );
 }

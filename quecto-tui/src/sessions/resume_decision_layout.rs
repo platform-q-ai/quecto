@@ -67,6 +67,20 @@ pub(super) fn path_lines(path: &str, width: usize, max_lines: usize) -> Vec<Stri
     lines
 }
 
+/// `text` bounded to `max_chars` characters by dropping its MIDDLE: a long
+/// path keeps the tail that tells it from its neighbours (never a head-only
+/// cut, which shows two different folders as one).
+pub(super) fn bounded_ends(text: &str, max_chars: usize) -> String {
+    let count = text.chars().count();
+    if count <= max_chars {
+        return text.to_string();
+    }
+    let keep = max_chars.saturating_sub(1);
+    let head: String = text.chars().take(keep / 2).collect();
+    let tail: String = text.chars().skip(count - (keep - keep / 2)).collect();
+    format!("{head}{ELLIPSIS}{tail}")
+}
+
 fn elide_middle(text: &str, budget: usize) -> String {
     if visible_width(text) <= budget {
         return text.to_string();

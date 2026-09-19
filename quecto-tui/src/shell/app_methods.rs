@@ -205,6 +205,7 @@ impl App {
             format_unix_minutes,
         );
         self.ac_mut().sessions.home_versions = rows.home_versions;
+        self.ac_mut().sessions.listed_titles = rows.titles;
         self.open_resume_selector_with_workspaces(rows.items, manifest_path, rows.empty_hint);
     }
 
@@ -475,10 +476,6 @@ impl App {
             let (selector_lines, overlay_width) = selector.render_overlay(width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
-        if let Some(dialog) = &mut self.ac_mut().sessions.resume_decision {
-            let (dialog_lines, overlay_width) = dialog.render_overlay(width, height);
-            Self::composite_centered(&mut lines, &dialog_lines, overlay_width, width, height);
-        }
         if let Some(selector) = &mut self.ac_mut().rewind.selector {
             let (selector_lines, overlay_width) =
                 build_rewind_selector_overlay(selector, width, height);
@@ -530,6 +527,15 @@ impl App {
                     .unwrap_or_else(|| " ".repeat(panel_width));
                 *line = format!("{cell}{divider} {line}");
             }
+        }
+
+        // The resume decision dialog (#2011) is laid over the WHOLE frame, the
+        // agents pane included: inside the body pane a 40-column terminal
+        // would leave it ten columns.
+        let full_width = self.terminal.width;
+        if let Some(dialog) = &mut self.ac_mut().sessions.resume_decision {
+            let (dialog_lines, overlay_width) = dialog.render_overlay(full_width, height);
+            Self::composite_centered(&mut lines, &dialog_lines, overlay_width, full_width, height);
         }
 
         // Store rendered lines for text selection extraction (#528).

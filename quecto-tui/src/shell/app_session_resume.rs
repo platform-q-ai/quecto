@@ -6,6 +6,10 @@ use super::super::*;
 use crate::protocol::resume_decision_payloads::{
     ResumeAnswer, ResumeSelection, parse_resume_answer,
 };
+use crate::sessions::resume_decision::ResumeDecisionDialog;
+
+/// The toast of a `stale_home_version` refusal.
+const STALE_LIST: &str = "List out of date — reopen /resume and pick again";
 
 impl App {
     pub(in crate::shell) fn send_list_sessions(&mut self) {
@@ -24,6 +28,7 @@ impl App {
         self.ac_mut().sessions.scope = scope;
         // The rows on screen are about to be replaced: their versions with them.
         self.ac_mut().sessions.home_versions.clear();
+        self.ac_mut().sessions.listed_titles.clear();
         self.ac_mut().sessions.selected_home_version = None;
         if self.ac().sessions.resume_selector.is_none() {
             self.ac_mut().sessions.resume_selector = Some(
@@ -85,6 +90,7 @@ impl App {
             .ac()
             .namespaced_id(&format!("resume-{}", super::super::app_events::uuid_like()));
         self.ac_mut().pending_session_resume_id = Some(id.clone());
+        self.ac_mut().pending_session_resume_acts = resume.action.is_some();
         let sent = self.send_command(Command::ResumeSession {
             id: Some(id),
             resume,
@@ -123,11 +129,16 @@ impl App {
             // A peer's decision, refusal or unreadable answer is not this tab's.
             _ if peers => {}
             ResumeAnswer::Decision(decision) if owned => {
-                self.ac_mut().sessions.resume_decision = Some(
-                    crate::sessions::resume_decision::ResumeDecisionDialog::new(decision),
-                );
+                let sessions = &self.ac().sessions;
+                let title = sessions.listed_titles.get(&decision.session_key).cloned();
+                self.ac_mut().sessions.resume_decision =
+                    Some(ResumeDecisionDialog::new(decision, title.as_deref()));
             }
             ResumeAnswer::Decision(_) => {}
+            // One truncated line: the instruction first, and no "home".
+            ResumeAnswer::Refused(Some(code)) if code == "stale_home_version" => {
+                self.notify(STALE_LIST, NotifyLevel::Error);
+            }
             ResumeAnswer::Refused(_) => self.notify_response_error("Resume failed", error),
             // A success this TUI cannot read as a restore changes nothing here:
             // no key adopted, no clock reset, no manifest write, no "Resumed".
@@ -135,7 +146,7 @@ impl App {
                 let outcome = outcome.unwrap_or_else(|| "an unreadable answer".to_string());
                 let outcome = crate::components::ansi::sanitize_untrusted_label(&outcome, 40);
                 self.notify(
-                    &format!("Resume answered \u{201c}{outcome}\u{201d}, which this TUI does not understand — nothing was changed here"),
+                    &format!("Nothing changed: update quecto-tui (unknown answer \u{201c}{outcome}\u{201d})"),
                     NotifyLevel::Warning,
                 );
             }
@@ -145,11 +156,21 @@ impl App {
     /// The harness rejected a line it could not decode as `resume_session` —
     /// an action newer than the harness. A `parse_error` carries no `id`, so
     /// the request in flight would never be answered: settle it here, change
-    /// nothing, and say so. Any other parse error is not a resume's.
-    pub(in crate::shell) fn handle_resume_parse_error(&mut self, error: Option<String>) {
-        let ours = error
+    /// nothing, and say so. `parse_error` is broadcast, so it is this tab's
+    /// only when the request in flight CARRIED an action (a plain restore can
+    /// never cause "unknown resume action" — that one is a peer's) and, should
+    /// an id come with it, the id is the one in flight.
+    pub(in crate::shell) fn handle_resume_parse_error(
+        &mut self,
+        id: Option<&str>,
+        error: Option<String>,
+    ) {
+        let about_an_action = error
             .as_deref()
             .is_some_and(|e| e.contains("resume action"));
+        let ours = about_an_action
+            && self.ac().pending_session_resume_acts
+            && (id.is_none() || self.is_owned_resume_response(id));
         if ours && self.ac_mut().pending_session_resume_id.take().is_some() {
             self.ac_mut().pending_session_resume = None;
             self.notify_response_error("Resume failed", error);

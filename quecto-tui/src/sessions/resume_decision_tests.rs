@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::resume_decision_payloads::{ResumeActionOffer, ResumeDecisionKind};
 
 fn offer(action: ResumeAction, available: bool, reason: Option<&str>) -> ResumeActionOffer {
     ResumeActionOffer {
@@ -21,18 +22,21 @@ fn decision(kind: ResumeDecisionKind, actions: Vec<ResumeActionOffer>) -> Resume
 }
 
 fn cross_folder(open_available: bool) -> ResumeDecisionDialog {
-    ResumeDecisionDialog::new(decision(
-        ResumeDecisionKind::CrossFolder,
-        vec![
-            offer(
-                ResumeAction::OpenOriginal,
-                open_available,
-                Some("not yet (#2012)"),
-            ),
-            offer(ResumeAction::ForkCurrent, false, None),
-            offer(ResumeAction::Cancel, true, None),
-        ],
-    ))
+    ResumeDecisionDialog::new(
+        decision(
+            ResumeDecisionKind::CrossFolder,
+            vec![
+                offer(
+                    ResumeAction::OpenOriginal,
+                    open_available,
+                    Some("not yet (#2012)"),
+                ),
+                offer(ResumeAction::ForkCurrent, false, None),
+                offer(ResumeAction::Cancel, true, None),
+            ],
+        ),
+        None,
+    )
 }
 
 fn frame(dialog: &mut ResumeDecisionDialog) -> String {
@@ -45,13 +49,15 @@ fn the_dialog_shows_every_offer_in_order_with_unavailable_reasons() {
     let mut dialog = cross_folder(false);
     let text = frame(&mut dialog);
     let open = text.find("Open original folder").expect("open");
-    let fork = text.find("Fork into current folder").expect("fork");
+    let fork = text
+        .find("Copy into this folder as a new session")
+        .expect("fork");
     let cancel = text.find("Cancel").expect("cancel");
     assert!(open < fork && fork < cancel, "{text}");
-    assert!(text.contains("Unavailable: not yet (#2012)"), "{text}");
+    assert!(text.contains("not yet (#2012)"), "{text}");
     assert!(
         text.contains("Open original folder — unavailable")
-            && text.contains("Fork into current folder — unavailable"),
+            && text.contains("Copy into this folder as a new session — unavailable"),
         "every unavailable row says so, not only the one under the cursor: {text}"
     );
     assert!(!text.contains("Cancel —"), "{text}");
@@ -60,54 +66,26 @@ fn the_dialog_shows_every_offer_in_order_with_unavailable_reasons() {
         text.contains("cli:foreign") && text.contains("/work/other"),
         "{text}"
     );
-    assert!(text.contains("nothing is restored or linked"), "{text}");
+    assert!(text.contains("your current session is untouched"), "{text}");
     assert_eq!(dialog.decision().kind, ResumeDecisionKind::CrossFolder);
 }
 
+/// Review R2-T8: the reason is under the cursor already, so the event carries
+/// no second copy of it for a one-line toast to truncate.
 #[test]
-fn every_kind_has_its_own_title() {
-    let titles: std::collections::BTreeSet<_> = [
-        ResumeDecisionKind::CrossFolder,
-        ResumeDecisionKind::HomeMissing,
-        ResumeDecisionKind::HomeChanged,
-        ResumeDecisionKind::HomeUnknown,
-        ResumeDecisionKind::LegacyUnscoped,
-    ]
-    .into_iter()
-    .map(title)
-    .collect();
-    assert_eq!(titles.len(), 5);
-}
-
-#[test]
-fn every_action_has_its_own_label() {
-    let labels: std::collections::BTreeSet<_> = [
-        ResumeAction::OpenOriginal,
-        ResumeAction::ForkCurrent,
-        ResumeAction::Locate,
-        ResumeAction::Associate,
-        ResumeAction::Cancel,
-    ]
-    .into_iter()
-    .map(label)
-    .collect();
-    assert_eq!(labels.len(), 5);
-}
-
-#[test]
-fn an_unavailable_action_is_explained_and_never_chosen() {
+fn an_unavailable_action_is_never_chosen_and_the_dialog_stays() {
     let mut dialog = cross_folder(false);
     assert_eq!(
         dialog.handle_key(&Key::Enter),
-        ResumeDecisionEvent::Unavailable(
-            "Open original folder is unavailable: not yet (#2012)".into()
-        )
+        ResumeDecisionEvent::Unavailable
     );
+    assert!(frame(&mut dialog).contains("not yet (#2012)"));
     assert_eq!(dialog.handle_key(&Key::Down), ResumeDecisionEvent::Pending);
     assert_eq!(
         dialog.handle_key(&Key::Enter),
-        ResumeDecisionEvent::Unavailable("Fork into current folder is unavailable".into())
+        ResumeDecisionEvent::Unavailable
     );
+    assert!(frame(&mut dialog).contains("Not available in this version"));
 }
 
 #[test]
@@ -149,13 +127,13 @@ fn a_decision_without_a_folder_shows_the_detail_or_a_placeholder() {
         ],
     );
     legacy.execution_path = None;
-    let mut dialog = ResumeDecisionDialog::new(legacy.clone());
-    assert!(frame(&mut dialog).contains("no folder recorded"));
+    let mut dialog = ResumeDecisionDialog::new(legacy.clone(), None);
+    assert!(frame(&mut dialog).contains("No folder on record"));
     legacy.detail = Some("home path is not admissible".into());
-    let mut dialog = ResumeDecisionDialog::new(legacy);
+    let mut dialog = ResumeDecisionDialog::new(legacy, None);
     let text = frame(&mut dialog);
     assert!(text.contains("home path is not admissible"), "{text}");
-    assert!(text.contains("Associate with a folder"), "{text}");
+    assert!(text.contains("Attach to a folder"), "{text}");
 }
 
 #[test]
@@ -170,7 +148,7 @@ fn hostile_metadata_is_made_safe_and_bounded_before_it_is_rendered() {
     hostile.session = "evil\u{1b}[2Jname".into();
     hostile.execution_path = Some(format!("/x\u{7}{}", "y".repeat(2000)));
     hostile.detail = Some("line\r\nbreak\u{1b}]0;title\u{7}".into());
-    let mut dialog = ResumeDecisionDialog::new(hostile);
+    let mut dialog = ResumeDecisionDialog::new(hostile, None);
     let decision = dialog.decision().clone();
     for text in [
         decision.session.clone(),
@@ -189,5 +167,39 @@ fn hostile_metadata_is_made_safe_and_bounded_before_it_is_rendered() {
     );
 }
 
+/// Review R2-T7: the dialog names the session the way the picker did — the
+/// title the user just chose, its key beneath; a typed key shows the key.
+#[test]
+fn the_picked_title_is_shown_with_the_key_beneath_it() {
+    let mut picked = ResumeDecisionDialog::new(
+        decision(
+            ResumeDecisionKind::CrossFolder,
+            vec![offer(ResumeAction::Cancel, true, None)],
+        ),
+        Some("hello from A\u{1b}[2J\u{202e}"),
+    );
+    let text = frame(&mut picked);
+    let title = text.find("hello from A").expect("the picked title");
+    let key = text.find("cli:foreign").expect("the key");
+    assert!(title < key, "{text}");
+    assert!(
+        !text.contains("[2J") && !text.contains('\u{202e}'),
+        "{text}"
+    );
+    // A title that only repeats the key, or an empty one, adds nothing.
+    for title in ["cli:foreign", ""] {
+        let mut plain = ResumeDecisionDialog::new(
+            decision(
+                ResumeDecisionKind::CrossFolder,
+                vec![offer(ResumeAction::Cancel, true, None)],
+            ),
+            Some(title),
+        );
+        assert_eq!(frame(&mut plain).matches("cli:foreign").count(), 1);
+    }
+}
+
 #[path = "resume_decision_render_tests.rs"]
 mod render;
+#[path = "resume_decision_wording_tests.rs"]
+mod wording_tests;

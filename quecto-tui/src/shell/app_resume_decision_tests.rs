@@ -73,6 +73,31 @@ async fn a_peers_decision_opens_nothing_here() {
     assert!(!h.app_mut().ac().sessions.has_modal());
 }
 
+/// Review R2-T9: a decision with NO id is nobody's in particular — even with
+/// this tab's resume in flight it opens nothing and the request stays in
+/// flight for its own, correlated answer.
+#[tokio::test]
+async fn an_idless_decision_opens_nothing_and_settles_nothing() {
+    let mut h = harness().await;
+    h.app_mut().ac_mut().agent_connected = true;
+    h.app_mut().send_resume_session("cli:foreign");
+    let id = h.app_mut().ac().pending_session_resume_id.clone().unwrap();
+    let _ = h.drain_commands().await;
+    h.app_mut().handle_response(
+        None,
+        "resume_session".into(),
+        false,
+        Some(decision(false)),
+        Some("session resume unavailable".into()),
+    );
+    assert!(h.app_mut().ac().sessions.resume_decision.is_none());
+    assert!(!h.app_mut().ac().sessions.has_modal());
+    assert_eq!(
+        h.app_mut().ac().pending_session_resume_id.as_deref(),
+        Some(id.as_str())
+    );
+}
+
 #[tokio::test]
 async fn escape_and_cancel_close_the_dialog_and_send_nothing() {
     for keys in [vec![Key::Escape], vec![Key::Down, Key::Down, Key::Enter]] {
@@ -87,19 +112,20 @@ async fn escape_and_cancel_close_the_dialog_and_send_nothing() {
     }
 }
 
+/// Review R2-T8: the reason is already under the cursor, so Enter on an
+/// unavailable row toasts a short pointer — not a truncated copy of it.
 #[tokio::test]
-async fn an_unavailable_action_is_explained_kept_open_and_never_sent() {
+async fn an_unavailable_action_is_pointed_at_kept_open_and_never_sent() {
     let mut h = harness().await;
     asked_and_answered(&mut h, decision(false)).await;
     h.app_mut().handle_key(Key::Enter);
     assert!(h.app_mut().ac().sessions.resume_decision.is_some());
     let commands = h.drain_commands().await;
     assert!(commands.is_empty(), "{commands:?}");
+    let notes = h.app_mut().notifications.messages();
+    assert_eq!(notes, ["Not available yet — see the reason below"]);
     let frame = h.full_frame();
-    assert!(
-        frame.contains("Open original folder is unavailable"),
-        "{frame}"
-    );
+    assert!(frame.contains("not yet (#2012)"), "the reason: {frame}");
 }
 
 #[tokio::test]
@@ -136,7 +162,7 @@ async fn a_typed_refusal_is_a_toast_not_a_dialog() {
     let mut h = harness().await;
     asked_and_answered(
         &mut h,
-        json!({"outcome": "refused", "code": "stale_home_version"}),
+        json!({"outcome": "refused", "code": "claim_refused"}),
     )
     .await;
     assert!(h.app_mut().ac().sessions.resume_decision.is_none());
@@ -186,3 +212,68 @@ async fn switching_tabs_closes_the_dialog() {
 
 #[path = "app_resume_answer_tests.rs"]
 mod answers;
+
+/// Review R2-T7: the dialog names the session by the title the picker showed
+/// for it, with the key beneath; a key that was never listed shows the key.
+#[tokio::test]
+async fn the_dialog_repeats_the_title_the_picker_showed() {
+    let mut h = harness().await;
+    h.app_mut().ac_mut().agent_connected = true;
+    let data = json!({"sessions": [{
+        "name": "hello from A", "key": "cli:foreign", "messageCount": 3,
+        "resumeEligible": false, "homeVersion": "h1-0123456789abcdef",
+        "executionPath": "/work/other",
+    }]});
+    let manifest = std::env::temp_dir().join("s2011f2-no-manifest.json");
+    h.app_mut().open_resume_selector_at(&data, &manifest);
+    let picker = h.full_frame();
+    assert!(picker.contains("hello from A"), "{picker}");
+    assert!(
+        picker.contains("Saved in another folder — Enter"),
+        "{picker}"
+    );
+    h.app_mut().handle_key(Key::Enter);
+    let id = h.app_mut().ac().pending_session_resume_id.clone().unwrap();
+    let _ = h.drain_commands().await;
+    h.app_mut().handle_response(
+        Some(id),
+        "resume_session".into(),
+        false,
+        Some(decision(false)),
+        None,
+    );
+    let frame = h.full_frame();
+    let title = frame.find("hello from A").expect("the picked title");
+    assert!(
+        title < frame.find("cli:foreign").expect("the key"),
+        "{frame}"
+    );
+    // Re-listing forgets the titles with the versions.
+    h.app_mut().handle_key(Key::Escape);
+    h.app_mut().send_list_sessions();
+    assert!(h.app_mut().ac().sessions.listed_titles.is_empty());
+}
+
+/// Review R2-T3: the dialog is laid over the WHOLE frame — on a 40-column
+/// terminal it is 36 columns wide, not the ten the body pane would leave it.
+#[tokio::test]
+async fn the_dialog_spans_the_terminal_not_the_body_pane() {
+    for (width, panel) in [(40_usize, 36_usize), (80, 76), (200, 88)] {
+        let mut h = super::super::tui_harness::TuiHarness::sized(width, 20).await;
+        asked_and_answered(&mut h, decision(false)).await;
+        let frame = h.full_frame();
+        let top = frame
+            .lines()
+            .find(|line| line.contains('┌'))
+            .expect("a box");
+        let border = top.chars().filter(|ch| "┌─┐".contains(*ch)).count();
+        assert_eq!(border, panel, "{width}: {frame}");
+        assert!(frame.contains("This session belongs to another"), "{frame}");
+        for line in frame.lines() {
+            assert!(
+                crate::components::utils::visible_width(line) <= width,
+                "{width}: {line:?}"
+            );
+        }
+    }
+}

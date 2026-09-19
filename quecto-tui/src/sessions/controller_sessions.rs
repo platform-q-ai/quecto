@@ -9,6 +9,9 @@ pub(crate) struct SessionsFlow {
     pub(super) scope: crate::protocol::session_payloads::SessionListScope,
     /// The home version each listed row was shown at (#2011), by key.
     pub(super) home_versions: std::collections::BTreeMap<String, String>,
+    /// The title each listed row was shown with, by key: a decision dialog
+    /// names the session the way the picker did.
+    pub(super) listed_titles: std::collections::BTreeMap<String, String>,
     /// The decision dialog of a session that cannot simply be restored (#2011).
     pub(super) resume_decision: Option<crate::sessions::resume_decision::ResumeDecisionDialog>,
     /// The picker selection's key and listed version, consumed by its send.
@@ -28,7 +31,7 @@ impl SessionsFlow {
 
 impl super::App {
     /// Route a key to the decision dialog (#2011). Cancel and Escape close it
-    /// and send nothing; an unavailable action is explained and the dialog
+    /// and send nothing; an unavailable action is pointed at its reason and the dialog
     /// stays; an available one sends identity, action and version.
     fn handle_resume_decision_key(&mut self, key: &Key) {
         use crate::sessions::resume_decision::ResumeDecisionEvent;
@@ -38,7 +41,11 @@ impl super::App {
         match dialog.handle_key(key) {
             ResumeDecisionEvent::Pending => {}
             ResumeDecisionEvent::Cancelled => self.ac_mut().sessions.resume_decision = None,
-            ResumeDecisionEvent::Unavailable(why) => self.notify(&why, NotifyLevel::Warning),
+            // The reason is under the cursor already: the toast only points at it.
+            ResumeDecisionEvent::Unavailable => self.notify(
+                crate::sessions::resume_decision::UNAVAILABLE_POINTER,
+                NotifyLevel::Warning,
+            ),
             ResumeDecisionEvent::Chosen(selection) => {
                 self.ac_mut().sessions.resume_decision = None;
                 self.send_resume_selection(selection);
