@@ -5,6 +5,7 @@
 //! reads a file, a transcript, Git or a clock; a query is literal text, never
 //! a pattern.
 use super::session_home::{SessionHomeScope, WorkspaceGroup};
+pub use super::session_metadata_text::visible_text;
 
 /// The longest query, in visible characters, that is searched at all.
 pub const MAX_QUERY_CHARS: usize = 256;
@@ -128,31 +129,6 @@ impl MetadataQuery {
         matched.sort();
         (!matched.is_empty()).then_some(matched)
     }
-}
-
-/// The text a safe renderer would show, folded for comparison: every control
-/// and invisible format character dropped, Unicode lower-cased, whitespace
-/// runs collapsed to one space and trimmed. Code points are compared as they
-/// are stored: a composed and a decomposed spelling of one glyph are two
-/// texts (the harness carries no normalization tables off macOS).
-pub fn visible_text(raw: &str) -> String {
-    let folded: String = raw
-        .chars()
-        .filter(|ch| !invisible(*ch))
-        .flat_map(char::to_lowercase)
-        .collect();
-    folded.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// Controls that are not whitespace, and the format characters that reorder,
-/// hide or split text (bidi controls, zero-width characters, the soft hyphen,
-/// invisible operators, tags, the byte-order mark).
-fn invisible(ch: char) -> bool {
-    (ch.is_control() && !ch.is_whitespace())
-        || matches!(ch,
-            '\u{ad}' | '\u{34f}' | '\u{61c}' | '\u{180b}'..='\u{180f}'
-            | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}'
-            | '\u{feff}' | '\u{fff9}'..='\u{fffb}' | '\u{e0000}'..='\u{e007f}')
 }
 
 /// The label of the repository or folder a home belongs to: the directory

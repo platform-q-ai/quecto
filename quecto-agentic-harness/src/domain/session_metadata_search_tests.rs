@@ -158,7 +158,7 @@ fn invisible_and_control_characters_neither_hide_nor_forge_a_match() {
 #[test]
 fn text_is_compared_lower_cased_and_whitespace_collapsed_code_point_by_code_point() {
     assert_eq!(visible_text("  Caf\u{e9}\t\n TIME  "), "caf\u{e9} time");
-    // Folding is per character, so context-free: a final sigma folds as any other.
+    // A final sigma folds as any other sigma (the fold itself: `session_metadata_text`).
     assert_eq!(visible_text("ÀÉÎ ΣΊΣΥΦΟΣ"), "àéî σίσυφοσ");
     let home = SessionHomeScope::LegacyUnscoped;
     assert_eq!(
