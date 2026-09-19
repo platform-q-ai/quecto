@@ -118,6 +118,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/interface/cli/uds_search_numbers.rs",
     "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
     "src/infrastructure/persistence/session_home_catalogue_seed.rs",
+    "src/infrastructure/persistence/session_record_read.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
@@ -745,19 +746,19 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/persistence/session_ownership.rs", 229),
     // R2-H2: the empty-save delete moved beside the home sidecar it now
     // removes (`session_store_home.rs`); the store is back at 687.
-    ("src/infrastructure/persistence/session_store.rs", 687),
+    ("src/infrastructure/persistence/session_store.rs", 685),
     (
         "src/infrastructure/persistence/session_store_catalogue.rs",
         23,
     ),
     // PR #2018 perf: the summary cache moved to its own module, seeded once
     // per process from the persisted index (31 → 29; the walk 62 → 60).
-    ("src/infrastructure/persistence/session_store_list.rs", 29),
+    ("src/infrastructure/persistence/session_store_list.rs", 28),
     // R2-L3: the per-record read (cached summary, header parse, layout
     // check, every skip logged) is its own helper; the walk shrank 110 → 62.
     (
         "src/infrastructure/persistence/session_store_list_scan.rs",
-        60,
+        59,
     ),
     (
         "src/infrastructure/persistence/session_store_list_index.rs",
@@ -766,18 +767,21 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // PR #2018 perf: the derived index is stamp-based and persisted; its
     // on-disk shape is its own module, both pinned at delivered size.
     // #2010 review (R1-H1): strict validation and the walk's seeding moved
-    // to child modules beside the rejection cache (482 → 468).
+    // to child modules beside the rejection cache (482 → 468). Round 2
+    // (R2-H1/H2): rejections are in memory only and never seeded, so every
+    // owner shrank (468 → 446, 139 → 110, 83 → 44); the one record read both
+    // halves share is its own seam (`session_record_read.rs`).
     (
         "src/infrastructure/persistence/session_home_catalogue.rs",
-        468,
+        446,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
-        139,
+        110,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_seed.rs",
-        83,
+        44,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_index.rs",
@@ -785,8 +789,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     (
         "src/infrastructure/persistence/session_store_list_record.rs",
-        98,
+        95,
     ),
+    ("src/infrastructure/persistence/session_record_read.rs", 48),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),
     ("src/interface/cli/agent/run_session.rs", 130),

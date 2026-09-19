@@ -301,7 +301,9 @@ Cross-folder actions are unavailable until their implementing slices ship.
 Search saved-session metadata: title, exact opaque key, repository label and
 execution path. Owner: `SearchSessionMetadata` (#2010). Transcript content is
 never matched — no transcript is read to MATCH. Freshness alone decides what is
-read: a record version already indexed (summarised or rejected) costs a `stat`;
+read: a record version already indexed — or already rejected by this process
+(a verdict on its bytes; a failed read is never remembered, and no rejection
+is persisted) — costs a `stat`;
 a new or changed record is read once per validating half, and an absent,
 unreadable or version-incompatible index is rebuilt by reading every record
 (twice in all) on the first search. An answer is not authorization to restore

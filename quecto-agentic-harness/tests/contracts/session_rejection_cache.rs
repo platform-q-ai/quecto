@@ -1,8 +1,10 @@
 //! Contract of the rejection cache (R1-H1) over the REAL store and catalogue:
 //! a record that cannot be summarised is read once per version — by the
 //! store's walk and by the strict catalogue alike — named in exactly one
-//! diagnostic per query, re-read the moment it changes, and remembered across
-//! processes through the index, which is trusted only through stamps.
+//! diagnostic per query, and re-read the moment it changes. Only a verdict on
+//! bytes that were read is remembered, never an I/O failure (R2-H1); and only
+//! in memory (R2-H2): the index carries no rejection and none is taken from
+//! it, so each process reads a corrupt record once for itself.
 #![cfg(feature = "test-support")]
 use quecto::application::sessions::ports::SessionStore;
 use quecto::application::sessions::ports::session_home::{
@@ -120,7 +122,7 @@ async fn a_rejected_record_is_read_once_per_version_and_again_when_it_changes() 
 }
 
 #[tokio::test]
-async fn a_new_process_reuses_a_persisted_rejection_only_at_its_stamp() {
+async fn a_new_process_reads_a_rejected_record_once_for_itself_and_persists_no_verdict() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path().join("base"));
     let writer = Process::over(&layout);
@@ -128,14 +130,26 @@ async fn a_new_process_reuses_a_persisted_rejection_only_at_its_stamp() {
     let rot = layout.session_file(&identity("chat-rot"));
     std::fs::write(&rot, ROT).unwrap();
     let _ = writer.query().await;
+    let index = std::fs::read_to_string(layout.home_catalogue_file()).unwrap();
+    assert!(!index.contains("rot"), "no verdict is persisted: {index}");
     let cold = Process::over(&layout);
+    for _ in 0..3 {
+        let seen = cold.query().await;
+        assert_eq!((named(&seen, "chat-rot.json"), cold.reads()), (1, (1, 1)));
+    }
+    // Deleting the index is a complete recovery and costs no re-read of a
+    // verdict this process reached itself on the bytes still on disk.
+    std::fs::remove_file(layout.home_catalogue_file()).unwrap();
     let seen = cold.query().await;
-    assert_eq!((named(&seen, "chat-rot.json"), cold.reads()), (1, (0, 0)));
-    // The file changes between processes: the persisted rejection is stale.
-    std::fs::write(&rot, &ROT[..ROT.len() - 1]).unwrap();
-    let next = Process::over(&layout);
-    let seen = next.query().await;
-    assert_eq!((named(&seen, "chat-rot.json"), next.reads()), (1, (1, 1)));
+    assert_eq!(
+        (keys(&seen), named(&seen, "chat-rot.json")),
+        (vec!["chat-good"], 1)
+    );
+    assert_eq!(
+        cold.reads(),
+        (2, 1),
+        "only the good record is validated again"
+    );
 }
 
 #[tokio::test]
@@ -175,4 +189,81 @@ async fn a_doctored_rejection_names_no_file_outside_the_layout_and_no_other_reco
     let _ = cold.query().await;
     let index = std::fs::read_to_string(&path).unwrap();
     assert!(!index.contains("doctored"), "{index}");
+}
+
+/// R2-H1: an I/O failure says nothing about a record's content. Both halves
+/// fail to read a VALID record during one query (the file, and so its stamp,
+/// untouched); the next query reads it again and the row is back.
+#[tokio::test]
+async fn a_transient_read_failure_is_reported_once_and_never_remembered() {
+    use quecto::infrastructure::persistence::session_record_read::fail_next_reads;
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path().join("base"));
+    let process = Process::over(&layout);
+    save(&process, "chat-good", "a good title").await;
+    save(&process, "chat-flaky", "a flaky read").await;
+    let flaky = layout.session_file(&identity("chat-flaky"));
+    // One failed read by the walk, one by the strict catalogue.
+    fail_next_reads(&flaky, 2);
+    let starved = process.query().await;
+    assert_eq!(
+        (keys(&starved), named(&starved, "chat-flaky.json")),
+        (vec!["chat-good"], 1),
+        "{:?}",
+        starved.diagnostics
+    );
+    let index = std::fs::read_to_string(layout.home_catalogue_file()).unwrap();
+    assert!(!index.contains("chat-flaky"), "no persisted trace: {index}");
+    let healed = process.query().await;
+    assert_eq!(keys(&healed), ["chat-flaky", "chat-good"]);
+    assert!(healed.diagnostics.is_empty(), "{:?}", healed.diagnostics);
+    // Only the walk fails: the strict catalogue lists the record, the answer
+    // cannot carry the row — and says so, by file name, for that answer only.
+    let cold = Process::over(&layout);
+    fail_next_reads(&flaky, 1);
+    std::fs::remove_file(layout.home_catalogue_file()).unwrap();
+    let walk_starved = cold.query().await;
+    assert_eq!(
+        (keys(&walk_starved), named(&walk_starved, "chat-flaky.json")),
+        (vec!["chat-good"], 1),
+        "{:?}",
+        walk_starved.diagnostics
+    );
+    let healed = cold.query().await;
+    assert_eq!(keys(&healed), ["chat-flaky", "chat-good"]);
+    assert!(healed.diagnostics.is_empty(), "{:?}", healed.diagnostics);
+}
+
+/// R2-H2: the derived index never decides what is hidden. A rejection carrying
+/// the CORRECT stamp of a VALID record — doctored, or written by another
+/// harness version — hides nothing, names nothing, and is not written back.
+#[tokio::test]
+async fn a_persisted_rejection_at_the_correct_stamp_of_a_valid_record_hides_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path().join("base"));
+    let writer = Process::over(&layout);
+    save(&writer, "chat-good", "a good title").await;
+    save(&writer, "chat-two", "another title").await;
+    let _ = writer.query().await;
+    let path = layout.home_catalogue_file();
+    let mut index: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let moved = index["records"]
+        .as_object_mut()
+        .unwrap()
+        .remove("chat-good")
+        .unwrap();
+    index["rejected"] = serde_json::json!({
+        "chat-good.json": {"stamp": moved["stamp"], "reason": "doctored", "unlisted": true},
+    });
+    std::fs::write(&path, serde_json::to_vec(&index).unwrap()).unwrap();
+    let cold = Process::over(&layout);
+    let seen = cold.query().await;
+    assert_eq!(keys(&seen), ["chat-good", "chat-two"]);
+    assert!(seen.diagnostics.is_empty(), "{:?}", seen.diagnostics);
+    assert!(!seen.rebuilt, "a legacy field is no corruption");
+    let listing = Process::over(&layout).catalogue.list().unwrap();
+    assert_eq!(listing.entries.len(), 2, "{listing:?}");
+    let index = std::fs::read_to_string(&path).unwrap();
+    assert!(!index.contains("rejected"), "{index}");
 }

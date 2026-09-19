@@ -32,7 +32,7 @@ use session_home_catalogue_index::{Catalogue, HomeEntry, IndexEntry, IndexHome, 
 mod session_home_catalogue_metadata;
 #[path = "session_home_catalogue_rejections.rs"]
 pub(super) mod session_home_catalogue_rejections;
-use session_home_catalogue_rejections::{RejectedEntry, RejectedIndex, Rejections};
+use session_home_catalogue_rejections::Rejections;
 #[path = "session_home_catalogue_seed.rs"]
 mod session_home_catalogue_seed;
 pub(super) use session_home_catalogue_seed::{WalkEntries, persisted_walk};
@@ -43,7 +43,7 @@ pub struct FileSessionHomeCatalogue {
     store: std::sync::Arc<FileSessionStore>,
     published: std::sync::Arc<std::sync::Mutex<Published>>,
     projection: std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, Projection>>>,
-    /// Records rejected at a stamp (R1-H1); never locked with `projection`.
+    /// Content verdicts by stamp, in memory only; never locked with `projection`.
     rejections: std::sync::Arc<std::sync::Mutex<Rejections>>,
     transcript_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -114,19 +114,18 @@ impl FileSessionHomeCatalogue {
             diagnostics: Vec::new(),
             rebuilt: false,
         };
-        let (mut records, mut rejected) = (BTreeMap::new(), RejectedIndex::new());
+        let mut records = BTreeMap::new();
         let entries = match std::fs::read_dir(self.layout.sessions_dir()) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok((Catalogue::new(records, rejected), result));
+                return Ok((Catalogue::new(records), result));
             }
             Err(e) => return Err(error(e)),
         };
         for entry in entries {
             match entry {
                 Ok(entry) if FlatSessionLayout::is_session_record(&entry.path()) => {
-                    let path = entry.path();
-                    rejected.extend(self.scan_record(&path, &mut records, &mut result));
+                    self.scan_record(&entry.path(), &mut records, &mut result);
                 }
                 Ok(_) => (),
                 Err(e) => result
@@ -136,24 +135,7 @@ impl FileSessionHomeCatalogue {
         }
         self.publish_stable_rows(&mut records, &mut result)?;
         result.entries.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok((Catalogue::new(records, rejected), result))
-    }
-    /// The index entry of a record this scan found rejected at its stamp,
-    /// with what the store's walk made of that same version.
-    fn rejected_entry(&self, path: &std::path::Path) -> Option<(String, RejectedEntry)> {
-        let (name, stamp, reason) = self.rejections.lock().ok()?.entry(path)?;
-        // Only a rejection of the version on disk now (not a changed file).
-        self::stamp(path)
-            .is_ok_and(|now| now == stamp)
-            .then_some(())?;
-        let listed = self.store.summary_at(path, &stamp);
-        let entry = RejectedEntry {
-            unlisted: self.store.unlisted_at(path, &stamp),
-            listed: listed.map(|s| (s.key, s.title, s.message_count)),
-            reason,
-            stamp,
-        };
-        Some((name, entry))
+        Ok((Catalogue::new(records), result))
     }
     fn publish_stable_rows(
         &self,
@@ -196,7 +178,7 @@ impl FileSessionHomeCatalogue {
         path: &std::path::Path,
         records: &mut Records,
         result: &mut HomeCatalogueSnapshot,
-    ) -> Option<(String, RejectedEntry)> {
+    ) {
         match self.projected_identity(path) {
             Ok(identity) => {
                 let home = self.observe_home(path, &identity, records);
@@ -214,7 +196,6 @@ impl FileSessionHomeCatalogue {
                         .push(format!("{file}: home needs repair: {reason}"));
                 }
                 result.entries.push((identity, home));
-                None
             }
             // Name the record file (basename only) so a corrupt legacy
             // transcript can be found and repaired from the diagnostic alone.
@@ -226,7 +207,6 @@ impl FileSessionHomeCatalogue {
                 result
                     .diagnostics
                     .push(format!("{file}: session record unavailable: {e}"));
-                self.rejected_entry(path)
             }
         }
     }
@@ -243,8 +223,11 @@ impl FileSessionHomeCatalogue {
         }
         self.transcript_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let outcome = session_home_catalogue_rejections::read_validated(path, &self.layout);
-        // Success and failure alike are remembered only for a stable file.
+        // An I/O failure is no verdict on the content: never remembered (R2-H1).
+        let bytes = super::session_record_read::read_record(path).map_err(error)?;
+        let outcome = session_home_catalogue_rejections::validated(&bytes, path, &self.layout);
+        drop(bytes);
+        // Success and rejection alike are remembered only for a stable file.
         let after = session_home_catalogue_rejections::stable(path, &before)?;
         match outcome {
             Ok(identity) => {
@@ -344,9 +327,6 @@ impl FileSessionHomeCatalogue {
     /// is keyed by its own identity's layout path and reused only while the
     /// file still carries the recorded stamp.
     fn seed_projection(&self, index: &Catalogue) -> Result<(), DomainError> {
-        let mut rejections = self.rejections.lock().map_err(error)?;
-        rejections.seed(&self.layout, &index.rejected);
-        drop(rejections);
         let mut projection = self.projection.lock().map_err(error)?;
         projection.clear();
         for (key, entry) in &index.records {
@@ -427,10 +407,8 @@ impl SessionHomeCatalogue for FileSessionHomeCatalogue {
                 let cached = disk.as_ref().map(|bytes| Catalogue::decode(bytes));
                 match &cached {
                     Some(Ok(index)) => self.seed_projection(index)?,
-                    _ => {
-                        self.projection.lock().map_err(error)?.clear();
-                        self.rejections.lock().map_err(error)?.clear();
-                    }
+                    // Rejections are never derived from the index: they stay.
+                    _ => self.projection.lock().map_err(error)?.clear(),
                 }
                 cached
             }

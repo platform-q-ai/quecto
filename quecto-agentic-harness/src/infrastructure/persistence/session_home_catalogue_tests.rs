@@ -1,5 +1,5 @@
-//! Unit coverage of the derived index's rejection cache and walk seeding
-//! (#2010 R1-H1) at the adapter's own level — observable without the
+//! Unit coverage of the in-memory rejection cache and the walk's seeding
+//! (#2010 R1-H1, R2-H1, R2-H2) at the adapter's own level — observable without the
 //! `test-support` counters: through the diagnostics, the listed rows and the
 //! bytes of `home.catalogue`. The counting proof is the contract suite's.
 use super::session_home_catalogue::FileSessionHomeCatalogue;
@@ -56,8 +56,13 @@ async fn mixed(layout: &FlatSessionLayout, store: &FileSessionStore) {
     std::fs::write(layout.session_file(&identity("chat-rot")), ROT).unwrap();
 }
 
+fn named(snapshot: &SessionMetadataSnapshot, file: &str) -> usize {
+    let lines = snapshot.diagnostics.iter();
+    lines.filter(|d| d.starts_with(file)).count()
+}
+
 #[tokio::test]
-async fn rejected_versions_are_indexed_with_what_the_walk_made_of_them() {
+async fn rejected_versions_are_named_on_every_answer_and_never_indexed() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path().join("base"));
     let (store, catalogue) = process(&layout);
@@ -70,34 +75,28 @@ async fn rejected_versions_are_indexed_with_what_the_walk_made_of_them() {
             "{pass}"
         );
         for file in ["chat-rot.json: ", "chat-cut.json: "] {
-            let named = snapshot.diagnostics.iter().filter(|d| d.starts_with(file));
-            assert_eq!(named.count(), 1, "{pass}: {:?}", snapshot.diagnostics);
+            assert_eq!(
+                named(&snapshot, file),
+                1,
+                "{pass}: {:?}",
+                snapshot.diagnostics
+            );
         }
     }
-    let rejected = index(&layout)["rejected"].clone();
-    assert_eq!(rejected["chat-rot.json"]["unlisted"], true, "{rejected}");
-    assert!(rejected["chat-rot.json"]["listed"].is_null(), "{rejected}");
-    assert_eq!(
-        rejected["chat-cut.json"]["listed"],
-        serde_json::json!(["chat-cut", "cut short title", 1]),
-        "{rejected}"
-    );
-    assert_eq!(rejected["chat-cut.json"]["unlisted"], false);
-    assert_eq!(
-        rejected["chat-rot.json"]["stamp"].as_array().unwrap().len(),
-        8
-    );
-    assert!(index(&layout)["records"]["chat-good"]["summary"].is_object());
+    let index = index(&layout);
+    assert!(index.get("rejected").is_none(), "{index}");
+    assert_eq!(index["records"].as_object().unwrap().len(), 1, "{index}");
+    assert!(index["records"]["chat-good"]["summary"].is_object());
 }
 
 #[tokio::test]
-async fn a_new_process_is_seeded_from_the_index_and_a_repair_clears_the_rejection() {
+async fn a_new_process_answers_the_same_and_a_repair_clears_the_rejection() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path().join("base"));
     let (store, catalogue) = process(&layout);
     mixed(&layout, &store).await;
     let first = catalogue.metadata().await.unwrap();
-    // The listing alone (no summary walk) carries the same rejections.
+    // The listing alone (no summary walk) names the same rejections.
     let (_, listing_only) = process(&layout);
     let listing = listing_only.list().unwrap();
     assert_eq!(listing.entries.len(), 1, "{listing:?}");
@@ -107,37 +106,74 @@ async fn a_new_process_is_seeded_from_the_index_and_a_repair_clears_the_rejectio
     assert_eq!(titles(&seeded), titles(&first));
     assert_eq!(seeded.diagnostics, first.diagnostics);
     assert!(!seeded.rebuilt);
-    // Repaired in place: read again, listed, and no longer indexed as rejected.
+    // Repaired in place: read again and listed.
     let mut repaired = ROT.to_vec();
     repaired.extend_from_slice(b"\"}]}");
     std::fs::write(layout.session_file(&identity("chat-rot")), repaired).unwrap();
     let healed = cold.metadata().await.unwrap();
     assert_eq!(titles(&healed), ["AAAA", "a good title", "cut short title"]);
-    assert!(index(&layout)["rejected"].get("chat-rot.json").is_none());
-    // Deleted: forgotten, in memory and in the index.
+    assert_eq!(named(&healed, "chat-rot.json: "), 0);
+    // Deleted: forgotten.
     std::fs::remove_file(layout.session_file(&identity("chat-cut"))).unwrap();
     let after = cold.metadata().await.unwrap();
     assert!(after.diagnostics.is_empty(), "{:?}", after.diagnostics);
-    assert!(index(&layout).get("rejected").is_none());
 }
 
+/// R2-H1: a failed READ is no verdict. Reported for that answer, by file
+/// name, by whichever half missed the record; read again on the next query.
 #[tokio::test]
-async fn an_unusable_index_seeds_nothing_and_a_doctored_rejection_seeds_only_its_own_file() {
+async fn a_transient_read_failure_is_named_for_that_answer_and_retried() {
+    use super::session_record_read::fail_next_reads;
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path().join("base"));
+    let (store, catalogue) = process(&layout);
+    save(&store, "chat-good", "a good title").await;
+    let good = layout.session_file(&identity("chat-good"));
+    for (failures, why) in [(2, "session record unavailable"), (1, "not listed")] {
+        let (_, cold) = process(&layout);
+        let _ = std::fs::remove_file(layout.home_catalogue_file());
+        fail_next_reads(&good, failures);
+        let starved = cold.metadata().await.unwrap();
+        assert!(titles(&starved).is_empty(), "{failures}");
+        assert_eq!(
+            named(&starved, "chat-good.json: "),
+            1,
+            "{:?}",
+            starved.diagnostics
+        );
+        assert!(
+            starved.diagnostics[0].contains(why),
+            "{:?}",
+            starved.diagnostics
+        );
+        assert!(starved.diagnostics[0].contains("injected read failure"));
+        let healed = cold.metadata().await.unwrap();
+        assert_eq!(titles(&healed), ["a good title"], "{failures}");
+        assert!(healed.diagnostics.is_empty(), "{:?}", healed.diagnostics);
+    }
+    drop(catalogue);
+}
+
+/// R2-H2: a `rejected` map (one pre-release head wrote it) is ignored — even
+/// at the correct stamp of a valid record — and republished away, silently.
+#[tokio::test]
+async fn a_persisted_rejection_hides_nothing_and_an_unusable_index_is_rebuilt() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path().join("base"));
     let (store, catalogue) = process(&layout);
     mixed(&layout, &store).await;
     let first = catalogue.metadata().await.unwrap();
     let mut doctored = index(&layout);
-    let stamp = doctored["records"]["chat-good"]["stamp"].clone();
-    doctored["rejected"]["../chat-good.json"] =
-        serde_json::json!({"stamp": stamp, "reason": "doctored", "unlisted": true});
-    doctored["rejected"]["notes.txt"] =
-        serde_json::json!({"stamp": stamp, "reason": "doctored", "unlisted": true});
-    doctored["rejected"]["chat-rot.json"]["listed"] =
-        serde_json::json!(["chat-good", "forged title", 9]);
-    doctored["rejected"]["chat-cut.json"]["listed"] =
-        serde_json::json!(["../evil", "forged title", 9]);
+    let good = doctored["records"]
+        .as_object_mut()
+        .unwrap()
+        .remove("chat-good");
+    let stamp = good.unwrap()["stamp"].clone();
+    doctored["rejected"] = serde_json::json!({
+        "chat-good.json": {"stamp": stamp, "reason": "doctored", "unlisted": true},
+        "chat-cut.json": {"stamp": stamp, "reason": "doctored",
+            "listed": ["chat-good", "forged title", 9]},
+    });
     std::fs::write(
         layout.home_catalogue_file(),
         serde_json::to_vec(&doctored).unwrap(),
@@ -150,7 +186,9 @@ async fn an_unusable_index_seeds_nothing_and_a_doctored_rejection_seeds_only_its
         titles(&first),
         "nothing forged, nothing hidden"
     );
-    assert!(!seen.diagnostics.iter().any(|d| d.contains("doctored")));
+    assert_eq!(seen.diagnostics, first.diagnostics);
+    assert!(!seen.rebuilt, "a legacy field is not corruption");
+    assert!(index(&layout).get("rejected").is_none(), "not written back");
     // Garbage and an older version: nothing is seeded, everything is rebuilt.
     for bytes in [&b"\x00garbage"[..], br#"{"version":1,"records":{}}"#] {
         std::fs::write(layout.home_catalogue_file(), bytes).unwrap();
@@ -158,6 +196,6 @@ async fn an_unusable_index_seeds_nothing_and_a_doctored_rejection_seeds_only_its
         let rebuilt = fresh.metadata().await.unwrap();
         assert!(rebuilt.rebuilt);
         assert_eq!(titles(&rebuilt), titles(&first));
-        assert!(index(&layout)["rejected"]["chat-rot.json"].is_object());
+        assert_eq!(named(&rebuilt, "chat-rot.json: "), 1);
     }
 }

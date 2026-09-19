@@ -1,12 +1,11 @@
 //! The on-disk shape of the derived `home.catalogue` (version 2). Per record:
 //! the authority's file stamp, the `.home` observation with the sidecar's
-//! stamp, and the listing summary the store's walk validated at that stamp;
-//! per rejected record, its stamp and reason. No digests, no content beyond
-//! the title. Trust: an entry is reused only while its file carries its stamp
-//! and yields only the identity it is keyed under; a doctored one can at most
-//! misreport a listing row — admission reads the sidecar, never this index.
+//! stamp, and the listing summary the store's walk validated at that stamp.
+//! No digests, no content beyond the title, and no rejections (R2-H2: a
+//! pre-release head wrote a `rejected` map) — the index can misreport a row,
+//! never remove one. Trust: an entry is reused only while its file carries its
+//! stamp, as the identity it is keyed under; admission never reads this index.
 use super::super::session_store::session_store_home::admissible_home_path;
-use super::session_home_catalogue_rejections::RejectedIndex;
 use crate::domain::session_home::{
     AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup,
 };
@@ -16,21 +15,22 @@ use std::{collections::BTreeMap, path::PathBuf};
 /// Bumped on an incompatible shape; older indexes rebuild once, diagnosed.
 pub(super) const VERSION: u32 = 2;
 
-#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
 pub(super) struct Catalogue {
     pub(super) version: u32,
     /// Keyed by persisted session key.
     pub(super) records: BTreeMap<String, IndexEntry>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(super) rejected: RejectedIndex,
+    /// Legacy, ignored; its presence alone gets the index republished without.
+    #[serde(default, skip_serializing)]
+    rejected: Option<serde::de::IgnoredAny>,
 }
 
 impl Catalogue {
-    pub(super) fn new(records: BTreeMap<String, IndexEntry>, rejected: RejectedIndex) -> Self {
+    pub(super) fn new(records: BTreeMap<String, IndexEntry>) -> Self {
         Self {
             version: VERSION,
             records,
-            rejected,
+            rejected: None,
         }
     }
     /// A readable index: current version and well-formed; anything else names why.

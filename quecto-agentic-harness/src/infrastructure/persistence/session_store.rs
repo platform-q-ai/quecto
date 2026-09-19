@@ -197,9 +197,7 @@ impl SessionStore for FileSessionStore {
         query: &SessionListQuery,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<SessionSummary>, DomainError>> + Send + '_>> {
         let query = query.clone();
-        Box::pin(async move {
-            session_store_list::list_summaries(&self.layout, &query, self.summaries.clone()).await
-        })
+        Box::pin(async move { Ok(self.walk(&query).await?.0) })
     }
 }
 

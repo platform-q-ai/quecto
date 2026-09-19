@@ -424,7 +424,7 @@ async fn two_thousand_records_are_searched_without_reading_a_transcript() {
             cold_catalogue.transcript_reads(),
             cold_store.summary_transcript_reads()
         ),
-        (0, 0),
-        "cold: zero reads"
+        (2, 2),
+        "cold: the two rejected records once per half (R2-H2), nothing else, and not again"
     );
 }

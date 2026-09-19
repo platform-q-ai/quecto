@@ -1,35 +1,19 @@
 //! Negative entries of the catalogue's projection (R1-H1): a record the
 //! strict validation rejected, remembered by the stamp it was rejected at, so
 //! an unchanged bad record costs one `stat` per query — like a good one — and
-//! still yields its one file-named diagnostic. Persisted in the index beside
-//! the valid entries (keyed by record file name), with what the store's walk
-//! made of the same version, so a new process re-reads neither.
+//! still yields its one file-named diagnostic on every answer.
 //!
-//! Trust: reused only while the file carries the recorded stamp. A doctored
-//! entry can at most hide a record from the *listing*, and names it in a
-//! diagnostic while it does; exact-key resume never reads this index.
+//! Only a CONTENT verdict is remembered (R2-H1): the bytes were read in full
+//! and failed validation. An I/O failure is never recorded. And only in
+//! memory, per process (R2-H2): a rejection is never written to the derived
+//! index nor seeded from it, so the index can never hide a session and mixed
+//! harness versions cannot hand each other a verdict. The cost is one read of
+//! each corrupt record per process.
 use super::super::session_layout::FlatSessionLayout;
 use super::super::session_store::session_store_home::error;
 use super::stamp;
 use crate::domain::{error::DomainError, session_identity::SessionIdentity};
-use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path, path::PathBuf};
-
-/// What the index carries for one rejected record version.
-#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Debug)]
-pub(in crate::infrastructure::persistence) struct RejectedEntry {
-    pub(in crate::infrastructure::persistence) stamp: Vec<u64>,
-    pub(in crate::infrastructure::persistence) reason: String,
-    /// The store walk's summary of this version (a crash-tolerant header
-    /// parse can list what the strict catalogue rejects): key, title, count.
-    #[serde(default)]
-    pub(in crate::infrastructure::persistence) listed: Option<(String, String, usize)>,
-    /// The store's walk could not summarise this version either.
-    #[serde(default)]
-    pub(in crate::infrastructure::persistence) unlisted: bool,
-}
-
-pub(in crate::infrastructure::persistence) type RejectedIndex = BTreeMap<String, RejectedEntry>;
 
 #[derive(Default)]
 pub(super) struct Rejections(BTreeMap<PathBuf, (Vec<u64>, String)>);
@@ -47,49 +31,32 @@ impl Rejections {
         };
         self.0.insert(path.to_path_buf(), (stamp, reason));
     }
+    /// Memory only: an entry of a deleted file could never be looked up.
     pub(super) fn retain_existing(&mut self) {
         self.0.retain(|path, _| path.exists());
     }
-    /// Only entries naming a bare record file of this layout seed. A stamp is
-    /// not checked for shape: one that is not the file's current stamp —
-    /// malformed or stale alike — is simply never reused.
-    pub(super) fn seed(&mut self, layout: &FlatSessionLayout, index: &RejectedIndex) {
-        let named = index.iter().filter_map(|(name, entry)| {
-            let version = (entry.stamp.clone(), entry.reason.clone());
-            Some((record_path(layout, name)?, version))
-        });
-        self.0 = named.collect();
-    }
-    pub(super) fn clear(&mut self) {
-        self.0.clear();
-    }
-    /// The cached rejection of `path`, for the index entry of this scan.
-    pub(super) fn entry(&self, path: &Path) -> Option<(String, Vec<u64>, String)> {
-        let (stamp, reason) = self.0.get(path)?;
-        let name = path.file_name()?.to_str()?.to_string();
-        Some((name, stamp.clone(), reason.clone()))
+}
+
+/// A record the store's walk skipped is named once per answer: by the
+/// catalogue's own line when it rejected the record too, else by the walk's.
+pub(super) fn name_skipped(diagnostics: &mut Vec<String>, skipped: Vec<(String, String)>) {
+    for (file, why) in skipped {
+        let named = format!("{file}: ");
+        if !diagnostics.iter().any(|line| line.starts_with(&named)) {
+            diagnostics.push(format!("{named}session record not listed: {why}"));
+        }
     }
 }
 
-/// A bare record file name of this layout — never a path out of it.
-pub(in crate::infrastructure::persistence) fn record_path(
-    layout: &FlatSessionLayout,
-    name: &str,
-) -> Option<PathBuf> {
-    let path = layout.sessions_dir().join(name);
-    let bare = Path::new(name).file_name().and_then(|n| n.to_str()) == Some(name);
-    (bare && FlatSessionLayout::is_session_record(&path)).then_some(path)
-}
-
-/// One full read, strictly validated: the identity the record names, which
-/// must be the one its file name encodes.
-pub(super) fn read_validated(
+/// The strict validation of a record's bytes, read in full: the identity the
+/// record names, which must be the one its file name encodes.
+pub(super) fn validated(
+    bytes: &[u8],
     path: &Path,
     layout: &FlatSessionLayout,
 ) -> Result<SessionIdentity, DomainError> {
-    let bytes = std::fs::read(path).map_err(error)?;
-    let identity = identity_from_transcript(&bytes, path, layout)?;
-    super::super::session_store::session_store_catalogue::validate_catalogue_record(&bytes)?;
+    let identity = identity_from_transcript(bytes, path, layout)?;
+    super::super::session_store::session_store_catalogue::validate_catalogue_record(bytes)?;
     debug_assert_eq!(layout.session_file(&identity), *path);
     Ok(identity)
 }
@@ -137,3 +104,7 @@ fn first_jsonl_value(bytes: &[u8]) -> Result<serde_json::Value, DomainError> {
     }
     Ok(first)
 }
+
+#[cfg(test)]
+#[path = "session_home_catalogue_rejections_tests.rs"]
+mod tests;

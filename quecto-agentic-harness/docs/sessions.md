@@ -157,7 +157,7 @@ Declared only under `src/application/sessions/ports.rs` and
 
 | Port | Adapter (production) | What it supplies |
 |------|----------------------|------------------|
-| `SessionHomeCatalogue` | `infrastructure/persistence/session_home_catalogue.rs` (`FileSessionHomeCatalogue`, its metadata query in `session_home_catalogue_metadata.rs`) | exact authoritative home reads, first-save home recording, derived catalogue validation and recovery, and the metadata query (#2010): every listed session once with its listing summary and home, validated by stamp; a record version already read — summarised **or rejected** (`session_home_catalogue_rejections.rs`) — is never read again |
+| `SessionHomeCatalogue` | `infrastructure/persistence/session_home_catalogue.rs` (`FileSessionHomeCatalogue`, its metadata query in `session_home_catalogue_metadata.rs`) | exact authoritative home reads, first-save home recording, derived catalogue validation and recovery, and the metadata query (#2010): every listed session once with its listing summary and home, validated by stamp; a record version already read — summarised, **or rejected** in this process (`session_home_catalogue_rejections.rs`: content verdicts only, in memory only) — is never read again |
 | `WorkspaceDiscovery` | `infrastructure/workspace/git_scope_discovery.rs` (`GitScopeDiscovery`), using `filesystem_scope.rs` | canonical execution directory and real Git common-dir/worktree grouping; observable discovery failure |
 | `SessionStore` | `infrastructure/persistence/session_store.rs` (`FileSessionStore`) | claim/release/load/save/save_delta/save_clean_delta/exists/list, keyed by `SessionIdentity` |
 | `ContextSpillStore` | `infrastructure/persistence/context_spill.rs` (`FileContextSpillStore`) | append/recall/list_entries/has_entries/clear/scrub_sync of the retention namespace |
@@ -213,17 +213,25 @@ restored (new ctime) or replaced by a new inode is re-read. A cold process
 over thousands of unchanged transcripts therefore lists in the time of the
 walk, not of reading every transcript. The index is rewritten only after a
 rebuild or when an entry changed. A record the strict validation **rejected**
-is indexed too (`rejected`, keyed by record file name: its stamp, the reason,
-and what the store's walk made of the same version), so an unchanged corrupt
-record — a 100 MB append cut short, say — costs one `stat` per query like a good
-one, in this process and the next, and still yields its one file-named
-diagnostic; it is read again the moment its stamp changes. The field is
-additive and defaulted: no version bump, an older harness ignores it. An entry
-is never trusted beyond its stamp: a rejection seeds only for a bare record
-file name of this layout with a well-formed stamp, a summary only beside its
-own file; a doctored entry can at most misreport a home or title in the
-listing, or hide a record from the *listing* while naming it in a diagnostic,
-and
+is remembered by stamp too, so an unchanged corrupt record — a 100 MB append
+cut short, say — costs one `stat` per query like a good one and still yields
+its one file-named diagnostic on every answer; it is read again the moment its
+stamp changes. Two rules bound that memory. **Only a verdict on content is
+remembered**: the bytes were read in full and failed to parse or validate. An
+I/O failure (no file descriptors, permission, a device error, a delete racing
+the read) says nothing about the record, so neither the catalogue nor the
+store's walk caches it: the record is named in that answer's diagnostics
+(`<file>: session record unavailable: …`, or `<file>: session record not
+listed: …` when only the walk missed it) and read again on the next query.
+**And it is never persisted**: rejections live in memory, per process, and the
+index carries none — so the derived index can never hide a session, mixed
+harness versions cannot hand each other a verdict, and deleting
+`home.catalogue` is always a complete recovery. The price is that each process
+reads a corrupt record once (per validating half). An index that still carries
+the `rejected` map one pre-release build wrote is read without it and
+republished without it, silently. A summary seeds only beside its own file; a
+doctored entry can at most misreport a home or title in the listing — it can
+never remove a row — and
 exact-key reads and resume admission read the `.home` sidecar, never the
 index, so no entry can make a session resume-eligible. A store-listed record the strict catalogue has no row
 for (a crash-truncated transcript mid-append) is not dropped: its `.home` is read
@@ -238,7 +246,8 @@ recorded key names that very file: a hand-renamed record, a symlink into the
 sessions directory, an unreadable or invalid file, or a file replaced while it
 was being read is skipped — deliberately, so no alias or foreign file can pose
 as a session — and every skip is a `tracing::warn!` naming the path and the
-reason, so nothing vanishes from the list silently.
+reason, and is returned by the walk so the metadata query names the file in
+its diagnostics, so nothing vanishes from the list silently.
 
 **Git is a runtime dependency of scoped sessions.** Discovery runs the `git`
 found on PATH (resolved once, spawned by absolute path off the async executor,
@@ -288,16 +297,19 @@ pure matching rules in `domain/session_metadata_search.rs`.
   is decided by freshness alone — the adapter joins the store's summary walk
   with the validated home listing, both stamp-checked and index-seeded, so a
   record version that was already read costs one `stat` per half and is not
-  opened again, whether it was summarised or **rejected** (a corrupt or
-  cut-short record is remembered by stamp with its diagnostic, in memory and in
-  the index). A new or changed record is read once by each half, and with the
+  opened again, whether it was summarised or — in this process — **rejected**
+  (a corrupt or cut-short record is remembered by stamp with its diagnostic, in
+  memory only: a new process reads it once; a failed READ is never remembered).
+  A new or changed record is read once by each half, and with the
   index absent, unreadable or version-incompatible every record is — once per
   half, i.e. twice in all (the two halves validate differently; sharing the
   read is follow-up work, #2042; see *Performance*). `tests/contracts/
   session_metadata_search.rs` counts zero transcript reads over 2,000 valid
-  records plus an unparseable one and a 2 MiB cut-short one, warm and from a
-  new process; `session_rejection_cache.rs` pins re-reading on change and the
-  index's trust rules.
+  records plus an unparseable one and a 2 MiB cut-short one, warm, and from a
+  new process exactly those two rejected records once per half;
+  `session_rejection_cache.rs` pins re-reading on change, that a transient read
+  failure is retried and leaves no trace, and that a persisted rejection — even
+  at the correct stamp of a valid record — hides nothing.
 - **How.** Literal text, never a pattern: regex, glob, SQL and shell
   metacharacters are ordinary characters. Query and fields are compared as
   *visible text* — control characters and invisible format characters (bidi

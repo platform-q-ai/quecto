@@ -1,9 +1,8 @@
 //! The summary walk's cache: per record path, the stamp the record was read
-//! at and its summary — `None` for a version that could not be summarised
-//! (R1-H1: a failure is cached by stamp exactly as a success is). A cold process seeds it once from the
-//! derived index the home catalogue publishes, so an unchanged directory is
-//! listed with one `stat` per file; every entry is still reused only while
-//! the file carries its recorded stamp (the walk's own rule).
+//! at and its summary — or why that version could not be summarised (a verdict
+//! on bytes read in full, R1-H1; an I/O failure is never cached, R2-H1). A cold
+//! process seeds the summaries once from the derived index, so an unchanged
+//! directory costs one `stat` per file; an entry is reused only at its stamp.
 use crate::domain::error::DomainError;
 use crate::domain::session::SessionSummary;
 
@@ -30,19 +29,20 @@ impl SummaryCache {
         if !cache.seeded {
             cache.seeded = true;
             debug_assert!(cache.entries.is_empty(), "seeding an already-used cache");
-            cache.entries = persisted_walk(layout).into_entries();
+            cache.entries = persisted_walk(layout);
         }
         Ok(cache)
     }
 
-    /// What the walk made of `path` at exactly `stamp`, if it saw that
-    /// version: its summary, or `None` when it could not be summarised.
-    pub(in crate::infrastructure::persistence) fn version_at(
+    /// The summary the walk validated for `path` at exactly `stamp`.
+    pub(in crate::infrastructure::persistence) fn summary_at(
         &self,
         path: &std::path::Path,
         stamp: &[u64],
-    ) -> Option<Option<&SessionSummary>> {
+    ) -> Option<&SessionSummary> {
         let (validated, summary) = self.entries.get(path)?;
-        (validated == stamp).then_some(summary.as_ref())
+        (validated == stamp)
+            .then_some(summary.as_ref().ok())
+            .flatten()
     }
 }
