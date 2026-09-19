@@ -137,7 +137,8 @@ impl App {
             return;
         };
         let query = picker.query().to_string();
-        let found = crate::sessions::local_filter::filter_listed(&sessions.listed, &query);
+        let found =
+            crate::sessions::local_filter::filter_listed(&sessions.listed, &query, picker.scope());
         let answer = SessionSearchAnswer {
             generation: None,
             total_matches: found.len() as u64,

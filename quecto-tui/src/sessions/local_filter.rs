@@ -1,23 +1,59 @@
 //! The search box against a harness that cannot search (R1-T5): a literal
 //! filter over the rows the picker already listed, by the harness's own rule
-//! — every word of the visible, case-folded text must occur in the title or
-//! the folder, or the whole text must BE the key. No repository label (a
-//! listing carries none), no ranking: the listing's order is kept.
-use crate::protocol::session_payloads::ResumeSessionSummary;
+//! as far as a listing's rows allow — every word of the visible, case-folded
+//! text must occur in the title or the folder, or the whole text must BE the
+//! key. No repository label (a listing carries none), no ranking: the
+//! listing's order is kept.
+//!
+//! The folder text follows the harness's scope rule (R2-T8). All Folders: the
+//! whole path. Local Folder: only what lies BELOW the local group's root, so
+//! the repository's own name does not match every local row. A listing names
+//! no group root; the deepest folder common to every listed row stands in for
+//! it. The one difference: a linked worktree outside the repository makes
+//! that common folder their shared parent, so the repository's name matches
+//! its rows again (the harness would match the worktree's only).
+use crate::protocol::session_payloads::{ResumeSessionSummary, SessionListScope};
+use std::path::{Path, PathBuf};
 
-/// The listed rows `query` names, in listing order.
-pub fn filter_listed(listed: &[ResumeSessionSummary], query: &str) -> Vec<ResumeSessionSummary> {
+/// The listed rows `query` names in `scope`, in listing order.
+pub fn filter_listed(
+    listed: &[ResumeSessionSummary],
+    query: &str,
+    scope: SessionListScope,
+) -> Vec<ResumeSessionSummary> {
     let terms = visible_text(query);
     let terms: Vec<&str> = terms.split(' ').filter(|term| !term.is_empty()).collect();
+    let root = match scope {
+        SessionListScope::Local => common_folder(listed),
+        SessionListScope::Global => None,
+    };
     let matches = |row: &&ResumeSessionSummary| {
-        let texts = [
-            Some(visible_text(&row.title)),
-            row.execution_dir.as_deref().map(visible_text),
-        ];
+        let folder = row.execution_dir.as_deref().map(|dir| {
+            let below = root
+                .as_ref()
+                .and_then(|root| Path::new(dir).strip_prefix(root).ok());
+            below.map_or_else(
+                || visible_text(dir),
+                |below| visible_text(&below.to_string_lossy()),
+            )
+        });
+        let texts = [Some(visible_text(&row.title)), folder];
         let found = |term: &&str| texts.iter().flatten().any(|text| text.contains(*term));
         row.key == query.trim() || terms.iter().all(found)
     };
     listed.iter().filter(matches).cloned().collect()
+}
+
+/// The deepest folder every listed row's path lies in or under.
+fn common_folder(listed: &[ResumeSessionSummary]) -> Option<PathBuf> {
+    let mut dirs = listed.iter().filter_map(|row| row.execution_dir.as_deref());
+    let mut common = PathBuf::from(dirs.next()?);
+    for dir in dirs {
+        while !Path::new(dir).starts_with(&common) {
+            common.pop();
+        }
+    }
+    Some(common)
 }
 
 /// The harness's visible-text fold (`domain/session_metadata_text.rs`), kept
@@ -39,7 +75,8 @@ fn visible_text(raw: &str) -> String {
     folded.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn invisible(ch: char) -> bool {
+/// What the harness's fold drops; the search box accepts none of it either.
+pub(super) fn invisible(ch: char) -> bool {
     (ch.is_control() && !ch.is_whitespace())
         || matches!(ch,
             '\u{ad}' | '\u{34f}' | '\u{61c}' | '\u{180b}'..='\u{180f}'

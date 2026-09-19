@@ -16,7 +16,7 @@ fn row(key: &str, title: &str, dir: Option<&str>) -> ResumeSessionSummary {
 }
 
 fn keys(listed: &[ResumeSessionSummary], query: &str) -> Vec<String> {
-    let found = filter_listed(listed, query);
+    let found = filter_listed(listed, query, SessionListScope::Global);
     found.into_iter().map(|row| row.key).collect()
 }
 
@@ -53,4 +53,37 @@ fn every_word_must_occur_in_the_title_or_folder_and_a_key_matches_whole() {
         "nothing visible: everything"
     );
     assert_eq!(keys(&listed, ".*").len(), 0, "literal, never a pattern");
+}
+
+fn local_keys(listed: &[ResumeSessionSummary], query: &str) -> Vec<String> {
+    let found = filter_listed(listed, query, SessionListScope::Local);
+    found.into_iter().map(|row| row.key).collect()
+}
+
+/// R2-T8: in Local Folder only what lies below the rows' common folder is
+/// matched — the repository's own name no longer names every local row.
+#[test]
+fn local_folder_matches_the_path_below_the_common_folder_only() {
+    let listed = [
+        row("cli:root", "plan", Some("/home/u/walrus")),
+        row("cli:app", "notes", Some("/home/u/walrus/app")),
+        row("cli:deep", "walrus title", Some("/home/u/walrus/docs/deep")),
+        row("cli:old", "legacy", None),
+    ];
+    assert_eq!(local_keys(&listed, "walrus"), ["cli:deep"], "title only");
+    assert_eq!(local_keys(&listed, "home"), [] as [&str; 0]);
+    assert_eq!(local_keys(&listed, "app"), ["cli:app"]);
+    assert_eq!(local_keys(&listed, "docs deep"), ["cli:deep"]);
+    assert_eq!(keys(&listed, "walrus").len(), 3, "All Folders: whole path");
+    // One folder only: nothing lies below it.
+    let single = [row("cli:a", "plan", Some("/work/app"))];
+    assert!(local_keys(&single, "app").is_empty());
+    assert_eq!(local_keys(&single, "plan"), ["cli:a"]);
+    // A worktree beside the repository: their parent is the common folder.
+    let beside = [
+        row("cli:a", "plan", Some("/work/walrus")),
+        row("cli:wt", "plan", Some("/work/walrus-wt")),
+    ];
+    assert_eq!(local_keys(&beside, "walrus-wt"), ["cli:wt"]);
+    assert!(local_keys(&beside, "work").is_empty());
 }
