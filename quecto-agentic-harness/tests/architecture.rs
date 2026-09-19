@@ -3437,10 +3437,17 @@ fn interface_dependency_roots(source: &str) -> BTreeSet<String> {
 fn assert_interface_dependencies_allowlisted(path: &str, source: &str) {
     const ALLOWED: &[&str] = &["application", "domain", "infrastructure", "interface"];
     for root in interface_dependency_roots(source) {
-        const LEGACY_FIND_EXCEPTIONS: &[&str] =
-            &["src/interface/shared.rs", "src/interface/tool_runtime.rs"];
+        const COMPOSITION_EXCEPTIONS: &[(&str, &str)] = &[
+            ("src/interface/shared.rs", "composition::find"),
+            ("src/interface/tool_runtime.rs", "composition::find"),
+            ("src/interface/cli/agent.rs", "composition::environments"),
+            (
+                "src/interface/cli/uds_lifecycle.rs",
+                "composition::environments",
+            ),
+        ];
         let explicitly_allowed = ALLOWED.contains(&root.as_str())
-            || (LEGACY_FIND_EXCEPTIONS.contains(&path) && root == "composition::find");
+            || COMPOSITION_EXCEPTIONS.contains(&(path, root.as_str()));
         assert!(
             explicitly_allowed,
             "production interface dependency is not allowlisted: {path}: crate::{root}"
