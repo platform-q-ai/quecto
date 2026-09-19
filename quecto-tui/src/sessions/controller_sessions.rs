@@ -13,7 +13,6 @@ pub(crate) struct SessionsFlow {
     /// names the session the way the picker did.
     pub(super) listed_titles: std::collections::BTreeMap<String, String>,
     /// Legacy storage retained for protocol/test compatibility; refusals now notify plainly.
-    pub(super) resume_decision: Option<crate::sessions::resume_decision::ResumeDecisionDialog>,
     /// The picker selection's key and listed version, consumed by its send.
     pub(super) selected_home_version: Option<(String, String)>,
     /// Which metadata search is in flight and which answer may be shown (#2010).
@@ -36,7 +35,7 @@ pub(crate) struct SessionsFlow {
 impl SessionsFlow {
     /// A sessions modal owns the keyboard: the decision dialog or the picker.
     pub(super) fn has_modal(&self) -> bool {
-        self.resume_decision.is_some() || self.resume_selector.is_some()
+        self.resume_selector.is_some()
     }
 
     /// The ONE way the picker closes — Escape, a selection, a failed listing,

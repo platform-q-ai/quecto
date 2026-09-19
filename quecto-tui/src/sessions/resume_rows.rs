@@ -110,7 +110,7 @@ impl ResumeRows {
                 } else {
                     String::new()
                 };
-                let folder = super::resume_decision::bounded_ends(
+                let folder = crate::components::text::bounded_ends(
                     &sanitize_untrusted_label(folder, 4096),
                     FOLDER_CHARS,
                 );

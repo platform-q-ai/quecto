@@ -257,5 +257,3 @@ impl App {
 mod app_session_search;
 
 #[cfg(test)]
-#[path = "app_resume_decision_tests.rs"]
-mod resume_decision_tests;

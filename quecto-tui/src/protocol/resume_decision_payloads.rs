@@ -108,7 +108,6 @@ struct WireAnswer {
 impl WireAnswer {
     /// A decision only when it is complete and every part of it is known.
     fn into_decision(self) -> Option<ResumeDecision> {
-        (!self.actions.is_empty()).then_some(())?;
         Some(ResumeDecision {
             session: self.session?,
             session_key: self.session_key?,
