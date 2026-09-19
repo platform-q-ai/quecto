@@ -209,8 +209,11 @@ fn unscoped_row(world: &mut QuectoWorld, title: String, key: String) {
         }
     });
     let frame = drive(world, TuiHarness::full_frame);
-    assert!(frame.contains("Unscoped · no folder on record"), "{frame}");
-    assert!(frame.contains(&format!("key {key}")), "{frame}");
+    assert!(
+        frame.contains("No folder recorded (older session)"),
+        "{frame}"
+    );
+    assert!(frame.contains(&format!("ID {key}")), "{frame}");
 }
 
 #[then(expr = "the searched row {string} shows its execution folder and its stable key {string}")]
@@ -244,7 +247,7 @@ fn scoped_row(world: &mut QuectoWorld, title: String, key: String) {
     let frame = drive(world, TuiHarness::full_frame);
     let leaf = folder.file_name().unwrap().to_str().unwrap();
     assert!(
-        frame.contains(leaf) && frame.contains(&format!("key {key}")),
+        frame.contains(leaf) && frame.contains(&format!("ID {key}")),
         "{frame}"
     );
 }
@@ -307,14 +310,36 @@ fn type_past(world: &mut QuectoWorld, first: String, rest: String) {
     });
 }
 
-#[then("the first answer is discarded and the listing stays on screen")]
-fn first_discarded(world: &mut QuectoWorld) {
-    let shown = displayed_titles(world);
-    assert_eq!(
-        shown.len(),
-        TITLES.len(),
-        "the full listing is still shown: {shown:?}"
+#[then("the first answer is shown as progress while the picker keeps searching")]
+fn first_is_progress(world: &mut QuectoWorld) {
+    // What `z` matched depends on the temp directory's random name, so the
+    // rows on screen are compared with the answer itself: exactly its rows,
+    // no longer the full listing.
+    let answers = search_answers(world);
+    let rows = answers.last().unwrap()["data"]["sessions"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let mut answered: Vec<_> = rows
+        .iter()
+        .map(|row| row["title"].as_str().unwrap())
+        .collect();
+    let mut shown = displayed_titles(world);
+    answered.sort_unstable();
+    shown.sort_unstable();
+    assert_eq!(shown, answered);
+    assert!(
+        shown.len() < TITLES.len() && shown.contains(&"ZEBRA-TITLE"),
+        "{shown:?}"
     );
+    let frame = drive(world, TuiHarness::full_frame);
+    assert!(frame.contains("Sessions · Searching…"), "{frame}");
+}
+
+#[then("the picker has settled")]
+fn picker_settled(world: &mut QuectoWorld) {
+    let frame = drive(world, TuiHarness::full_frame);
+    assert!(!frame.contains("Searching…"), "{frame}");
 }
 
 #[then(expr = "the answer to {string} replaces the listing with exactly {string}")]
@@ -419,12 +444,14 @@ fn long_query(world: &mut QuectoWorld, chars: usize) {
     );
 }
 
-#[then("the search answer is valid UTF-8 with a replacement character in the execution path")]
+#[then(
+    "the search answer is valid UTF-8 with the byte that is no text spelled in the execution path"
+)]
 fn odd_folder(world: &mut QuectoWorld) {
     let answers = search_answers(world);
     let row = &answers.last().unwrap()["data"]["sessions"][0];
     let path = row["executionPath"].as_str().expect("a path");
-    assert!(path.ends_with("caf\u{fffd}-folder"), "{path}");
+    assert!(path.ends_with("caf\\xE9-folder"), "{path}");
     assert_eq!(row["matched"], serde_json::json!(["repository", "path"]));
     let frame = drive(world, TuiHarness::full_frame);
     assert!(frame.contains("-folder"), "{frame}");
@@ -588,4 +615,60 @@ fn exact_key_independent(world: &mut QuectoWorld, key: String) {
     assert_eq!(answer["data"]["outcome"], "decision", "{answer}");
     assert_eq!(answer["data"]["kind"], "cross_folder", "{answer}");
     let _ = command;
+}
+
+fn raw_search(world: &mut QuectoWorld, id: &str, fields: serde_json::Value) -> serde_json::Value {
+    let mut request = serde_json::json!({
+        "type": "search_session_metadata", "id": id, "query": "otter", "scope": "global",
+    });
+    for (field, value) in fields.as_object().unwrap() {
+        request[field] = value.clone();
+    }
+    let (line, answer) = socket_roundtrip(world, &request.to_string());
+    world.agent_events.push(line);
+    assert_eq!(
+        (&answer["id"], &answer["success"]),
+        (&serde_json::json!(id), &serde_json::json!(true)),
+        "{answer}"
+    );
+    answer["data"].clone()
+}
+
+#[then(
+    expr = "a production search whose limit is the text {string} is refused under its own id without searching"
+)]
+fn limit_not_a_number(world: &mut QuectoWorld, limit: String) {
+    let data = raw_search(
+        world,
+        "lenient-1",
+        serde_json::json!({"limit": limit, "generation": 4}),
+    );
+    assert_eq!(data["refused"], "limit must be a number", "{data}");
+    assert_eq!(
+        (&data["generation"], &data["searched"]),
+        (&serde_json::json!(4), &serde_json::json!(0))
+    );
+    assert!(data["sessions"].as_array().unwrap().is_empty(), "{data}");
+}
+
+#[then(
+    expr = "a production search with limit -1 and generation 7.9 is answered with limit {int} and generation {int}"
+)]
+fn numbers_brought_into_range(world: &mut QuectoWorld, limit: u64, generation: u64) {
+    let data = raw_search(
+        world,
+        "lenient-2",
+        serde_json::json!({"limit": -1, "generation": 7.9}),
+    );
+    assert!(data["refused"].is_null(), "{data}");
+    assert_eq!(
+        (&data["limit"], &data["generation"]),
+        (&serde_json::json!(limit), &serde_json::json!(generation))
+    );
+    assert_eq!(
+        data["sessions"].as_array().unwrap().len(),
+        1,
+        "the limit holds: {data}"
+    );
+    assert_eq!(data["totalMatches"], 2, "{data}");
 }

@@ -42,13 +42,30 @@ Feature: Global session metadata search through the production runtime
     Then no searched session is displayed
     And the search answer reports every saved session searched and none matched
 
-  Scenario: An answer overtaken by more typing is discarded
+  Scenario: An answer overtaken by more typing is progress and only the latest answer settles
     Given saved production sessions with distinct title key repository and path
     When the operator opens resume through the production socket and TUI
     And the operator selects All Folders in the resume picker
     And the operator types "z" then "ebra" before the first answer arrives
-    Then the first answer is discarded and the listing stays on screen
+    Then the first answer is shown as progress while the picker keeps searching
     And the answer to "zebra" replaces the listing with exactly "ZEBRA-TITLE"
+    And the picker has settled
+
+  Scenario: Local Folder does not match the folder every local session shares
+    Given saved production sessions with distinct title key repository and path
+    When the operator opens resume through the production socket and TUI
+    And the operator selects All Folders in the resume picker
+    And the operator searches the resume picker for "workspace"
+    Then the searched sessions displayed are exactly "LOCAL-CONVERSATION otter"
+    When the operator switches the resume picker back to Local Folder
+    Then no searched session is displayed
+    And the last search was answered in scope "local"
+
+  Scenario: A limit or generation that is no number is refused under the request's own id
+    Given saved production sessions with distinct title key repository and path
+    When the operator opens resume through the production socket and TUI
+    Then a production search whose limit is the text "seven" is refused under its own id without searching
+    And a production search with limit -1 and generation 7.9 is answered with limit 1 and generation 7
 
   Scenario: Hostile queries are literal bounded and deterministic
     Given saved production sessions with distinct title key repository and path
@@ -62,7 +79,7 @@ Feature: Global session metadata search through the production runtime
     And the operator selects All Folders in the resume picker
     And the operator searches the resume picker for "caf"
     Then the searched sessions displayed are exactly "ODD-FOLDER-CONVERSATION"
-    And the search answer is valid UTF-8 with a replacement character in the execution path
+    And the search answer is valid UTF-8 with the byte that is no text spelled in the execution path
 
   Scenario: A session deleted between the search and the selection activates nothing
     Given saved production sessions with distinct title key repository and path
