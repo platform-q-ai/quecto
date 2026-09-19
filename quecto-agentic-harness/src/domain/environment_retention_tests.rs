@@ -72,15 +72,14 @@ fn retention_policy_holds_for_every_created_run_on_exit_and_parent_kill() {
 fn preserving_stop_policy_requires_affirmative_created_success() {
     let run = SwarmRunObservation::Run;
     for mode in [MemberFinalizeMode::Exit, MemberFinalizeMode::ParentKill] {
-        for successful in [
-            with_status(RunStatus::Succeeded, None),
-            with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
-        ] {
-            assert!(stops_runtime_preserving_workspace(mode, &run(successful)));
-        }
+        assert!(stops_runtime_preserving_workspace(
+            mode,
+            &run(with_status(RunStatus::Succeeded, None))
+        ));
         for active_or_recoverable in [
             running_swarm(),
             with_status(RunStatus::Paused, None),
+            with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
             with_status(RunStatus::Paused, Some(RunStatus::Blocked)),
             with_status(RunStatus::Failed, None),
             with_status(RunStatus::Cancelled, None),

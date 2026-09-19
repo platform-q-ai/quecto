@@ -299,6 +299,51 @@ fn a_kill_in_flight_is_reported_not_relabelled_and_an_explicit_kill_retries_it()
 }
 
 #[test]
+fn crashed_preserving_stop_recovers_gone_runtime_to_preserved_with_cas() {
+    let mut stopping = record("C1", EnvironmentStatus::Killing);
+    stopping.metadata["stop_in_progress"] = serde_json::json!(true);
+    let store = store_with(vec![stopping]);
+    let process = process(|_| EnvironmentLiveness::Gone);
+
+    let (registry, report) = RestoreRegistry::new(store.clone(), process, no_hosted()).execute("s");
+
+    let recovered = registry.get("C1").expect("preserving stop remains listed");
+    assert_eq!(recovered.status, EnvironmentStatus::Preserved);
+    assert_eq!(recovered.metadata.get("stop_in_progress"), None);
+    assert!(recovered.metadata.get("preserved").is_some());
+    assert_eq!(store.corrections.lock().unwrap().as_slice(), ["C1"]);
+    assert_eq!(
+        store.load().unwrap()[0].status,
+        EnvironmentStatus::Preserved
+    );
+    assert_eq!(report.restored, ["C1"]);
+}
+
+#[test]
+fn crashed_preserving_stop_never_assumes_success_when_runtime_is_running_or_unknown() {
+    for liveness in [
+        EnvironmentLiveness::Running,
+        EnvironmentLiveness::Unknown("inspect failed".to_string()),
+    ] {
+        let mut stopping = record("C1", EnvironmentStatus::Killing);
+        stopping.metadata["stop_in_progress"] = serde_json::json!(true);
+        let store = store_with(vec![stopping]);
+        let observed = liveness.clone();
+        let process = process(move |_| observed.clone());
+
+        let (registry, report) =
+            RestoreRegistry::new(store.clone(), process, no_hosted()).execute("s");
+
+        assert_eq!(
+            registry.get("C1").unwrap().status,
+            EnvironmentStatus::Killing
+        );
+        assert!(store.corrections.lock().unwrap().is_empty());
+        assert_eq!(report.unverified.len(), 1);
+    }
+}
+
+#[test]
 fn an_unreadable_store_yields_an_empty_registry_that_still_allocates_through_the_store() {
     let store = Arc::new(FakeStore {
         fail_load: true.into(),

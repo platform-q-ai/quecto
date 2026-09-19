@@ -122,6 +122,14 @@ pub fn unfinished_run_reason(run: &HostedSwarmRun) -> String {
     )
 }
 
+fn preserving_stop_in_flight(record: &EnvironmentRecord) -> bool {
+    record
+        .metadata
+        .get("stop_in_progress")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+}
+
 fn unreadable_store_reason(error: &str) -> String {
     format!("coordination store could not be read ({error}); container exited; {KEPT}")
 }
@@ -441,6 +449,40 @@ impl RestoreRegistry {
             // checkout and board state. Runtime absence must never relabel it
             // destructively during restart reconciliation.
             EnvironmentStatus::Preserved => false,
+            EnvironmentStatus::Killing if preserving_stop_in_flight(record) => {
+                // The durable intent was written before invoking the preserving
+                // stop. Runtime absence is therefore its receipt after a crash:
+                // recover with the same status-CAS used by every restore
+                // correction, never by falling through to destructive cleanup.
+                match self.process.observe(record) {
+                    EnvironmentLiveness::Gone => {
+                        record.status = EnvironmentStatus::Preserved;
+                        record.last_error = None;
+                        if let Some(metadata) = record.metadata.as_object_mut() {
+                            metadata.remove("stop_in_progress");
+                            metadata.insert(
+                                "preserved".to_string(),
+                                serde_json::json!(
+                                    "runtime stopped; workspace retained for data recovery"
+                                ),
+                            );
+                        }
+                        report.restored.push(environment_ref);
+                        true
+                    }
+                    EnvironmentLiveness::Running => {
+                        report.unverified.push((
+                            environment_ref,
+                            "preserving stop in flight; runtime still running".to_string(),
+                        ));
+                        false
+                    }
+                    EnvironmentLiveness::Unknown(error) => {
+                        report.unverified.push((environment_ref, error));
+                        false
+                    }
+                }
+            }
             EnvironmentStatus::Killing => {
                 // Whether its session is still settling the kill cannot
                 // be told from here: say so, change nothing.

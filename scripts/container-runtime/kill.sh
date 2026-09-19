@@ -61,15 +61,40 @@ printf '%s\n' "$op" >>"$env_dir/kill.log"
 # A real adapter tears the runtime environment down here (e.g.
 # `docker rm -f`). The host-local reference terminates every recorded
 # child process and removes the checked-out workspace.
-if [ -f "$env_dir/children.jsonl" ]; then
-  # One jq pass over the whole record, not one fork per line. A jq parse
-  # failure yields no pids and the loop is a no-op by design. Reference
-  # caveat: recorded pids can be reused by unrelated same-user processes on
-  # long-lived environments; a real adapter kills the runtime container (a
-  # stable handle) instead of raw pids.
+inventory="$env_dir/children.jsonl"
+pids=""
+if [ -e "$inventory" ]; then
+  # Inventory is safety-critical: malformed or unreadable input cannot be
+  # treated as an empty process set and followed by a successful receipt.
+  # Require every record to carry one positive integral pid before signalling
+  # any of them, so validation failure leaves the runtime state retryable.
+  pids="$(jq -s -e -r \
+    'if all(.[]; ((.pid | type) == "number") and (.pid > 0) and (.pid == (.pid | floor))) then .[].pid else error("invalid pid") end' \
+    "$inventory")" || die "cannot read valid recorded children from $inventory"
+  # Reference caveat: recorded pids can be reused by unrelated same-user
+  # processes on long-lived environments; a real adapter kills the runtime
+  # container (a stable handle) instead of raw pids.
   while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
     kill -9 "$pid" 2>/dev/null || true
-  done < <(jq -r '.pid' "$env_dir/children.jsonl")
+  done <<<"$pids"
+
+  # A receipt asserts retirement, not merely signal delivery. Accept absence
+  # and zombies (already retired, awaiting their owner's wait); refuse every
+  # process still in an executing or sleeping state after a short bound.
+  for _ in $(seq 1 100); do
+    live=""
+    while IFS= read -r pid; do
+      [ -n "$pid" ] || continue
+      if [ -r "/proc/$pid/stat" ]; then
+        state="$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || printf '?')"
+        [ "$state" = Z ] || live="$live $pid"
+      fi
+    done <<<"$pids"
+    [ -n "$live" ] || break
+    sleep 0.01
+  done
+  [ -z "$live" ] || die "recorded children did not retire:$live"
 fi
 case "$op" in
 stop)

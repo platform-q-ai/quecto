@@ -132,8 +132,8 @@ pub fn retains_environment(mode: MemberFinalizeMode, observed: &SwarmRunObservat
 /// runtime has no active swarm responsibility and may be retired while its
 /// workspace is preserved. Merely being retained is deliberately
 /// insufficient: running, plain-paused, cancelled and recoverable outcomes
-/// all keep their runtime. A closed success or a pause holding success is the
-/// only completed outcome that proves no active responsibility.
+/// all keep their runtime. Only an affirmatively closed success proves no
+/// active responsibility; a pause holding success remains resumable.
 pub fn stops_runtime_preserving_workspace(
     mode: MemberFinalizeMode,
     observed: &SwarmRunObservation,
@@ -147,16 +147,6 @@ pub fn stops_runtime_preserving_workspace(
                 ..
             }) if crate::domain::swarm::participates(*deadline)
         )
-        || mode.inspectable_end()
-            && matches!(
-                observed,
-                SwarmRunObservation::Run(HostedSwarmRun {
-                    status: RunStatus::Paused,
-                    outcome: Some(RunStatus::Succeeded),
-                    deadline,
-                    ..
-                }) if crate::domain::swarm::participates(*deadline)
-            )
 }
 
 const KEPT: &str = "environment retained for inspection, kill_container to remove";

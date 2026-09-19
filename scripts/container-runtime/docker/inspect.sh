@@ -79,18 +79,35 @@ case "$id" in
 */* | *..*) die "invalid environment id: $id" ;;
 esac
 env_dir="$state_dir/$id"
+# An inspect failure is ambiguous (missing object, daemon outage, permission
+# denial, or malformed response). Only a successful inventory which omits the
+# exact container affirmatively proves absence.
+runtime_absent() {
+  local container="$1" listing
+  listing="$("$cli" ps -a --filter "name=^${container}$" --format '{{.Names}}')" || return 2
+  while IFS= read -r found; do
+    [ "$found" = "$container" ] && return 1
+  done <<<"$listing"
+  return 0
+}
 if [ ! -d "$env_dir" ]; then
   # The environment's state is gone (a manual `rm -rf`, a completed kill
   # whose record outlived it). The container the create would have named
   # may still run: ask the runtime before calling it dead, so a restore
   # (#2024 S4d) never stops a live environment — and marks a truly gone
   # one stopped instead of keeping it unverified forever.
-  if [ "$("$cli" inspect --format '{{.State.Running}}' "quecto-$id" 2>/dev/null)" = true ]; then
-    jq -cn --arg cli "$cli" --arg container "quecto-$id" \
+  container="quecto-$id"
+  if state="$("$cli" inspect --format '{{.State.Running}}' "$container")"; then
+    [ "$state" = true ] || die "$container exists but returned an invalid running state: $state"
+    jq -cn --arg cli "$cli" --arg container "$container" \
       '{status: "running", metadata: {runtime: $cli, container: $container, cause: "state-dir-removed"}}'
-  else
+  elif runtime_absent "$container"; then
     jq -cn --arg cli "$cli" \
       '{status: "dead", metadata: {runtime: $cli, cause: "environment-removed"}}'
+  else
+    rc=$?
+    [ "$rc" = 1 ] || die "$cli inventory failed while verifying $container absence"
+    die "$cli inspect failed for existing container $container"
   fi
   exit 0
 fi
@@ -102,10 +119,15 @@ case "$resolved" in
 esac
 container="$(cat "$env_dir/container")"
 
-if ! state="$("$cli" inspect --format '{{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}}' "$container" 2>/dev/null)"; then
-  jq -cn --arg cli "$cli" --arg container "$container" \
-    '{status: "dead", metadata: {runtime: $cli, container: $container, cause: "container-removed"}}'
-  exit 0
+if ! state="$("$cli" inspect --format '{{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}}' "$container")"; then
+  if runtime_absent "$container"; then
+    jq -cn --arg cli "$cli" --arg container "$container" \
+      '{status: "dead", metadata: {runtime: $cli, container: $container, cause: "container-removed"}}'
+    exit 0
+  fi
+  rc=$?
+  [ "$rc" = 1 ] || die "$cli inventory failed while verifying $container absence"
+  die "$cli inspect failed for existing container $container"
 fi
 read -r running exit_code oom <<<"$state"
 if [ "$running" = "true" ]; then

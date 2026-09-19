@@ -224,37 +224,39 @@ fn coordinator_exit_from_a_plain_pause_is_a_loss() {
 }
 
 #[test]
-fn final_member_after_success_automatically_stops_runtime_and_preserves_workspace() {
-    for hosted in [
-        with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
-        with_status(RunStatus::Succeeded, None),
-    ] {
-        let port = Arc::new(HostedRunPort::hosting(Some(hosted)));
-        let (registry, env_ref) = finalize(port.clone(), MemberFinalizeMode::Exit);
-        assert_eq!(port.stops.lock().unwrap().len(), 1);
-        assert!(port.kills.lock().unwrap().is_empty());
-        assert!(port.losses.lock().unwrap().is_empty());
-        let record = registry.get(&env_ref).unwrap();
-        assert_eq!(record.status, EnvironmentStatus::Preserved);
-        assert_eq!(
-            record.workspace_path,
-            std::path::PathBuf::from(format!("/ws/{env_ref}"))
-        );
-        assert!(
-            registry
-                .resolve_joinable(&EnvironmentTarget::Ref(env_ref.clone()))
-                .is_err()
-        );
-        assert!(
-            registry.begin_kill(&env_ref).is_ok(),
-            "later explicit discard"
-        );
-    }
+fn final_member_after_closed_success_automatically_stops_runtime_and_preserves_workspace() {
+    let port = Arc::new(HostedRunPort::hosting(Some(with_status(
+        RunStatus::Succeeded,
+        None,
+    ))));
+    let (registry, env_ref) = finalize(port.clone(), MemberFinalizeMode::Exit);
+    assert_eq!(port.stops.lock().unwrap().len(), 1);
+    assert!(port.kills.lock().unwrap().is_empty());
+    assert!(port.losses.lock().unwrap().is_empty());
+    let record = registry.get(&env_ref).unwrap();
+    assert_eq!(record.status, EnvironmentStatus::Preserved);
+    assert_eq!(
+        record.workspace_path,
+        std::path::PathBuf::from(format!("/ws/{env_ref}"))
+    );
+    assert!(
+        registry
+            .resolve_joinable(&EnvironmentTarget::Ref(env_ref.clone()))
+            .is_err()
+    );
+    assert!(
+        registry.begin_kill(&env_ref).is_ok(),
+        "later explicit discard"
+    );
 }
 
 #[test]
 fn non_success_orderly_end_retains_without_quarantine_or_runtime_stop() {
     let cases = [
+        (
+            with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
+            "run ended: succeeded",
+        ),
         (
             with_status(RunStatus::Paused, Some(RunStatus::Blocked)),
             "run ended: blocked",
@@ -405,20 +407,18 @@ fn supervisor_kill_retains_running_or_plain_paused_coordinator() {
 }
 
 #[test]
-fn supervisor_kill_after_affirmative_success_stops_runtime_but_preserves_workspace() {
-    for hosted in [
-        with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
-        with_status(RunStatus::Succeeded, None),
-    ] {
-        let port = Arc::new(HostedRunPort::hosting(Some(hosted)));
-        let (registry, env_ref) = finalize(port.clone(), MemberFinalizeMode::ParentKill);
-        assert_eq!(port.stops.lock().unwrap().len(), 1);
-        assert!(port.kills.lock().unwrap().is_empty());
-        assert_eq!(
-            registry.get(&env_ref).unwrap().status,
-            EnvironmentStatus::Preserved
-        );
-    }
+fn supervisor_kill_after_closed_success_stops_runtime_but_preserves_workspace() {
+    let port = Arc::new(HostedRunPort::hosting(Some(with_status(
+        RunStatus::Succeeded,
+        None,
+    ))));
+    let (registry, env_ref) = finalize(port.clone(), MemberFinalizeMode::ParentKill);
+    assert_eq!(port.stops.lock().unwrap().len(), 1);
+    assert!(port.kills.lock().unwrap().is_empty());
+    assert_eq!(
+        registry.get(&env_ref).unwrap().status,
+        EnvironmentStatus::Preserved
+    );
 }
 
 #[test]

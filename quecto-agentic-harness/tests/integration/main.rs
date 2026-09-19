@@ -15,8 +15,10 @@
 //! modules, met the child before it was bound (it then exits at the 30 s bind
 //! deadline instead of on connection loss, past the test's 20 s bound).
 
+mod docker_inspect_script;
 mod docker_kill_script;
 mod fleet_teardown;
+mod host_kill_script;
 mod inference_admission_anthropic_malformed_terminal;
 mod inference_admission_attempts;
 mod inference_admission_broker;

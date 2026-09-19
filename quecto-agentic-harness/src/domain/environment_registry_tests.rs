@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use super::*;
 
 fn record(env_ref: &str, id: &str) -> EnvironmentRecord {

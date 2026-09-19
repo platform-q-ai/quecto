@@ -61,6 +61,48 @@ fn later_successful_inspect_clears_persisted_inspect_failure() {
 }
 
 #[test]
+fn successful_preserving_stop_keeps_a_postmortem_inspect_error() {
+    let registry = registry_with_member("C1", "a1");
+    let claim = registry.begin_inspect("C1", "a1").unwrap();
+    registry.record_inspect_failure(
+        claim,
+        "inspect exited with status 1: postmortem unavailable",
+    );
+
+    let stop = registry.begin_kill("C1").unwrap();
+    registry.complete_stop(stop);
+
+    let rec = registry.get("C1").unwrap();
+    assert_eq!(rec.status, EnvironmentStatus::Preserved);
+    assert_eq!(
+        rec.last_error.as_deref(),
+        Some("inspect exited with status 1: postmortem unavailable"),
+        "successful runtime stop must preserve the sticky inspect diagnostic"
+    );
+}
+
+#[test]
+fn successful_preserving_stop_clears_a_previous_stop_error() {
+    let registry = registry_with_member("C1", "a1");
+    let first_stop = registry.begin_kill("C1").unwrap();
+    registry.fail_stop(first_stop, "stop exited with status 1: transient");
+    assert_eq!(
+        registry.get("C1").unwrap().last_error.as_deref(),
+        Some("stop exited with status 1: transient")
+    );
+
+    let retry = registry.begin_kill("C1").unwrap();
+    registry.complete_stop(retry);
+
+    let rec = registry.get("C1").unwrap();
+    assert_eq!(rec.status, EnvironmentStatus::Preserved);
+    assert_eq!(
+        rec.last_error, None,
+        "successful retry clears its stale stop error"
+    );
+}
+
+#[test]
 fn later_successful_inspect_keeps_a_kill_failure_error() {
     let registry = registry_with_member("C1", "a1");
     registry.add_member("C1", "a2").unwrap();
