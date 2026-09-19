@@ -372,7 +372,9 @@ workspace facts searches nothing and says why in `diagnostics`. An
 `executionPath` or `repositoryLabel` that is not UTF-8 spells each byte that is
 no text as `\xNN` (`/work/caf\xE9`) and doubles a literal backslash (a folder
 really named `caf\xE9` is `caf\\xE9`), so the spelling is injective: two
-different folders never share one, and a query matches what is shown.
+different folders never share one, and a query matches what is shown. Every
+`executionPath` on the wire is spelled this way — a `list_sessions` row, a
+search row and the `resume_session` decision name one folder with one text.
 
 **Cost and ordering.** Every search stamps every saved record (about 90 ms on
 a 5,200-record store; the 50 ms target is missed) and folds every path, so the

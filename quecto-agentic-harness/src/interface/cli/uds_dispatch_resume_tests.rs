@@ -242,3 +242,35 @@ fn the_arabic_letter_mark_separators_and_soft_hyphen_are_replaced() {
         "/var/tmp/x\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}y\u{2764}\u{fe0f}"
     );
 }
+
+/// R3-H2: one folder, one spelling — the decision's `executionPath` is the
+/// list row's, byte for byte, for a folder no lossy text could carry.
+#[test]
+fn a_decision_spells_its_folder_exactly_as_the_listed_row_does() {
+    use crate::application::sessions::dto::ListedSession;
+    use crate::domain::session_home::{AssociationProvenance, SessionHome, WorkspaceGroup};
+    use std::os::unix::ffi::OsStrExt;
+    let dir = PathBuf::from(std::ffi::OsStr::from_bytes(b"/w/caf\xe9/a\\b\x1b[2J"));
+    let mut shown = decision(ResumeDecisionKind::CrossFolder);
+    shown.execution_dir = Some(dir.clone());
+    let target = ResumeTarget::parse("cli:foreign").unwrap();
+    let row = ListedSession {
+        summary: crate::domain::session::SessionSummary {
+            key: "cli:foreign".into(),
+            identity: target.identity,
+            title: "t".into(),
+            message_count: 1,
+            updated_unix_secs: None,
+        },
+        home: SessionHomeScope::Scoped(SessionHome {
+            execution_dir: dir.clone(),
+            group: WorkspaceGroup::Folder { directory: dir },
+            provenance: AssociationProvenance::SavedHere,
+        }),
+        resume_eligible: false,
+    };
+    let row = super::super::super::uds_dispatch_query::listed_row_json(&row);
+    let decided = decision_json(&shown, "cross_folder");
+    assert_eq!(decided["executionPath"], "/w/caf\\xE9/a\\\\b\u{fffd}[2J");
+    assert_eq!(decided["executionPath"], row["executionPath"]);
+}

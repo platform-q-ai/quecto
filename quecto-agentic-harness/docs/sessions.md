@@ -246,8 +246,12 @@ recorded key names that very file: a hand-renamed record, a symlink into the
 sessions directory, an unreadable or invalid file, or a file replaced while it
 was being read is skipped — deliberately, so no alias or foreign file can pose
 as a session — and every skip is a `tracing::warn!` naming the path and the
-reason, and is returned by the walk so the metadata query names the file in
-its diagnostics, so nothing vanishes from the list silently.
+reason, and is returned by the walk so `search_session_metadata` names the file
+in its diagnostics, so nothing vanishes from the list silently. `list_sessions`
+names every record the catalogue's validation rejected — nearly always the same
+files — but a record only the walk failed to read (a transient I/O failure
+between the two reads) is in the log alone there, as it always was: the listing
+reads the store through the `SessionStore::list` port, which answers rows only.
 
 **Git is a runtime dependency of scoped sessions.** Discovery runs the `git`
 found on PATH (resolved once, spawned by absolute path off the async executor,
