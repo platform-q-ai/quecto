@@ -110,13 +110,13 @@ is always `0`), so pids 1 and 2 inside a box — `podman-init` and the
 coordinator — can never be targeted from outside. This is ratcheted by
 `quecto-agentic-harness/tests/architecture/teardown_authority.rs` (the
 process-effect allowlist) and proven by running the harness's own full BDD
-suite inside a `quecto-box:local` container whose pid 2 blocks and logs every
+suite inside a `quecto-dev:local` container whose pid 2 blocks and logs every
 signal it receives (see the #1940 record below).
 
 #### In-container proof record (#1925 method, #1940 run)
 
 Method (issue #1925): the harness's own full BDD suite runs inside a
-`quecto-box:local` container as the child of a **signal-logging pid 2** — a
+`quecto-dev:local` container as the child of a **signal-logging pid 2** — a
 Python wrapper that blocks `SIGTERM`/`SIGINT`/`SIGHUP`, runs the suite as its
 child (with the mask unblocked for the child), and logs every signal it
 receives from a `sigwaitinfo` loop with `si_pid` and the sender's `cmdline`.
@@ -124,7 +124,7 @@ Pid 2 is where a swarm coordinator's harness sits, so any registry, fixture or
 descendant pid the suite ever targeted would receive the signal there.
 
 - **Revision:** `ec29e9902b96fdab2534a0f51dd82bdbace0f5e2` (the #1940 PR head at the time of the run; the commits that record it follow)
-- **Image:** `quecto-box:local`, id `b1f87e8917502e1963979a0ed43fd7866427c961c26aac0d1576a17774b63662`
+- **Image:** `quecto-dev:local`, id `b1f87e8917502e1963979a0ed43fd7866427c961c26aac0d1576a17774b63662`
 - **Command:** `scripts/bdd-in-box/run.sh` (committed with the pid 2
   wrapper `scripts/bdd-in-box/pid2_signal_log.py`), which runs exactly:
 
@@ -135,7 +135,7 @@ descendant pid the suite ever targeted would receive the signal there.
     -v <scratch>/home:/home/dev -v scripts/bdd-in-box/pid2_signal_log.py:/pid2_signal_log.py:ro \
     -e CARGO_TARGET_DIR=/tmp/target -e HOME=/home/dev -e TMPDIR=/home/dev/tmp \
     -e PID2_SIGNAL_LOG=/home/dev/pid2-signals.log -e RUST_LOG=warn -w /src \
-    quecto-box:local python3 /pid2_signal_log.py \
+    quecto-dev:local python3 /pid2_signal_log.py \
     bash -c 'status=0; for i in 0 1 2 3; do echo "=== shard $i/4 ==="; \
       QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=4 \
       cargo test --workspace --features quecto-agentic-harness/test-support --bins --test bdd || status=1; done; exit $status'
@@ -636,7 +636,7 @@ or an invalid contract fails the launch and rolls back. **Logs and
 diagnostics go to stderr**: the last 4 KiB of the script's stderr (with
 terminal escapes and control characters removed) are appended to the tool
 error after the exit status — `script-managed create failed with status
-exit status: 6: … image quecto-box:local is not present …` — and echoed on
+exit status: 6: … image quecto-dev:local is not present …` — and echoed on
 the parent harness's stderr, so a `die` message reaches both the model and
 the operator (#2024 S4b). The same applies to `exec`, and to the retained
 `inspect`, `kill` and `cleanup` scripts (a failed cleanup is logged with

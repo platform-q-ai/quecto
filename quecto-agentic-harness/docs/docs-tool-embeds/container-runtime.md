@@ -20,7 +20,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
 
 1. **Initialise** — writes the bundle and binds the repository (idempotent):
    ```
-   quecto container init                      # --repo from origin; --image quecto-box:local
+   quecto container init                      # --repo from origin; --image quecto-dev:local
    quecto container init --repo <url>         # explicit repository
    quecto container init --image <tag>        # another image tag
    quecto container init --dry-run            # print what would be written
@@ -34,18 +34,18 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
    container config "standard" written as container_configs.standard in /repo/.quecto/config.json (trusted for exactly these bytes)
      default: true — this repo's default: `spawn container: true` selects it in this repo (no default elsewhere overrides a repo's standard container)
      --repo https://github.com/org/app.git (the checkout's origin remote): a new container is a fresh clone of it
-     --state-dir under the quecto base directory; --image quecto-box:local
+     --state-dir under the quecto base directory; --image quecto-dev:local
    next:
-     1. build the image … podman build -t quecto-box:local -f /repo/.quecto/containers/standard/Containerfile /repo/.quecto/containers/standard
+     1. build the image … podman build -t quecto-dev:local -f /repo/.quecto/containers/standard/Containerfile /repo/.quecto/containers/standard
      2. quecto container doctor   — every check ✓
      3. spawn {"agent_id":"probe","task":"run pwd","container":true} …
    ```
    **`standard` is always this repo's default.** A global default (`the global default <name> does not apply in this repo`) is overridden here only — the global file is untouched, other repos keep it. Another overlay entry carrying `"default": true` loses the label in the same write (`displaced default: <name>`; select it by name). Launch policy applies the rule, not just the label: a repo-bound `standard` is what `container: true` selects even after `quecto config unset --local container_configs.standard.default` removed its label (possible only while another entry is labelled; a raw edit un-trusts the overlay instead) or the global file was re-labelled — `status` then says `default by rule` with the remedy (`init --refresh` or `quecto config set --local container_configs.standard.default true`). Init names what it displaced from the *effective* set: an overlay entry's label (`displaced default:`), else the global label it overrides. A re-init keeps the entry's `--repo`/`--image` unless the flag is given (`kept:`/`rewrote:` lines).
-2. **Build the image** — exactly the command init printed (a create never builds or pulls). Skip it when `quecto container status` already reports `image: image quecto-box:local is present`:
+2. **Build the image** — exactly the command init printed (a create never builds or pulls). Skip it when `quecto container status` already reports `image: image quecto-dev:local is present`:
    ```
-   podman build -t quecto-box:local -f /repo/.quecto/containers/standard/Containerfile /repo/.quecto/containers/standard
+   podman build -t quecto-dev:local -f /repo/.quecto/containers/standard/Containerfile /repo/.quecto/containers/standard
    ```
-   Expected: the last line is `Successfully tagged localhost/quecto-box:local` (docker: `naming to docker.io/library/quecto-box:local`). A docker-only host runs the same command with `docker`: the scripts drive whichever runtime the doctor's `runtime-cli` line names. A project that needs a toolchain derives `FROM quecto-box:local` and passes `--image <tag>` to init.
+   Expected: the last line is `Successfully tagged localhost/quecto-dev:local` (docker: `naming to docker.io/library/quecto-dev:local`). A docker-only host runs the same command with `docker`: the scripts drive whichever runtime the doctor's `runtime-cli` line names. A project that needs a toolchain derives `FROM quecto-dev:local` and passes `--image <tag>` to init.
 3. **Use** — from an agent started in this repository:
    `spawn {"agent_id":"probe","task":"run pwd and git log -1 --oneline, then exit","container":true}` → the result names `environment_ref=C1 container_config=standard`; `agent_cmd {"agent_id":"*","command":"get_containers"}` lists it `running` with the repository; `agent_cmd {"agent_id":"*","command":"kill_container","ref":"C1"}` ends it (its members are terminated, the config's kill runs once; from the shell, `quecto container kill C1`). When the last member of an ordinary environment exits it tears itself down; a swarm container is `retained` until `kill_container` / `quecto container kill`.
 
@@ -63,7 +63,7 @@ standard container at /repo/.quecto/containers/standard
   config:  standard (default, overlay) in the effective configuration; --repo https://github.com/org/app.git
            this repo's default: `spawn container: true` selects it whatever the global file labels
   trust:   trusted (the repo-local overlay is applied)
-  image:   image quecto-box:local is present
+  image:   image quecto-dev:local is present
 ready: spawn {"container":true} from an agent in this project
 ```
 
@@ -74,12 +74,12 @@ quecto container doctor [--name <config>] [--config <file>]
 It resolves the effective config exactly as `spawn container: true` does, runs the create script's own preflight (`create.sh --preflight-only`) **without creating anything**, one line per check, exit 0 when none failed (warnings allowed):
 
 ```
-container config "standard" (create: /repo/.quecto/containers/standard/scripts/create.sh --state-dir /home/me/.quecto/container-environments --repo https://github.com/org/app.git --image quecto-box:local)
+container config "standard" (create: /repo/.quecto/containers/standard/scripts/create.sh --state-dir /home/me/.quecto/container-environments --repo https://github.com/org/app.git --image quecto-dev:local)
   ✓ runtime-cli  podman at /usr/bin/podman
   ✓ jq           jq at /usr/bin/jq
   ✓ git          git at /usr/bin/git
   ✓ gh           gh at /usr/bin/gh
-  ✓ image        image quecto-box:local is present
+  ✓ image        image quecto-dev:local is present
   ✓ repo         --repo https://github.com/org/app.git is reachable
   ✓ state-dir    state dir /home/me/.quecto/container-environments is writable and owned by the current user   (or: will be created under writable /home/me/.quecto)
 0 checks failed, 0 warnings
@@ -92,7 +92,7 @@ Then the spawn in Do step 3: `environment_ref=C1 container_config=standard`, and
 ```
 quecto config unset --local container_configs.standard   # → unset container_configs.standard in /repo/.quecto/config.json (trusted)
 rm -r .quecto/containers/standard
-podman rmi quecto-box:local                              # optional: the image
+podman rmi quecto-dev:local                              # optional: the image
 ```
 
 Running environments are unaffected until killed (`kill_container`, or `quecto container kill <ref|name>` from the shell; `quecto container gc` removes exited leftovers). Other repositories are never affected: the overlay is read from the working directory only.
@@ -105,7 +105,7 @@ Running environments are unaffected until killed (`kill_container`, or `quecto c
 | init: `overlay … is not trusted …` | hand-written or edited overlay | review `quecto config get --local`, `quecto config trust`, retry |
 | init: `… carries a credential in its userinfo …` | userinfo in the URL | `git remote set-url origin <credential-free url>` or `--repo <url>` |
 | doctor `✗ runtime-cli` | no podman/docker on PATH, or the daemon not answering | install/start it; `QUECTO_CONTAINER_CLI=/abs/podman` overrides the choice |
-| doctor `✗ image  image quecto-box:local is not present …` | step 2 skipped (create never pulls) | run the printed `podman build …` |
+| doctor `✗ image  image quecto-dev:local is not present …` | step 2 skipped (create never pulls) | run the printed `podman build …` |
 | doctor `✗ repo  --repo <url> is unreachable: …` | wrong URL, no network, or missing credentials (`repository … not found` for a private repo) | `gh auth login` / ssh key, or `quecto container init --repo <url>` with the right URL |
 | doctor `! gh  gh is not on PATH …` (warning) | children get no GitHub token | install `gh`, `gh auth login`; harmless if children never push |
 | doctor `✗ state-dir` | `<base_dir>/container-environments` not writable | fix ownership/permissions of the base dir |
