@@ -86,11 +86,26 @@ container="$(cat "$env_dir/container" 2>/dev/null || true)"
 # bound the grace: one second for the child to cascade, then SIGKILL.
 grace=()
 [ "$cli" = podman ] && grace=(--time 1)
+# An inspect failure is ambiguous (absent object, daemon outage, permission
+# denial, or transient transport failure). Only a successful inventory that
+# omits the exact name affirmatively proves the container is absent.
+runtime_absent() {
+  local expected="$1" listing found
+  listing="$("$cli" ps -a --filter "name=^${expected}$" --format '{{.Names}}')" || return 1
+  while IFS= read -r found; do
+    [ "$found" = "$expected" ] && return 1
+  done <<<"$listing"
+  return 0
+}
 if [ "$op" = stop ]; then
   # Stop is truthful and retryable: unlike destructive cleanup, failure to
   # retire the runtime is not swallowed. The state directory is never removed.
   if "$cli" inspect "$container" >/dev/null 2>&1; then
     "$cli" rm -f "${grace[@]}" "$container" >/dev/null
+  elif runtime_absent "$container"; then
+    : # Already retired; the affirmative inventory makes stop idempotent.
+  else
+    die "$cli could not verify whether container $container is absent"
   fi
   tmp="$env_dir/.runtime-stopped.$$"
   printf 'stopped\n' >"$tmp"
