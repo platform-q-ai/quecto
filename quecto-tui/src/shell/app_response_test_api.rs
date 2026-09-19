@@ -19,12 +19,9 @@ impl App {
         self.ac_mut().pending_session_resume_id = Some(id.to_string());
     }
 
-    /// Whether a `/resume` answer is still outstanding for this tab.
-    pub fn test_pending_session_resume(&self) -> (Option<&str>, Option<&str>) {
-        (
-            self.ac().pending_session_resume.as_deref(),
-            self.ac().pending_session_resume_id.as_deref(),
-        )
+    /// The request id of the `/resume` answer still outstanding, if any.
+    pub fn test_pending_session_resume(&self) -> Option<&str> {
+        self.ac().pending_session_resume_id.as_deref()
     }
 
     /// Arm exact-pending rewind-refresh correlation for a synthetic response delivery.
@@ -88,6 +85,29 @@ impl App {
         // unless a case explicitly tears it down.
         state.agent_connected = true;
         self.tabs.insert(tab, state);
+    }
+
+    /// Insert the next free disconnected tab (unfocused) and return its id.
+    #[cfg(test)]
+    pub(crate) fn test_open_disconnected_tab(&mut self) -> crate::shell::connection::TabId {
+        let next = self.tabs.keys().map(|t| t.0 + 1).max().unwrap_or(0);
+        self.test_insert_disconnected_tab(next);
+        crate::shell::connection::TabId(next)
+    }
+
+    /// Swap `tab`'s transport (and owned child watch) for a connected one.
+    #[cfg(test)]
+    pub(crate) fn test_attach_connection(
+        &mut self,
+        tab: crate::shell::connection::TabId,
+        transport: crate::shell::connection::Connection,
+        child_watch: Option<crate::shell::child_watch::ChildWatch>,
+    ) {
+        let state = self.tabs.get_mut(&tab).expect("tab present for attach");
+        state.transport = transport;
+        state.child_exit_watch = child_watch;
+        state.agent_connected = true;
+        state.agent_ever_connected = true;
     }
 
     /// Focus a different tab without tearing connections (#1465 test seam).

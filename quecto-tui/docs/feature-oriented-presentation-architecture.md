@@ -402,7 +402,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_ordinary_exit.rs` | `shell` ordinary-exit finalization (#1586 Phase 4) |
 | `shell/app_render_helpers.rs` | `shell` render helper extraction (line-count split, #1334 PR 4) |
 | `shell/app_response.rs` | `shell` response dispatch seam (relocated, #1257 Phase 6; protocol-mapper allowlist #1220) |
-| `shell/app_response_test_api.rs` | `shell` multi-tab test/harness API (#1465) |
+| `shell/app_response_test_api.rs` | `shell` response/connection test and harness API (#1465) |
 | `shell/app_selection.rs` | `shell` focus/selection routing (relocated, #1257 Phase 6) |
 | `shell/app_session_resume.rs` | `shell` `/resume` request and answer handling (split from `app_response.rs` for the 750-line cap, #1726) |
 | `shell/app_session_stats_text.rs` | `shell` session stats status text formatting (line-count split, #1567) |
@@ -416,19 +416,14 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/cli_startup_exit.rs` | `shell` startup-failure leader-only agent termination with a stderr notice (#1956) |
 | `shell/connection.rs` | `shell` master-connection feed task and `Source`-keyed fan-in seam (#1462) |
 | `shell/connection_state.rs` | `shell` per-connection state bundle behind the `active_conn()` seam (#1463) |
-| `shell/atomic_file.rs` | `shell` atomic temp+rename durability helper (#1465 AC4) |
 | `shell/keys.rs` | `shell` input mapping primitive (relocated, #1257 Phase 1) |
 | `shell/mod.rs` | `shell` module root |
 | `shell/process.rs` | `shell` leader-only harness termination + post-exit canary, budget derived from the harness teardown (#1956) |
 | `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
 | `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
 | `shell/socket_path.rs` | `shell` shared socket-path validation policy for every connect (#1460) |
-| `shell/tab_activity.rs` | `shell` pure per-tab spinner/unread activity policy (#1466) |
-| `shell/tab_lifecycle.rs` | `shell` multi-tab open/switch/close + durability snapshot (#1465 P3) |
-| `shell/tab_registry.rs` | `shell` tab-agent registry sidecar (#1465 AC4) |
-| `shell/tab_spawn_policy.rs` | `shell` parent CLI policy inherited by secondary tab spawns (#1465 F8) |
-| `shell/workspace_manifest.rs` | `shell` workspace tab-set manifest (#1465 AC4) |
-| `shell/workspace_resume.rs` | `shell` workspace-aware /resume restore (#1465 P4) |
+| `shell/tab_lifecycle.rs` | `shell` ordinary-exit persist fan-out and child-watch collection over the connection map (#1465 P3; collapses in #2044 PR 2) |
+| `shell/workspace_resume.rs` | `shell` session-only `/resume` selector open and selection dispatch (#1465 P4, #2044) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
 | `shell/thinking_preferences.rs` | `shell` durable model-thinking visibility preference storage (#1231) |
@@ -436,7 +431,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/tui_harness.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_layout.rs` | `shell` harness layout probes split for line budget (#1465) |
 | `shell/tui_harness_sourced.rs` | `shell` fan-in/feed-task harness drivers for the #1462 seam |
-| `shell/tui_harness_tabs.rs` | `shell` multi-tab paint/activity harness drivers (#1466) |
+| `shell/tui_harness_tabs.rs` | `shell` harness clock, overlay-close, frame and sub-agent delivery drivers (#1466, #2044) |
 | `shell/tui_harness_tool_policy.rs` | `shell` tool policy test-harness event helpers (#1334 PR 4) |
 | `shell/tui_harness_disconnect.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_exit.rs` | `shell` test harness support for the leader-only ordinary exit (#1956) |

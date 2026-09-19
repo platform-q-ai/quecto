@@ -30,11 +30,11 @@ async fn ordinary_exit_finalizer_persists_all_visible_tabs_before_terminal_clean
     let a = h.app_mut();
     let (mut master_conn, mut master_rx) = Connection::live_for_tests();
     master_conn.set_tab_for_tests(TabId::MASTER);
-    a.attach_connection_to_tab(TabId::MASTER, master_conn, None);
-    let tab = a.open_placeholder_tab(Some("worker".into()));
+    a.test_attach_connection(TabId::MASTER, master_conn, None);
+    let tab = a.test_open_disconnected_tab();
     let (mut tab_conn, mut tab_rx) = Connection::live_for_tests();
     tab_conn.set_tab_for_tests(tab);
-    a.attach_connection_to_tab(tab, tab_conn, None);
+    a.test_attach_connection(tab, tab_conn, None);
 
     a.finalize_ordinary_exit().await;
 
@@ -52,7 +52,7 @@ async fn ordinary_exit_kill_policy_cleans_up_owned_child_watches() {
     let a = h.app_mut();
     let (mut conn, mut rx) = Connection::live_for_tests();
     conn.set_tab_for_tests(TabId::MASTER);
-    a.attach_connection_to_tab(
+    a.test_attach_connection(
         TabId::MASTER,
         conn,
         Some(crate::shell::child_watch::ChildWatch::for_tests(Some(77))),
@@ -69,34 +69,12 @@ async fn ordinary_exit_kill_policy_cleans_up_owned_child_watches() {
 }
 
 #[tokio::test]
-async fn ordinary_exit_kill_policy_cleans_up_in_flight_tab_spawn_watch_before_attach() {
-    let mut h = TuiHarness::new().await;
-    let a = h.app_mut();
-    a.pending_tab_child_watches
-        .lock()
-        .unwrap()
-        .push(crate::shell::child_watch::ChildWatch::for_tests(Some(88)));
-    a.set_ordinary_exit_kill_owned(true);
-
-    a.finalize_ordinary_exit().await;
-
-    assert!(
-        a.pending_tab_child_watches.lock().unwrap().is_empty(),
-        "ordinary exit must drain TUI-owned watches registered by in-flight tab spawns"
-    );
-    assert!(
-        a.take_all_child_exit_watches().is_empty(),
-        "drained pending spawn watches must not remain for a later teardown race"
-    );
-}
-
-#[tokio::test]
 async fn ordinary_exit_detach_policy_leaves_owned_child_watches() {
     let mut h = TuiHarness::new().await;
     let a = h.app_mut();
     let (mut conn, mut rx) = Connection::live_for_tests();
     conn.set_tab_for_tests(TabId::MASTER);
-    a.attach_connection_to_tab(
+    a.test_attach_connection(
         TabId::MASTER,
         conn,
         Some(crate::shell::child_watch::ChildWatch::for_tests(Some(77))),
@@ -119,7 +97,7 @@ async fn ordinary_exit_waits_for_persist_barrier_before_teardown() {
     let a = h.app_mut();
     let (mut conn, mut rx) = Connection::live_for_tests();
     conn.set_tab_for_tests(TabId::MASTER);
-    a.attach_connection_to_tab(TabId::MASTER, conn, None);
+    a.test_attach_connection(TabId::MASTER, conn, None);
     let event_tx = a.tab_event_tx.clone().unwrap();
 
     tokio::spawn(async move {
@@ -153,7 +131,7 @@ async fn ordinary_exit_reports_persist_enqueue_error_before_teardown() {
     let (mut conn, rx) = Connection::live_for_tests();
     drop(rx);
     conn.set_tab_for_tests(TabId::MASTER);
-    a.attach_connection_to_tab(TabId::MASTER, conn, None);
+    a.test_attach_connection(TabId::MASTER, conn, None);
 
     let finalization_errors = a.finalize_ordinary_exit().await;
     let emitted_errors = a.take_ordinary_exit_finalization_errors_for_tests();
@@ -183,7 +161,7 @@ async fn ordinary_exit_reports_persist_barrier_failure_before_teardown() {
     let a = h.app_mut();
     let (mut conn, mut rx) = Connection::live_for_tests();
     conn.set_tab_for_tests(TabId::MASTER);
-    a.attach_connection_to_tab(TabId::MASTER, conn, None);
+    a.test_attach_connection(TabId::MASTER, conn, None);
     let event_tx = a.tab_event_tx.clone().unwrap();
 
     tokio::spawn(async move {
@@ -230,11 +208,11 @@ async fn ordinary_exit_partial_enqueue_failure_still_waits_for_successful_barrie
     let (mut failed_conn, failed_rx) = Connection::live_for_tests();
     drop(failed_rx);
     failed_conn.set_tab_for_tests(TabId::MASTER);
-    a.attach_connection_to_tab(TabId::MASTER, failed_conn, None);
-    let tab = a.open_placeholder_tab(Some("worker".into()));
+    a.test_attach_connection(TabId::MASTER, failed_conn, None);
+    let tab = a.test_open_disconnected_tab();
     let (mut ok_conn, mut ok_rx) = Connection::live_for_tests();
     ok_conn.set_tab_for_tests(tab);
-    a.attach_connection_to_tab(tab, ok_conn, None);
+    a.test_attach_connection(tab, ok_conn, None);
     let event_tx = a.tab_event_tx.clone().unwrap();
 
     tokio::spawn(async move {
@@ -271,11 +249,11 @@ async fn ordinary_exit_mixed_barrier_failure_still_waits_for_other_ids() {
     let a = h.app_mut();
     let (mut master_conn, mut master_rx) = Connection::live_for_tests();
     master_conn.set_tab_for_tests(TabId::MASTER);
-    a.attach_connection_to_tab(TabId::MASTER, master_conn, None);
-    let tab = a.open_placeholder_tab(Some("worker".into()));
+    a.test_attach_connection(TabId::MASTER, master_conn, None);
+    let tab = a.test_open_disconnected_tab();
     let (mut tab_conn, mut tab_rx) = Connection::live_for_tests();
     tab_conn.set_tab_for_tests(tab);
-    a.attach_connection_to_tab(tab, tab_conn, None);
+    a.test_attach_connection(tab, tab_conn, None);
     let event_tx = a.tab_event_tx.clone().unwrap();
 
     tokio::spawn(async move {
@@ -331,7 +309,7 @@ async fn ordinary_exit_barrier_uses_single_overall_deadline_for_incidental_event
     let a = h.app_mut();
     let (mut conn, _rx) = Connection::live_for_tests();
     conn.set_tab_for_tests(TabId::MASTER);
-    a.attach_connection_to_tab(TabId::MASTER, conn, None);
+    a.test_attach_connection(TabId::MASTER, conn, None);
     let event_tx = a.tab_event_tx.clone().unwrap();
 
     tokio::spawn(async move {
@@ -403,11 +381,11 @@ async fn ordinary_exit_barrier_ignores_closed_sentinel_and_waits_for_remaining_p
     let a = h.app_mut();
     let (mut master_conn, mut master_rx) = Connection::live_for_tests();
     master_conn.set_tab_for_tests(TabId::MASTER);
-    a.attach_connection_to_tab(TabId::MASTER, master_conn, None);
-    let tab = a.open_placeholder_tab(Some("worker".into()));
+    a.test_attach_connection(TabId::MASTER, master_conn, None);
+    let tab = a.test_open_disconnected_tab();
     let (mut tab_conn, mut tab_rx) = Connection::live_for_tests();
     tab_conn.set_tab_for_tests(tab);
-    a.attach_connection_to_tab(tab, tab_conn, None);
+    a.test_attach_connection(tab, tab_conn, None);
     let event_tx = a.tab_event_tx.clone().unwrap();
 
     tokio::spawn(async move {
@@ -478,7 +456,7 @@ async fn ordinary_exit_barrier_ignores_subagent_event_and_waits_for_remaining_pe
     let a = h.app_mut();
     let (mut conn, mut rx) = Connection::live_for_tests();
     conn.set_tab_for_tests(TabId::MASTER);
-    a.attach_connection_to_tab(TabId::MASTER, conn, None);
+    a.test_attach_connection(TabId::MASTER, conn, None);
     let event_tx = a.tab_event_tx.clone().unwrap();
 
     tokio::spawn(async move {

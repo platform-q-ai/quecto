@@ -433,7 +433,6 @@ async fn resume_resets_the_clock_only_on_a_session_identity_change() {
 #[tokio::test(start_paused = true)]
 async fn only_the_owned_resume_answer_settles_the_latches() {
     let mut h = TuiHarness::new().await;
-    h.app_mut().ac_mut().pending_session_resume = Some("cli:mine".into());
     h.app_mut().test_arm_resume_session("resume-mine");
     h.app_mut().handle_response(
         Some("resume-other".into()),
@@ -448,7 +447,7 @@ async fn only_the_owned_resume_answer_settles_the_latches() {
     );
     assert_eq!(
         h.app_mut().test_pending_session_resume(),
-        (Some("cli:mine"), Some("resume-mine")),
+        Some("resume-mine"),
         "a foreign answer leaves this tab's resume in flight"
     );
     h.app_mut().handle_response(
@@ -460,49 +459,12 @@ async fn only_the_owned_resume_answer_settles_the_latches() {
     );
     assert_eq!(
         h.app_mut().test_pending_session_resume(),
-        (None, None),
-        "an owned failure clears the deferred session so a reattach cannot replay it"
+        None,
+        "an owned failure settles the resume in flight"
     );
     let notes = h.app_mut().notifications.messages();
     assert!(
         notes.iter().any(|note| note.contains("Resume failed")),
         "the failure is toasted: {notes:?}"
-    );
-}
-
-/// Learning the key from the resume answer must not skip the durable write
-/// the get_state snapshot path would have made (#1726 review).
-#[tokio::test(start_paused = true)]
-async fn a_resume_into_another_session_persists_the_new_key() {
-    let mut h = TuiHarness::new().await;
-    let data_home = tempfile::tempdir().expect("isolated tui data");
-    // SAFETY: redirects the durable write away from the developer's own registry (as app_event_loop_tests does).
-    unsafe {
-        std::env::set_var("XDG_DATA_HOME", data_home.path());
-    }
-    h.app_mut().ac_mut().session_key = Some("cli:original".into());
-    let before = h.app_mut().ac().durability_writes;
-    resume_answer(
-        &mut h,
-        Some("resume-5"),
-        true,
-        Some(serde_json::json!({"session": "original", "sessionKey": "cli:original"})),
-    );
-    assert_eq!(
-        h.app_mut().ac().durability_writes,
-        before,
-        "resuming the session already shown writes nothing"
-    );
-    resume_answer(
-        &mut h,
-        Some("resume-6"),
-        true,
-        Some(serde_json::json!({"session": "alpha", "sessionKey": "cli:alpha"})),
-    );
-    assert_eq!(h.app_mut().ac().session_key.as_deref(), Some("cli:alpha"));
-    assert_eq!(
-        h.app_mut().ac().durability_writes,
-        before + 1,
-        "a new session identity reaches the durable registry"
     );
 }

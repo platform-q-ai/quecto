@@ -167,6 +167,26 @@ async fn retained_sessions_and_warm_feeds_evict_oldest_non_active_beyond_cap() {
     assert!(app.ac().roster.sessions.contains_key("agent-30"));
 }
 
+#[tokio::test]
+async fn exactly_30_sessions_survive_with_no_eviction() {
+    // At-limit boundary: an off-by-one that evicts AT 30 must fail here.
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let app = h.app_mut();
+    for i in 0..30 {
+        app.ensure_session(&format!("agent-{i:03}"));
+    }
+    assert_eq!(app.ac().roster.sessions.len(), 30);
+    for i in 0..30 {
+        assert!(
+            app.ac()
+                .roster
+                .sessions
+                .contains_key(&format!("agent-{i:03}")),
+            "no session may be evicted while at (not past) the cap: agent-{i:03}"
+        );
+    }
+}
+
 #[test]
 fn duplicate_ids_within_one_sync_delta_keep_first_position_and_latest_content() {
     let mut transcript = crate::agents::ledger::LedgerTranscript::default();

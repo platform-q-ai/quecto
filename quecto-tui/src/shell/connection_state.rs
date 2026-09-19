@@ -57,14 +57,8 @@ pub(crate) struct ConnectionState {
     /// Exit-diagnosis watch for the TUI-owned agent child (#1047), published
     /// by [`crate::shell::child_watch`]. `None` for external sockets.
     pub(crate) child_exit_watch: Option<crate::shell::child_watch::ChildWatch>,
-    /// OS pid of the TUI-owned agent child when known (registry sidecar, AC4).
-    pub(crate) child_pid: Option<u32>,
-    /// Live UDS path for this tab's master agent (registry/reattach, AC4/AC6).
-    pub(crate) socket_path: Option<std::path::PathBuf>,
-    /// Durable session key for this tab's master agent (manifest, AC4/AC5/AC6).
+    /// Durable session key of this connection's master agent.
     pub(crate) session_key: Option<String>,
-    /// Session key to resume once this tab becomes connected (workspace restore).
-    pub(crate) pending_session_resume: Option<String>,
     /// Request id of this tab's in-flight `resume_session`, so only its own
     /// answer clears the resume latches; foreign answers (another client
     /// resuming the shared agent) still refresh the view (#1726).
@@ -72,19 +66,6 @@ pub(crate) struct ConnectionState {
     /// Whether the resume in flight carried an explicit action (#2011): only
     /// such a request can be what an "unknown resume action" parse error is about.
     pub(crate) pending_session_resume_acts: bool,
-    /// Test seam: durable registry/manifest writes made through this tab.
-    #[cfg(any(test, feature = "test-harness"))]
-    pub(crate) durability_writes: usize,
-    /// True while a background spawn/reattach for this tab is in flight (AC2).
-    pub(crate) pending_attach: bool,
-    /// Generation stamped when the current attach/spawn was kicked; outcomes
-    /// with a mismatched generation are rejected so close→reopen cannot attach
-    /// the wrong agent into a recycled TabId (#1465 F2).
-    pub(crate) attach_generation: u64,
-    /// Draft text composed while this tab was focused (swapped on tab switch).
-    pub(crate) editor_draft: String,
-    /// Prompts typed while attach was still pending; flushed after connect.
-    pub(crate) queued_prompts: Vec<String>,
     /// Oversized-event drops already surfaced as a notification, so each is
     /// reported exactly once (#1047).
     pub(crate) surfaced_oversized_drops: u64,
@@ -136,9 +117,6 @@ pub(crate) struct ConnectionState {
     /// This tab's agent tree: tracked children, their sessions and feeds
     /// (#1463 cluster 6); the panel focus/cursor half stays global.
     pub(crate) roster: crate::agents::view::ConnectionRoster,
-    /// Unread dot (#1466): any output arrived on this tab since it was last
-    /// viewed. Set by background-routed events, cleared on tab switch.
-    pub(crate) unread_output: bool,
 }
 
 impl ConnectionState {
@@ -190,18 +168,9 @@ impl ConnectionState {
             agent_connected: true,
             agent_ever_connected: true,
             child_exit_watch: None,
-            child_pid: None,
-            socket_path: None,
             session_key: None,
-            pending_session_resume: None,
             pending_session_resume_id: None,
             pending_session_resume_acts: false,
-            #[cfg(any(test, feature = "test-harness"))]
-            durability_writes: 0,
-            pending_attach: false,
-            attach_generation: 0,
-            editor_draft: String::new(),
-            queued_prompts: Vec::new(),
             surfaced_oversized_drops: 0,
             disconnect_diag_pending: false,
             disconnect_refusal_notified: false,
@@ -220,7 +189,6 @@ impl ConnectionState {
             workflow: WorkflowFlow::default(),
             inference: app_inference::ConnInference::default(),
             roster: crate::agents::view::ConnectionRoster::new(),
-            unread_output: false,
         }
     }
 

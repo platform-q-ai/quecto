@@ -17,7 +17,7 @@ async fn ordinary_exit_unanswered_leader_termination_is_bounded_by_the_budget() 
     conn.set_tab_for_tests(TabId::MASTER);
     let (watch, mut term_rx) =
         crate::shell::child_watch::ChildWatch::for_tests_with_termination_probe(Some(99));
-    a.attach_connection_to_tab(TabId::MASTER, conn, Some(watch));
+    a.test_attach_connection(TabId::MASTER, conn, Some(watch));
     a.set_leader_budget(crate::shell::process::LeaderBudget {
         settle: std::time::Duration::from_millis(300),
         force: std::time::Duration::from_millis(200),
@@ -89,7 +89,7 @@ async fn ordinary_exit_shows_and_updates_the_settling_notice_then_dismisses_it()
     let a = h.app_mut();
     let (watch, mut term_rx) =
         crate::shell::child_watch::ChildWatch::for_tests_with_termination_probe(Some(99));
-    a.pending_tab_child_watches.lock().unwrap().push(watch);
+    a.set_child_exit_watch(watch);
     a.set_leader_budget(crate::shell::process::LeaderBudget {
         settle: std::time::Duration::from_secs(10),
         force: std::time::Duration::from_secs(10),
@@ -211,8 +211,8 @@ fn ordinary_exit_describes_kill_and_strays_only() {
 }
 
 /// #1956 review: the budget each owned leader gets is derived from the
-/// subagent count its tab's roster last showed; an in-flight spawn (no
-/// roster) gets the worst case.
+/// subagent count its connection's roster last showed; an unknown count
+/// gets the worst case.
 #[tokio::test]
 async fn ordinary_exit_budget_follows_each_tabs_roster() {
     use crate::shell::process::LeaderBudget;
@@ -227,7 +227,7 @@ async fn ordinary_exit_budget_follows_each_tabs_roster() {
         std::time::Duration::from_secs(55)
     );
     assert_eq!(a.leader_budget(None), LeaderBudget::WORST_CASE);
-    let tab = a.open_placeholder_tab(Some("worker".into()));
+    let tab = TabId::MASTER;
     a.conn_mut(tab).unwrap().child_exit_watch =
         Some(crate::shell::child_watch::ChildWatch::for_tests(Some(5)));
     for i in 0..9 {
@@ -253,15 +253,11 @@ async fn ordinary_exit_budget_follows_each_tabs_roster() {
             ),
         );
     }
-    a.pending_tab_child_watches
-        .lock()
-        .unwrap()
-        .push(crate::shell::child_watch::ChildWatch::for_tests(Some(6)));
     let taken = a.take_all_child_exit_watches_with_rosters();
     let mut counts: Vec<(Option<u32>, Option<usize>)> =
         taken.iter().map(|(w, n)| (w.pid(), *n)).collect();
     counts.sort();
-    assert_eq!(counts, vec![(Some(5), Some(9)), (Some(6), None)]);
+    assert_eq!(counts, vec![(Some(5), Some(9))]);
     let override_budget = LeaderBudget {
         settle: std::time::Duration::from_secs(1),
         force: std::time::Duration::from_secs(1),

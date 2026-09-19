@@ -10,3 +10,9 @@ Feature: TUI live tool policy modal
   Scenario: Tool policy shortcut is documented
     Given the TUI help is shown
     Then the help mentions Ctrl+T for tool policy
+
+  @done
+  Scenario: Ctrl+T opens the tool policy selector
+    Given a headless TUI
+    When the user presses Ctrl+T
+    Then the tool policy selector is open

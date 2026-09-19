@@ -2,7 +2,7 @@
 
 A lightweight terminal UI client for `quecto agent --mode uds`.
 
-**Version `0.77.25` (pre-1.0).** The TUI is a UDS bus client of the harness: the
+**Version `0.77.26` (pre-1.0).** The TUI is a UDS bus client of the harness: the
 wire protocol and session ownership live in `quecto`, so most breaking risk is
 upstream. This crate stays on `0.y` until feature-oriented presentation boundaries and
 public surface (flags, slash commands, attach/spawn) meet the bar for a deliberate
@@ -86,7 +86,7 @@ When `quecto-tui` spawns the agent for you, it can forward these flags:
 | `--no-workflow` | Disable workflow tool/state/prompt for the spawned agent |
 | `--system <prompt>` | Pass a custom system prompt to the spawned agent |
 | `--config <path>` | Use an alternate quecto config file when spawning the agent |
-| `--model <provider/model>` | Start the spawned agent (and every tab of this run) on this model, in memory only — nothing is written |
+| `--model <provider/model>` | Start the spawned agent on this model, in memory only — nothing is written |
 | `--effort <level>` | Start the spawned agent on this reasoning-effort level, in memory only |
 
 By default, the spawned UDS agent has the workflow tool available but dormant:
@@ -161,7 +161,7 @@ opens links natively, that help line is the single place to update first.
 | `/model <name>` | Switch to a model directly |
 | `/clear` | Clear the current conversation |
 | `/new` | Start a fresh conversation |
-| `/resume` | Open the session picker (`/resume <key>` resumes a key directly). `Tab` moves between **Sessions**, **Scope** (Local Folder / All Folders) and **Search**. The search box asks the harness as you type and matches **the words you type, in any order, literally** — in a session's title, its folder path and its repository name (in Local Folder: the title and the path below the repository root, since every local session shares the rest); a full session ID (key) matches exactly; case is ignored. It is no longer a fuzzy (subsequence) filter: `fxbg` does not find "fix bug" — type `fix bug` or `bug fix` (fuzzy title matching is tracked in #2043). A paste goes to the search box whichever section has the focus: its first line only (the picker says so when more lines were dropped), up to 256 characters — a longer one is refused whole; typing and pasting accept the same characters (anything visible; control, bidi and zero-width characters are dropped; any whitespace — a tab, a no-break space, a Unicode line separator — becomes a space, and a pasted run of it one space, so `fix⇥bug` searches `fix bug`). In a picker too small to have a notice row (e.g. 40×12 beside the agents pane) the `Paste refused…` / `Pasted the first line only` notice is not shown; the box simply keeps its text. `Sessions · Searching…` means the rows still belong to older text: `Enter` then waits for the answer and opens its top match, and the header says so while it waits (`Searching… ⏎ will open the top match`; in a narrower panel `Sessions · ⏎ Searching…`, then `⏎ Sessions…`, down to a bare `⏎` — the `⏎` is on screen at any width the header is). Any other key or click — `Tab`, a cursor move, typing, a paste, a scope change, `Esc` — withdraws that Enter, as do a lost connection and the clock: an Enter is paid only within 5 s of the keypress — a search that is not answered in time is retried once, and text typed ahead of an answer is searched next, but an Enter older than 5 s opens nothing. An Enter is only ever owed to a search of text you typed: while a listing loads (`Sessions · Loading…`, e.g. `/resume` `Enter` `Enter`) it does nothing. `Sessions · No answer` means the search was given up — edit the text or change Scope to retry; `Sessions · Disconnected` means the connection was lost while rows were awaited. A row's detail line shows its folder, time, what `Enter` does, its `ID`, its repository and which fields matched; "Showing 200 of 5,200 — keep typing to narrow" means the list was cut. Against an older harness (one that rejects the search command itself) the TUI says so once and filters the listed sessions of the scope on screen itself — by title, full session ID and folder path; in Local Folder only the path below the folder all listed sessions share, which stands in for the repository root the listing does not name. It differs from the harness's rule in three cases: a linked worktree outside the repository (their common parent stands in, so the repository's name matches again), every listed session in one single folder (nothing lies below it, so the whole path is matched — more rows than the harness would find, never fewer), and sessions spread only over sub-folders of one sub-folder (that sub-folder's own name matches none of them) |
+| `/resume` | Open the session picker (`/resume <key>` resumes a key directly). `Tab` moves between **Sessions**, **Scope** (Local Folder / All Folders) and **Search**. The search box asks the harness as you type and matches **the words you type, in any order, literally** — in a session's title, its folder path and its repository name (in Local Folder: the title and the path below the repository root, since every local session shares the rest); a full session ID (key) matches exactly; case is ignored. It is no longer a fuzzy (subsequence) filter: `fxbg` does not find "fix bug" — type `fix bug` or `bug fix` (fuzzy title matching is tracked in #2043). A paste goes to the search box whichever section has the focus: its first line only (the picker says so when more lines were dropped), up to 256 characters — a longer one is refused whole; typing and pasting accept the same characters (anything visible; control, bidi and zero-width characters are dropped; any whitespace — a tab, a no-break space, a Unicode line separator — becomes a space, and a pasted run of it one space, so `fix⇥bug` searches `fix bug`). In a picker too small to have a notice row (e.g. 40×12 beside the agents pane) the `Paste refused…` / `Pasted the first line only` notice is not shown; the box simply keeps its text. `Sessions · Searching…` means the rows still belong to older text: `Enter` then waits for the answer and opens its top match, and the header says so while it waits (`Searching… ⏎ will open the top match`; in a narrower panel `Sessions · ⏎ Searching…`, then `⏎ Sessions…`, down to a bare `⏎` — the `⏎` is on screen at any width the header is). Any other key or click — `Tab`, a cursor move, typing, a paste, a scope change, `Esc` — withdraws that Enter, as do a lost connection and the clock: an Enter is paid only within 5 s of the keypress — a search that is not answered in time is retried once, and text typed ahead of an answer is searched next, but an Enter older than 5 s opens nothing. An Enter is only ever owed to a search of text you typed: while a listing loads (`Sessions · Loading…`, e.g. `/resume` `Enter` `Enter`) it does nothing. `Sessions · No answer` means the search was given up — edit the text or change Scope to retry; `Sessions · Disconnected` means the connection was lost while rows were awaited — the TUI does not reconnect, so restart `quecto-tui` to resume a session (a `/resume <key>` typed while disconnected is refused, not queued). A row's detail line shows its folder, time, what `Enter` does, its `ID`, its repository and which fields matched; "Showing 200 of 5,200 — keep typing to narrow" means the list was cut. Against an older harness (one that rejects the search command itself) the TUI says so once and filters the listed sessions of the scope on screen itself — by title, full session ID and folder path; in Local Folder only the path below the folder all listed sessions share, which stands in for the repository root the listing does not name. It differs from the harness's rule in three cases: a linked worktree outside the repository (their common parent stands in, so the repository's name matches again), every listed session in one single folder (nothing lies below it, so the whole path is matched — more rows than the harness would find, never fewer), and sessions spread only over sub-folders of one sub-folder (that sub-folder's own name matches none of them) |
 | `/session` | Show session statistics |
 | `/setup` | Ask the agent to walk through quecto setup for this folder/machine (credential, repo overlay, default model, admission broker, container): it submits a walkthrough prompt as your turn; the agent reads the `setup` docs page, reports each area's state, proposes the runbook commands and asks before writing anything. Variants: `/setup model <model-id>`, `/setup admission`, `/setup podman` (alias `container`), `/setup auth`. Master-session only: with a sub-agent focused it refuses with a toast (Esc back to the master, then `/setup` again) and sends nothing to the child |
 | `/workflow-auto` | Toggle core workflow auto-continue |
@@ -203,17 +203,16 @@ time: it runs while the agent is processing (from `agent_start` to
 `agent_end`, an abort, an error or a disconnect) and freezes in between, so
 idle time between your messages and the agent's wakes never counts and a new
 message resumes the frozen value rather than restarting at `0:00` (#1726). It
-restarts at `0:00` only at a session boundary: `/new` or `/clear`, a
-`/resume` into a different session, or an attach of the tab to an agent
-(including a reconnect after a disconnect, which froze the previous value).
+restarts at `0:00` only at a session boundary: `/new`, `/clear` or a
+`/resume` into a different session.
 
 ### Subagent transcript freshness
 
 Direct child-socket feeds display live token events. Open subagent feeds also
-request committed-ledger catch-up every **2 seconds**, including while idle and
-on background tabs. Socketless (root-routed inspection) feeds use this cadence
+request committed-ledger catch-up every **2 seconds**, including while idle.
+Socketless (root-routed inspection) feeds use this cadence
 for automatic transcript refresh; it is **not token streaming**. Only opened
-feeds are polled, within the existing per-tab warm-feed cap.
+feeds are polled, within the existing warm-feed cap.
 
 Catch-up uses the last applied cursor rather than assuming an earlier request
 will be answered. A refused enqueue, lost final hint/response, or refused page
@@ -247,9 +246,8 @@ a **repeated** SIGTERM inside that work is ignored, and one arriving after
    never `kill(-pgid)`, never a descendant.
 2. Wait for that process to exit within the *settle* budget: `ceil(n / 8)`
    batches × 25 s + 5 s to persist and exit, where `n` is the number of
-   subagents the tab's roster last showed (30 s for up to 8, 55 s for 9–16,
-   80 s — the 3-pass worst case — beyond that or when the roster is unknown,
-   e.g. a spawn still in flight).
+   subagents the roster last showed (30 s for up to 8, 55 s for 9–16,
+   80 s — the 3-pass worst case — beyond that or when the roster is unknown).
 3. If it is still running, send a **second** SIGTERM — the repeated signal is
    what arms the harness's own 45 s force-exit — and wait those 45 s.
 4. Only then SIGKILL that one pid.
@@ -263,11 +261,16 @@ process group (skipped if the pid has already been recycled); under the
 lifetime binding that list is always empty, and a non-empty one is printed
 after terminal cleanup as the evidence. Swarm members and bash tool children
 that run in their own process group are, by design, outside the canary's
-view. The same leader-only helper serves tab close, `/new` workspace reset
-and startup-failure cleanup (which prints "waiting for the agent to exit…"
+view. The same leader-only helper serves startup-failure cleanup (which prints "waiting for the agent to exit…"
 once on stderr if it takes more than a second).
 
 Use `--detach-on-exit` to leave owned agents running (`--kill-on-exit` is the
 default). Externally attached agents are not killed merely because this TUI exits.
-Reconnecting to a running harness uses its live registry. Exit durability and
-cleanup errors are reported separately.
+Attaching to a running harness (`--socket`) shows that harness's live sub-agent
+roster; the TUI keeps no registry of its own. Exit durability and cleanup errors
+are reported separately.
+
+`$XDG_DATA_HOME/quecto/tui/tab-agent-registry.json` (default
+`~/.local/share/quecto/tui/`; and `workspace-manifests.json`
+beside it), written by 0.77.25 and earlier, is no longer read or written and can
+be deleted (#2044).

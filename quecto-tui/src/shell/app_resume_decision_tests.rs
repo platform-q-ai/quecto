@@ -178,8 +178,7 @@ async fn a_picker_selection_echoes_the_listed_version_even_for_an_ineligible_row
         "name": "elsewhere", "key": "chat-1-else", "messageCount": 3,
         "resumeEligible": false, "homeVersion": "h1-00000000000000aa",
     }]});
-    let manifest = std::env::temp_dir().join("s2011-no-manifest.json");
-    h.app_mut().open_resume_selector_at(&data, &manifest);
+    h.app_mut().open_resume_selector(&data);
     h.app_mut().handle_key(Key::Enter);
     assert!(h.app_mut().ac().sessions.resume_selector.is_none());
     let sent = resume_commands(&h.drain_commands().await);
@@ -224,8 +223,7 @@ async fn the_dialog_repeats_the_title_the_picker_showed() {
         "resumeEligible": false, "homeVersion": "h1-0123456789abcdef",
         "executionPath": "/work/other",
     }]});
-    let manifest = std::env::temp_dir().join("s2011f2-no-manifest.json");
-    h.app_mut().open_resume_selector_at(&data, &manifest);
+    h.app_mut().open_resume_selector(&data);
     let picker = h.full_frame();
     assert!(picker.contains("hello from A"), "{picker}");
     assert!(

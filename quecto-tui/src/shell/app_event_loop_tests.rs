@@ -450,15 +450,9 @@ async fn handle_submit_new_starts_new_session() {
 }
 
 #[tokio::test]
-async fn handle_submit_new_starts_fresh_session_without_workspace_manifest() {
+async fn handle_submit_new_starts_fresh_session_forgetting_the_old_key() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let old_workspace_id = a.workspace_id.clone();
-    let data_home = tempfile::tempdir().expect("isolated tui data");
-    // SAFETY: this test runs before invoking `/new`; the isolated path prevents touching user state.
-    unsafe {
-        std::env::set_var("XDG_DATA_HOME", data_home.path());
-    }
     a.ac_mut().session_key = Some("cli:old-master".into());
     a.ac_mut().master_session.chat.add_entry(ChatEntry::User {
         text: "keep master".into(),
@@ -467,28 +461,16 @@ async fn handle_submit_new_starts_fresh_session_without_workspace_manifest() {
     let tab1 = crate::shell::connection::TabId(1);
     a.conn_mut(tab1).unwrap().session_key = Some("cli:old-tab".into());
     a.conn_mut(tab1).unwrap().name = Some("worker".into());
-    a.switch_tab(tab1);
+    a.test_set_active_tab(1);
 
     a.handle_submit("/new");
 
-    assert_ne!(
-        a.workspace_id, old_workspace_id,
-        "/new must mint a fresh workspace id"
-    );
     assert_eq!(a.tabs.len(), 1, "/new must close departing workspace tabs");
     assert_eq!(a.active_tab, crate::shell::connection::TabId::MASTER);
     assert_eq!(
         a.ac().session_key,
         None,
         "new blank master must not reuse old session"
-    );
-
-    let store = crate::shell::workspace_manifest::WorkspaceManifestStore::load(
-        &crate::shell::workspace_manifest::default_manifest_path(),
-    );
-    assert!(
-        store.get(&old_workspace_id).is_none(),
-        "/new no longer writes departing workspace manifests"
     );
 }
 
