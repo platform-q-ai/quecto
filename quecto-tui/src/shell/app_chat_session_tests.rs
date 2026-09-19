@@ -96,10 +96,29 @@ async fn scoped_discovery_discards_old_answers_and_cancel_never_restores() {
     );
     a.handle_session_list_response(Some(&current), Some(data));
     assert!(a.ac().sessions.resume_selector.is_some());
+    // #2011: an ineligible row is not decided here — the harness is asked and
+    // answers with the typed decision; Escape there restores and sends nothing.
     a.handle_resume_selector_key(&Key::Enter);
+    let asked = a.ac().pending_session_resume_id.clone().expect("asked");
+    assert!(a.ac().sessions.resume_selector.is_none());
+    let decision = serde_json::json!({
+        "outcome": "decision", "code": "decision_required", "session": "foreign",
+        "sessionKey": "foreign", "kind": "cross_folder", "homeVersion": "h1-0123456789abcdef",
+        "executionPath": "/elsewhere", "detail": null,
+        "actions": [{"action": "cancel", "available": true, "reason": null}],
+    });
+    a.handle_response(
+        Some(asked),
+        "resume_session".into(),
+        false,
+        Some(decision),
+        Some("session resume unavailable".into()),
+    );
+    assert!(a.ac().sessions.resume_decision.is_some());
     assert!(a.ac().pending_session_resume_id.is_none());
     a.handle_resume_selector_key(&Key::Escape);
-    assert!(a.ac().sessions.resume_selector.is_none());
+    assert!(a.ac().sessions.resume_decision.is_none());
+    assert!(a.ac().pending_session_resume_id.is_none());
     a.handle_session_list_response(Some(&current), Some(serde_json::json!({"sessions":[]})));
     assert!(a.ac().sessions.resume_selector.is_none());
 }
