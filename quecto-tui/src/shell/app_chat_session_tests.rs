@@ -20,13 +20,7 @@ async fn resume_selector_renders_chat_metadata_and_uses_key_for_selection() {
     });
     let a = h.app_mut();
 
-    // Empty manifest path so operator workspace sidecars cannot inflate the list.
-    let empty_manifest = std::env::temp_dir().join(format!(
-        "quecto-resume-selector-empty-{}.json",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&empty_manifest);
-    a.open_resume_selector_at(&data, &empty_manifest);
+    a.open_resume_selector(&data);
 
     let selector = a.ac_mut().sessions.resume_selector.as_mut().unwrap();
     assert_eq!(selector.item_count(), 1);
@@ -99,7 +93,7 @@ async fn scoped_discovery_discards_old_answers_and_cancel_never_restores() {
     // #2011: an ineligible row is not decided here — the harness is asked and
     // answers with the typed decision; Escape there restores and sends nothing.
     // What replaced the client-side block: from the send until the harness
-    // answers `resumed`, nothing local changes — identity, chat, manifest.
+    // answers `resumed`, nothing local changes — identity, chat.
     a.ac_mut().session_key = Some("cli:showing".into());
     a.ac_mut()
         .master_session
@@ -109,7 +103,7 @@ async fn scoped_discovery_discards_old_answers_and_cancel_never_restores() {
         });
     let snapshot = |a: &mut App| {
         let chat = a.ac_mut().master_session.chat.render(120).join("\n");
-        (a.ac().session_key.clone(), chat, a.ac().durability_writes)
+        (a.ac().session_key.clone(), chat)
     };
     let before = snapshot(a);
     assert!(

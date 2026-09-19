@@ -90,6 +90,29 @@ impl App {
         self.tabs.insert(tab, state);
     }
 
+    /// Insert the next free disconnected tab (unfocused) and return its id.
+    #[cfg(test)]
+    pub(crate) fn test_open_disconnected_tab(&mut self) -> crate::shell::connection::TabId {
+        let next = self.tabs.keys().map(|t| t.0 + 1).max().unwrap_or(0);
+        self.test_insert_disconnected_tab(next);
+        crate::shell::connection::TabId(next)
+    }
+
+    /// Swap `tab`'s transport (and owned child watch) for a connected one.
+    #[cfg(test)]
+    pub(crate) fn test_attach_connection(
+        &mut self,
+        tab: crate::shell::connection::TabId,
+        transport: crate::shell::connection::Connection,
+        child_watch: Option<crate::shell::child_watch::ChildWatch>,
+    ) {
+        let state = self.tabs.get_mut(&tab).expect("tab present for attach");
+        state.transport = transport;
+        state.child_exit_watch = child_watch;
+        state.agent_connected = true;
+        state.agent_ever_connected = true;
+    }
+
     /// Focus a different tab without tearing connections (#1465 test seam).
     pub fn test_set_active_tab(&mut self, tab: u32) {
         let tab = crate::shell::connection::TabId(tab);

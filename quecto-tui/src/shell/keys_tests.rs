@@ -597,20 +597,26 @@ fn cov_modify_other_keys_plain_printable() {
 }
 
 #[test]
-fn modify_other_keys_tab_switch_chords_match_kitty() {
-    // xterm modifyOtherKeys mode 2 must produce the same tab-cycle keys as
-    // the kitty protocol (#1466 decision 5): codepoint 9 with Ctrl/Alt.
-    assert_eq!(parse_key(b"\x1b[27;5;9~").unwrap().0, Key::TabSwitchNext);
-    assert_eq!(parse_key(b"\x1b[27;3;9~").unwrap().0, Key::TabSwitchNext);
-    assert_eq!(parse_key(b"\x1b[27;6;9~").unwrap().0, Key::TabSwitchPrev);
-    assert_eq!(parse_key(b"\x1b[27;4;9~").unwrap().0, Key::TabSwitchPrev);
-}
-
-#[test]
-fn modify_other_keys_ctrl_digit_aliases_alt_digit() {
-    // Ctrl+9 and Alt+9 both alias the tab-focus primary.
-    assert_eq!(parse_key(b"\x1b[27;5;57~").unwrap().0, Key::Alt('9'));
-    assert_eq!(parse_key(b"\x1b[27;3;57~").unwrap().0, Key::Alt('9'));
+fn modified_tab_and_page_chords_are_unbound_never_plain_keys() {
+    // Ctrl/Alt(+Shift)+Tab and Ctrl+PgUp/PgDn are bound to nothing: they must
+    // never degrade to a plain Tab / Shift+Tab / page scroll (#2044).
+    for seq in [
+        &b"\x1b[27;5;9~"[..],
+        b"\x1b[27;3;9~",
+        b"\x1b[27;6;9~",
+        b"\x1b[27;4;9~",
+        b"\x1b[9;5u",
+        b"\x1b[9;3u",
+        b"\x1b[9;6u",
+        b"\x1b[5;5~",
+        b"\x1b[6;5~",
+        b"\x1b[57354;5u",
+        b"\x1b[57355;5u",
+    ] {
+        let (key, used) = parse_key(seq).unwrap();
+        assert!(matches!(key, Key::Unknown(_)), "{seq:?} parsed as {key:?}");
+        assert_eq!(used, seq.len());
+    }
 }
 
 // ── Coverage: utf8 fallback + convenience matchers ────────────────────

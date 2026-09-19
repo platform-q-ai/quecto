@@ -1,10 +1,10 @@
-//! Step definitions for `tui_multi_tab_round2.feature` (#1466 round-2 fix
-//! pass, PR #1485 second field-testing round).
-//!
-//! Reuses the polish-suite harness plumbing (`a TUI with a second background
-//! tab` lives in `tui_multi_tab_polish_steps.rs`). Sub-agent scenarios drive
-//! the REAL feed-attach path (live Unix sockets), so they run inside the
-//! world's runtime context.
+//! Step definitions for the single-session scenarios that outlived the
+//! multi-tab features (#2044): the frame spacer/height pair in
+//! `tui_foundation.feature`, the Ctrl+T guard in
+//! `tui_tool_policy_modal.feature` and the sub-agent delivery trio in
+//! `tui_subagent_session_parity.feature`. Sub-agent scenarios drive the REAL
+//! feed-attach path (live Unix sockets), so they run inside the world's
+//! runtime context.
 
 use crate::TuiWorld;
 use cucumber::{given, then, when};
@@ -13,8 +13,7 @@ use quecto_tui::shell::app::tui_harness::TuiHarness;
 
 const RESTORED_MSG: &str = "hello restored agent";
 
-/// Like the polish suite's `with_harness`, but entering the runtime handle so
-/// harness drivers may spawn feed tasks (live-socket sub-agent scenarios).
+/// Lazily builds the harness, entering the runtime handle so harness drivers may spawn feed tasks (live-socket sub-agent scenarios).
 fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {
         world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
@@ -60,7 +59,7 @@ fn when_frame_renders(world: &mut TuiWorld) {
     world.stdout = with_harness(world, |h| h.frame_lines()).join("\n");
 }
 
-// ── Item 1: version header line → blank spacer ───────────────────────────
+// ── Frame: blank spacer, full height ─────────────────────────────────────
 
 #[then("no frame line contains the version header text")]
 fn then_no_version_header(world: &mut TuiWorld) {
@@ -80,25 +79,6 @@ fn then_first_line_blank(world: &mut TuiWorld) {
     );
 }
 
-#[then("the second frame line is a blank spacer")]
-fn then_second_line_blank(world: &mut TuiWorld) {
-    let second = frame_line(world, 1);
-    assert_eq!(
-        body_of(&second).trim(),
-        "",
-        "the line after the tab bar must be a blank spacer; second={second:?}"
-    );
-}
-
-#[then("the first frame line is the tab bar")]
-fn then_first_line_tab_bar(world: &mut TuiWorld) {
-    let first = frame_line(world, 0);
-    assert!(
-        first.contains(" 1 ") && first.contains(" 2 "),
-        "with 2+ tabs the tab bar must be the first frame line; first={first:?}"
-    );
-}
-
 #[then("the frame height equals the terminal height")]
 fn then_frame_height(world: &mut TuiWorld) {
     let (frame_height, term_height) =
@@ -109,44 +89,12 @@ fn then_frame_height(world: &mut TuiWorld) {
     );
 }
 
-// ── Item 2: Ctrl+N new-tab chord (Ctrl+T is the tool-policy selector) ────
-
-#[when("the user presses Ctrl+N")]
-fn when_ctrl_n(world: &mut TuiWorld) {
-    with_harness(world, |h| {
-        h.press_raw(b"\x0e");
-    });
-}
+// ── Ctrl+T opens the tool-policy selector ────────────────────────────────
 
 #[when("the user presses Ctrl+T")]
 fn when_ctrl_t(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.press_raw(b"\x14");
-    });
-}
-
-#[then("a second tab is open")]
-fn then_second_tab_open(world: &mut TuiWorld) {
-    with_harness(world, |h| {
-        assert_eq!(h.tab_count(), 2, "Ctrl+N must open a second tab");
-    });
-}
-
-#[then("still only one tab is open")]
-fn then_still_one_tab(world: &mut TuiWorld) {
-    with_harness(world, |h| {
-        assert_eq!(h.tab_count(), 1, "the chord must not open a tab");
-    });
-}
-
-#[then("the new tab is the active tab")]
-fn then_new_tab_active(world: &mut TuiWorld) {
-    with_harness(world, |h| {
-        assert_eq!(
-            h.active_tab_index(),
-            1,
-            "the freshly opened tab must take focus"
-        );
     });
 }
 
@@ -160,47 +108,9 @@ fn then_tool_policy_open(world: &mut TuiWorld) {
     });
 }
 
-#[when("the user runs /hotkeys")]
-fn when_runs_hotkeys(world: &mut TuiWorld) {
-    with_harness(world, |h| {
-        h.submit("/hotkeys");
-    });
-    world.stdout = with_harness(world, |h| h.last_status_line().unwrap_or_default());
-}
+// ── User sends to restored sub-agents ────────────────────────────────────
 
-#[then("the help text lists Ctrl+N as the new-tab chord")]
-fn then_help_lists_ctrl_n(world: &mut TuiWorld) {
-    let line = world
-        .stdout
-        .lines()
-        .find(|l| l.contains("Ctrl+N ") && !l.contains("Ctrl+Shift"))
-        .unwrap_or("")
-        .to_lowercase();
-    assert!(
-        line.contains("new tab") || line.contains("open a new tab"),
-        "/hotkeys must document plain Ctrl+N as the new-tab chord; help={:?}",
-        world.stdout
-    );
-}
-
-#[then("the help text omits Ctrl+N as the new-tab chord")]
-fn then_help_omits_ctrl_n(world: &mut TuiWorld) {
-    let line = world
-        .stdout
-        .lines()
-        .find(|l| l.contains("Ctrl+N ") && !l.contains("Ctrl+Shift"))
-        .unwrap_or("")
-        .to_lowercase();
-    assert!(
-        !(line.contains("new tab") || line.contains("open a new tab")),
-        "/hotkeys must not document plain Ctrl+N as a new-tab chord; help={:?}",
-        world.stdout
-    );
-}
-
-// ── Item 3: user sends to restored sub-agents ────────────────────────────
-
-#[given("a running sub-agent restored from a resumed workspace is focused")]
+#[given("a running sub-agent restored from a resumed session is focused")]
 fn given_restored_running_subagent(world: &mut TuiWorld) {
     with_harness(world, |h| h.focus_restored_running_subagent("w1"));
 }
@@ -210,8 +120,6 @@ fn given_detached_reachable_subagent(world: &mut TuiWorld) {
     with_harness(world, |h| h.focus_detached_reachable_subagent("w1"));
 }
 
-// The dead-side Then ("a delivery failure naming the sub-agent is visibly
-// surfaced") is bound in `tui_multi_tab_fix_pass_steps.rs` and names "w1".
 #[given("a dead restored sub-agent is focused")]
 fn given_dead_subagent(world: &mut TuiWorld) {
     with_harness(world, |h| h.focus_dead_subagent("w1"));
@@ -243,6 +151,23 @@ fn then_no_delivery_failure(world: &mut TuiWorld) {
             !status.contains("not delivered") && !note.contains("not delivered"),
             "no delivery failure may surface for a reachable sub-agent; \
              status={status:?}, notification={note:?}"
+        );
+    });
+}
+
+#[then("a delivery failure naming the sub-agent is visibly surfaced")]
+fn then_delivery_outcome_surfaced(world: &mut TuiWorld) {
+    with_harness(world, |h| {
+        // The surfaced text must SPECIFICALLY reference the failed delivery
+        // and the agent — an incidental unrelated notification cannot pass.
+        let status = h.last_status_line().unwrap_or_default();
+        let last_note = h.last_notification().unwrap_or_default();
+        let surfaced = |s: &str| s.contains("not delivered") && s.contains("w1");
+        assert!(
+            surfaced(&status) || surfaced(&last_note),
+            "a message to a dead/unattached sub-agent must surface a delivery \
+             failure naming the agent; last status={status:?}, last \
+             notification={last_note:?}"
         );
     });
 }

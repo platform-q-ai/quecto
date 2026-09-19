@@ -1,9 +1,7 @@
 use crate::protocol::client::Client;
 use crate::shell::app::App;
 use crate::shell::connection::TabId;
-use crate::shell::tab_registry::TabAgentRegistry;
 use crate::shell::terminal::Terminal;
-use crate::shell::workspace_manifest::WorkspaceManifestStore;
 
 fn app() -> App {
     let client = Client::disconnected_for_tests();
@@ -13,38 +11,14 @@ fn app() -> App {
 }
 
 #[test]
-fn open_placeholder_allocates_and_focuses() {
-    let mut a = app();
-    assert_eq!(a.tabs.len(), 1);
-    let t1 = a.open_placeholder_tab(Some("two".into()));
-    assert_eq!(t1, TabId(1));
-    assert_eq!(a.tabs.len(), 2);
-    assert_eq!(a.active_tab, TabId(1));
-    assert_eq!(a.ac().name.as_deref(), Some("two"));
-    assert!(!a.ac().agent_connected);
-}
-
-#[test]
-fn switch_tab_next_prev_wraps() {
-    let mut a = app();
-    let _ = a.open_placeholder_tab(None);
-    let _ = a.open_placeholder_tab(None);
-    assert_eq!(a.active_tab, TabId(2));
-    assert_eq!(a.switch_tab_prev(), TabId(1));
-    assert_eq!(a.switch_tab_prev(), TabId(0));
-    assert_eq!(a.switch_tab_prev(), TabId(2));
-    assert_eq!(a.switch_tab_next(), TabId(0));
-}
-
-#[test]
 fn new_command_resets_workspace_not_just_active_session() {
     let mut a = app();
-    let old_workspace_id = a.workspace_id.clone();
     a.active_chat_mut()
         .add_entry(crate::components::chat::ChatEntry::User {
             text: "master old".into(),
         });
-    let t1 = a.open_placeholder_tab(Some("stale".into()));
+    let t1 = a.test_open_disconnected_tab();
+    a.test_set_active_tab(t1.0);
     a.active_chat_mut()
         .add_entry(crate::components::chat::ChatEntry::User {
             text: "background old".into(),
@@ -64,14 +38,12 @@ fn new_command_resets_workspace_not_just_active_session() {
     assert_eq!(a.ac().pending_session_resume, None);
     assert_eq!(a.subagents.panel_nav_key, None);
     assert_eq!(a.subagents.panel_nav.selected(), 0);
-    assert_ne!(a.workspace_id, old_workspace_id);
-    assert!(!a.workspace_label.is_empty());
 }
 
 #[test]
 fn reset_workspace_returns_stale_tab_child_watches_for_termination() {
     let mut a = app();
-    let t1 = a.open_placeholder_tab(Some("owned".into()));
+    let t1 = a.test_open_disconnected_tab();
     a.conn_mut(t1).unwrap().child_exit_watch =
         Some(crate::shell::child_watch::ChildWatch::for_tests(Some(77)));
 
@@ -87,75 +59,11 @@ fn reset_workspace_returns_stale_tab_child_watches_for_termination() {
 }
 
 #[test]
-fn registry_and_manifest_snapshots_track_tabs() {
-    let mut a = app();
-    a.open_placeholder_tab(Some("b".into()));
-    let reg = a.registry_snapshot(Some("ws"));
-    assert_eq!(reg.agents.len(), 2);
-    assert_eq!(reg.agents[1].tab_name.as_deref(), Some("b"));
-    let man = a.workspace_manifest_snapshot("ws");
-    assert_eq!(man.tabs.len(), 2);
-    assert_eq!(man.active_index, 1);
-
-    let dir = tempfile::tempdir().unwrap();
-    let rpath = dir.path().join("r.json");
-    let mpath = dir.path().join("m.json");
-    let _ = mpath;
-    a.persist_registry_snapshot("ws", &rpath);
-    let loaded_r = TabAgentRegistry::load(&rpath);
-    assert_eq!(loaded_r.agents.len(), 2);
-}
-
-#[test]
-fn switch_unknown_tab_is_false() {
-    let mut a = app();
-    assert!(!a.switch_tab(TabId(9)));
-    assert_eq!(a.active_tab, TabId::MASTER);
-}
-
-#[test]
-fn attach_connection_marks_tab_connected() {
-    let mut a = app();
-    let tab = a.open_placeholder_tab(None);
-    assert!(!a.conn_for(tab).unwrap().agent_connected);
-    let conn = crate::shell::connection::Connection::placeholder(tab);
-    a.attach_connection_to_tab(tab, conn, None);
-    assert!(a.conn_for(tab).unwrap().agent_connected);
-    assert_eq!(a.active_tab, tab);
-}
-
-#[test]
-fn registry_snapshot_includes_live_socket_pid_and_session_key() {
-    let mut a = app();
-    let tab = a.open_placeholder_tab(Some("worker".into()));
-    let state = a.conn_mut(tab).unwrap();
-    state.agent_connected = true;
-    state.socket_path = Some(std::path::PathBuf::from("/tmp/quecto-tab-1.sock"));
-    state.session_key = Some("cli:worker-1".into());
-    state.child_pid = Some(4242);
-    let reg = a.registry_snapshot(Some("ws"));
-    let record = reg
-        .agents
-        .iter()
-        .find(|r| r.tab_id == tab.0)
-        .expect("tab record");
-    assert_eq!(record.pid, Some(4242));
-    assert_eq!(
-        record.socket_path,
-        std::path::PathBuf::from("/tmp/quecto-tab-1.sock")
-    );
-    assert_eq!(record.session_key.as_deref(), Some("cli:worker-1"));
-    let man = a.workspace_manifest_snapshot("ws");
-    let entry = man.tabs.iter().find(|t| t.tab_id == tab.0).unwrap();
-    assert_eq!(entry.session_key.as_deref(), Some("cli:worker-1"));
-}
-
-#[test]
 fn removed_tab_slash_commands_are_unknown_and_do_not_mutate_tabs() {
     for command in ["/tab-new", "/tab-close", "/tab-next", "/tab-prev"] {
         let mut a = app();
-        let extra = a.open_placeholder_tab(Some("extra".into()));
-        a.switch_tab(extra);
+        let extra = a.test_open_disconnected_tab();
+        a.test_set_active_tab(extra.0);
         let before_active = a.active_tab;
         a.handle_submit(command);
         assert_eq!(a.tabs.len(), 2, "{command} must not open/close tabs");
@@ -174,143 +82,15 @@ fn removed_tab_slash_commands_are_unknown_and_do_not_mutate_tabs() {
 }
 
 #[test]
-fn switch_tab_resyncs_panel_nav_to_active_roster() {
-    let mut a = app();
-    let t1 = a.open_placeholder_tab(None);
-    a.switch_tab(TabId::MASTER);
-    a.ac_mut().roster.tracked.insert(
-        "child-a".into(),
-        crate::agents::roster::TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
-            agent_uuid: None,
-            display_name: None,
-            agent_id: "child-a".into(),
-            status: "running".into(),
-            last_tool: None,
-            last_error: None,
-            compact: false,
-            pid: 0,
-            socket_path: None,
-            parent_id: None,
-            workflow: None,
-            read_only: false,
-            execution_backend: None,
-            environment: None,
-        }),
-    );
-    a.subagents.panel_nav.set_selected(1);
-    a.subagents.panel_nav_key = Some("agent:child-a".into());
-    assert!(a.switch_tab(t1));
-    assert_eq!(
-        a.subagents.panel_nav.selected(),
-        0,
-        "panel cursor must resync to the newly focused tab roster"
-    );
-}
-
-#[test]
 fn collect_owned_child_watches_includes_every_tab() {
     let mut a = app();
-    let t1 = a.open_placeholder_tab(None);
+    let t1 = a.test_open_disconnected_tab();
     a.conn_mut(TabId::MASTER).unwrap().child_exit_watch =
         Some(crate::shell::child_watch::ChildWatch::for_tests(Some(1)));
     a.conn_mut(t1).unwrap().child_exit_watch =
         Some(crate::shell::child_watch::ChildWatch::for_tests(Some(2)));
     let watches = a.take_all_child_exit_watches();
     assert_eq!(watches.len(), 2, "kill-on-exit must see every tab watch");
-}
-
-#[test]
-fn stale_attach_outcome_is_rejected_after_close() {
-    let mut a = app();
-    let tab = a.open_placeholder_tab(None);
-    a.mark_tab_pending_attach(tab);
-    let generation = a.bump_attach_generation(tab);
-    assert_ne!(generation, 0);
-    // The tab goes away (its connection dropped) and the id is recycled
-    // with a fresh generation.
-    a.tabs.remove(&tab);
-    a.active_tab = TabId::MASTER;
-    let tab2 = a.open_placeholder_tab(None);
-    assert_eq!(tab2, tab, "allocator reuses lowest free id");
-    a.mark_tab_pending_attach(tab2);
-    let generation2 = a.bump_attach_generation(tab2);
-    assert_ne!(generation2, generation);
-    // Stale outcome from the closed tab must not attach into the new occupant.
-    a.apply_tab_attach_outcome(super::TabAttachOutcome {
-        tab: tab2,
-        generation,
-        result: Err("stale".into()),
-        child_watch: None,
-    });
-    assert_eq!(a.conn_for(tab2).unwrap().attach_generation, generation2);
-    assert!(
-        a.conn_for(tab2).unwrap().pending_attach,
-        "F2: stale outcome must not clear the recycled tab's pending_attach"
-    );
-}
-
-#[test]
-fn attach_connection_does_not_steal_focus() {
-    let mut a = app();
-    let t1 = a.open_placeholder_tab(None);
-    a.switch_tab(TabId::MASTER);
-    assert_eq!(a.active_tab, TabId::MASTER);
-    let conn = crate::shell::connection::Connection::placeholder(t1);
-    a.attach_connection_to_tab(t1, conn, None);
-    assert_eq!(
-        a.active_tab,
-        TabId::MASTER,
-        "F9: background attach must not steal focus after user navigated away"
-    );
-    assert!(a.conn_for(t1).unwrap().agent_connected);
-}
-
-#[test]
-fn switch_tab_clears_open_pending_and_swaps_editor_draft() {
-    let mut a = app();
-    let t1 = a.open_placeholder_tab(None);
-    a.editor.set_text("draft-t1");
-    a.inference.model_registry.open_pending = true;
-    a.switch_tab(TabId::MASTER);
-    assert!(
-        !a.inference.model_registry.open_pending,
-        "F10: switch must clear global open_pending"
-    );
-    assert_eq!(a.editor.text(), "", "master starts empty");
-    a.editor.set_text("draft-master");
-    a.switch_tab(t1);
-    assert_eq!(
-        a.editor.text(),
-        "draft-t1",
-        "F11: per-tab editor draft restored"
-    );
-}
-
-#[test]
-fn pending_attach_queues_prompt_not_disconnect_refusal() {
-    let mut a = app();
-    let tab = a.open_placeholder_tab(None);
-    a.mark_tab_pending_attach(tab);
-    a.handle_submit("hello while connecting");
-    let status = a
-        .ac()
-        .master_session
-        .chat
-        .last_status_text()
-        .unwrap_or("")
-        .to_lowercase();
-    assert!(
-        !status.contains("restart"),
-        "F7: must not show disconnected/restart UX while connecting: {status}"
-    );
-    assert!(
-        status.contains("connecting"),
-        "F7: connecting UX expected: {status}"
-    );
-    assert_eq!(
-        a.ac().queued_prompts,
-        vec!["hello while connecting".to_string()]
-    );
 }
 
 #[test]
@@ -325,239 +105,22 @@ fn tab_commands_are_absent_from_help_registry() {
 }
 
 #[test]
-fn single_resume_path_after_attach() {
-    let mut a = app();
-    let tab = a.open_placeholder_tab(None);
-    a.conn_mut(tab).unwrap().pending_session_resume = Some("sess-x".into());
-    let (live, mut rx) = crate::shell::connection::Connection::live_for_tests();
-    a.attach_connection_to_tab(tab, live, None);
-    // Drain any commands; resume must appear exactly once.
-    let mut resumes = 0;
-    while let Ok(line) = rx.try_recv() {
-        if line.contains("resume_session") {
-            resumes += 1;
-        }
-    }
-    assert_eq!(resumes, 1, "F6: exactly one resume_session after attach");
-    assert!(
-        a.conn_for(tab).unwrap().pending_session_resume.is_none(),
-        "pending latch cleared"
-    );
-}
-
-#[test]
-fn persist_merges_open_tabs_and_keeps_detached_live_registry_rows() {
-    use crate::shell::tab_registry::{TabAgentRecord, TabAgentStatus};
-    use std::os::unix::net::UnixListener;
-
-    let mut a = app();
-    // Fresh TUI: only MASTER is open, with a new socket/session.
-    let dir = tempfile::tempdir().unwrap();
-    let master_sock = dir.path().join("master-new.sock");
-    let detached_sock = dir.path().join("tab1-live.sock");
-    let _master_listener = UnixListener::bind(&master_sock).unwrap();
-    let _detached_listener = UnixListener::bind(&detached_sock).unwrap();
-
-    a.ac_mut().agent_connected = true;
-    a.ac_mut().socket_path = Some(master_sock.clone());
-    a.ac_mut().session_key = Some("cli:new-master".into());
-    a.ac_mut().child_pid = Some(std::process::id());
-
-    let rpath = dir.path().join("registry.json");
-    let mpath = dir.path().join("manifest.json");
-    let mut preexisting = TabAgentRegistry::new();
-    preexisting.upsert(TabAgentRecord {
-        tab_id: 0,
-        pid: Some(std::process::id()),
-        socket_path: dir.path().join("old-master.sock"),
-        session_key: Some("cli:old-master".into()),
-        tab_name: Some("old".into()),
-        workspace_id: Some("ws".into()),
-        updated_unix_s: 1,
-        status: TabAgentStatus::Live,
-    });
-    preexisting.upsert(TabAgentRecord {
-        tab_id: 1,
-        pid: Some(std::process::id()),
-        socket_path: detached_sock.clone(),
-        session_key: Some("cli:tab1".into()),
-        tab_name: Some("two".into()),
-        workspace_id: Some("ws".into()),
-        updated_unix_s: 1,
-        status: TabAgentStatus::Live,
-    });
-    preexisting.store(&rpath).unwrap();
-
-    let _ = mpath;
-    a.persist_registry_snapshot("ws", &rpath);
-
-    let loaded = TabAgentRegistry::load(&rpath);
-    let tab1 = loaded
-        .agents
-        .iter()
-        .find(|r| r.tab_id == 1)
-        .expect("AC3b/AC6: detached-but-live tab 1 must survive persist of a one-tab restart");
-    assert_eq!(tab1.session_key.as_deref(), Some("cli:tab1"));
-    assert_eq!(tab1.socket_path, detached_sock);
-    let tab0_new = loaded
-        .agents
-        .iter()
-        .find(|r| r.tab_id == 0 && r.session_key.as_deref() == Some("cli:new-master"))
-        .expect("open master must remain in registry");
-    assert_eq!(tab0_new.socket_path, master_sock);
-    let tab0_old = loaded
-        .agents
-        .iter()
-        .find(|r| r.tab_id == 0 && r.session_key.as_deref() == Some("cli:old-master"))
-        .expect("AC3b/AC6: detached live master must survive fresh master persist");
-    assert_eq!(tab0_old.socket_path, dir.path().join("old-master.sock"));
-}
-
-#[test]
-fn failed_attach_clears_deferred_resume_so_prompts_are_not_queued_forever() {
-    let mut a = app();
-    let tab = a.open_placeholder_tab(None);
-    a.mark_tab_pending_attach(tab);
-    a.conn_mut(tab).unwrap().pending_session_resume = Some("cli:work".into());
-    let generation = a.bump_attach_generation(tab);
-    a.apply_tab_attach_outcome(super::TabAttachOutcome {
-        tab,
-        generation,
-        result: Err("spawn failed".into()),
-        child_watch: None,
-    });
-    assert!(
-        !a.conn_for(tab).unwrap().pending_attach,
-        "attach flag must clear on final failure"
-    );
-    assert!(
-        a.conn_for(tab).unwrap().pending_session_resume.is_none(),
-        "final attach failure must drop the resume latch so later prompts are not treated as still-connecting"
-    );
-    assert!(
-        !a.tab_has_pending_attach(tab),
-        "failed attach must not keep tab_has_pending_attach true"
-    );
-    a.handle_submit("hello after failed attach");
-    let status = a
-        .ac()
-        .master_session
-        .chat
-        .last_status_text()
-        .unwrap_or("")
-        .to_lowercase();
-    assert!(
-        !status.contains("connecting"),
-        "must not queue forever as connecting after final attach failure: {status}"
-    );
-    assert!(
-        a.ac().queued_prompts.is_empty(),
-        "prompt must not be latched as a connecting queue after attach failure"
-    );
-}
-
-#[test]
-fn persist_gc_removes_dead_foreign_rows_and_their_orphan_manifests() {
-    use crate::shell::tab_registry::{TabAgentRecord, TabAgentStatus};
-    use crate::shell::workspace_manifest::{WorkspaceManifest, WorkspaceTabEntry};
-
-    let a = app();
-    let dir = tempfile::tempdir().unwrap();
-    let rpath = dir.path().join("registry.json");
-    let mpath = dir.path().join("manifest.json");
-
-    // A previous TUI instance (workspace "w-old") left a dead tab-0 row:
-    // no live socket, no session key. Matching on tab_id alone would flip
-    // it Live (tab 0 is open in every TUI) and retain it forever.
-    let mut preexisting = TabAgentRegistry::new();
-    preexisting.upsert(TabAgentRecord {
-        tab_id: 0,
-        pid: None,
-        socket_path: dir.path().join("gone.sock"),
-        session_key: None,
-        tab_name: None,
-        workspace_id: Some("w-old".into()),
-        updated_unix_s: 1,
-        status: TabAgentStatus::Live,
-    });
-    preexisting.store(&rpath).unwrap();
-
-    // Its session-less manifest row: only referenced through the dead row.
-    let mut store = WorkspaceManifestStore::load(&mpath);
-    store.upsert(WorkspaceManifest {
-        workspace_id: "w-old".into(),
-        label: "old".into(),
-        last_active_unix_s: 1,
-        active_index: 0,
-        tabs: vec![WorkspaceTabEntry {
-            tab_id: 0,
-            session_key: None,
-            name: None,
-            summary: None,
-        }],
-        updated_unix_s: 1,
-    });
-    store.store(&mpath).unwrap();
-
-    a.persist_registry_snapshot("w-new", &rpath);
-
-    let loaded_r = TabAgentRegistry::load(&rpath);
-    assert!(
-        !loaded_r
-            .agents
-            .iter()
-            .any(|r| r.workspace_id.as_deref() == Some("w-old")),
-        "dead foreign tab-0 row must be GC'd, not kept via the open tab_id"
-    );
-    let loaded_m = WorkspaceManifestStore::load(&mpath);
-    assert!(
-        loaded_m.get("w-old").is_some(),
-        "registry-only persistence no longer prunes legacy workspace manifests"
-    );
-    assert!(
-        loaded_m.get("w-new").is_none(),
-        "registry-only persistence no longer writes own workspace manifests"
-    );
-}
-
-#[test]
-fn snippet_of_strips_control_and_escape_bytes() {
-    // Review finding (PR #1485): bracketed paste delivers ESC/BEL verbatim
-    // and the snippet is replayed raw into the /resume selector — sanitize
-    // at persist time like tab names do.
-    let s = super::snippet_of("evil\x1b]8;;file:///tmp/x\x07click me\x1b]8;;\x07 tail", 60);
-    assert!(
-        !s.contains('\x1b') && !s.contains('\x07'),
-        "persisted snippets must contain no escape/control bytes; got {s:?}"
-    );
-    assert!(
-        s.contains("evil") && s.contains("click me"),
-        "printable text must survive sanitization; got {s:?}"
-    );
-}
-
-#[test]
 fn ordinary_exit_fanout_targets_all_sendable_tabs_without_focus_or_name_collapse() {
-    let data_home = tempfile::tempdir().expect("isolated tui data");
-    let registry_path = data_home.path().join("tab-registry.json");
-    let manifest_path = data_home.path().join("workspace-manifests.json");
     let mut a = app();
     let (mut master_conn, mut master_rx) = crate::shell::connection::Connection::live_for_tests();
     master_conn.set_tab_for_tests(TabId::MASTER);
-    a.attach_connection_to_tab(TabId::MASTER, master_conn, None);
+    a.test_attach_connection(TabId::MASTER, master_conn, None);
 
-    let t1 = a.open_placeholder_tab(Some("worker".into()));
+    let t1 = a.test_open_disconnected_tab();
     let (mut tab_conn, mut tab_rx) = crate::shell::connection::Connection::live_for_tests();
     tab_conn.set_tab_for_tests(t1);
-    a.attach_connection_to_tab(t1, tab_conn, None);
-    let t2 = a.open_placeholder_tab(Some("worker".into()));
+    a.test_attach_connection(t1, tab_conn, None);
+    let t2 = a.test_open_disconnected_tab();
     let (mut tab2_conn, mut tab2_rx) = crate::shell::connection::Connection::live_for_tests();
     tab2_conn.set_tab_for_tests(t2);
-    a.attach_connection_to_tab(t2, tab2_conn, None);
-    a.switch_tab(TabId::MASTER);
+    a.test_attach_connection(t2, tab2_conn, None);
 
-    a.enqueue_ordinary_exit_snapshot_persists_at(&registry_path, &manifest_path)
-        .unwrap();
+    a.enqueue_ordinary_exit_snapshot_persists().unwrap();
 
     let master_cmd: serde_json::Value =
         serde_json::from_str(&master_rx.try_recv().unwrap()).unwrap();
@@ -579,24 +142,19 @@ fn ordinary_exit_fanout_targets_all_sendable_tabs_without_focus_or_name_collapse
 
 #[test]
 fn ordinary_exit_fanout_continues_after_first_enqueue_failure() {
-    let data_home = tempfile::tempdir().expect("isolated tui data");
-    let registry_path = data_home.path().join("tab-registry.json");
-    let manifest_path = data_home.path().join("workspace-manifests.json");
     let mut a = app();
-    a.attach_connection_to_tab(
+    a.test_attach_connection(
         TabId::MASTER,
         crate::shell::connection::Connection::disconnected_for_tests(),
         None,
     );
 
-    let t1 = a.open_placeholder_tab(Some("worker".into()));
+    let t1 = a.test_open_disconnected_tab();
     let (mut tab_conn, mut tab_rx) = crate::shell::connection::Connection::live_for_tests();
     tab_conn.set_tab_for_tests(t1);
-    a.attach_connection_to_tab(t1, tab_conn, None);
+    a.test_attach_connection(t1, tab_conn, None);
 
-    let err = a
-        .enqueue_ordinary_exit_snapshot_persists_at(&registry_path, &manifest_path)
-        .unwrap_err();
+    let err = a.enqueue_ordinary_exit_snapshot_persists().unwrap_err();
 
     let (successful_ids, err) = err;
     assert_eq!(
@@ -611,29 +169,18 @@ fn ordinary_exit_fanout_continues_after_first_enqueue_failure() {
     let tab_cmd: serde_json::Value = serde_json::from_str(&tab_rx.try_recv().unwrap()).unwrap();
     assert_eq!(tab_cmd["type"], "persist_session");
     assert!(tab_cmd["restoreReason"].is_null());
-
-    let store = WorkspaceManifestStore::load(&manifest_path);
-    assert!(
-        store.get(&a.workspace_id).is_none(),
-        "ordinary-exit persistence no longer writes workspace manifests"
-    );
 }
 
 #[test]
 fn ordinary_exit_persistence_distinguishes_owned_killing_from_detach_and_external() {
     for (owned, kill_owned) in [(true, true), (true, false), (false, true)] {
-        let data = tempfile::tempdir().unwrap();
         let mut a = app();
         a.set_ordinary_exit_kill_owned(kill_owned);
         let (mut conn, mut rx) = crate::shell::connection::Connection::live_for_tests();
         conn.set_tab_for_tests(TabId::MASTER);
         let watch = owned.then(|| crate::shell::child_watch::ChildWatch::for_tests(Some(123)));
-        a.attach_connection_to_tab(TabId::MASTER, conn, watch);
-        a.enqueue_ordinary_exit_snapshot_persists_at(
-            &data.path().join("registry.json"),
-            &data.path().join("manifest.json"),
-        )
-        .unwrap();
+        a.test_attach_connection(TabId::MASTER, conn, watch);
+        a.enqueue_ordinary_exit_snapshot_persists().unwrap();
         let cmd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
         assert_eq!(cmd["type"], "persist_session");
         if owned && kill_owned {
@@ -654,8 +201,8 @@ fn reset_workspace_leaves_the_master_watch_and_takes_only_other_tabs() {
     let mut a = app();
     a.conn_mut(TabId::MASTER).unwrap().child_exit_watch =
         Some(crate::shell::child_watch::ChildWatch::for_tests(Some(1)));
-    let t1 = a.open_placeholder_tab(Some("one".into()));
-    let t2 = a.open_placeholder_tab(Some("two".into()));
+    let t1 = a.test_open_disconnected_tab();
+    let t2 = a.test_open_disconnected_tab();
     a.conn_mut(t1).unwrap().child_exit_watch =
         Some(crate::shell::child_watch::ChildWatch::for_tests(Some(2)));
     a.conn_mut(t2).unwrap().child_exit_watch =
@@ -674,46 +221,4 @@ fn reset_workspace_leaves_the_master_watch_and_takes_only_other_tabs() {
         Some(1),
         "the master's watch is not handed out for termination"
     );
-}
-
-/// #1956 review: a stale spawn outcome (its tab closed or recycled while
-/// spawning) hands back only that outcome's watch; every other tab's watch
-/// stays attached.
-#[tokio::test]
-async fn stale_attach_outcome_terminates_only_its_own_watch() {
-    let mut a = app();
-    let keep = a.open_placeholder_tab(Some("keep".into()));
-    a.conn_mut(keep).unwrap().child_exit_watch =
-        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(11)));
-    let gone = a.open_placeholder_tab(Some("gone".into()));
-    a.mark_tab_pending_attach(gone);
-    let generation = a.bump_attach_generation(gone);
-    a.tabs.remove(&gone);
-    a.active_tab = TabId::MASTER;
-    let (stale, mut probe) =
-        crate::shell::child_watch::ChildWatch::for_tests_with_termination_probe(Some(12));
-
-    a.apply_tab_attach_outcome(super::TabAttachOutcome {
-        tab: gone,
-        generation,
-        child_watch: Some(stale),
-        result: Err("stale".into()),
-    });
-
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_secs(2), probe.recv())
-            .await
-            .expect("the stale outcome's watch is asked to terminate")
-            .is_some()
-    );
-    assert_eq!(
-        a.conn_for(keep)
-            .unwrap()
-            .child_exit_watch
-            .as_ref()
-            .and_then(|w| w.pid()),
-        Some(11),
-        "the other tab's watch is untouched"
-    );
-    assert_eq!(a.take_all_child_exit_watches().len(), 1);
 }

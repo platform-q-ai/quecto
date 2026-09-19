@@ -154,17 +154,7 @@ fn apply_workflow_defaults(flags: &mut CliFlags) {
     }
 }
 
-pub(crate) use super::tab_spawn_policy::{TabSpawnPolicy, tab_spawn_flags_from_policy};
-
-pub(crate) async fn spawn_agent_for_tab(
-    flags: &CliFlags,
-    pending_child_watches: crate::shell::child_watch::ChildWatchRegistry,
-) -> Result<(PathBuf, crate::shell::child_watch::ChildWatch, Option<u8>), String> {
-    spawn_agent_program_watched_for_tab("quecto", flags, pending_child_watches).await
-}
-
 async fn run_tui(flags: CliFlags) -> i32 {
-    let tab_spawn_policy = TabSpawnPolicy::from_flags(&flags);
     let (socket, child_watch, announced_protocol) = match flags.socket_path {
         Some(path) => (path, None, None),
         None => match spawn_agent(&flags).await {
@@ -223,14 +213,10 @@ async fn run_tui(flags: CliFlags) -> i32 {
 
     let terminal = crate::shell::terminal::Terminal::new();
     let mut app = crate::shell::app::App::new(terminal, client);
-    app.tab_spawn_policy = Some(tab_spawn_policy);
-    app.ac_mut().socket_path = Some(socket.clone()); // AC4 durability
     if let Some(watch) = &child_watch {
-        app.ac_mut().child_pid = watch.pid();
         app.set_child_exit_watch(watch.clone());
     }
     app.set_ordinary_exit_kill_owned(flags.kill_on_exit);
-    app.persist_default_durability();
     let exit_code = app.run().await;
 
     drop(child_watch);
@@ -280,94 +266,6 @@ pub(crate) async fn spawn_agent(
     String,
 > {
     spawn_agent_program("quecto", flags).await
-}
-
-pub(crate) async fn spawn_agent_program_watched_for_tab(
-    program: &str,
-    flags: &CliFlags,
-    pending_child_watches: crate::shell::child_watch::ChildWatchRegistry,
-) -> Result<(PathBuf, crate::shell::child_watch::ChildWatch, Option<u8>), String> {
-    use tokio::io::AsyncBufReadExt;
-    let args = build_agent_args(flags);
-    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let mut child = tokio::process::Command::new(program)
-        .args(&args_ref)
-        .stderr(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stdin(std::process::Stdio::null())
-        // Own process group: terminal signals never reach the harness, and
-        // the post-exit canary (#1956) can recognise a stray by pgid. The
-        // group itself is never signalled — only the leader pid is.
-        .process_group(0)
-        .spawn()
-        .map_err(|e| format!("failed to spawn {program}: {e}"))?;
-
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "failed to capture agent stderr".to_string())?;
-    let stderr_context = crate::shell::child_watch::StderrTail::default();
-    let watch = crate::shell::child_watch::watch_child(child, stderr_context.clone());
-    if let Ok(mut pending) = pending_child_watches.lock() {
-        pending.push(watch.clone());
-    }
-
-    let mut reader = tokio::io::BufReader::new(stderr);
-    let mut line = String::new();
-    let socket_prefix = "quecto-agent-socket: ";
-    let protocol_prefix = quecto_line_io::PROTOCOL_ANNOUNCE_PREFIX;
-    let mut announced_protocol: Option<u8> = None;
-    let deadline = tokio::time::Instant::now() + AGENT_SOCKET_DEADLINE;
-
-    eprintln!("{}", agent_starting_status());
-
-    loop {
-        line.clear();
-        let read_future = reader.read_line(&mut line);
-        let result = tokio::time::timeout_at(deadline, read_future).await;
-
-        match result {
-            Ok(Ok(0)) => {
-                terminate_watched_at_startup(&watch).await;
-                return Err(format_agent_startup_failure(
-                    "agent exited before announcing socket",
-                    &stderr_context.lines(),
-                ));
-            }
-            Ok(Ok(_)) => {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    remember_stderr_line(&stderr_context, trimmed);
-                }
-                if let Some(version) = trimmed.strip_prefix(protocol_prefix) {
-                    announced_protocol = version.trim().parse().ok();
-                }
-                if let Some(path_str) = trimmed.strip_prefix(socket_prefix) {
-                    let path = PathBuf::from(path_str.trim());
-                    if let Err(e) = validate_socket_path(&path) {
-                        terminate_watched_at_startup(&watch).await;
-                        return Err(e);
-                    }
-                    spawn_stderr_drain(reader, stderr_context.clone());
-                    return Ok((path, watch, announced_protocol));
-                }
-            }
-            Ok(Err(e)) => {
-                terminate_watched_at_startup(&watch).await;
-                return Err(format_agent_startup_failure(
-                    &format!("error reading agent stderr: {e}"),
-                    &stderr_context.lines(),
-                ));
-            }
-            Err(_) => {
-                terminate_watched_at_startup(&watch).await;
-                return Err(format_agent_startup_failure(
-                    &agent_socket_timeout_message(),
-                    &stderr_context.lines(),
-                ));
-            }
-        }
-    }
 }
 
 /// [`spawn_agent`] with the agent binary injectable, so tests can drive the
@@ -715,9 +613,6 @@ fn format_agent_startup_failure(reason: &str, stderr_lines: &[String]) -> String
 #[path = "cli_cov_tests.rs"]
 mod cli_cov_tests;
 
-#[cfg(test)]
-#[path = "cli_tab_spawn_tests.rs"]
-mod cli_tab_spawn_tests;
 #[cfg(test)]
 #[path = "cli_tests.rs"]
 mod tests;

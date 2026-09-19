@@ -229,11 +229,6 @@ impl App {
                     .reset_coordinator_clock(tokio::time::Instant::now());
             }
             self.ac_mut().session_key = Some(key.to_owned());
-            // Learning the key here pre-empts the get_state snapshot path, so
-            // the durable registry/manifest must be written here too.
-            if changed {
-                self.persist_default_durability();
-            }
         }
         let session = ack.map_or_else(|| "session".to_string(), |ack| ack.name);
         self.notify(&format!("Resumed session {session}"), NotifyLevel::Success);

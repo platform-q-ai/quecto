@@ -5,21 +5,15 @@
 use super::*;
 
 /// Everything a non-restore must leave alone.
-fn local_state(
-    h: &mut super::super::super::tui_harness::TuiHarness,
-) -> (Option<String>, String, usize) {
+fn local_state(h: &mut super::super::super::tui_harness::TuiHarness) -> (Option<String>, String) {
     let app = h.app_mut();
     let chat = app.ac_mut().master_session.chat.render(120).join("\n");
-    (
-        app.ac().session_key.clone(),
-        chat,
-        app.ac().durability_writes,
-    )
+    (app.ac().session_key.clone(), chat)
 }
 
 /// Review R1-T1: an owned success whose outcome is not `resumed` — a later
 /// slice's, a contradictory one, garbage — adopts no key, resets no clock,
-/// writes no manifest, fetches nothing and never says "Resumed".
+/// fetches nothing and never says "Resumed".
 #[tokio::test]
 async fn a_success_that_is_not_a_restore_changes_nothing_locally() {
     for outcome in [
@@ -306,8 +300,7 @@ async fn a_scope_switch_clears_the_listed_versions() {
         "key": "chat-1-else", "title": "t", "messageCount": 3,
         "resumeEligible": true, "homeVersion": "h1-00000000000000aa",
     }]});
-    let manifest = std::env::temp_dir().join("s2011f1-no-manifest.json");
-    h.app_mut().open_resume_selector_at(&data, &manifest);
+    h.app_mut().open_resume_selector(&data);
     assert_eq!(h.app_mut().ac().sessions.home_versions.len(), 1);
     h.app_mut()
         .request_session_scope(crate::protocol::session_payloads::SessionListScope::Global);

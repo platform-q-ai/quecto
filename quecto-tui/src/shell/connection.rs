@@ -145,16 +145,11 @@ impl Connection {
         self.tab
     }
 
-    /// Re-key this connection to another tab id (workspace restore remap).
-    /// Keeps minted correlation namespaces aligned with the map key (#1465).
-    pub(crate) fn set_tab(&mut self, tab: TabId) {
-        self.tab = tab;
-    }
-
-    /// Test-only alias for [`Self::set_tab`].
+    /// Test-only: re-key this connection to another tab id, keeping minted
+    /// correlation namespaces aligned with the map key (#1465).
     #[cfg(any(test, feature = "test-harness"))]
     pub(crate) fn set_tab_for_tests(&mut self, tab: TabId) {
-        self.set_tab(tab);
+        self.tab = tab;
     }
 
     /// Abort the feed task owning the client. Called from [`Drop`] and by
@@ -193,20 +188,6 @@ impl Connection {
     pub(crate) fn dropped_oversized_events(&self) -> u64 {
         self.dropped_oversized
             .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Connecting/placeholder tab: no live writer and no feed task.
-    /// Used while a new tab's agent is spawning (#1465 AC1).
-    pub(crate) fn placeholder(tab: TabId) -> Self {
-        let (tx, rx) = tokio::sync::mpsc::channel::<String>(1);
-        drop(rx);
-        Self {
-            tab,
-            sender: CommandSender { tx },
-            speaks_frames: true,
-            dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            feed_task: None,
-        }
     }
 
     /// Test-only: a connection whose writer channel is already closed, so

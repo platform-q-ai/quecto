@@ -185,18 +185,6 @@ impl App {
     // ── Resume selector ─────────────────────────────────────────────
 
     pub(super) fn open_resume_selector(&mut self, data: &serde_json::Value) {
-        self.open_resume_selector_at(
-            data,
-            &crate::shell::workspace_manifest::default_manifest_path(),
-        );
-    }
-
-    /// Testable resume selector open with an explicit manifest path (#1465 AC5).
-    pub(super) fn open_resume_selector_at(
-        &mut self,
-        data: &serde_json::Value,
-        manifest_path: &std::path::Path,
-    ) {
         // Presentation coordination is the sessions feature's: rows, IDs,
         // safe copy and the listed home versions come back projected.
         let mut listed = session_payloads::parse_resume_sessions(data);
@@ -210,7 +198,7 @@ impl App {
         self.ac_mut().sessions.listed_scope = Some(self.ac().sessions.scope);
         self.ac_mut().sessions.home_versions = rows.home_versions;
         self.ac_mut().sessions.listed_titles = rows.titles;
-        self.open_resume_selector_with_workspaces(rows.items, manifest_path, rows.empty_hint);
+        self.open_resume_selector_with_items(rows.items, rows.empty_hint);
         // Text typed against a harness that cannot search filters the new
         // listing here (R1-T5); either way the rows are now the answer.
         let filtering = (self.ac().sessions.resume_selector.as_ref())
@@ -640,8 +628,6 @@ impl App {
 
     /// Start a fresh single `/new` session, preserving the old session for `/resume`.
     pub(super) fn reset_workspace(&mut self) -> Vec<crate::shell::child_watch::ChildWatch> {
-        self.persist_default_durability();
-
         let mut master = self
             .tabs
             .remove(&crate::shell::connection::TabId::MASTER)
@@ -661,10 +647,7 @@ impl App {
         self.routing_tab_override = None;
         self.editor.set_text("");
         self.subagents = crate::agents::view::SubagentUi::new();
-        self.workspace_id = crate::shell::workspace_manifest::generate_workspace_id();
-        self.workspace_label = crate::shell::workspace_manifest::generate_workspace_label();
         self.reset_session("New session started");
-        self.persist_default_durability();
         watches
     }
 

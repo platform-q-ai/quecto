@@ -20,3 +20,16 @@ Feature: TUI Foundation
     When the TUI renders a frame
     Then the DiffRenderer should return the render error instead of ignoring it
     And the TUI should show an error notification for the failed render
+
+  @tui @done
+  Scenario: The frame renders no version header line
+    Given a headless TUI
+    When the frame renders
+    Then no frame line contains the version header text
+    And the first frame line is a blank spacer
+
+  @tui @done
+  Scenario: The frame keeps the terminal height
+    Given a headless TUI
+    When the frame renders
+    Then the frame height equals the terminal height
