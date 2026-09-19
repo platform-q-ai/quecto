@@ -165,7 +165,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         if let Some(reconciliation) = environment_reconciliation {
             tokio::task::spawn_blocking(move || {
                 let report = reconciliation.execute();
-                crate::composition::environments::report_environment_reconciliation(&report);
+                crate::interface::cli::container::report_environment_reconciliation(&report);
             });
         }
         super::uds_multi::multi_client_loop(

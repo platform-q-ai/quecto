@@ -33,6 +33,21 @@ pub struct EnvironmentRegistryBuild {
     pub reconciliation: Option<crate::application::environments::use_cases::ReconcileRegistry>,
 }
 
+/// Present the result of an asynchronous agent-startup reconciliation.
+pub fn report_environment_reconciliation(
+    report: &crate::application::environments::dto::RestoredRegistry,
+) {
+    for line in &report.diagnostics {
+        eprintln!("{line}");
+    }
+    for (environment_ref, reason) in &report.retained {
+        eprintln!("{environment_ref} retained at restore: {reason}");
+    }
+    for (environment_ref, reason) in &report.unverified {
+        tracing::warn!(environment_ref, %reason, "restored environment could not be verified against the runtime");
+    }
+}
+
 /// Composition's builder of an agent run's durable environment registry
 /// (#2024 S4d): `(base_dir, session key, seed)` — load/seed only for a
 /// top-level session, journalling only for a spawned child. Runtime inspection

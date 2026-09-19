@@ -449,6 +449,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/environments/mod.rs",
     "src/application/environments/use_cases/mod.rs",
     "src/application/environments/use_cases/list_environments.rs",
+    "src/application/environments/use_cases/stop_environment.rs",
     "src/interface/uds/subagent_teardown/mod.rs",
     "src/interface/uds/subagent_teardown/mapping.rs",
     "src/interface/uds/subagent_teardown/wire.rs",

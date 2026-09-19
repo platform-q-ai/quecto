@@ -276,7 +276,7 @@ pub(crate) fn cmd_agent(
     // before the two-phase UDS startup split.
     if let Some(reconciliation) = build.environment_reconciliation {
         let report = reconciliation.execute();
-        crate::composition::environments::report_environment_reconciliation(&report);
+        crate::interface::cli::container::report_environment_reconciliation(&report);
     }
     // The interface never constructs a session store (#1970): without
     // composition's builder there is nothing to persist against.

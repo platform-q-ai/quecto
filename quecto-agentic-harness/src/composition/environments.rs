@@ -152,13 +152,6 @@ pub fn build_environment_registry(
     }
 }
 
-/// Present the result of an asynchronous agent-startup reconciliation.
-/// Kept in composition so the interface owns neither logging policy nor
-/// environment-domain report formatting.
-pub fn report_environment_reconciliation(report: &RestoredRegistry) {
-    report_restore(report);
-}
-
 fn report_restore(report: &RestoredRegistry) {
     if let Some(read_error) = &report.read_error {
         // The session starts with an empty registry and every container
