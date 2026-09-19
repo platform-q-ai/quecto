@@ -39,7 +39,11 @@ impl App {
             "resume-search-{}",
             super::super::super::app_events::uuid_like()
         ));
-        self.ac_mut().sessions.search.sent(id.clone(), generation);
+        let now = tokio::time::Instant::now();
+        self.ac_mut()
+            .sessions
+            .search
+            .sent(id.clone(), generation, now);
         if !self.send_command(Command::SearchSessionMetadata {
             id: Some(id),
             search,
@@ -65,8 +69,8 @@ impl App {
             _ => flight.sent_generation(id),
         };
         match flight.settle(id, generation) {
-            Settled::Foreign | Settled::Stale { resend: false } => {}
-            Settled::Stale { resend: true } => {
+            Settled::Foreign | Settled::Stale { resend: false, .. } => {}
+            Settled::Stale { resend: true, .. } => {
                 let latest = self.ac().sessions.search.latest();
                 self.send_session_search(latest);
             }
