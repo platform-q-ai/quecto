@@ -49,7 +49,7 @@ impl App {
     pub(super) fn show_help(&mut self) {
         // Slash commands first, keyboard shortcuts last: compose_frame follows the
         // chat tail, so Ctrl+T (and other shortcuts) stay in the viewport as the
-        // slash list grows (#1465 /tab-* entries).
+        // slash list grows.
         let mut text = String::from("Slash commands:");
         // Derive the slash-command listing from the single source of truth so it
         // can never drift from the autocomplete set or the dispatch handler.
@@ -394,7 +394,7 @@ impl App {
 
         // ── Render top section (spacer + chat) ──────────────────────
         // The version/help header line is gone (#1466 round 2): a BLANK
-        // spacer keeps the tab bar / Master status breathing room and the
+        // spacer keeps the Master status breathing room and the
         // frame geometry stays otherwise identical.
         lines.push(String::new());
 

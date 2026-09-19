@@ -57,9 +57,9 @@ pub(crate) struct ConnectionState {
     /// Exit-diagnosis watch for the TUI-owned agent child (#1047), published
     /// by [`crate::shell::child_watch`]. `None` for external sockets.
     pub(crate) child_exit_watch: Option<crate::shell::child_watch::ChildWatch>,
-    /// Durable session key for this tab's master agent (manifest, AC4/AC5/AC6).
+    /// Durable session key of this connection's master agent.
     pub(crate) session_key: Option<String>,
-    /// Session key to resume once this tab becomes connected (workspace restore).
+    /// Session key latched by a `/resume` issued while disconnected.
     pub(crate) pending_session_resume: Option<String>,
     /// Request id of this tab's in-flight `resume_session`, so only its own
     /// answer clears the resume latches; foreign answers (another client

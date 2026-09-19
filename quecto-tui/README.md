@@ -2,7 +2,7 @@
 
 A lightweight terminal UI client for `quecto agent --mode uds`.
 
-**Version `0.77.25` (pre-1.0).** The TUI is a UDS bus client of the harness: the
+**Version `0.77.26` (pre-1.0).** The TUI is a UDS bus client of the harness: the
 wire protocol and session ownership live in `quecto`, so most breaking risk is
 upstream. This crate stays on `0.y` until feature-oriented presentation boundaries and
 public surface (flags, slash commands, attach/spawn) meet the bar for a deliberate
@@ -86,7 +86,7 @@ When `quecto-tui` spawns the agent for you, it can forward these flags:
 | `--no-workflow` | Disable workflow tool/state/prompt for the spawned agent |
 | `--system <prompt>` | Pass a custom system prompt to the spawned agent |
 | `--config <path>` | Use an alternate quecto config file when spawning the agent |
-| `--model <provider/model>` | Start the spawned agent (and every tab of this run) on this model, in memory only — nothing is written |
+| `--model <provider/model>` | Start the spawned agent on this model, in memory only — nothing is written |
 | `--effort <level>` | Start the spawned agent on this reasoning-effort level, in memory only |
 
 By default, the spawned UDS agent has the workflow tool available but dormant:
@@ -203,17 +203,16 @@ time: it runs while the agent is processing (from `agent_start` to
 `agent_end`, an abort, an error or a disconnect) and freezes in between, so
 idle time between your messages and the agent's wakes never counts and a new
 message resumes the frozen value rather than restarting at `0:00` (#1726). It
-restarts at `0:00` only at a session boundary: `/new` or `/clear`, a
-`/resume` into a different session, or an attach of the tab to an agent
-(including a reconnect after a disconnect, which froze the previous value).
+restarts at `0:00` only at a session boundary: `/new`, `/clear` or a
+`/resume` into a different session.
 
 ### Subagent transcript freshness
 
 Direct child-socket feeds display live token events. Open subagent feeds also
-request committed-ledger catch-up every **2 seconds**, including while idle and
-on background tabs. Socketless (root-routed inspection) feeds use this cadence
+request committed-ledger catch-up every **2 seconds**, including while idle.
+Socketless (root-routed inspection) feeds use this cadence
 for automatic transcript refresh; it is **not token streaming**. Only opened
-feeds are polled, within the existing per-tab warm-feed cap.
+feeds are polled, within the existing warm-feed cap.
 
 Catch-up uses the last applied cursor rather than assuming an earlier request
 will be answered. A refused enqueue, lost final hint/response, or refused page
@@ -247,9 +246,8 @@ a **repeated** SIGTERM inside that work is ignored, and one arriving after
    never `kill(-pgid)`, never a descendant.
 2. Wait for that process to exit within the *settle* budget: `ceil(n / 8)`
    batches × 25 s + 5 s to persist and exit, where `n` is the number of
-   subagents the tab's roster last showed (30 s for up to 8, 55 s for 9–16,
-   80 s — the 3-pass worst case — beyond that or when the roster is unknown,
-   e.g. a spawn still in flight).
+   subagents the roster last showed (30 s for up to 8, 55 s for 9–16,
+   80 s — the 3-pass worst case — beyond that or when the roster is unknown).
 3. If it is still running, send a **second** SIGTERM — the repeated signal is
    what arms the harness's own 45 s force-exit — and wait those 45 s.
 4. Only then SIGKILL that one pid.
@@ -263,8 +261,7 @@ process group (skipped if the pid has already been recycled); under the
 lifetime binding that list is always empty, and a non-empty one is printed
 after terminal cleanup as the evidence. Swarm members and bash tool children
 that run in their own process group are, by design, outside the canary's
-view. The same leader-only helper serves tab close, `/new` workspace reset
-and startup-failure cleanup (which prints "waiting for the agent to exit…"
+view. The same leader-only helper serves startup-failure cleanup (which prints "waiting for the agent to exit…"
 once on stderr if it takes more than a second).
 
 Use `--detach-on-exit` to leave owned agents running (`--kill-on-exit` is the

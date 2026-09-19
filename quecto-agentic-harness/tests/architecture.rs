@@ -954,6 +954,58 @@ fn collect_tui_production_rs_paths(dir: &Path, files: &mut BTreeSet<String>) {
     }
 }
 
+/// #2044 PR 1: the multi-tab features no user could reach are gone from the
+/// TUI — tab-switch chords, the workspace manifest / tab-agent registry and
+/// its restore path, and placeholder-tab opening. Every `.rs` file under
+/// `quecto-tui/src` (test modules included) is scanned so neither the code
+/// nor a test of it comes back under the same name.
+#[test]
+fn tui_removed_multi_tab_symbols_do_not_come_back() {
+    const REMOVED: &[&str] = &[
+        "TabSwitch",
+        "workspace_manifest",
+        "tab_registry",
+        "restore_workspace",
+        "open_placeholder_tab",
+    ];
+    fn scan(dir: &Path, hits: &mut Vec<String>) {
+        for entry in fs::read_dir(dir).expect("read dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                scan(&path, hits);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let content = fs::read_to_string(&path).expect("read file");
+                for (n, line) in content.lines().enumerate() {
+                    for symbol in REMOVED {
+                        if line.contains(symbol) {
+                            hits.push(format!("{}:{}: {symbol}", path.display(), n + 1));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut hits = Vec::new();
+    scan(Path::new(TUI_SRC), &mut hits);
+    assert!(
+        hits.is_empty(),
+        "removed multi-tab symbols are back in quecto-tui/src (#2044):\n{}",
+        hits.join("\n")
+    );
+    for file in [
+        "tab_activity.rs",
+        "tab_registry.rs",
+        "tab_spawn_policy.rs",
+        "workspace_manifest.rs",
+        "atomic_file.rs",
+    ] {
+        assert!(
+            !Path::new(TUI_SHELL).join(file).exists(),
+            "shell/{file} was removed with the multi-tab features (#2044)"
+        );
+    }
+}
+
 #[test]
 fn tui_architecture_layers_exist() {
     assert!(
@@ -1675,7 +1727,10 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// (155 → 158); this is required barrier fan-out, not DTO spread.
 /// #1679 P4 added the `Event::AdmissionStateChanged` dispatch arm in
 /// `shell/app_events.rs` (one usage).
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 159;
+/// #2044 PR 1 removes the unreachable multi-tab features (tab attach/reattach
+/// client seams, placeholder transport, background-tab harness drivers):
+/// 159 → 146.
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 146;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
