@@ -3440,11 +3440,6 @@ fn assert_interface_dependencies_allowlisted(path: &str, source: &str) {
         const COMPOSITION_EXCEPTIONS: &[(&str, &str)] = &[
             ("src/interface/shared.rs", "composition::find"),
             ("src/interface/tool_runtime.rs", "composition::find"),
-            ("src/interface/cli/agent.rs", "composition::environments"),
-            (
-                "src/interface/cli/uds_lifecycle.rs",
-                "composition::environments",
-            ),
         ];
         let explicitly_allowed = ALLOWED.contains(&root.as_str())
             || COMPOSITION_EXCEPTIONS.contains(&(path, root.as_str()));
@@ -3469,6 +3464,25 @@ fn interface_dependency_allowlist_rejects_aliased_composition_reference() {
         assert!(
             rejected.is_err(),
             "composition alias must be rejected: {bypass}"
+        );
+    }
+}
+
+#[test]
+fn interface_dependency_allowlist_rejects_removed_composition_exceptions() {
+    for path in [
+        "src/interface/cli/agent.rs",
+        "src/interface/cli/uds_lifecycle.rs",
+    ] {
+        let rejected = std::panic::catch_unwind(|| {
+            assert_interface_dependencies_allowlisted(
+                path,
+                "fn build() { crate::composition::environments::build(); }",
+            )
+        });
+        assert!(
+            rejected.is_err(),
+            "removed composition exception must stay rejected: {path}"
         );
     }
 }
