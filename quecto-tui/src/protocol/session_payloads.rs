@@ -33,6 +33,10 @@ pub struct ResumeSessionSummary {
     pub home_version: Option<String>,
     /// The harness knows no folder for it: saved before folders were tracked (#2010).
     pub unscoped: bool,
+    /// The repository or folder label a search row carries (#2010); a listing has none.
+    pub repository_label: Option<String>,
+    /// The metadata fields a search matched, in the harness's rank order.
+    pub matched: Vec<String>,
 }
 
 /// Displayable chat messages from a resumed/backfilled session.
@@ -162,6 +166,8 @@ pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSumma
                 unscoped: row.home_state.as_deref() == Some("legacy_unscoped"),
                 message_count: row.message_count,
                 updated_unix_secs: row.updated_unix_secs.or(row.updated_at),
+                repository_label: row.repository_label.as_deref().map(safe_session_display),
+                matched: matched_fields(value),
             })
         })
         .collect()
@@ -340,7 +346,7 @@ fn safe_session_display(value: &str) -> String {
 }
 
 /// Discovery scope, independent of opaque session identity.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionListScope {
     #[default]
@@ -375,4 +381,19 @@ struct DiscoveryRow {
     message_count: u64,
     updated_unix_secs: Option<u64>,
     updated_at: Option<u64>,
+    repository_label: Option<String>,
+}
+
+/// The matched-field names of a search row: only the four the protocol
+/// defines, in the order given; anything else is dropped, never shown.
+fn matched_fields(row: &serde_json::Value) -> Vec<String> {
+    let names = row.get("matched").and_then(|v| v.as_array());
+    let known = |name: &&str| ["key", "title", "repository", "path"].contains(name);
+    names
+        .into_iter()
+        .flatten()
+        .filter_map(|name| name.as_str())
+        .filter(known)
+        .map(str::to_string)
+        .collect()
 }

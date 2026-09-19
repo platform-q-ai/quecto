@@ -9,8 +9,12 @@ use crate::protocol::session_payloads::ResumeSessionSummary;
 
 pub const SESSION_ROW_PREFIX: &str = "session:";
 const NO_HOME: &str = "No folder on record";
-/// A session saved before folders were tracked: said outright, not implied.
-const UNSCOPED: &str = "Unscoped · no folder on record";
+/// A session saved before folders were tracked: said outright, in the
+/// picker's own vocabulary (R1-T14) — "unscoped" is the harness's word.
+const UNSCOPED: &str = "No folder recorded (older session)";
+/// A folder longer than this loses its MIDDLE (R1-T10): the tail tells two
+/// folders apart, and the action and ID after it stay on screen.
+const FOLDER_CHARS: usize = 64;
 const ELIGIBLE: &str = "Resume";
 /// Why Enter on the row restores nothing at once, in the picker's own words
 /// ("Local Folder" / "All Folders"): the session lives in another folder, or
@@ -27,6 +31,20 @@ pub struct ResumeRows {
     pub titles: std::collections::BTreeMap<String, String>,
     /// The status line to show when there is nothing to pick.
     pub empty_hint: Option<&'static str>,
+}
+
+/// What only a searched row says (R1-T9, R1-T14): its stable ID ("key" reads
+/// as a keyboard key beside "Enter"), its repository — a linked worktree's is
+/// not in its path — and the fields the query matched.
+fn found(session: &ResumeSessionSummary) -> String {
+    let mut found = format!(" · ID {}", sanitize_untrusted_label(&session.key, 128));
+    if let Some(label) = &session.repository_label {
+        found.push_str(&format!(" · repo {}", sanitize_untrusted_label(label, 64)));
+    }
+    if !session.matched.is_empty() {
+        found.push_str(&format!(" · matched: {}", session.matched.join(", ")));
+    }
+    found
 }
 
 impl ResumeRows {
@@ -87,17 +105,20 @@ impl ResumeRows {
                     (None, true) => UNSCOPED,
                     (None, false) => NO_HOME,
                 };
-                let key = if searched {
-                    format!(" · key {}", sanitize_untrusted_label(&session.key, 128))
+                let found = if searched {
+                    found(&session)
                 } else {
                     String::new()
                 };
+                let folder = super::resume_decision::bounded_ends(
+                    &sanitize_untrusted_label(folder, 4096),
+                    FOLDER_CHARS,
+                );
                 SelectItem {
                     value: format!("{SESSION_ROW_PREFIX}{}", session.key),
                     label: sanitize_untrusted_label(&session.title, 512),
                     description: Some(format!(
-                        "{} · {when} ({} msgs) · {action}{key}",
-                        sanitize_untrusted_label(folder, 512),
+                        "{folder} · {when} ({} msgs) · {action}{found}",
                         session.message_count,
                     )),
                 }

@@ -38,6 +38,12 @@ impl super::App {
         }
         let scope = self.ac().sessions.scope;
         if let Some(picker) = self.ac_mut().sessions.resume_selector.as_mut() {
+            // An empty listing says why under `Sessions`, never "No items".
+            picker.set_notice(
+                empty_status
+                    .filter(|_| items.is_empty())
+                    .map(str::to_string),
+            );
             picker.sync_items(items);
         } else {
             self.ac_mut().sessions.resume_selector = Some(

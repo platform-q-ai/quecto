@@ -168,6 +168,11 @@ impl SearchFlight {
         }
     }
 
+    /// The latest edit's answer was a failure: the text stays unanswered.
+    pub fn unanswered(&mut self) {
+        self.answered = false;
+    }
+
     /// When the search in flight is overdue, if one is in flight.
     pub fn deadline(&self) -> Option<Instant> {
         self.in_flight.as_ref().map(|flight| flight.deadline)

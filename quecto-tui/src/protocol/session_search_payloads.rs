@@ -23,6 +23,10 @@ pub struct SessionSearchAnswer {
     pub total_matches: u64,
     /// Why the harness searched nothing, when it refused the query.
     pub refused: Option<String>,
+    /// The harness cut the rows at its limit: `total_matches` is the whole.
+    pub truncated: bool,
+    /// The scope the harness searched, echoed; `None` when it sent none.
+    pub scope: Option<SessionListScope>,
 }
 
 /// The answer's own fields, typed; rows are mapped by the discovery-row parser.
@@ -32,6 +36,7 @@ struct SearchEnvelope {
     generation: Option<u64>,
     total_matches: Option<u64>,
     refused: Option<String>,
+    truncated: Option<bool>,
 }
 
 /// An envelope that does not decode (a generation that is no number) yields
@@ -40,12 +45,17 @@ pub fn parse_session_search(data: &serde_json::Value) -> SessionSearchAnswer {
     use serde::Deserialize;
     let envelope = SearchEnvelope::deserialize(data).unwrap_or_default();
     let sessions = parse_resume_sessions(data);
+    let total_matches = envelope.total_matches.unwrap_or(sessions.len() as u64);
+    // Decoded on its own: an unknown scope is no scope, not a lost envelope.
+    let scope = data.get("scope").cloned();
     SessionSearchAnswer {
         generation: envelope.generation,
-        total_matches: envelope.total_matches.unwrap_or(sessions.len() as u64),
+        total_matches,
         refused: envelope
             .refused
             .map(|reason| reason.chars().take(200).collect()),
+        truncated: envelope.truncated.unwrap_or(false) || total_matches > sessions.len() as u64,
+        scope: scope.and_then(|scope| serde_json::from_value(scope).ok()),
         sessions,
     }
 }

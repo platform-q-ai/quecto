@@ -199,14 +199,25 @@ impl App {
     ) {
         // Presentation coordination is the sessions feature's: rows, IDs,
         // safe copy and the listed home versions come back projected.
+        let mut listed = session_payloads::parse_resume_sessions(data);
+        listed.sort_by_key(|s| std::cmp::Reverse(s.updated_unix_secs.unwrap_or(0)));
         let rows = crate::sessions::resume_rows::ResumeRows::project(
-            session_payloads::parse_resume_sessions(data),
+            listed.clone(),
             session_payloads::has_session_entries(data),
             format_unix_minutes,
         );
+        self.ac_mut().sessions.listed = listed;
         self.ac_mut().sessions.home_versions = rows.home_versions;
         self.ac_mut().sessions.listed_titles = rows.titles;
         self.open_resume_selector_with_workspaces(rows.items, manifest_path, rows.empty_hint);
+        // Text typed against a harness that cannot search filters the new
+        // listing here (R1-T5); either way the rows are now the answer.
+        let filtering = (self.ac().sessions.resume_selector.as_ref())
+            .is_some_and(|picker| !picker.query().trim().is_empty());
+        if filtering && self.ac().sessions.search_unsupported {
+            self.filter_listed_sessions();
+        }
+        self.sync_picker_rows_state();
     }
 
     pub(super) fn replace_chat_with_messages(&mut self, data: &serde_json::Value) {

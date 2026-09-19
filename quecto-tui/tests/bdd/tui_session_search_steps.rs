@@ -141,7 +141,7 @@ fn when_type(world: &mut TuiWorld, text: String) {
 #[when("I clear the resume search box")]
 fn when_clear(world: &mut TuiWorld) {
     drive(world, |h| {
-        for _ in 0..64 {
+        for _ in 0..256 {
             h.press(Key::Backspace);
         }
     });
@@ -404,4 +404,93 @@ fn then_resume_sent(world: &mut TuiWorld, key: String, version: String) {
 fn then_toast(world: &mut TuiWorld, text: String) {
     let notes = drive(world, |h| h.notification_messages());
     assert!(notes.iter().any(|n| n.contains(&text)), "{notes:?}");
+}
+
+#[when("I press Enter twice in the resume picker")]
+fn when_enter_twice(world: &mut TuiWorld) {
+    // Search ▸ Sessions, then Enter on whatever rows are on screen.
+    drive(world, |h| {
+        h.press(Key::Enter).press(Key::Enter);
+    });
+}
+
+#[when(expr = "I paste {string} into the resume search box")]
+fn when_paste(world: &mut TuiWorld, text: String) {
+    drive(world, |h| {
+        h.press(Key::Paste(text));
+    });
+}
+
+#[then("no resume request was sent")]
+fn then_no_resume(world: &mut TuiWorld) {
+    let resumes = of_type(world, "resume_session");
+    assert!(resumes.is_empty(), "{resumes:?}");
+}
+
+#[when(expr = "the harness answers the search in flight with {int} of {int} matches")]
+fn when_answer_truncated(world: &mut TuiWorld, shown: usize, total: u64) {
+    let open = unanswered(world);
+    assert_eq!(open.len(), 1, "exactly one search in flight: {open:?}");
+    let request = open[0].clone();
+    world
+        .tui_search_answered
+        .push(request["id"].as_str().unwrap().to_string());
+    let rows: Vec<_> = (0..shown)
+        .map(|n| {
+            let (key, version) = (format!("cli:m{n}"), format!("h1-00000000000000d{n}"));
+            row(&format!("MATCH-{n}"), &key, &version, Some("/work/m"))
+        })
+        .collect();
+    let data = serde_json::json!({
+        "query": request["query"], "scope": request["scope"], "generation": request["generation"],
+        "sessions": rows, "totalMatches": total, "searched": total, "truncated": true,
+        "refused": null, "diagnostics": [], "rebuilt": false,
+    });
+    respond(world, &request["id"], "search_session_metadata", data);
+}
+
+#[when(expr = "the harness refuses the search in flight with {string}")]
+fn when_refuse(world: &mut TuiWorld, reason: String) {
+    let open = unanswered(world);
+    assert_eq!(open.len(), 1, "exactly one search in flight: {open:?}");
+    let request = open[0].clone();
+    world
+        .tui_search_answered
+        .push(request["id"].as_str().unwrap().to_string());
+    let data = serde_json::json!({
+        "query": "", "scope": request["scope"], "generation": request["generation"],
+        "sessions": [], "totalMatches": 0, "searched": 0, "truncated": false,
+        "refused": reason, "diagnostics": [], "rebuilt": false,
+    });
+    respond(world, &request["id"], "search_session_metadata", data);
+}
+
+#[when("the picker is closed by a tab switch")]
+fn when_tab_switch_closes(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.close_overlays_for_tab_switch();
+    });
+}
+
+#[then("no toast is shown")]
+fn then_no_toast(world: &mut TuiWorld) {
+    let notes = drive(world, |h| h.notification_messages());
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[when("the harness rejects search_session_metadata as an unknown command")]
+fn when_unknown_command(world: &mut TuiWorld) {
+    let line = serde_json::json!({
+        "type": "response", "command": "parse_error", "success": false,
+        "error": "parse error: unknown variant `search_session_metadata`, expected one of `prompt`, `list_sessions`",
+    });
+    drive(world, |h| {
+        h.event_line(&line.to_string());
+    });
+}
+
+#[then("exactly one metadata search was ever sent")]
+fn then_one_search_ever(world: &mut TuiWorld) {
+    let searches = of_type(world, "search_session_metadata");
+    assert_eq!(searches.len(), 1, "{searches:?}");
 }

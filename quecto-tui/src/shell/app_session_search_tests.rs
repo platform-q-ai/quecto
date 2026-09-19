@@ -5,7 +5,7 @@ use super::super::super::tui_harness::TuiHarness;
 use super::super::super::*;
 use serde_json::json;
 
-fn sent(commands: &[String], kind: &str) -> Vec<serde_json::Value> {
+pub(super) fn sent(commands: &[String], kind: &str) -> Vec<serde_json::Value> {
     commands
         .iter()
         .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
@@ -14,7 +14,7 @@ fn sent(commands: &[String], kind: &str) -> Vec<serde_json::Value> {
 }
 
 /// `/resume` answered with one listed row, the search box focused.
-async fn open_picker(h: &mut TuiHarness) {
+pub(super) async fn open_picker(h: &mut TuiHarness) {
     h.app_mut().ac_mut().agent_connected = true;
     h.app_mut().send_list_sessions();
     let id = h.app_mut().ac().sessions.pending_list_id.clone().unwrap();
@@ -27,13 +27,18 @@ async fn open_picker(h: &mut TuiHarness) {
     let _ = h.drain_commands().await;
 }
 
-fn type_text(h: &mut TuiHarness, text: &str) {
+pub(super) fn type_text(h: &mut TuiHarness, text: &str) {
     for ch in text.chars() {
         h.app_mut().handle_resume_selector_key(&Key::Char(ch));
     }
 }
 
-fn answer(h: &mut TuiHarness, request: &serde_json::Value, title: &str, extra: serde_json::Value) {
+pub(super) fn answer(
+    h: &mut TuiHarness,
+    request: &serde_json::Value,
+    title: &str,
+    extra: serde_json::Value,
+) {
     let mut data = json!({
         "generation": request["generation"], "scope": request["scope"], "totalMatches": 1,
         "sessions": [{"key": "cli:found", "title": title, "homeVersion": "h1-00000000000000bb",
@@ -63,9 +68,9 @@ async fn an_edit_sends_one_search_and_its_answer_replaces_rows_and_versions() {
         h.full_frame().contains("LISTED"),
         "rows stay until an answer replaces them"
     );
-    // Overtaken: dropped, and the latest text goes out.
-    answer(&mut h, &searches[0], "STALE", json!({}));
-    assert!(!h.full_frame().contains("STALE"));
+    // Overtaken: progress at most — never settled — and the latest text goes out.
+    answer(&mut h, &searches[0], "OVERTAKEN", json!({}));
+    assert!(h.full_frame().contains("Sessions · Searching…"));
     let next = sent(&h.drain_commands().await, "search_session_metadata");
     assert_eq!((next.len(), &next[0]["query"]), (1, &json!("zeb")));
     assert!(next[0]["generation"].as_u64() > searches[0]["generation"].as_u64());
@@ -76,7 +81,7 @@ async fn an_edit_sends_one_search_and_its_answer_replaces_rows_and_versions() {
         "{frame}"
     );
     assert!(
-        frame.contains("Unscoped · no folder on record") && frame.contains("key cli:found"),
+        frame.contains("No folder recorded (older session)") && frame.contains("ID cli:found"),
         "{frame}"
     );
     let sessions = &h.app_mut().ac().sessions;
@@ -154,6 +159,10 @@ async fn a_failed_or_refused_search_says_so_and_leaves_the_picker_usable() {
             .any(|n| n.contains("Could not search sessions"))
     );
     assert!(h.full_frame().contains("LISTED") && !h.app_mut().ac().sessions.search.is_in_flight());
+    assert!(
+        h.full_frame().contains("Sessions · Search did not answer"),
+        "a failed search leaves the text unanswered"
+    );
     type_text(&mut h, "b");
     let request = sent(&h.drain_commands().await, "search_session_metadata")[0].clone();
     answer(
@@ -162,13 +171,15 @@ async fn a_failed_or_refused_search_says_so_and_leaves_the_picker_usable() {
         "x",
         json!({"sessions": [], "refused": "query too long: 300\u{1b}[2J characters", "diagnostics": ["cli_bad.json: session record unavailable"]}),
     );
-    let notes = h.notification_messages().join("\n");
+    // The refusal is said where the rows would be, made safe; the diagnostic is toasted.
+    let frame = h.full_frame();
     assert!(
-        notes.contains("Search refused: query too long: 300") && !notes.contains('\u{1b}'),
-        "{notes}"
+        frame.contains("Search refused: query too long: 300") && !frame.contains('\u{1b}'),
+        "{frame}"
     );
+    assert!(!frame.contains("No items"), "{frame}");
+    let notes = h.notification_messages().join("\n");
     assert!(notes.contains("cli_bad.json"), "{notes}");
-    assert!(h.full_frame().contains("No items"));
 }
 
 #[tokio::test]
@@ -222,10 +233,12 @@ async fn a_harness_without_the_command_frees_the_flight_and_says_so() {
             .iter()
             .any(|n| n.contains("newer quecto harness"))
     );
-    assert!(h.full_frame().contains("LISTED"), "the rows stay");
-    type_text(&mut h, "b");
-    assert_eq!(
-        sent(&h.drain_commands().await, "search_session_metadata").len(),
-        1
+    // The box filters the listed rows here from now on (R1-T5): `a` names none.
+    let frame = h.full_frame();
+    assert!(
+        frame.contains("No sessions match \"a\"") && !frame.contains("LISTED"),
+        "{frame}"
     );
+    type_text(&mut h, "b");
+    assert!(sent(&h.drain_commands().await, "search_session_metadata").is_empty());
 }

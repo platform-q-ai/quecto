@@ -7,6 +7,7 @@ use crate::protocol::resume_decision_payloads::{
     ResumeAnswer, ResumeSelection, parse_resume_answer,
 };
 use crate::sessions::resume_decision::ResumeDecisionDialog;
+use crate::sessions::resume_picker::RowsState;
 
 /// The toast of a `stale_home_version` refusal.
 const STALE_LIST: &str = "List out of date — reopen /resume and pick again";
@@ -38,10 +39,17 @@ impl App {
                 crate::sessions::resume_picker::ResumePicker::new(Vec::new(), scope),
             );
         }
-        self.send_command(Command::ListSessions {
+        if !self.send_command(Command::ListSessions {
             id: Some(id),
             scope,
-        });
+        }) {
+            // Never sent: nothing to await — the picker says so (R1-T4).
+            self.ac_mut().sessions.pending_list_id = None;
+            let picker = self.ac_mut().sessions.resume_selector.as_mut();
+            picker.map(|picker| picker.set_rows_state(RowsState::Stalled));
+            return;
+        }
+        self.sync_picker_rows_state();
     }
 
     pub(in crate::shell) fn handle_session_list_response(
@@ -80,9 +88,7 @@ impl App {
     ) {
         let pending = self.ac().sessions.pending_list_id.as_deref();
         if pending.is_some_and(|pending| Some(pending) == id) {
-            self.ac_mut().sessions.pending_list_id = None;
-            self.ac_mut().sessions.resume_selector = None;
-            self.ac_mut().sessions.search.abandon();
+            self.ac_mut().sessions.close_picker();
             self.notify_response_error("Could not list sessions", error);
         }
     }

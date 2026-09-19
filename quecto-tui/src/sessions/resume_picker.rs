@@ -21,6 +21,23 @@ pub enum ResumePickerEvent {
     Dismissed,
     Pending,
 }
+/// What the rows on screen are worth for the text in the box and the scope
+/// on screen. Only `Settled` rows may be acted on (R1-T1): while `Searching`
+/// an Enter is deferred to the settled answer's top-ranked row, and `Stalled`
+/// rows (nobody is asking: a lost answer, a lost connection) act on nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RowsState {
+    #[default]
+    Settled,
+    Searching,
+    Stalled,
+}
+/// The search box holds any session key (R1-T11); the harness searches at
+/// most this many visible characters, so nothing typed here is ever refused.
+pub const QUERY_CAP: usize = 256;
+const PASTE_REFUSED: &str =
+    "Paste refused: longer than 256 characters — part of a key matches nothing";
+const STALLED: &str = "Search did not answer — edit the text or change Scope to retry";
 /// The three focusable sections, in Tab order after `Results`. The user-facing
 /// names (`Sessions`, `Scope`, `Search`) live in [`Focus::label`].
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -97,6 +114,13 @@ pub struct ResumePicker {
     query: String,
     hits: HitLayout,
     result_rows: usize,
+    rows_state: RowsState,
+    /// An Enter typed while `Searching`, owed to the settled answer's top row.
+    pending_enter: bool,
+    /// The user moved the cursor since the last query or scope edit.
+    cursor_placed: bool,
+    /// One status line under the rows: truncated, no match, refused, fallback.
+    notice: Option<String>,
 }
 impl Default for ResumePicker {
     fn default() -> Self {
@@ -112,11 +136,45 @@ impl ResumePicker {
             query: String::new(),
             hits: HitLayout::default(),
             result_rows: 12,
+            rows_state: RowsState::Settled,
+            pending_enter: false,
+            cursor_placed: false,
+            notice: None,
         };
         picker.sync_items(items);
         picker
     }
+    pub fn set_notice(&mut self, notice: Option<String>) {
+        self.notice = notice.map(|text| safe(&text));
+    }
+    pub fn rows_state(&self) -> RowsState {
+        self.rows_state
+    }
+    /// What the rows are worth now. Settling honours an Enter typed ahead of
+    /// the answer: the value of the answer's top-ranked row, once — `None`
+    /// when no Enter is owed or nothing matched.
+    pub fn set_rows_state(&mut self, state: RowsState) -> Option<String> {
+        self.rows_state = state;
+        // Still searching: the Enter stays owed. Stalled: it is withdrawn.
+        let owed = self.pending_enter && state == RowsState::Settled;
+        self.pending_enter &= state == RowsState::Searching;
+        if !owed {
+            return None;
+        }
+        self.list.select_first();
+        self.list.selected_item().map(|item| item.value.clone())
+    }
+    /// A query or scope edit: the rows now belong to an older question.
+    fn unsettle(&mut self) {
+        self.rows_state = RowsState::Searching;
+        (self.pending_enter, self.cursor_placed) = (false, false);
+        self.notice = None;
+    }
+    /// Replace the rows. An answer is ranked, so the cursor goes to its top
+    /// row — unless the user placed it and that session is still there (R1-T8).
     pub fn sync_items(&mut self, items: Vec<SelectItem>) {
+        let placed = self.list.selected_item().map(|item| item.value.clone());
+        let placed = placed.filter(|_| self.cursor_placed);
         let items: Vec<_> = items
             .into_iter()
             .map(|mut item| {
@@ -126,6 +184,16 @@ impl ResumePicker {
             })
             .collect();
         self.list.sync_items(items);
+        // Rows that replace "no rows" are actionable before the next render
+        // re-fits the window (it always does, and only ever shrinks this).
+        if self.result_rows == 0 {
+            self.result_rows = self.list.item_count().min(1);
+        }
+        let kept = self.list.selected_item().map(|item| &item.value) == placed.as_ref();
+        if !(kept && placed.is_some()) {
+            self.list.select_first();
+            self.cursor_placed = false;
+        }
     }
     /// The search text as typed; what it matches is the harness's decision.
     pub fn query(&self) -> &str {
@@ -152,6 +220,7 @@ impl ResumePicker {
             return ResumePickerEvent::Pending;
         }
         self.scope = scope;
+        self.unsettle();
         self.sync_items(Vec::new()); // Old-scope rows are never actionable while refreshing.
         ResumePickerEvent::ScopeChanged(scope)
     }
@@ -166,7 +235,10 @@ impl ResumePicker {
     }
     pub fn handle_input(&mut self, key: &Key) -> ResumePickerEvent {
         match key {
-            Key::Escape => return ResumePickerEvent::Dismissed,
+            Key::Escape => {
+                self.pending_enter = false;
+                return ResumePickerEvent::Dismissed;
+            }
             Key::Tab => {
                 self.focus = match self.focus {
                     Focus::Scope => Focus::Query,
@@ -192,16 +264,23 @@ impl ResumePicker {
             (Focus::Scope, Key::Left) => return self.change_scope(SessionListScope::Local),
             (Focus::Scope, Key::Right) => return self.change_scope(SessionListScope::Global),
             (Focus::Query, Key::Char(c))
-                if (c.is_alphanumeric() || c.is_ascii_punctuation() || *c == ' ')
-                    && self.query.chars().count() < 64 =>
+                if typeable(*c) && self.query.chars().count() < QUERY_CAP =>
             {
                 self.query.push(*c);
-                return ResumePickerEvent::QueryChanged(self.query.clone());
+                return self.query_changed();
             }
+            (Focus::Query, Key::Paste(text)) => return self.paste(text),
             (Focus::Query, Key::Backspace) if self.query.pop().is_some() => {
-                return ResumePickerEvent::QueryChanged(self.query.clone());
+                return self.query_changed();
             }
             (Focus::Query, Key::Enter) => self.focus = Focus::Results,
+            (Focus::Results, Key::Enter | Key::Char(' '))
+                if self.rows_state != RowsState::Settled =>
+            {
+                // Deferred, never acted on stale rows (R1-T1). A cursor the
+                // user placed on them points at no settled row: nothing.
+                self.pending_enter = self.rows_state == RowsState::Searching && !self.cursor_placed;
+            }
             (Focus::Results, key) if self.result_rows > 0 => {
                 let key = match key {
                     Key::Char(' ') => &Key::Enter,
@@ -209,7 +288,9 @@ impl ResumePicker {
                     Key::ScrollUp => &Key::Up,
                     key => key,
                 };
-                self.list.handle_input(key);
+                if self.list.handle_input(key) && *key != Key::Enter {
+                    (self.cursor_placed, self.pending_enter) = (true, false);
+                }
                 if let SelectResult::Selected(value) = self.list.take_result() {
                     return ResumePickerEvent::Selected(value);
                 }
@@ -217,6 +298,31 @@ impl ResumePicker {
             _ => {}
         }
         ResumePickerEvent::Pending
+    }
+    fn query_changed(&mut self) -> ResumePickerEvent {
+        self.unsettle();
+        ResumePickerEvent::QueryChanged(self.query.clone())
+    }
+    /// A paste into the search box (R1-T11): its first line, through the
+    /// typing filter. One that does not fit is refused whole — a truncated
+    /// key would search for something the user never meant.
+    fn paste(&mut self, text: &str) -> ResumePickerEvent {
+        let line = text.lines().find(|line| !line.trim().is_empty());
+        let pasted: String = line
+            .unwrap_or_default()
+            .trim()
+            .chars()
+            .filter(|c| typeable(*c))
+            .collect();
+        if pasted.is_empty() {
+            return ResumePickerEvent::Pending;
+        }
+        if self.query.chars().count() + pasted.chars().count() > QUERY_CAP {
+            self.notice = Some(PASTE_REFUSED.into());
+            return ResumePickerEvent::Pending;
+        }
+        self.query.push_str(&pasted);
+        self.query_changed()
     }
     fn mouse(&mut self, x: usize, y: usize) -> ResumePickerEvent {
         let h = &self.hits;
@@ -251,7 +357,7 @@ impl ResumePicker {
                     self.focus = Focus::Results;
                     for _ in 0..self.list.item_count() {
                         if self.list.selected_item().is_some_and(|s| s.value == id) {
-                            return ResumePickerEvent::Selected(id);
+                            return self.clicked(id);
                         }
                         self.list.handle_input(&Key::Down);
                     }
@@ -259,6 +365,24 @@ impl ResumePicker {
             }
         }
         ResumePickerEvent::Pending
+    }
+    /// A click selects only a settled row (R1-T1); on any other it is a
+    /// cursor placement, which also withdraws an Enter typed ahead.
+    fn clicked(&mut self, id: String) -> ResumePickerEvent {
+        if self.rows_state == RowsState::Settled {
+            return ResumePickerEvent::Selected(id);
+        }
+        (self.cursor_placed, self.pending_enter) = (true, false);
+        ResumePickerEvent::Pending
+    }
+    /// `Sessions`, and what the rows under it are worth when not settled.
+    fn sessions_header(&self) -> String {
+        match (self.rows_state, self.query.trim().is_empty()) {
+            (RowsState::Settled, _) => "Sessions".into(),
+            (RowsState::Searching, true) => "Sessions · Loading…".into(),
+            (RowsState::Searching, false) => "Sessions · Searching…".into(),
+            (RowsState::Stalled, _) => format!("Sessions · {STALLED}"),
+        }
     }
     pub fn render_overlay(&mut self, width: usize, height: usize) -> (Vec<String>, usize) {
         self.render(width, height)
@@ -306,7 +430,11 @@ impl ResumePicker {
                     self.query
                 )),
                 blank(),
-                Some(format!("{}Sessions", marker(focus == Focus::Results))),
+                Some(format!(
+                    "{}{}",
+                    marker(focus == Focus::Results),
+                    self.sessions_header()
+                )),
             ]
             .into_iter()
             .flatten()
@@ -319,7 +447,21 @@ impl ResumePicker {
                 .and_then(|item| item.description.as_deref())
                 .map(|description| crate::components::utils::wrap_text(description, detail_width))
                 .unwrap_or_default();
-            let fit = fit_result_window(budget, self.list.item_count(), details.len());
+            // The notice (at most two rows) is budgeted before the list, and
+            // stands in for the list's own placeholder when there are no rows.
+            let notice_width = content_width.saturating_sub(LIST_INDENT.len()).max(1);
+            let mut notice = (self.notice.as_deref())
+                .map(|text| crate::components::utils::wrap_text(text, notice_width))
+                .unwrap_or_default();
+            notice.truncate(2.min(budget.saturating_sub(1)));
+            let no_rows = self.list.item_count() == 0
+                && (!notice.is_empty() || self.rows_state != RowsState::Settled);
+            let mut fit =
+                fit_result_window(budget - notice.len(), self.list.item_count(), details.len());
+            if no_rows {
+                fit.gap_before_footer += fit.result_rows;
+                fit.result_rows = 0;
+            }
             self.result_rows = fit.result_rows;
             self.list.set_max_visible(self.result_rows);
             if self.result_rows > 0 {
@@ -340,6 +482,11 @@ impl ResumePicker {
                 rendered.truncate(self.result_rows + fit.indicator);
                 lines.extend(rendered.iter().map(|row| format!("{LIST_INDENT}{row}")));
             }
+            lines.extend(
+                notice
+                    .iter()
+                    .map(|row| format!("{LIST_INDENT}{}", theme::dim(row))),
+            );
             lines.extend(std::iter::repeat_n(String::new(), fit.gap_before_details));
             lines.extend(
                 details
@@ -369,6 +516,10 @@ impl ResumePicker {
         };
         (lines, panel_width)
     }
+}
+/// What the search box accepts, typed or pasted: visible text only.
+fn typeable(c: char) -> bool {
+    c.is_alphanumeric() || c.is_ascii_punctuation() || c == ' '
 }
 fn safe(text: &str) -> String {
     sanitize_truncate_chars_with_ellipsis(text, 512, "…")

@@ -15,23 +15,70 @@ Feature: The /resume picker searches session metadata through the harness (#2010
     Then one metadata search is in flight for "zeb" in scope "global"
     And no session list was requested by typing
 
-  Scenario: A searched row shows its title, folder, key and unscoped state
+  Scenario: A searched row shows its title, folder, ID, repository, match and folder state
     When I type "a" into the resume search box
     And the harness answers the search in flight with a scoped and an unscoped session
     Then the resume picker shows the row "Zebra cache" with "/work/alpha"
-    And the resume picker details show "key chat-1700000000-abc"
+    And the resume picker details show "ID chat-1700000000-abc"
+    And the resume picker details show "repo alpha · matched: title"
     When I press Down in the resume results
-    Then the resume picker details show "Unscoped · no folder on record"
-    And the resume picker details show "key cli:legacy"
+    Then the resume picker details show "No folder recorded (older session)"
+    And the resume picker details show "ID cli:legacy"
 
-  Scenario: An answer to a query the user has typed past is discarded
+  Scenario: An answer the user has typed past is progress and never settles the picker
     When I type "ze" into the resume search box
-    And the harness answers the search in flight with the session "STALE-Z-ROW"
-    Then the resume picker does not show "STALE-Z-ROW"
+    Then the resume picker shows "Sessions · Searching…"
+    And the resume picker shows "LISTED-ONE"
+    When the harness answers the search in flight with the session "OVERTAKEN-Z-ROW"
+    Then the resume picker shows "OVERTAKEN-Z-ROW"
+    And the resume picker shows "Sessions · Searching…"
     And one metadata search is in flight for "ze" in scope "global"
     When the harness answers the search in flight with the session "FRESH-ZE-ROW"
     Then the resume picker shows "FRESH-ZE-ROW"
+    And the resume picker does not show "Searching…"
     And no metadata search is in flight
+
+  Scenario: Enter typed ahead of the answer resumes the answered row, never a listed one
+    When I type "zebr" into the resume search box
+    And I press Enter twice in the resume picker
+    Then no resume request was sent
+    When the harness answers the search in flight with the session "OVERTAKEN-Z-ROW"
+    Then no resume request was sent
+    And one metadata search is in flight for "zebr" in scope "global"
+    When the harness answers the search in flight with the session "ZEBRA-PLAN"
+    Then one resume request is sent for "cli:answered" carrying version "h1-00000000000000c1"
+    And the resume picker is closed
+
+  Scenario: Enter typed ahead of an answer with no match resumes nothing
+    When I type "q" into the resume search box
+    And I press Enter twice in the resume picker
+    And the harness answers the search in flight with no sessions
+    Then no resume request was sent
+    And the resume picker shows "No sessions match"
+    And the resume picker shows "in All Folders"
+    And the resume picker does not show "No items"
+
+  Scenario: An answer cut at the limit says how many matched
+    When I type "m" into the resume search box
+    And the harness answers the search in flight with 3 of 5200 matches
+    Then the resume picker shows "Showing 3 of 5,200 — keep typing to narrow"
+
+  Scenario: A refused query says so where the rows would be
+    When I type "r" into the resume search box
+    And the harness refuses the search in flight with "query too long: 300 characters (at most 256 are searched)"
+    Then the resume picker shows "Search refused: query too long: 300 characters"
+
+  Scenario: A pasted key is searched whole
+    When I paste "  chat-1700000000-abc  " into the resume search box
+    Then one metadata search is in flight for "chat-1700000000-abc" in scope "global"
+
+  Scenario: A picker closed by a tab switch abandons its search
+    When I type "a" into the resume search box
+    And the picker is closed by a tab switch
+    And a search answer for the closed picker arrives with the session "AFTER-SWITCH"
+    Then the resume picker is closed
+    And no toast is shown
+    And nothing but metadata searches and lists was ever sent
 
   Scenario: An answer with another generation or another id is discarded
     When I type "q" into the resume search box
@@ -83,3 +130,15 @@ Feature: The /resume picker searches session metadata through the harness (#2010
     And the harness fails the search in flight with "sessions dir unreadable"
     Then a toast says "Could not search sessions"
     And the resume picker shows "LISTED-ONE"
+    And the resume picker shows "Sessions · Search did not answer"
+
+  Scenario: A harness without the command is told once and the box filters the listed rows
+    When I type "two" into the resume search box
+    And the harness rejects search_session_metadata as an unknown command
+    Then a toast says "Search needs a newer quecto harness — restart the agent"
+    And the resume picker shows "LISTED-TWO"
+    And the resume picker does not show "LISTED-ONE"
+    When I clear the resume search box
+    And I type "one" into the resume search box
+    Then the resume picker shows "LISTED-ONE"
+    And exactly one metadata search was ever sent

@@ -55,6 +55,16 @@ impl TuiHarness {
         self
     }
 
+    /// Run the production seam every tab/session switch closes overlays
+    /// through (`close_tab_switch_overlays`). With a modal open the switch
+    /// keys go to the modal, so a test of "the picker was closed by a switch"
+    /// drives the seam itself.
+    pub fn close_overlays_for_tab_switch(&mut self) -> &mut Self {
+        self.app.close_tab_switch_overlays();
+        self.capture();
+        self
+    }
+
     /// Drain any deferred stream paint the way the loop's deadline arm would:
     /// if a coalesced paint is pending, treat its deadline as reached and
     /// paint. Lets tests assert "no frame even after the loop settles"

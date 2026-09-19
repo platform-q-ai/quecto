@@ -52,6 +52,7 @@ fn scope_focus_and_query_cycle_reporting_the_search_text_without_filtering() {
     // The picker filters nothing: both rows stay until an answer replaces them.
     assert_eq!((picker.item_count(), picker.query()), (2, "b"));
     picker.sync_items(vec![item("b")]);
+    picker.set_rows_state(super::resume_picker::RowsState::Settled);
     picker.handle_input(&Key::Tab);
     assert_eq!(
         picker.handle_input(&Key::Enter),
@@ -470,7 +471,11 @@ fn layout_separates_sections_with_blank_rows_and_indents_list_rows() {
 
     picker.handle_input(&Key::Tab);
     picker.handle_input(&Key::Right);
+    // Asked, not yet answered: the rows are loading, and none are shown.
+    let (lines, _) = picker.render(100, 30);
+    assert_eq!(content_rows(&lines)[5], "  Sessions · Loading…");
     picker.sync_items(vec![]);
+    picker.set_rows_state(super::resume_picker::RowsState::Settled);
     let (lines, _) = picker.render(100, 30);
     let rows = content_rows(&lines);
     assert_eq!(

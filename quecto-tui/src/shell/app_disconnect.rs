@@ -59,6 +59,8 @@ impl App {
         // `/resume` still latched in `pending_session_resume` is re-sent by
         // the next attach.
         self.ac_mut().pending_session_resume_id = None;
+        // So did a metadata search or a listing the picker was waiting for.
+        self.interrupt_session_discovery();
         self.ac_mut().master_session.running = false;
         self.ac_mut().spinner = None;
         self.ac_mut().master_session.chat.finalize_assistant();

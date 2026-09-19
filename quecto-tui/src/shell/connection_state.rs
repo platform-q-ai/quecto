@@ -324,7 +324,7 @@ impl App {
     /// idempotence by doing the state transition outside render composition.
     pub(crate) fn close_tab_switch_overlays(&mut self) {
         let conn = self.active_conn_mut();
-        conn.sessions.resume_selector = None;
+        conn.sessions.close_picker();
         conn.sessions.resume_decision = None;
         conn.rewind.selector = None;
         self.autocomplete.dismiss();

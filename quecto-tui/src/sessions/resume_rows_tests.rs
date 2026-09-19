@@ -11,6 +11,8 @@ fn summary(key: &str, at: Option<u64>, eligible: bool, dir: Option<&str>) -> Res
         resume_eligible: eligible,
         home_version: at.map(|at| format!("h1-{at:016x}")),
         unscoped: false,
+        repository_label: None,
+        matched: Vec::new(),
     }
 }
 
@@ -98,11 +100,11 @@ fn searched_rows_keep_the_harness_order_and_name_key_folder_and_unscoped_state()
         .collect();
     assert_eq!(
         described[0],
-        "/work/alpha · t1 (3 msgs) · Resume · key chat-best"
+        "/work/alpha · t1 (3 msgs) · Resume · ID chat-best"
     );
     assert_eq!(
         described[1],
-        "Unscoped · no folder on record · t99 (3 msgs) · Enter for options · key cli:legacy"
+        "No folder recorded (older session) · t99 (3 msgs) · Enter for options · ID cli:legacy"
     );
     assert!(
         described[2].starts_with("No folder on record · t50"),
@@ -122,7 +124,7 @@ fn searched_rows_keep_the_harness_order_and_name_key_folder_and_unscoped_state()
     let rows = ResumeRows::project(vec![listed], true, |secs| format!("t{secs}"));
     assert_eq!(
         rows.items[0].description.as_deref(),
-        Some("Unscoped · no folder on record · t9 (3 msgs) · Enter for options")
+        Some("No folder recorded (older session) · t9 (3 msgs) · Enter for options")
     );
 }
 
@@ -144,4 +146,66 @@ fn a_rows_untrusted_text_is_made_safe_for_the_terminal() {
     assert!(item.label.contains("evil") && item.label.contains("title"));
     // The identity sent on selection is the key as the harness gave it.
     assert_eq!(item.value, "session:cli:e\u{202e}vil\u{200b}");
+}
+
+/// R1-T9 / R1-T10 / R1-T14: a searched row says why it matched and which
+/// repository it belongs to, keeps its action and ID on screen whatever the
+/// folder's length, and speaks the picker's own vocabulary.
+#[test]
+fn a_searched_row_names_its_repository_and_match_and_a_long_folder_keeps_its_tail() {
+    let mut worktree = summary("cli:wt", Some(1), false, Some("/work/wt/fix-2010"));
+    worktree.repository_label = Some("quecto\u{202e}".into());
+    worktree.matched = vec!["repository".into(), "path".into()];
+    let long = format!("/very/{}/deep/tail-folder", "long-segment/".repeat(300));
+    let mut deep = summary("cli:deep", Some(2), true, Some(&long));
+    deep.matched = vec!["title".into()];
+    let rows = ResumeRows::project_searched(vec![worktree, deep], |secs| format!("t{secs}"));
+    assert_eq!(
+        rows.items[0].description.as_deref(),
+        Some(
+            "/work/wt/fix-2010 · t1 (3 msgs) · Saved in another folder — Enter for options · ID cli:wt · repo quecto · matched: repository, path"
+        )
+    );
+    let deep = rows.items[1].description.as_deref().unwrap();
+    assert!(
+        deep.chars().count() < 160,
+        "{}: {deep}",
+        deep.chars().count()
+    );
+    assert!(
+        deep.starts_with("/very/long-segment/") && deep.contains("…"),
+        "{deep}"
+    );
+    assert!(
+        deep.contains("/deep/tail-folder · t2 (3 msgs) · Resume · ID cli:deep · matched: title"),
+        "{deep}"
+    );
+    // An everything-query matched no field: no marker, and no label → no repo.
+    let plain = ResumeRows::project_searched(vec![summary("k", Some(1), true, Some("/w"))], |_| {
+        "now".into()
+    });
+    assert_eq!(
+        plain.items[0].description.as_deref(),
+        Some("/w · now (3 msgs) · Resume · ID k")
+    );
+    // A listing row elides the same way and never shows search-only fields.
+    let mut listed = summary("cli:deep", Some(2), true, Some(&long));
+    listed.repository_label = Some("ignored".into());
+    let rows = ResumeRows::project(vec![listed], true, |secs| format!("t{secs}"));
+    let listed = rows.items[0].description.as_deref().unwrap();
+    assert!(
+        listed.ends_with("/deep/tail-folder · t2 (3 msgs) · Resume"),
+        "{listed}"
+    );
+}
+
+#[test]
+fn a_session_without_a_folder_is_worded_for_a_user() {
+    let mut legacy = summary("cli:legacy", Some(9), false, None);
+    legacy.unscoped = true;
+    let rows = ResumeRows::project(vec![legacy], true, |secs| format!("t{secs}"));
+    assert_eq!(
+        rows.items[0].description.as_deref(),
+        Some("No folder recorded (older session) · t9 (3 msgs) · Enter for options")
+    );
 }
