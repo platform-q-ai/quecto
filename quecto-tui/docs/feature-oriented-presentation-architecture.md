@@ -81,9 +81,13 @@ request and the answer; `sessions` owns the search box's flight control (one
 search in flight, latest wins; only the latest generation's answer under the
 sent id *settles* the rows, an overtaken one is progress, a lost one is retried
 once and given up), what the picker's rows are worth (`RowsState`: Enter and
-the mouse act on settled rows only, an Enter typed ahead is owed to the settled
-answer's top row) and the row wording; `shell` owns the request id, the
-timeout tick and the toasts. The picker reports its text and matches nothing —
+the mouse act on settled rows only; an Enter typed ahead is owed to the settled
+answer's top row — only while a SEARCH of typed text is in the air, never
+while a listing loads — is shown in the header while owed, and is withdrawn by
+any other key or click, a lost connection or the first timeout) and the row
+wording; `shell` owns the request id, the timeout tick and the toasts. An old
+harness is recognised only by a `parse_error` that rejects the search command
+itself (`unknown variant`), with a search of this tab in flight. The picker reports its text and matches nothing —
 with one exception that adds no policy: against a harness that predates the
 command, `sessions/local_filter.rs` filters the rows already listed by the
 harness's own visible-text rule.
@@ -368,7 +372,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/client_result_text.rs` | `protocol` tool-result text extraction (split from `client.rs` for the 750-line cap, #1679 P4; protocol-mapper allowlist as a `client.rs` relocation) |
 | `protocol/subagent_payloads.rs` | `protocol` typed subagent roster wire DTOs incl. versioned environment metadata (#1369 slice 4; split from `client.rs` for the 750-line baseline) |
 | `protocol/workflow_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
-| `sessions/resume_picker.rs` | `sessions` (scope-aware presentation, #2009; the search box reports its text — typed or pasted, up to 256 characters — and filters nothing; `RowsState` settled/searching/stalled, the deferred Enter, the cursor rule for replaced rows and the status notice, #2010) |
+| `sessions/resume_picker.rs` | `sessions` (scope-aware presentation, #2009; the search box reports its text — typed or pasted, up to 256 characters — and filters nothing; `RowsState` settled/loading/searching/stalled/disconnected, the deferred Enter and its cue, the cursor rule for replaced rows and the status notice, #2010) |
 | `sessions/session_search.rs` | `sessions` metadata-search flight control: single flight, latest wins, settled only by the sent id with the latest generation, overtaken answers as progress, the 5 s give-up with one retry (#2010) |
 | `sessions/local_filter.rs` | `sessions` literal filter over the listed rows for a harness without `search_session_metadata` (#2010) |
 | `protocol/session_search_payloads.rs` | `protocol` typed `search_session_metadata` exchange: request (query, scope, generation) and answer (rows via the discovery-row parser with repository label and matched fields, generation, echoed scope, total, truncation, refusal) (#2010) |
