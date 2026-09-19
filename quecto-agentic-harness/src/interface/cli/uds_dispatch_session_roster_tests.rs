@@ -736,7 +736,7 @@ pub(crate) fn ephemeral_read_handles(
 /// The composed `list_sessions` handle a dispatch rig holds over `base`.
 pub(crate) fn list_handle(
     base: &std::path::Path,
-) -> std::sync::Arc<crate::interface::uds::sessions::controller::ListSessionsController> {
+) -> crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles {
     composed_sessions(base).list_sessions
 }
 

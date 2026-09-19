@@ -167,6 +167,20 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Search saved-session metadata (#2010): title, exact key, repository
+    /// label and path — literal text, never a pattern, never transcript
+    /// content. `generation` is the client's own counter, echoed unchanged.
+    SearchSessionMetadata {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        query: String,
+        #[serde(default)]
+        scope: SessionListScopeCommand,
+        #[serde(default)]
+        generation: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u64>,
+    },
     /// Switch to a fresh user-chat session.
     NewSession {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -417,6 +431,7 @@ impl AgentCommand {
             Self::ListModels { id } => id.as_deref(),
             Self::RefreshModels { id, .. } => id.as_deref(),
             Self::ListSessions { id, .. } => id.as_deref(),
+            Self::SearchSessionMetadata { id, .. } => id.as_deref(),
             Self::NewSession { id } => id.as_deref(),
             Self::ResumeSession { id, .. } => id.as_deref(),
             Self::SetModel { id, .. } => id.as_deref(),
@@ -449,6 +464,7 @@ impl AgentCommand {
             Self::ListModels { .. } => "list_models",
             Self::RefreshModels { .. } => "refresh_models",
             Self::ListSessions { .. } => "list_sessions",
+            Self::SearchSessionMetadata { .. } => "search_session_metadata",
             Self::NewSession { .. } => "new_session",
             Self::ResumeSession { .. } => "resume_session",
             Self::SetModel { .. } => "set_model",

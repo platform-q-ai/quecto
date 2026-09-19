@@ -14,7 +14,9 @@ use super::{
     },
 };
 use crate::{
-    application::sessions::ports::session_home::{HomeCatalogueSnapshot, SessionHomeCatalogue},
+    application::sessions::ports::session_home::{
+        Answer, HomeCatalogueSnapshot, SessionHomeCatalogue, SessionMetadataSnapshot,
+    },
     domain::{
         error::DomainError,
         session_home::{SessionHome, SessionHomeScope},
@@ -26,6 +28,8 @@ use std::{collections::BTreeMap, path::PathBuf};
 #[path = "session_home_catalogue_index.rs"]
 mod session_home_catalogue_index;
 use session_home_catalogue_index::{Catalogue, HomeEntry, IndexEntry, IndexHome, SummaryEntry};
+#[path = "session_home_catalogue_metadata.rs"]
+mod session_home_catalogue_metadata;
 
 #[derive(Clone)]
 pub struct FileSessionHomeCatalogue {
@@ -394,15 +398,10 @@ fn indexed_home_matches(
         })
 }
 impl SessionHomeCatalogue for FileSessionHomeCatalogue {
-    fn list_async(
-        &self,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<HomeCatalogueSnapshot, DomainError>>
-                + Send
-                + '_,
-        >,
-    > {
+    fn metadata(&self) -> Answer<'_, SessionMetadataSnapshot> {
+        Box::pin(session_home_catalogue_metadata::query(self.clone()))
+    }
+    fn list_async(&self) -> Answer<'_, HomeCatalogueSnapshot> {
         let catalogue = self.clone();
         Box::pin(async move {
             tokio::task::spawn_blocking(move || catalogue.list())

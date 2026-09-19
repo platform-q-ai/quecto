@@ -229,6 +229,16 @@ const COMPOSED_CONSTRUCTORS: &[(&str, &str)] = &[
         "ListSessionsController::new(",
         "src/composition/sessions.rs",
     ),
+    // #2010 metadata search: its use case and controller beside the list
+    // controller in the discovery handles.
+    (
+        "SearchSessionMetadata::new(",
+        "src/composition/session_search.rs",
+    ),
+    (
+        "SearchSessionMetadataController::new(",
+        "src/composition/session_search.rs",
+    ),
     ("FileSessionStore::new(", "src/composition/sessions.rs"),
     (
         "ActiveSessionState::new(",

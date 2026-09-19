@@ -19,7 +19,7 @@ use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
 use crate::domain::message::Message;
-use crate::interface::uds::sessions::controller::ListSessionsController;
+use crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles;
 use futures::FutureExt;
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
@@ -171,7 +171,7 @@ pub(crate) struct DispatchCtx<'a> {
     pub catalogue: super::catalogue_handles::CatalogueHandles,
 }
 type FleetTeardown = std::sync::Arc<TerminateAllDelegatedAgents>;
-type ListSessionsHandle = std::sync::Arc<ListSessionsController>;
+type ListSessionsHandle = SessionDiscoveryHandles;
 type SaveSessionHandle = std::sync::Arc<crate::application::sessions::use_cases::SaveSession>;
 
 impl<'a> DispatchCtx<'a> {

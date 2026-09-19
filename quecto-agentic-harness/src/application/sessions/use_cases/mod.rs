@@ -12,6 +12,7 @@ pub mod resume_saved_session;
 pub mod retain_context;
 pub mod rewind_conversation;
 pub mod save_session;
+pub mod search_session_metadata;
 pub mod start_fresh_conversation;
 pub mod synchronize_transcript;
 
@@ -26,6 +27,7 @@ pub use resume_saved_session::ResumeSavedSession;
 pub use retain_context::{ListRetainedContext, RetainContext};
 pub use rewind_conversation::RewindConversation;
 pub use save_session::SaveSession;
+pub use search_session_metadata::SearchSessionMetadata;
 pub use start_fresh_conversation::StartFreshConversation;
 pub use synchronize_transcript::SynchronizeTranscript;
 
