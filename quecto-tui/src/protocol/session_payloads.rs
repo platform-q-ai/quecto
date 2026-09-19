@@ -167,7 +167,7 @@ pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSumma
                 message_count: row.message_count,
                 updated_unix_secs: row.updated_unix_secs.or(row.updated_at),
                 repository_label: row.repository_label.as_deref().map(safe_session_display),
-                matched: matched_fields(value),
+                matched: matched_fields(row.matched),
             })
         })
         .collect()
@@ -382,18 +382,33 @@ struct DiscoveryRow {
     updated_unix_secs: Option<u64>,
     updated_at: Option<u64>,
     repository_label: Option<String>,
+    #[serde(default)]
+    matched: Vec<Lenient<String>>,
+}
+
+/// A value that is kept when it is what the protocol says and ignored —
+/// never an error that would hide its whole row or answer — when it is not.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+pub(super) enum Lenient<T> {
+    Known(T),
+    Other(serde::de::IgnoredAny),
+}
+
+impl<T> Lenient<T> {
+    pub(super) fn known(self) -> Option<T> {
+        match self {
+            Self::Known(value) => Some(value),
+            Self::Other(_) => None,
+        }
+    }
 }
 
 /// The matched-field names of a search row: only the four the protocol
 /// defines, in the order given; anything else is dropped, never shown.
-fn matched_fields(row: &serde_json::Value) -> Vec<String> {
-    let names = row.get("matched").and_then(|v| v.as_array());
-    let known = |name: &&str| ["key", "title", "repository", "path"].contains(name);
-    names
-        .into_iter()
-        .flatten()
-        .filter_map(|name| name.as_str())
-        .filter(known)
-        .map(str::to_string)
-        .collect()
+fn matched_fields(names: Vec<Lenient<String>>) -> Vec<String> {
+    const FIELDS: [&str; 4] = ["key", "title", "repository", "path"];
+    let known = |name: &String| FIELDS.contains(&name.as_str());
+    let names = names.into_iter().filter_map(Lenient::known);
+    names.filter(known).collect()
 }

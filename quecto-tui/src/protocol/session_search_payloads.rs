@@ -3,7 +3,9 @@
 //! parser as `list_sessions`, so a searched row carries the same home version);
 //! the generation is the client's own counter, echoed by the harness, that an
 //! answer must carry to be shown.
-use super::session_payloads::{ResumeSessionSummary, SessionListScope, parse_resume_sessions};
+use super::session_payloads::{
+    Lenient, ResumeSessionSummary, SessionListScope, parse_resume_sessions,
+};
 
 /// What the search box asks: literal text, the scope on screen, and the
 /// generation of this edit.
@@ -37,6 +39,8 @@ struct SearchEnvelope {
     total_matches: Option<u64>,
     refused: Option<String>,
     truncated: Option<bool>,
+    /// Lenient: an unknown scope is no scope, not a lost envelope.
+    scope: Option<Lenient<SessionListScope>>,
 }
 
 /// An envelope that does not decode (a generation that is no number) yields
@@ -46,8 +50,6 @@ pub fn parse_session_search(data: &serde_json::Value) -> SessionSearchAnswer {
     let envelope = SearchEnvelope::deserialize(data).unwrap_or_default();
     let sessions = parse_resume_sessions(data);
     let total_matches = envelope.total_matches.unwrap_or(sessions.len() as u64);
-    // Decoded on its own: an unknown scope is no scope, not a lost envelope.
-    let scope = data.get("scope").cloned();
     SessionSearchAnswer {
         generation: envelope.generation,
         total_matches,
@@ -55,7 +57,7 @@ pub fn parse_session_search(data: &serde_json::Value) -> SessionSearchAnswer {
             .refused
             .map(|reason| reason.chars().take(200).collect()),
         truncated: envelope.truncated.unwrap_or(false) || total_matches > sessions.len() as u64,
-        scope: scope.and_then(|scope| serde_json::from_value(scope).ok()),
+        scope: envelope.scope.and_then(Lenient::known),
         sessions,
     }
 }
