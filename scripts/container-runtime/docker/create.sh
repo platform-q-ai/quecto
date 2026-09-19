@@ -59,7 +59,7 @@ usage() {
 
 state_dir=""
 repo=""
-image="${QUECTO_DOCKER_IMAGE:-quecto-box:local}"
+image="${QUECTO_DOCKER_IMAGE:-quecto-dev:local}"
 preflight_only=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -219,6 +219,32 @@ if [ -n "$cli" ]; then
   fi
 else
   report warn image "image $image was not checked: no container runtime" \
+    "fix the runtime-cli check first"
+fi
+
+# A present tag is not enough for this repository's standard development
+# container. Prove the compiler and every CI helper are executable before an
+# agent is admitted; this keeps a generic/tool-only image from failing only
+# after code has been changed. Custom images selected with --image must honour
+# the same development contract.
+if [ -n "$cli" ] && [ "$image_rc" = 0 ]; then
+  tools_rc=0
+  tools_error="$(bounded "$cli" run --rm --pull=never "$image" sh -c '
+    for tool in cargo rustc rustfmt cargo-clippy cargo-nextest cargo-llvm-cov cargo-deny cargo-machete; do
+      command -v "$tool" >/dev/null || { printf "missing %s\n" "$tool" >&2; exit 1; }
+    done
+  ' 2>&1)" || tools_rc=$?
+  if [ "$tools_rc" = 0 ]; then
+    report ok dev-tools "image $image provides the Quecto development toolchain" ""
+  else
+    report fail dev-tools "image $image is not a Quecto development image: $(last_line "$tools_error")" \
+      "build the standard image printed by 'quecto container init --refresh'" "$EXIT_NO_IMAGE"
+  fi
+elif [ -n "$cli" ]; then
+  report fail dev-tools "image $image could not be checked for the Quecto development toolchain" \
+    "fix the image check first, then build the standard development image" "$EXIT_NO_IMAGE"
+else
+  report warn dev-tools "the Quecto development toolchain was not checked: no container runtime" \
     "fix the runtime-cli check first"
 fi
 

@@ -110,13 +110,13 @@ is always `0`), so pids 1 and 2 inside a box — `podman-init` and the
 coordinator — can never be targeted from outside. This is ratcheted by
 `quecto-agentic-harness/tests/architecture/teardown_authority.rs` (the
 process-effect allowlist) and proven by running the harness's own full BDD
-suite inside a `quecto-box:local` container whose pid 2 blocks and logs every
+suite inside a `quecto-dev:local` container whose pid 2 blocks and logs every
 signal it receives (see the #1940 record below).
 
 #### In-container proof record (#1925 method, #1940 run)
 
 Method (issue #1925): the harness's own full BDD suite runs inside a
-`quecto-box:local` container as the child of a **signal-logging pid 2** — a
+`quecto-dev:local` container as the child of a **signal-logging pid 2** — a
 Python wrapper that blocks `SIGTERM`/`SIGINT`/`SIGHUP`, runs the suite as its
 child (with the mask unblocked for the child), and logs every signal it
 receives from a `sigwaitinfo` loop with `si_pid` and the sender's `cmdline`.
@@ -124,7 +124,7 @@ Pid 2 is where a swarm coordinator's harness sits, so any registry, fixture or
 descendant pid the suite ever targeted would receive the signal there.
 
 - **Revision:** `ec29e9902b96fdab2534a0f51dd82bdbace0f5e2` (the #1940 PR head at the time of the run; the commits that record it follow)
-- **Image:** `quecto-box:local`, id `b1f87e8917502e1963979a0ed43fd7866427c961c26aac0d1576a17774b63662`
+- **Image:** `quecto-dev:local`, id `b1f87e8917502e1963979a0ed43fd7866427c961c26aac0d1576a17774b63662`
 - **Command:** `scripts/bdd-in-box/run.sh` (committed with the pid 2
   wrapper `scripts/bdd-in-box/pid2_signal_log.py`), which runs exactly:
 
@@ -135,7 +135,7 @@ descendant pid the suite ever targeted would receive the signal there.
     -v <scratch>/home:/home/dev -v scripts/bdd-in-box/pid2_signal_log.py:/pid2_signal_log.py:ro \
     -e CARGO_TARGET_DIR=/tmp/target -e HOME=/home/dev -e TMPDIR=/home/dev/tmp \
     -e PID2_SIGNAL_LOG=/home/dev/pid2-signals.log -e RUST_LOG=warn -w /src \
-    quecto-box:local python3 /pid2_signal_log.py \
+    quecto-dev:local python3 /pid2_signal_log.py \
     bash -c 'status=0; for i in 0 1 2 3; do echo "=== shard $i/4 ==="; \
       QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=4 \
       cargo test --workspace --features quecto-agentic-harness/test-support --bins --test bdd || status=1; done; exit $status'
@@ -636,7 +636,7 @@ or an invalid contract fails the launch and rolls back. **Logs and
 diagnostics go to stderr**: the last 4 KiB of the script's stderr (with
 terminal escapes and control characters removed) are appended to the tool
 error after the exit status — `script-managed create failed with status
-exit status: 6: … image quecto-box:local is not present …` — and echoed on
+exit status: 6: … image quecto-dev:local is not present …` — and echoed on
 the parent harness's stderr, so a `die` message reaches both the model and
 the operator (#2024 S4b). The same applies to `exec`, and to the retained
 `inspect`, `kill` and `cleanup` scripts (a failed cleanup is logged with
@@ -816,13 +816,13 @@ step is a command with its expected output):
 |---|---|---|
 | Preconditions | `git rev-parse --show-toplevel`; `podman --version` (or `docker`); `jq --version`; `git ls-remote --exit-code origin`; `quecto status` | the toplevel is `pwd`; the tools answer; `ls-remote` exits 0; `Overlay: none` or `(trusted)` |
 | 1. init | `quecto container init` (`--repo <url>`, `--image <tag>`, `--dry-run`) | `wrote …` × 5, `container config "standard" written as container_configs.standard in <repo>/.quecto/config.json (trusted for exactly these bytes)`, `default: true`, then `next:` with the build command |
-| 2. build | the printed `podman build -t quecto-box:local -f <repo>/.quecto/containers/standard/Containerfile <repo>/.quecto/containers/standard` (skip when `status` already reports the image present) | `Successfully tagged localhost/quecto-box:local` |
+| 2. build | the printed `podman build -t quecto-dev:local -f <repo>/.quecto/containers/standard/Containerfile <repo>/.quecto/containers/standard` (skip when `status` already reports the image present) | `Successfully tagged localhost/quecto-dev:local` |
 | 3. verify | `quecto container status` | a header, the `assets/config/trust/image` lines (plus a `this repo's default` continuation, or a `note:` when the label was removed by hand), then `ready: spawn {"container":true} from an agent in this project`, exit 0 (exit 1 `not ready` while any file differs — a digest-pinned Containerfile included; then rely on the doctor) |
 | 4. doctor | `quecto container doctor` | every check `✓` (`gh` may be `!`), `0 checks failed`, exit 0 |
 | 5. spawn | from an agent in the repo: `spawn {"agent_id":"probe","task":"run pwd","container":true}` | `environment_ref=C1 container_config=standard` |
 | 6. inventory | `agent_cmd {"agent_id":"*","command":"get_containers"}` | the environment `running`, its `repository` |
 | 7. kill | `agent_cmd {"agent_id":"*","command":"kill_container","ref":"C1"}` | the environment gone from `get_containers` |
-| Rollback | `quecto config unset --local container_configs.standard`; `rm -r .quecto/containers/standard`; optionally `podman rmi quecto-box:local` | `unset container_configs.standard in <repo>/.quecto/config.json (trusted)` |
+| Rollback | `quecto config unset --local container_configs.standard`; `rm -r .quecto/containers/standard`; optionally `podman rmi quecto-dev:local` | `unset container_configs.standard in <repo>/.quecto/config.json (trusted)` |
 | Upgrade | `quecto container init --refresh`, rebuild if the Containerfile changed, `quecto container doctor` | each differing file `refreshed` |
 
 Failures and their fixes are in the [troubleshooting runbook](#troubleshooting-runbook)
@@ -866,7 +866,7 @@ is written, so a refused init leaves the project untouched):
    for exactly the bytes written. Every argv names the materialised
    scripts by absolute path; `create` carries `--state-dir
    <base dir>/container-environments`, `--repo <url>` when there is one and
-   `--image quecto-box:local` (or `--image` as given); `kill`/`cleanup`
+   `--image quecto-dev:local` (or `--image` as given); `kill`/`cleanup`
    carry `--op kill`/`--op cleanup`; no argv ends with `--` (the launcher
    appends it before the child command).
 5. Materialises the missing files (the scripts byte-identical to
@@ -882,7 +882,7 @@ is written, so a refused init leaves the project untouched):
    (`quecto config unset --local container_configs.standard`).
 6. Prints the files, the entry and the one step left — the exact build
    command:
-   `podman build -t quecto-box:local -f <project>/.quecto/containers/standard/Containerfile <project>/.quecto/containers/standard`
+   `podman build -t quecto-dev:local -f <project>/.quecto/containers/standard/Containerfile <project>/.quecto/containers/standard`
    (on a docker-only host, the same command with `docker`: the scripts
    drive whichever runtime the doctor's `runtime-cli` line names).
 
@@ -938,12 +938,7 @@ image line carries the same refusal). Review a pulled change to
 An entry that names its own scripts elsewhere is vouched for by the
 overlay's trust alone: the integrity check is the standard bundle's, not
 a general one. The Containerfile is not a host-side script and is not
-checked at launch; `status` still reports it. The Containerfile's base is
-pinned by tag (`docker.io/library/debian:trixie-slim`), not by digest: a
-rebuild can pick up a newer base under the same tag. Pin the digest in
-the materialised Containerfile (`FROM debian@sha256:…`) if you need a
-reproducible base; `status` will then list it as `differs`, which is
-expected and does not affect a launch.
+checked at launch; `status` still reports it. The Containerfile pins its Debian base by digest and pins the Rust toolchain and Cargo helper versions. Upgrade those values only deliberately, rebuild the image, and run the documented development gates.
 
 **Upgrades.** The comparison is against *this binary's* bundle, so a
 quecto that embeds a newer bundle than the one that materialised the
@@ -967,13 +962,16 @@ environment variables between an operator and a working container, and
 sat *before* the preflight, so `quecto container doctor` could never have
 reported on it. Pin a digest in `--image` if you want one.
 
-**Image contents.** Debian trixie-slim with bash, ca-certificates,
-coreutils, curl, jq, git, openssh-client, gh, ripgrep, fd, python3 and
-procps; `ENTRYPOINT []` so the create's argv is the container's main
-process; no compiler or Cargo. A project that needs a toolchain derives its
-own image `FROM` this one and passes `--image <tag>` to `init`. The host
-`quecto` binary is identity-mounted into the container, so the image must
-carry a glibc the binary runs on (Debian trixie does for current builds).
+**Image contents.** A digest-pinned Debian trixie base with the shell,
+Git/GitHub, Python and everyday utilities plus the complete pinned Quecto
+development toolchain: Rust and Cargo, rustfmt, Clippy, LLVM tools,
+`cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, and `cargo-machete`.
+`ENTRYPOINT []` lets the create adapter's child argv remain the container's
+main process. The preflight executes an allowlisted tool probe in the image;
+a generic or stale image is refused before an agent can edit code. The host
+`quecto` binary is identity-mounted, so the image retains a compatible glibc.
+The repository is still cloned by the trusted host adapter and mounted at
+runtime; source and credentials are never baked into the image.
 
 `quecto container status` reports, one line each and exit 1 while anything
 is missing: the assets (`present (5 of 5, version 2)`, or which differ or
@@ -1123,7 +1121,7 @@ Design properties:
   OAuth providers. The scripts carry a comment warning against this.
 - **Image selection.** `--image <img>` on the create argv, or the
   `QUECTO_DOCKER_IMAGE` environment variable, with a sensible local default
-  (`quecto-box:local`, whose Containerfile `quecto container init`
+  (`quecto-dev:local`, whose Containerfile `quecto container init`
   materialises). The `run` passes `--pull=never`: a tag that vanished
   between the preflight and the run fails instead of fetching whatever a
   registry serves under that name.
@@ -1265,8 +1263,8 @@ container config "quecto" (create: /…/docker/create.sh --state-dir /var/tmp/en
   ✓ jq           jq at /usr/bin/jq
   ✓ git          git at /usr/bin/git
   ✓ gh           gh at /usr/bin/gh
-  ✗ image        image quecto-box:local is not present in the local podman store
-    remedy: build it (podman build -t quecto-box:local <dir with its Containerfile>) or pull it (podman pull quecto-box:local); create never pulls implicitly
+  ✗ image        image quecto-dev:local is not present in the local podman store
+    remedy: build it (podman build -t quecto-dev:local <dir with its Containerfile>) or pull it (podman pull quecto-dev:local); create never pulls implicitly
   ✓ repo         --repo https://github.com/you/project is reachable
   ✓ state-dir    state dir /var/tmp/envs is writable and owned by the current user
 1 check failed, 0 warnings
@@ -1278,7 +1276,7 @@ container config "quecto" (create: /…/docker/create.sh --state-dir /var/tmp/en
 | `… status exit status: 4: … jq is not on PATH` | `✗ jq` | Install `jq`. |
 | `… status exit status: 5: … git is not on PATH` | `✗ git` | Install `git` (only needed for configs with `--repo`). |
 | `… gh is not on PATH: members will have no GitHub token` (a warning; the create proceeds) | `! gh` | Install `gh` and run `gh auth login` so members can push and use the GitHub API. |
-| `… status exit status: 6: … image quecto-box:local is not present` | `✗ image` | Build the image (`podman build -t quecto-box:local <dir>`) or pull it; the scripts never pull implicitly. Change `--image` / `QUECTO_DOCKER_IMAGE` if another image was meant. |
+| `… status exit status: 6: … image quecto-dev:local is not present` | `✗ image` | Build the image (`podman build -t quecto-dev:local <dir>`) or pull it; the scripts never pull implicitly. Change `--image` / `QUECTO_DOCKER_IMAGE` if another image was meant. |
 | `… status exit status: 7: … --repo <url> is unreachable: fatal: …` | `✗ repo` | Check the URL and your credentials (`ssh` key or `gh auth login`); fix `--repo` in the config's create argv. |
 | `… status exit status: 8: … state dir <dir> is not owned by the current user` / `cannot be created` | `✗ state-dir` | Point `--state-dir` at a directory you own. |
 | `unknown container config '<name>' (available container configs: …)` | (doctor refuses too) | Pick a listed name, or bind the repository: `quecto config set --local container_configs.<name> '{…,"default":true}'`. |

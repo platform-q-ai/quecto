@@ -148,7 +148,7 @@ fn the_build_command_quotes_a_bundle_directory_the_shell_would_split_or_expand()
         .unwrap();
     assert_eq!(
         report.build_command,
-        "build -t quecto-box:local '/my projects/it'\\''s here/.quecto/containers/standard'"
+        "build -t quecto-dev:local '/my projects/it'\\''s here/.quecto/containers/standard'"
     );
     let mut request = request("/plain/dir");
     request.image = Some("mine:1".into());

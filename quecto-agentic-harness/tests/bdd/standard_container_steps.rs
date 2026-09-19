@@ -449,7 +449,7 @@ fn when_materialised_preflight(world: &mut QuectoWorld) {
 fn given_fake_podman_accepting_run(world: &mut QuectoWorld) {
     let toolbox = Toolbox::build(world);
     let body = format!(
-        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = image ] && [ \"$2\" = exists ]; then exit 0; fi\nif [ \"$1\" = run ]; then echo deadbeef; exit 0; fi\nif [ \"$1\" = rm ]; then exit 0; fi\nexit 125\n",
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = image ] && [ \"$2\" = exists ]; then exit 0; fi\nif [ \"$1\" = run ] && [ \"${{2:-}}\" = --rm ]; then exit 0; fi\nif [ \"$1\" = run ]; then echo deadbeef; exit 0; fi\nif [ \"$1\" = rm ]; then exit 0; fi\nexit 125\n",
         toolbox.podman_log().display()
     );
     write_executable(&toolbox.dir.join("podman"), &body);
@@ -509,8 +509,8 @@ fn then_run_argv_carries(world: &mut QuectoWorld, needle: String) {
     let log = std::fs::read_to_string(Toolbox::existing(world).podman_log()).unwrap_or_default();
     let run = log
         .lines()
-        .find(|line| line.starts_with("run "))
-        .unwrap_or_else(|| panic!("podman was never asked to run: {log:?}"));
+        .find(|line| line.starts_with("run ") && !line.starts_with("run --rm "))
+        .unwrap_or_else(|| panic!("podman was never asked to run a child: {log:?}"));
     assert!(run.contains(&needle), "{needle:?} not in: {run}");
 }
 
@@ -548,7 +548,7 @@ fn then_build_command_quoted(world: &mut QuectoWorld) {
     // `{dir}` is one quoted word, so the shell reads
     // `'…/standard'/Containerfile` as one path.
     let expected = format!(
-        "podman build -t quecto-box:local -f '{}'/Containerfile '{}'",
+        "podman build -t quecto-dev:local -f '{}'/Containerfile '{}'",
         dir.display(),
         dir.display()
     );
@@ -688,12 +688,15 @@ case "$1" in
   image) [ "$2" = exists ] && exit 0; exit 1 ;;
   run)
     shift
+    # The standard preflight's short-lived allowlisted development-tool
+    # probe succeeds in this runtime fixture; lifecycle runs continue below.
+    if [ "${{1:-}}" = --rm ]; then exit 0; fi
     name=""
-    while [ "$#" -gt 0 ] && [ "$1" != quecto-box:local ]; do
+    while [ "$#" -gt 0 ] && [ "$1" != quecto-dev:local ]; do
       [ "$1" = --name ] && name="$2"
       shift
     done
-    [ "$1" = quecto-box:local ] || exit 125
+    [ "$1" = quecto-dev:local ] || exit 125
     shift
     setsid "$@" >/dev/null 2>&1 </dev/null &
     pid=$!
@@ -816,14 +819,20 @@ fn then_entry_is_default(world: &mut QuectoWorld, name: String) {
 #[then(expr = "the fake podman should have been asked to run the child {int} times")]
 fn then_fake_podman_ran_times(world: &mut QuectoWorld, expected: usize) {
     let log = std::fs::read_to_string(Toolbox::existing(world).podman_log()).unwrap_or_default();
-    let runs = log.lines().filter(|line| line.starts_with("run ")).count();
+    let runs = log
+        .lines()
+        .filter(|line| line.starts_with("run ") && !line.starts_with("run --rm "))
+        .count();
     assert_eq!(runs, expected, "podman log: {log}");
 }
 
 #[then("the fake podman should have been asked to run the child once")]
 fn then_fake_podman_ran_once(world: &mut QuectoWorld) {
     let log = std::fs::read_to_string(Toolbox::existing(world).podman_log()).unwrap_or_default();
-    let runs = log.lines().filter(|line| line.starts_with("run ")).count();
+    let runs = log
+        .lines()
+        .filter(|line| line.starts_with("run ") && !line.starts_with("run --rm "))
+        .count();
     assert_eq!(runs, 1, "podman log: {log}");
 }
 
