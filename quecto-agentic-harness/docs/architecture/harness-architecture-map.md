@@ -216,12 +216,14 @@ adapters in `src/infrastructure/persistence/` and
 `src/infrastructure/workspace/` (`git_scope_discovery.rs`,
 `filesystem_scope.rs` — the only production spawns of `git`, resolved on PATH
 once and run off the async executor); the graph in
-`src/composition/{sessions,session_home,active_session,session_report,
-retention,fleet_settlement}.rs`; the wire edge in `src/interface/uds/sessions/`
+`src/composition/{sessions,session_home,session_search,active_session,
+session_report,retention,fleet_settlement}.rs`; the wire edge in `src/interface/uds/sessions/`
 and the session modules of `src/interface/cli/`.
 
-Sessions capability, final shape (epic #1968, closed by #1979): fourteen use
-cases own every session transaction and query — `ListSessions` (#1861),
+Sessions capability, final shape (epic #1968, closed by #1979; #2010 added the
+fifteenth): fifteen use cases own every session transaction and query —
+`ListSessions` (#1861), `SearchSessionMetadata` (#2010, metadata search over
+the home catalogue's metadata query and workspace discovery),
 `ReadHistory` (#1856), `RecoverMessage` (#1858), `SynchronizeTranscript`
 (#1857), `ExportSessionReport` (#1859), `SaveSession` (#1860),
 `ClearConversation` (#1864), `RewindConversation` (#1865),

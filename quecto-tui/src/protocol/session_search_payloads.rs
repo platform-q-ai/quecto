@@ -25,15 +25,26 @@ pub struct SessionSearchAnswer {
     pub refused: Option<String>,
 }
 
+/// The answer's own fields, typed; rows are mapped by the discovery-row parser.
+#[derive(Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchEnvelope {
+    generation: Option<u64>,
+    total_matches: Option<u64>,
+    refused: Option<String>,
+}
+
+/// An envelope that does not decode (a generation that is no number) yields
+/// no generation, so the answer can never be taken for the latest.
 pub fn parse_session_search(data: &serde_json::Value) -> SessionSearchAnswer {
+    use serde::Deserialize;
+    let envelope = SearchEnvelope::deserialize(data).unwrap_or_default();
     let sessions = parse_resume_sessions(data);
-    let total = data.get("totalMatches").and_then(serde_json::Value::as_u64);
     SessionSearchAnswer {
-        generation: data.get("generation").and_then(serde_json::Value::as_u64),
-        total_matches: total.unwrap_or(sessions.len() as u64),
-        refused: data
-            .get("refused")
-            .and_then(serde_json::Value::as_str)
+        generation: envelope.generation,
+        total_matches: envelope.total_matches.unwrap_or(sessions.len() as u64),
+        refused: envelope
+            .refused
             .map(|reason| reason.chars().take(200).collect()),
         sessions,
     }

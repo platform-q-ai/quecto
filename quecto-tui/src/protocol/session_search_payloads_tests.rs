@@ -53,8 +53,9 @@ fn an_answer_carries_generation_rows_total_and_refusal() {
 fn an_answer_without_the_new_fields_is_read_defensively() {
     let answer = parse_session_search(&json!({"sessions": [{"key": "k", "title": "T"}]}));
     assert_eq!((answer.generation, answer.total_matches), (None, 1));
-    let refused = parse_session_search(&json!({"generation": "9", "refused": "x".repeat(500)}));
-    assert_eq!(refused.generation, None, "a generation is a number");
+    let untyped = parse_session_search(&json!({"generation": "9", "totalMatches": 4}));
+    assert_eq!(untyped.generation, None, "a generation is a number");
+    let refused = parse_session_search(&json!({"generation": 9, "refused": "x".repeat(500)}));
     assert_eq!(refused.refused.map(|r| r.len()), Some(200));
     assert!(parse_session_search(&json!(null)).sessions.is_empty());
 }

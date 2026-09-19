@@ -102,6 +102,15 @@ const CANONICAL_FILES: &[&str] = &[
     "src/composition/resume_capabilities.rs",
     "src/interface/uds/sessions/resume_session_controller.rs",
     "src/interface/cli/uds_dispatch_resume.rs",
+    // #2010 global metadata search: one new query owner and its edges.
+    "src/domain/session_metadata_search.rs",
+    "src/application/sessions/dto/search_session_metadata.rs",
+    "src/application/sessions/use_cases/search_session_metadata.rs",
+    "src/infrastructure/persistence/session_home_catalogue_metadata.rs",
+    "src/composition/session_search.rs",
+    "src/interface/uds/sessions/search_session_metadata_controller.rs",
+    "src/interface/cli/uds_discovery_handles.rs",
+    "src/interface/cli/uds_dispatch_search.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
@@ -770,8 +779,30 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // shrinks below master (was 187).
     // #2011: one re-export line for the shared safe-display helper (174 → 173).
     ("src/interface/cli/uds_dispatch_query.rs", 173),
-    // #2011 review: the safe rendering is its own module (50 → 46).
-    ("src/interface/cli/uds_dispatch_discovery.rs", 46),
+    // #2011 review: the safe rendering is its own module (50 → 46). #2010:
+    // the row is one shared function (46 → 45).
+    ("src/interface/cli/uds_dispatch_discovery.rs", 45),
+    // #2010 metadata search: every new owner pinned at its delivered size.
+    (
+        "src/application/sessions/use_cases/search_session_metadata.rs",
+        162,
+    ),
+    (
+        "src/application/sessions/dto/search_session_metadata.rs",
+        88,
+    ),
+    ("src/domain/session_metadata_search.rs", 187),
+    (
+        "src/infrastructure/persistence/session_home_catalogue_metadata.rs",
+        46,
+    ),
+    ("src/composition/session_search.rs", 23),
+    ("src/interface/cli/uds_dispatch_search.rs", 82),
+    ("src/interface/cli/uds_discovery_handles.rs", 44),
+    (
+        "src/interface/uds/sessions/search_session_metadata_controller.rs",
+        39,
+    ),
     ("src/interface/cli/uds_safe_display.rs", 24),
     // #1848 reasoning-effort injection plus #2009 scoped session dispatch.
     // #2011: the resume answers are the resume presenter's (259 → 246).

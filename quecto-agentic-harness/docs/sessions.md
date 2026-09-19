@@ -130,6 +130,7 @@ the architecture tests refuse a use case the docs do not name.
 | Use case | Catalogue | Triggered by | Owns |
 |----------|-----------|--------------|------|
 | `ListSessions` | #1861 | `list_sessions` | local/global discovery over saved summaries and authoritative home metadata, newest first |
+| `SearchSessionMetadata` | #2010 | `search_session_metadata` | local/global search of saved-session metadata — title, exact opaque key, repository label, path — with scope, literal visible-text match, rank order, limit and advisory eligibility; never transcript content |
 | `ReadHistory` | #1856 | `get_messages`, connect-time snapshot, child transcript forwarding | stable-id cursor selection and chronological paging of the live, published or persisted transcript |
 | `RecoverMessage` | #1858 | `get_message` | full-copy recovery of a possibly collapsed message (ledger, then retention store), content ranges, tool-call arguments |
 | `SynchronizeTranscript` | #1857 | `sync` (idle loop and busy reader) | epoch/revision reconciliation, reset-or-delta selection |
@@ -156,7 +157,7 @@ Declared only under `src/application/sessions/ports.rs` and
 
 | Port | Adapter (production) | What it supplies |
 |------|----------------------|------------------|
-| `SessionHomeCatalogue` | `infrastructure/persistence/session_home_catalogue.rs` (`FileSessionHomeCatalogue`) | exact authoritative home reads, first-save home recording, derived catalogue validation and recovery |
+| `SessionHomeCatalogue` | `infrastructure/persistence/session_home_catalogue.rs` (`FileSessionHomeCatalogue`, its metadata query in `session_home_catalogue_metadata.rs`) | exact authoritative home reads, first-save home recording, derived catalogue validation and recovery, and the metadata query (#2010): every listed session once with its listing summary and home, validated by stamp, no transcript read for an unchanged record |
 | `WorkspaceDiscovery` | `infrastructure/workspace/git_scope_discovery.rs` (`GitScopeDiscovery`), using `filesystem_scope.rs` | canonical execution directory and real Git common-dir/worktree grouping; observable discovery failure |
 | `SessionStore` | `infrastructure/persistence/session_store.rs` (`FileSessionStore`) | claim/release/load/save/save_delta/save_clean_delta/exists/list, keyed by `SessionIdentity` |
 | `ContextSpillStore` | `infrastructure/persistence/context_spill.rs` (`FileContextSpillStore`) | append/recall/list_entries/has_entries/clear/scrub_sync of the retention namespace |
@@ -259,6 +260,67 @@ directory, which must be the current execution directory in the same group —
 admission rechecks it after ownership admission for both explicit resume and
 startup; a discovery group is not permission to execute history in another
 directory.
+
+#### Metadata search (#2010)
+
+`SearchSessionMetadata` (`use_cases/search_session_metadata.rs`) is the one
+owner of the picker's search. It consumes the `SessionHomeCatalogue` metadata
+query and `WorkspaceDiscovery` through the loop's `SessionHomeContext`; it holds
+no store. DTOs live in `dto/search_session_metadata.rs` (request with scope,
+`QueryGeneration` and `SearchLimit`; `SessionMetadataRow` — a `ListedSession`
+plus the repository label and the matched fields; `SearchFreshness`), and the
+pure matching rules in `domain/session_metadata_search.rs`.
+
+- **What is matched.** The listing title (the first user message, as the index
+  holds it), the **exact opaque key**, the **repository label** and the
+  **execution path**. Nothing else exists in the query's input, so transcript
+  content can never match and no transcript is opened to answer a search: the
+  adapter joins the store's summary walk with the validated home listing, both
+  stamp-checked and index-seeded (`tests/contracts/session_metadata_search.rs`
+  counts zero transcript reads over 2,000 records, warm and from a new process).
+- **How.** Literal text, never a pattern: regex, glob, SQL and shell
+  metacharacters are ordinary characters. Query and fields are compared as
+  *visible text* — control characters and invisible format characters (bidi
+  controls, zero-width characters, the soft hyphen, tags, the BOM) are dropped
+  from both sides, then Unicode lower-cased per character, whitespace runs
+  collapsed — so a hidden character can neither hide a record nor forge a match.
+  Code points are compared as stored (no normalization tables ship off macOS: a
+  decomposed `é` is not a composed one). Whitespace separates terms; **every**
+  term must occur in the title, the label or the path. A key matches only when
+  the whole trimmed query equals it byte for byte — no fragment, no case fold.
+  A non-UTF-8 path is searched by its lossy text. A query of more than 256
+  visible characters is refused whole (`refused`), never searched as a prefix;
+  a query with nothing visible names every session in scope.
+- **Repository label.** For a Git home, the directory that holds the `.git`
+  common dir (so linked worktrees share their repository's label) or a bare
+  repository's name without `.git`; for a folder home, the folder's name.
+  Legacy unscoped and unavailable homes have no label and no path: they are
+  found by title and key, and presented with `homeState` so a client labels
+  them explicitly.
+- **Scope, order, limit.** `global` is every listed session; `local` is the
+  current workspace group and, without current workspace facts, nothing — never
+  everything. Rows are ordered by the best matched field (key, title,
+  repository, path), then newest first (undated last), then key: a total order.
+  At most `limit` rows (default 200, 1–500) are returned, with `totalMatches`
+  and `truncated`.
+- **Freshness.** Every search validates against authority exactly as a listing
+  does: same diagnostics (a corrupt record is named, siblings stay), same
+  recovery (`rebuilt` with a diagnostic for an unparseable index, silent refresh
+  for a superseded one), and a store-listed record the strict catalogue rejects
+  keeps the home admission would read. Exact-key resume never depends on it.
+- **Selection.** A row is a listing row and carries the same identity-bound
+  `homeVersion` (the contract suite asserts search row = list row = authority).
+  Selecting one goes to `ResumeSavedSession` like any other row: a session
+  deleted since is `not_found`, a re-homed one `stale_home_version`, a
+  cross-folder one a typed decision. Eligibility in a row is advisory, decided
+  by the one domain rule over the single discovery of the current directory the
+  query makes (a home saved anywhere else can never admit, so nothing is
+  discovered per row).
+- **Generation.** `generation` is the client's own counter, echoed unchanged;
+  the application attaches no meaning to it. The TUI sends at most one search at
+  a time per picker (an edit made meanwhile goes out when the answer arrives —
+  latest wins, no timer) and shows an answer only when it carries the id that
+  was sent **and** the latest generation; anything else is discarded.
 
 #### Typed resume decisions (#2011)
 
@@ -532,6 +594,6 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 
 ## See also
 
-- UDS Protocol Reference (`docs {"name":"uds-protocol"}`) — `list_sessions`, `resume_session`, `new_session`, `persist_session`, `get_state`, `get_messages`, `get_message`, `sync`, `get_report`, `get_session_stats`, `clear_history`, `rewind_to`
+- UDS Protocol Reference (`docs {"name":"uds-protocol"}`) — `list_sessions`, `search_session_metadata`, `resume_session`, `new_session`, `persist_session`, `get_state`, `get_messages`, `get_message`, `sync`, `get_report`, `get_session_stats`, `clear_history`, `rewind_to`
 - Harness architecture map (`docs/architecture/harness-architecture-map.md`) — the sessions capability in the layer model
 - Subagents (`docs {"name":"subagents"}`) — each subagent gets its own session

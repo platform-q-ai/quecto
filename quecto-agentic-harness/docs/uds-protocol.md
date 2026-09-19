@@ -32,7 +32,7 @@ The agent prints the socket path to stderr on startup. Options:
 - **Shutdown:** By default the agent exits when all clients disconnect. Pass `--persist` to keep it running. A launcher-created child ignores client churn and ends on the loss of its launch-bound parent connection instead (#1935/#1937). Socket file is removed on exit
 - **Security:** Socket file is created with `chmod 0600` (owner-only). On startup, dead auto-generated sockets are reaped by liveness check; the 24h age threshold is a fallback for sockets whose liveness cannot be determined
 - **See also:** [ADR-0008](architecture-design-records/adr-0008-length-prefixed-uds-framing-and-bounded-events.md) for version negotiation and the NDJSON deprecation window, and the [protocol capability matrix](architecture/protocol-capability-matrix.md) for the current compatibility/evolution map
-- **Session commands (#1968):** `list_sessions`, `resume_session`, `new_session`, `persist_session`, `clear_history`, `rewind_to`, `get_messages`, `get_message`, `sync`, `get_report` and `get_session_stats` are each answered by one sessions use case (named in the command's section and in [sessions.md](sessions.md#architecture-epic-1968)); the epic that moved them changed no command, field or refusal text
+- **Session commands (#1968):** `list_sessions`, `search_session_metadata` (#2010), `resume_session`, `new_session`, `persist_session`, `clear_history`, `rewind_to`, `get_messages`, `get_message`, `sync`, `get_report` and `get_session_stats` are each answered by one sessions use case (named in the command's section and in [sessions.md](sessions.md#architecture-epic-1968)); the epic that moved them changed no command, field or refusal text
 
 ## Correlation IDs
 
@@ -270,8 +270,8 @@ Local scope groups the nearest Git repository and related worktrees using Git
 facts and canonical paths. Outside Git it matches the canonical exact folder.
 Grouped worktrees can have different execution directories and are not thereby
 eligible for restore. Global lists all saved identities, including legacy
-unassociated and unavailable-home records. Metadata search is not part of this
-slice. Malformed records and discovery/catalogue failures produce diagnostics;
+unassociated and unavailable-home records. Metadata search is its own command,
+[`search_session_metadata`](#search_session_metadata). Malformed records and discovery/catalogue failures produce diagnostics;
 one bad record does not hide valid siblings. A malformed record's diagnostic
 names its file so it can be repaired, e.g.
 `cli_slippery-keith.json: session record unavailable: expected value at line 79 column 6`. `rebuilt` reports derived catalogue
@@ -292,6 +292,79 @@ Cross-folder actions are unavailable until their implementing slices ship.
 
 ```json
 {"type":"list_sessions","id":"ls-1","scope":"global"}
+```
+
+---
+
+### `search_session_metadata`
+
+Search saved-session metadata: title, exact opaque key, repository label and
+execution path. Owner: `SearchSessionMetadata` (#2010). Transcript content is
+never matched and no transcript is read to answer. An answer is not
+authorization to restore a row.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"search_session_metadata"` | yes | |
+| `id` | string | no | Correlation ID |
+| `query` | string | yes | Literal text, never a pattern. Compared as visible text (controls and invisible format characters dropped, lower-cased, whitespace collapsed); whitespace separates terms and every term must occur in the title, repository label or path; the whole trimmed query must equal a key byte for byte to match it. Nothing visible names every session in scope. More than 256 visible characters is refused whole. A missing or non-string `query` is an uncorrelated `parse_error` |
+| `scope` | `"local"` or `"global"` | no | Defaults to local; unsupported values are rejected |
+| `generation` | non-negative integer | no | The client's own counter, echoed unchanged so a client can discard an answer it no longer wants. Defaults to 0 |
+| `limit` | integer | no | Rows returned at most: 1–500, default 200; out-of-range values are clamped and the effective value echoed |
+
+**Response data:**
+
+```json
+{
+  "query": "flaky",
+  "scope": "global",
+  "generation": 7,
+  "limit": 200,
+  "sessions": [
+    {"key":"chat-1765930000-1a2b3c","title":"Fix the flaky test","messageCount":12,"updatedUnixSecs":1765930000,"updatedAt":1765930000,"homeState":"scoped","executionPath":"/work/project","resumeEligible":false,"homeVersion":"h1-0123456789abcdef","repositoryLabel":"project","matched":["title"]}
+  ],
+  "totalMatches": 1,
+  "searched": 5201,
+  "truncated": false,
+  "refused": null,
+  "diagnostics": [],
+  "rebuilt": false
+}
+```
+
+A row is a [`list_sessions`](#list_sessions) row — same fields, same
+identity-bound `homeVersion`, to be echoed as `resume_session.expectedHomeVersion`
+— plus:
+
+| Row field | Type | Description |
+|---|---|---|
+| `repositoryLabel` | string \| null | Safely rendered name of the repository (the directory holding the Git common dir; shared by linked worktrees) or folder; `null` for a legacy unscoped or unavailable home |
+| `matched` | string[] | Which metadata matched, in rank order: `key`, `title`, `repository`, `path`; empty when the query named every session |
+
+| Answer field | Type | Description |
+|---|---|---|
+| `query` | string | The query as received, safely rendered and bounded to 256 characters |
+| `sessions` | row[] | Best first: best matched field (key, title, repository, path), then newest, then key |
+| `totalMatches` | integer | Matches in scope before `limit` |
+| `searched` | integer | Sessions in scope the query was matched against |
+| `truncated` | boolean | `totalMatches` exceeds the rows returned |
+| `refused` | string \| null | Why nothing was searched (`query too long: …`); the rows are then empty |
+| `diagnostics`, `rebuilt` | | As for `list_sessions`: every search validates the derived index against authority; a malformed record is named and hides no sibling |
+
+`homeState` is `legacy_unscoped` for a session saved before folders were
+tracked: it is found by title and key, and a client labels it explicitly (the
+TUI shows "Unscoped · no folder on record"). Local scope without current
+workspace facts searches nothing and says why in `diagnostics`.
+
+The TUI's `/resume` search box sends this command for the scope on screen as the
+text changes — one search in flight per picker, the latest text sent when the
+answer arrives — and discards any answer that does not carry the id it sent and
+its latest `generation`. An empty box lists the scope with `list_sessions`. The
+picker filters nothing itself and decides no scope; a selected row goes to
+`resume_session` with its `homeVersion` like any listed row.
+
+```json
+{"type":"search_session_metadata","id":"ss-1","query":"flaky","scope":"global","generation":7}
 ```
 
 ---

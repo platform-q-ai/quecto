@@ -114,6 +114,7 @@ const RETIRED_NAMES: &[&str] = &[
 /// own `### `command`` heading.
 const SESSION_COMMANDS: &[&str] = &[
     "list_sessions",
+    "search_session_metadata",
     "resume_session",
     "new_session",
     "clear_history",
