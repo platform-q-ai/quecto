@@ -14,11 +14,11 @@ pub(crate) const ID_NAMESPACE: &str = "tab0:";
 /// Everything owned by the master connection. Move order follows the
 /// issue's blast-radius clusters; fields arrive cluster by cluster.
 pub(crate) struct ConnectionState {
-    /// The tab's transport: the master connection behind its feed task
+    /// The connection's transport: the master connection behind its feed task
     /// (#1462). The feed task owns the [`Client`]; this is the command/state
     /// handle.
     pub(crate) transport: crate::shell::connection::Connection,
-    /// The tab's master agent session, modeled as just another
+    /// The connection's master agent session, modeled as just another
     /// [`SessionView`] (#828) so render/input share ONE active-session path
     /// with sub-agents (`active_agent_id == None` selects this). Only
     /// `spinner`/`agent_state` stay master-local; sub-agents derive
@@ -26,7 +26,7 @@ pub(crate) struct ConnectionState {
     pub(crate) master_session: SessionView,
     /// Agent run state machine (abort-aware, #502).
     pub(crate) agent_state: AgentRunState,
-    /// Working spinner for the tab's own agent turn; `None` when idle.
+    /// Working spinner for the connection's own agent turn; `None` when idle.
     pub(crate) spinner: Option<Spinner>,
     /// Connected agent's own id (get_state sessionKey), vs descendants' (#997).
     pub(crate) connected_agent_id: Option<String>,
@@ -57,7 +57,7 @@ pub(crate) struct ConnectionState {
     pub(crate) child_exit_watch: Option<crate::shell::child_watch::ChildWatch>,
     /// Durable session key of this connection's master agent.
     pub(crate) session_key: Option<String>,
-    /// Request id of this tab's in-flight `resume_session`, so only its own
+    /// Request id of the connection's in-flight `resume_session`, so only its own
     /// answer clears the resume latches; foreign answers (another client
     /// resuming the shared agent) still refresh the view (#1726).
     pub(crate) pending_session_resume_id: Option<String>,
@@ -68,9 +68,9 @@ pub(crate) struct ConnectionState {
     /// reported exactly once (#1047).
     pub(crate) surfaced_oversized_drops: u64,
     /// Whether a stream-closed disconnect diagnosis is resolving off-loop
-    /// (#1462 scope 3) for THIS tab: set by `begin_agent_stream_closed` when
+    /// (#1462 scope 3) for the connection: set by `begin_agent_stream_closed` when
     /// it spawns the bounded #1047 waits, cleared by
-    /// `finish_agent_stream_closed` for the matching tab only (#1463). The
+    /// `finish_agent_stream_closed` (#1463). The
     /// harness keys its diagnosis pumping off this latch.
     pub(crate) disconnect_diag_pending: bool,
     /// One "commands are not being sent" notice per disconnect episode
@@ -92,27 +92,27 @@ pub(crate) struct ConnectionState {
     pub(crate) message_recovery_batches: HashMap<String, MessageRecoveryBatch>,
     pub(crate) pending_stub_recall: HashMap<String, app_paged_history::StubRecall>,
     pub(crate) failed_stub_recalls: HashSet<(Option<String>, String)>,
-    /// Exact correlation id for this tab's in-flight resume transcript fetch
+    /// Exact correlation id for the connection's in-flight resume transcript fetch
     /// (#1237). `get_messages` responses are broadcast; fixed literals would
     /// clobber peers.
     pub(crate) pending_resume_messages_id: Option<String>,
-    /// Exact correlation id for this tab's post-rewind transcript refresh (#1237).
+    /// Exact correlation id for the connection's post-rewind transcript refresh (#1237).
     pub(crate) pending_rewind_refresh_id: Option<String>,
-    /// Exact correlation id for this tab's solicited attach backfill (#1237).
+    /// Exact correlation id for the connection's solicited attach backfill (#1237).
     /// Id-less busy-connect snapshots must not clear this pending.
     pub(crate) pending_attach_backfill_id: Option<String>,
     /// Local sequence suffix for minted solicited `get_messages` ids (#1237).
     pub(crate) solicited_get_messages_seq: u64,
-    /// Rewind flow state (#997) for this tab's conversation.
+    /// Rewind flow state (#997) for the connection's conversation.
     pub(crate) rewind: RewindFlow,
-    /// Session pick/resume flow state for this tab's agent.
+    /// Session pick/resume flow state for the connection's agent.
     pub(crate) sessions: SessionsFlow,
-    /// Workflow flow state for this tab's agent.
+    /// Workflow flow state for the connection's agent.
     pub(crate) workflow: WorkflowFlow,
-    /// The model/effort the tab's agent currently runs with (#1463);
+    /// The model/effort the connection's agent currently runs with (#1463);
     /// selector overlays stay global on `App`.
     pub(crate) inference: app_inference::ConnInference,
-    /// This tab's agent tree: tracked children, their sessions and feeds
+    /// The connection's agent tree: tracked children, their sessions and feeds
     /// (#1463 cluster 6); the panel focus/cursor half stays global.
     pub(crate) roster: crate::agents::view::ConnectionRoster,
 }
@@ -145,7 +145,7 @@ impl ConnectionState {
         self.stopped_at = Some(now);
     }
 
-    /// Bundle a freshly spawned transport with the connected-tab defaults.
+    /// Bundle a freshly spawned transport with the connected defaults.
     pub(crate) fn new(
         transport: crate::shell::connection::Connection,
         master_session: SessionView,
