@@ -205,7 +205,7 @@ async fn a_typed_key_never_borrows_another_rows_version() {
 async fn switching_tabs_closes_the_dialog() {
     let mut h = harness().await;
     asked_and_answered(&mut h, decision(false)).await;
-    h.app_mut().close_tab_switch_overlays();
+    h.app_mut().close_session_switch_overlays();
     assert!(h.app_mut().ac().sessions.resume_decision.is_none());
 }
 

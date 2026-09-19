@@ -286,7 +286,7 @@ async fn slow_settling_leader_exits_inside_the_budget_without_sigkill() {
     let mut leader = spawn_group(&script);
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let outcome = terminate(&mut leader, LeaderBudget::for_children(Some(0))).await;
+    let outcome = terminate(&mut leader, LeaderBudget::for_children(0)).await;
 
     assert_eq!(outcome.end, LeaderEnd::ExitedAfterTerm);
     assert!(

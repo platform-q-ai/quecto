@@ -82,7 +82,7 @@ impl TuiHarness {
 
     /// Whether any TUI-owned watch is still held (detach leaves them).
     pub fn owned_watches_remaining(&mut self) -> usize {
-        self.app.take_all_child_exit_watches().len()
+        usize::from(self.app.take_child_exit_watch_with_roster().is_some())
     }
 
     /// Terminate one adopted harness directly through the watcher API with
@@ -95,7 +95,7 @@ impl TuiHarness {
             settle,
             force: settle,
         };
-        let watch = self.app.take_all_child_exit_watches().pop()?;
+        let (watch, _) = self.app.take_child_exit_watch_with_roster()?;
         watch.terminate_with_budget(budget).await
     }
 

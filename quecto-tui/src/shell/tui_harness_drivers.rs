@@ -1,22 +1,15 @@
 //! Harness drivers: the manual clock, overlay-close seam, frame/selector
-//! probes and sub-agent delivery fixtures (plus the second-connection seam
-//! the routing tests still use until #2044 PR 2).
+//! probes and sub-agent delivery fixtures.
 
 use super::TuiHarness;
 
 impl TuiHarness {
-    /// Insert a disconnected background tab (id 1) without changing focus.
-    pub fn open_background_tab(&mut self) -> &mut Self {
-        self.app.test_insert_disconnected_tab(1);
-        self
-    }
-
-    /// Run the production seam every tab/session switch closes overlays
-    /// through (`close_tab_switch_overlays`). With a modal open the switch
+    /// Run the production seam every session switch closes overlays
+    /// through (`close_session_switch_overlays`). With a modal open the switch
     /// keys go to the modal, so a test of "the picker was closed by a switch"
     /// drives the seam itself.
-    pub fn close_overlays_for_tab_switch(&mut self) -> &mut Self {
-        self.app.close_tab_switch_overlays();
+    pub fn close_overlays_for_session_switch(&mut self) -> &mut Self {
+        self.app.close_session_switch_overlays();
         self.capture();
         self
     }
@@ -41,11 +34,6 @@ impl TuiHarness {
         self.app.service_search_timeout(self.app.clock.now());
         self.capture();
         self
-    }
-
-    /// The focused tab's numeric id.
-    pub fn active_tab_index(&self) -> u32 {
-        self.app.active_tab.0
     }
 
     /// Feed one raw key byte-sequence through the production parser and key

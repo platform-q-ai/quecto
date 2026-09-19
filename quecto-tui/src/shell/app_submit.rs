@@ -30,11 +30,7 @@ impl App {
                     return;
                 }
                 "/new" => {
-                    for watch in self.reset_workspace() {
-                        tokio::spawn(async move {
-                            watch.terminate().await;
-                        });
-                    }
+                    self.reset_workspace();
                     return;
                 }
                 "/help" | "/hotkeys" => {

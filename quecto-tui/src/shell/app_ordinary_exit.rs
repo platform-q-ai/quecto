@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::io::Write;
 use std::time::Duration;
 
@@ -17,8 +16,8 @@ pub(crate) const SETTLING_NOTICE_PREFIX: &str = "waiting for the agent to settle
 pub(crate) struct OrdinaryExitPolicy {
     /// `--kill-on-exit` (default) terminates owned leaders; `--detach-on-exit` leaves them.
     pub(crate) kill_owned: bool,
-    /// Test override of the per-leader budget (production derives it from
-    /// each tab's roster, see [`LeaderBudget::for_children`]).
+    /// Test override of the leader budget (production derives it from
+    /// the roster, see [`LeaderBudget::for_children`]).
     pub(crate) leader_budget_override: Option<LeaderBudget>,
     /// Every settling notice shown, in order (test seam).
     #[cfg(any(test, feature = "test-harness"))]
@@ -56,16 +55,14 @@ impl App {
     pub(crate) async fn finalize_ordinary_exit(&mut self) -> Vec<String> {
         self.request_ordinary_exit();
         let mut errors = Vec::new();
-        let ids = match self.enqueue_ordinary_exit_snapshot_persists() {
-            Ok(ids) => ids,
-            Err((ids, err)) => {
+        match self.enqueue_ordinary_exit_snapshot_persist() {
+            Ok(id) => errors.extend(self.await_ordinary_exit_durability_barrier(id).await),
+            Err(err) => {
                 let msg = format!("ordinary-exit persistence enqueue failed: {err}");
                 self.notify(&msg, NotifyLevel::Error);
                 errors.push(msg);
-                ids
             }
-        };
-        errors.extend(self.await_ordinary_exit_durability_barrier(ids).await);
+        }
         errors.extend(self.settle_owned_harnesses().await);
         self.kitty.cleanup();
         self.terminal.show_cursor();
@@ -82,56 +79,46 @@ impl App {
         self.exit_policy.leader_budget_override = Some(budget);
     }
 
-    /// The budget for one owned leader: the fleet-derived wait for the
-    /// direct children its tab's roster last showed (unknown for a spawn
-    /// still in flight), unless a test overrides it.
-    fn leader_budget(&self, children: Option<usize>) -> LeaderBudget {
+    /// The budget for the owned leader: the fleet-derived wait for the
+    /// direct children the roster last showed, unless a test overrides it.
+    fn leader_budget(&self, children: usize) -> LeaderBudget {
         self.exit_policy
             .leader_budget_override
             .unwrap_or_else(|| LeaderBudget::for_children(children))
     }
 
-    /// Ordinary exit with the kill-on-exit policy: SIGTERM every TUI-owned
-    /// harness leader (one pid each, never a group or a descendant), wait
-    /// for the leaders to exit within the budget while showing a settling
+    /// Ordinary exit with the kill-on-exit policy: SIGTERM the TUI-owned
+    /// harness leader (one pid, never a group or a descendant), wait
+    /// for it to exit within the budget while showing a settling
     /// notice after ~1 s, SIGKILL only a leader that outlives the budget,
     /// and report what the post-exit canary found (#1956).
     async fn settle_owned_harnesses(&mut self) -> Vec<String> {
         if !self.exit_policy.kill_owned {
             return Vec::new();
         }
-        let watches = self.take_all_child_exit_watches_with_rosters();
-        if watches.is_empty() {
+        let Some((watch, children)) = self.take_child_exit_watch_with_roster() else {
             return Vec::new();
-        }
-        let mut pending = tokio::task::JoinSet::new();
-        let mut longest = Duration::ZERO;
-        for (watch, children) in watches {
-            let budget = self.leader_budget(children);
-            longest = longest.max(budget.total());
-            pending.spawn(async move { (watch.terminate_with_budget(budget).await, budget) });
-        }
+        };
+        let budget = self.leader_budget(children);
+        let longest = budget.total();
+        let termination = watch.terminate_with_budget(budget);
+        tokio::pin!(termination);
         let started = tokio::time::Instant::now();
         let mut next_notice = started + SETTLING_NOTICE_AFTER;
-        let mut outcomes = Vec::new();
-        while !pending.is_empty() {
+        let outcome = loop {
             tokio::select! {
-                joined = pending.join_next() => {
-                    if let Some(Ok((Some(outcome), budget))) = joined {
-                        outcomes.push((outcome, budget));
-                    }
-                }
+                outcome = &mut termination => break outcome,
                 _ = tokio::time::sleep_until(next_notice) => {
                     self.show_settling_notice(started.elapsed(), longest);
                     self.render();
                     next_notice += Duration::from_secs(1);
                 }
             }
-        }
+        };
         self.notifications.dismiss_prefixed(SETTLING_NOTICE_PREFIX);
-        outcomes
-            .iter()
-            .filter_map(|(outcome, budget)| Self::describe_leader_termination(outcome, *budget))
+        outcome
+            .and_then(|outcome| Self::describe_leader_termination(&outcome, budget))
+            .into_iter()
             .collect()
     }
 
@@ -202,43 +189,72 @@ impl App {
         let _ = stderr.flush();
     }
 
-    async fn await_ordinary_exit_durability_barrier(&mut self, ids: Vec<String>) -> Vec<String> {
-        let mut errors = Vec::new();
-        let mut pending: HashSet<String> = ids.into_iter().collect();
+    /// Enqueue the ordinary-exit roster/session persist on the connection
+    /// and return its request id for the durability barrier. An owned agent
+    /// about to be killed is recorded as stopped; a detached or external one
+    /// keeps its live recovery.
+    pub(crate) fn enqueue_ordinary_exit_snapshot_persist(
+        &mut self,
+    ) -> Result<String, crate::protocol::client::ClientError> {
+        let id = self.ac().namespaced_id("persist-exit");
+        let stops_owned_agent = self.exit_policy.kill_owned && self.ac().child_exit_watch.is_some();
+        self.ac()
+            .transport
+            .clone_sender()
+            .try_send_exit_durability(&crate::protocol::client::Command::PersistSession {
+                id: Some(id.clone()),
+                restore_reason: stops_owned_agent.then(|| "ordinary_tui_exit_stopped".to_string()),
+            })?;
+        Ok(id)
+    }
+
+    /// Detach the owned agent's `ChildWatch` so ordinary-exit cleanup can
+    /// terminate it, paired with the number of subagents the roster last
+    /// showed — the input to the fleet-derived leader budget (#1956).
+    pub(crate) fn take_child_exit_watch_with_roster(
+        &mut self,
+    ) -> Option<(crate::shell::child_watch::ChildWatch, usize)> {
+        let watch = self.ac_mut().child_exit_watch.take()?;
+        Some((watch, self.ac().roster.tracked.len()))
+    }
+
+    /// Wait (bounded) for the agent's answer to the exit persist `id`. A
+    /// master event channel that closes first still waits out the deadline
+    /// and reports the timeout — the same observable exit as an agent that
+    /// never answers.
+    async fn await_ordinary_exit_durability_barrier(&mut self, id: String) -> Vec<String> {
         let deadline = tokio::time::Instant::now() + ORDINARY_EXIT_DURABILITY_BARRIER_TIMEOUT;
-        while !pending.is_empty() {
-            let recv = tokio::time::timeout_at(deadline, self.tab_event_rx.recv()).await;
+        loop {
+            let recv = tokio::time::timeout_at(deadline, self.master_event_rx.recv()).await;
             let sourced_event = match recv {
                 Ok(Some(event)) => event,
                 Ok(None) | Err(_) => {
+                    tokio::time::sleep_until(deadline).await;
                     let msg = "ordinary-exit persistence barrier timed out".to_string();
                     self.notify(&msg, NotifyLevel::Error);
-                    errors.push(msg);
-                    return errors;
+                    return vec![msg];
                 }
             };
-            let crate::shell::connection::SourcedEvent::Tab(tab, event) = sourced_event else {
+            let crate::shell::connection::SourcedEvent::Master(event) = sourced_event else {
                 continue;
             };
-            let Some((id, success, error)) =
+            let Some((Some(answered), success, error)) =
                 crate::protocol::event_barrier::persist_session_response(event)
             else {
                 continue;
             };
-            let Some(id) = id else { continue };
-            if !pending.remove(&id) {
+            if answered != id {
                 continue;
             }
             if success {
-                continue;
+                return Vec::new();
             }
             let msg = error
                 .unwrap_or_else(|| "failed to persist session before ordinary exit".to_string());
-            let msg = format!("tab {}: {msg}", tab.0);
+            let msg = format!("tab 0: {msg}");
             self.notify(&msg, NotifyLevel::Error);
-            errors.push(msg);
+            return vec![msg];
         }
-        errors
     }
 }
 

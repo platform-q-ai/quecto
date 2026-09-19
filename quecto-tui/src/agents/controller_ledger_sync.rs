@@ -14,16 +14,15 @@ impl App {
     /// pending request as proof that a response will arrive. Polling also gives
     /// socketless inspection feeds an independent, automatic refresh cadence.
     pub(super) fn refresh_subagent_transcripts(&mut self) {
-        for connection in self.tabs.values_mut() {
-            let ns = connection.id_namespace();
-            for feed in connection.roster.feeds.values_mut() {
-                let _ = feed.cmd_tx.try_send(Command::Sync {
-                    agent_id: None,
-                    id: Some(crate::shell::connection::feed_id(&ns, "subagent-sync")),
-                    epoch: feed.epoch,
-                    since_rev: feed.rev,
-                });
-            }
+        let connection = &mut self.conn;
+        let ns = connection.id_namespace();
+        for feed in connection.roster.feeds.values_mut() {
+            let _ = feed.cmd_tx.try_send(Command::Sync {
+                agent_id: None,
+                id: Some(crate::shell::connection::feed_id(&ns, "subagent-sync")),
+                epoch: feed.epoch,
+                since_rev: feed.rev,
+            });
         }
     }
 

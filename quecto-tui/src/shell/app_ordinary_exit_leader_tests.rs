@@ -3,7 +3,7 @@
 
 use crate::protocol::client::Event;
 use crate::shell::app::tui_harness::TuiHarness;
-use crate::shell::connection::{Connection, SourcedEvent, TabId};
+use crate::shell::connection::{Connection, SourcedEvent};
 
 /// #1956: a watcher that never answers cannot hold the exit past the budget
 /// plus the KILL grace — terminal cleanup still runs and no error is invented.
@@ -13,29 +13,25 @@ async fn ordinary_exit_unanswered_leader_termination_is_bounded_by_the_budget() 
     let a = h.app_mut();
     a.kitty.active = true;
     a.kitty.modify_other_keys = true;
-    let (mut conn, mut rx) = Connection::live_for_tests();
-    conn.set_tab_for_tests(TabId::MASTER);
+    let (conn, mut rx) = Connection::live_for_tests();
     let (watch, mut term_rx) =
         crate::shell::child_watch::ChildWatch::for_tests_with_termination_probe(Some(99));
-    a.test_attach_connection(TabId::MASTER, conn, Some(watch));
+    a.test_attach_connection(conn, Some(watch));
     a.set_leader_budget(crate::shell::process::LeaderBudget {
         settle: std::time::Duration::from_millis(300),
         force: std::time::Duration::from_millis(200),
     });
-    let event_tx = a.tab_event_tx.clone().unwrap();
+    let event_tx = a.master_event_tx.clone().unwrap();
     tokio::spawn(async move {
         let cmd: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
         event_tx
-            .send(SourcedEvent::Tab(
-                TabId::MASTER,
-                Event::Response {
-                    id: cmd["id"].as_str().map(str::to_string),
-                    command: "persist_session".to_string(),
-                    success: true,
-                    data: None,
-                    error: None,
-                },
-            ))
+            .send(SourcedEvent::Master(Event::Response {
+                id: cmd["id"].as_str().map(str::to_string),
+                command: "persist_session".to_string(),
+                success: true,
+                data: None,
+                error: None,
+            }))
             .await
             .unwrap();
     });
@@ -153,7 +149,7 @@ async fn ordinary_exit_shows_and_updates_the_settling_notice_then_dismisses_it()
 #[test]
 fn ordinary_exit_describes_kill_and_strays_only() {
     use crate::shell::process::{LeaderBudget, LeaderEnd, LeaderTermination};
-    let budget = LeaderBudget::for_children(Some(0));
+    let budget = LeaderBudget::for_children(0);
     let clean = LeaderTermination {
         pid: Some(4),
         end: LeaderEnd::ExitedAfterTerm,
@@ -210,28 +206,21 @@ fn ordinary_exit_describes_kill_and_strays_only() {
     );
 }
 
-/// #1956 review: the budget each owned leader gets is derived from the
-/// subagent count its connection's roster last showed; an unknown count
-/// gets the worst case.
+/// #1956 review: the budget the owned leader gets is derived from the
+/// subagent count the connection's roster last showed.
 #[tokio::test]
-async fn ordinary_exit_budget_follows_each_tabs_roster() {
+async fn ordinary_exit_budget_follows_the_roster() {
     use crate::shell::process::LeaderBudget;
     let mut h = TuiHarness::new().await;
     let a = h.app_mut();
+    assert_eq!(a.leader_budget(0), LeaderBudget::for_children(0));
     assert_eq!(
-        a.leader_budget(Some(0)),
-        LeaderBudget::for_children(Some(0))
-    );
-    assert_eq!(
-        a.leader_budget(Some(9)).settle,
+        a.leader_budget(9).settle,
         std::time::Duration::from_secs(55)
     );
-    assert_eq!(a.leader_budget(None), LeaderBudget::WORST_CASE);
-    let tab = TabId::MASTER;
-    a.conn_mut(tab).unwrap().child_exit_watch =
-        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(5)));
+    a.ac_mut().child_exit_watch = Some(crate::shell::child_watch::ChildWatch::for_tests(Some(5)));
     for i in 0..9 {
-        a.conn_mut(tab).unwrap().roster.tracked.insert(
+        a.ac_mut().roster.tracked.insert(
             format!("agent-{i}"),
             crate::agents::roster::TrackedSubagent::new(
                 crate::protocol::client::SubagentInfoEvent {
@@ -253,15 +242,12 @@ async fn ordinary_exit_budget_follows_each_tabs_roster() {
             ),
         );
     }
-    let taken = a.take_all_child_exit_watches_with_rosters();
-    let mut counts: Vec<(Option<u32>, Option<usize>)> =
-        taken.iter().map(|(w, n)| (w.pid(), *n)).collect();
-    counts.sort();
-    assert_eq!(counts, vec![(Some(5), Some(9))]);
+    let taken = a.take_child_exit_watch_with_roster();
+    assert_eq!(taken.map(|(w, n)| (w.pid(), n)), Some((Some(5), 9)));
     let override_budget = LeaderBudget {
         settle: std::time::Duration::from_secs(1),
         force: std::time::Duration::from_secs(1),
     };
     a.set_leader_budget(override_budget);
-    assert_eq!(a.leader_budget(Some(9)), override_budget);
+    assert_eq!(a.leader_budget(9), override_budget);
 }

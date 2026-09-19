@@ -463,32 +463,22 @@ async fn issue_1605_delayed_older_refresh_cannot_roll_back_applied_transcript() 
 }
 
 #[tokio::test]
-async fn issue_1605_periodic_refresh_uses_each_tabs_namespace_and_cursor() {
-    use crate::shell::connection::TabId;
+async fn issue_1605_periodic_refresh_uses_the_connection_namespace_and_cursor() {
     let mut h = super::tui_harness::TuiHarness::new().await;
-    h.open_background_tab();
-    let mut receivers = Vec::new();
-    for tab in 0..2 {
-        let (mut feed, rx) = feed_with_rx();
-        feed.epoch = 3 + u64::from(tab);
-        feed.rev = 8 + u64::from(tab);
-        h.app_mut()
-            .conn_mut(TabId(tab))
-            .unwrap()
-            .roster
-            .feeds
-            .insert("same-child".into(), feed);
-        receivers.push(rx);
-    }
+    let (mut feed, mut rx) = feed_with_rx();
+    feed.epoch = 3;
+    feed.rev = 8;
+    h.app_mut()
+        .ac_mut()
+        .roster
+        .feeds
+        .insert("same-child".into(), feed);
     service_without_new_hint(&mut h).await;
-    for (tab, rx) in receivers.iter_mut().enumerate() {
-        let command = rx.try_recv().expect("periodic refresh on each owning tab");
-        assert!(
-            matches!(command, Command::Sync { id: Some(id), epoch, since_rev, .. }
-            if id == format!("tab{tab}:subagent-sync") && epoch == 3 + tab as u64 && since_rev == 8 + tab as u64)
-        );
-    }
-    assert_eq!(h.active_tab_index(), 0);
+    let command = rx.try_recv().expect("periodic refresh on the feed");
+    assert!(
+        matches!(command, Command::Sync { id: Some(id), epoch, since_rev, .. }
+        if id == "tab0:subagent-sync" && epoch == 3 && since_rev == 8)
+    );
 }
 
 #[tokio::test]

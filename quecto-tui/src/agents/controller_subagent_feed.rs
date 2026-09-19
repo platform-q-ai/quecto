@@ -67,9 +67,6 @@ impl App {
             let path = std::path::PathBuf::from(socket.expect("checked usable socket"));
             let tx = self.subagents.event_tx.clone();
             let agent_id_for_task = agent_id.clone();
-            // The forwarded-event tag must agree with the id namespace about
-            // which tab owns this feed (#1472 r1).
-            let feed_tab = self.ac().transport.tab();
             let task = async move {
                 let Ok(mut client) = Client::connect(&path).await else {
                     return;
@@ -92,7 +89,7 @@ impl App {
                 loop {
                     tokio::select! {
                         ev = client.recv() => match ev {
-                            Some(ev) => if tx.send(SourcedEvent::Subagent(feed_tab, agent_id_for_task.clone(), ev)).await.is_err() { break; },
+                            Some(ev) => if tx.send(SourcedEvent::Subagent(agent_id_for_task.clone(), ev)).await.is_err() { break; },
                             None => break,
                         },
                         cmd = cmd_rx.recv() => match cmd {

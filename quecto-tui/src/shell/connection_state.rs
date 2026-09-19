@@ -1,15 +1,17 @@
-//! Per-tab connection state (#1463, epic #1467).
+//! Connection state (#1463; single connection since #2044).
 //!
-//! Phase 2 of the multi-session TUI bundles everything scoped to ONE master
-//! connection — its transport handle plus the agent-lifecycle state that
-//! phase 1 left on `App` — into this struct, reached through
-//! [`App::active_conn`] / [`App::active_conn_mut`]. At N=1 the app owns
-//! exactly one; the accessors are the dispatch seam where tab selection
-//! lands with N>1, mirroring the proven `active_session_mut()` seam.
+//! Everything scoped to the TUI's ONE master connection — its transport
+//! handle plus the agent-lifecycle state — lives in this struct, owned by
+//! `App` and reached through [`App::active_conn`] / [`App::active_conn_mut`].
 
 use super::*;
 
-/// Everything owned by one tab's master connection. Move order follows the
+/// The correlation-id prefix every minted request id carries (#1463). One
+/// constant for the one connection; ownership of an answer is decided by
+/// exact pending-id equality, never by this prefix.
+pub(crate) const ID_NAMESPACE: &str = "tab0:";
+
+/// Everything owned by the master connection. Move order follows the
 /// issue's blast-radius clusters; fields arrive cluster by cluster.
 pub(crate) struct ConnectionState {
     /// The tab's transport: the master connection behind its feed task
@@ -192,13 +194,12 @@ impl ConnectionState {
         }
     }
 
-    /// The correlation-id namespace prefix for this connection's tab
-    /// (#1463): `tab{N}:`. Every id the tab mints carries it, so broadcast
-    /// responses can never match another tab's pending latches.
+    /// The correlation-id namespace prefix every minted id carries (#1463).
+    /// A constant since the TUI became a single-connection client (#2044):
+    /// the wire format of ids is unchanged.
     pub(crate) fn id_namespace(&self) -> String {
-        // Kept as an owned String for call-site compatibility; derived from
-        // the tab id so it can never drift from the transport (#1463).
-        format!("tab{}:", self.transport.tab().0)
+        // Kept as an owned String for call-site compatibility.
+        ID_NAMESPACE.to_string()
     }
 
     /// Mint `suffix` under this connection's namespace (#1463).
@@ -222,25 +223,14 @@ impl ConnectionState {
 }
 
 impl App {
-    /// Resolve which tab `active_conn*` should address: routing override
-    /// (inbound event owner) if set, otherwise the focused `active_tab`.
-    fn effective_tab(&self) -> crate::shell::connection::TabId {
-        self.routing_tab_override.unwrap_or(self.active_tab)
-    }
-
-    /// The focused (or routing-override) tab's connection state.
+    /// The TUI's one connection state.
     pub(crate) fn active_conn(&self) -> &ConnectionState {
-        let tab = self.effective_tab();
-        self.tabs
-            .get(&tab)
-            .unwrap_or_else(|| panic!("missing connection state for effective tab {tab:?}"))
+        &self.conn
     }
 
     /// Mutable counterpart to [`Self::active_conn`].
     pub(crate) fn active_conn_mut(&mut self) -> &mut ConnectionState {
-        let tab = self.effective_tab();
-        self.conn_mut(tab)
-            .unwrap_or_else(|| panic!("missing connection state for effective tab {tab:?}"))
+        &mut self.conn
     }
 
     /// Short alias for dense call sites (line-budget / rustfmt).
@@ -255,42 +245,10 @@ impl App {
         self.active_conn_mut()
     }
 
-    /// Immutable lookup for a specific tab (None if unknown).
-    pub(crate) fn conn_for(
-        &self,
-        tab: crate::shell::connection::TabId,
-    ) -> Option<&ConnectionState> {
-        self.tabs.get(&tab)
-    }
-
-    /// Mutable lookup for a specific tab (None if unknown).
-    pub(crate) fn conn_mut(
-        &mut self,
-        tab: crate::shell::connection::TabId,
-    ) -> Option<&mut ConnectionState> {
-        self.tabs.get_mut(&tab)
-    }
-
-    /// Run `f` with `active_conn*` temporarily addressing `tab` so existing
-    /// handlers can mutate the event owner without changing focus (#1465).
-    /// Unknown tabs are a no-op (AC7: no ghost state, no active fallthrough).
-    pub(crate) fn with_routing_tab<R>(
-        &mut self,
-        tab: crate::shell::connection::TabId,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> Option<R> {
-        self.conn_for(tab)?;
-        let prev = self.routing_tab_override;
-        self.routing_tab_override = Some(tab);
-        let out = f(self);
-        self.routing_tab_override = prev;
-        Some(out)
-    }
-
-    /// Close global overlay surfaces when switching the active tab/session.
-    /// N=1 session switches use the same seam; this preserves compose-frame
-    /// idempotence by doing the state transition outside render composition.
-    pub(crate) fn close_tab_switch_overlays(&mut self) {
+    /// Close global overlay surfaces when switching the active session. This
+    /// preserves compose-frame idempotence by doing the state transition
+    /// outside render composition.
+    pub(crate) fn close_session_switch_overlays(&mut self) {
         let conn = self.active_conn_mut();
         conn.sessions.close_picker();
         conn.sessions.resume_decision = None;
@@ -302,7 +260,7 @@ impl App {
         self.inference.model_selector = None;
         self.inference.effort_selector = None;
         // Global model-selector open latch must not fire on the newly focused
-        // tab after a switch (#1465 F10).
+        // session after a switch (#1465 F10).
         self.inference.model_registry.open_pending = false;
     }
 }

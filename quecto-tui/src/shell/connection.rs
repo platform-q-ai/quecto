@@ -1,56 +1,34 @@
-//! Master-connection feed task seam (#1462, epic #1467).
+//! Master-connection feed task seam (#1462; single connection since #2044).
 //!
-//! Phase 1 of the multi-session TUI: the master [`Client`] moves behind a
-//! [`Connection`] feed task, modelled on the sub-agent feed task pattern
-//! (`agents/controller_subagent_feed.rs`): a tokio task owns the socket's
-//! event stream, commands ride the client's existing FIFO writer mpsc
-//! (whose task owns the socket's write half), and events are forwarded into
-//! the shared fan-in channel keyed by [`SourcedEvent`]. The event loop's select
-//! arm count becomes independent of connection count, and stream close is an
-//! explicit [`SourcedEvent::Closed`] sentinel instead of `None`-from-recv.
+//! The master [`Client`] lives behind a [`Connection`] feed task, modelled on
+//! the sub-agent feed task pattern (`agents/controller_subagent_feed.rs`): a
+//! tokio task owns the socket's event stream, commands ride the client's
+//! existing FIFO writer mpsc (whose task owns the socket's write half), and
+//! events are forwarded into the master event channel as [`SourcedEvent`]s.
+//! Stream close is an explicit [`SourcedEvent::Closed`] sentinel instead of
+//! `None`-from-recv.
 
 use crate::protocol::client::{Client, ClientError, Command, CommandSender, Event};
 use tokio::sync::mpsc;
 
-/// Stable identity of one TUI tab (one master connection). Phase 1 has
-/// exactly one: [`TabId::MASTER`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TabId(pub(crate) u32);
-
-impl TabId {
-    /// The single tab of the N=1 phase.
-    pub(crate) const MASTER: TabId = TabId(0);
-}
-
-/// One item on a fan-in channel drained by the app event loop. The payload
-/// lives inside the variant, so an event-less `Tab`/`Subagent` item or a
+/// One item on a channel drained by the app event loop. The payload lives
+/// inside the variant, so an event-less `Master`/`Subagent` item or a
 /// payload-carrying `Closed` sentinel is unrepresentable — consumers need no
 /// dead arms for states no producer constructs (#1470 review).
 #[derive(Debug, Clone)]
 pub(crate) enum SourcedEvent {
-    /// An event from the tab's master connection.
-    Tab(TabId, Event),
-    /// An event from a sub-agent feed belonging to the tab.
-    Subagent(TabId, String, Event),
-    /// The tab's master connection stream closed (replaces `None`-from-recv).
-    Closed(TabId),
+    /// An event from the master connection.
+    Master(Event),
+    /// An event from a sub-agent feed.
+    Subagent(String, Event),
+    /// The master connection stream closed (replaces `None`-from-recv).
+    Closed,
 }
 
-impl SourcedEvent {
-    /// The tab this item belongs to, regardless of variant.
-    pub(crate) fn tab(&self) -> TabId {
-        match self {
-            SourcedEvent::Tab(tab, _)
-            | SourcedEvent::Subagent(tab, _, _)
-            | SourcedEvent::Closed(tab) => *tab,
-        }
-    }
-}
-
-/// A master connection behind a feed task: the feed task owns the [`Client`]
-/// (and with it the socket's event stream), forwards events into the shared
-/// fan-in tagged `SourcedEvent::Tab(tab, ..)`, and emits `SourcedEvent::Closed(tab)` when
-/// the stream closes. Callers hold only this handle.
+/// The master connection behind a feed task: the feed task owns the
+/// [`Client`] (and with it the socket's event stream), forwards events into
+/// the master event channel as `SourcedEvent::Master(..)`, and emits
+/// `SourcedEvent::Closed` when the stream closes. Callers hold only this handle.
 ///
 /// Commands ride the client's existing ordered writer mpsc — the "small
 /// cmd_tx" of the sub-agent feed pattern — whose task owns the socket's
@@ -59,10 +37,6 @@ impl SourcedEvent {
 /// `try_send`; the seam deliberately reuses the queue that already provides
 /// FIFO order and a non-blocking enqueue.
 pub(crate) struct Connection {
-    /// The tab this connection belongs to. Every correlation id the tab
-    /// mints is namespaced `tab{N}:` from this id (#1463), so broadcast
-    /// responses can never match another tab's pending latches.
-    tab: TabId,
     sender: CommandSender,
     /// Per-connection ADR-0008 negotiation outcome (#1462 scope 4), copied
     /// from the [`Client`]'s connect-time framing.
@@ -72,8 +46,8 @@ pub(crate) struct Connection {
     dropped_oversized: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// The feed task owning the client, when one was spawned. Held so drop /
     /// replace can abort it — otherwise the orphaned task keeps the real
-    /// socket and injects a spurious `Closed` sentinel into the fan-in later
-    /// (#1470 / #1465 F1: TabId reuse would poison the next occupant).
+    /// socket and injects a spurious `Closed` sentinel into the channel later
+    /// (#1470).
     feed_task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -85,8 +59,7 @@ impl Drop for Connection {
 
 impl Connection {
     /// Move `client` behind the feed task, forwarding its events into
-    /// `event_tx` keyed by `tab` and closing with a `SourcedEvent::Closed(tab)`
-    /// sentinel. The negotiation outcome (`speaks_frames`) is read from the
+    /// `event_tx` and closing with a `SourcedEvent::Closed` sentinel. The negotiation outcome (`speaks_frames`) is read from the
     /// client itself — per-connection state, not a caller-supplied flag.
     ///
     /// In TEST builds only, outside a tokio runtime (sync unit tests
@@ -95,7 +68,7 @@ impl Connection {
     /// command sender — exactly the pre-seam behaviour those tests
     /// exercised. Production builds always spawn, and panic loudly if no
     /// runtime is present.
-    pub(crate) fn spawn(client: Client, tab: TabId, event_tx: mpsc::Sender<SourcedEvent>) -> Self {
+    pub(crate) fn spawn(client: Client, event_tx: mpsc::Sender<SourcedEvent>) -> Self {
         let sender = client.clone_sender();
         let speaks_frames = client.speaks_frames();
         let dropped_oversized = client.dropped_oversized_handle();
@@ -104,7 +77,7 @@ impl Connection {
         // tokio runtime. In production builds we spawn unconditionally, so a
         // future caller outside a runtime fails loudly (`tokio::spawn`
         // panics) instead of silently dropping the client and freezing the
-        // tab with no `SourcedEvent::Closed` sentinel (#1047 class, PR review).
+        // session with no `SourcedEvent::Closed` sentinel (#1047 class, PR review).
         #[cfg(any(test, feature = "test-harness"))]
         let spawn_feed = tokio::runtime::Handle::try_current().is_ok();
         #[cfg(not(any(test, feature = "test-harness")))]
@@ -115,14 +88,14 @@ impl Connection {
                 loop {
                     match client.recv().await {
                         Some(ev) => {
-                            if event_tx.send(SourcedEvent::Tab(tab, ev)).await.is_err() {
+                            if event_tx.send(SourcedEvent::Master(ev)).await.is_err() {
                                 return; // App gone — nothing left to feed.
                             }
                         }
                         None => {
                             // Stream closed: the explicit sentinel replaces
                             // `None`-from-recv on a dedicated select arm.
-                            let _ = event_tx.send(SourcedEvent::Closed(tab)).await;
+                            let _ = event_tx.send(SourcedEvent::Closed).await;
                             return;
                         }
                     }
@@ -132,24 +105,11 @@ impl Connection {
             None
         };
         Self {
-            tab,
             sender,
             speaks_frames,
             dropped_oversized,
             feed_task,
         }
-    }
-
-    /// The tab this connection belongs to.
-    pub(crate) fn tab(&self) -> TabId {
-        self.tab
-    }
-
-    /// Test-only: re-key this connection to another tab id, keeping minted
-    /// correlation namespaces aligned with the map key (#1465).
-    #[cfg(any(test, feature = "test-harness"))]
-    pub(crate) fn set_tab_for_tests(&mut self, tab: TabId) {
-        self.tab = tab;
     }
 
     /// Abort the feed task owning the client. Called from [`Drop`] and by
@@ -177,7 +137,7 @@ impl Connection {
     /// Per-connection ADR-0008 negotiation outcome: whether this connection
     /// speaks length-prefixed frames (vs legacy NDJSON).
     // Consumed by the seam's contract tests today; production reads arrive
-    // with the ADR-0008 part-3 handshake and the N>1 tabs of epic #1467.
+    // with the ADR-0008 part-3 handshake.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn speaks_frames(&self) -> bool {
         self.speaks_frames
@@ -197,7 +157,6 @@ impl Connection {
     pub(crate) fn disconnected_for_tests() -> Self {
         let client = Client::disconnected_for_tests();
         Self {
-            tab: TabId::MASTER,
             sender: client.clone_sender(),
             speaks_frames: client.speaks_frames(),
             dropped_oversized: client.dropped_oversized_handle(),
@@ -213,7 +172,6 @@ impl Connection {
         let sender = crate::protocol::client::CommandSender { tx };
         (
             Self {
-                tab: TabId::MASTER,
                 sender,
                 speaks_frames: true,
                 dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -221,12 +179,6 @@ impl Connection {
             },
             rx,
         )
-    }
-
-    /// Test-only: force the ADR-0008 negotiation flag for isolation checks.
-    #[cfg(test)]
-    pub(crate) fn set_speaks_frames_for_tests(&mut self, speaks: bool) {
-        self.speaks_frames = speaks;
     }
 
     /// Test-only: simulate the reader recording `n` oversized-line drops.

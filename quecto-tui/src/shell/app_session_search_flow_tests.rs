@@ -367,7 +367,7 @@ async fn a_picker_closed_by_a_tab_switch_abandons_the_flight_and_a_late_answer_c
     open_picker(&mut h).await;
     type_text(&mut h, "z");
     let request = searches(&mut h).await[0].clone();
-    h.app_mut().close_tab_switch_overlays();
+    h.app_mut().close_session_switch_overlays();
     assert!(!h.app_mut().ac().sessions.search.is_in_flight());
     assert!(h.app_mut().ac().sessions.pending_list_id.is_none());
     answer(

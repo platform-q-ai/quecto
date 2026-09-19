@@ -88,36 +88,26 @@ impl App {
         item: crate::shell::connection::SourcedEvent,
     ) -> SourcedRender {
         use crate::shell::connection::SourcedEvent;
-        // #1465: fan-in may carry any known tab (unknown tabs no-op in arms);
-        // touching `.tab()` keeps the helper live under deny(dead_code).
-        let _routed_tab = item.tab();
         match item {
-            SourcedEvent::Tab(tab, ev) => {
+            SourcedEvent::Master(ev) => {
                 let is_token = Self::is_token_event(&ev);
-                // Route to the owner tab (#1465); unknown tabs no-op.
-                self.with_routing_tab(tab, |app| {
-                    app.handle_event(ev);
-                    if app.surface_dropped_oversized_events() {
-                        SourcedRender::Immediate
-                    } else {
-                        SourcedRender::Stream { is_token }
-                    }
-                })
-                .unwrap_or(SourcedRender::Stream { is_token })
+                self.handle_event(ev);
+                if self.surface_dropped_oversized_events() {
+                    SourcedRender::Immediate
+                } else {
+                    SourcedRender::Stream { is_token }
+                }
             }
-            SourcedEvent::Subagent(tab, agent_id, ev) => {
-                // Direct child feeds belong to the tab that opened them.
+            SourcedEvent::Subagent(agent_id, ev) => {
                 let stream = SourcedRender::Stream {
                     is_token: Self::is_token_event(&ev),
                 };
-                let _ = self.with_routing_tab(tab, |app| {
-                    app.route_subagent_event(&agent_id, ev);
-                });
+                self.route_subagent_event(&agent_id, ev);
                 stream
             }
-            SourcedEvent::Closed(tab) => {
-                // Owner-targeted disconnect (#1465 / #1047 via #1462).
-                self.begin_agent_stream_closed(tab);
+            SourcedEvent::Closed => {
+                // Master stream closed (#1047 via #1462).
+                self.begin_agent_stream_closed();
                 SourcedRender::Immediate
             }
         }
@@ -261,7 +251,7 @@ impl App {
             let next_idle_service_tick = self.next_idle_service_deadline();
 
             tokio::select! {
-                _ = subagent_refresh.tick(), if self.tabs.values().any(|tab| !tab.roster.feeds.is_empty()) => {
+                _ = subagent_refresh.tick(), if !self.conn.roster.feeds.is_empty() => {
                     self.refresh_subagent_transcripts();
                 }
                 // Stdin input.
@@ -315,20 +305,20 @@ impl App {
                 // Off-loop disconnect diagnosis completion (#1462 scope 3):
                 // the bounded #1047 waits ran on a spawned task; finish the
                 // disconnect with the diagnosis it reported.
-                Some((tab, detail)) = self.disconnect_diag_rx.recv() => {
-                    self.finish_agent_stream_closed(tab, detail);
+                Some(detail) = self.disconnect_diag_rx.recv() => {
+                    self.finish_agent_stream_closed(detail);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
                 Some(failure) = self.command_send_failure_rx.recv() => {
                     self.handle_command_send_failure(failure);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
-                // Master-connection fan-in (`SourcedEvent::Tab` / `Closed`):
-                // its own channel so master events interleave fairly with
+                // Master-connection events (`SourcedEvent::Master` / `Closed`):
+                // their own channel so master events interleave fairly with
                 // sub-agent bursts instead of queueing FIFO behind them
-                // (#1470 review). All tabs share this arm — the select arm
-                // count stays constant as connections come and go (#1462).
-                Some(item) = self.tab_event_rx.recv() => {
+                // (#1470 review). Once the feed task has ended the channel is
+                // closed and this arm stays disabled.
+                Some(item) = self.master_event_rx.recv() => {
                     let render = self.route_sourced(item);
                     self.apply_sourced_render(render, &mut stream_render_coalescer);
                 }

@@ -34,11 +34,10 @@ impl App {
         kitty_deadline: tokio::time::Instant,
     ) -> bool {
         let mut needs_render = self.tick_admission_labels();
-        for state in self.tabs.values_mut() {
-            if let Some(spinner) = &mut state.spinner {
-                if spinner.tick() {
-                    needs_render = true;
-                }
+        let state = &mut self.conn;
+        if let Some(spinner) = &mut state.spinner {
+            if spinner.tick() {
+                needs_render = true;
             }
         }
         if self.service_search_timeout(self.clock.now()) {

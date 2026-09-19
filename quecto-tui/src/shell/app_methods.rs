@@ -627,27 +627,14 @@ impl App {
     }
 
     /// Start a fresh single `/new` session, preserving the old session for `/resume`.
-    pub(super) fn reset_workspace(&mut self) -> Vec<crate::shell::child_watch::ChildWatch> {
-        let mut master = self
-            .tabs
-            .remove(&crate::shell::connection::TabId::MASTER)
-            .expect("workspace reset requires a master tab");
-        let mut watches = Vec::new();
-        for (_, mut state) in self.tabs.drain() {
-            state.transport.abort_feed();
-            watches.extend(state.child_exit_watch.take());
-        }
+    pub(super) fn reset_workspace(&mut self) {
+        let master = self.ac_mut();
         master.name = None;
         master.session_key = None;
         master.roster = crate::agents::view::ConnectionRoster::new();
-        self.tabs
-            .insert(crate::shell::connection::TabId::MASTER, master);
-        self.active_tab = crate::shell::connection::TabId::MASTER;
-        self.routing_tab_override = None;
         self.editor.set_text("");
         self.subagents = crate::agents::view::SubagentUi::new();
         self.reset_session("New session started");
-        watches
     }
 
     /// Reset the conversation — clears agent history, chat UI, and context display.

@@ -471,20 +471,6 @@ async fn message_recovery_ids_carry_connection_namespace() {
 }
 
 #[tokio::test]
-async fn minted_ids_derive_namespace_from_tab_id() {
-    // Guard against a hard-coded "tab0:" literal satisfying every assertion
-    // above (#1463 review): a connection re-keyed to tab 1 must mint tab1: ids.
-    let mut h = harness().await;
-    h.app_mut().test_set_master_tab(1);
-    let id = mint_resume_id(&mut h).await;
-    assert!(
-        id.starts_with("tab1:"),
-        "minted id namespaces must derive from the connection's tab id, \
-         not a constant prefix (#1463): got {id:?}"
-    );
-}
-
-#[tokio::test]
 async fn startup_request_ids_carry_connection_namespace() {
     // The connect-time literals ("init", "init-subagents") and the attach
     // backfill are minted ids too (#1463 scope).
@@ -612,23 +598,5 @@ async fn foreign_namespace_response_does_not_resolve_pending_resume() {
     assert!(
         !frame.contains("foreign resumed user"),
         "a foreign-namespace transcript must not land in this tab:\n{frame}"
-    );
-}
-
-#[tokio::test]
-async fn disconnect_diag_completion_for_another_tab_leaves_this_latch_pending() {
-    // The disconnect-diagnosis pending latch is keyed per tab (#1463,
-    // accepted phase-2 debt from PR #1470): a completion attributed to some
-    // other tab must not clear (or emit through) this tab's latch.
-    let mut h = harness().await;
-    h.app_mut().ac_mut().disconnect_diag_pending = true;
-    h.app_mut().finish_agent_stream_closed(
-        crate::shell::connection::TabId(1),
-        Some("other tab's exit detail".into()),
-    );
-    assert!(
-        h.app_mut().ac().disconnect_diag_pending,
-        "a diagnosis completion keyed to another tab must leave this tab's \
-         pending latch set (#1463)"
     );
 }

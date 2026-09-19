@@ -1,6 +1,5 @@
 use crate::protocol::client::Client;
 use crate::shell::app::App;
-use crate::shell::connection::TabId;
 use crate::shell::terminal::Terminal;
 
 fn app() -> App {
@@ -11,29 +10,24 @@ fn app() -> App {
 }
 
 #[test]
-fn bare_session_selection_still_current_tab() {
+fn bare_session_selection_resumes_in_the_current_session() {
     let mut a = app();
-    // Live writer so resume commands are observable on the active tab sender.
-    let (mut live, mut rx) = crate::shell::connection::Connection::live_for_tests();
-    live.set_tab_for_tests(TabId::MASTER);
+    // Live writer so resume commands are observable on the connection's sender.
+    let (live, mut rx) = crate::shell::connection::Connection::live_for_tests();
     a.ac_mut().transport = live;
     a.ac_mut().agent_connected = true;
-    assert_eq!(a.active_tab, TabId::MASTER);
     a.apply_resume_selection("session:my-key");
     let line = rx
         .try_recv()
-        .expect("session: prefix must send resume on active tab");
+        .expect("session: prefix must send resume on the connection");
     assert!(line.contains("resume_session"), "wire={line}");
     assert!(line.contains("my-key"), "wire={line}");
-    assert_eq!(a.active_tab, TabId::MASTER, "must not open/switch tabs");
     a.apply_resume_selection("plain-key");
     let line = rx
         .try_recv()
-        .expect("bare key must send resume on active tab");
+        .expect("bare key must send resume on the connection");
     assert!(line.contains("resume_session"), "wire={line}");
     assert!(line.contains("plain-key"), "wire={line}");
-    assert_eq!(a.active_tab, TabId::MASTER);
-    assert_eq!(a.tabs.len(), 1);
 }
 
 #[test]
