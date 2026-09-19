@@ -244,3 +244,55 @@ async fn a_scope_switch_clears_the_listed_versions() {
         "{sent:?}"
     );
 }
+
+/// A success with no payload at all (nothing to read an identity from) still
+/// reports a restore and refreshes, and adopts no key.
+#[tokio::test]
+async fn a_bare_success_reports_a_restore_without_adopting_a_key() {
+    let mut h = harness().await;
+    h.app_mut().ac_mut().session_key = Some("cli:local".into());
+    h.app_mut()
+        .handle_response(Some("r".into()), "resume_session".into(), true, None, None);
+    assert_eq!(h.app_mut().ac().session_key.as_deref(), Some("cli:local"));
+    let notes = h.app_mut().notifications.messages();
+    assert!(
+        notes.iter().any(|note| note == "Resumed session session"),
+        "{notes:?}"
+    );
+}
+
+/// A peer tab's quiet footer refresh stays quiet; a solicited `/session`
+/// answer is shown (the sessions controller's stats routing).
+#[tokio::test]
+async fn a_peers_quiet_stats_refresh_is_dropped_and_a_solicited_one_is_shown() {
+    let mut h = harness().await;
+    let data = json!({"sessionKey": "cli:s", "totalMessages": 1});
+    let chat = |h: &mut super::super::super::tui_harness::TuiHarness| {
+        h.app_mut()
+            .ac_mut()
+            .master_session
+            .chat
+            .render(120)
+            .join("\n")
+    };
+    let before = chat(&mut h);
+    h.app_mut().handle_response(
+        Some("tab9:stats-footer".into()),
+        "get_session_stats".into(),
+        true,
+        Some(data.clone()),
+        None,
+    );
+    assert_eq!(chat(&mut h), before, "a peer's quiet refresh adds nothing");
+    h.app_mut().handle_response(
+        Some("session-1".into()),
+        "get_session_stats".into(),
+        true,
+        Some(data),
+        None,
+    );
+    assert!(
+        chat(&mut h).contains("cli:s"),
+        "a solicited answer is shown"
+    );
+}
