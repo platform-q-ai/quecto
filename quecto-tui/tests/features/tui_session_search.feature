@@ -173,5 +173,8 @@ Feature: The /resume picker searches session metadata through the harness (#2010
     And the resume picker does not show "LISTED-ONE"
     When I clear the resume search box
     And I type "one" into the resume search box
+    Then the resume picker shows "Sessions · Loading…"
+    When the harness answers the session list in flight for "global" with 2 listed sessions
     Then the resume picker shows "LISTED-ONE"
+    And the resume picker does not show "LISTED-TWO"
     And exactly one metadata search was ever sent

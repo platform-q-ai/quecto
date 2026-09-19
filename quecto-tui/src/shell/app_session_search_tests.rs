@@ -212,7 +212,7 @@ async fn a_harness_without_the_command_frees_the_flight_and_says_so() {
     open_picker(&mut h).await;
     // Not about a search, or no search in flight: not this tab's.
     h.app_mut()
-        .handle_search_parse_error(Some("unknown variant `search_session_metadata`"));
+        .handle_search_parse_error(None, Some("unknown variant `search_session_metadata`"));
     assert!(h.notification_messages().is_empty());
     type_text(&mut h, "a");
     let _ = h.drain_commands().await;

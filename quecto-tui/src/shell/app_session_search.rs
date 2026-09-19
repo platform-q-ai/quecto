@@ -13,6 +13,8 @@ use crate::sessions::session_search::{FlightState, Overdue, Settled};
 /// Said once per connection to a harness that predates the command (R1-T5).
 const OLD_HARNESS: &str = "Search needs a newer quecto harness — restart the agent";
 const FILTERED_HERE: &str = "Filtering the listed sessions here — this harness cannot search";
+/// serde's rejection of the command itself, as every harness words it.
+const SEARCH_UNKNOWN: &str = "unknown variant `search_session_metadata`";
 const NO_ANSWER: &str = "Search did not answer — edit the text or change Scope to retry";
 
 impl App {
@@ -27,11 +29,16 @@ impl App {
             return self.request_session_scope(scope);
         }
         self.ac_mut().sessions.scope = scope;
+        if self.ac().sessions.search_unsupported {
+            // The listing IS the fallback's data: one still awaited is
+            // filtered when it arrives (R2-T4), never the old scope's rows.
+            if self.ac().sessions.pending_list_id.is_none() {
+                self.filter_listed_sessions();
+            }
+            return self.sync_picker_rows_state();
+        }
         // A listing still in flight would overwrite the rows the search shows.
         self.ac_mut().sessions.pending_list_id = None;
-        if self.ac().sessions.search_unsupported {
-            return self.filter_listed_sessions();
-        }
         let flight = &mut self.ac_mut().sessions.search;
         let send = if rescoped {
             flight.scope_changed()
@@ -123,11 +130,19 @@ impl App {
     /// uncorrelated `parse_error`: the search in flight would never be
     /// answered. It is given up, the user is told ONCE per connection, no
     /// further search is sent on it, and the box filters the listed rows here
-    /// instead (R1-T5). `parse_error` is broadcast, so it is this tab's only
-    /// when it names the command AND a search is in flight here.
-    pub(in crate::shell) fn handle_search_parse_error(&mut self, error: Option<&str>) {
-        let about_search = error.is_some_and(|e| e.contains("search_session_metadata"));
-        if about_search && self.ac().sessions.search.is_in_flight() {
+    /// instead (R1-T5). `parse_error` is broadcast and `get_state` advertises
+    /// no command list, so it is this tab's only when the search command is
+    /// THE variant it rejects — a harness that knows the command names it in
+    /// every unknown-command error, among the expected ones (R2-T2) — AND a
+    /// search is in flight here and, should an id come with it, under that id.
+    pub(in crate::shell) fn handle_search_parse_error(
+        &mut self,
+        id: Option<&str>,
+        error: Option<&str>,
+    ) {
+        let search = &self.ac().sessions.search;
+        let ours = search.is_in_flight() && (id.is_none() || search.owns(id));
+        if ours && error.is_some_and(|e| e.contains(SEARCH_UNKNOWN)) {
             self.ac_mut().sessions.search.abandon();
             self.ac_mut().sessions.search_unsupported = true;
             self.notify(OLD_HARNESS, NotifyLevel::Warning);
@@ -293,6 +308,9 @@ fn grouped(n: u64) -> String {
     out
 }
 
+#[cfg(test)]
+#[path = "app_session_search_fallback_r2_tests.rs"]
+mod fallback_r2_tests;
 #[cfg(test)]
 #[path = "app_session_search_flow_tests.rs"]
 mod flow_tests;
