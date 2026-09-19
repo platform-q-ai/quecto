@@ -69,7 +69,7 @@ fn composed_with_script(script_body: &str, extra_argv: &[&str]) -> (tempfile::Te
 #[test]
 fn doctor_presents_each_check_with_its_remedy_and_exits_one_on_a_failure() {
     let (_dir, ctx) = composed(
-        "ok\\truntime-cli\\tpodman at /usr/bin/podman\\t\\nwarn\\tgh\\tgh is not on PATH\\tinstall gh\\nfail\\timage\\timage quecto-box:local is not present\\tbuild it (podman build -t quecto-box:local .)\\n",
+        "ok\\truntime-cli\\tpodman at /usr/bin/podman\\t\\nwarn\\tgh\\tgh is not on PATH\\tinstall gh\\nfail\\timage\\timage quecto-dev:local is not present\\tbuild it (podman build -t quecto-dev:local .)\\n",
     );
     let output = run(&["container", "doctor"], &ctx);
     assert_eq!(output.exit_code, 1, "{output:?}");
@@ -96,7 +96,7 @@ fn doctor_presents_each_check_with_its_remedy_and_exits_one_on_a_failure() {
     );
     assert!(
         output.stdout.contains(
-            "  ✗ image        image quecto-box:local is not present\n    remedy: build it (podman build -t quecto-box:local .)\n"
+            "  ✗ image        image quecto-dev:local is not present\n    remedy: build it (podman build -t quecto-dev:local .)\n"
         ),
         "{}",
         output.stdout

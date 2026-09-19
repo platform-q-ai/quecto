@@ -176,8 +176,9 @@ impl Toolbox {
     /// recorded and refused so a test can prove it never happened.
     pub(crate) fn install_fake_podman(&self, image_present: bool) {
         let body = format!(
-            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = image ] && [ \"$2\" = exists ]; then [ -e '{}' ] && exit 0 || exit 1; fi\nexit 125\n",
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = image ] && [ \"$2\" = exists ]; then [ -e '{}' ] && exit 0 || exit 1; fi\nif [ \"$1\" = run ] && [ \"${{2:-}}\" = --rm ] && [ -e '{}' ]; then exit 0; fi\nexit 125\n",
             self.podman_log().display(),
+            self.marker().display(),
             self.marker().display()
         );
         write_executable(&self.dir.join("podman"), &body);

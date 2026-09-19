@@ -140,7 +140,7 @@ fn a_warned_image_check_is_shown_with_its_remedy_and_is_not_ready() {
     assert_eq!(status.exit_code, 1);
     let out = &status.stdout;
     assert!(
-        out.contains("image:   ! image quecto-box:local is stale\n           remedy: rebuild it\n"),
+        out.contains("image:   ! image quecto-dev:local is stale\n           remedy: rebuild it\n"),
         "{out}"
     );
     assert!(out.contains("not ready"), "{out}");

@@ -373,7 +373,7 @@ pub const STANDARD_CONTAINER_CONFIG: &str = "standard";
 /// The image the standard config launches when `init` is not told
 /// another: the tag the official adapter set already defaults to, so the
 /// Containerfile init materialises is its missing build input.
-pub const STANDARD_CONTAINER_IMAGE: &str = "quecto-box:local";
+pub const STANDARD_CONTAINER_IMAGE: &str = "quecto-dev:local";
 
 /// Where the standard bundle lives below a project: the assets are
 /// materialised here and the config entry's argv names them here.

@@ -35,10 +35,10 @@ fn writes_the_bundle_and_a_default_entry_naming_the_materialised_scripts() {
         Some("https://example.test/origin")
     );
     assert_eq!(report.repository_origin, RepositoryOrigin::CheckoutOrigin);
-    assert_eq!(report.image, "quecto-box:local");
+    assert_eq!(report.image, "quecto-dev:local");
     assert_eq!(
         report.build_command,
-        "build -t quecto-box:local /p/.quecto/containers/standard"
+        "build -t quecto-dev:local /p/.quecto/containers/standard"
     );
     assert_eq!(report.entry.displaced_default, None);
     assert_eq!(report.entry.overridden_global_default, None);
@@ -59,7 +59,7 @@ fn writes_the_bundle_and_a_default_entry_naming_the_materialised_scripts() {
             "--repo",
             "https://example.test/origin",
             "--image",
-            "quecto-box:local"
+            "quecto-dev:local"
         ]
     );
     assert_eq!(
@@ -257,7 +257,7 @@ fn an_explicit_repo_wins_and_no_origin_means_a_sandbox() {
     assert_eq!(report.repository, None);
     let create = argv(&report.entry.entry, "create");
     assert!(!create.contains(&"--repo".to_string()), "{create:?}");
-    assert_eq!(&create[create.len() - 2..], ["--image", "quecto-box:local"]);
+    assert_eq!(&create[create.len() - 2..], ["--image", "quecto-dev:local"]);
 }
 
 #[test]
