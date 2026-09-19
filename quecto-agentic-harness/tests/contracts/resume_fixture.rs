@@ -5,11 +5,7 @@
 //! the target's claim as they were.
 use quecto::application::durable_prefix::DurablePrefixLatch;
 use quecto::application::sessions::dto::{
-    ActionAvailability, ResumeDecision, ResumeIntent, ResumeOutcome, ResumeRequest,
-    ResumeSavedSessionError,
-};
-use quecto::application::sessions::ports::session_home::{
-    SessionHomeCatalogue, WorkspaceDiscovery,
+    ResumeDecision, ResumeOutcome, ResumeRequest, ResumeSavedSessionError,
 };
 use quecto::application::sessions::ports::session_runtime::TurnAccountingReset;
 use quecto::application::sessions::ports::{
@@ -17,18 +13,14 @@ use quecto::application::sessions::ports::{
 };
 use quecto::composition::session_home::session_home_in;
 use quecto::domain::message::Message;
-use quecto::domain::resume_decision::{HomeVersion, ResumeDecisionKind};
 use quecto::domain::session::Session;
-use quecto::domain::session_home::SessionHomeScope;
 use quecto::domain::session_identity::SessionIdentity;
 use quecto::domain::workflow::WorkflowRunPersisted;
-use quecto::infrastructure::persistence::session_home_catalogue::FileSessionHomeCatalogue;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::workspace::git_scope_discovery::GitScopeDiscovery;
 use quecto::interface::cli::uds_session_handles::{SessionHandles, SessionLoopInputs};
 use quecto::interface::uds::sessions::controller::ListSessionsController;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
