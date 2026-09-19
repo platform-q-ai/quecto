@@ -143,7 +143,8 @@ pub enum Command {
     ResumeSession {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
-        session: String,
+        #[serde(flatten)]
+        resume: super::resume_decision_payloads::ResumeSelection,
     },
     SetModel {
         #[serde(skip_serializing_if = "Option::is_none")]

@@ -510,7 +510,7 @@ async fn a_scope_refusal_for_the_current_key_keeps_the_loops_own_claim() {
     };
     let rig = rig_on_its_own_key(options, true);
     let (err, journal) = refused_on_its_own_key(&rig, false).await;
-    assert!(matches!(err, ResumeSavedSessionError::Scope(_)), "{err}");
+    assert!(matches!(err, ResumeSavedSessionError::Decision(_)), "{err}");
     assert_eq!(journal.last().unwrap(), "store.load(cli:departing)");
 }
 
@@ -543,7 +543,7 @@ async fn a_scope_refusal_of_another_key_releases_the_claim_just_taken() {
         .execute("saved", &mut messages, None, &mut runtime)
         .await
         .expect_err("refused");
-    assert!(matches!(err, ResumeSavedSessionError::Scope(_)), "{err}");
+    assert!(matches!(err, ResumeSavedSessionError::Decision(_)), "{err}");
     assert_eq!(
         rig.journal().last().unwrap(),
         "store.release(cli:saved)@active=cli:departing"

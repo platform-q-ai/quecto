@@ -2,9 +2,7 @@
 //! resume transaction applies under its claim, for the selection and the
 //! exact-key/startup paths alike. Not a second transaction owner: the
 //! decision is the domain's, the observations the shared context's.
-use crate::application::sessions::dto::ResumeSavedSessionError;
 use crate::application::sessions::ports::SessionStore;
-use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::session_identity::SessionIdentity;
 use std::sync::Arc;
 
@@ -30,19 +28,4 @@ impl Drop for PendingClaim {
             self.store.release(&self.identity);
         }
     }
-}
-
-/// The caller owns the key while authoritative metadata is re-read; the
-/// current facts and the saved home are observed fresh, never cached.
-pub(super) async fn admit_home(
-    home: &SessionHomeContext,
-    identity: &SessionIdentity,
-) -> Result<(), ResumeSavedSessionError> {
-    let scope = home
-        .catalogue
-        .read(identity)
-        .map_err(ResumeSavedSessionError::Load)?;
-    home.admit(&scope)
-        .await
-        .map_err(ResumeSavedSessionError::Scope)
 }

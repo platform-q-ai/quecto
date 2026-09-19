@@ -7,6 +7,7 @@ pub mod container_configs;
 pub mod environments;
 pub mod find;
 pub mod fleet_settlement;
+pub mod resume_capabilities;
 pub mod retention;
 pub mod runtime;
 pub mod session_home;

@@ -10,12 +10,14 @@ use crate::protocol::session_payloads::ResumeSessionSummary;
 pub const SESSION_ROW_PREFIX: &str = "session:";
 const NO_HOME: &str = "Unassociated / unavailable home";
 const ELIGIBLE: &str = "Resume";
-const INELIGIBLE: &str = "Open original / Fork / Locate unavailable; Cancel";
+const INELIGIBLE: &str = "Needs a decision (Enter)";
 
 pub struct ResumeRows {
     pub items: Vec<SelectItem>,
     /// Keys the backend admitted; a selection outside this set is refused.
     pub eligible_keys: BTreeSet<String>,
+    /// The home version each row was listed at (#2011), echoed on selection.
+    pub home_versions: std::collections::BTreeMap<String, String>,
     /// The status line to show when there is nothing to pick.
     pub empty_hint: Option<&'static str>,
 }
@@ -38,6 +40,10 @@ impl ResumeRows {
             .iter()
             .filter(|s| s.resume_eligible)
             .map(|s| s.key.clone())
+            .collect();
+        let home_versions = sessions
+            .iter()
+            .filter_map(|s| Some((s.key.clone(), s.home_version.clone()?)))
             .collect();
         let items = sessions
             .into_iter()
@@ -65,6 +71,7 @@ impl ResumeRows {
         Self {
             items,
             eligible_keys,
+            home_versions,
             empty_hint,
         }
     }

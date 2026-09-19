@@ -20,6 +20,30 @@ impl From<SessionListScopeCommand> for crate::application::sessions::dto::Sessio
     }
 }
 
+/// The explicit action of `resume_session` (#2011) as spelled on the wire;
+/// any other spelling is rejected at the protocol boundary.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResumeActionCommand {
+    OpenOriginal,
+    ForkCurrent,
+    Locate,
+    Associate,
+    Cancel,
+}
+
+impl From<ResumeActionCommand> for crate::domain::resume_decision::ResumeAction {
+    fn from(action: ResumeActionCommand) -> Self {
+        match action {
+            ResumeActionCommand::OpenOriginal => Self::OpenOriginal,
+            ResumeActionCommand::ForkCurrent => Self::ForkCurrent,
+            ResumeActionCommand::Locate => Self::Locate,
+            ResumeActionCommand::Associate => Self::Associate,
+            ResumeActionCommand::Cancel => Self::Cancel,
+        }
+    }
+}
+
 // ─── Commands (stdin) ────────────────────────────────────────────────────────
 /// A command received over the UDS socket.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -150,11 +174,22 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
-    /// Switch the active UDS session to a persisted CLI session.
+    /// Switch the active UDS session to a persisted session by exact key,
+    /// or answer one explicit action of a resume decision (#2011). Absent
+    /// `action` is a restore; `expectedHomeVersion` is the version the client
+    /// was shown.
     ResumeSession {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         session: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action: Option<ResumeActionCommand>,
+        #[serde(
+            default,
+            rename = "expectedHomeVersion",
+            skip_serializing_if = "Option::is_none"
+        )]
+        expected_home_version: Option<String>,
     },
     /// Switch the active model at runtime.
     ///

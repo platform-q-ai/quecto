@@ -29,6 +29,8 @@ pub struct ResumeSessionSummary {
     pub updated_unix_secs: Option<u64>,
     pub execution_dir: Option<String>,
     pub resume_eligible: bool,
+    /// The home version the row was listed at (#2011), echoed on selection.
+    pub home_version: Option<String>,
 }
 
 /// Displayable chat messages from a resumed/backfilled session.
@@ -154,6 +156,7 @@ pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSumma
                 title: safe_session_display(&title),
                 execution_dir: row.execution_path.as_deref().map(safe_session_display),
                 resume_eligible: row.resume_eligible,
+                home_version: row.home_version.as_deref().map(safe_session_display),
                 message_count: row.message_count,
                 updated_unix_secs: row.updated_unix_secs.or(row.updated_at),
             })
@@ -363,6 +366,7 @@ struct DiscoveryRow {
     execution_path: Option<String>,
     #[serde(default)]
     resume_eligible: bool,
+    home_version: Option<String>,
     #[serde(default)]
     message_count: u64,
     updated_unix_secs: Option<u64>,

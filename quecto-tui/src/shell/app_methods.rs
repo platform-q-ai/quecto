@@ -205,6 +205,7 @@ impl App {
             format_unix_minutes,
         );
         self.ac_mut().sessions.eligible_keys = rows.eligible_keys;
+        self.ac_mut().sessions.home_versions = rows.home_versions;
         self.open_resume_selector_with_workspaces(rows.items, manifest_path, rows.empty_hint);
     }
 
@@ -474,6 +475,10 @@ impl App {
         if let Some(selector) = &mut self.ac_mut().sessions.resume_selector {
             let (selector_lines, overlay_width) = selector.render_overlay(width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
+        }
+        if let Some(dialog) = &mut self.ac_mut().sessions.resume_decision {
+            let (dialog_lines, overlay_width) = dialog.render_overlay(width, height);
+            Self::composite_centered(&mut lines, &dialog_lines, overlay_width, width, height);
         }
         if let Some(selector) = &mut self.ac_mut().rewind.selector {
             let (selector_lines, overlay_width) =

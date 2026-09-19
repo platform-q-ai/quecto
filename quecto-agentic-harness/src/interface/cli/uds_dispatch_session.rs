@@ -9,10 +9,13 @@ use super::super::uds_session_switch_runtime::LoopSessionSwitchRuntime;
 use super::super::uds_turn_accounting::LoopTurnAccounting;
 use super::AgentEvent;
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer, emit_ledger_advanced};
-use crate::application::sessions::dto::SavedSessionResumed;
+use crate::application::sessions::dto::ResumeOutcome;
 use crate::application::sessions::ports::FleetSettlement;
 use crate::interface::cli::protocol::HISTORY_PAGE_SIZE;
+use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
 use crate::interface::uds::sessions::rewind_conversation_controller::RewindFields;
+#[path = "uds_dispatch_resume.rs"]
+mod uds_dispatch_resume;
 
 /// The loop's fleet teardown as the settlement port the transitions
 /// order (#1938), if the loop has one.
@@ -91,19 +94,18 @@ pub(super) async fn handle_new_session(
     false
 }
 
-/// `resume_session` (#1863, D8 #1977): admitted only while the agent is
-/// idle; the transaction itself is the application's — target admission,
-/// settlement, save, claim, load, restore and switch. On success the roster
-/// reset is broadcast, then the ledger position, then the response — the
-/// same on-socket order as before the migration (master broadcast the
-/// roster reset between the key propagation and the history replacement;
-/// no event is emitted in between, so the requester and the other clients
-/// see the same sequence).
+/// `resume_session` (#1863, D8 #1977, #2011): admitted only while the agent
+/// is idle; the controller maps the wire fields and the transaction is the
+/// application's — target admission, the typed decision or refusal,
+/// settlement, save, claim, load, restore and switch. On a restore the
+/// roster reset is broadcast, then the ledger position, then the response —
+/// the same on-socket order as before the migration. A cancel, a decision
+/// and a refusal announce nothing but their answer.
 pub(super) async fn handle_resume_session(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
     type_name: &str,
-    session: String,
+    fields: ResumeFields,
 ) -> bool {
     if ctx.session.is_streaming() {
         let ev = AgentEvent::err(
@@ -115,47 +117,32 @@ pub(super) async fn handle_resume_session(
         return false;
     }
     let resume = ctx.switch.resume.clone();
-    let result = {
-        let mut runtime = LoopSessionSwitchRuntime::new(
-            ctx.agent,
-            ctx.session,
-            &ctx.execution_state,
-            ctx.workflow_state.as_ref(),
-            ctx.catalogue.effort.clone(),
-        );
-        resume
-            .execute(
-                &session,
-                ctx.messages,
-                fleet_settlement_of(&ctx.fleet_teardown),
-                &mut runtime,
-            )
-            .await
-    };
-    let resumed = match result {
-        Ok(resumed) => resumed,
-        Err(err) => {
-            let ev = AgentEvent::err(id, type_name, err.to_string());
-            emit_event_to_broadcast_or_writer(ctx, &ev).await;
-            return false;
+    let result = match fields.into_request() {
+        Ok(request) => {
+            let mut runtime = LoopSessionSwitchRuntime::new(
+                ctx.agent,
+                ctx.session,
+                &ctx.execution_state,
+                ctx.workflow_state.as_ref(),
+                ctx.catalogue.effort.clone(),
+            );
+            let fleet = fleet_settlement_of(&ctx.fleet_teardown);
+            resume
+                .request(&request, ctx.messages, fleet, &mut runtime)
+                .await
         }
+        Err(refused) => Err(refused),
     };
-    broadcast_roster_reset(ctx);
-    emit_ledger_advanced(ctx, resumed.ledger).await;
-    let ev = AgentEvent::ok(id, type_name, Some(resumed_session_json(&resumed)));
+    let ev = match &result {
+        Ok(outcome) => uds_dispatch_resume::outcome_event(id, type_name, outcome),
+        Err(refusal) => uds_dispatch_resume::refusal_event(id, type_name, refusal),
+    };
+    if let Ok(ResumeOutcome::Resumed(resumed)) = result {
+        broadcast_roster_reset(ctx);
+        emit_ledger_advanced(ctx, resumed.ledger).await;
+    }
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
-}
-
-/// The `resume_session` acknowledgement: the name as the client spelled
-/// it, the key the loop now stands for, and the live conversation's length
-/// (what the TUI maps onto its message count and session key).
-fn resumed_session_json(resumed: &SavedSessionResumed) -> serde_json::Value {
-    serde_json::json!({
-        "session": resumed.name,
-        "sessionKey": resumed.identity.runtime_key(),
-        "messageCount": resumed.message_count,
-    })
 }
 
 /// `clear_history` (#1864): admitted only while the agent is idle; the

@@ -16,6 +16,7 @@ pub(crate) mod inspection_routing;
 pub mod model_payloads;
 pub mod presentation_payloads;
 pub mod range_accumulator;
+pub mod resume_decision_payloads;
 pub mod session_payloads;
 pub mod state_payloads;
 pub mod subagent_payloads;

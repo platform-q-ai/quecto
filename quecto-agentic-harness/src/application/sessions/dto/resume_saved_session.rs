@@ -10,8 +10,11 @@ use crate::domain::session_identity::SessionIdentity;
 use crate::domain::workflow::WorkflowRunPersisted;
 #[path = "resume_disposition.rs"]
 mod resume_disposition;
-use super::StartupRefusal;
+use super::{ResumeDecision, StartupRefusal};
+use crate::domain::resume_decision::ResumeAction;
 pub use resume_disposition::ResumeDisposition;
+#[path = "resume_refusal_text.rs"]
+mod resume_refusal_text;
 
 /// The saved session a client asked to resume: the name as the client
 /// spelled it (trimmed; echoed in the acknowledgement and the not-found
@@ -81,7 +84,19 @@ pub enum ResumeSavedSessionError {
     Ephemeral,
     /// The target is not one of the accepted spellings.
     InvalidName,
-    Scope(ResumeDisposition),
+    /// The target exists and its home does not admit a restore here (#2011).
+    Decision(Box<ResumeDecision>),
+    /// The home changed since the client was shown it (#2011).
+    StaleHomeVersion,
+    /// This runtime's own execution directory cannot be discovered (#2011).
+    CurrentScopeUnavailable(String),
+    /// No executor of `action` is composed; nothing else was done instead.
+    ActionUnavailable {
+        action: ResumeAction,
+        reason: String,
+    },
+    /// `action` has its own transaction; this owner restores and nothing else.
+    ActionExecutedElsewhere(ResumeAction),
     /// The loop's own composed session does not admit at startup (#2009).
     StartupScope(StartupRefusal),
     Refused(SessionTransitionRefused),
@@ -93,27 +108,6 @@ pub enum ResumeSavedSessionError {
     NotFound(String),
     /// The target could not be read.
     Load(DomainError),
-}
-
-impl std::fmt::Display for ResumeSavedSessionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Ephemeral => f.write_str("cannot resume sessions in ephemeral mode"),
-            Self::InvalidName => {
-                f.write_str("session name must contain only alphanumeric, '-', or '_'")
-            }
-            Self::Scope(disposition) => write!(
-                f,
-                "session resume unavailable: {disposition}; Cancel (open/fork/locate are unavailable)"
-            ),
-            Self::StartupScope(refusal) => write!(f, "{refusal}"),
-            Self::Refused(refused) => write!(f, "{refused}"),
-            Self::Save(error) => write!(f, "failed to save current session: {error}"),
-            Self::Claim(error) => write!(f, "{error}"),
-            Self::NotFound(name) => write!(f, "session not found: {name}"),
-            Self::Load(error) => write!(f, "failed to load session: {error}"),
-        }
-    }
 }
 
 impl std::error::Error for ResumeSavedSessionError {}

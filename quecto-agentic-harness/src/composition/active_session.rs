@@ -6,9 +6,8 @@
 //! becomes the typed identity here: the exact persisted-key round-trip,
 //! the only conversion outside persistence. The runtime sources the save
 //! transaction snapshots — the workflow engine and the sub-agent registry
-//! — and the roster the transitions count and replace are adapted here;
-//! the agent's dirty latch is a port on its own, and the fleet teardown
-//! is the loop's late-bound handle, passed to the transaction per call.
+//! — and the roster the transitions count and replace are adapted here; the
+//! dirty latch is its own port; the fleet teardown is passed per call.
 use std::sync::Arc;
 
 use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
@@ -96,7 +95,8 @@ pub fn assemble_session_handles(
         departing_children.clone(),
         inputs.ephemeral,
         home,
-    );
+    )
+    .with_capabilities(super::resume_capabilities::composed());
     let switch = SessionSwitchHandles {
         fresh: Arc::new(StartFreshConversation::new(
             active_session.clone(),

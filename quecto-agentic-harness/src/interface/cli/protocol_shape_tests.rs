@@ -606,6 +606,8 @@ fn core_command_type_names() {
         AgentCommand::ResumeSession {
             id: None,
             session: "work".into(),
+            action: None,
+            expected_home_version: None,
         }
         .type_name(),
         "resume_session"

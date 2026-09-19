@@ -23,8 +23,7 @@ pub(super) fn display_title(raw: &str) -> String {
 
 #[path = "uds_dispatch_discovery.rs"]
 mod uds_dispatch_discovery;
-pub(super) use uds_dispatch_discovery::discovery_json;
-use uds_dispatch_discovery::safe_display;
+pub(super) use uds_dispatch_discovery::{discovery_json, safe_display};
 
 pub(super) fn session_summary_to_json(
     summary: &crate::domain::session::SessionSummary,

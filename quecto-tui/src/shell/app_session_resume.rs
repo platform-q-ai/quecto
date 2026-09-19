@@ -3,6 +3,9 @@
 //! refresh every resume answer triggers (#1726). Child module of
 //! `app_response`.
 use super::super::*;
+use crate::protocol::resume_decision_payloads::{
+    ResumeAnswer, ResumeSelection, parse_resume_answer,
+};
 
 impl App {
     pub(in crate::shell) fn send_list_sessions(&mut self) {
@@ -63,13 +66,26 @@ impl App {
             self.send_list_sessions();
             return;
         }
+        // A picker selection carries the version its row was listed at; a
+        // typed key or a latched resume of another key carries none.
+        let listed = self.ac_mut().sessions.selected_home_version.take();
+        let mut selection = ResumeSelection::exact(session.trim());
+        selection.expected_home_version = listed
+            .filter(|(key, _)| key == &selection.session)
+            .map(|(_, version)| version);
+        self.send_resume_selection(selection);
+    }
+
+    /// The one `resume_session` send: stable identity, optional explicit
+    /// action and the home version the user was shown (#2011).
+    pub(in crate::shell) fn send_resume_selection(&mut self, resume: ResumeSelection) {
         let id = self
             .ac()
             .namespaced_id(&format!("resume-{}", super::super::app_events::uuid_like()));
         self.ac_mut().pending_session_resume_id = Some(id.clone());
         let sent = self.send_command(Command::ResumeSession {
             id: Some(id),
-            session: session.trim().to_string(),
+            resume,
         });
         if !sent {
             self.ac_mut().pending_session_resume_id = None;
@@ -86,15 +102,26 @@ impl App {
         data: Option<serde_json::Value>,
         error: Option<String>,
     ) {
-        if self.is_owned_resume_response(id) {
+        let owned = self.is_owned_resume_response(id);
+        if owned {
             self.ac_mut().pending_session_resume_id = None;
             self.ac_mut().pending_session_resume = None;
         }
-        if success {
-            self.clear_message_recovery();
-            self.handle_resume_success(data);
-        } else {
-            self.notify_response_error("Resume failed", error);
+        match parse_resume_answer(success, data.as_ref()) {
+            ResumeAnswer::Resumed => {
+                self.clear_message_recovery();
+                self.handle_resume_success(data);
+            }
+            // Nothing changed for anyone: no refresh, no toast.
+            ResumeAnswer::Cancelled => {}
+            // Only the tab that asked decides; a peer's decision is not ours.
+            ResumeAnswer::Decision(decision) if owned => {
+                self.ac_mut().sessions.resume_decision = Some(
+                    crate::sessions::resume_decision::ResumeDecisionDialog::new(decision),
+                );
+            }
+            ResumeAnswer::Decision(_) => {}
+            ResumeAnswer::Refused(_) => self.notify_response_error("Resume failed", error),
         }
     }
 
@@ -134,3 +161,7 @@ impl App {
         self.send_state_resync();
     }
 }
+
+#[cfg(test)]
+#[path = "app_resume_decision_tests.rs"]
+mod resume_decision_tests;

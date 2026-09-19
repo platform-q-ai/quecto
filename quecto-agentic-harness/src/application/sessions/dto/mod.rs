@@ -9,6 +9,7 @@ pub mod clear_conversation;
 pub mod history;
 pub mod list_sessions;
 pub mod message_recovery;
+pub mod resume_decision;
 pub mod resume_saved_session;
 pub mod retained_context;
 pub mod rewind_conversation;
@@ -23,6 +24,10 @@ pub use history::{HistoryError, HistoryPage, HistoryQuery};
 pub use list_sessions::{ListSessionsRequest, ListSessionsResult, ListedSession, SessionListScope};
 pub use message_recovery::{
     ContentSelector, RecoveredContent, RecoveryError, RecoveryRequest, Utf8Range,
+};
+pub use resume_decision::{
+    ActionAvailability, ResumeActionCapabilities, ResumeActionOffer, ResumeDecision, ResumeIntent,
+    ResumeOutcome, ResumeRequest,
 };
 pub use resume_saved_session::{
     ResumeSavedSessionError, ResumeTarget, SavedSessionResumed, StartupSessionOpened,

@@ -50,7 +50,7 @@ async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
             &mut ctx,
             Some("resume-select"),
             "resume_session",
-            persisted_key.clone(),
+            persisted_key.clone().into(),
         )
         .await
     );

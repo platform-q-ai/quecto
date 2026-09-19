@@ -12,9 +12,13 @@ pub struct ScopeProcess {
     child: Child,
     stream: UnixStream,
     reader: BufReader<UnixStream>,
-    before_history: Option<serde_json::Value>,
-    before_state: Option<serde_json::Value>,
+    pub(super) before_history: Option<serde_json::Value>,
+    pub(super) before_state: Option<serde_json::Value>,
     source_home: Option<Vec<u8>>,
+    /// The last `resume_session` request the TUI emitted (#2011).
+    pub(super) last_resume_request: Option<serde_json::Value>,
+    /// Every transcript and home authority before the request (#2011).
+    pub(super) store_files: Option<String>,
 }
 impl Drop for ScopeProcess {
     fn drop(&mut self) {
@@ -64,7 +68,7 @@ fn saved_folders(world: &mut QuectoWorld) {
     save(base, &local, "local", "LOCAL-CONVERSATION");
     save(base, &foreign, "foreign", "FOREIGN-CONVERSATION");
 }
-fn drive<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+pub(super) fn drive<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     let handle = world.tui_parity_rt.as_ref().unwrap().handle().clone();
     let _guard = handle.enter();
     f(&mut world.tui_parity.as_mut().unwrap().0)
@@ -161,6 +165,8 @@ fn open_runtime(world: &mut QuectoWorld, mode: &[&str]) {
         before_history: None,
         before_state: None,
         source_home: None,
+        last_resume_request: None,
+        store_files: None,
     });
     let rt = tokio::runtime::Runtime::new().unwrap();
     let h = rt.block_on(TuiHarness::sized(180, 40));
@@ -213,15 +219,39 @@ fn exact_foreign(world: &mut QuectoWorld) {
     let history = query(world, "get_messages");
     world.session_scope_process.as_mut().unwrap().before_history = Some(history);
     world.session_scope_process.as_mut().unwrap().source_home = Some(home);
+    let files = super::session_resume_decision_steps::session_files(
+        world.cli_context.base_dir.as_ref().unwrap(),
+    );
+    world.session_scope_process.as_mut().unwrap().store_files = Some(files);
     drive(world, |h| {
         h.press(Key::Escape).submit("/resume cli:foreign");
     });
+    let request = emitted_resume_request(world);
+    resume_roundtrip(world, &request);
+}
+
+/// The one `resume_session` command the TUI emitted for the last user action.
+pub(super) fn emitted_resume_request(world: &mut QuectoWorld) -> String {
     let handle = world.tui_parity_rt.as_ref().unwrap().handle().clone();
     let commands = handle.block_on(world.tui_parity.as_mut().unwrap().0.drain_commands());
-    let request = commands
+    let requests: Vec<_> = commands
         .iter()
-        .find(|line| line.contains("\"resume_session\""))
-        .expect("exact resume emitted");
+        .filter(|line| line.contains("\"resume_session\""))
+        .collect();
+    assert_eq!(requests.len(), 1, "one resume request: {commands:?}");
+    let request = requests[0].clone();
+    world
+        .session_scope_process
+        .as_mut()
+        .unwrap()
+        .last_resume_request = Some(serde_json::from_str(&request).unwrap());
+    request
+}
+
+/// Send `request` over the production socket, keep its answer in
+/// `world.stderr` and hand it to the TUI. A malformed request is answered by
+/// the protocol boundary's `parse_error`, which carries no id.
+pub(super) fn resume_roundtrip(world: &mut QuectoWorld, request: &str) {
     let id = serde_json::from_str::<serde_json::Value>(request).unwrap()["id"].clone();
     let process = world.session_scope_process.as_mut().unwrap();
     writeln!(process.stream, "{request}").unwrap();
@@ -231,7 +261,8 @@ fn exact_foreign(world: &mut QuectoWorld) {
         match process.reader.read_line(&mut line) {
             Ok(n) if n > 0 => {
                 let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-                if value["id"] == id && value["command"] == "resume_session" {
+                let answered = value["id"] == id && value["command"] == "resume_session";
+                if answered || value["command"] == "parse_error" {
                     world.stderr = line.clone();
                     drive(world, |h| {
                         h.event_line(&line);
@@ -250,58 +281,36 @@ fn exact_foreign(world: &mut QuectoWorld) {
         assert!(Instant::now() < deadline, "resume response timed out");
     }
 }
-fn assert_scope_refusal(
-    world: &mut QuectoWorld,
-    expected: quecto::application::sessions::dto::resume_saved_session::ResumeDisposition,
-) {
-    use quecto::application::sessions::dto::ResumeSavedSessionError;
+/// The typed decision (#2011) a home that does not admit a restore is answered with.
+pub(super) fn assert_scope_refusal(world: &mut QuectoWorld, kind: &str) -> serde_json::Value {
     let response: serde_json::Value = serde_json::from_str(&world.stderr).unwrap();
     assert_eq!(response["success"], false, "{response}");
+    assert_eq!(response["data"]["outcome"], "decision", "{response}");
+    assert_eq!(response["data"]["code"], "decision_required", "{response}");
+    assert_eq!(response["data"]["kind"], kind, "{response}");
     let error = response["error"]
         .as_str()
         .expect("typed resume error string");
-    assert_eq!(
-        error,
-        ResumeSavedSessionError::Scope(expected).to_string(),
-        "{response}"
-    );
     assert!(
         error.starts_with("session resume unavailable:"),
         "scope refusal, not ephemeral/generic: {error}"
     );
+    response["data"].clone()
 }
 
 #[then("the runtime refuses replacement as a different-execution-directory scope error")]
 fn refused_foreign_directory(world: &mut QuectoWorld) {
-    use quecto::application::sessions::dto::ResumeSavedSessionError;
-    use quecto::application::sessions::dto::resume_saved_session::ResumeDisposition;
-    let expected = ResumeDisposition::DifferentExecutionDirectory;
-    assert_scope_refusal(world, expected.clone());
-    let error = serde_json::from_str::<serde_json::Value>(&world.stderr).unwrap()["error"]
-        .as_str()
-        .expect("typed resume error string")
-        .to_owned();
-    assert_eq!(
-        error,
-        ResumeSavedSessionError::Scope(expected).to_string(),
-        "typed Scope(DifferentExecutionDirectory) refusal"
-    );
+    let decision = assert_scope_refusal(world, "cross_folder");
+    assert_eq!(decision["kind"], "cross_folder", "{decision}");
 }
 
 #[then("the runtime refuses replacement as an unavailable-home scope error")]
 fn refused_corrupt_home(world: &mut QuectoWorld) {
-    use quecto::application::sessions::dto::ResumeSavedSessionError;
-    use quecto::application::sessions::dto::resume_saved_session::ResumeDisposition;
-    let expected = ResumeDisposition::Unavailable("corrupt authority".into());
-    assert_scope_refusal(world, expected.clone());
-    let error = serde_json::from_str::<serde_json::Value>(&world.stderr).unwrap()["error"]
-        .as_str()
-        .expect("typed resume error string")
-        .to_owned();
+    let decision = assert_scope_refusal(world, "home_unknown");
     assert_eq!(
-        error,
-        ResumeSavedSessionError::Scope(expected).to_string(),
-        "typed Scope(Unavailable(_)) refusal"
+        decision["executionPath"],
+        serde_json::Value::Null,
+        "{decision}"
     );
 }
 
@@ -353,8 +362,8 @@ fn preserved_active_identity(world: &mut QuectoWorld) {
     drop(target);
     let frame = drive(world, TuiHarness::full_frame);
     assert!(
-        frame.contains("session resume unavailable"),
-        "typed refusal visible: {frame}"
+        frame.contains("This session") && frame.contains("Cancel"),
+        "typed decision visible: {frame}"
     );
     // ScopeProcess waits for exit; both keys must be claimable after teardown.
     drop(world.session_scope_process.take());
@@ -365,7 +374,7 @@ fn preserved_active_identity(world: &mut QuectoWorld) {
         drop(claim);
     }
 }
-fn query(world: &mut QuectoWorld, kind: &str) -> serde_json::Value {
+pub(super) fn query(world: &mut QuectoWorld, kind: &str) -> serde_json::Value {
     let process = world.session_scope_process.as_mut().unwrap();
     let id = format!(
         "scope-check-{kind}-{}",

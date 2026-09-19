@@ -12,6 +12,7 @@ use crate::application::sessions::use_cases::{
     DepartingChildren, ListSessions, ResumeSavedSession, SaveSession,
 };
 use crate::application::sessions::{active_session::ActiveSessionState, ports::SessionStore};
+use crate::domain::resume_decision::ResumeDecisionKind;
 use crate::domain::session_home::SessionHomeScope;
 use crate::domain::session_identity::SessionIdentity;
 use crate::domain::{message::Message, session::Session};
@@ -217,9 +218,8 @@ async fn exact_corrupt_home_refusal_preserves_source_and_releases_only_target_cl
         .await;
     assert!(matches!(
         result,
-        Err(ResumeSavedSessionError::Scope(
-            ResumeDisposition::Unavailable(_)
-        ))
+        Err(ResumeSavedSessionError::Decision(decision))
+            if decision.kind == ResumeDecisionKind::HomeUnknown
     ));
     assert_eq!(messages.len(), before.len());
     assert_eq!(messages[0].content, before[0].content);
@@ -303,10 +303,9 @@ async fn exact_key_resume_of_a_grouped_worktree_session_is_refused() {
         .await;
     assert!(
         matches!(
-            result,
-            Err(ResumeSavedSessionError::Scope(
-                ResumeDisposition::DifferentExecutionDirectory
-            ))
+            &result,
+            Err(ResumeSavedSessionError::Decision(decision))
+                if decision.kind == ResumeDecisionKind::CrossFolder
         ),
         "{result:?}"
     );
@@ -353,10 +352,9 @@ async fn a_folder_session_whose_directory_became_a_repository_is_home_changed() 
         .await;
     assert!(
         matches!(
-            result,
-            Err(ResumeSavedSessionError::Scope(
-                ResumeDisposition::HomeChanged
-            ))
+            &result,
+            Err(ResumeSavedSessionError::Decision(decision))
+                if decision.kind == ResumeDecisionKind::HomeChanged
         ),
         "{result:?}"
     );

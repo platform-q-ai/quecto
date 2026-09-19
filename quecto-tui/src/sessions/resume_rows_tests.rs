@@ -9,6 +9,7 @@ fn summary(key: &str, at: Option<u64>, eligible: bool, dir: Option<&str>) -> Res
         updated_unix_secs: at,
         execution_dir: dir.map(str::to_string),
         resume_eligible: eligible,
+        home_version: at.map(|at| format!("h1-{at:016x}")),
     }
 }
 
@@ -38,11 +39,18 @@ fn rows_are_newest_first_with_stable_ids_and_an_affirmative_eligible_allowlist()
         vec!["chat-old"]
     );
     assert!(SESSION_ROW_PREFIX == "session:");
+    // Every row that was listed with a version carries it, eligible or not.
+    assert_eq!(
+        rows.home_versions.get("chat-old").map(String::as_str),
+        Some("h1-000000000000000a")
+    );
+    assert!(rows.home_versions.contains_key("chat-new"));
+    assert!(!rows.home_versions.contains_key("chat-undated"));
     let old = rows.items[1].description.as_deref().unwrap();
     assert!(old.contains("/repo · t10 (3 msgs) · Resume"), "{old}");
     let new = rows.items[0].description.as_deref().unwrap();
     assert!(
-        new.contains("/elsewhere") && new.ends_with("unavailable; Cancel"),
+        new.contains("/elsewhere") && new.ends_with("Needs a decision (Enter)"),
         "{new}"
     );
     let undated = rows.items[2].description.as_deref().unwrap();

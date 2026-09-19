@@ -431,7 +431,10 @@ async fn resume_loads_chat_session_by_full_key() {
     fx.store.save(&saved).await.unwrap();
     {
         let mut ctx = fx.ctx();
-        assert!(!handle_resume_session(&mut ctx, Some("rs"), "resume_session", key.clone()).await);
+        assert!(
+            !handle_resume_session(&mut ctx, Some("rs"), "resume_session", key.clone().into())
+                .await
+        );
     }
     assert_eq!(fx.current_session_key(), key);
     assert_eq!(fx.messages.len(), 1);
@@ -592,6 +595,8 @@ async fn dispatch_routes_resume_session_ephemeral() {
     let cmd = AgentCommand::ResumeSession {
         id: None,
         session: "x".into(),
+        action: None,
+        expected_home_version: None,
     };
     let mut ctx = fx.ctx();
     assert!(!dispatch_command(cmd, &mut ctx).await);

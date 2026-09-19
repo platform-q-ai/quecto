@@ -422,7 +422,7 @@ impl App {
         }
 
         // If the resume selector is active, route input to it.
-        if self.ac().sessions.resume_selector.is_some() {
+        if self.ac().sessions.has_modal() {
             self.ac_mut().rewind.last_idle_escape = None;
             self.handle_resume_selector_key(&key);
             return;
