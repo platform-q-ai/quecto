@@ -300,17 +300,21 @@ Cross-folder actions are unavailable until their implementing slices ship.
 
 Search saved-session metadata: title, exact opaque key, repository label and
 execution path. Owner: `SearchSessionMetadata` (#2010). Transcript content is
-never matched and no transcript is read to answer. An answer is not
-authorization to restore a row.
+never matched — no transcript is read to MATCH. Freshness alone decides what is
+read: a record version already indexed (summarised or rejected) costs a `stat`;
+a new or changed record is read once per validating half, and an absent,
+unreadable or version-incompatible index is rebuilt by reading every record
+(twice in all) on the first search. An answer is not authorization to restore
+a row.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"search_session_metadata"` | yes | |
 | `id` | string | no | Correlation ID |
-| `query` | string | yes | Literal text, never a pattern. Compared as visible text (controls and invisible format characters dropped, lower-cased, whitespace collapsed); whitespace separates terms and every term must occur in the title, repository label or path; the whole trimmed query must equal a key byte for byte to match it. Nothing visible names every session in scope. More than 256 visible characters is refused whole. A missing or non-string `query` is an uncorrelated `parse_error` |
+| `query` | string | yes | Literal text, never a pattern. Compared as visible text (controls and invisible format characters dropped, case folded — Unicode lower-casing plus final sigma = sigma, `ß` = `ss`, dotted/dotless `i` = `i`; no normalization, no ligature expansion — whitespace collapsed); whitespace separates terms and every term must occur in the title, repository label or path (in `local` scope: the title, or the path **below the workspace group's root** — the root and the label are every local row's, so they are not matched); the whole trimmed query must equal a key byte for byte to match it. Nothing visible names every session in scope. More than 256 visible characters is refused whole. A missing or non-string `query` is an uncorrelated `parse_error` |
 | `scope` | `"local"` or `"global"` | no | Defaults to local; unsupported values are rejected |
-| `generation` | non-negative integer | no | The client's own counter, echoed unchanged so a client can discard an answer it no longer wants. Defaults to 0 |
-| `limit` | integer | no | Rows returned at most: 1–500, default 200; out-of-range values are clamped and the effective value echoed |
+| `generation` | number | no | The client's own counter, echoed so a client can discard an answer it no longer wants. Defaults to 0. Any JSON number is accepted and brought into `u64` (negative → 0, a fraction truncated, ≥ 2^64 → 2^64−1) — so send a non-negative integer to have it echoed **unchanged**, and one ≤ 2^53 if your JSON reader cannot round-trip larger integers. Anything that is not a number is a **correlated** refusal (`refused: "generation must be a number"`, `generation` echoed as 0), never an uncorrelated `parse_error` |
+| `limit` | number | no | Rows returned at most: 1–500, default 200. Any JSON number is accepted and clamped into range (negative or 0 → 1, a fraction truncated, anything larger → 500) and the effective value echoed. Anything that is not a number is a **correlated** refusal (`refused: "limit must be a number"`, the readable `generation` still echoed) |
 
 **Response data:**
 
@@ -348,20 +352,34 @@ identity-bound `homeVersion`, to be echoed as `resume_session.expectedHomeVersio
 | `totalMatches` | integer | Matches in scope before `limit` |
 | `searched` | integer | Sessions in scope the query was matched against |
 | `truncated` | boolean | `totalMatches` exceeds the rows returned |
-| `refused` | string \| null | Why nothing was searched (`query too long: …`); the rows are then empty |
-| `diagnostics`, `rebuilt` | | As for `list_sessions`: every search validates the derived index against authority; a malformed record is named and hides no sibling |
+| `refused` | string \| null | Why nothing was searched (`query too long: …`, `limit must be a number`, `generation must be a number`); the rows are then empty |
+| `diagnostics`, `rebuilt` | | As for `list_sessions`: every search validates the derived index against authority; a malformed record (`cli_x.json: session record unavailable: …`) and a sidecar that needs repair (`cli_x.home: home needs repair: …`) are each named by file, once per answer, and hide no sibling |
 
 `homeState` is `legacy_unscoped` for a session saved before folders were
 tracked: it is found by title and key, and a client labels it explicitly (the
-TUI shows "Unscoped · no folder on record"). Local scope without current
-workspace facts searches nothing and says why in `diagnostics`.
+TUI shows "No folder recorded (older session)"). Local scope without current
+workspace facts searches nothing and says why in `diagnostics`. An
+`executionPath` or `repositoryLabel` that is not UTF-8 spells each byte that is
+no text as `\xNN` (`/work/caf\xE9`), so two such folders stay distinguishable.
+
+**Cost and ordering.** Every search stamps every saved record (about 90 ms on
+a 5,200-record store; the 50 ms target is missed). Commands are answered FIFO:
+searches queued back-to-back delay a later `get_state` or `abort` on the same
+connection by their sum. Send one search at a time and the latest text when it
+is answered, as the TUI does.
 
 The TUI's `/resume` search box sends this command for the scope on screen as the
 text changes — one search in flight per picker, the latest text sent when the
-answer arrives — and discards any answer that does not carry the id it sent and
-its latest `generation`. An empty box lists the scope with `list_sessions`. The
-picker filters nothing itself and decides no scope; a selected row goes to
-`resume_session` with its `homeVersion` like any listed row.
+answer arrives (two searches for a burst typed faster than a round trip, one per
+key otherwise). Only the answer that carries the id it sent and its latest
+`generation` settles the picker, and only settled rows are acted on; an
+overtaken answer is shown as progress under `Searching…`, never across a scope
+change or a cleared box; an unanswered search is re-issued once after 5 s. An
+empty box lists the scope with `list_sessions`. The picker decides no scope and
+matches nothing itself — except against a harness that predates this command
+(an uncorrelated `parse_error: unknown variant`), where it says so once and
+filters the listed rows locally by the same visible-text rule. A selected row
+goes to `resume_session` with its `homeVersion` like any listed row.
 
 ```json
 {"type":"search_session_metadata","id":"ss-1","query":"flaky","scope":"global","generation":7}

@@ -157,7 +157,7 @@ Declared only under `src/application/sessions/ports.rs` and
 
 | Port | Adapter (production) | What it supplies |
 |------|----------------------|------------------|
-| `SessionHomeCatalogue` | `infrastructure/persistence/session_home_catalogue.rs` (`FileSessionHomeCatalogue`, its metadata query in `session_home_catalogue_metadata.rs`) | exact authoritative home reads, first-save home recording, derived catalogue validation and recovery, and the metadata query (#2010): every listed session once with its listing summary and home, validated by stamp, no transcript read for an unchanged record |
+| `SessionHomeCatalogue` | `infrastructure/persistence/session_home_catalogue.rs` (`FileSessionHomeCatalogue`, its metadata query in `session_home_catalogue_metadata.rs`) | exact authoritative home reads, first-save home recording, derived catalogue validation and recovery, and the metadata query (#2010): every listed session once with its listing summary and home, validated by stamp; a record version already read — summarised **or rejected** (`session_home_catalogue_rejections.rs`) — is never read again |
 | `WorkspaceDiscovery` | `infrastructure/workspace/git_scope_discovery.rs` (`GitScopeDiscovery`), using `filesystem_scope.rs` | canonical execution directory and real Git common-dir/worktree grouping; observable discovery failure |
 | `SessionStore` | `infrastructure/persistence/session_store.rs` (`FileSessionStore`) | claim/release/load/save/save_delta/save_clean_delta/exists/list, keyed by `SessionIdentity` |
 | `ContextSpillStore` | `infrastructure/persistence/context_spill.rs` (`FileContextSpillStore`) | append/recall/list_entries/has_entries/clear/scrub_sync of the retention namespace |
@@ -212,8 +212,18 @@ always applied, so a transcript rewritten in place with its length and mtime
 restored (new ctime) or replaced by a new inode is re-read. A cold process
 over thousands of unchanged transcripts therefore lists in the time of the
 walk, not of reading every transcript. The index is rewritten only after a
-rebuild or when an entry changed. An entry is never trusted beyond its stamp:
-a doctored entry can at most misreport a home or title in the listing, and
+rebuild or when an entry changed. A record the strict validation **rejected**
+is indexed too (`rejected`, keyed by record file name: its stamp, the reason,
+and what the store's walk made of the same version), so an unchanged corrupt
+record — a 100 MB append cut short, say — costs one `stat` per query like a good
+one, in this process and the next, and still yields its one file-named
+diagnostic; it is read again the moment its stamp changes. The field is
+additive and defaulted: no version bump, an older harness ignores it. An entry
+is never trusted beyond its stamp: a rejection seeds only for a bare record
+file name of this layout with a well-formed stamp, a summary only beside its
+own file; a doctored entry can at most misreport a home or title in the
+listing, or hide a record from the *listing* while naming it in a diagnostic,
+and
 exact-key reads and resume admission read the `.home` sidecar, never the
 index, so no entry can make a session resume-eligible. A store-listed record the strict catalogue has no row
 for (a crash-truncated transcript mid-append) is not dropped: its `.home` is read
@@ -274,21 +284,38 @@ pure matching rules in `domain/session_metadata_search.rs`.
 - **What is matched.** The listing title (the first user message, as the index
   holds it), the **exact opaque key**, the **repository label** and the
   **execution path**. Nothing else exists in the query's input, so transcript
-  content can never match and no transcript is opened to answer a search: the
-  adapter joins the store's summary walk with the validated home listing, both
-  stamp-checked and index-seeded (`tests/contracts/session_metadata_search.rs`
-  counts zero transcript reads over 2,000 records, warm and from a new process).
+  content can never match: no transcript is ever read to MATCH. What is read
+  is decided by freshness alone — the adapter joins the store's summary walk
+  with the validated home listing, both stamp-checked and index-seeded, so a
+  record version that was already read costs one `stat` per half and is not
+  opened again, whether it was summarised or **rejected** (a corrupt or
+  cut-short record is remembered by stamp with its diagnostic, in memory and in
+  the index). A new or changed record is read once by each half, and with the
+  index absent, unreadable or version-incompatible every record is — once per
+  half, i.e. twice in all (the two halves validate differently; sharing the
+  read is follow-up work, see *Performance*). `tests/contracts/
+  session_metadata_search.rs` counts zero transcript reads over 2,000 valid
+  records plus an unparseable one and a 2 MiB cut-short one, warm and from a
+  new process; `session_rejection_cache.rs` pins re-reading on change and the
+  index's trust rules.
 - **How.** Literal text, never a pattern: regex, glob, SQL and shell
   metacharacters are ordinary characters. Query and fields are compared as
   *visible text* — control characters and invisible format characters (bidi
   controls, zero-width characters, the soft hyphen, tags, the BOM) are dropped
-  from both sides, then Unicode lower-cased per character, whitespace runs
-  collapsed — so a hidden character can neither hide a record nor forge a match.
-  Code points are compared as stored (no normalization tables ship off macOS: a
-  decomposed `é` is not a composed one). Whitespace separates terms; **every**
+  from both sides, whitespace runs collapsed, and case **folded**
+  (`domain/session_metadata_text.rs`): the whole text is Unicode lower-cased,
+  then final sigma is a sigma (`οδος` finds `ΟΔΟΣ`), sharp s is `ss` (`straße`
+  finds `STRASSE`), a dotless `ı` is an `i`, and the combining dot a dotted
+  capital `İ` lower-cases into is dropped after an `i` (`istanbul` finds
+  `İstanbul`) — so a hidden character can neither hide a record nor forge a
+  match. Two limits remain: code points are compared as stored (the harness
+  ships no normalization tables: a decomposed `é` is not a composed one), and
+  ligatures and other full-fold expansions (`ﬁ`) are not expanded. Whitespace separates terms; **every**
   term must occur in the title, the label or the path. A key matches only when
   the whole trimmed query equals it byte for byte — no fragment, no case fold.
-  A non-UTF-8 path is searched by its lossy text. A query of more than 256
+  A path that is not UTF-8 is matched and presented with each byte that is no
+  text spelled `\xNN` (`caf\xE9`), so two folders that differ only in such a
+  byte stay distinguishable by `executionPath` and `repositoryLabel` alone. A query of more than 256
   visible characters is refused whole (`refused`), never searched as a prefix;
   a query with nothing visible names every session in scope.
 - **Repository label.** For a Git home, the directory that holds the `.git`
@@ -299,12 +326,18 @@ pure matching rules in `domain/session_metadata_search.rs`.
   them explicitly.
 - **Scope, order, limit.** `global` is every listed session; `local` is the
   current workspace group and, without current workspace facts, nothing — never
-  everything. Rows are ordered by the best matched field (key, title,
+  everything. In `local` every row shares the group's root and its repository
+  label, so neither can tell two rows apart and any word occurring in them
+  would match every row: a Local search matches the title, the exact key, and
+  the path **below the group root** (for a linked worktree outside the root,
+  below their common ancestor) — a sub-folder's or a worktree's own name still
+  finds its row, reported as `path`; the repository label is not matched. Rows are ordered by the best matched field (key, title,
   repository, path), then newest first (undated last), then key: a total order.
   At most `limit` rows (default 200, 1–500) are returned, with `totalMatches`
   and `truncated`.
 - **Freshness.** Every search validates against authority exactly as a listing
-  does: same diagnostics (a corrupt record is named, siblings stay), same
+  does: same diagnostics (a corrupt record and a `.home` that needs repair are
+  each named by file, once per query; siblings stay), same
   recovery (`rebuilt` with a diagnostic for an unparseable index, silent refresh
   for a superseded one), and a store-listed record the strict catalogue rejects
   keeps the home admission would read. Exact-key resume never depends on it.
@@ -319,8 +352,22 @@ pure matching rules in `domain/session_metadata_search.rs`.
 - **Generation.** `generation` is the client's own counter, echoed unchanged;
   the application attaches no meaning to it. The TUI sends at most one search at
   a time per picker (an edit made meanwhile goes out when the answer arrives —
-  latest wins, no timer) and shows an answer only when it carries the id that
-  was sent **and** the latest generation; anything else is discarded.
+  latest wins). Only the answer that carries the id that was sent **and** the
+  latest generation *settles* the picker — Enter and the mouse act on settled
+  rows only, and an Enter typed ahead is applied to the settled answer's top
+  row. An overtaken answer is shown as progress (never across a scope change
+  or a cleared box); a search unanswered for 5 s is re-issued once, then given
+  up. Typing faster than a round trip costs two searches per burst; typing
+  slower costs one per key.
+- **Performance.** Every query stamps every record (no time-limited cache, no
+  directory-mtime short-circuit — transcripts are appended in place, which
+  does not touch the directory). On a 5,201-record store a warm search takes
+  ~90 ms against a 50 ms target: **missed, ~1.8×**. The cost is the two `stat`
+  passes (store walk + catalogue scan); sharing one pass, or stamping in
+  parallel, is tracked as follow-up work. Commands are dispatched FIFO, as
+  `list_sessions` is: a client that queues searches back-to-back delays its own
+  `get_state`/`abort` by the sum — the TUI's single flight bounds that to two
+  scans; a raw client gets no such bound.
 
 #### Typed resume decisions (#2011)
 
