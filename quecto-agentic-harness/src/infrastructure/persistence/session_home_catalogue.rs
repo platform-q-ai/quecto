@@ -35,7 +35,7 @@ mod session_home_catalogue_metadata;
 pub struct FileSessionHomeCatalogue {
     layout: FlatSessionLayout,
     store: std::sync::Arc<FileSessionStore>,
-    published: std::sync::Arc<std::sync::Mutex<Option<(Vec<u8>, Catalogue)>>>,
+    published: std::sync::Arc<std::sync::Mutex<Published>>,
     projection: std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, Projection>>>,
     transcript_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -47,6 +47,8 @@ struct Projection {
     entry: IndexEntry,
 }
 type Records = BTreeMap<String, IndexEntry>;
+/// Our last publication: its bytes, and the index they encode.
+type Published = Option<(Vec<u8>, Catalogue)>;
 
 /// Include ctime and inode, not merely user-restorable mtime/length. Only regular
 /// files qualify; changed/replaced authorities must be validated again.
@@ -423,8 +425,7 @@ impl SessionHomeCatalogue for FileSessionHomeCatalogue {
         self.store.discard_orphan_home(identity)
     }
     fn list(&self) -> Result<HomeCatalogueSnapshot, DomainError> {
-        // Serialize list/publication within this adapter. A well-formed index
-        // seeds the projection; every record is stat-ed, a changed one re-read.
+        // One list/publication at a time. The index seeds; stamps decide re-reads.
         let mut published = self.published.lock().map_err(error)?;
         let path = self.layout.home_catalogue_file();
         // Only a missing index is "absent"; a read failure is recovery.
@@ -454,8 +455,7 @@ impl SessionHomeCatalogue for FileSessionHomeCatalogue {
                 *published = disk.map(|bytes| (bytes, authority));
                 return Ok(result);
             }
-            // A well-formed index superseded by newer authority (an autosave
-            // since the last query) is routine: refresh it silently.
+            // Superseded by newer authority (a routine autosave): refreshed silently.
             Some(Ok(_)) => {}
             // Unparseable or version-incompatible: recovery, reported.
             Some(Err(reason)) => {

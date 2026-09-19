@@ -296,7 +296,7 @@ async fn two_thousand_records_are_searched_without_reading_a_transcript() {
     let here = dir.path().join("here");
     std::fs::create_dir_all(&here).unwrap();
     let here = here.canonicalize().unwrap();
-    let layout = FlatSessionLayout::new(&dir.path().join("base"));
+    let layout = FlatSessionLayout::new(dir.path().join("base"));
     let store = Arc::new(FileSessionStore::new(layout.clone()));
     let count = 2_000;
     for n in 0..count {
