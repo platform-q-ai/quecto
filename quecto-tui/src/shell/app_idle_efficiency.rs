@@ -10,10 +10,12 @@ impl App {
             next_exited_subagent_gc_deadline(&self.ac().roster.tracked, EXITED_SUBAGENT_GRACE);
         // A metadata search that is never answered is given up on time (#2010).
         let search_deadline = self.ac().sessions.search.deadline();
-        [notification_deadline, subagent_gc_deadline, search_deadline]
-            .into_iter()
-            .flatten()
-            .min()
+        // …and an Enter owed to its answer expires on time (R2-T3).
+        let picker = self.ac().sessions.resume_selector.as_ref();
+        let enter_deadline = picker.and_then(|picker| picker.enter_deadline());
+        let deadlines = [notification_deadline, subagent_gc_deadline];
+        let search = [search_deadline, enter_deadline];
+        deadlines.into_iter().chain(search).flatten().min()
     }
 
     pub(super) fn needs_animation_tick(&self, kitty_fallback_pending: bool) -> bool {

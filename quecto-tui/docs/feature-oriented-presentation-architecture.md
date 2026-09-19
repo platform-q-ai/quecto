@@ -84,7 +84,8 @@ once and given up), what the picker's rows are worth (`RowsState`: Enter and
 the mouse act on settled rows only; an Enter typed ahead is owed to the settled
 answer's top row — only while a SEARCH of typed text is in the air, never
 while a listing loads — is shown in the header while owed, and is withdrawn by
-any other key or click, a lost connection or the first timeout) and the row
+any other key or click, a lost connection, the first timeout, or one answer
+window (5 s) after the keypress, whichever comes first) and the row
 wording; `shell` owns the request id, the timeout tick and the toasts. An old
 harness is recognised only by a `parse_error` that rejects the search command
 itself (`unknown variant`), with a search of this tab in flight. The picker reports its text and matches nothing —

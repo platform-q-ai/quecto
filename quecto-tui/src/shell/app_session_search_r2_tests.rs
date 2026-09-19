@@ -170,3 +170,64 @@ async fn a_foreign_scope_echo_and_a_lost_listing_say_what_happened() {
         "{frame}"
     );
 }
+
+/// R2-T3: an Enter is never paid more than one answer window after it was
+/// pressed — not even when every flight is answered just in time (the text
+/// typed ahead of the first answer is a second flight with its own window).
+#[tokio::test(start_paused = true)]
+async fn an_owed_enter_expires_one_answer_window_after_it_was_pressed() {
+    let mut h = harness().await;
+    open_picker(&mut h).await;
+    type_text(&mut h, "z");
+    let first = searches(&mut h).await[0].clone();
+    type_text(&mut h, "e");
+    key(&mut h, Key::Enter);
+    key(&mut h, Key::Enter);
+    assert!(h.full_frame().contains("will open the top match"));
+    let pressed = tokio::time::Instant::now();
+    // The first flight is answered late but in time: progress, and the text
+    // typed ahead goes out with a window of its own.
+    tokio::time::advance(ANSWER_TIMEOUT - std::time::Duration::from_secs(1)).await;
+    answer(&mut h, &first, "ZULU", json!({}));
+    let second = searches(&mut h).await[0].clone();
+    assert!(
+        h.full_frame().contains("will open the top match"),
+        "still in its window"
+    );
+    let wake = h.app_mut().next_idle_service_deadline();
+    assert_eq!(
+        wake,
+        Some(pressed + ANSWER_TIMEOUT),
+        "the loop wakes for it"
+    );
+    tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    let now = tokio::time::Instant::now();
+    assert!(
+        h.app_mut().service_search_timeout(now),
+        "the cue is repainted away"
+    );
+    let frame = h.full_frame();
+    assert!(
+        frame.contains("Sessions · Searching…") && !frame.contains("will open"),
+        "{frame}"
+    );
+    assert!(
+        searches(&mut h).await.is_empty(),
+        "the flight itself is not overdue"
+    );
+    answer(&mut h, &second, "ZEBRA", json!({}));
+    let commands = h.drain_commands().await;
+    assert!(sent(&commands, "resume_session").is_empty(), "{commands:?}");
+    assert!(h.full_frame().contains("ZEBRA"));
+    // Inside the window the same sequence is paid: the type-ahead still works.
+    key(&mut h, Key::Tab);
+    key(&mut h, Key::Tab);
+    type_text(&mut h, "b");
+    let third = searches(&mut h).await[0].clone();
+    key(&mut h, Key::Tab);
+    key(&mut h, Key::Enter);
+    tokio::time::advance(ANSWER_TIMEOUT - std::time::Duration::from_secs(1)).await;
+    answer(&mut h, &third, "ZEBRA", json!({}));
+    let commands = h.drain_commands().await;
+    assert_eq!(sent(&commands, "resume_session").len(), 1, "{commands:?}");
+}

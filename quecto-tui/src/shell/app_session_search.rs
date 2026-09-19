@@ -179,8 +179,12 @@ impl App {
     /// text is asked once more, then the box says so and waits for an edit.
     /// `true` when something changed on screen.
     pub(in crate::shell) fn service_search_timeout(&mut self, now: tokio::time::Instant) -> bool {
+        // An Enter owed for a whole answer window is withdrawn, whatever the
+        // flights did meanwhile (R2-T3): the cue goes, the search goes on.
+        let picker = self.ac_mut().sessions.resume_selector.as_mut();
+        let expired = picker.is_some_and(|picker| picker.withdraw_overdue_enter(now));
         let Some(overdue) = self.ac_mut().sessions.search.overdue(now) else {
-            return false;
+            return expired;
         };
         // An Enter is owed to the FIRST flight only (R2-T3): whatever comes
         // of this one, a keypress from five seconds ago opens nothing.

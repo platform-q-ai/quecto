@@ -10,7 +10,9 @@ use crate::components::{
     utils::sanitize_truncate_chars_with_ellipsis,
 };
 use crate::protocol::session_payloads::SessionListScope;
+use crate::sessions::session_search::ANSWER_TIMEOUT;
 use crate::shell::keys::Key;
+use tokio::time::Instant;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ResumePickerEvent {
@@ -124,9 +126,9 @@ pub struct ResumePicker {
     result_rows: usize,
     rows_state: RowsState,
     /// An Enter typed while `Searching`, owed to the settled answer's top
-    /// row. ANY later key or click withdraws it (R2-T3); a repeated Enter
-    /// owes it again.
-    pending_enter: bool,
+    /// row — until this instant, one answer window after the keypress. ANY
+    /// later key or click withdraws it (R2-T3); a repeated Enter owes it anew.
+    pending_enter: Option<Instant>,
     /// The user moved the cursor since the last query or scope edit.
     cursor_placed: bool,
     /// One status line under the rows: truncated, no match, refused, fallback.
@@ -149,7 +151,7 @@ impl ResumePicker {
             hits: HitLayout::default(),
             result_rows: 12,
             rows_state: RowsState::Settled,
-            pending_enter: false,
+            pending_enter: None,
             cursor_placed: false,
             notice: None,
             paste_notice: None,
@@ -169,8 +171,11 @@ impl ResumePicker {
     pub fn set_rows_state(&mut self, state: RowsState) -> Option<String> {
         self.rows_state = state;
         // Still searching: the Enter stays owed. Any other state withdraws it.
-        let owed = self.pending_enter && state == RowsState::Settled;
-        self.pending_enter &= state == RowsState::Searching;
+        let in_time = self
+            .pending_enter
+            .is_some_and(|until| Instant::now() < until);
+        let owed = in_time && state == RowsState::Settled;
+        self.pending_enter = self.pending_enter.filter(|_| state == RowsState::Searching);
         if !owed {
             return None;
         }
@@ -181,7 +186,16 @@ impl ResumePicker {
     /// The owed Enter is withdrawn by the shell: the search was not answered
     /// within its first flight, so a retry never pays it (R2-T3).
     pub fn withdraw_enter(&mut self) {
-        self.pending_enter = false;
+        self.pending_enter = None;
+    }
+    /// When the owed Enter expires unpaid, for the loop to wake and say so.
+    pub fn enter_deadline(&self) -> Option<Instant> {
+        self.pending_enter
+    }
+    /// Withdraw an Enter owed for a whole answer window (R2-T3): a keypress
+    /// from five seconds ago opens nothing. `true` when one was withdrawn.
+    pub fn withdraw_overdue_enter(&mut self, now: Instant) -> bool {
+        self.pending_enter.take_if(|until| *until <= now).is_some()
     }
     /// A query or scope edit: the rows now belong to an older question — a
     /// search of the text, or the listing an empty box asks for.
@@ -191,7 +205,7 @@ impl ResumePicker {
         } else {
             RowsState::Searching
         };
-        (self.pending_enter, self.cursor_placed) = (false, false);
+        (self.pending_enter, self.cursor_placed) = (None, false);
         (self.notice, self.paste_notice) = (None, None);
     }
     /// Replace the rows. An answer is ranked, so the cursor goes to its top
@@ -261,7 +275,7 @@ impl ResumePicker {
         // Whatever the user does next withdraws an owed Enter (R2-T3): a
         // focus change, a click, an edit, a cursor move, Escape. Only the
         // Enter arm below owes one (again).
-        self.pending_enter = false;
+        self.pending_enter = None;
         match key {
             Key::Escape => return ResumePickerEvent::Dismissed,
             Key::Tab => {
@@ -307,9 +321,10 @@ impl ResumePicker {
                 // SEARCH of text the user typed here, never to a listing
                 // (R2-T1). A cursor the user placed on the stale rows points
                 // at no settled row: nothing.
-                self.pending_enter = self.rows_state == RowsState::Searching
+                let owed = self.rows_state == RowsState::Searching
                     && !self.query.trim().is_empty()
                     && !self.cursor_placed;
+                self.pending_enter = owed.then(|| Instant::now() + ANSWER_TIMEOUT);
             }
             (Focus::Results, key) if self.result_rows > 0 => {
                 let key = match key {
@@ -414,7 +429,7 @@ impl ResumePicker {
         match self.rows_state {
             RowsState::Settled => "Sessions",
             RowsState::Loading => "Sessions · Loading…",
-            RowsState::Searching if !self.pending_enter => "Sessions · Searching…",
+            RowsState::Searching if self.pending_enter.is_none() => "Sessions · Searching…",
             RowsState::Searching if OWED.chars().count() <= width => OWED,
             RowsState::Searching => OWED_SHORT,
             RowsState::Stalled => "Sessions · No answer",
