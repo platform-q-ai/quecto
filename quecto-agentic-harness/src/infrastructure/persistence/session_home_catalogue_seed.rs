@@ -73,7 +73,7 @@ pub(in crate::infrastructure::persistence) fn persisted_walk(
             Some((key, title, count)) => walk.summaries.extend(
                 summary(key, &entry.stamp, title, count).filter(|(listed, _)| *listed == path),
             ),
-            None if entry.unlisted && entry.stamp.len() == STAMP_LEN => {
+            None if entry.unlisted => {
                 walk.unlisted.insert(path, entry.stamp);
             }
             None => {}

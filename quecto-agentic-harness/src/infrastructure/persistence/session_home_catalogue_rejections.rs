@@ -10,7 +10,7 @@
 //! diagnostic while it does; exact-key resume never reads this index.
 use super::super::session_layout::FlatSessionLayout;
 use super::super::session_store::session_store_home::error;
-use super::{STAMP_LEN, stamp};
+use super::stamp;
 use crate::domain::{error::DomainError, session_identity::SessionIdentity};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path, path::PathBuf};
@@ -50,16 +50,15 @@ impl Rejections {
     pub(super) fn retain_existing(&mut self) {
         self.0.retain(|path, _| path.exists());
     }
-    /// Only well-formed entries naming a record file of this layout seed.
+    /// Only entries naming a bare record file of this layout seed. A stamp is
+    /// not checked for shape: one that is not the file's current stamp —
+    /// malformed or stale alike — is simply never reused.
     pub(super) fn seed(&mut self, layout: &FlatSessionLayout, index: &RejectedIndex) {
-        self.0 = index
-            .iter()
-            .filter_map(|(name, entry)| {
-                let path = record_path(layout, name)?;
-                (entry.stamp.len() == STAMP_LEN)
-                    .then(|| (path, (entry.stamp.clone(), entry.reason.clone())))
-            })
-            .collect();
+        let named = index.iter().filter_map(|(name, entry)| {
+            let version = (entry.stamp.clone(), entry.reason.clone());
+            Some((record_path(layout, name)?, version))
+        });
+        self.0 = named.collect();
     }
     pub(super) fn clear(&mut self) {
         self.0.clear();

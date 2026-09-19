@@ -773,7 +773,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
-        140,
+        139,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_seed.rs",
