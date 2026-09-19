@@ -94,6 +94,8 @@ fn then_every_listed_session_has_summary_fields(world: &mut QuectoWorld) {
             [
                 "executionPath",
                 "homeState",
+                // #2011: the version the row was listed at, echoed on resume.
+                "homeVersion",
                 "key",
                 "messageCount",
                 "resumeEligible",
