@@ -18,7 +18,6 @@ mod cov_tests;
 pub(super) type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
 >;
-
 pub struct UdsLoopArgs<'a> {
     pub agent: AgentLoopImpl,
     /// The run's retained-context handles (D9 #1978): the one store the
@@ -77,7 +76,6 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     rt.block_on(uds_loop_async(args))
 }
 use super::uds_socket::{SocketGuard, bind_secure_socket};
-
 async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let UdsLoopArgs {
         agent,
@@ -131,7 +129,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
             engine.restore_run(persisted);
         }
     }
-
     if let Some(std_stream) = socket_override {
         // Single-client path: backward-compatible with existing tests.
         single_client_loop(
@@ -162,12 +159,12 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         };
         eprint!("{}", super::uds_wire::socket_announcement(&socket_path));
         let _guard = SocketGuard(socket_path);
-        if let Some(reconciliation) = environment_reconciliation {
+        environment_reconciliation.map(|reconciliation| {
             tokio::task::spawn_blocking(move || {
                 let report = reconciliation.execute();
                 crate::interface::cli::container::report_environment_reconciliation(&report);
-            });
-        }
+            })
+        });
         super::uds_multi::multi_client_loop(
             MultiClientArgs {
                 agent,

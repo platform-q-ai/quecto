@@ -4365,7 +4365,9 @@ fn environments_application_dependency_allowed(path: &str) -> bool {
         ["crate", "domain", ..] | ["crate", "application", "environments", ..] => true,
         ["crate", ..] => false,
         ["super", "super", "super", ..] => false,
-        ["serde_json", "Value"] => true,
+        ["serde_json", "Value"] | ["serde_json", "Value", "as_bool"] | ["serde_json", "json"] => {
+            true
+        }
         [
             "tokio" | "serde" | "serde_json" | "quecto_line_io" | "reqwest" | "futures" | "libc",
             ..,
