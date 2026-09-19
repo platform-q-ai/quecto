@@ -8,7 +8,7 @@
 //! negotiation outcome per connection — derived from the client's real
 //! connect-time framing, not a caller-supplied flag.
 
-use super::{Connection, SourcedEvent, TabId};
+use super::{Connection, SourcedEvent};
 use crate::protocol::client::{Client, Command, Event};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
@@ -61,13 +61,13 @@ fn probe(id: &str) -> Command {
 }
 
 /// #1462 scope 1+2: an event arriving on the master socket is forwarded into
-/// the shared fan-in channel tagged `Source::Tab(tab)` — the event loop no
+/// the shared fan-in channel as `SourcedEvent::Master` — the event loop no
 /// longer needs a dedicated `client.recv()` select arm.
 #[tokio::test]
-async fn connection_forwards_master_events_into_fan_in_as_tab_source() {
+async fn connection_forwards_master_events_into_the_channel_as_master_source() {
     let (client, mut server) = connected_pair().await;
     let (tx, mut rx) = mpsc::channel::<SourcedEvent>(16);
-    let _conn = Connection::spawn(client, TabId::MASTER, tx);
+    let _conn = Connection::spawn(client, tx);
 
     // Legacy NDJSON line: the client's reader sniffs framing per message.
     server
@@ -81,21 +81,21 @@ async fn connection_forwards_master_events_into_fan_in_as_tab_source() {
         .await
         .expect("the feed task must forward the master event into the fan-in (#1462)");
     match item {
-        SourcedEvent::Tab(TabId::MASTER, Event::Token { ref token }) => assert_eq!(
+        SourcedEvent::Master(Event::Token { ref token }) => assert_eq!(
             token, "fan-in-hello",
             "the forwarded event must be the one written on the wire"
         ),
-        other => panic!("expected SourcedEvent::Tab(MASTER, Token), got {other:?}"),
+        other => panic!("expected SourcedEvent::Master(Token), got {other:?}"),
     }
 }
 
-/// #1462 scope 3: stream close is an explicit `Source::Closed(tab)` sentinel
+/// #1462 scope 3: stream close is an explicit `SourcedEvent::Closed` sentinel
 /// emitted by the feed task — not a `None`-from-recv on a dedicated arm.
 #[tokio::test]
 async fn connection_emits_closed_sentinel_when_stream_closes() {
     let (client, server) = connected_pair().await;
     let (tx, mut rx) = mpsc::channel::<SourcedEvent>(16);
-    let _conn = Connection::spawn(client, TabId::MASTER, tx);
+    let _conn = Connection::spawn(client, tx);
 
     drop(server); // Close the agent side of the socket.
 
@@ -103,8 +103,8 @@ async fn connection_emits_closed_sentinel_when_stream_closes() {
         .await
         .expect("the feed task must emit a Closed sentinel when the stream closes (#1462)");
     assert!(
-        matches!(item, SourcedEvent::Closed(TabId::MASTER)),
-        "stream close must arrive as SourcedEvent::Closed(MASTER), got {item:?}"
+        matches!(item, SourcedEvent::Closed),
+        "stream close must arrive as SourcedEvent::Closed, got {item:?}"
     );
 }
 
@@ -116,7 +116,7 @@ async fn connection_emits_closed_sentinel_when_stream_closes() {
 async fn events_written_before_close_arrive_before_closed_sentinel() {
     let (client, mut server) = connected_pair().await;
     let (tx, mut rx) = mpsc::channel::<SourcedEvent>(16);
-    let _conn = Connection::spawn(client, TabId::MASTER, tx);
+    let _conn = Connection::spawn(client, tx);
 
     server
         .stream
@@ -130,7 +130,7 @@ async fn events_written_before_close_arrive_before_closed_sentinel() {
         .await
         .expect("the in-flight event must still be delivered (#1462)");
     match first {
-        SourcedEvent::Tab(TabId::MASTER, Event::Token { ref token }) => {
+        SourcedEvent::Master(Event::Token { ref token }) => {
             assert_eq!(token, "final-token")
         }
         other => panic!("expected the buffered Token before the sentinel, got {other:?}"),
@@ -139,7 +139,7 @@ async fn events_written_before_close_arrive_before_closed_sentinel() {
         .await
         .expect("the Closed sentinel must follow the buffered event (#1462)");
     assert!(
-        matches!(second, SourcedEvent::Closed(TabId::MASTER)),
+        matches!(second, SourcedEvent::Closed),
         "the Closed sentinel must follow the buffered event, got {second:?}"
     );
 }
@@ -151,7 +151,7 @@ async fn events_written_before_close_arrive_before_closed_sentinel() {
 async fn connection_sends_commands_through_feed_task_in_fifo_order() {
     let (client, server) = connected_pair().await;
     let (tx, _rx) = mpsc::channel::<SourcedEvent>(16);
-    let conn = Connection::spawn(client, TabId::MASTER, tx);
+    let conn = Connection::spawn(client, tx);
 
     for id in ["seam-1", "seam-2", "seam-3"] {
         conn.try_send(&probe(id))
@@ -202,7 +202,7 @@ async fn connection_sends_commands_through_feed_task_in_fifo_order() {
 async fn frames_connection_reports_negotiation_and_writes_framed_hello() {
     let (client, mut server) = connected_pair().await;
     let (tx, _rx) = mpsc::channel::<SourcedEvent>(16);
-    let conn = Connection::spawn(client, TabId::MASTER, tx);
+    let conn = Connection::spawn(client, tx);
     assert!(
         conn.speaks_frames(),
         "a connection built from a framed client must report speaks_frames() (#1462)"
@@ -232,7 +232,7 @@ async fn frames_connection_reports_negotiation_and_writes_framed_hello() {
 async fn legacy_connection_reports_negotiation_and_writes_ndjson() {
     let (client, server) = connected_pair_with(true).await;
     let (tx, _rx) = mpsc::channel::<SourcedEvent>(16);
-    let conn = Connection::spawn(client, TabId::MASTER, tx);
+    let conn = Connection::spawn(client, tx);
     assert!(
         !conn.speaks_frames(),
         "a connection built from a legacy client must report !speaks_frames() (#1462)"
@@ -259,13 +259,13 @@ async fn legacy_connection_reports_negotiation_and_writes_ndjson() {
     );
 }
 
-/// #1465 F1: dropping a Connection must abort its feed task so a recycled
-/// TabId cannot receive a late Closed sentinel from the previous occupant.
+/// #1465 F1: dropping a Connection must abort its feed task so no late
+/// Closed sentinel follows a connection that is already gone.
 #[tokio::test]
 async fn connection_drop_aborts_feed_task() {
     let (client, server) = connected_pair().await;
     let (tx, mut rx) = mpsc::channel::<SourcedEvent>(16);
-    let conn = Connection::spawn(client, TabId::MASTER, tx);
+    let conn = Connection::spawn(client, tx);
     drop(conn);
     // Drop the server side so a non-aborted feed would eventually emit Closed.
     drop(server);
@@ -274,7 +274,7 @@ async fn connection_drop_aborts_feed_task() {
     // channel closed without a Closed sentinel is acceptable; a Closed event is not.
     if let Ok(Some(item)) = closed {
         assert!(
-            !matches!(item, SourcedEvent::Closed(_)),
+            !matches!(item, SourcedEvent::Closed),
             "F1: drop must abort feed before Closed can poison the fan-in"
         );
     }

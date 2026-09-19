@@ -10,7 +10,7 @@ use super::tui_harness::{self, TuiHarness, mask_clocks};
 use crate::components::component::Component;
 use crate::protocol::client::Event;
 
-/// #1462 AC: a master event delivered via `SourcedEvent::Tab(MASTER)` renders in
+/// #1462 AC: a master event delivered via `SourcedEvent::Master` renders in
 /// the master session exactly as a directly handled event would.
 #[tokio::test]
 async fn sourced_master_event_renders_like_direct_handling() {
@@ -33,7 +33,7 @@ async fn sourced_master_event_renders_like_direct_handling() {
     let got = sourced.full_frame();
     assert!(
         got.contains("seam-parity-token"),
-        "a SourcedEvent::Tab(MASTER) event must reach the master session's chat (#1462)"
+        "a SourcedEvent::Master event must reach the master session's chat (#1462)"
     );
     // Masked to `#:##` clocks: the Coordinator row embeds an elapsed timer
     // timer, and a second boundary can pass between the two captures on a
@@ -142,7 +142,7 @@ async fn sourced_subagent_event_routes_to_subagent_session() {
     );
 }
 
-/// #1462 scope 3: the `SourcedEvent::Closed(MASTER)` sentinel runs the production
+/// #1462 scope 3: the `SourcedEvent::Closed` sentinel runs the production
 /// disconnect handling — agent marked disconnected, panel pinned (#1047),
 /// disconnect notification shown.
 #[tokio::test]
@@ -218,39 +218,14 @@ fn mask_clocks_masks_only_clock_tokens() {
 // per-token flicker) with the whole suite still green.
 
 use super::app_event_loop::SourcedRender;
-use crate::shell::connection::{SourcedEvent, TabId};
-
-#[tokio::test]
-async fn route_sourced_ignores_master_event_for_foreign_tab() {
-    let mut h = TuiHarness::new().await;
-    h.app_mut().test_set_master_tab(1);
-
-    let got = h.app_mut().route_sourced(SourcedEvent::Tab(
-        TabId::MASTER,
-        Event::Token {
-            token: "foreign-master-token".into(),
-        },
-    ));
-    h.capture();
-
-    assert_eq!(
-        got,
-        SourcedRender::Stream { is_token: true },
-        "foreign master events are still classified for the stream paint path"
-    );
-    assert!(
-        !h.full_frame().contains("foreign-master-token"),
-        "a SourcedEvent::Tab tagged for a different tab must not mutate the active connection (#1472 sweep)"
-    );
-}
+use crate::shell::connection::SourcedEvent;
 
 #[tokio::test]
 async fn route_sourced_master_token_coalesces_as_stream_token() {
     let mut h = TuiHarness::new().await;
-    let got = h.app_mut().route_sourced(SourcedEvent::Tab(
-        TabId::MASTER,
-        Event::Token { token: "t".into() },
-    ));
+    let got = h
+        .app_mut()
+        .route_sourced(SourcedEvent::Master(Event::Token { token: "t".into() }));
     assert_eq!(
         got,
         SourcedRender::Stream { is_token: true },
@@ -263,7 +238,7 @@ async fn route_sourced_master_non_token_paints_stream_immediately() {
     let mut h = TuiHarness::new().await;
     let got = h
         .app_mut()
-        .route_sourced(SourcedEvent::Tab(TabId::MASTER, Event::TurnStart));
+        .route_sourced(SourcedEvent::Master(Event::TurnStart));
     assert_eq!(
         got,
         SourcedRender::Stream { is_token: false },
@@ -278,10 +253,9 @@ async fn route_sourced_master_event_with_surfaced_drops_paints_immediately() {
         .ac()
         .transport
         .record_dropped_oversized_for_tests(1);
-    let got = h.app_mut().route_sourced(SourcedEvent::Tab(
-        TabId::MASTER,
-        Event::Token { token: "t".into() },
-    ));
+    let got = h
+        .app_mut()
+        .route_sourced(SourcedEvent::Master(Event::Token { token: "t".into() }));
     assert_eq!(
         got,
         SourcedRender::Immediate,
@@ -290,41 +264,9 @@ async fn route_sourced_master_event_with_surfaced_drops_paints_immediately() {
 }
 
 #[tokio::test]
-async fn route_sourced_ignores_subagent_event_for_foreign_tab() {
-    let mut h = TuiHarness::new().await;
-    h.app_mut().test_set_master_tab(1);
-    h.event(tui_harness::subagents_changed(vec![tui_harness::subagent(
-        "foreign-a1",
-        "running",
-        None,
-    )]));
-    h.select(Some("foreign-a1"));
-
-    let got = h.app_mut().route_sourced(SourcedEvent::Subagent(
-        TabId::MASTER,
-        "foreign-a1".into(),
-        Event::Token {
-            token: "foreign-tab-token".into(),
-        },
-    ));
-    h.capture();
-
-    assert_eq!(
-        got,
-        SourcedRender::Stream { is_token: true },
-        "foreign sub-agent events are still classified for the stream paint path"
-    );
-    assert!(
-        !h.full_frame().contains("foreign-tab-token"),
-        "a SourcedEvent::Subagent tagged for a different tab must not mutate the active connection (#1472)"
-    );
-}
-
-#[tokio::test]
 async fn route_sourced_subagent_token_coalesces_as_stream_token() {
     let mut h = TuiHarness::new().await;
     let got = h.app_mut().route_sourced(SourcedEvent::Subagent(
-        TabId::MASTER,
         "a1".into(),
         Event::Token { token: "t".into() },
     ));
@@ -338,9 +280,7 @@ async fn route_sourced_subagent_token_coalesces_as_stream_token() {
 #[tokio::test]
 async fn route_sourced_closed_sentinel_paints_immediately() {
     let mut h = TuiHarness::new().await;
-    let got = h
-        .app_mut()
-        .route_sourced(SourcedEvent::Closed(TabId::MASTER));
+    let got = h.app_mut().route_sourced(SourcedEvent::Closed);
     assert_eq!(
         got,
         SourcedRender::Immediate,
@@ -356,11 +296,11 @@ async fn route_sourced_closed_sentinel_paints_immediately() {
 // events. This drives the REAL event loop and lets IT deliver the item.
 
 #[tokio::test]
-async fn run_select_loop_drains_tab_fan_in_even_when_disconnected() {
+async fn run_select_loop_drains_master_events_even_when_disconnected() {
     let mut h = TuiHarness::new().await;
     // Pre-flip the flag the deleted `client.recv()` arm used to be gated on,
     // then drive the item through the REAL master wire so it travels client
-    // reader → feed task → `tab_event_tx` → the dedicated tab select arm —
+    // reader → feed task → `master_event_tx` → the dedicated tab select arm —
     // the actual replacement for that gated arm (#1470 review). Injecting a
     // hand-built `SourcedEvent` on the sub-agent channel would instead drain
     // through the always-unconditional sub-agent arm and never exercise the
@@ -387,7 +327,7 @@ async fn run_select_loop_drains_tab_fan_in_even_when_disconnected() {
 /// drained by run() itself: an event written on the REAL master socket
 /// travels client reader → feed task → tab channel → run()'s select arm.
 #[tokio::test]
-async fn run_select_loop_drains_tab_fan_in_from_the_wire() {
+async fn run_select_loop_drains_master_events_from_the_wire() {
     let mut h = TuiHarness::new().await;
     h.send_agent_event_line("{\"type\":\"token\",\"token\":\"tab-arm-run-token\"}")
         .await;

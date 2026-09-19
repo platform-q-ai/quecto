@@ -130,43 +130,39 @@ impl App {
     /// return). A `Closed` sentinel arriving while a diagnosis is already
     /// pending is a no-op: state is already flipped and a second diag task
     /// would duplicate the notification.
-    pub(super) fn begin_agent_stream_closed(&mut self, tab: crate::shell::connection::TabId) {
-        // Owner-targeted Closed (#1465): unknown tabs no-op; known inactive
-        // tabs disconnect only themselves.
-        let _ = self.with_routing_tab(tab, |app| {
-            // Duplicate gate: the first sentinel flips `agent_connected`; any
-            // later duplicate (ownerless attach connections included, where no
-            // diagnosis latch is ever set) is a no-op — the exact once-per-
-            // connection guarantee of the deleted gated select arm (#1470 r4).
-            if !app.ac().agent_connected {
-                return;
-            }
-            app.ac_mut().disconnect_refusal_notified = false;
-            app.surface_dropped_oversized_events();
-            app.mark_agent_disconnected();
-            let Some(watch) = app.ac().child_exit_watch.clone() else {
-                app.emit_agent_disconnected_notice(None);
-                return;
-            };
-            app.ac_mut().disconnect_diag_pending = true;
-            let tx = app.disconnect_diag_tx.clone();
-            tokio::spawn(async move {
-                // Best-effort read of the owned agent child's exit diagnosis. The
-                // stream usually closes a beat before the watcher reaps the
-                // child, so give the diagnosis a short window to land.
-                // Event-driven via the watcher's watch channel (#1051 review —
-                // no 20 ms poll loop): the common case resolves the moment the
-                // reap is recorded; only a child that closed its socket but
-                // stays alive costs the full (bounded, one-time) window.
-                let detail = watch.wait_exit_detail(CHILD_EXIT_DETAIL_WINDOW).await;
-                // The exit diagnosis lands the moment the child is reaped, which
-                // can be BEFORE the independent stderr-drain task consumes the
-                // buffered panic message — give the drain the same bounded
-                // window so the stderr snapshot taken at completion is complete,
-                // not racy (#1051 final review).
-                watch.wait_stderr_drained(CHILD_EXIT_DETAIL_WINDOW).await;
-                let _ = tx.send((tab, detail)).await;
-            });
+    pub(super) fn begin_agent_stream_closed(&mut self) {
+        // Duplicate gate: the first sentinel flips `agent_connected`; any
+        // later duplicate (ownerless attach connections included, where no
+        // diagnosis latch is ever set) is a no-op — the exact once-per-
+        // connection guarantee of the deleted gated select arm (#1470 r4).
+        if !self.ac().agent_connected {
+            return;
+        }
+        self.ac_mut().disconnect_refusal_notified = false;
+        self.surface_dropped_oversized_events();
+        self.mark_agent_disconnected();
+        let Some(watch) = self.ac().child_exit_watch.clone() else {
+            self.emit_agent_disconnected_notice(None);
+            return;
+        };
+        self.ac_mut().disconnect_diag_pending = true;
+        let tx = self.disconnect_diag_tx.clone();
+        tokio::spawn(async move {
+            // Best-effort read of the owned agent child's exit diagnosis. The
+            // stream usually closes a beat before the watcher reaps the
+            // child, so give the diagnosis a short window to land.
+            // Event-driven via the watcher's watch channel (#1051 review —
+            // no 20 ms poll loop): the common case resolves the moment the
+            // reap is recorded; only a child that closed its socket but
+            // stays alive costs the full (bounded, one-time) window.
+            let detail = watch.wait_exit_detail(CHILD_EXIT_DETAIL_WINDOW).await;
+            // The exit diagnosis lands the moment the child is reaped, which
+            // can be BEFORE the independent stderr-drain task consumes the
+            // buffered panic message — give the drain the same bounded
+            // window so the stderr snapshot taken at completion is complete,
+            // not racy (#1051 final review).
+            watch.wait_stderr_drained(CHILD_EXIT_DETAIL_WINDOW).await;
+            let _ = tx.send(detail).await;
         });
     }
 
@@ -177,27 +173,20 @@ impl App {
     /// Gated on the pending latch (#1470 r3): a session reset during the
     /// diagnosis window clears the latch, so the stale completion is
     /// dropped instead of dumping stderr into the fresh transcript.
-    pub(super) fn finish_agent_stream_closed(
-        &mut self,
-        tab: crate::shell::connection::TabId,
-        detail: Option<String>,
-    ) {
-        // Owner-targeted diag completion (#1465 / #1463): unknown tabs no-op.
-        let _ = self.with_routing_tab(tab, |app| {
-            if !app.ac().disconnect_diag_pending {
-                // A reset invalidated the pending completion: the transcript
-                // entries must not land in the fresh session, but the crash
-                // diagnosis itself (#1047) must still surface as a toast —
-                // pre-seam the diagnosis was always shown (#1470 r6).
-                if detail.is_some() {
-                    let text = Self::disconnect_notice_text(detail.as_deref());
-                    app.notify(&text, NotifyLevel::Error);
-                }
-                return;
+    pub(super) fn finish_agent_stream_closed(&mut self, detail: Option<String>) {
+        if !self.ac().disconnect_diag_pending {
+            // A reset invalidated the pending completion: the transcript
+            // entries must not land in the fresh session, but the crash
+            // diagnosis itself (#1047) must still surface as a toast —
+            // pre-seam the diagnosis was always shown (#1470 r6).
+            if detail.is_some() {
+                let text = Self::disconnect_notice_text(detail.as_deref());
+                self.notify(&text, NotifyLevel::Error);
             }
-            app.ac_mut().disconnect_diag_pending = false;
-            app.emit_agent_disconnected_notice(detail);
-        });
+            return;
+        }
+        self.ac_mut().disconnect_diag_pending = false;
+        self.emit_agent_disconnected_notice(detail);
     }
 
     /// Surface newly-recorded oversized-event drops as a warning notification
@@ -262,8 +251,7 @@ impl App {
     }
 
     /// Surface a failed command send, attributed to the connection it
-    /// happened on (#1460) so that with N per-tab connections the
-    /// rollback/notice cannot be misrouted cross-tab.
+    /// happened on (#1460).
     pub(super) fn handle_command_send_failure(&mut self, failure: CommandSendFailure) {
         let CommandSendFailure {
             command,

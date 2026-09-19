@@ -117,9 +117,9 @@ Feature: The /resume picker searches session metadata through the harness (#2010
     Then one metadata search is in flight for "cli:one" in scope "global"
     And the resume picker shows "Pasted the first line only"
 
-  Scenario: A picker closed by a tab switch abandons its search
+  Scenario: A picker closed by a session switch abandons its search
     When I type "a" into the resume search box
-    And the picker is closed by a tab switch
+    And the picker is closed by a session switch
     And a search answer for the closed picker arrives with the session "AFTER-SWITCH"
     Then the resume picker is closed
     And no toast is shown

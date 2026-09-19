@@ -249,8 +249,8 @@ impl ConnectionRoster {
 }
 
 /// The global UI half of the sub-agent state (#997/#1463): panel focus and
-/// cursor are app chrome shared across tabs, and the event channel is the
-/// shared fan-in transport for every tab's feeds.
+/// cursor are app chrome, and the event channel is the shared fan-in
+/// transport for the sub-agent feeds.
 pub(crate) struct SubagentUi {
     /// Left-panel selection cursor over the flattened (master + tree) rows.
     pub(crate) panel_nav: ListNavigator,
@@ -258,10 +258,10 @@ pub(crate) struct SubagentUi {
     /// viewport coordinate; live roster updates can reorder rows, so focused
     /// navigation preserves/commits by this key when possible.
     pub(crate) panel_nav_key: Option<String>,
-    /// Shared fan-in for the tab's master connection AND its direct/routed
-    /// sub-agent feeds (#800/#1442/#1462), keyed by
+    /// Shared fan-in for the direct/routed sub-agent feeds
+    /// (#800/#1442/#1462), carrying
     /// [`crate::shell::connection::SourcedEvent`] so the event loop drains ONE
-    /// channel regardless of connection count.
+    /// channel regardless of feed count.
     pub(crate) event_tx: mpsc::Sender<crate::shell::connection::SourcedEvent>,
     pub(crate) event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
     /// Which pane has keyboard focus: the editor or the side panel (#802).

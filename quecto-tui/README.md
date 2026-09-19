@@ -2,7 +2,7 @@
 
 A lightweight terminal UI client for `quecto agent --mode uds`.
 
-**Version `0.77.26` (pre-1.0).** The TUI is a UDS bus client of the harness: the
+**Version `0.77.27` (pre-1.0).** The TUI is a UDS bus client of the harness: the
 wire protocol and session ownership live in `quecto`, so most breaking risk is
 upstream. This crate stays on `0.y` until feature-oriented presentation boundaries and
 public surface (flags, slash commands, attach/spawn) meet the bar for a deliberate
@@ -268,7 +268,9 @@ Use `--detach-on-exit` to leave owned agents running (`--kill-on-exit` is the
 default). Externally attached agents are not killed merely because this TUI exits.
 Attaching to a running harness (`--socket`) shows that harness's live sub-agent
 roster; the TUI keeps no registry of its own. Exit durability and cleanup errors
-are reported separately.
+are reported separately. One `quecto-tui` process holds exactly one harness
+connection (#2044): there are no tabs, and a second session means a second
+`quecto-tui`.
 
 `$XDG_DATA_HOME/quecto/tui/tab-agent-registry.json` (default
 `~/.local/share/quecto/tui/`; and `workspace-manifests.json`

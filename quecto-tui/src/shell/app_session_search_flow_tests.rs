@@ -360,14 +360,15 @@ async fn an_old_harness_costs_one_warning_and_the_box_still_narrows_the_listed_r
     assert_eq!(searches(&mut h).await.len(), 1);
 }
 
-/// R1-T7, the reviewer's probe: a picker closed by a tab switch.
+/// R1-T7, the reviewer's probe: a picker closed by a session switch.
 #[tokio::test]
-async fn a_picker_closed_by_a_tab_switch_abandons_the_flight_and_a_late_answer_changes_nothing() {
+async fn a_picker_closed_by_a_session_switch_abandons_the_flight_and_a_late_answer_changes_nothing()
+{
     let mut h = harness().await;
     open_picker(&mut h).await;
     type_text(&mut h, "z");
     let request = searches(&mut h).await[0].clone();
-    h.app_mut().close_tab_switch_overlays();
+    h.app_mut().close_session_switch_overlays();
     assert!(!h.app_mut().ac().sessions.search.is_in_flight());
     assert!(h.app_mut().ac().sessions.pending_list_id.is_none());
     answer(

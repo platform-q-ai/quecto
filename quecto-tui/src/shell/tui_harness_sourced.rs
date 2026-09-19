@@ -1,15 +1,15 @@
-//! Fan-in seam driving for the headless harness (#1462, epic #1467).
+//! Sourced-event seam driving for the headless harness (#1462).
 //!
 //! Drives events through the sourced fan-in path the event loop drains now
-//! that the master connection lives behind a feed task. At N=1, `event()`
-//! keeps meaning "the (only) tab's master" — these drivers pin that the
+//! that the master connection lives behind a feed task. `event()`
+//! keeps meaning "the master" — these drivers pin that the
 //! fan-in path renders identically, and the `wire_*` drivers exercise the
 //! FULL production flow: real socket → client reader → connection feed task
-//! → dedicated tab fan-in → `route_sourced`.
+//! → master event channel → `route_sourced`.
 
 use super::TuiHarness;
 use crate::protocol::client::Event;
-use crate::shell::connection::{SourcedEvent, TabId};
+use crate::shell::connection::SourcedEvent;
 
 /// Bounded wait for fan-in delivery so a broken feed task fails a test
 /// quickly instead of hanging it.
@@ -29,23 +29,18 @@ impl TuiHarness {
     }
 
     /// Deliver a master-connection event through the sourced fan-in routing
-    /// (`SourcedEvent::Tab(MASTER, ..)`) and capture the resulting frame.
+    /// (`SourcedEvent::Master(..)`) and capture the resulting frame.
     pub async fn sourced_master_event(&mut self, ev: Event) -> &mut Self {
-        self.route_sourced_item(SourcedEvent::Tab(TabId::MASTER, ev))
-            .await;
+        self.route_sourced_item(SourcedEvent::Master(ev)).await;
         self.capture();
         self
     }
 
     /// Deliver a sub-agent event through the sourced fan-in routing
-    /// (`SourcedEvent::Subagent(MASTER, agent_id, ..)`) and capture.
+    /// (`SourcedEvent::Subagent(agent_id, ..)`) and capture.
     pub async fn sourced_subagent_event(&mut self, agent_id: &str, ev: Event) -> &mut Self {
-        self.route_sourced_item(SourcedEvent::Subagent(
-            TabId::MASTER,
-            agent_id.to_string(),
-            ev,
-        ))
-        .await;
+        self.route_sourced_item(SourcedEvent::Subagent(agent_id.to_string(), ev))
+            .await;
         self.capture();
         self
     }
@@ -56,8 +51,7 @@ impl TuiHarness {
     /// #1047 diagnosis off-loop; the shared completion in
     /// [`Self::route_sourced_item`] resolves it before capturing.
     pub async fn deliver_closed_sentinel(&mut self) -> &mut Self {
-        self.route_sourced_item(SourcedEvent::Closed(TabId::MASTER))
-            .await;
+        self.route_sourced_item(SourcedEvent::Closed).await;
         self.capture();
         self
     }
@@ -121,7 +115,7 @@ impl TuiHarness {
             // assert an inter-channel ordering production does not guarantee
             // (#1470 r3).
             tokio::select! {
-                Some(item) = self.app.tab_event_rx.recv() => item,
+                Some(item) = self.app.master_event_rx.recv() => item,
                 Some(item) = self.app.subagents.event_rx.recv() => item,
             }
         })
@@ -134,10 +128,10 @@ impl TuiHarness {
     /// the stream-closed disconnect with it — the harness stand-in for the
     /// event loop's disconnect-diagnosis select arm.
     pub async fn pump_disconnect_diagnosis(&mut self) {
-        let (tab, detail) = tokio::time::timeout(PUMP_TIMEOUT, self.app.disconnect_diag_rx.recv())
+        let detail = tokio::time::timeout(PUMP_TIMEOUT, self.app.disconnect_diag_rx.recv())
             .await
             .expect("the off-loop disconnect diagnosis must complete (#1462)")
             .expect("the disconnect diagnosis channel must stay open");
-        self.app.finish_agent_stream_closed(tab, detail);
+        self.app.finish_agent_stream_closed(detail);
     }
 }

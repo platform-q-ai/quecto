@@ -171,7 +171,7 @@ impl App {
             self.ac_mut().roster.selected_environment = None;
         }
         let new_active = agent_id.map(str::to_string);
-        self.close_tab_switch_overlays();
+        self.close_session_switch_overlays();
         if new_active == self.ac().roster.active_agent_id {
             return;
         }
