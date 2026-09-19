@@ -193,7 +193,7 @@ impl FileSessionHomeCatalogue {
     }
     fn scan_record(
         &self,
-        path: &PathBuf,
+        path: &std::path::Path,
         records: &mut Records,
         result: &mut HomeCatalogueSnapshot,
     ) -> Option<(String, RejectedEntry)> {
@@ -232,7 +232,7 @@ impl FileSessionHomeCatalogue {
     }
     /// The record's identity: the projection's when the file still carries
     /// the projected stamp, else one full read, strictly validated.
-    fn projected_identity(&self, path: &PathBuf) -> Result<SessionIdentity, DomainError> {
+    fn projected_identity(&self, path: &std::path::Path) -> Result<SessionIdentity, DomainError> {
         let before = stamp(path)?;
         if let Some(identity) = self.cached_if_current(path, &before)? {
             return Ok(identity);
@@ -258,7 +258,7 @@ impl FileSessionHomeCatalogue {
                     entry,
                 };
                 let mut projection = self.projection.lock().map_err(error)?;
-                projection.insert(path.clone(), projected);
+                projection.insert(path.to_path_buf(), projected);
                 Ok(identity)
             }
             Err(rejection) => {
