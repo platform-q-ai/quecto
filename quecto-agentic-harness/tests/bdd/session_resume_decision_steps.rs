@@ -199,8 +199,14 @@ fn restored_to(world: &mut QuectoWorld, key: String) {
 
 #[then("the TUI reports the resumed session")]
 fn tui_resumed(world: &mut QuectoWorld) {
+    let messages = drive(world, |h| h.notification_messages());
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("Resumed session cli:local")),
+        "{messages:?}"
+    );
     let frame = drive(world, TuiHarness::full_frame);
-    assert!(frame.contains("Resumed session cli:local"), "{frame}");
     assert!(
         !frame.contains("This session"),
         "no decision dialog: {frame}"
@@ -326,11 +332,14 @@ fn choose_first(world: &mut QuectoWorld) {
 
 #[then("the TUI explains the action is unavailable and keeps the dialog open")]
 fn explains_unavailable(world: &mut QuectoWorld) {
-    let frame = drive(world, TuiHarness::full_frame);
+    let messages = drive(world, |h| h.notification_messages());
     assert!(
-        frame.contains("Open original folder is unavailable"),
-        "{frame}"
+        messages
+            .iter()
+            .any(|m| m.contains("Open original folder is unavailable") && m.contains("#2012")),
+        "{messages:?}"
     );
+    let frame = drive(world, TuiHarness::full_frame);
     assert!(
         frame.contains("This session belongs to another folder"),
         "{frame}"
