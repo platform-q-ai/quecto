@@ -610,8 +610,8 @@ fn modified_tab_and_page_chords_are_unbound_never_plain_keys() {
         b"\x1b[9;6u",
         b"\x1b[5;5~",
         b"\x1b[6;5~",
-        b"\x1b[57354;5u",
-        b"\x1b[57355;5u",
+        b"\x1b[7;5u",
+        b"\x1b[8;5u",
     ] {
         let (key, used) = parse_key(seq).unwrap();
         assert!(matches!(key, Key::Unknown(_)), "{seq:?} parsed as {key:?}");
