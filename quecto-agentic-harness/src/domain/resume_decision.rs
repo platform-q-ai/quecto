@@ -2,7 +2,7 @@
 //! authoritative home, the explicit actions a user may choose, the kinds of
 //! obstacle a home can present, and the one affirmative table of which actions
 //! each kind offers. No filesystem, Git, UI or process call lives here.
-use super::session_home::{SessionHome, SessionHomeScope, WorkspaceGroup};
+use super::session_home::{AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup};
 
 /// Opaque version of a session's authoritative home metadata. Two reads that
 /// yield the same token saw the same authority; a client echoes the token it
@@ -75,7 +75,10 @@ impl Fnv1a {
         };
         self.field(kind);
         self.field(path.as_os_str().as_encoded_bytes());
-        self.field(format!("{:?}", home.provenance).as_bytes());
+        // Spelled out: a renamed variant must not silently change every version.
+        self.field(match home.provenance {
+            AssociationProvenance::SavedHere => b"saved_here",
+        });
     }
 }
 

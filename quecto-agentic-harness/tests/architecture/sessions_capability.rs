@@ -650,7 +650,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/dto/resume_saved_session.rs", 117),
     ("src/application/sessions/dto/resume_refusal_text.rs", 61),
     ("src/application/sessions/dto/resume_decision.rs", 168),
-    ("src/domain/resume_decision.rs", 179),
+    ("src/domain/resume_decision.rs", 182),
     ("src/composition/resume_capabilities.rs", 15),
     (
         "src/interface/uds/sessions/resume_session_controller.rs",

@@ -35,6 +35,22 @@ fn a_version_is_deterministic_and_pinned_across_releases() {
     );
 }
 
+/// Pinned literally: a scoped home's token must not drift with a refactor.
+#[test]
+fn a_scoped_version_is_pinned_to_its_literal_token() {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for field in [&b"scoped"[..], b"/a", b"folder", b"/a", b"saved_here"] {
+        for byte in (field.len() as u64).to_le_bytes().iter().chain(field) {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    assert_eq!(
+        HomeVersion::of(&folder("/a")).as_str(),
+        format!("h1-{hash:016x}")
+    );
+}
+
 fn legacy_digest() -> String {
     // FNV-1a of the 8-byte little-endian length 6 followed by "legacy".
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
