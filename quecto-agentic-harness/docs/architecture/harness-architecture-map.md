@@ -261,7 +261,7 @@ membership does not authorize restore in another execution directory. The
 home context is composed once per loop over the one file store and is
 mandatory for resume. Typed resume decisions (#2011) stay with that owner:
 `ResumeSavedSession::execute` answers a `ResumeRequest` with a `ResumeOutcome`,
-a typed `ResumeDecision` (pure kinds, actions and `HomeVersion` in
+a typed cross-folder refusal notice (pure kind and `HomeVersion` in
 `src/domain/resume_decision.rs`; DTOs in `dto/resume_decision.rs`; eligibility
 collaborators in `use_cases/resume_saved_session_decision.rs`) or a coded
 refusal; action availability is the capability set composed in

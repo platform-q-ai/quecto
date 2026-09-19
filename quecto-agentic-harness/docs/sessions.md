@@ -389,7 +389,11 @@ pure matching rules in `domain/session_metadata_search.rs`.
   `get_state`/`abort` by the sum — the TUI's single flight bounds that to two
   scans; a raw client gets no such bound.
 
-#### Typed resume decisions (#2011)
+#### Typed resume outcomes
+
+Cross-folder targets produce a plain, effect-free typed refusal/notice. They do not offer or execute Open, Fork, Associate, or Cancel resume actions; displaying the notice performs no claim, save, child settlement, or process spawn. Local restores retain exact-key and home-version checks.
+
+The remainder of this section describes the historical decision model and is retained only for compatibility notes; new clients must use the typed refusal above.
 
 `ResumeSavedSession::execute` takes a `ResumeRequest` (exact target, intent,
 optional expected `HomeVersion`) and answers a `ResumeOutcome` (`Resumed`,

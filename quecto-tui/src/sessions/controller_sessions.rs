@@ -12,7 +12,7 @@ pub(crate) struct SessionsFlow {
     /// The title each listed row was shown with, by key: a decision dialog
     /// names the session the way the picker did.
     pub(super) listed_titles: std::collections::BTreeMap<String, String>,
-    /// The decision dialog of a session that cannot simply be restored (#2011).
+    /// Legacy storage retained for protocol/test compatibility; refusals now notify plainly.
     pub(super) resume_decision: Option<crate::sessions::resume_decision::ResumeDecisionDialog>,
     /// The picker selection's key and listed version, consumed by its send.
     pub(super) selected_home_version: Option<(String, String)>,
@@ -52,34 +52,8 @@ impl SessionsFlow {
 }
 
 impl super::App {
-    /// Route a key to the decision dialog (#2011). Cancel and Escape close it
-    /// and send nothing; an unavailable action is pointed at its reason and the dialog
-    /// stays; an available one sends identity, action and version.
-    fn handle_resume_decision_key(&mut self, key: &Key) {
-        use crate::sessions::resume_decision::ResumeDecisionEvent;
-        let Some(dialog) = self.ac_mut().sessions.resume_decision.as_mut() else {
-            return;
-        };
-        match dialog.handle_key(key) {
-            ResumeDecisionEvent::Pending => {}
-            ResumeDecisionEvent::Cancelled => self.ac_mut().sessions.resume_decision = None,
-            // The reason is under the cursor already: the toast only points at it.
-            ResumeDecisionEvent::Unavailable => self.notify(
-                crate::sessions::resume_decision::UNAVAILABLE_POINTER,
-                NotifyLevel::Warning,
-            ),
-            ResumeDecisionEvent::Chosen(selection) => {
-                self.ac_mut().sessions.resume_decision = None;
-                self.send_resume_selection(selection);
-            }
-        }
-    }
-
     pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
         use crate::sessions::resume_picker::ResumePickerEvent;
-        if self.ac().sessions.resume_decision.is_some() {
-            return self.handle_resume_decision_key(key);
-        }
         // The shell prefixes the agents pane after rendering this body-local overlay.
         let key = match key {
             Key::MousePress(x, y) => {

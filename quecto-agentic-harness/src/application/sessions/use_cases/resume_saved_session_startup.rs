@@ -5,6 +5,16 @@ use crate::application::sessions::dto::{ResumeSavedSessionError, StartupRefusal}
 use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::{session_home::SessionHomeScope, session_identity::SessionIdentity};
 
+fn refusal_code(disposition: &crate::application::sessions::dto::ResumeDisposition) -> &'static str {
+    use crate::application::sessions::dto::ResumeDisposition as D;
+    match disposition {
+        D::DifferentExecutionDirectory => "belongs_elsewhere",
+        D::HomeChanged => "home_changed",
+        D::Unavailable(_) => "home_unknown",
+        D::LegacyUnscoped => "no_home_recorded",
+    }
+}
+
 /// The loaded transcript's home must admit the current directory: the same
 /// classification as an explicit resume, re-read under the claim. A refusal
 /// names the key and what the user can do now.
@@ -19,6 +29,8 @@ pub(super) async fn admit_at_startup(
     home.admit(&scope).await.map_err(|disposition| {
         ResumeSavedSessionError::StartupScope(StartupRefusal {
             key: identity.runtime_key().to_string(),
+            code: refusal_code(&disposition),
+            command: format!("quecto -s {}", identity.name()),
             disposition,
         })
     })

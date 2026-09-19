@@ -6,7 +6,6 @@ use super::super::*;
 use crate::protocol::resume_decision_payloads::{
     ResumeAnswer, ResumeSelection, parse_resume_answer,
 };
-use crate::sessions::resume_decision::ResumeDecisionDialog;
 use crate::sessions::resume_picker::RowsState;
 
 /// The toast of a `stale_home_version` refusal.
@@ -160,10 +159,19 @@ impl App {
             // A peer's decision, refusal or unreadable answer is not this tab's.
             _ if peers => {}
             ResumeAnswer::Decision(decision) if owned => {
-                let sessions = &self.ac().sessions;
-                let title = sessions.listed_titles.get(&decision.session_key).cloned();
-                self.ac_mut().sessions.resume_decision =
-                    Some(ResumeDecisionDialog::new(decision, title.as_deref()));
+                // Cross-folder sessions are informational refusals: never offer
+                // actions or mutate the local session. Keep the notice plain and
+                // bounded; the harness remains the authority for the path.
+                let path = decision
+                    .execution_path
+                    .as_deref()
+                    .unwrap_or("the recorded folder");
+                let key = decision.session_key.as_str();
+                let path = crate::components::ansi::sanitize_untrusted_label(path, 160);
+                let message = format!(
+                    "This session belongs to {path}. Open quecto there to resume it: cd {path} && quecto-tui -s {key}"
+                );
+                self.notify(&message, NotifyLevel::Warning);
             }
             ResumeAnswer::Decision(_) => {}
             // One truncated line: the instruction first, and no "home".

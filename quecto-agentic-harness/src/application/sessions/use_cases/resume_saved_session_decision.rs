@@ -4,7 +4,7 @@
 //! the refusal of an explicit action (`resume_saved_session_action.rs`) run.
 use super::ResumeSavedSession;
 use crate::application::sessions::dto::{
-    ResumeActionCapabilities, ResumeActionOffer, ResumeDecision, ResumeIntent, ResumeRequest,
+    ResumeActionCapabilities, ResumeDecision, ResumeIntent, ResumeRequest,
     ResumeSavedSessionError, ResumeTarget,
 };
 use crate::application::sessions::ports::SessionStore;
@@ -91,7 +91,7 @@ impl Eligibility {
 /// an affirmatively admitted home passes. All else is a decision or refusal.
 pub(super) async fn decide(
     home: &SessionHomeContext,
-    capabilities: &ResumeActionCapabilities,
+    _capabilities: &ResumeActionCapabilities,
     target: &ResumeTarget,
     expected: Option<&HomeVersion>,
 ) -> Result<(), ResumeSavedSessionError> {
@@ -110,14 +110,10 @@ pub(super) async fn decide(
         }
         Err(HomeObstacle::Decision(kind, detail)) => (kind, detail),
     };
-    let offers = kind
-        .offered_actions()
-        .iter()
-        .map(|action| ResumeActionOffer {
-            action: *action,
-            availability: capabilities.availability(*action),
-        })
-        .collect();
+    // Cross-folder decisions are informational only. No action is offered or
+    // dispatched here: preserving the typed home classification is safer than
+    // presenting an action that this runtime cannot execute.
+    let offers = Vec::new();
     let execution_dir = match scope {
         SessionHomeScope::Scoped(saved) => Some(saved.execution_dir),
         SessionHomeScope::LegacyUnscoped | SessionHomeScope::Unavailable(_) => None,

@@ -8,6 +8,10 @@ pub struct StartupRefusal {
     /// The key as composed (`cli:default`, `cli:<name>`, `chat-…`).
     pub key: String,
     pub disposition: ResumeDisposition,
+    /// Stable machine-readable refusal classification.
+    pub code: &'static str,
+    /// Safe command the user can run to resolve the refusal.
+    pub command: String,
 }
 
 impl std::fmt::Display for StartupRefusal {

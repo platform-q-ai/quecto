@@ -35,7 +35,23 @@ impl Serialize for ResumeActionCommand {
 
 impl<'de> Deserialize<'de> for ResumeActionCommand {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let name = String::deserialize(deserializer)?;
+        // Accept the current string spelling and the object wrapper emitted by
+        // pre-#2011 clients.  Keeping this compatibility at the wire edge
+        // means an action-bearing request still reaches dispatch (and receives
+        // its correlated typed refusal) instead of becoming parse_error.
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let name = match value {
+            serde_json::Value::String(name) => name,
+            serde_json::Value::Object(mut fields) => {
+                let candidate = fields
+                    .remove("name")
+                    .or_else(|| fields.remove("action"));
+                candidate
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .ok_or_else(|| serde::de::Error::custom("invalid resume action"))?
+            }
+            _ => return Err(serde::de::Error::custom("invalid resume action")),
+        };
         crate::domain::resume_decision::ResumeAction::from_name(&name)
             .map(Self)
             .ok_or_else(|| serde::de::Error::custom("unknown resume action"))

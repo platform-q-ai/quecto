@@ -633,6 +633,12 @@ fn resume_session_actions_are_spelled_by_the_domains_one_table() {
         let wire = serde_json::to_value(&command).unwrap();
         assert_eq!(wire["action"], action.name());
     }
+    let legacy = parse(r#"{"name":"cancel"}"#).unwrap();
+    let AgentCommand::ResumeSession { action, .. } = legacy else {
+        panic!("resume_session expected");
+    };
+    assert_eq!(action.map(|action| action.0), Some(ResumeAction::Cancel));
+
     for unknown in [
         "\"find\"",
         "\"Cancel\"",
@@ -641,6 +647,7 @@ fn resume_session_actions_are_spelled_by_the_domains_one_table() {
         "5",
         "true",
         "[]",
+        "{}",
     ] {
         assert!(parse(unknown).is_err(), "{unknown}");
     }

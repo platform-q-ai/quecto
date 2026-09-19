@@ -20,8 +20,8 @@ const ELIGIBLE: &str = "Resume";
 /// ("Local Folder" / "All Folders"): the session lives in another folder, or
 /// no folder is on record for it (the row already says so where a folder
 /// would be).
-const ELSEWHERE: &str = "Saved in another folder — Enter for options";
-const NO_FOLDER: &str = "Enter for options";
+const ELSEWHERE: &str = "In another folder";
+const NO_FOLDER: &str = "No folder recorded";
 
 pub struct ResumeRows {
     pub items: Vec<SelectItem>,

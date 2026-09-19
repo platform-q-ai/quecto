@@ -295,7 +295,7 @@ reported as `rebuilt`). Exact-key resume does not rely on the catalogue.
 The TUI `/resume` picker defaults to Local, with a visible Local/Global control.
 Tab/Shift+Tab move between scope, query and results; Enter/Space activate, mouse
 selects, and Escape cancels. Ctrl+G retains its existing global behavior.
-Cross-folder actions are unavailable until their implementing slices ship.
+Cross-folder targets produce a typed, effect-free refusal with a bounded plain notice. No resume action is offered or executed; clients must not render an action picker. Rendering the notice performs no claim, save, child settlement, or process spawn. Action-bearing legacy clients may ignore the refusal data and continue safely.
 
 ```json
 {"type":"list_sessions","id":"ls-1","scope":"global"}

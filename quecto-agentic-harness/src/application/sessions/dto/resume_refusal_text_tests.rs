@@ -43,6 +43,8 @@ fn every_refusal() -> Vec<ResumeSavedSessionError> {
         ResumeSavedSessionError::ActionExecutedElsewhere(ResumeAction::OpenOriginal),
         ResumeSavedSessionError::ActionNotOffered(ResumeAction::Associate),
         ResumeSavedSessionError::StartupScope(StartupRefusal {
+            code: "no_home_recorded",
+            command: "quecto -s old".into(),
             key: "cli:old".into(),
             disposition: ResumeDisposition::LegacyUnscoped,
         }),

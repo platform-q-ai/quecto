@@ -10,7 +10,14 @@ impl std::fmt::Display for ResumeSavedSessionError {
             Self::InvalidName => {
                 f.write_str("session name must contain only alphanumeric, '-', or '_'")
             }
-            Self::Decision(decision) => write!(f, "{decision}"),
+            Self::Decision(decision) => {
+                let path = decision
+                    .execution_dir
+                    .as_deref()
+                    .map(crate::domain::session_path_text::display_path)
+                    .unwrap_or_else(|| "the recorded folder".to_string());
+                write!(f, "This session belongs to {path}.")
+            }
             Self::StaleHomeVersion => {
                 f.write_str("session list out of date; list and choose again")
             }

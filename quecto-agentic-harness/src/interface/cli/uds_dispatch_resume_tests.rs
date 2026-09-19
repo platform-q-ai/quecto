@@ -79,8 +79,9 @@ fn a_decision_is_a_failure_carrying_the_typed_safe_decision() {
     assert_eq!(event["success"], false);
     assert_eq!(event["command"], "resume_session");
     let data = &event["data"];
-    assert_eq!(data["outcome"], "decision");
-    assert_eq!(data["code"], "decision_required");
+    assert_eq!(data["outcome"], "refused");
+    assert_eq!(data["code"], "belongs_elsewhere");
+    assert!(data["command"].as_str().is_some());
     assert_eq!(data["kind"], "cross_folder");
     assert_eq!(data["session"], "cli:foreign");
     assert_eq!(data["sessionKey"], "cli:foreign");

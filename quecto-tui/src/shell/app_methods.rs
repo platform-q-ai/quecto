@@ -541,15 +541,6 @@ impl App {
             }
         }
 
-        // The resume decision dialog (#2011) is laid over the WHOLE frame, the
-        // agents pane included: inside the body pane a 40-column terminal
-        // would leave it ten columns.
-        let full_width = self.terminal.width;
-        if let Some(dialog) = &mut self.ac_mut().sessions.resume_decision {
-            let (dialog_lines, overlay_width) = dialog.render_overlay(full_width, height);
-            Self::composite_centered(&mut lines, &dialog_lines, overlay_width, full_width, height);
-        }
-
         // Store rendered lines for text selection extraction (#528).
         if self.selection.is_some() {
             self.last_rendered_lines = lines.clone();

@@ -64,6 +64,12 @@ pub(super) fn refusal_event(
     }
 }
 
+fn shell_quote(value: &str) -> String {
+    // POSIX single quotes are an allowlist: every byte is literal except the
+    // quote, which is closed, escaped, and reopened without invoking a shell.
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 fn decision_json(decision: &ResumeDecision, code: &str) -> serde_json::Value {
     let actions: Vec<_> = decision
         .offers
@@ -82,8 +88,11 @@ fn decision_json(decision: &ResumeDecision, code: &str) -> serde_json::Value {
         .collect();
     // Spelled as every discovery row spells it (R3-H2): one folder, one text.
     let path = decision.execution_dir.as_deref().map(display_path);
+    let command = path.as_deref().map(|folder| {
+        format!("cd {} && quecto-tui -s {}", shell_quote(folder), shell_quote(&decision.target.identity.runtime_key()))
+    });
     serde_json::json!({
-        "outcome": "decision",
+        "outcome": "refused",
         "code": code,
         "session": safe_display(&decision.target.name),
         "sessionKey": decision.target.identity.runtime_key(),
@@ -91,6 +100,7 @@ fn decision_json(decision: &ResumeDecision, code: &str) -> serde_json::Value {
         "homeVersion": decision.home_version.as_str(),
         "executionPath": path.as_deref().map(safe_display),
         "detail": decision.detail.as_deref().map(safe_display),
+        "command": command,
         "actions": actions,
     })
 }

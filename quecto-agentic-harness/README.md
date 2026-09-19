@@ -1,5 +1,7 @@
 # Quecto
 
+Cross-folder session resumes are reported as bounded typed notices, not interactive action prompts. The TUI must display these notices without offering resume actions or causing session claims, saves, child settlement, or process spawns.
+
 Quecto is a Rust workspace centred on a lightweight personal AI assistant. The main `quecto` binary receives messages via the command line or a UDS event bus, routes them through an LLM (OpenAI, Anthropic, or ChatGPT Codex), executes tools (shell commands, file operations, search), and persists conversations to disk.
 
 The workspace also includes companion binaries for terminal UI access (`quecto-tui`), HTTP/WebSocket gateway access (`quecto-api`), MCP tool bridging (`quecto-mcp`), and managed runtime orchestration (`quecto-runtime-manager`). Quecto runs on a VPS, small Linux host, or container with no non-Rust application runtime.
