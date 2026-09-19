@@ -7,6 +7,9 @@ use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// What only an open resume decision dialog says, whatever its kind.
+const DIALOG_OPEN: &str = "your current session is untouched";
+
 #[derive(Debug)]
 pub struct ScopeProcess {
     child: Child,
@@ -362,7 +365,7 @@ fn preserved_active_identity(world: &mut QuectoWorld) {
     drop(target);
     let frame = drive(world, TuiHarness::full_frame);
     assert!(
-        frame.contains("This session") && frame.contains("Cancel"),
+        frame.contains(DIALOG_OPEN) && frame.contains("Cancel"),
         "typed decision visible: {frame}"
     );
     // ScopeProcess waits for exit; both keys must be claimable after teardown.

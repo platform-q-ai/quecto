@@ -13,6 +13,8 @@ use quecto_tui::shell::app::tui_harness::TuiHarness;
 use quecto_tui::shell::keys::Key;
 use std::os::unix::fs::PermissionsExt;
 
+/// What only an open resume decision dialog says, whatever its kind.
+const DIALOG_OPEN: &str = "your current session is untouched";
 fn base(world: &QuectoWorld) -> PathBuf {
     world.cli_context.base_dir.clone().expect("base dir")
 }
@@ -335,10 +337,7 @@ fn tui_resumed(world: &mut QuectoWorld) {
         "{messages:?}"
     );
     let frame = drive(world, TuiHarness::full_frame);
-    assert!(
-        !frame.contains("This session"),
-        "no decision dialog: {frame}"
-    );
+    assert!(!frame.contains(DIALOG_OPEN), "no decision dialog: {frame}");
 }
 
 #[when("the local session home is rewritten after the listing")]
@@ -424,7 +423,7 @@ fn no_foreign_home(world: &mut QuectoWorld) {
 #[when("the operator cancels the decision dialog")]
 fn cancel_dialog(world: &mut QuectoWorld) {
     let frame = drive(world, TuiHarness::full_frame);
-    assert!(frame.contains("This session"), "dialog open first: {frame}");
+    assert!(frame.contains(DIALOG_OPEN), "dialog open first: {frame}");
     drive(world, |h| {
         h.press(Key::Escape);
     });
@@ -440,7 +439,7 @@ fn dialog_closed(world: &mut QuectoWorld) {
     let commands = sent_commands(world);
     assert!(commands.is_empty(), "Cancel emits no command: {commands:?}");
     let frame = drive(world, TuiHarness::full_frame);
-    assert!(!frame.contains("This session"), "{frame}");
+    assert!(!frame.contains(DIALOG_OPEN), "{frame}");
 }
 
 #[when("the operator chooses the first offered action in the decision dialog")]
