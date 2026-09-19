@@ -405,3 +405,77 @@ async fn ordinary_exit_barrier_waits_out_the_deadline_when_the_event_channel_is_
         "a closed channel reports the timeout at the deadline, not at once"
     );
 }
+
+/// A `persist_session` answer for the barrier tests.
+fn persist_answer(id: &str, success: bool, error: Option<&str>) -> SourcedEvent {
+    SourcedEvent::Master(Event::Response {
+        id: Some(id.to_string()),
+        command: "persist_session".to_string(),
+        success,
+        data: None,
+        error: error.map(str::to_string),
+    })
+}
+
+/// #2044 R1-3: only the answer to THIS exit's persist id ends the barrier. A
+/// foreign `persist_session` failure arriving first is ignored — the own
+/// success then ends the barrier with no error.
+#[tokio::test]
+async fn ordinary_exit_barrier_ignores_a_foreign_persist_failure() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    let (conn, mut rx) = Connection::live_for_tests();
+    a.test_attach_connection(conn, None);
+    let event_tx = a.master_event_tx.clone().unwrap();
+
+    tokio::spawn(async move {
+        let cmd: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        let own = cmd["id"].as_str().unwrap().to_string();
+        let foreign = persist_answer("someone-else:persist-exit", false, Some("foreign failure"));
+        event_tx.send(foreign).await.unwrap();
+        event_tx
+            .send(persist_answer(&own, true, None))
+            .await
+            .unwrap();
+    });
+
+    let finalization_errors = a.finalize_ordinary_exit().await;
+
+    assert_eq!(
+        finalization_errors,
+        Vec::<String>::new(),
+        "a persist failure answering a different id is not this exit's failure"
+    );
+}
+
+/// #2044 R1-3: a foreign `persist_session` SUCCESS must not release the
+/// barrier either — the own answer (here a failure) still decides the exit.
+#[tokio::test]
+async fn ordinary_exit_barrier_is_not_released_by_a_foreign_persist_success() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    let (conn, mut rx) = Connection::live_for_tests();
+    a.test_attach_connection(conn, None);
+    let event_tx = a.master_event_tx.clone().unwrap();
+
+    tokio::spawn(async move {
+        let cmd: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        let own = cmd["id"].as_str().unwrap().to_string();
+        event_tx
+            .send(persist_answer("someone-else:persist-exit", true, None))
+            .await
+            .unwrap();
+        event_tx
+            .send(persist_answer(&own, false, Some("own disk full")))
+            .await
+            .unwrap();
+    });
+
+    let finalization_errors = a.finalize_ordinary_exit().await;
+
+    assert_eq!(
+        finalization_errors,
+        vec!["tab 0: own disk full".to_string()],
+        "a success answering a different id must not end the barrier"
+    );
+}
