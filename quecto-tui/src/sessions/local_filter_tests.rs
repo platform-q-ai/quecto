@@ -75,10 +75,20 @@ fn local_folder_matches_the_path_below_the_common_folder_only() {
     assert_eq!(local_keys(&listed, "app"), ["cli:app"]);
     assert_eq!(local_keys(&listed, "docs deep"), ["cli:deep"]);
     assert_eq!(keys(&listed, "walrus").len(), 3, "All Folders: whole path");
-    // One folder only: nothing lies below it.
+    // R3-T6: every row in ONE folder — it cannot be told from the group
+    // root, and nothing would lie below it: the whole path is matched
+    // (over-matching, never hiding a row the harness would find).
     let single = [row("cli:a", "plan", Some("/work/app"))];
-    assert!(local_keys(&single, "app").is_empty());
+    assert_eq!(local_keys(&single, "app"), ["cli:a"]);
     assert_eq!(local_keys(&single, "plan"), ["cli:a"]);
+    let same = [
+        row("cli:a", "plan", Some("/r/repo/app")),
+        row("cli:b", "notes", Some("/r/repo/app")),
+        row("cli:old", "legacy", None),
+    ];
+    assert_eq!(local_keys(&same, "app"), ["cli:a", "cli:b"]);
+    assert_eq!(local_keys(&same, "repo notes"), ["cli:b"]);
+    assert!(local_keys(&same, "elsewhere").is_empty());
     // A worktree beside the repository: their parent is the common folder.
     let beside = [
         row("cli:a", "plan", Some("/work/walrus")),

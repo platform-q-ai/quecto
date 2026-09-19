@@ -9,9 +9,13 @@
 //! whole path. Local Folder: only what lies BELOW the local group's root, so
 //! the repository's own name does not match every local row. A listing names
 //! no group root; the deepest folder common to every listed row stands in for
-//! it. The one difference: a linked worktree outside the repository makes
-//! that common folder their shared parent, so the repository's name matches
-//! its rows again (the harness would match the worktree's only).
+//! it. Two differences, both on the over-matching side. A linked worktree
+//! outside the repository makes that common folder their shared parent, so
+//! the repository's name matches its rows again (the harness would match the
+//! worktree's only). And when every listed row is in ONE folder, that folder
+//! cannot be told from the group root and nothing would lie below it: the
+//! whole path is matched then (R3-T6). (Rows spread over sub-folders of one
+//! sub-folder still stand in for the root: its own name matches none.)
 use crate::protocol::session_payloads::{ResumeSessionSummary, SessionListScope};
 use std::path::{Path, PathBuf};
 
@@ -44,16 +48,18 @@ pub fn filter_listed(
     listed.iter().filter(matches).cloned().collect()
 }
 
-/// The deepest folder every listed row's path lies in or under.
+/// The deepest folder every listed row's path lies in or under — `None`
+/// when no row lies BELOW it (all rows are in one folder, R3-T6).
 fn common_folder(listed: &[ResumeSessionSummary]) -> Option<PathBuf> {
-    let mut dirs = listed.iter().filter_map(|row| row.execution_dir.as_deref());
-    let mut common = PathBuf::from(dirs.next()?);
-    for dir in dirs {
+    let dirs = || listed.iter().filter_map(|row| row.execution_dir.as_deref());
+    let mut common = PathBuf::from(dirs().next()?);
+    for dir in dirs() {
         while !Path::new(dir).starts_with(&common) {
             common.pop();
         }
     }
-    Some(common)
+    let spread = dirs().any(|dir| Path::new(dir) != common);
+    spread.then_some(common)
 }
 
 /// The harness's visible-text fold (`domain/session_metadata_text.rs`), kept
