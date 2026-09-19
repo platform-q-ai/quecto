@@ -98,7 +98,8 @@ async fn an_owed_enter_is_shown_and_withdrawn_at_the_first_timeout() {
     assert!(h.full_frame().contains("ZEBRA"), "the rows are shown");
 }
 
-/// A focus change (Tab) or a disconnect withdraws the owed Enter.
+/// A focus change (Tab), a click outside the picker or a disconnect withdraws
+/// the owed Enter.
 #[tokio::test]
 async fn a_focus_change_and_a_disconnect_each_withdraw_the_owed_enter() {
     let mut h = harness().await;
@@ -112,6 +113,18 @@ async fn a_focus_change_and_a_disconnect_each_withdraw_the_owed_enter() {
     answer(&mut h, &first, "PROGRESS", json!({}));
     let latest = searches(&mut h).await[0].clone();
     answer(&mut h, &latest, "ZEBRA", json!({}));
+    assert!(sent(&h.drain_commands().await, "resume_session").is_empty());
+
+    // A click outside the picker (the agents pane, left of the body).
+    let mut h = harness().await;
+    open_picker(&mut h).await;
+    type_text(&mut h, "z");
+    key(&mut h, Key::Enter);
+    key(&mut h, Key::Enter);
+    assert!(h.app_mut().frame_split().0 > 0, "the agents pane is shown");
+    key(&mut h, Key::MousePress(0, 0));
+    let request = searches(&mut h).await[0].clone();
+    answer(&mut h, &request, "Z", json!({}));
     assert!(sent(&h.drain_commands().await, "resume_session").is_empty());
 
     let mut h = harness().await;
