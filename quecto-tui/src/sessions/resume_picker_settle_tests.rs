@@ -172,6 +172,14 @@ fn stalled_rows_are_never_acted_on_and_say_why() {
         None,
         "no Enter was deferred"
     );
+    // An Enter owed when the search is given up is withdrawn, not kept for
+    // whatever answer settles the rows later.
+    let mut picker = listed();
+    type_ahead(&mut picker, "zebra");
+    picker.handle_input(&Key::Enter);
+    assert_eq!(picker.set_rows_state(RowsState::Stalled), None);
+    picker.sync_items(vec![item("zebra")]);
+    assert_eq!(picker.set_rows_state(RowsState::Settled), None, "withdrawn");
 }
 
 /// R1-T8: an answer is ranked, so the cursor goes to its best row — unless
