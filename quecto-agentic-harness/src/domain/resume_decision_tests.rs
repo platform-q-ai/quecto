@@ -42,7 +42,7 @@ fn every_state_is_pinned_to_its_literal_token() {
         (git("/a", "/a/.git"), "h1-28dc33537e6d8d17"),
         (
             SessionHomeScope::Unavailable("bad".into()),
-            "h1-da4dfebd3a260889",
+            "h1-b597603abf079a65",
         ),
     ] {
         assert_eq!(of(&scope).as_str(), token, "{scope:?}");
@@ -54,7 +54,6 @@ fn every_authoritative_fact_changes_the_version() {
     let versions = [
         of(&SessionHomeScope::LegacyUnscoped),
         of(&SessionHomeScope::Unavailable("bad".into())),
-        of(&SessionHomeScope::Unavailable("worse".into())),
         of(&folder("/a")),
         of(&folder("/b")),
         of(&git("/a", "/a/.git")),
@@ -63,6 +62,25 @@ fn every_authoritative_fact_changes_the_version() {
     ];
     let distinct: std::collections::BTreeSet<_> = versions.iter().cloned().collect();
     assert_eq!(distinct.len(), versions.len(), "{versions:?}");
+}
+
+/// The token of an uninterpretable home depends on the stable category, never
+/// on the reader's error wording (review R2-H5): a serde or message change
+/// between two harness versions must not turn a listed token stale — #2014
+/// treats the token as a write authorization across an upgrade.
+#[test]
+fn an_uninterpretable_home_is_versioned_by_category_not_by_error_wording() {
+    let token = of(&SessionHomeScope::Unavailable(
+        "expected value at line 1 column 1".into(),
+    ));
+    for wording in [
+        "expected value at line 1, column 1 (v2)",
+        "unsupported home group",
+        "",
+    ] {
+        assert_eq!(of(&SessionHomeScope::Unavailable(wording.into())), token);
+    }
+    assert_ne!(token, of(&SessionHomeScope::LegacyUnscoped));
 }
 
 /// #2014 authorizes a write with the token: it names one record. Two legacy
@@ -103,16 +121,12 @@ fn field_boundaries_are_unambiguous() {
         of(&folder_in("/a", "/afolder/b")),
         of(&folder_in("/afolder/a", "/b"))
     );
-    // identity "cli:a" + "unavailable" + "unavailableb"  vs
-    // identity "cli:aunavailable" + "unavailable" + "b"
+    // identity "cli:a" + "unavailable"  vs  identity "cli:aunavailable" + "unavailable"
     assert_ne!(
-        HomeVersion::of(
-            &id("cli:a"),
-            &SessionHomeScope::Unavailable("unavailableb".into())
-        ),
+        HomeVersion::of(&id("cli:a"), &SessionHomeScope::Unavailable(String::new())),
         HomeVersion::of(
             &id("cli:aunavailable"),
-            &SessionHomeScope::Unavailable("b".into())
+            &SessionHomeScope::Unavailable(String::new())
         )
     );
 }

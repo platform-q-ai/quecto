@@ -27,10 +27,8 @@ impl HomeVersion {
         digest.field(identity.runtime_key().as_bytes());
         match scope {
             SessionHomeScope::LegacyUnscoped => digest.field(b"legacy"),
-            SessionHomeScope::Unavailable(reason) => {
-                digest.field(b"unavailable");
-                digest.field(reason.as_bytes());
-            }
+            // The category alone: the reason is a reader's wording, not a fact.
+            SessionHomeScope::Unavailable(_) => digest.field(b"unavailable"),
             SessionHomeScope::Scoped(home) => digest.home(home),
         }
         Self(format!("{VERSION_PREFIX}{:016x}", digest.value()))
