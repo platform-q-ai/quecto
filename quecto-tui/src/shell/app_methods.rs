@@ -362,7 +362,7 @@ impl App {
         (
             panel_width,
             divider_width,
-            full_width - panel_width - divider_width,
+            full_width.saturating_sub(panel_width + divider_width),
         )
     }
 

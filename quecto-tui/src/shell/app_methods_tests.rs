@@ -724,3 +724,19 @@ async fn resumed_duplicate_tool_ids_attach_results_chronologically() {
         "{text}"
     );
 }
+
+/// #2010 R2-T10: a terminal narrower than the divider leaves no body — no underflow.
+#[tokio::test]
+async fn frame_split_of_a_terminal_narrower_than_the_divider_has_no_body() {
+    let mut app = test_app_for_methods().await;
+    app.ac_mut().agent_connected = true;
+    for (width, body) in [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 1)] {
+        app.terminal.width = width;
+        assert_eq!(
+            app.frame_split().2,
+            body,
+            "{width}: {:?}",
+            app.frame_split()
+        );
+    }
+}
