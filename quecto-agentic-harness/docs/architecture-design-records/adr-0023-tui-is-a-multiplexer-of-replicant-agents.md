@@ -2,10 +2,6 @@
 
 **Status:** Rejected — superseded by ADR-0025.
 
-**Superseded in part by #2044:** the TUI is single-connection; the tab
-machinery this ADR describes (process-per-tab, workspace manifests, the
-tab-agent registry) was removed. The text below is kept as history.
-
 **Implementation status:** Phase 0 (shared-state hardening, #1460) landed;
 remaining phases tracked by epic #1467.
 

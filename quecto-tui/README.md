@@ -266,8 +266,9 @@ once on stderr if it takes more than a second).
 
 Use `--detach-on-exit` to leave owned agents running (`--kill-on-exit` is the
 default). Externally attached agents are not killed merely because this TUI exits.
-Reconnecting to a running harness uses its live registry. Exit durability and
-cleanup errors are reported separately.
+Attaching to a running harness (`--socket`) shows that harness's live sub-agent
+roster; the TUI keeps no registry of its own. Exit durability and cleanup errors
+are reported separately.
 
 `$XDG_DATA_HOME/quecto/tui/tab-agent-registry.json` (default
 `~/.local/share/quecto/tui/`; and `workspace-manifests.json`

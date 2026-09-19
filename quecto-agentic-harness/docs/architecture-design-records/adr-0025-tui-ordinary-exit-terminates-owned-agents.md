@@ -2,8 +2,6 @@
 
 **Status:** Proposed.
 
-**Superseded in part by #2044:** the TUI is single-connection; the tab machinery was removed, so "owned agents" is the one startup agent and there is no tab-agent registry or workspace manifest. The exit ordering and termination rules below still stand.
-
 **Supersedes:** ADR-0023 lifecycle inversion only. ADR-0023's process-per-tab topology and shared-state invariants still stand.
 
 **Implementation status:** Planned by #1586.
