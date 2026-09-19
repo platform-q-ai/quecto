@@ -16,6 +16,7 @@ mod container_setup;
 pub use container::{
     ContainerDoctorBuilder, ContainerInitBuilder, ContainerInventoryBuilder,
     ContainerStatusBuilder, EnvironmentRegistryBuild, EnvironmentRegistryBuilder,
+    report_environment_reconciliation,
 };
 mod help;
 mod models;

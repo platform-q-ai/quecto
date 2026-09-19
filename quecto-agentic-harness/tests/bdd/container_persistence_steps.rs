@@ -202,7 +202,7 @@ fn compose_session(world: &mut QuectoWorld, session: &str) {
     } = quecto::composition::environments::build_environment_registry(&base, session, true);
     if let Some(reconciliation) = reconciliation {
         let report = reconciliation.execute();
-        quecto::composition::environments::report_environment_reconciliation(&report);
+        quecto::interface::cli::report_environment_reconciliation(&report);
     }
     let subagent_registry = world
         .agent_cmd_registry
