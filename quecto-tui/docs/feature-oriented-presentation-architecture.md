@@ -349,7 +349,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/model_payloads.rs` | `protocol` mapper feeding `models` (relocated, #1257 Phase 2) |
 | `protocol/presentation_payloads.rs` | `protocol` typed mapping for turn, history, spawn, and tool display payloads (#1257 Phase 6) |
 | `protocol/range_accumulator.rs` | `protocol` (relocated, #1257 Phase 2) |
-| `protocol/resume_decision_payloads.rs` | `protocol` typed `resume_session` exchange: the selection sent (identity, action, expected home version) and the answer mapper — restored, cancelled, decision, refusal (#2011) |
+| `protocol/resume_decision_payloads.rs` | `protocol` typed `resume_session` exchange: the selection sent (identity, action, expected home version) and the affirmative answer mapper — a restore only for `resumed` (or no outcome, a pre-#2011 harness), cancelled, decision, refusal, and `Unrecognized` for every other success, which changes nothing locally (#2011) |
 | `protocol/session_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/state_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/admission_payloads.rs` | `protocol` inference-admission view mapper (#1679 P4) |
@@ -358,8 +358,9 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/workflow_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `sessions/resume_picker.rs` | `sessions` (scope-aware presentation, #2009) |
 | `sessions/discovery_diagnostics.rs` | `sessions` discovery-diagnostic toast policy: once per process, batches summarised (#2018) |
-| `sessions/resume_decision.rs` | `sessions` resume decision dialog: harness-offered actions in order, unavailable ones explained and never sent, Cancel/Escape send nothing, untrusted text made safe (#2011) |
-| `sessions/resume_rows.rs` | `sessions` discovery-row projection: order, stable IDs, safe copy, eligible-key allowlist (#2009) |
+| `sessions/resume_decision.rs` | `sessions` resume decision dialog: harness-offered actions in order, every unavailable one marked at every width, explained and never sent; Cancel, Escape and Ctrl-C send nothing; untrusted text made safe (controls, bidi, zero-width); sections shed by importance so footer and border survive a small terminal (#2011) |
+| `sessions/resume_decision_layout.rs` | `sessions` pure dialog text layout: whole-word wrap, bounded sections with a marked cut, a folder path that keeps both ends (#2011) |
+| `sessions/resume_rows.rs` | `sessions` discovery-row projection: order, stable IDs, safe copy, the home version each row was listed at (#2009, #2011) |
 | `sessions/controller_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `sessions/mod.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `setup/mod.rs` | `setup` walkthrough prompt templates + `/setup` variant parser (#2024 S6; pure text, no filesystem/UDS/policy) |

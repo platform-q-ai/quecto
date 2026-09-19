@@ -49,6 +49,12 @@ fn the_dialog_shows_every_offer_in_order_with_unavailable_reasons() {
     let cancel = text.find("Cancel").expect("cancel");
     assert!(open < fork && fork < cancel, "{text}");
     assert!(text.contains("Unavailable: not yet (#2012)"), "{text}");
+    assert!(
+        text.contains("Open original folder — unavailable")
+            && text.contains("Fork into current folder — unavailable"),
+        "every unavailable row says so, not only the one under the cursor: {text}"
+    );
+    assert!(!text.contains("Cancel —"), "{text}");
     assert!(text.contains("belongs to another folder"), "{text}");
     assert!(
         text.contains("cli:foreign") && text.contains("/work/other"),
@@ -182,3 +188,6 @@ fn hostile_metadata_is_made_safe_and_bounded_before_it_is_rendered() {
         "{raw:?}"
     );
 }
+
+#[path = "resume_decision_render_tests.rs"]
+mod render;
