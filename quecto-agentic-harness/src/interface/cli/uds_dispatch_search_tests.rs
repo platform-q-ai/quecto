@@ -320,8 +320,10 @@ async fn hostile_metadata_is_searchable_and_never_reaches_the_wire_raw() {
             data["sessions"][0]["executionPath"]
                 .as_str()
                 .unwrap()
-                .contains("caf\u{fffd}")
+                .contains("/w/caf\\xE9/pro")
         );
+        // R1-H10: the byte that is no text is spelled, not lost — a client
+        // can tell `caf\xe9` from `caf\xea` by the path alone.
     }
 }
 

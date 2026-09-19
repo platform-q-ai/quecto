@@ -445,3 +445,57 @@ async fn a_row_names_its_repository_and_debug_prints_no_context() {
     assert_eq!(result.rows[0].repository_label.as_deref(), Some("walrus"));
     assert_eq!(format!("{:?}", rig.search), "SearchSessionMetadata { .. }");
 }
+
+/// R1-T12: in Local every row shares the current root and label; only what
+/// lies below the root (a sub-folder, a worktree's own name) tells rows apart.
+#[tokio::test]
+async fn a_local_search_does_not_match_the_folder_every_local_row_shares() {
+    let mut records = seeded();
+    records.push(record(
+        "cli:wt",
+        "third",
+        Some(6),
+        git("/work/wt", "quecto"),
+    ));
+    for shared in ["quecto", "/work/", "src"] {
+        let rig = rig_at("/work/quecto", Metadata::of(records.clone()));
+        let found = keyed(&rig, shared, SessionListScope::Local).await;
+        let expected: &[&str] = if shared == "src" { &["cli:mine"] } else { &[] };
+        let keys: Vec<_> = found
+            .rows
+            .iter()
+            .map(|r| r.session.summary.key.as_str())
+            .collect();
+        assert_eq!(keys, expected, "{shared}");
+        assert_eq!(found.searched, 2, "{shared}: both local rows were searched");
+    }
+    let rig = rig_at("/work/quecto", Metadata::of(records.clone()));
+    let found = keyed(&rig, "wt", SessionListScope::Local).await;
+    assert_eq!(found.rows[0].matched, [MatchedField::Path]);
+    assert_eq!(found.rows[0].session.summary.key, "cli:wt");
+    // Globally the same words still find the repository and the path.
+    let rig = rig_at("/work/quecto", Metadata::of(records));
+    assert_eq!(
+        keys(&rig, "quecto", SessionListScope::Global).await.len(),
+        2
+    );
+}
+
+/// R1-H8: eligibility is the domain rule alone — with the current discovery
+/// as the observation, `Eligible` already requires the saved home to BE the
+/// current one, execution directory included.
+#[test]
+fn the_admission_rule_alone_refuses_a_home_saved_in_another_directory_of_the_group() {
+    let (SessionHomeScope::Scoped(here), SessionHomeScope::Scoped(worktree)) =
+        (git(HERE, "quecto"), git("/work/wt", "quecto"))
+    else {
+        unreachable!()
+    };
+    assert!(eligible(
+        &SessionHomeScope::Scoped(here.clone()),
+        Some(&here)
+    ));
+    assert!(!eligible(&SessionHomeScope::Scoped(worktree), Some(&here)));
+    assert!(!eligible(&SessionHomeScope::LegacyUnscoped, Some(&here)));
+    assert!(!eligible(&SessionHomeScope::Scoped(here), None));
+}

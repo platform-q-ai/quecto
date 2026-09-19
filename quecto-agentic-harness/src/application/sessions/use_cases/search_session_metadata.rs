@@ -16,7 +16,7 @@ use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::error::DomainError;
 use crate::domain::session_home::{HomeAdmission, SessionHome, SessionHomeScope};
 use crate::domain::session_metadata_search::{
-    MatchedField, MetadataQuery, SessionMetadataFields, repository_label,
+    MatchedField, MetadataQuery, SessionMetadataFields, group_root, repository_label,
 };
 
 /// The metadata search over the home catalogue and workspace discovery.
@@ -62,6 +62,11 @@ impl SearchSessionMetadata {
                 None
             }
         };
+        // Local rows all share the current group's root (R1-T12).
+        let local_root = match (request.scope, current.as_ref()) {
+            (SessionListScope::Local, Some(current)) => group_root(current),
+            _ => None,
+        };
         let mut matches: Vec<Match> = Vec::new();
         for record in snapshot.records {
             if in_scope(request.scope, &record.home, current.as_ref()) {
@@ -70,6 +75,7 @@ impl SearchSessionMetadata {
                     key: &record.summary.key,
                     title: &record.summary.title,
                     home: &record.home,
+                    local_root,
                 };
                 if let Some(matched) = query.matches(&fields) {
                     matches.push((matched, record));
@@ -136,15 +142,15 @@ fn in_scope(
     }
 }
 
-/// Advisory eligibility by the one domain rule. A home saved in this very
-/// directory is re-observed by the discovery of this directory the query
-/// already made; a home saved anywhere else can never admit, so nothing is
-/// discovered for it. Resume still admits under its claim.
+/// Advisory eligibility by the one domain rule, with the discovery of this
+/// directory the query already made as the observation: it admits only a
+/// saved home that IS the current one (execution directory included), so a
+/// home saved anywhere else never admits and nothing is discovered for it.
+/// Resume still admits under its claim.
 fn eligible(home: &SessionHomeScope, current: Option<&SessionHome>) -> bool {
     match (home, current) {
         (SessionHomeScope::Scoped(saved), Some(current)) => {
-            saved.execution_dir == current.execution_dir
-                && SessionHome::admission(saved, current, current) == HomeAdmission::Eligible
+            SessionHome::admission(saved, current, current) == HomeAdmission::Eligible
         }
         _ => false,
     }

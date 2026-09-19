@@ -28,7 +28,12 @@ fn matched(
     title: &str,
     home: &SessionHomeScope,
 ) -> Option<Vec<MatchedField>> {
-    let fields = SessionMetadataFields { key, title, home };
+    let fields = SessionMetadataFields {
+        key,
+        title,
+        home,
+        local_root: None,
+    };
     MetadataQuery::parse(query)
         .expect("searchable")
         .matches(&fields)
@@ -183,10 +188,19 @@ fn text_is_compared_lower_cased_and_whitespace_collapsed_code_point_by_code_poin
 fn a_non_utf8_path_is_searchable_by_its_lossy_text_and_never_panics() {
     let dir = PathBuf::from(std::ffi::OsStr::from_bytes(b"/work/caf\xe9/app"));
     let home = folder_home(dir);
-    assert_eq!(
-        execution_path(&home).as_deref(),
-        Some("/work/caf\u{fffd}/app")
+    assert_eq!(execution_path(&home).as_deref(), Some("/work/caf\\xE9/app"));
+    // R1-H10: two folders that differ in a byte that is no text stay two.
+    let other = folder_home(PathBuf::from(std::ffi::OsStr::from_bytes(
+        b"/work/caf\xea/app",
+    )));
+    assert_ne!(execution_path(&home), execution_path(&other));
+    let (a, b) = (
+        folder_home(PathBuf::from(std::ffi::OsStr::from_bytes(b"/w/caf\xe9"))),
+        folder_home(PathBuf::from(std::ffi::OsStr::from_bytes(b"/w/caf\xea"))),
     );
+    assert_eq!(repository_label(&a).as_deref(), Some("caf\\xE9"));
+    assert_ne!(repository_label(&a), repository_label(&b));
+    assert!(matched("caf", "k", "t", &a).is_some() && matched("caf", "k", "t", &b).is_some());
     assert_eq!(
         matched("caf", "k", "t", &home),
         Some(vec![MatchedField::Path])
@@ -255,4 +269,88 @@ fn field_names_are_the_wire_spelling_and_rank_is_their_order() {
     assert!(
         MatchedField::Key < MatchedField::Title && MatchedField::Repository < MatchedField::Path
     );
+}
+
+fn matched_locally(
+    query: &str,
+    title: &str,
+    home: &SessionHomeScope,
+    root: &str,
+) -> Option<Vec<MatchedField>> {
+    let fields = SessionMetadataFields {
+        key: "k",
+        title,
+        home,
+        local_root: Some(std::path::Path::new(root)),
+    };
+    MetadataQuery::parse(query).unwrap().matches(&fields)
+}
+
+/// R1-T12: inside one workspace group every row shares the root's path and
+/// the repository label, so neither can tell two rows apart.
+#[test]
+fn a_local_search_matches_the_path_below_the_shared_root_never_the_root_or_the_label() {
+    let root = "/home/me/Documents/quecto";
+    let sub = git_home(
+        "/home/me/Documents/quecto/docs/adr",
+        "/home/me/Documents/quecto/.git",
+    );
+    let top = git_home(
+        "/home/me/Documents/quecto",
+        "/home/me/Documents/quecto/.git",
+    );
+    // The shared part — `/home`, `Documents`, the label — matches no row.
+    for shared in ["home", "doc", "quecto", "me/Documents"] {
+        assert_eq!(matched_locally(shared, "t", &top, root), None, "{shared}");
+    }
+    assert_eq!(matched_locally("quecto", "t", &sub, root), None);
+    // What is below the root still finds its row, as the path field.
+    assert_eq!(
+        matched_locally("adr", "t", &sub, root),
+        Some(vec![MatchedField::Path])
+    );
+    assert_eq!(
+        matched_locally("docs/adr", "t", &sub, root),
+        Some(vec![MatchedField::Path])
+    );
+    // A linked worktree outside the root: what it does not share with it.
+    let worktree = git_home(
+        "/home/me/Documents/quecto-wt/fix-2010",
+        "/home/me/Documents/quecto/.git",
+    );
+    assert_eq!(
+        matched_locally("fix-2010", "t", &worktree, root),
+        Some(vec![MatchedField::Path])
+    );
+    assert_eq!(
+        matched_locally("quecto-wt", "t", &worktree, root),
+        Some(vec![MatchedField::Path])
+    );
+    assert_eq!(matched_locally("documents", "t", &worktree, root), None);
+    // Title and key are untouched; a global search still sees everything.
+    assert_eq!(
+        matched_locally("plan", "the plan", &top, root),
+        Some(vec![MatchedField::Title])
+    );
+    assert_eq!(
+        matched("quecto", "k", "t", &top),
+        Some(vec![MatchedField::Repository, MatchedField::Path])
+    );
+}
+
+#[test]
+fn the_group_root_is_the_work_tree_the_bare_repository_or_the_folder() {
+    let root = |home: &SessionHomeScope| match home {
+        SessionHomeScope::Scoped(home) => group_root(home).map(PathBuf::from),
+        _ => None,
+    };
+    assert_eq!(
+        root(&git_home("/w/a/src", "/w/a/.git")),
+        Some("/w/a".into())
+    );
+    assert_eq!(
+        root(&git_home("/w/wt", "/srv/bare.git")),
+        Some("/srv/bare.git".into())
+    );
+    assert_eq!(root(&folder_home("/w/plain")), Some("/w/plain".into()));
 }

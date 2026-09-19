@@ -38,6 +38,21 @@ fn invisible(ch: char) -> bool {
             | '\u{feff}' | '\u{fff9}'..='\u{fffb}' | '\u{e0000}'..='\u{e007f}')
 }
 
+/// A path as text. One that is text is itself; in one that is not, each byte
+/// that is no UTF-8 is spelled `\xNN` (R1-H10), so two folders that differ
+/// only in such a byte stay two — a lossy `U+FFFD` would make them one.
+pub fn display_path(path: &std::path::Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut shown = String::new();
+    for chunk in path.as_os_str().as_bytes().utf8_chunks() {
+        shown.push_str(chunk.valid());
+        for byte in chunk.invalid() {
+            shown.push_str(&format!("\\x{byte:02X}"));
+        }
+    }
+    shown
+}
+
 #[cfg(test)]
 #[path = "session_metadata_text_tests.rs"]
 mod tests;
