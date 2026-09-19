@@ -954,46 +954,146 @@ fn collect_tui_production_rs_paths(dir: &Path, files: &mut BTreeSet<String>) {
     }
 }
 
+/// One banned name of the #2044 ratchet. Matching is on IDENTIFIER tokens
+/// (maximal runs of `[A-Za-z0-9_]`), never on raw substrings, so a ban on
+/// `active_tab` leaves `active_table` and `inactive_tab` alone (#2044 R1-8).
+#[derive(Clone, Copy, Debug)]
+enum RemovedSymbol {
+    /// The identifier token is exactly this name.
+    Word(&'static str),
+    /// PREFIX ban: any identifier token that STARTS with this text — for
+    /// removed families (`tab_event_tx` / `tab_event_rx`, a module and its
+    /// `_tests` sibling). `on_tab_event_x` does not start with it and passes.
+    Prefix(&'static str),
+    /// CALL ban: exactly this identifier directly followed by `(`.
+    Call(&'static str),
+}
+
+impl RemovedSymbol {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Word(name) | Self::Prefix(name) | Self::Call(name) => name,
+        }
+    }
+
+    /// Whether `line` re-introduces this symbol. Comments are scanned like
+    /// code: naming a removed symbol in a `quecto-tui/src` comment is drift
+    /// too, and boundary matching leaves ordinary prose ("tabs", "the active
+    /// table") legal — the history lives here and in the ADRs instead.
+    fn is_in(self, line: &str) -> bool {
+        identifier_tokens(line).any(|(token, followed_by)| match self {
+            Self::Word(name) => token == name,
+            Self::Prefix(prefix) => token.starts_with(prefix),
+            Self::Call(name) => token == name && followed_by == Some('('),
+        })
+    }
+}
+
+/// The identifier tokens of `line`, each with the character right after it.
+fn identifier_tokens(line: &str) -> impl Iterator<Item = (&str, Option<char>)> {
+    fn is_identifier_char(c: char) -> bool {
+        c.is_ascii_alphanumeric() || c == '_'
+    }
+    let mut rest = line;
+    std::iter::from_fn(move || {
+        let start = rest.find(is_identifier_char)?;
+        let from_token = &rest[start..];
+        let len = from_token
+            .find(|c: char| !is_identifier_char(c))
+            .unwrap_or(from_token.len());
+        let (token, after) = from_token.split_at(len);
+        rest = after;
+        Some((token, after.chars().next()))
+    })
+}
+
+/// The names removed with the multi-tab features (#2044). Every identifier
+/// that carried one of these on the pre-removal tree is still matched.
+const REMOVED_MULTI_TAB_SYMBOLS: &[RemovedSymbol] = {
+    use RemovedSymbol::{Call, Prefix, Word};
+    &[
+        Prefix("TabSwitch"),
+        Prefix("workspace_manifest"),
+        Prefix("apply_workspace_manifest"),
+        Word("test_workspace_manifest"),
+        Prefix("tab_registry"),
+        Prefix("restore_workspace"),
+        Word("open_placeholder_tab"),
+        Word("queued_prompts"),
+        Word("flush_queued_prompts"),
+        Word("spawn_agent_for_tab"),
+        Word("TabSpawnPolicy"),
+        Word("unread_output"),
+        Prefix("tab_attach_"),
+        Word("apply_tab_attach_outcome"),
+        Word("attach_generation"),
+        Word("bump_attach_generation"),
+        Word("next_attach_generation"),
+        Word("queue_or_send_session_resume"),
+        // #2044 PR 2a: one owned connection — no tab identity, no routing.
+        Word("TabId"),
+        Word("with_routing_tab"),
+        Word("routing_tab_override"),
+        Word("effective_tab"),
+        Word("active_tab"),
+        Word("active_tab_id"),
+        Word("active_tab_index"),
+        Word("test_set_active_tab"),
+        Word("ordered_tab_ids"),
+        Call("conn_for"),
+        Prefix("tab_event_"),
+        Prefix("tab_lifecycle"),
+        Word("close_tab_switch_overlays"),
+        Prefix("take_all_child_exit_watches"),
+        Word("set_tab_for_tests"),
+        Word("test_set_master_tab"),
+        Word("test_insert_disconnected_tab"),
+        Word("test_open_disconnected_tab"),
+        Word("tui_harness_tabs"),
+        Prefix("app_tab_collection"),
+    ]
+};
+
+/// #2044 R1-8: the ratchet's matcher works on identifier boundaries.
+#[test]
+fn removed_symbol_matcher_respects_identifier_boundaries() {
+    use RemovedSymbol::{Call, Prefix, Word};
+    for (ban, line) in [
+        (Word("active_tab"), "let t = self.active_tab;"),
+        (Word("active_tab"), "// the active_tab field"),
+        (Word("TabId"), "fn route(tab: TabId) {}"),
+        (Word("TabId"), "app.conn(TabId::MASTER)"),
+        (
+            Prefix("tab_event_"),
+            "let (tab_event_tx, tab_event_rx) = channel();",
+        ),
+        (Prefix("tab_lifecycle"), "mod tab_lifecycle_tests;"),
+        (Call("conn_for"), "app.conn_for(id)"),
+    ] {
+        assert!(ban.is_in(line), "{ban:?} must match `{line}`");
+    }
+    for (ban, line) in [
+        (Word("active_tab"), "let active_table = rows();"),
+        (Word("active_tab"), "let inactive_tab = 1;"),
+        (Word("active_tab"), "fn interactive_tab_stop() {}"),
+        (Word("TabId"), "struct TabIdentity;"),
+        (Word("TabId"), "struct StabId;"),
+        (Prefix("tab_event_"), "fn on_tab_event_key() {}"),
+        (Call("conn_for"), "let conn_for_master = 1; // conn_for"),
+        (Call("conn_for"), "fn my_conn_for(id: u8) {}"),
+    ] {
+        assert!(!ban.is_in(line), "{ban:?} must not match `{line}`");
+    }
+}
+
 /// #2044: the multi-tab features no user could reach are gone from the
 /// TUI — tab-switch chords, the workspace manifest / tab-agent registry and
 /// its restore path, placeholder-tab opening (PR 1), and the `App.tabs` /
 /// `TabId` routing behind the one connection (PR 2a). Every `.rs` file under
-/// `quecto-tui/src` (test modules included) is scanned so neither the code
-/// nor a test of it comes back under the same name.
+/// `quecto-tui/src` (test modules included) is scanned, comments too, so
+/// neither the code nor a test of it comes back under the same name.
 #[test]
 fn tui_removed_multi_tab_symbols_do_not_come_back() {
-    const REMOVED: &[&str] = &[
-        "TabSwitch",
-        "workspace_manifest",
-        "tab_registry",
-        "restore_workspace",
-        "open_placeholder_tab",
-        "queued_prompts",
-        "spawn_agent_for_tab",
-        "TabSpawnPolicy",
-        "unread_output",
-        "tab_attach_",
-        "attach_generation",
-        "queue_or_send_session_resume",
-        // #2044 PR 2a: one owned connection — no tab identity, no routing.
-        "TabId",
-        "with_routing_tab",
-        "routing_tab_override",
-        "effective_tab",
-        "active_tab",
-        "ordered_tab_ids",
-        "conn_for(",
-        "tab_event_",
-        "tab_lifecycle",
-        "close_tab_switch_overlays",
-        "take_all_child_exit_watches",
-        "set_tab_for_tests",
-        "test_set_master_tab",
-        "test_insert_disconnected_tab",
-        "test_open_disconnected_tab",
-        "tui_harness_tabs",
-        "app_tab_collection",
-    ];
     fn scan(dir: &Path, hits: &mut Vec<String>) {
         for entry in fs::read_dir(dir).expect("read dir") {
             let path = entry.expect("dir entry").path();
@@ -1002,9 +1102,10 @@ fn tui_removed_multi_tab_symbols_do_not_come_back() {
             } else if path.extension().is_some_and(|ext| ext == "rs") {
                 let content = fs::read_to_string(&path).expect("read file");
                 for (n, line) in content.lines().enumerate() {
-                    for symbol in REMOVED {
-                        if line.contains(symbol) {
-                            hits.push(format!("{}:{}: {symbol}", path.display(), n + 1));
+                    for symbol in REMOVED_MULTI_TAB_SYMBOLS {
+                        if symbol.is_in(line) {
+                            let name = symbol.name();
+                            hits.push(format!("{}:{}: {name}", path.display(), n + 1));
                         }
                     }
                 }
