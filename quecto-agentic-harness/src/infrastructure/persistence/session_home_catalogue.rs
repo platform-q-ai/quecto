@@ -32,7 +32,7 @@ use session_home_catalogue_index::{Catalogue, HomeEntry, IndexEntry, IndexHome, 
 mod session_home_catalogue_metadata;
 #[path = "session_home_catalogue_rejections.rs"]
 pub(super) mod session_home_catalogue_rejections;
-use session_home_catalogue_rejections::Rejections;
+use session_home_catalogue_rejections::{Rejections, legacy_key};
 #[path = "session_home_catalogue_seed.rs"]
 mod session_home_catalogue_seed;
 pub(super) use session_home_catalogue_seed::{WalkEntries, persisted_walk};

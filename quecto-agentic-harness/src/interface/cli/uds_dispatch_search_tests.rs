@@ -513,6 +513,25 @@ async fn a_number_no_float_can_hold_is_still_answered_under_the_requests_id() {
     }
 }
 
+/// R3-H3: a field a search does not have is skipped without being built —
+/// ignored as the command decoder ignores unknown fields, whatever it holds —
+/// while the same field keeps any other command a `parse_error`.
+#[tokio::test]
+async fn an_unknown_field_is_ignored_by_the_rescue_whatever_it_holds() {
+    let mut fx = seeded().await;
+    let deep = format!("{}{}", "[".repeat(100_000), "]".repeat(100_000));
+    for unknown in ["1e400", deep.as_str()] {
+        let line = format!(
+            r#"{{"type":"search_session_metadata","id":"u1","query":"","scope":"global","zzz":{unknown}}}"#
+        );
+        let data = answer_to_line(&mut fx, "u1", &line).await["data"].clone();
+        assert!(data["refused"].is_null(), "{data}");
+        let other = format!(r#"{{"type":"list_sessions","id":"u1","zzz":{unknown}}}"#);
+        let error = crate::interface::cli::protocol::parse_command_line(&other).unwrap_err();
+        assert!(error.starts_with("parse error: "), "{error}");
+    }
+}
+
 /// R2-H4: the 256 bound counts the characters the user typed — a fold that
 /// expands (`ß` → `ss`) changes neither the bound nor the echo.
 #[tokio::test]

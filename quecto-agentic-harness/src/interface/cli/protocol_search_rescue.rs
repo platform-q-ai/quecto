@@ -3,10 +3,10 @@
 //! lexing — before any field is decoded — so a `search_session_metadata`
 //! carrying one in `generation` or `limit` was an uncorrelated `parse_error`
 //! its client awaited for ever. Here the line is read once more as a search
-//! whose two numbers are kept as raw text; one that no `f64` holds becomes the
-//! largest or smallest `f64`, which the edge then clamps (`limit`) or refuses
-//! under the request's id (`generation`, which must be an exact integer).
-//! Anything else about the line must still decode, or the first error stands.
+//! whose two numbers are raw text; one no `f64` holds becomes the largest or
+//! smallest `f64`, which the edge clamps (`limit`) or refuses under the id
+//! (`generation`). A search's OWN fields must still decode or the first error
+//! stands; an unknown field is skipped unbuilt, whatever it holds (R3-H3).
 use super::{AgentCommand, SessionListScopeCommand};
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};

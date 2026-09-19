@@ -13,6 +13,7 @@ use super::super::session_layout::FlatSessionLayout;
 use super::super::session_store::session_store_home::error;
 use super::stamp;
 use crate::domain::{error::DomainError, session_identity::SessionIdentity};
+use serde::{Deserializer, de::IgnoredAny};
 use std::{collections::BTreeMap, path::Path, path::PathBuf};
 
 #[path = "session_home_catalogue_skipped.rs"]
@@ -39,6 +40,12 @@ impl Rejections {
     pub(super) fn retain_existing(&mut self) {
         self.0.retain(|path, _| path.exists());
     }
+}
+
+/// The index's legacy `rejected` key: ANY value under it, `null` too (R3-H6),
+/// is "present", so the index is republished without it.
+pub(super) fn legacy_key<'de, D: Deserializer<'de>>(d: D) -> Result<Option<IgnoredAny>, D::Error> {
+    serde::Deserialize::deserialize(d).map(Some)
 }
 
 /// The strict validation of a record's bytes, read in full: the identity the

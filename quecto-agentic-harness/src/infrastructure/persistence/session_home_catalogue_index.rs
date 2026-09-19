@@ -21,7 +21,7 @@ pub(super) struct Catalogue {
     /// Keyed by persisted session key.
     pub(super) records: BTreeMap<String, IndexEntry>,
     /// Legacy, ignored; its presence alone gets the index republished without.
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing, deserialize_with = "super::legacy_key")]
     rejected: Option<serde::de::IgnoredAny>,
 }
 

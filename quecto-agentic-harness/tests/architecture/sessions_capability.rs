@@ -781,10 +781,11 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/infrastructure/persistence/session_home_catalogue.rs",
         446,
     ),
-    // Round 3 (R3-H1): naming the walk's skips is its own owner (110 → 103).
+    // Round 3: naming the walk's skips is its own owner (R3-H1), and the
+    // legacy `rejected` key's presence rule lives here (R3-H6): 110 as before.
     (
         "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
-        103,
+        110,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_skipped.rs",

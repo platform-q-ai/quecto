@@ -199,3 +199,25 @@ async fn a_persisted_rejection_hides_nothing_and_an_unusable_index_is_rebuilt() 
         assert_eq!(named(&rebuilt, "chat-rot.json: "), 1);
     }
 }
+
+/// R3-H6: a legacy `rejected` key is republished away whatever it holds —
+/// `null` is present too.
+#[tokio::test]
+async fn a_null_legacy_rejected_key_is_republished_away_like_any_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path().join("base"));
+    let (store, catalogue) = process(&layout);
+    save(&store, "chat-good", "a good title").await;
+    let first = catalogue.metadata().await.unwrap();
+    for legacy in [serde_json::Value::Null, serde_json::json!({})] {
+        let mut doctored = index(&layout);
+        doctored["rejected"] = legacy.clone();
+        let bytes = serde_json::to_vec(&doctored).unwrap();
+        std::fs::write(layout.home_catalogue_file(), bytes).unwrap();
+        let (_, cold) = process(&layout);
+        let seen = cold.metadata().await.unwrap();
+        assert_eq!(titles(&seen), titles(&first));
+        assert!(!seen.rebuilt, "{legacy}: a legacy field is not corruption");
+        assert!(index(&layout).get("rejected").is_none(), "{legacy}");
+    }
+}
