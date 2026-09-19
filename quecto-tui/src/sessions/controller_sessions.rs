@@ -21,6 +21,9 @@ pub(crate) struct SessionsFlow {
     /// The rows of the last listing, newest first: what the search box
     /// filters here when the harness cannot search (R1-T5).
     pub(super) listed: Vec<crate::protocol::session_payloads::ResumeSessionSummary>,
+    /// The scope `listed` was listed in; `None` when no listing is held. A
+    /// closed picker holds none, so a new one inherits no rows (R3-T2).
+    pub(super) listed_scope: Option<crate::protocol::session_payloads::SessionListScope>,
     /// This connection's harness rejected `search_session_metadata`: told
     /// once, never asked again until the next connection (R1-T5).
     pub(super) search_unsupported: bool,
@@ -42,6 +45,8 @@ impl SessionsFlow {
     pub(crate) fn close_picker(&mut self) {
         self.resume_selector = None;
         self.pending_list_id = None;
+        self.listed.clear();
+        self.listed_scope = None;
         self.search.abandon();
     }
 }

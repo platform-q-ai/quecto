@@ -33,7 +33,7 @@ impl App {
             // The listing IS the fallback's data: one still awaited is
             // filtered when it arrives (R2-T4), never the old scope's rows.
             if self.ac().sessions.pending_list_id.is_none() {
-                self.filter_listed_sessions();
+                self.filter_or_relist();
             }
             return self.sync_picker_rows_state();
         }
@@ -146,8 +146,21 @@ impl App {
             self.ac_mut().sessions.search.abandon();
             self.ac_mut().sessions.search_unsupported = true;
             self.notify(OLD_HARNESS, NotifyLevel::Warning);
-            self.filter_listed_sessions();
+            self.filter_or_relist();
         }
+    }
+
+    /// The fallback filters only a listing it HOLDS for the scope on screen
+    /// (R3-T2). The search that met the verdict dropped the listing it
+    /// overtook, a first picker holds none and a reopened one inherits none:
+    /// the scope is listed again — `Loading…`, no Enter owed — and its
+    /// arrival is filtered by the text in the box.
+    fn filter_or_relist(&mut self) {
+        let scope = self.ac().sessions.scope;
+        if self.ac().sessions.listed_scope == Some(scope) {
+            return self.filter_listed_sessions();
+        }
+        self.request_session_scope(scope);
     }
 
     /// The fallback of R1-T5: the listed rows the text names, settled at once.
@@ -321,6 +334,9 @@ mod flow_tests;
 #[cfg(test)]
 #[path = "app_session_search_r2_tests.rs"]
 mod r2_tests;
+#[cfg(test)]
+#[path = "app_session_search_r3_tests.rs"]
+mod r3_tests;
 #[cfg(test)]
 #[path = "app_session_search_tests.rs"]
 mod tests;

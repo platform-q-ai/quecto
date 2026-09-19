@@ -207,6 +207,7 @@ impl App {
             format_unix_minutes,
         );
         self.ac_mut().sessions.listed = listed;
+        self.ac_mut().sessions.listed_scope = Some(self.ac().sessions.scope);
         self.ac_mut().sessions.home_versions = rows.home_versions;
         self.ac_mut().sessions.listed_titles = rows.titles;
         self.open_resume_selector_with_workspaces(rows.items, manifest_path, rows.empty_hint);
