@@ -124,3 +124,7 @@ impl SessionHomeContext {
         self.catalogue.record_new(identity, &self.current().await?)
     }
 }
+
+#[cfg(test)]
+#[path = "session_home_tests.rs"]
+mod tests;

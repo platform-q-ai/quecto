@@ -65,6 +65,9 @@ pub(crate) struct RecordingStore {
     pub(crate) sessions: Mutex<Vec<Session>>,
     pub(crate) owned_elsewhere: Mutex<Option<String>>,
     pub(crate) fail_load: AtomicBool,
+    /// `exists` affirms the seeded sessions (#2011 pre-flight); off, it
+    /// affirms nothing, so only the claimed path decides.
+    pub(crate) affirm_exists: AtomicBool,
 }
 
 impl RecordingStore {
@@ -153,8 +156,15 @@ impl SessionStore for RecordingStore {
     ) -> Fut<'a, ()> {
         self.write("save_clean_delta", messages)
     }
-    fn exists(&self, _: &SessionIdentity) -> Fut<'_, bool> {
-        Box::pin(async { Ok(false) })
+    fn exists(&self, identity: &SessionIdentity) -> Fut<'_, bool> {
+        let seeded = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|s| &s.key == identity);
+        let affirmed = self.affirm_exists.load(Ordering::SeqCst) && seeded;
+        Box::pin(async move { Ok(affirmed) })
     }
     fn list(&self, _: &SessionListQuery) -> Fut<'_, Vec<SessionSummary>> {
         Box::pin(async { Ok(Vec::new()) })
@@ -311,6 +321,8 @@ pub(crate) struct FreshOptions {
     /// Every saved home reads as legacy-unscoped, so scope admission
     /// refuses any loaded target (#1995).
     pub(crate) legacy_homes: bool,
+    /// The home context of the resume transaction, instead of the rig's (#2011).
+    pub(crate) home: Option<crate::application::sessions::session_home::SessionHomeContext>,
 }
 
 impl Default for FreshOptions {
@@ -324,6 +336,7 @@ impl Default for FreshOptions {
             fresh_identity: FRESH_KEY,
             current_identity: OLD_KEY,
             legacy_homes: false,
+            home: None,
         }
     }
 }
@@ -428,6 +441,7 @@ pub(crate) fn build_fresh_rig(options: FreshOptions) -> FreshRig {
         sessions: Mutex::new(Vec::new()),
         owned_elsewhere: Mutex::new(None),
         fail_load: AtomicBool::new(false),
+        affirm_exists: AtomicBool::new(false),
     });
     let save = Arc::new(SaveSession::new(
         state.clone(),
@@ -467,7 +481,9 @@ pub(crate) fn build_fresh_rig(options: FreshOptions) -> FreshRig {
             store.clone(),
             children.clone(),
             options.ephemeral,
-            rig_home(options.legacy_homes),
+            options
+                .home
+                .unwrap_or_else(|| rig_home(options.legacy_homes)),
         ),
         state,
         store,

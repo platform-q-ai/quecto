@@ -55,3 +55,7 @@ impl std::fmt::Display for ResumeSavedSessionError {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "resume_refusal_text_tests.rs"]
+mod tests;

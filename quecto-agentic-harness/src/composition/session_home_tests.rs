@@ -205,6 +205,9 @@ async fn exact_corrupt_home_refusal_preserves_source_and_releases_only_target_cl
     std::fs::write(layout.home_file(&target), b"{broken").unwrap();
     let source_before = std::fs::read(layout.session_file(&target)).unwrap();
     store.release(&target);
+    // The loop owns its session since startup; the refusal (#2011: decided
+    // before the departing save) must leave that claim alone.
+    store.claim(&active).unwrap();
     let resume = resume_over(&state, save, store.clone(), context);
     let mut messages = vec![Message::user("active")];
     let before = messages.clone();

@@ -666,3 +666,31 @@ async fn dispatch_ext_command_unregister_unknown_noop() {
     let mut ctx = fx.ctx();
     assert!(!dispatch_ext_command(cmd, &mut ctx, None, "unregister_tools").await);
 }
+
+/// #2011: a cancel, an explicit action and a never-issued version token are
+/// each answered without replacing the session or claiming the target.
+#[tokio::test]
+async fn resume_cancel_action_and_stale_token_change_nothing() {
+    use crate::domain::resume_decision::ResumeAction;
+    use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
+    let mut fx = Fixture::new();
+    let before = fx.current_session_key();
+    for (action, version) in [
+        (Some(ResumeAction::Cancel), None),
+        (Some(ResumeAction::ForkCurrent), None),
+        (None, Some("not-a-version".to_string())),
+    ] {
+        let fields = ResumeFields {
+            session: "other".into(),
+            action,
+            expected_home_version: version,
+        };
+        let mut ctx = fx.ctx();
+        assert!(!handle_resume_session(&mut ctx, Some("rs"), "resume_session", fields).await);
+    }
+    assert_eq!(fx.current_session_key(), before);
+    let competing = FileSessionStore::new(FlatSessionLayout::new(fx._tmp.path()));
+    competing
+        .claim(&id(Session::build_key("cli", "other")))
+        .expect("no refusal retains a claim on the target");
+}
