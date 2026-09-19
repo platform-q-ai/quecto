@@ -66,46 +66,6 @@ impl Fnv1a {
     }
 }
 
-/// An explicit choice a user can make about a session that cannot simply be
-/// restored here. `Cancel` is always executable; every other action needs an
-/// executor composed into the runtime (#2012 open, #2013 fork, #2014 locate
-/// and associate).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ResumeAction {
-    OpenOriginal,
-    ForkCurrent,
-    Locate,
-    Associate,
-    Cancel,
-}
-
-impl ResumeAction {
-    pub const ALL: [Self; 5] = [
-        Self::OpenOriginal,
-        Self::ForkCurrent,
-        Self::Locate,
-        Self::Associate,
-        Self::Cancel,
-    ];
-
-    /// The stable name of the action on every boundary.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::OpenOriginal => "open_original",
-            Self::ForkCurrent => "fork_current",
-            Self::Locate => "locate",
-            Self::Associate => "associate",
-            Self::Cancel => "cancel",
-        }
-    }
-
-    /// Exact-name admission — the wire parse goes through it, so the names
-    /// above are the one spelling table; nothing else denotes an action.
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|action| action.name() == name)
-    }
-}
-
 /// Why a saved session cannot simply be restored in this runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResumeDecisionKind {
@@ -131,19 +91,6 @@ impl ResumeDecisionKind {
             Self::LegacyUnscoped => "legacy_unscoped",
         }
     }
-
-    /// The affirmative table: the only actions this kind ever offers, in
-    /// presentation order. None of them is a restore; `Cancel` is always last.
-    pub fn offered_actions(self) -> &'static [ResumeAction] {
-        use ResumeAction::{Associate, Cancel, ForkCurrent, Locate, OpenOriginal};
-        match self {
-            Self::CrossFolder => &[OpenOriginal, ForkCurrent, Cancel],
-            Self::HomeMissing | Self::HomeChanged | Self::HomeUnknown => {
-                &[Locate, ForkCurrent, Cancel]
-            }
-            Self::LegacyUnscoped => &[Associate, Cancel],
-        }
-    }
 }
 
 impl std::fmt::Display for ResumeDecisionKind {
@@ -157,7 +104,3 @@ impl std::fmt::Display for ResumeDecisionKind {
         })
     }
 }
-
-#[cfg(test)]
-#[path = "resume_decision_tests.rs"]
-mod tests;

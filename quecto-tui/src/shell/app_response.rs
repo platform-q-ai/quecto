@@ -350,7 +350,7 @@ impl App {
             "agent_error" => self.handle_agent_error(error),
             "parse_error" => {
                 self.handle_search_parse_error(id.as_deref(), error.as_deref());
-                self.handle_resume_parse_error(id.as_deref(), error);
+                self.notify_response_error("Protocol error", error);
             }
             _ => {}
         }

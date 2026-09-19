@@ -209,8 +209,6 @@ async fn switching_tabs_closes_the_dialog() {
     assert!(h.app_mut().ac().sessions.resume_decision.is_none());
 }
 
-#[path = "app_resume_answer_tests.rs"]
-mod answers;
 
 /// Review R2-T7: the dialog names the session by the title the picker showed
 /// for it, with the key beneath; a key that was never listed shows the key.

@@ -576,7 +576,5 @@ async fn an_ephemeral_loop_and_an_invalid_key_refuse_every_intent() {
     case.assert_no_effect();
 }
 
-#[path = "resume_saved_session_action_tests.rs"]
-mod action_order;
 #[path = "resume_saved_session_preflight_tests.rs"]
 mod preflight;

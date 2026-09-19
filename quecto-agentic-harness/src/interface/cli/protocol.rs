@@ -23,9 +23,8 @@ mod protocol_commands;
 #[path = "protocol_search_rescue.rs"]
 mod protocol_search_rescue;
 pub use protocol_commands::{
-    AgentCommand, ResumeActionCommand, SessionListScopeCommand, StreamingBehavior,
-    ToolPolicyApplyModeCommand, ToolPolicyMutationCommand, ToolPolicyOperationCommand,
-    ToolRegistration,
+    AgentCommand, SessionListScopeCommand, StreamingBehavior, ToolPolicyApplyModeCommand,
+    ToolPolicyMutationCommand, ToolPolicyOperationCommand, ToolRegistration,
 };
 
 // ─── Events (stdout) ─────────────────────────────────────────────────────────
@@ -687,9 +686,6 @@ mod event_tests;
 #[cfg(test)]
 #[path = "protocol_policy_tests.rs"]
 mod policy_tests;
-#[cfg(test)]
-#[path = "protocol_shape_tests.rs"]
-mod shape_tests;
 
 #[cfg(test)]
 #[path = "protocol_1060_tests.rs"]

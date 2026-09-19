@@ -5,8 +5,7 @@
 //! can influence neither exact-key resolution nor admission.
 use super::resume_decision::{World, identity};
 use quecto::application::sessions::dto::{
-    ListedSession, ResumeIntent, ResumeOutcome, ResumeRequest, ResumeSavedSessionError,
-    SessionListScope,
+    ListedSession, ResumeOutcome, ResumeRequest, ResumeSavedSessionError, SessionListScope,
 };
 use quecto::application::sessions::ports::session_home::SessionHomeCatalogue;
 use quecto::domain::resume_decision::{HomeVersion, ResumeDecisionKind};
@@ -94,7 +93,6 @@ async fn the_version_of_a_listed_eligible_row_restores_it() {
     assert!(listed.resume_eligible);
     let request = ResumeRequest {
         target: listed.summary.key.clone(),
-        intent: ResumeIntent::Restore,
         expected_home_version: Some(listed.home_version()),
     };
     let (result, _) = world.request(&request).await;
@@ -147,7 +145,6 @@ async fn a_well_formed_lying_index_cannot_influence_exact_key_resolution() {
     let files = world.files();
     let request = ResumeRequest {
         target: "cli:theirs".into(),
-        intent: ResumeIntent::Restore,
         expected_home_version: Some(lied.home_version()),
     };
     let (result, messages) = world.request(&request).await;

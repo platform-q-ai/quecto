@@ -52,26 +52,16 @@ impl SessionsFlow {
 }
 
 impl super::App {
-    /// Route a key to the decision dialog (#2011). Cancel and Escape close it
-    /// and send nothing; an unavailable action is pointed at its reason and the dialog
-    /// stays; an available one sends identity, action and version.
+    /// The refusal notice is informational: Enter/Escape dismiss and send nothing.
     fn handle_resume_decision_key(&mut self, key: &Key) {
-        use crate::sessions::resume_decision::ResumeDecisionEvent;
-        let Some(dialog) = self.ac_mut().sessions.resume_decision.as_mut() else {
-            return;
-        };
-        match dialog.handle_key(key) {
-            ResumeDecisionEvent::Pending => {}
-            ResumeDecisionEvent::Cancelled => self.ac_mut().sessions.resume_decision = None,
-            // The reason is under the cursor already: the toast only points at it.
-            ResumeDecisionEvent::Unavailable => self.notify(
-                crate::sessions::resume_decision::UNAVAILABLE_POINTER,
-                NotifyLevel::Warning,
-            ),
-            ResumeDecisionEvent::Chosen(selection) => {
-                self.ac_mut().sessions.resume_decision = None;
-                self.send_resume_selection(selection);
-            }
+        let dismiss = self
+            .ac_mut()
+            .sessions
+            .resume_decision
+            .as_mut()
+            .is_some_and(|dialog| dialog.handle_key(key));
+        if dismiss {
+            self.ac_mut().sessions.resume_decision = None;
         }
     }
 

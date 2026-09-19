@@ -18,20 +18,6 @@ impl std::fmt::Display for ResumeSavedSessionError {
                 "session resume unavailable: the current execution directory cannot be \
                  discovered, so no saved session can be admitted here",
             ),
-            Self::HomeVersionRequired(action) => {
-                write!(f, "{} needs expectedHomeVersion; ask again", action.name())
-            }
-            Self::ActionNotOffered(action) => {
-                write!(f, "{} is not offered for this session", action.name())
-            }
-            Self::ActionUnavailable { action, reason } => {
-                write!(f, "{} is unavailable: {reason}", action.name())
-            }
-            Self::ActionExecutedElsewhere(action) => write!(
-                f,
-                "{} is not a restore: request it through its own command",
-                action.name()
-            ),
             Self::StartupScope(refusal) => write!(f, "{refusal}"),
             Self::Refused(refused) => write!(f, "{refused}"),
             Self::Save(error) => write!(f, "failed to save current session: {error}"),
@@ -41,7 +27,3 @@ impl std::fmt::Display for ResumeSavedSessionError {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "resume_refusal_text_tests.rs"]
-mod tests;

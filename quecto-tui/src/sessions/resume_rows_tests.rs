@@ -49,7 +49,7 @@ fn rows_are_newest_first_with_stable_ids_and_their_listed_versions() {
     assert!(old.contains("/repo · t10 (3 msgs) · Resume"), "{old}");
     let new = rows.items[0].description.as_deref().unwrap();
     assert!(
-        new.contains("/elsewhere") && new.ends_with("Saved in another folder — Enter for options"),
+        new.contains("/elsewhere") && new.ends_with("In another folder"),
         "{new}"
     );
     let undated = rows.items[2].description.as_deref().unwrap();
@@ -163,7 +163,7 @@ fn a_searched_row_names_its_repository_and_match_and_a_long_folder_keeps_its_tai
     assert_eq!(
         rows.items[0].description.as_deref(),
         Some(
-            "/work/wt/fix-2010 · t1 (3 msgs) · Saved in another folder — Enter for options · ID cli:wt · repo quecto · matched: repository, path"
+            "/work/wt/fix-2010 · t1 (3 msgs) · In another folder · ID cli:wt · repo quecto · matched: repository, path"
         )
     );
     let deep = rows.items[1].description.as_deref().unwrap();

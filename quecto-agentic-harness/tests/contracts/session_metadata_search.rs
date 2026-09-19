@@ -8,7 +8,7 @@
 //! the resume transaction's own checks.
 use super::resume_decision::{World, identity};
 use quecto::application::sessions::dto::{
-    ListedSession, ResumeIntent, ResumeOutcome, ResumeRequest, ResumeSavedSessionError,
+    ListedSession, ResumeOutcome, ResumeRequest, ResumeSavedSessionError,
     SearchSessionMetadataRequest, SearchSessionMetadataResult, SessionListScope,
 };
 use quecto::application::sessions::ports::SessionStore;
@@ -194,7 +194,6 @@ async fn a_selection_made_from_an_answer_still_answers_to_the_resume_transaction
     );
     let select = |result: &SearchSessionMetadataResult| ResumeRequest {
         target: result.rows[0].session.summary.key.clone(),
-        intent: ResumeIntent::Restore,
         expected_home_version: Some(result.rows[0].session.home_version()),
     };
     // Re-homed between the answer and the selection: the token is stale.

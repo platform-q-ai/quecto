@@ -127,7 +127,7 @@ async fn scoped_discovery_discards_old_answers_and_cancel_never_restores() {
         Some(decision),
         Some("session resume unavailable".into()),
     );
-    assert!(a.ac().sessions.resume_decision.is_some());
+    assert!(a.ac().sessions.resume_decision.is_none());
     assert!(a.ac().pending_session_resume_id.is_none());
     assert_eq!(snapshot(a), before, "a decision changes nothing");
     a.handle_resume_selector_key(&Key::Escape);

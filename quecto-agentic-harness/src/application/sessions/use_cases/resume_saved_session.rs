@@ -27,8 +27,8 @@ use super::clear_conversation::visible_message_count;
 use super::{DepartingChildren, SaveSession};
 use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::dto::{
-    ResumeActionCapabilities, ResumeOutcome, ResumeRequest, ResumeSavedSessionError, SaveTrigger,
-    SavedSessionResumed, SessionTransition, StartupSessionOpened,
+    ResumeOutcome, ResumeRequest, ResumeSavedSessionError, SaveTrigger, SavedSessionResumed,
+    SessionTransition, StartupSessionOpened,
 };
 use crate::application::sessions::ports::{FleetSettlement, SessionStore, SessionSwitchRuntime};
 use crate::application::sessions::session_home::SessionHomeContext;
@@ -51,8 +51,6 @@ pub struct ResumeSavedSession {
 #[path = "resume_saved_session_admission.rs"]
 mod resume_saved_session_admission;
 use resume_saved_session_admission::PendingClaim;
-#[path = "resume_saved_session_action.rs"]
-mod resume_saved_session_action;
 #[path = "resume_saved_session_decision.rs"]
 mod resume_saved_session_decision;
 use resume_saved_session_decision::{Admitted, Eligibility, admit};
@@ -75,18 +73,8 @@ impl ResumeSavedSession {
             store,
             children,
             ephemeral,
-            eligibility: Eligibility {
-                home,
-                capabilities: ResumeActionCapabilities::cancel_only(),
-            },
+            eligibility: Eligibility { home },
         }
-    }
-
-    /// Declare the explicit actions whose executor composition wired.
-    #[must_use]
-    pub fn with_capabilities(mut self, capabilities: ResumeActionCapabilities) -> Self {
-        self.eligibility.capabilities = capabilities;
-        self
     }
 
     /// Answer a resume request (#2011): [`admit`] settles a cancel and hands
@@ -104,11 +92,7 @@ impl ResumeSavedSession {
         let expected = request.expected_home_version.as_ref();
         let store = self.store.as_ref();
         let checks = &self.eligibility;
-        let target = match admit(self.ephemeral, request)? {
-            Admitted::Cancelled(name) => return Ok(ResumeOutcome::Cancelled { name }),
-            Admitted::Act(to, act) => return Err(checks.refuse(store, &to, expected, act).await),
-            Admitted::Restore(target) => target,
-        };
+        let Admitted(target) = admit(self.ephemeral, request)?;
         let old_identity = self.state.read().await.identity().clone();
         let own = old_identity == target.identity;
         (checks.preflight(store, &target, expected, own)).await?;
