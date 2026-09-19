@@ -7,7 +7,8 @@ use super::uds_dispatch_forwarding::try_forward_subagent_targeted_command;
 pub(super) use super::uds_dispatch_get_message_forward::{
     ForwardGetMessage, forward_subagent_get_message,
 };
-use super::uds_dispatch_legacy_resume::legacy_resume_action_event;
+#[path = "uds_dispatch_legacy_resume.rs"]
+mod legacy_resume;
 use super::uds_dispatch_runtime::{SetModelArgs, handle_set_effort, handle_set_model};
 #[cfg(test)]
 pub(super) use super::uds_dispatch_session::{
@@ -27,6 +28,7 @@ use crate::interface::cli::protocol::{
 };
 use crate::interface::cli::uds_ext_protocol;
 use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
+use legacy_resume::legacy_resume_action_event;
 
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     if let Some(result) = try_forward_subagent_targeted_command(&cmd, ctx).await {

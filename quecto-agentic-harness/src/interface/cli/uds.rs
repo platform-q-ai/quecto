@@ -260,8 +260,6 @@ mod uds_dispatch;
 mod uds_dispatch_forwarding;
 #[path = "uds_dispatch_get_message_forward.rs"]
 mod uds_dispatch_get_message_forward;
-#[path = "uds_dispatch_legacy_resume.rs"]
-mod uds_dispatch_legacy_resume;
 #[path = "uds_dispatch_query.rs"]
 mod uds_dispatch_query;
 #[path = "uds_dispatch_runtime.rs"]
