@@ -503,7 +503,7 @@ async fn a_number_no_float_can_hold_is_still_answered_under_the_requests_id() {
     // Only a search is rescued, and only when the rest of it decodes.
     use crate::interface::cli::protocol::parse_command_line;
     for raw in [
-        r#"{"type":"list_sessions","id":"x","since":1e400}"#.to_string(),
+        r#"{"type":"list_sessions","id":"x","query":"q","limit":1e400}"#.to_string(),
         r#"{"type":"search_session_metadata","id":"x","generation":1e400}"#.to_string(),
         r#"{"type":"search_session_metadata","id":"x","query":"q","scope":"everywhere","limit":1e400}"#.to_string(),
         r#"{"type":"search_session_metadata","id":"x","query":"q","limit":1e400"#.to_string(),

@@ -230,4 +230,14 @@ async fn an_owed_enter_expires_one_answer_window_after_it_was_pressed() {
     answer(&mut h, &third, "ZEBRA", json!({}));
     let commands = h.drain_commands().await;
     assert_eq!(sent(&commands, "resume_session").len(), 1, "{commands:?}");
+    // An answer that beats the tick to an expired Enter pays nothing either.
+    open_picker(&mut h).await;
+    type_text(&mut h, "z");
+    let late = searches(&mut h).await[0].clone();
+    key(&mut h, Key::Tab);
+    key(&mut h, Key::Enter);
+    tokio::time::advance(ANSWER_TIMEOUT).await;
+    answer(&mut h, &late, "ZEBRA", json!({}));
+    let commands = h.drain_commands().await;
+    assert!(sent(&commands, "resume_session").is_empty(), "{commands:?}");
 }
