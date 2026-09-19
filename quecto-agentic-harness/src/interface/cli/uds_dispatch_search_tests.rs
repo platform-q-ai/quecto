@@ -204,9 +204,6 @@ async fn a_malformed_search_is_rejected_at_the_protocol_boundary() {
         serde_json::json!({"type": "search_session_metadata", "id": "p"}),
         serde_json::json!({"type": "search_session_metadata", "id": "p", "query": 7}),
         serde_json::json!({"type": "search_session_metadata", "id": "p", "query": "x", "scope": "everywhere"}),
-        serde_json::json!({"type": "search_session_metadata", "id": "p", "query": "x", "generation": -1}),
-        serde_json::json!({"type": "search_session_metadata", "id": "p", "query": "x", "generation": "3"}),
-        serde_json::json!({"type": "search_session_metadata", "id": "p", "query": "x", "limit": 1.5}),
     ] {
         assert!(
             serde_json::from_value::<AgentCommand>(line.clone()).is_err(),
@@ -354,4 +351,86 @@ async fn a_searched_rows_version_restores_it_and_a_stale_one_is_refused() {
     let resumed = answer(&mut fx, pick).await;
     assert_eq!(resumed["success"], true, "{resumed}");
     assert_eq!(fx.current_session_key(), "cli:picked");
+}
+
+/// R1-H5: a client awaiting its id never hangs on `limit` or `generation`.
+/// Any JSON number is brought into range; anything else is a CORRELATED
+/// refusal that still echoes what could be read.
+#[tokio::test]
+async fn limit_and_generation_are_read_leniently_and_a_non_number_is_a_correlated_refusal() {
+    let mut fx = seeded().await;
+    let huge: serde_json::Value = serde_json::from_str("99999999999999999999").unwrap();
+    let beyond: serde_json::Value = serde_json::from_str("18446744073709551616").unwrap();
+    for (limit, shown) in [
+        (serde_json::json!(-1), 1),
+        (serde_json::json!(0), 1),
+        (serde_json::json!(1.5), 1),
+        (serde_json::json!(2.9), 2),
+        (huge, 500),
+        (serde_json::json!(1e20), 500),
+        (serde_json::Value::Null, 200),
+    ] {
+        let line = serde_json::json!({"type": "search_session_metadata", "id": "l",
+            "query": "", "scope": "global", "generation": 9, "limit": limit});
+        let event = answer(&mut fx, line).await;
+        let data = &event["data"];
+        assert_eq!(event["success"], true, "{limit}: {event}");
+        assert_eq!(
+            (&data["limit"], &data["generation"]),
+            (&serde_json::json!(shown), &serde_json::json!(9)),
+            "{limit}"
+        );
+        assert!(data["refused"].is_null(), "{limit}");
+    }
+    for (generation, echoed) in [
+        (serde_json::json!(-1), 0u64),
+        (serde_json::json!(7.9), 7),
+        (beyond, u64::MAX),
+        (serde_json::json!(u64::MAX), u64::MAX),
+    ] {
+        let line = serde_json::json!({"type": "search_session_metadata", "id": "g",
+            "query": "", "scope": "global", "generation": generation});
+        let data = answer(&mut fx, line).await["data"].clone();
+        assert_eq!(
+            data["generation"],
+            serde_json::json!(echoed),
+            "{generation}"
+        );
+        assert!(
+            data["refused"].is_null() && !keys(&data).is_empty(),
+            "{generation}"
+        );
+    }
+    for (field, value, generation) in [
+        ("limit", serde_json::json!("7"), 3u64),
+        ("limit", serde_json::json!([7]), 3),
+        ("limit", serde_json::json!(true), 3),
+        ("generation", serde_json::json!("7"), 0),
+        ("generation", serde_json::json!({"n": 7}), 0),
+    ] {
+        let mut line = serde_json::json!({"type": "search_session_metadata", "id": "r",
+            "query": "zebra", "scope": "global", "generation": 3});
+        line[field] = value.clone();
+        let event = answer(&mut fx, line).await;
+        let data = &event["data"];
+        assert_eq!(event["success"], true, "{field}={value}: {event}");
+        assert_eq!(
+            data["refused"],
+            format!("{field} must be a number"),
+            "{value}"
+        );
+        assert_eq!(
+            data["generation"],
+            serde_json::json!(generation),
+            "{field}={value}"
+        );
+        assert_eq!(
+            (keys(data).len(), &data["searched"]),
+            (0, &serde_json::json!(0))
+        );
+        assert_eq!(
+            (&data["query"], &data["scope"]),
+            (&serde_json::json!("zebra"), &serde_json::json!("global"))
+        );
+    }
 }

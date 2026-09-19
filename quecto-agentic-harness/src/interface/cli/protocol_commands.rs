@@ -170,16 +170,19 @@ pub enum AgentCommand {
     /// Search saved-session metadata (#2010): title, exact key, repository
     /// label and path — literal text, never a pattern, never transcript
     /// content. `generation` is the client's own counter, echoed unchanged.
+    /// `generation` and `limit` are decoded as any JSON value (R1-H5): the
+    /// edge brings a number into range and answers anything else with a
+    /// correlated refusal, so a client awaiting its id never hangs on them.
     SearchSessionMetadata {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         query: String,
         #[serde(default)]
         scope: SessionListScopeCommand,
-        #[serde(default)]
-        generation: u64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        limit: Option<u64>,
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        generation: serde_json::Value,
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        limit: serde_json::Value,
     },
     /// Switch to a fresh user-chat session.
     NewSession {

@@ -34,6 +34,10 @@ impl SearchSessionMetadata {
         &self,
         request: &SearchSessionMetadataRequest,
     ) -> Result<SearchSessionMetadataResult, DomainError> {
+        let query = match MetadataQuery::parse(&request.query) {
+            Ok(query) => query,
+            Err(refusal) => return Ok(SearchSessionMetadataResult::refused(request, refusal)),
+        };
         let mut result = SearchSessionMetadataResult {
             generation: request.generation,
             scope: request.scope,
@@ -42,13 +46,6 @@ impl SearchSessionMetadata {
             searched: 0,
             refused: None,
             freshness: SearchFreshness::default(),
-        };
-        let query = match MetadataQuery::parse(&request.query) {
-            Ok(query) => query,
-            Err(refusal) => {
-                result.refused = Some(refusal);
-                return Ok(result);
-            }
         };
         let snapshot = self.home.catalogue.metadata().await?;
         result.freshness = SearchFreshness {

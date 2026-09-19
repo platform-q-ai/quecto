@@ -8,14 +8,16 @@ use super::{AgentEvent, DispatchCtx};
 use crate::application::sessions::dto::{
     QueryGeneration, SearchLimit, SearchSessionMetadataRequest, SearchSessionMetadataResult,
 };
+use crate::domain::session_metadata_search::QueryRefusal;
 use crate::interface::cli::protocol::SessionListScopeCommand;
+use crate::interface::cli::uds_search_numbers::lenient_u64;
 
 /// The wire fields of one search, as the protocol decoded them.
 pub(super) struct SearchFields {
     pub(super) query: String,
     pub(super) scope: SessionListScopeCommand,
-    pub(super) generation: u64,
-    pub(super) limit: Option<u64>,
+    pub(super) generation: serde_json::Value,
+    pub(super) limit: serde_json::Value,
 }
 
 pub(super) async fn handle(
@@ -24,13 +26,26 @@ pub(super) async fn handle(
     type_name: &str,
     fields: SearchFields,
 ) -> bool {
+    let (generation, limit) = (lenient_u64(&fields.generation), lenient_u64(&fields.limit));
     let request = SearchSessionMetadataRequest {
         query: fields.query,
         scope: fields.scope.into(),
-        generation: QueryGeneration(fields.generation),
-        limit: SearchLimit::clamped(fields.limit),
+        generation: QueryGeneration(generation.unwrap_or_default().unwrap_or_default()),
+        limit: SearchLimit::clamped(limit.unwrap_or_default()),
     };
-    let event = match ctx.list_sessions.search(&request).await {
+    // Not a number (R1-H5): refused in a correlated answer, nothing searched.
+    let malformed = match (generation, limit) {
+        (Err(()), _) => Some(QueryRefusal::NotANumber {
+            field: "generation",
+        }),
+        (_, Err(())) => Some(QueryRefusal::NotANumber { field: "limit" }),
+        _ => None,
+    };
+    let answer = match malformed {
+        Some(refusal) => Ok(SearchSessionMetadataResult::refused(&request, refusal)),
+        None => ctx.list_sessions.search(&request).await,
+    };
+    let event = match answer {
         Ok(result) => {
             let data = search_json(&result, fields.scope, &request);
             AgentEvent::ok(id, type_name, Some(data))

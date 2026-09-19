@@ -78,6 +78,19 @@ pub struct SearchSessionMetadataResult {
 }
 
 impl SearchSessionMetadataResult {
+    /// The answer to a request that is not searched: no rows, and why.
+    pub fn refused(request: &SearchSessionMetadataRequest, refusal: QueryRefusal) -> Self {
+        Self {
+            generation: request.generation,
+            scope: request.scope,
+            rows: Vec::new(),
+            total_matches: 0,
+            searched: 0,
+            refused: Some(refusal),
+            freshness: SearchFreshness::default(),
+        }
+    }
+
     pub fn truncated(&self) -> bool {
         self.total_matches > self.rows.len()
     }

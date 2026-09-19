@@ -39,6 +39,9 @@ pub enum QueryRefusal {
     /// More visible characters than [`MAX_QUERY_CHARS`]: a prefix of it would
     /// match records the whole query does not name.
     TooLong { chars: usize },
+    /// A request field that must be a number was something else (R1-H5):
+    /// answered — correlated — rather than dropped as undecodable.
+    NotANumber { field: &'static str },
 }
 
 impl std::fmt::Display for QueryRefusal {
@@ -48,6 +51,7 @@ impl std::fmt::Display for QueryRefusal {
                 f,
                 "query too long: {chars} characters (at most {MAX_QUERY_CHARS} are searched)"
             ),
+            Self::NotANumber { field } => write!(f, "{field} must be a number"),
         }
     }
 }
