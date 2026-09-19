@@ -15,6 +15,8 @@ pub(super) use super::uds_dispatch_session::{
 #[cfg(not(test))]
 use super::uds_dispatch_session::{handle_new_session, handle_resume_session, handle_rewind_to};
 use super::{AgentCommand, AgentEvent};
+#[path = "uds_dispatch_legacy_resume.rs"]
+mod legacy_resume;
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::session::SubagentRestoreReason;
@@ -26,6 +28,7 @@ use crate::interface::cli::protocol::{
 };
 use crate::interface::cli::uds_ext_protocol;
 use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
+use legacy_resume::legacy_resume_action_event;
 
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     if let Some(result) = try_forward_subagent_targeted_command(&cmd, ctx).await {
@@ -161,16 +164,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             ..
         } => {
             if action.is_some() {
-                let event = AgentEvent::Response {
-                    id,
-                    command: type_name,
-                    success: false,
-                    data: Some(serde_json::json!({
-                        "outcome": "refused",
-                        "code": "legacy_action_unsupported"
-                    })),
-                    error: Some("resume actions are no longer supported".to_string()),
-                };
+                let event = legacy_resume_action_event(id, type_name);
                 emit_event_to_broadcast_or_writer(ctx, &event).await;
                 return false;
             }

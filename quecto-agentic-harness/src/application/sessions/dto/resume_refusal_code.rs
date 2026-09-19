@@ -7,17 +7,7 @@ impl ResumeSavedSessionError {
             Self::Busy => "busy",
             Self::Ephemeral => "ephemeral",
             Self::InvalidName => "invalid_name",
-            Self::Decision(decision) => match decision.kind {
-                crate::domain::resume_decision::ResumeDecisionKind::CrossFolder => {
-                    "belongs_elsewhere"
-                }
-                crate::domain::resume_decision::ResumeDecisionKind::HomeMissing => "home_missing",
-                crate::domain::resume_decision::ResumeDecisionKind::HomeChanged => "home_changed",
-                crate::domain::resume_decision::ResumeDecisionKind::HomeUnknown => "home_unknown",
-                crate::domain::resume_decision::ResumeDecisionKind::LegacyUnscoped => {
-                    "no_home_recorded"
-                }
-            },
+            Self::Decision(decision) => decision.kind.refusal_code(),
             Self::StaleHomeVersion => "stale_home_version",
             Self::CurrentScopeUnavailable(_) => "current_scope_unavailable",
             Self::StartupScope(_) => "startup_scope",

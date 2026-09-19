@@ -91,6 +91,16 @@ impl ResumeDecisionKind {
             Self::LegacyUnscoped => "legacy_unscoped",
         }
     }
+
+    pub fn refusal_code(self) -> &'static str {
+        match self {
+            Self::CrossFolder => "belongs_elsewhere",
+            Self::HomeMissing => "home_missing",
+            Self::HomeChanged => "home_changed",
+            Self::HomeUnknown => "home_unknown",
+            Self::LegacyUnscoped => "no_home_recorded",
+        }
+    }
 }
 
 impl std::fmt::Display for ResumeDecisionKind {

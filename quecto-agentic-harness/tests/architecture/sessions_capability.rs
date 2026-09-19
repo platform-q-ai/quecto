@@ -98,8 +98,6 @@ const CANONICAL_FILES: &[&str] = &[
     "src/domain/stable_digest.rs",
     "src/interface/cli/uds_safe_display.rs",
     "src/application/sessions/use_cases/resume_saved_session_decision.rs",
-    "src/application/sessions/use_cases/resume_saved_session_action.rs",
-    "src/composition/resume_capabilities.rs",
     "src/interface/uds/sessions/resume_session_controller.rs",
     "src/interface/cli/uds_dispatch_resume.rs",
     // #2010 global metadata search: one new query owner and its edges.
@@ -679,15 +677,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     // #2011: the eligibility collaborators of the one resume transaction —
     // request admission, the effect-free pre-flight, the claimed re-check.
-    // Review R2-H3: the refusal order of an explicit action is its own
-    // module, so the helper shrinks (158 → 147).
+    // #2045 removes explicit resume actions; eligibility remains effect-free.
     (
         "src/application/sessions/use_cases/resume_saved_session_decision.rs",
         147,
-    ),
-    (
-        "src/application/sessions/use_cases/resume_saved_session_action.rs",
-        52,
     ),
     // #2011: the refusal text moved to its own module (123 → 117 with the
     // typed decision and refusal variants added).
@@ -701,7 +694,6 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // Review R1: the digest is its own pure module (182 → 165).
     ("src/domain/resume_decision.rs", 163),
     ("src/domain/stable_digest.rs", 30),
-    ("src/composition/resume_capabilities.rs", 15),
     (
         "src/interface/uds/sessions/resume_session_controller.rs",
         55,
