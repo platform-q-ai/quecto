@@ -29,7 +29,6 @@ use crate::interface::cli::protocol::{
 use crate::interface::cli::uds_ext_protocol;
 use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
 use legacy_resume::legacy_resume_action_event;
-
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     if let Some(result) = try_forward_subagent_targeted_command(&cmd, ctx).await {
         return result;
