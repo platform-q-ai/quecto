@@ -15,6 +15,10 @@ use super::stamp;
 use crate::domain::{error::DomainError, session_identity::SessionIdentity};
 use std::{collections::BTreeMap, path::Path, path::PathBuf};
 
+#[path = "session_home_catalogue_skipped.rs"]
+mod session_home_catalogue_skipped;
+pub(super) use session_home_catalogue_skipped::name_skipped;
+
 #[derive(Default)]
 pub(super) struct Rejections(BTreeMap<PathBuf, (Vec<u64>, String)>);
 
@@ -34,17 +38,6 @@ impl Rejections {
     /// Memory only: an entry of a deleted file could never be looked up.
     pub(super) fn retain_existing(&mut self) {
         self.0.retain(|path, _| path.exists());
-    }
-}
-
-/// A record the store's walk skipped is named once per answer: by the
-/// catalogue's own line when it rejected the record too, else by the walk's.
-pub(super) fn name_skipped(diagnostics: &mut Vec<String>, skipped: Vec<(String, String)>) {
-    for (file, why) in skipped {
-        let named = format!("{file}: ");
-        if !diagnostics.iter().any(|line| line.starts_with(&named)) {
-            diagnostics.push(format!("{named}session record not listed: {why}"));
-        }
     }
 }
 

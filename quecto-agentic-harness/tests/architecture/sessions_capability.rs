@@ -117,6 +117,8 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/search_limits.rs",
     "src/interface/cli/uds_search_numbers.rs",
     "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
+    // Round 3 (R3-H1): naming the walk's skips, linear in the bad records.
+    "src/infrastructure/persistence/session_home_catalogue_skipped.rs",
     "src/infrastructure/persistence/session_home_catalogue_seed.rs",
     "src/infrastructure/persistence/session_record_read.rs",
     "src/domain/session_path_text.rs",
@@ -779,9 +781,14 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/infrastructure/persistence/session_home_catalogue.rs",
         446,
     ),
+    // Round 3 (R3-H1): naming the walk's skips is its own owner (110 → 103).
     (
         "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
-        110,
+        103,
+    ),
+    (
+        "src/infrastructure/persistence/session_home_catalogue_skipped.rs",
+        34,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_seed.rs",
