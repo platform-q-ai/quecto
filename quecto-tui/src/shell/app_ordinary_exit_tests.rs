@@ -374,3 +374,34 @@ async fn ordinary_exit_persistence_distinguishes_owned_killing_from_detach_and_e
         }
     }
 }
+
+/// #2044: the master event channel closes once the connection's feed task has
+/// ended (no sender is retained). An exit persist that was accepted but can
+/// no longer be answered still waits out the barrier deadline and reports the
+/// timeout — never an immediate "timed out".
+#[tokio::test(start_paused = true)]
+async fn ordinary_exit_barrier_waits_out_the_deadline_when_the_event_channel_is_closed() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    let (conn, _rx) = Connection::live_for_tests();
+    // Replacing the transport drops the harness connection and aborts its
+    // feed task; with the test handle gone too, no sender is left.
+    a.test_attach_connection(conn, None);
+    a.master_event_tx = None;
+    while !a.master_event_rx.is_closed() {
+        tokio::task::yield_now().await;
+    }
+
+    let started = tokio::time::Instant::now();
+    let finalization_errors = a.finalize_ordinary_exit().await;
+
+    assert_eq!(
+        finalization_errors,
+        vec!["ordinary-exit persistence barrier timed out".to_string()]
+    );
+    assert_eq!(
+        started.elapsed(),
+        std::time::Duration::from_secs(2),
+        "a closed channel reports the timeout at the deadline, not at once"
+    );
+}
