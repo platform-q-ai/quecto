@@ -16,7 +16,7 @@ impl Clock {
     }
     pub fn now(&self) -> Instant {
         match &self.0 {
-            Some(at) => *at.lock().unwrap_or_else(|poisoned| poisoned.into_inner()),
+            Some(at) => *at.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
             None => Instant::now(),
         }
     }
@@ -24,7 +24,7 @@ impl Clock {
     /// is nobody's to move: nothing happens.
     pub fn advance(&self, by: Duration) {
         if let Some(at) = &self.0 {
-            *at.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += by;
+            *at.lock().unwrap_or_else(std::sync::PoisonError::into_inner) += by;
         }
     }
 }
