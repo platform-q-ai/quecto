@@ -102,6 +102,29 @@ async fn a_reopened_picker_never_inherits_the_previous_scopes_rows() {
     );
 }
 
+/// …nor its listing of the SAME scope: a closed picker holds no listing, so
+/// the reopened one waits for its own instead of filtering nothing.
+#[tokio::test]
+async fn a_reopened_picker_holds_no_listing_of_its_own_scope_either() {
+    let mut h = harness().await;
+    open_picker(&mut h).await;
+    key(&mut h, Key::Escape);
+    assert!(h.app_mut().ac().sessions.listed_scope.is_none());
+    h.app_mut().send_list_sessions();
+    key(&mut h, Key::Tab);
+    key(&mut h, Key::Tab);
+    type_text(&mut h, "l");
+    let _ = h.drain_commands().await;
+    old_harness_verdict(&mut h);
+    let frame = h.full_frame();
+    assert!(
+        frame.contains("Sessions · Loading…") && !frame.contains("No sessions match"),
+        "{frame}"
+    );
+    answer_listing(&mut h, json!([{"key": "cli:l", "title": "LISTED again"}]));
+    assert!(h.full_frame().contains("LISTED again"));
+}
+
 /// Rows held for the OTHER scope (their listing was overtaken by a search)
 /// are not the fallback's data either.
 #[tokio::test]
