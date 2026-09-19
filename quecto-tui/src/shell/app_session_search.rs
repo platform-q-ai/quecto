@@ -64,7 +64,7 @@ impl App {
             "resume-search-{}",
             super::super::super::app_events::uuid_like()
         ));
-        let now = tokio::time::Instant::now();
+        let now = self.clock.now();
         self.ac_mut()
             .sessions
             .search

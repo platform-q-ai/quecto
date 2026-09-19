@@ -45,7 +45,8 @@ Feature: The /resume picker searches session metadata through the harness (#2010
     When the harness answers the search in flight with the session "OVERTAKEN-Z-ROW"
     Then no resume request was sent
     And one metadata search is in flight for "zebr" in scope "global"
-    When the harness answers the search in flight with the session "ZEBRA-PLAN"
+    When 4 seconds pass without an answer
+    And the harness answers the search in flight with the session "ZEBRA-PLAN"
     Then one resume request is sent for "cli:answered" carrying version "h1-00000000000000c1"
     And the resume picker is closed
 
@@ -68,7 +69,19 @@ Feature: The /resume picker searches session metadata through the harness (#2010
   Scenario: An owed Enter is withdrawn when the search is not answered in time
     When I type "z" into the resume search box
     And I press Enter twice in the resume picker
-    And the search in flight is not answered in time
+    And 6 seconds pass without an answer
+    Then the resume picker shows "Sessions · Searching…"
+    And the resume picker does not show "will open"
+    When the harness answers the search in flight with the session "LATE-ZEBRA"
+    Then the resume picker shows "LATE-ZEBRA"
+    And no resume request was sent
+
+  Scenario: An Enter pressed late in the first flight is withdrawn when that flight times out
+    When I type "z" into the resume search box
+    And 3 seconds pass without an answer
+    And I press Enter twice in the resume picker
+    Then the resume picker shows "will open"
+    When 2 seconds pass without an answer
     Then the resume picker shows "Sessions · Searching…"
     And the resume picker does not show "will open"
     When the harness answers the search in flight with the session "LATE-ZEBRA"

@@ -10,6 +10,7 @@ use crate::components::{
     utils::sanitize_truncate_chars_with_ellipsis,
 };
 use crate::protocol::session_payloads::SessionListScope;
+use crate::sessions::clock::Clock;
 use crate::sessions::session_search::ANSWER_TIMEOUT;
 use crate::shell::keys::Key;
 use tokio::time::Instant;
@@ -129,6 +130,8 @@ pub struct ResumePicker {
     /// row — until this instant, one answer window after the keypress. ANY
     /// later key or click withdraws it (R2-T3); a repeated Enter owes it anew.
     pending_enter: Option<Instant>,
+    /// Where "now" comes from (R3-T1): the shell's clock, never the wall.
+    clock: Clock,
     /// The user moved the cursor since the last query or scope edit.
     cursor_placed: bool,
     /// One status line under the rows: truncated, no match, refused, fallback.
@@ -152,12 +155,18 @@ impl ResumePicker {
             result_rows: 12,
             rows_state: RowsState::Settled,
             pending_enter: None,
+            clock: Clock::default(),
             cursor_placed: false,
             notice: None,
             paste_notice: None,
         };
         picker.sync_items(items);
         picker
+    }
+    /// Read time from the shell's clock instead of tokio's.
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        self
     }
     pub fn set_notice(&mut self, notice: Option<String>) {
         self.notice = notice.map(|text| safe(&text));
@@ -171,9 +180,8 @@ impl ResumePicker {
     pub fn set_rows_state(&mut self, state: RowsState) -> Option<String> {
         self.rows_state = state;
         // Still searching: the Enter stays owed. Any other state withdraws it.
-        let in_time = self
-            .pending_enter
-            .is_some_and(|until| Instant::now() < until);
+        let now = self.clock.now();
+        let in_time = self.pending_enter.is_some_and(|until| now < until);
         let owed = in_time && state == RowsState::Settled;
         self.pending_enter = self.pending_enter.filter(|_| state == RowsState::Searching);
         if !owed {
@@ -324,7 +332,7 @@ impl ResumePicker {
                 let owed = self.rows_state == RowsState::Searching
                     && !self.query.trim().is_empty()
                     && !self.cursor_placed;
-                self.pending_enter = owed.then(|| Instant::now() + ANSWER_TIMEOUT);
+                self.pending_enter = owed.then(|| self.clock.now() + ANSWER_TIMEOUT);
             }
             (Focus::Results, key) if self.result_rows > 0 => {
                 let key = match key {

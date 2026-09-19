@@ -174,7 +174,7 @@ async fn a_foreign_scope_echo_and_a_lost_listing_say_what_happened() {
 /// R2-T3: an Enter is never paid more than one answer window after it was
 /// pressed — not even when every flight is answered just in time (the text
 /// typed ahead of the first answer is a second flight with its own window).
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn an_owed_enter_expires_one_answer_window_after_it_was_pressed() {
     let mut h = harness().await;
     open_picker(&mut h).await;
@@ -184,10 +184,10 @@ async fn an_owed_enter_expires_one_answer_window_after_it_was_pressed() {
     key(&mut h, Key::Enter);
     key(&mut h, Key::Enter);
     assert!(h.full_frame().contains("will open the top match"));
-    let pressed = tokio::time::Instant::now();
+    let pressed = h.now();
     // The first flight is answered late but in time: progress, and the text
     // typed ahead goes out with a window of its own.
-    tokio::time::advance(ANSWER_TIMEOUT - std::time::Duration::from_secs(1)).await;
+    h.advance_clock(ANSWER_TIMEOUT - std::time::Duration::from_secs(1));
     answer(&mut h, &first, "ZULU", json!({}));
     let second = searches(&mut h).await[0].clone();
     assert!(
@@ -200,8 +200,8 @@ async fn an_owed_enter_expires_one_answer_window_after_it_was_pressed() {
         Some(pressed + ANSWER_TIMEOUT),
         "the loop wakes for it"
     );
-    tokio::time::advance(std::time::Duration::from_secs(1)).await;
-    let now = tokio::time::Instant::now();
+    h.advance_clock(std::time::Duration::from_secs(1));
+    let now = h.now();
     assert!(
         h.app_mut().service_search_timeout(now),
         "the cue is repainted away"
@@ -226,7 +226,7 @@ async fn an_owed_enter_expires_one_answer_window_after_it_was_pressed() {
     let third = searches(&mut h).await[0].clone();
     key(&mut h, Key::Tab);
     key(&mut h, Key::Enter);
-    tokio::time::advance(ANSWER_TIMEOUT - std::time::Duration::from_secs(1)).await;
+    h.advance_clock(ANSWER_TIMEOUT - std::time::Duration::from_secs(1));
     answer(&mut h, &third, "ZEBRA", json!({}));
     let commands = h.drain_commands().await;
     assert_eq!(sent(&commands, "resume_session").len(), 1, "{commands:?}");
@@ -236,8 +236,34 @@ async fn an_owed_enter_expires_one_answer_window_after_it_was_pressed() {
     let late = searches(&mut h).await[0].clone();
     key(&mut h, Key::Tab);
     key(&mut h, Key::Enter);
-    tokio::time::advance(ANSWER_TIMEOUT).await;
+    h.advance_clock(ANSWER_TIMEOUT);
     answer(&mut h, &late, "ZEBRA", json!({}));
+    let commands = h.drain_commands().await;
+    assert!(sent(&commands, "resume_session").is_empty(), "{commands:?}");
+}
+
+/// R3-T3: the FIRST flight's timeout withdraws an Enter that is still inside
+/// its own window — pressed 3 s into the flight, it is 2 s old when the
+/// flight is given up, so only that rule can explain the withdrawal.
+#[tokio::test]
+async fn the_first_timeout_withdraws_an_enter_still_inside_its_own_window() {
+    let mut h = harness().await;
+    open_picker(&mut h).await;
+    type_text(&mut h, "z");
+    let _ = searches(&mut h).await;
+    h.pass_time(std::time::Duration::from_secs(3));
+    key(&mut h, Key::Tab);
+    key(&mut h, Key::Enter);
+    assert!(h.full_frame().contains("will open the top match"));
+    h.pass_time(std::time::Duration::from_secs(2));
+    let retry = searches(&mut h).await[0].clone();
+    let frame = h.full_frame();
+    assert!(
+        frame.contains("Sessions · Searching…") && !frame.contains("will open"),
+        "{frame}"
+    );
+    h.advance_clock(std::time::Duration::from_secs(1));
+    answer(&mut h, &retry, "ZEBRA", json!({}));
     let commands = h.drain_commands().await;
     assert!(sent(&commands, "resume_session").is_empty(), "{commands:?}");
 }

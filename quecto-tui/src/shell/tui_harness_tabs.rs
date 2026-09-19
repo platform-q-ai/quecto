@@ -65,11 +65,24 @@ impl TuiHarness {
         self
     }
 
-    /// Let the metadata search in flight go unanswered past its deadline, the
-    /// way the idle loop's timeout service finds it (#2010 R2-T3).
-    pub fn search_answer_overdue(&mut self) -> &mut Self {
-        let late = tokio::time::Instant::now() + crate::sessions::session_search::ANSWER_TIMEOUT;
-        self.app.service_search_timeout(late);
+    /// The harness's manual clock (#2010 R3-T1): it stands still until a
+    /// test says time passed, so no deadline depends on how long a step took.
+    pub fn now(&self) -> tokio::time::Instant {
+        self.app.clock.now()
+    }
+
+    /// Move the clock without waking anything: what an answer that beats the
+    /// idle tick finds.
+    pub fn advance_clock(&mut self, by: std::time::Duration) -> &mut Self {
+        self.app.clock.advance(by);
+        self
+    }
+
+    /// `by` passes with no input and no answer, then the idle loop's timeout
+    /// service wakes, as its deadline arm would (#2010 R2-T3).
+    pub fn pass_time(&mut self, by: std::time::Duration) -> &mut Self {
+        self.app.clock.advance(by);
+        self.app.service_search_timeout(self.app.clock.now());
         self.capture();
         self
     }

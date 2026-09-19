@@ -47,10 +47,7 @@ pub struct App {
     /// the active tab is selected by `active_tab`. Call sites reach the
     /// active slot via `ac()` / `ac()`, and a specific
     /// tab via `conn_for` / `conn_mut`.
-    tabs: std::collections::HashMap<
-        crate::shell::connection::TabId,
-        connection_state::ConnectionState,
-    >,
+    tabs: HashMap<crate::shell::connection::TabId, connection_state::ConnectionState>,
     /// Which tab is focused for input, render, and active command send.
     active_tab: crate::shell::connection::TabId,
     /// This TUI's workspace identity (#1466 decision 1): a UUID minted at
@@ -81,6 +78,8 @@ pub struct App {
     /// stdout so headless tests don't garble the runner's terminal.
     #[cfg(any(test, feature = "test-harness"))]
     pub(super) suppress_paint: bool,
+    /// "Now" for the `/resume` picker's deadlines: an input, not the wall (#2010 R3-T1).
+    pub(super) clock: crate::sessions::clock::Clock,
     /// Active mouse text selection (#528).
     selection: Option<TextSelection>,
     /// Last rendered lines (for extracting selected text from the buffer).
@@ -189,6 +188,7 @@ impl App {
             rendered_frames: 0,
             #[cfg(any(test, feature = "test-harness"))]
             suppress_paint: false,
+            clock: Default::default(),
             selection: None,
             last_rendered_lines: Vec::new(),
             tool_catalogue: HashMap::new(),

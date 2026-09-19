@@ -90,7 +90,8 @@ impl TuiHarness {
     }
 
     pub async fn sized(width: usize, height: usize) -> Self {
-        let (app, cmd_rx, agent_event_tx) = headless_app(width, height).await;
+        let (mut app, cmd_rx, agent_event_tx) = headless_app(width, height).await;
+        app.clock = crate::sessions::clock::Clock::manual();
         Self {
             app,
             width,

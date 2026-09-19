@@ -54,7 +54,7 @@ impl App {
                 }
             }
         }
-        if self.service_search_timeout(tokio::time::Instant::now()) {
+        if self.service_search_timeout(self.clock.now()) {
             needs_render = true;
         }
         // GC expired notifications.

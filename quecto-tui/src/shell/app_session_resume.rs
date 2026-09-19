@@ -36,7 +36,8 @@ impl App {
         self.ac_mut().sessions.selected_home_version = None;
         if self.ac().sessions.resume_selector.is_none() {
             self.ac_mut().sessions.resume_selector = Some(
-                crate::sessions::resume_picker::ResumePicker::new(Vec::new(), scope),
+                crate::sessions::resume_picker::ResumePicker::new(Vec::new(), scope)
+                    .with_clock(self.clock.clone()),
             );
         }
         if !self.send_command(Command::ListSessions {

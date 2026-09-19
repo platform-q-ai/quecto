@@ -47,7 +47,8 @@ impl super::App {
             picker.sync_items(items);
         } else {
             self.ac_mut().sessions.resume_selector = Some(
-                crate::sessions::resume_picker::ResumePicker::new(items, scope),
+                crate::sessions::resume_picker::ResumePicker::new(items, scope)
+                    .with_clock(self.clock.clone()),
             );
         }
     }

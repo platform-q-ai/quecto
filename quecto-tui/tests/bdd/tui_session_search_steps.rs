@@ -130,15 +130,19 @@ fn when_tab(world: &mut TuiWorld) {
     });
 }
 
-#[when("the search in flight is not answered in time")]
-fn when_overdue(world: &mut TuiWorld) {
-    // The search given up is no longer "in flight" for the later steps.
-    let lost = unanswered(world);
-    let lost = lost.iter().map(|s| s["id"].as_str().unwrap().to_string());
-    world.tui_search_answered.extend(lost);
+/// Time is an input (R3-T1): the harness's clock moves by exactly this much
+/// and the idle service wakes — however long the steps themselves took. A
+/// search the TUI gave up and asked again is no longer "in flight" later.
+#[when(expr = "{int} seconds pass without an answer")]
+fn when_seconds_pass(world: &mut TuiWorld, seconds: u64) {
+    let before = unanswered(world);
     drive(world, |h| {
-        h.search_answer_overdue();
+        h.pass_time(std::time::Duration::from_secs(seconds));
     });
+    if unanswered(world).len() > before.len() {
+        let lost = before.iter().map(|s| s["id"].as_str().unwrap().to_string());
+        world.tui_search_answered.extend(lost);
+    }
 }
 
 #[given(expr = "the resume picker is open on All Folders with {int} listed sessions")]
