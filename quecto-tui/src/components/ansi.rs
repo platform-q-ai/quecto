@@ -253,15 +253,39 @@ pub fn sanitize_control_truncated(s: &str, max_chars: usize) -> (String, bool) {
 }
 
 /// [`sanitize_control`] for untrusted *metadata* shown as a label (a path, a
-/// name, a reason — never prose): it also drops the zero-width characters
-/// (U+200B–U+200D, U+2060, U+FEFF) that hide or split text invisibly, and
-/// bounds the result to `max_chars`. Chat text keeps them (emoji joiners).
+/// name, a reason — never prose): it also drops every invisible character
+/// that hides or splits text ([`is_invisible_in_label`]), lets at most two
+/// combining marks follow a base character (a flood of them overdraws the
+/// rows around the label) and none open the label, and bounds the result to
+/// `max_chars`. Chat text keeps them all (emoji joiners and selectors).
 pub fn sanitize_untrusted_label(s: &str, max_chars: usize) -> String {
+    const MARKS_PER_BASE: usize = 2;
+    // No base yet: a leading mark has nothing to sit on.
+    let mut marks = MARKS_PER_BASE;
     sanitize_control(s)
         .chars()
-        .filter(|ch| !matches!(ch, '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}'))
+        .filter(|ch| !is_invisible_in_label(*ch))
+        .filter(|ch| {
+            let mark = unicode_width::UnicodeWidthChar::width(*ch) == Some(0);
+            marks = if mark { marks + 1 } else { 0 };
+            marks <= MARKS_PER_BASE
+        })
         .take(max_chars)
         .collect()
+}
+
+/// Invisible in a label: the soft hyphen, the grapheme joiner, the Mongolian
+/// selectors, zero-width characters, line/paragraph separators, the word
+/// joiner and invisible operators, variation selectors, the byte-order mark,
+/// interlinear annotations and tag characters. (Bidi controls are dropped by
+/// [`keep_char`] for every text.)
+fn is_invisible_in_label(ch: char) -> bool {
+    matches!(ch,
+        '\u{AD}' | '\u{34F}' | '\u{180B}'..='\u{180F}'
+        | '\u{200B}'..='\u{200D}' | '\u{2028}' | '\u{2029}'
+        | '\u{2060}'..='\u{2065}' | '\u{206A}'..='\u{206F}'
+        | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}'
+        | '\u{E0000}'..='\u{E007F}' | '\u{E0100}'..='\u{E01EF}')
 }
 
 /// Whether `ch` survives control/escape sanitization.
