@@ -30,13 +30,11 @@ fn new_command_resets_the_workspace_not_just_the_transcript() {
     a.subagents.panel_nav_key = Some("stale-agent".into());
     a.subagents.panel_nav.set_selected(3);
     // Seed what `/new` must clear, so the assertions below are not vacuous.
-    a.ac_mut().name = Some("old name".into());
     a.ac_mut().session_key = Some("cli:old".into());
 
     a.handle_submit("/new");
 
     assert_eq!(a.ac().master_session.chat.entry_count(), 0);
-    assert_eq!(a.ac().name, None);
     assert_eq!(a.ac().session_key, None);
     assert_eq!(a.subagents.panel_nav_key, None);
     assert_eq!(a.subagents.panel_nav.selected(), 0);

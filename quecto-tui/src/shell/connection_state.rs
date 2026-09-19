@@ -18,10 +18,6 @@ pub(crate) struct ConnectionState {
     /// (#1462). The feed task owns the [`Client`]; this is the command/state
     /// handle.
     pub(crate) transport: crate::shell::connection::Connection,
-    /// Optional human label for this tab. N=1 leaves it unset so rendered
-    /// frames stay byte-identical; N>1 tab creation can set it and the render
-    /// path will paint it wherever the active tab's master is named (#1464).
-    pub(crate) name: Option<String>,
     /// The tab's master agent session, modeled as just another
     /// [`SessionView`] (#828) so render/input share ONE active-session path
     /// with sub-agents (`active_agent_id == None` selects this). Only
@@ -157,7 +153,6 @@ impl ConnectionState {
         let started_at = tokio::time::Instant::now();
         Self {
             transport,
-            name: None,
             master_session,
             agent_state: AgentRunState::new(),
             spinner: None,
@@ -207,18 +202,10 @@ impl ConnectionState {
         format!("{}{suffix}", self.id_namespace())
     }
 
-    /// The label to render for this tab's main-pane title.
+    /// The label of the master agent in the main-pane title and the pinned
+    /// coordinator panel row.
     pub(crate) fn display_name(&self) -> &str {
-        self.name
-            .as_deref()
-            .filter(|name| !name.is_empty())
-            .unwrap_or("Coordinator")
-    }
-
-    /// The label to render for this tab's pinned coordinator panel row. N=1 uses
-    /// the Coordinator fallback; named tabs paint the tab name.
-    pub(crate) fn master_panel_label(&self) -> &str {
-        self.display_name()
+        "Coordinator"
     }
 }
 

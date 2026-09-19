@@ -540,6 +540,9 @@ mod app_clipboard_tests;
 #[path = "app_conversation_characterization_tests/mod.rs"]
 mod app_conversation_characterization_tests;
 #[cfg(test)]
+#[path = "../agents/app_coordinator_label_tests.rs"]
+mod app_coordinator_label_tests;
+#[cfg(test)]
 #[path = "app_cov_tests.rs"]
 mod app_cov_tests;
 #[cfg(test)]
@@ -659,9 +662,6 @@ mod app_subagent_workflow_sticky_tests;
 #[cfg(test)]
 #[path = "../agents/app_subagents_tests.rs"]
 mod app_subagents_tests;
-#[cfg(test)]
-#[path = "../agents/app_tab_render_tests.rs"]
-mod app_tab_render_tests;
 #[cfg(test)]
 #[path = "app_text_input_1277_tests.rs"]
 mod app_text_input_1277_tests;

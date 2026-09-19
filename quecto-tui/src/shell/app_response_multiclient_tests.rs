@@ -394,12 +394,10 @@ async fn rewind_request_ids_use_fresh_production_tokens_per_request() {
 
 // --- #1463: minted correlation ids carry a connection namespace -------------
 //
-// Phase 2 of the multi-session TUI (epic #1467): every correlation id this
-// client mints is scoped to its connection, so a broadcast response can never
-// match a pending latch on another tab. The master tab is `TabId(0)`; its
-// namespace prefix is `tab0:`.
+// Every correlation id this client mints carries the connection namespace
+// prefix `tab0:` (#1463; a constant since #2044).
 
-/// Namespace prefix every master-tab minted correlation id must carry (#1463).
+/// Namespace prefix every minted correlation id must carry (#1463).
 const MASTER_NAMESPACE: &str = "tab0:";
 
 #[track_caller]

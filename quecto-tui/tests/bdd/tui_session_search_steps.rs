@@ -510,7 +510,7 @@ fn when_refuse(world: &mut TuiWorld, reason: String) {
 }
 
 #[when("the picker is closed by a session switch")]
-fn when_tab_switch_closes(world: &mut TuiWorld) {
+fn when_session_switch_closes(world: &mut TuiWorld) {
     drive(world, |h| {
         h.close_overlays_for_session_switch();
     });

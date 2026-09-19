@@ -954,9 +954,10 @@ fn collect_tui_production_rs_paths(dir: &Path, files: &mut BTreeSet<String>) {
     }
 }
 
-/// #2044 PR 1: the multi-tab features no user could reach are gone from the
+/// #2044: the multi-tab features no user could reach are gone from the
 /// TUI — tab-switch chords, the workspace manifest / tab-agent registry and
-/// its restore path, and placeholder-tab opening. Every `.rs` file under
+/// its restore path, placeholder-tab opening (PR 1), and the `App.tabs` /
+/// `TabId` routing behind the one connection (PR 2a). Every `.rs` file under
 /// `quecto-tui/src` (test modules included) is scanned so neither the code
 /// nor a test of it comes back under the same name.
 #[test]
@@ -974,6 +975,24 @@ fn tui_removed_multi_tab_symbols_do_not_come_back() {
         "tab_attach_",
         "attach_generation",
         "queue_or_send_session_resume",
+        // #2044 PR 2a: one owned connection — no tab identity, no routing.
+        "TabId",
+        "with_routing_tab",
+        "routing_tab_override",
+        "effective_tab",
+        "active_tab",
+        "ordered_tab_ids",
+        "conn_for(",
+        "tab_event_",
+        "tab_lifecycle",
+        "close_tab_switch_overlays",
+        "take_all_child_exit_watches",
+        "set_tab_for_tests",
+        "test_set_master_tab",
+        "test_insert_disconnected_tab",
+        "test_open_disconnected_tab",
+        "tui_harness_tabs",
+        "app_tab_collection",
     ];
     fn scan(dir: &Path, hits: &mut Vec<String>) {
         for entry in fs::read_dir(dir).expect("read dir") {
@@ -1005,6 +1024,10 @@ fn tui_removed_multi_tab_symbols_do_not_come_back() {
         "tab_spawn_policy.rs",
         "workspace_manifest.rs",
         "atomic_file.rs",
+        "tab_lifecycle.rs",
+        "tab_lifecycle_tests.rs",
+        "app_tab_collection_tests.rs",
+        "tui_harness_tabs.rs",
     ] {
         assert!(
             !Path::new(TUI_SHELL).join(file).exists(),
@@ -1718,10 +1741,10 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// connecting-tab stub — transport-seam usage (139 → 140).
 /// multi-tab live attach/reattach path (#1465 review) — Client connect seams (140 → 146).
 /// #1466 background-tab paint/activity harness drivers in
-/// `shell/tui_harness_tabs.rs` mention `Event` per routed variant — harness
+/// `shell/tui_harness_drivers.rs` (then `tui_harness_tabs.rs`) mention `Event` per routed variant — harness
 /// seam usage, not feature/view growth (146 → 151).
 /// #1466 fix pass (PR #1485): the dead-sub-agent BDD driver
-/// `track_subagent` in `shell/tui_harness_tabs.rs` seeds one roster entry
+/// `track_subagent` in `shell/tui_harness_drivers.rs` seeds one roster entry
 /// via `SubagentInfoEvent` — harness seam usage, not feature/view growth
 /// (151 → 152).
 /// #1231 adds two protocol `Event::Thinking` routing arms in the same TUI
@@ -1737,7 +1760,10 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// #2044 PR 1 removes the unreachable multi-tab features (tab attach/reattach
 /// client seams, placeholder transport, background-tab harness drivers):
 /// 159 → 146.
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 146;
+/// #2044 PR 2a folds the tab lifecycle rump's exit persist into
+/// `shell/app_ordinary_exit.rs` and drops the tab tag from the sourced-event
+/// seam: 146 → 143.
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 143;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///

@@ -296,7 +296,7 @@ async fn route_sourced_closed_sentinel_paints_immediately() {
 // events. This drives the REAL event loop and lets IT deliver the item.
 
 #[tokio::test]
-async fn run_select_loop_drains_tab_fan_in_even_when_disconnected() {
+async fn run_select_loop_drains_master_events_even_when_disconnected() {
     let mut h = TuiHarness::new().await;
     // Pre-flip the flag the deleted `client.recv()` arm used to be gated on,
     // then drive the item through the REAL master wire so it travels client
@@ -327,7 +327,7 @@ async fn run_select_loop_drains_tab_fan_in_even_when_disconnected() {
 /// drained by run() itself: an event written on the REAL master socket
 /// travels client reader → feed task → tab channel → run()'s select arm.
 #[tokio::test]
-async fn run_select_loop_drains_tab_fan_in_from_the_wire() {
+async fn run_select_loop_drains_master_events_from_the_wire() {
     let mut h = TuiHarness::new().await;
     h.send_agent_event_line("{\"type\":\"token\",\"token\":\"tab-arm-run-token\"}")
         .await;

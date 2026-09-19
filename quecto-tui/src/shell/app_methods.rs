@@ -629,7 +629,6 @@ impl App {
     /// Start a fresh single `/new` session, preserving the old session for `/resume`.
     pub(super) fn reset_workspace(&mut self) {
         let master = self.ac_mut();
-        master.name = None;
         master.session_key = None;
         master.roster = crate::agents::view::ConnectionRoster::new();
         self.editor.set_text("");
