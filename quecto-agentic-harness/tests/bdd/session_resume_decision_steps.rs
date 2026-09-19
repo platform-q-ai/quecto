@@ -199,12 +199,24 @@ fn real_answer_rendered_at(world: &QuectoWorld, columns: usize, rows: usize) -> 
 fn dialog_titled(world: &mut QuectoWorld, title: String) {
     let frame = drive(world, TuiHarness::full_frame);
     assert!(frame.contains(&title), "{frame}");
-    for row in ["Open original folder", "Fork into current folder", "Cancel"] {
+    let labels = [
+        "Open original folder",
+        "Copy into this folder as a new session",
+        "Cancel",
+    ];
+    for row in labels {
         assert!(frame.contains(row), "missing {row}: {frame}");
     }
     assert!(frame.contains("unavailable"), "{frame}");
     // On an ordinary and on a small terminal the same real answer is whole:
-    // every unavailable row is marked, and the footer and border are inside.
+    // every unavailable row is marked, the footer and border are inside, and
+    // the runtime's OWN reason for the offer under the cursor is on screen in
+    // full — word for word, nothing elided (review R2-T1).
+    let reason = answer(world)["data"]["actions"][0]["reason"].clone();
+    let reason = reason
+        .as_str()
+        .expect("the first offer's reason")
+        .to_string();
     for (columns, rows) in [(80, 24), (40, 20)] {
         let frame = real_answer_rendered_at(world, columns, rows);
         let marked = frame
@@ -219,13 +231,22 @@ fn dialog_titled(world: &mut QuectoWorld, title: String) {
         let bottom = frame.lines().position(|l| l.contains('└'));
         let footer = frame.lines().position(|l| l.contains("Esc cancel"));
         assert!(footer < bottom, "{columns}x{rows}: {frame}");
-        if columns == 80 {
-            assert!(frame.contains("belongs to another"), "{frame}");
-            assert!(
-                frame.contains("Unavailable:"),
-                "the reason is shown: {frame}"
-            );
-        }
+        let inside = |line: &str| {
+            let end = line.rfind('│')?;
+            let start = line[..end].rfind('│')? + '│'.len_utf8();
+            Some(line[start..end].trim().to_string())
+        };
+        let said: Vec<String> = frame.lines().filter_map(inside).collect();
+        let said = said.join(" ");
+        let said = said.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            said.contains(&reason),
+            "{columns}x{rows}: {reason:?} in full: {frame}"
+        );
+        assert!(
+            said.contains("This session belongs to another folder"),
+            "{columns}x{rows}: {frame}"
+        );
     }
 }
 
@@ -385,7 +406,12 @@ fn restore_foreign_access(world: &QuectoWorld) {
 fn keeps_guidance(world: &mut QuectoWorld) {
     let response = answer(world);
     let error = response["error"].as_str().expect("message");
-    for needle in ["explicit first association", "-s <name>", "All Folders"] {
+    let needles = [
+        "explicit first association",
+        "Not available yet.",
+        "stays listed under All Folders",
+    ];
+    for needle in needles {
         assert!(error.contains(needle), "missing {needle:?}: {error}");
     }
 }
@@ -430,12 +456,16 @@ fn explains_unavailable(world: &mut QuectoWorld) {
     assert!(
         messages
             .iter()
-            .any(|m| m.contains("Open original folder is unavailable")
-                && m.contains("start quecto in that folder")
-                && !m.contains('#')),
+            .any(|m| m == "Not available yet — see the reason below"),
         "{messages:?}"
     );
+    // The reason the toast points at is the runtime's own, under the cursor.
     let frame = drive(world, TuiHarness::full_frame);
+    assert!(
+        frame.contains("To continue this session, start quecto in that folder.")
+            && !frame.contains('#'),
+        "{frame}"
+    );
     assert!(
         frame.contains("This session belongs to another folder"),
         "{frame}"
@@ -563,5 +593,6 @@ fn no_control_characters(world: &mut QuectoWorld) {
         !frame.contains("[2J") && !frame.contains('\u{7}'),
         "{frame:?}"
     );
-    assert!(frame.contains("folder record is unreadable"), "{frame}");
+    let title = "quecto can't read where this session was saved";
+    assert!(frame.contains(title), "{frame}");
 }

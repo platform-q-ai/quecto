@@ -9,6 +9,13 @@ use quecto_tui::shell::app::tui_harness::TuiHarness;
 use quecto_tui::shell::keys::Key;
 
 const DECIDED_VERSION: &str = "h1-0123456789abcdef";
+/// What only the decision dialog's footer says.
+const FOOTER_TAIL: &str = "your current session is untouched";
+/// The harness's own reasons (`dto/resume_decision.rs::unavailable_reason`).
+const OPEN_REASON: &str =
+    "Not available yet. To continue this session, start quecto in that folder.";
+const ASSOCIATE_REASON: &str = "Not available yet. This session predates folder tracking; \
+    it stays listed under All Folders.";
 
 fn drive<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     let handle = world
@@ -170,7 +177,7 @@ fn when_choose_row(world: &mut TuiWorld, row: usize) {
 fn then_titled(world: &mut TuiWorld, title: String) {
     let frame = drive(world, TuiHarness::full_frame);
     assert!(frame.contains(&title), "{frame}");
-    assert!(frame.contains("nothing is restored or linked"), "{frame}");
+    assert!(frame.contains(FOOTER_TAIL), "{frame}");
 }
 
 #[then(expr = "the decision dialog lists {string} in order")]
@@ -191,14 +198,9 @@ fn then_marked_unavailable(world: &mut TuiWorld) {
     let rows: Vec<&str> = frame
         .lines()
         .filter(|line| {
-            [
-                "Open original",
-                "Fork into",
-                "Locate folder",
-                "Associate with",
-            ]
-            .iter()
-            .any(|label| line.contains(label))
+            ["Open original", "Copy into", "Locate folder", "Attach to"]
+                .iter()
+                .any(|label| line.contains(label))
         })
         .collect();
     assert!(!rows.is_empty(), "{frame}");
@@ -215,7 +217,7 @@ fn then_marked_unavailable(world: &mut TuiWorld) {
 #[then("the decision dialog is closed")]
 fn then_closed(world: &mut TuiWorld) {
     let frame = drive(world, TuiHarness::full_frame);
-    assert!(!frame.contains("nothing is restored or linked"), "{frame}");
+    assert!(!frame.contains(FOOTER_TAIL), "{frame}");
 }
 
 #[then("the decision dialog sent no command")]
@@ -284,12 +286,17 @@ fn when_long_folder_decision(world: &mut TuiWorld, kind: String) {
     let mut data = decision(&kind, actions, "cancel");
     data["session"] = serde_json::json!("chat-1750000000-ab");
     data["executionPath"] = serde_json::json!(LONG_FOLDER);
-    data["actions"][0]["reason"] = serde_json::json!(
-        "explicit association of a legacy session with a folder is not available yet; \
-         start a new session — the old transcript stays in place and visible under All Folders"
-    );
+    data["actions"][0]["reason"] = serde_json::json!(shipped_reason(&kind));
     let id = pending_resume_id(world);
     answer(world, &id, data);
+}
+
+/// The reason the harness really ships for the first offer of `kind`.
+fn shipped_reason(kind: &str) -> &'static str {
+    match kind {
+        "legacy_unscoped" => ASSOCIATE_REASON,
+        _ => OPEN_REASON,
+    }
 }
 
 /// The dialog's rows, top to bottom: the text between the box's own two
@@ -327,12 +334,16 @@ fn then_box_whole(world: &mut TuiWorld, columns: usize, rows: usize) {
     // The footer is inside the box, whole: never a clipped or elided line.
     let body = dialog_rows(world);
     let footer = body.last().expect("rows");
-    let ends_the_box = footer.contains("Esc cancel") || footer.contains("restored or linked");
+    let ends_the_box = footer.contains("Esc cancel") || footer.contains("session is untouched");
     assert!(ends_the_box && !footer.ends_with('…'), "{frame}");
     if columns >= 80 {
         let said = body.join(" ");
-        assert!(said.contains("nothing is restored or linked"), "{frame}");
+        assert!(said.contains(FOOTER_TAIL), "{frame}");
     }
+    // Review R2-T3: the box spans the TERMINAL, not the body pane beside the
+    // agents pane — a 40-column terminal gives it 36 columns, not 10.
+    let wanted = columns.saturating_sub(4).min(88);
+    assert_eq!(dialog_content_width(world) + 4, wanted, "{frame}");
 }
 
 /// The columns a dialog row has, from its top border.
@@ -358,16 +369,20 @@ fn then_folder_ends(world: &mut TuiWorld) {
     );
 }
 
+/// The offers: the block after the first blank row, up to the next blank row
+/// or to the reason (a small terminal sheds the blank between the two).
+fn offer_rows(rows: &[String]) -> Vec<&String> {
+    rows.iter()
+        .skip_while(|row| !row.is_empty())
+        .skip(1)
+        .take_while(|row| !row.is_empty() && !row.starts_with("Not available"))
+        .collect()
+}
+
 #[then("every unavailable decision row carries its mark and Cancel carries none")]
 fn then_every_row_marked(world: &mut TuiWorld) {
     let rows = dialog_rows(world);
-    // The offers are the block after the first blank row.
-    let offers: Vec<&String> = rows
-        .iter()
-        .skip_while(|row| !row.is_empty())
-        .skip(1)
-        .take_while(|row| !row.is_empty())
-        .collect();
+    let offers = offer_rows(&rows);
     let is_cancel = |row: &&String| row.trim_start_matches('→').trim() == "Cancel";
     let cancel: Vec<&String> = offers.iter().copied().filter(is_cancel).collect();
     let unavailable: Vec<&String> = offers
@@ -383,31 +398,118 @@ fn then_every_row_marked(world: &mut TuiWorld) {
     }
 }
 
-#[then("the decision dialog explains the unavailable action under the cursor in whole words")]
-fn then_reason_in_whole_words(world: &mut TuiWorld) {
-    let width = dialog_content_width(world);
+/// Review R2-T1: every action is unavailable in this slice, so the reason is
+/// the dialog's content — it is on screen in FULL, whole words, no ellipsis.
+#[then("the decision dialog shows the whole reason of the unavailable action under the cursor")]
+fn then_whole_reason(world: &mut TuiWorld) {
     let rows = dialog_rows(world);
-    let from = rows
-        .iter()
-        .position(|row| row.starts_with("Unavailable:") || row.starts_with("explicit"));
+    let from = rows.iter().position(|row| row.starts_with("Not available"));
     let from = from.unwrap_or_else(|| panic!("the reason is shown: {rows:#?}"));
-    let reason: Vec<&String> = rows[from..]
+    let reason: Vec<&str> = rows[from..]
         .iter()
-        .take_while(|row| !row.is_empty())
+        .take_while(|row| !row.is_empty() && !row.contains("Esc cancel"))
+        .map(String::as_str)
         .collect();
-    assert!((1..=4).contains(&reason.len()), "bounded: {reason:#?}");
-    let said = "Unavailable: explicit association of a legacy session with a folder is not \
-        available yet; start a new session — the old transcript stays in place and visible \
-        under All Folders";
-    let words: Vec<&str> = said.split_whitespace().collect();
-    for row in reason {
-        for word in row.trim_end_matches('…').split_whitespace() {
-            // Only a word wider than the dialog itself may be broken.
-            let too_wide = |w: &&str| w.chars().count() > width && w.contains(word);
-            let whole = words.contains(&word) || words.iter().any(too_wide);
-            assert!(whole, "{word:?} is a broken word in {row:?}");
-        }
+    let said = reason.join(" ");
+    assert!(
+        [OPEN_REASON, ASSOCIATE_REASON].contains(&said.as_str()),
+        "the whole reason, word for word: {rows:#?}"
+    );
+    assert!(!said.contains('…'), "nothing is cut: {rows:#?}");
+}
+
+/// Review R2-T3: legible, not merely unclipped — the long title in whole
+/// words, and every offer a complete label (long or short form, with a whole
+/// mark) or a cut that says so.
+#[then("the decision dialog title and every action label read whole")]
+fn then_title_and_labels_whole(world: &mut TuiWorld) {
+    let rows = dialog_rows(world);
+    let said = rows.join(" ");
+    let titled = [
+        "This session belongs to another folder",
+        "This session was saved before quecto tracked folders",
+    ];
+    assert!(titled.iter().any(|title| said.contains(title)), "{rows:#?}");
+    let names = [
+        "Open original folder",
+        "Open original",
+        "Copy into this folder as a new session",
+        "Copy here",
+        "Attach to a folder",
+        "Attach",
+    ];
+    for row in offer_rows(&rows) {
+        let label = row.trim_start_matches('→').trim();
+        let whole = label == "Cancel"
+            || names.iter().any(|name| {
+                [
+                    format!("{name} — unavailable"),
+                    format!("{name} (n/a)"),
+                    format!("✗ {name}"),
+                ]
+                .contains(&label.to_string())
+            });
+        assert!(whole || label.ends_with('…'), "{label:?} in {rows:#?}");
+        assert!(
+            !label.ends_with('…'),
+            "no label is cut at this size: {rows:#?}"
+        );
     }
+}
+
+#[then(expr = "the decision dialog shows {string}")]
+fn then_dialog_shows(world: &mut TuiWorld, text: String) {
+    let rows = dialog_rows(world).join("\n");
+    assert!(rows.contains(&text), "{text:?} not in {rows}");
+}
+
+#[when(expr = "the harness answers the resume with a {string} decision whose detail is {string}")]
+fn when_decision_with_detail(world: &mut TuiWorld, kind: String, detail: String) {
+    let mut data = decision(&kind, "locate,fork_current,cancel", "cancel");
+    data["detail"] = serde_json::json!(detail);
+    let id = pending_resume_id(world);
+    answer(world, &id, data);
+}
+
+#[when(expr = "the harness lists the session {string} titled {string} saved in another folder")]
+fn when_listed_elsewhere(world: &mut TuiWorld, key: String, title: String) {
+    let request = world
+        .tui_last_commands
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|command| command["type"] == "list_sessions")
+        .expect("the /resume listing request");
+    let line = serde_json::json!({
+        "type": "response", "id": request["id"], "command": "list_sessions", "success": true,
+        "data": {"sessions": [{
+            "title": title, "key": key, "messageCount": 3, "resumeEligible": false,
+            "homeVersion": DECIDED_VERSION, "executionPath": "/work/elsewhere",
+        }]},
+    });
+    drive(world, |h| {
+        h.event_line(&line.to_string());
+    });
+}
+
+#[then(expr = "the resume list explains the row with {string}")]
+fn then_row_explained(world: &mut TuiWorld, hint: String) {
+    let frame = drive(world, TuiHarness::full_frame);
+    assert!(frame.contains(&hint), "{frame}");
+    assert!(!frame.contains("Needs a decision"), "{frame}");
+}
+
+#[when("I pick the listed session")]
+fn when_pick_listed(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.press(Key::Enter);
+    });
+    world.tui_last_commands = drain(world);
+}
+
+#[then("the resume request is still in flight")]
+fn then_still_in_flight(world: &mut TuiWorld) {
+    let pending = drive(world, |h| h.pending_resume_request_id());
+    assert_eq!(pending, Some(pending_resume_id(world)));
 }
 
 #[when("I press Ctrl-C in the decision dialog")]

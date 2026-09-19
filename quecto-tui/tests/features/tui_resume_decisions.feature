@@ -19,12 +19,12 @@ Feature: /resume renders the harness's typed resume decision (#2011)
     And every action except Cancel is marked unavailable
 
     Examples:
-      | kind            | actions                           | title                        | labels                                                 |
-      | cross_folder    | open_original,fork_current,cancel | belongs to another folder    | Open original folder,Fork into current folder,Cancel   |
-      | home_missing    | locate,fork_current,cancel        | folder is missing or moved   | Locate folder,Fork into current folder,Cancel          |
-      | home_changed    | locate,fork_current,cancel        | folder changed its workspace | Locate folder,Fork into current folder,Cancel          |
-      | home_unknown    | locate,fork_current,cancel        | folder record is unreadable  | Locate folder,Fork into current folder,Cancel          |
-      | legacy_unscoped | associate,cancel                  | never linked to a folder     | Associate with a folder,Cancel                         |
+      | kind            | actions                           | title                                                                    | labels                                                             |
+      | cross_folder    | open_original,fork_current,cancel | This session belongs to another folder                                  | Open original folder,Copy into this folder as a new session,Cancel |
+      | home_missing    | locate,fork_current,cancel        | This session's folder can't be opened (missing, moved or no permission) | Locate folder,Copy into this folder as a new session,Cancel        |
+      | home_changed    | locate,fork_current,cancel        | This folder is no longer the same project as when the session was saved | Locate folder,Copy into this folder as a new session,Cancel        |
+      | home_unknown    | locate,fork_current,cancel        | quecto can't read where this session was saved                          | Locate folder,Copy into this folder as a new session,Cancel        |
+      | legacy_unscoped | associate,cancel                  | This session was saved before quecto tracked folders                    | Attach to a folder,Cancel                                          |
 
   Scenario Outline: The dialog is legible on an ordinary and on a small terminal
     Given a fresh TUI app harness on a <columns> by <rows> terminal
@@ -33,7 +33,8 @@ Feature: /resume renders the harness's typed resume decision (#2011)
     Then the decision dialog box is whole on the <columns> by <rows> terminal
     And the decision dialog shows both ends of the recorded folder
     And every unavailable decision row carries its mark and Cancel carries none
-    And the decision dialog explains the unavailable action under the cursor in whole words
+    And the decision dialog title and every action label read whole
+    And the decision dialog shows the whole reason of the unavailable action under the cursor
 
     Examples:
       | columns | rows | kind            |
@@ -41,6 +42,21 @@ Feature: /resume renders the harness's typed resume decision (#2011)
       | 80      | 24   | legacy_unscoped |
       | 40      | 20   | cross_folder    |
       | 40      | 20   | legacy_unscoped |
+
+  Scenario: A folder that cannot be read says why under the folder
+    When I submit the master prompt "/resume cli:foreign"
+    And the harness answers the resume with a "home_missing" decision whose detail is "Permission denied (os error 13)"
+    Then the decision dialog is titled "can't be opened (missing, moved or no permission)"
+    And the decision dialog shows "Permission denied (os error 13)"
+
+  Scenario: The dialog names the session by the title picked in the list
+    When I submit the master prompt "/resume"
+    And the harness lists the session "cli:foreign" titled "hello from A" saved in another folder
+    Then the resume list explains the row with "Saved in another folder"
+    When I pick the listed session
+    And the harness answers the resume with a "cross_folder" decision offering "open_original,fork_current,cancel" where "cancel" is available
+    Then the decision dialog shows "hello from A"
+    And the decision dialog shows "cli:foreign"
 
   Scenario: Ctrl-C in the dialog closes it and sends nothing
     When I submit the master prompt "/resume cli:foreign"
@@ -55,7 +71,7 @@ Feature: /resume renders the harness's typed resume decision (#2011)
     And the harness answers the resume as a success with outcome "<outcome>" for "cli:foreign"
     Then the TUI still shows the session "cli:local"
     And the TUI never reports a resumed session
-    And the TUI explains "does not understand"
+    And the TUI explains "Nothing changed: update quecto-tui"
     And the answer made the TUI send nothing
 
     Examples:
@@ -72,9 +88,19 @@ Feature: /resume renders the harness's typed resume decision (#2011)
 
   Scenario: An action the harness cannot parse settles the resume instead of waiting for ever
     When I submit the master prompt "/resume cli:foreign"
+    And the harness answers the resume with a "cross_folder" decision offering "open_original,fork_current,cancel" where "fork_current,cancel" is available
+    And I choose decision row 2
     And the harness rejects the resume line with an uncorrelated parse error
     Then the TUI explains "Resume failed"
     And no resume request is left in flight
+
+  Scenario: Another client's unparsed action does not settle this tab's plain restore
+    When I submit the master prompt "/resume cli:foreign"
+    And the harness rejects the resume line with an uncorrelated parse error
+    Then the TUI reports nothing
+    And the resume request is still in flight
+    When the harness answers the resume with a "cross_folder" decision offering "open_original,fork_current,cancel" where "cancel" is available
+    Then the decision dialog is titled "This session belongs to another folder"
 
   Scenario: Escape closes the dialog and sends nothing
     When I submit the master prompt "/resume cli:foreign"
@@ -90,11 +116,12 @@ Feature: /resume renders the harness's typed resume decision (#2011)
     Then the decision dialog is closed
     And the decision dialog sent no command
 
-  Scenario: An unavailable action is explained, kept on screen and never sent
+  Scenario: An unavailable action is pointed at its reason, kept on screen and never sent
     When I submit the master prompt "/resume cli:foreign"
     And the harness answers the resume with a "cross_folder" decision offering "open_original,fork_current,cancel" where "cancel" is available
     And I choose decision row 1
-    Then the TUI explains "Open original folder is unavailable"
+    Then the TUI explains "Not available yet — see the reason below"
+    And the decision dialog shows "open_original is not delivered yet"
     And the decision dialog is titled "belongs to another folder"
     And the decision dialog sent no command
 
@@ -105,11 +132,16 @@ Feature: /resume renders the harness's typed resume decision (#2011)
     Then the decision dialog is closed
     And one resume request is sent for "cli:foreign" with action "fork_current" and the decided version
 
-  Scenario: A typed refusal is a toast, never a dialog
+  Scenario Outline: A typed refusal is a toast, never a dialog
     When I submit the master prompt "/resume cli:foreign"
-    And the harness refuses the resume with code "stale_home_version"
+    And the harness refuses the resume with code "<code>"
     Then the decision dialog is closed
-    And the TUI explains "Resume failed"
+    And the TUI explains "<toast>"
+
+    Examples:
+      | code               | toast                                            |
+      | claim_refused      | Resume failed                                    |
+      | stale_home_version | List out of date — reopen /resume and pick again |
 
   Scenario: Another tab's decision opens nothing here
     When another client's resume is answered with a decision
@@ -130,5 +162,5 @@ Feature: /resume renders the harness's typed resume decision (#2011)
   Scenario: Hostile decision metadata never reaches the terminal raw
     When I submit the master prompt "/resume cli:foreign"
     And the harness answers the resume with a decision carrying terminal control characters
-    Then the decision dialog is titled "folder record is unreadable"
+    Then the decision dialog is titled "quecto can't read where this session was saved"
     And the rendered frame carries no raw control sequence from the decision
