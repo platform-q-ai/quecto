@@ -62,8 +62,12 @@ fn an_enter_is_owed_to_a_search_never_to_a_listing_or_an_empty_box() {
         None,
         "a re-list under text is owed nothing"
     );
-    // Nothing visible in the box is no search text.
+    // Nothing visible in the box is no search text — whatever the state says.
     assert_eq!(settled(owed("  ")), None);
+    let mut picker = owed("  ");
+    picker.set_rows_state(RowsState::Searching);
+    picker.handle_input(&Key::Enter);
+    assert_eq!(settled(picker), None, "an empty box is owed nothing");
     // An emptied box asks for a listing: it says so, and defers nothing.
     let mut picker = owed("z");
     picker.handle_input(&Key::BackTab);
@@ -149,9 +153,11 @@ fn the_unsettled_states_are_told_apart_on_a_narrow_panel() {
     let header = |picker: &mut ResumePicker, width| {
         let shown = frame(picker, width);
         let line = shown.lines().find(|line| line.contains("Sessions ·"));
-        line.unwrap_or_else(|| panic!("{shown}")).trim().to_string()
+        let line = line.unwrap_or_else(|| panic!("{shown}"));
+        let text = &line[line.find("Sessions").unwrap()..];
+        text.trim_end_matches(['│', ' ']).to_string()
     };
-    for width in [30, 34, 60, 90] {
+    for width in [26, 28, 30, 34, 60, 90] {
         let mut seen = std::collections::BTreeSet::new();
         let mut owing = owed("zebra");
         seen.insert(header(&mut owing, width));

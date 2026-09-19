@@ -66,7 +66,7 @@ async fn a_parse_error_about_another_command_is_not_an_old_harness() {
 async fn the_fallback_filters_the_listing_of_the_scope_on_screen() {
     let mut h = harness().await;
     open_picker(&mut h).await;
-    type_text(&mut h, "z");
+    type_text(&mut h, "l");
     assert_eq!(searches(&mut h).await.len(), 1);
     let error = "parse error: unknown variant `search_session_metadata`, expected one of `prompt`";
     h.app_mut()
@@ -76,21 +76,23 @@ async fn the_fallback_filters_the_listing_of_the_scope_on_screen() {
     let commands = h.drain_commands().await;
     assert_eq!(sent(&commands, "list_sessions")[0]["scope"], "global");
     key(&mut h, Key::Tab);
-    type_text(&mut h, "e");
+    type_text(&mut h, "i");
     let frame = h.full_frame();
     assert!(
-        frame.contains("Sessions · Loading…") && !frame.contains("LISTED"),
+        frame.contains("Sessions · Loading…")
+            && !frame.contains("LISTED")
+            && !frame.contains("Filtering the listed sessions here"),
         "the old scope's rows are never settled under the new scope: {frame}"
     );
     assert!(h.app_mut().ac().sessions.pending_list_id.is_some());
     answer_listing(
         &mut h,
-        json!([{"key": "cli:g1", "title": "zebra zeta elsewhere", "executionPath": "/other"},
+        json!([{"key": "cli:g1", "title": "lion elsewhere", "executionPath": "/other"},
                {"key": "cli:g2", "title": "alpha", "executionPath": "/other"}]),
     );
     let frame = h.full_frame();
     assert!(
-        frame.contains("zebra zeta elsewhere") && !frame.contains("alpha"),
+        frame.contains("lion elsewhere") && !frame.contains("alpha"),
         "{frame}"
     );
     assert!(!frame.contains("Loading…"), "{frame}");
