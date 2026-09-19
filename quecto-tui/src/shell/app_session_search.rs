@@ -77,6 +77,19 @@ impl App {
         }
     }
 
+    /// A harness that does not know the command rejects the line with an
+    /// uncorrelated `parse_error`: the search in flight would never be
+    /// answered, so it is given up (the rows stay) and the user is told.
+    /// `parse_error` is broadcast, so it is this tab's only when it names the
+    /// command AND a search is in flight here.
+    pub(in crate::shell) fn handle_search_parse_error(&mut self, error: Option<&str>) {
+        let about_search = error.is_some_and(|e| e.contains("search_session_metadata"));
+        if about_search && self.ac().sessions.search.is_in_flight() {
+            self.ac_mut().sessions.search.abandon();
+            self.notify("Search needs a newer quecto harness", NotifyLevel::Warning);
+        }
+    }
+
     fn show_session_search(
         &mut self,
         answer: crate::protocol::session_search_payloads::SessionSearchAnswer,

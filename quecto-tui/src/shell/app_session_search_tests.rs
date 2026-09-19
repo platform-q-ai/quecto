@@ -194,3 +194,38 @@ async fn a_failed_send_frees_the_flight_and_a_closed_picker_sends_nothing() {
     h.app_mut().request_session_discovery(scope);
     assert_eq!(sent(&h.drain_commands().await, "list_sessions").len(), 1);
 }
+
+#[tokio::test]
+async fn a_harness_without_the_command_frees_the_flight_and_says_so() {
+    let mut h = harness().await;
+    open_picker(&mut h).await;
+    // Not about a search, or no search in flight: not this tab's.
+    h.app_mut()
+        .handle_search_parse_error(Some("unknown variant `search_session_metadata`"));
+    assert!(h.notification_messages().is_empty());
+    type_text(&mut h, "a");
+    let _ = h.drain_commands().await;
+    let error = "unknown variant `search_session_metadata`, expected one of `prompt`";
+    h.app_mut().handle_response(
+        None,
+        "parse_error".into(),
+        false,
+        None,
+        Some("missing field `x`".into()),
+    );
+    assert!(h.app_mut().ac().sessions.search.is_in_flight());
+    h.app_mut()
+        .handle_response(None, "parse_error".into(), false, None, Some(error.into()));
+    assert!(!h.app_mut().ac().sessions.search.is_in_flight());
+    assert!(
+        h.notification_messages()
+            .iter()
+            .any(|n| n.contains("newer quecto harness"))
+    );
+    assert!(h.full_frame().contains("LISTED"), "the rows stay");
+    type_text(&mut h, "b");
+    assert_eq!(
+        sent(&h.drain_commands().await, "search_session_metadata").len(),
+        1
+    );
+}

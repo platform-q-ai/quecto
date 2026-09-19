@@ -348,7 +348,10 @@ impl App {
                 self.notify_response_error("Could not delete subagents", error)
             }
             "agent_error" => self.handle_agent_error(error),
-            "parse_error" => self.handle_resume_parse_error(id.as_deref(), error),
+            "parse_error" => {
+                self.handle_search_parse_error(error.as_deref());
+                self.handle_resume_parse_error(id.as_deref(), error);
+            }
             _ => {}
         }
     }
