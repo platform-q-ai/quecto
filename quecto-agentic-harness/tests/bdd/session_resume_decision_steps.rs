@@ -160,6 +160,28 @@ fn only_cancel_available(world: &mut QuectoWorld) {
     }
 }
 
+/// The runtime's REAL answer, asked for and rendered by a fresh production
+/// TUI on a `columns`×`rows` terminal (the shared one is 180 wide for the
+/// picker's rows; a dialog must not depend on that).
+fn real_answer_rendered_at(world: &QuectoWorld, columns: usize, rows: usize) -> String {
+    let mut answer = answer(world);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let mut h = rt.block_on(TuiHarness::sized(columns, rows));
+    let _guard = rt.enter();
+    h.submit(&format!(
+        "/resume {}",
+        answer["data"]["sessionKey"].as_str().unwrap()
+    ));
+    let asked = rt.block_on(h.drain_commands());
+    let asked = asked
+        .iter()
+        .find(|line| line.contains("\"resume_session\""));
+    let asked: serde_json::Value = serde_json::from_str(asked.expect("asked")).unwrap();
+    answer["id"] = asked["id"].clone();
+    h.event_line(&answer.to_string());
+    h.full_frame()
+}
+
 #[then(expr = "the TUI shows the decision dialog titled {string}")]
 fn dialog_titled(world: &mut QuectoWorld, title: String) {
     let frame = drive(world, TuiHarness::full_frame);
@@ -168,6 +190,30 @@ fn dialog_titled(world: &mut QuectoWorld, title: String) {
         assert!(frame.contains(row), "missing {row}: {frame}");
     }
     assert!(frame.contains("unavailable"), "{frame}");
+    // On an ordinary and on a small terminal the same real answer is whole:
+    // every unavailable row is marked, and the footer and border are inside.
+    for (columns, rows) in [(80, 24), (40, 20)] {
+        let frame = real_answer_rendered_at(world, columns, rows);
+        let marked = frame
+            .lines()
+            .filter(|l| l.contains("(n/a)") || l.contains("— unavailable") || l.contains('✗'))
+            .count();
+        assert_eq!(
+            marked, 2,
+            "{columns}x{rows}: both unavailable rows marked: {frame}"
+        );
+        assert!(frame.contains("Esc cancel"), "{columns}x{rows}: {frame}");
+        let bottom = frame.lines().position(|l| l.contains('└'));
+        let footer = frame.lines().position(|l| l.contains("Esc cancel"));
+        assert!(footer < bottom, "{columns}x{rows}: {frame}");
+        if columns == 80 {
+            assert!(frame.contains("belongs to another"), "{frame}");
+            assert!(
+                frame.contains("Unavailable:"),
+                "the reason is shown: {frame}"
+            );
+        }
+    }
 }
 
 #[then(expr = "the runtime refuses the resume with code {string}")]

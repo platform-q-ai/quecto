@@ -107,6 +107,16 @@ impl TuiHarness {
             .map(|s| s.message().to_string())
     }
 
+    /// #2011: the session this tab stands for.
+    pub fn session_key(&self) -> Option<String> {
+        self.app.ac().session_key.clone()
+    }
+
+    /// #2011: the id of a `resume_session` request still awaiting its answer.
+    pub fn pending_resume_request_id(&self) -> Option<String> {
+        self.app.ac().pending_session_resume_id.clone()
+    }
+
     /// The App-level `current_model` tracker (#1085), used with
     /// [`Self::master_footer_text`] to assert late master responses do not
     /// clobber focused-child state.

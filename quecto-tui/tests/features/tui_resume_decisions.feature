@@ -26,6 +26,56 @@ Feature: /resume renders the harness's typed resume decision (#2011)
       | home_unknown    | locate,fork_current,cancel        | folder record is unreadable  | Locate folder,Fork into current folder,Cancel          |
       | legacy_unscoped | associate,cancel                  | never linked to a folder     | Associate with a folder,Cancel                         |
 
+  Scenario Outline: The dialog is legible on an ordinary and on a small terminal
+    Given a fresh TUI app harness on a <columns> by <rows> terminal
+    When I submit the master prompt "/resume cli:foreign"
+    And the harness answers the resume with a "<kind>" decision for a session saved in a long folder path
+    Then the decision dialog box is whole on the <columns> by <rows> terminal
+    And the decision dialog shows both ends of the recorded folder
+    And every unavailable decision row carries its mark and Cancel carries none
+    And the decision dialog explains the unavailable action under the cursor in whole words
+
+    Examples:
+      | columns | rows | kind            |
+      | 80      | 24   | cross_folder    |
+      | 80      | 24   | legacy_unscoped |
+      | 40      | 20   | cross_folder    |
+      | 40      | 20   | legacy_unscoped |
+
+  Scenario: Ctrl-C in the dialog closes it and sends nothing
+    When I submit the master prompt "/resume cli:foreign"
+    And the harness answers the resume with a "cross_folder" decision offering "open_original,fork_current,cancel" where "fork_current,cancel" is available
+    And I press Ctrl-C in the decision dialog
+    Then the decision dialog is closed
+    And the decision dialog sent no command
+
+  Scenario Outline: A success that is not a restore changes nothing in the TUI
+    Given the TUI shows the session "cli:local"
+    When I submit the master prompt "/resume cli:foreign"
+    And the harness answers the resume as a success with outcome "<outcome>" for "cli:foreign"
+    Then the TUI still shows the session "cli:local"
+    And the TUI never reports a resumed session
+    And the TUI explains "does not understand"
+    And the answer made the TUI send nothing
+
+    Examples:
+      | outcome          |
+      | opened_elsewhere |
+      | forked           |
+      | decision         |
+      | refused          |
+
+  Scenario: Another tab's refusal is not reported here
+    When another client's resume is refused with code "not_found"
+    Then the decision dialog is closed
+    And the TUI reports nothing
+
+  Scenario: An action the harness cannot parse settles the resume instead of waiting for ever
+    When I submit the master prompt "/resume cli:foreign"
+    And the harness rejects the resume line with an uncorrelated parse error
+    Then the TUI explains "Resume failed"
+    And no resume request is left in flight
+
   Scenario: Escape closes the dialog and sends nothing
     When I submit the master prompt "/resume cli:foreign"
     And the harness answers the resume with a "cross_folder" decision offering "open_original,fork_current,cancel" where "cancel" is available
@@ -70,6 +120,12 @@ Feature: /resume renders the harness's typed resume decision (#2011)
     And the harness answers the resume with a "cross_folder" decision offering "restore_anyway,cancel" where "restore_anyway,cancel" is available
     Then the decision dialog is closed
     And the TUI explains "Resume failed"
+
+  Scenario: Invisible reordering characters in a decision never reach the terminal
+    When I submit the master prompt "/resume cli:foreign"
+    And the harness answers the resume with a decision carrying bidi and zero-width characters
+    Then the decision dialog is titled "belongs to another folder"
+    And the rendered frame carries no bidi or zero-width character
 
   Scenario: Hostile decision metadata never reaches the terminal raw
     When I submit the master prompt "/resume cli:foreign"
