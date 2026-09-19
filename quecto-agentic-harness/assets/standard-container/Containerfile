@@ -1,41 +1,59 @@
-# The standard Quecto container image (#2024 S4e).
+# Quecto's repository standard development image.
 #
-# Build input for the `standard` container config `quecto container init`
-# writes; a create never builds or pulls an image, so build it once:
+# `quecto container init` materialises this file and the trusted runtime
+# scripts below `.quecto/containers/standard`. The runtime script, not this
+# image, clones the configured repository and mounts that checkout. Build the
+# image once with the command printed by init; create never pulls or builds it.
 #
-#   podman build -t quecto-box:local -f .quecto/containers/standard/Containerfile .quecto/containers/standard
-#
-# What the image must provide: a glibc userland the identity-mounted host
-# `quecto` binary runs on, `/bin/sh` (the create script sources the
-# provider-key file through it), `git` and `gh` (agents clone, push and use
-# the GitHub API inside), and the everyday tools an agent's `exec` reaches
-# for. Deliberately tool-only: no compiler, no Cargo, no Node — a project
-# that needs a toolchain derives its own image FROM this one and points the
-# entry's `--image` at it.
-#
-# The base is pinned by TAG, not by digest: a rebuild can pick up a newer
-# trixie-slim under the same name. For a reproducible base, pin the digest
-# in your materialised copy (`FROM docker.io/library/debian@sha256:…`);
-# `quecto container status` will then list this file as `differs`, which
-# is expected — the Containerfile is a build input, never run on the
-# host, and a launch does not check it.
-FROM docker.io/library/debian:trixie-slim
+# Keep these versions aligned deliberately with `.github/workflows/ci.yml`.
+# CI follows stable Rust; this image pins the stable release current at the
+# time of the image revision so a rebuild cannot silently change compilers.
+FROM docker.io/library/debian@sha256:abc9cb88a5587630d7f915f47b23b0668fe250fbfc6457aa4d52b534c1bbf73f
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG STANDARD_IMAGE_VERSION=1
-LABEL org.opencontainers.image.title="Quecto standard container" \
-      org.opencontainers.image.version="${STANDARD_IMAGE_VERSION}"
+ARG RUST_TOOLCHAIN=1.97.1
+ARG CARGO_NEXTEST_VERSION=0.9.144
+ARG CARGO_LLVM_COV_VERSION=0.8.4
+ARG CARGO_DENY_VERSION=0.19.0
+ARG CARGO_MACHETE_VERSION=0.9.1
+ARG STANDARD_IMAGE_VERSION=2
+
+LABEL org.opencontainers.image.title="Quecto development container" \
+      org.opencontainers.image.version="${STANDARD_IMAGE_VERSION}" \
+      org.opencontainers.image.description="Pinned Rust and CI tooling for developing platform-q-ai/quecto"
 
 RUN apt-get update \
  && apt-get install --no-install-recommends --yes \
-      bash ca-certificates coreutils findutils grep sed curl jq less git \
-      openssh-client gh ripgrep fd-find python3 python3-venv procps \
+      bash build-essential ca-certificates coreutils curl fd-find findutils \
+      git gh grep jq less libssl-dev openssh-client pkg-config procps \
+      python3 python3-venv ripgrep sed \
  && rm -rf /var/lib/apt/lists/* \
  && ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
-# The child binary and its arguments come from the create script's argv
-# (the child is the container's main process under `--init`); an empty
-# entrypoint keeps an image-owned command from getting in front of it.
+ENV CARGO_HOME=/opt/cargo \
+    RUSTUP_HOME=/opt/rustup \
+    CARGO_BUILD_JOBS=2 \
+    PATH=/opt/cargo/bin:${PATH}
+
+RUN curl --proto '=https' --tlsv1.2 --fail --show-error --silent \
+      https://sh.rustup.rs \
+      | sh -s -- -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
+ && rustup component add --toolchain "${RUST_TOOLCHAIN}" \
+      clippy llvm-tools-preview rustfmt \
+ && cargo install --locked cargo-nextest --version "${CARGO_NEXTEST_VERSION}" \
+ && cargo install --locked cargo-llvm-cov --version "${CARGO_LLVM_COV_VERSION}" \
+ && cargo install --locked cargo-deny --version "${CARGO_DENY_VERSION}" \
+ && cargo install --locked cargo-machete --version "${CARGO_MACHETE_VERSION}" \
+ && rustc --version \
+ && cargo --version \
+ && cargo fmt --version \
+ && cargo clippy --version \
+ && cargo nextest --version \
+ && cargo llvm-cov --version \
+ && cargo deny --version \
+ && cargo machete --version
+
+# The host-side adapter supplies the child command and mounts its checkout.
 ENTRYPOINT []
 CMD []
 WORKDIR /workspace
