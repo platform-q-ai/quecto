@@ -23,6 +23,13 @@ const ELIGIBLE: &str = "Resume";
 const ELSEWHERE: &str = "In another folder";
 const NO_FOLDER: &str = "No folder recorded";
 
+fn bounded_ends(value: &str, limit: usize) -> String {
+    if value.chars().count() <= limit { return value.to_string(); }
+    let tail: String = value.chars().rev().take(limit.saturating_sub(1) / 2).collect::<String>().chars().rev().collect();
+    let head: String = value.chars().take(limit.saturating_sub(1) / 2).collect();
+    format!("{head}…{tail}")
+}
+
 pub struct ResumeRows {
     pub items: Vec<SelectItem>,
     /// The home version each row was listed at (#2011), echoed on selection.
@@ -110,7 +117,7 @@ impl ResumeRows {
                 } else {
                     String::new()
                 };
-                let folder = crate::components::text::bounded_ends(
+                let folder = bounded_ends(
                     &sanitize_untrusted_label(folder, 4096),
                     FOLDER_CHARS,
                 );

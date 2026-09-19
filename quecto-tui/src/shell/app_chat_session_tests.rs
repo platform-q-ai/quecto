@@ -121,10 +121,10 @@ async fn scoped_discovery_discards_old_answers_and_cancel_never_restores() {
     assert!(a.ac().sessions.resume_selector.is_none());
     assert_eq!(snapshot(a), before, "sending changes nothing");
     let decision = serde_json::json!({
-        "outcome": "decision", "code": "decision_required", "session": "foreign",
+        "outcome": "refused", "code": "belongs_elsewhere", "session": "foreign",
         "sessionKey": "foreign", "kind": "cross_folder", "homeVersion": "h1-0123456789abcdef",
         "executionPath": "/elsewhere", "detail": null,
-        "actions": [{"action": "cancel", "available": true, "reason": null}],
+        "command": "cd '/elsewhere' && quecto-tui -s 'foreign'", "actions": [],
     });
     a.handle_response(
         Some(asked),
