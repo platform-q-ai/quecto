@@ -619,6 +619,22 @@ fn modified_tab_and_page_chords_are_unbound_never_plain_keys() {
     }
 }
 
+#[test]
+fn modified_digits_are_unbound_never_typed_characters() {
+    // Ctrl/Alt+digit focused a tab once; now it is bound to nothing and must
+    // never insert the digit (#2044). Kitty CSI-u and modifyOtherKeys forms.
+    for seq in [
+        &b"\x1b[49;3u"[..],
+        b"\x1b[49;5u",
+        b"\x1b[27;3;49~",
+        b"\x1b[27;5;49~",
+    ] {
+        let (key, used) = parse_key(seq).unwrap();
+        assert!(matches!(key, Key::Unknown(_)), "{seq:?} parsed as {key:?}");
+        assert_eq!(used, seq.len());
+    }
+}
+
 // ── Coverage: utf8 fallback + convenience matchers ────────────────────
 
 #[test]

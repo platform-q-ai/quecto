@@ -25,6 +25,11 @@ fn new_command_resets_workspace_not_just_active_session() {
         });
     a.subagents.panel_nav_key = Some("stale-agent".into());
     a.subagents.panel_nav.set_selected(3);
+    // Seed what `/new` must clear, so the assertions below are not vacuous.
+    let master = a.conn_mut(TabId::MASTER).expect("master tab");
+    master.name = Some("old name".into());
+    master.session_key = Some("cli:old".into());
+    master.pending_session_resume = Some("cli:old".into());
 
     a.handle_submit("/new");
 
