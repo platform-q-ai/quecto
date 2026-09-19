@@ -45,6 +45,7 @@ fn every_refusal() -> Vec<ResumeSavedSessionError> {
         ResumeSavedSessionError::StartupScope(StartupRefusal {
             key: "cli:old".into(),
             disposition: ResumeDisposition::LegacyUnscoped,
+                execution_dir: None,
         }),
         ResumeSavedSessionError::Refused(SessionTransitionRefused::LiveRowsRemain(1)),
         ResumeSavedSessionError::Save(SaveSessionError::Store(DomainError::Session("disk".into()))),

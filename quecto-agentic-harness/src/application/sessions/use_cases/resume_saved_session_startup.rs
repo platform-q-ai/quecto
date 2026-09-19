@@ -4,10 +4,6 @@
 use crate::application::sessions::dto::{ResumeSavedSessionError, StartupRefusal};
 use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::{session_home::SessionHomeScope, session_identity::SessionIdentity};
-
-/// The loaded transcript's home must admit the current directory: the same
-/// classification as an explicit resume, re-read under the claim. A refusal
-/// names the key and what the user can do now.
 pub(super) async fn admit_at_startup(
     home: &SessionHomeContext,
     identity: &SessionIdentity,
@@ -17,13 +13,17 @@ pub(super) async fn admit_at_startup(
         .read(identity)
         .map_err(ResumeSavedSessionError::Load)?;
     home.admit(&scope).await.map_err(|disposition| {
+        let execution_dir = match &scope {
+            SessionHomeScope::Scoped(saved) => Some(saved.execution_dir.clone()),
+            SessionHomeScope::LegacyUnscoped | SessionHomeScope::Unavailable(_) => None,
+        };
         ResumeSavedSessionError::StartupScope(StartupRefusal {
             key: identity.runtime_key().to_string(),
             disposition,
+            execution_dir,
         })
     })
 }
-
 /// A startup identity without a transcript is a genuinely new session,
 /// whatever sidecar is beside the absent transcript: a home there is an
 /// orphan (a save that never committed a message, a transcript removed

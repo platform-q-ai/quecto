@@ -133,6 +133,7 @@ async fn persisted_home_is_local_but_legacy_and_foreign_startup_are_refused() {
             refused,
             ResumeSavedSessionError::StartupScope(StartupRefusal {
                 disposition: ResumeDisposition::DifferentExecutionDirectory,
+                execution_dir: None,
                 ..
             })
         ),
@@ -147,6 +148,7 @@ async fn persisted_home_is_local_but_legacy_and_foreign_startup_are_refused() {
             refused,
             ResumeSavedSessionError::StartupScope(StartupRefusal {
                 disposition: ResumeDisposition::LegacyUnscoped,
+                execution_dir: None,
                 ..
             })
         ),
