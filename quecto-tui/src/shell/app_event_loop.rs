@@ -72,8 +72,8 @@ pub(super) enum SourcedRender {
 }
 
 impl App {
-    /// Route one item drained from the shared fan-in channel (#1462): master
-    /// events (`SourcedEvent::Tab`) go through the master event handler, sub-agent
+    /// Route one item drained from an event channel (#1462): master
+    /// events (`SourcedEvent::Master`) go through the master event handler, sub-agent
     /// events (`SourcedEvent::Subagent`) through sub-agent routing, and the
     /// `SourcedEvent::Closed` sentinel runs the #1047 disconnect diagnosis path.
     ///
@@ -159,7 +159,7 @@ impl App {
         }
     }
 
-    /// Send the connect-time state requests for this tab's connection.
+    /// Send the connect-time state requests for the connection.
     ///
     /// Queries initial agent state and sub-agent roster (#525) through the
     /// shared command path so startup send failures surface in the UI like

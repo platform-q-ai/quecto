@@ -45,7 +45,7 @@ impl TuiHarness {
         self
     }
 
-    /// Track a sub-agent roster entry with `status` on the active tab.
+    /// Track a sub-agent roster entry with `status` on the connection.
     pub fn track_subagent(&mut self, id: &str, status: &str) -> &mut Self {
         self.app
             .update_subagent_bar(vec![crate::protocol::client::SubagentInfoEvent {

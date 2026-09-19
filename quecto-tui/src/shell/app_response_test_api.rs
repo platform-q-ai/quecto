@@ -1,4 +1,4 @@
-//! Test/harness API for multi-tab connection collection (#1465).
+//! Test/harness API for pending-id arming and connection attachment.
 
 use super::*;
 
@@ -14,7 +14,7 @@ impl App {
         self.ac_mut().pending_resume_messages_id = Some(id.to_string());
     }
 
-    /// Arm this tab's own `resume_session` request id for a synthetic response.
+    /// Arm this client's own `resume_session` request id for a synthetic response.
     pub fn test_arm_resume_session(&mut self, id: &str) {
         self.ac_mut().pending_session_resume_id = Some(id.to_string());
     }

@@ -1,11 +1,11 @@
-//! Fan-in seam driving for the headless harness (#1462, epic #1467).
+//! Sourced-event seam driving for the headless harness (#1462).
 //!
 //! Drives events through the sourced fan-in path the event loop drains now
-//! that the master connection lives behind a feed task. At N=1, `event()`
-//! keeps meaning "the (only) tab's master" — these drivers pin that the
+//! that the master connection lives behind a feed task. `event()`
+//! keeps meaning "the master" — these drivers pin that the
 //! fan-in path renders identically, and the `wire_*` drivers exercise the
 //! FULL production flow: real socket → client reader → connection feed task
-//! → dedicated tab fan-in → `route_sourced`.
+//! → master event channel → `route_sourced`.
 
 use super::TuiHarness;
 use crate::protocol::client::Event;

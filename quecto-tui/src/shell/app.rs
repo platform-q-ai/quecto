@@ -54,7 +54,7 @@ pub struct App {
     should_exit: bool,
     exit_policy: app_ordinary_exit::OrdinaryExitPolicy,
     stdin_buffer: crate::shell::stdin_buffer::StdinBuffer,
-    /// Global selector-overlay half of the inference flow; per-tab
+    /// Global selector-overlay half of the inference flow; the agent's
     /// model/effort state lives on `conn` (#1463).
     inference: InferenceFlow,
     /// Sub-agent / multi-session UI state (#997).

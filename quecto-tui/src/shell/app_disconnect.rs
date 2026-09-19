@@ -251,8 +251,7 @@ impl App {
     }
 
     /// Surface a failed command send, attributed to the connection it
-    /// happened on (#1460) so that with N per-tab connections the
-    /// rollback/notice cannot be misrouted cross-tab.
+    /// happened on (#1460).
     pub(super) fn handle_command_send_failure(&mut self, failure: CommandSendFailure) {
         let CommandSendFailure {
             command,
