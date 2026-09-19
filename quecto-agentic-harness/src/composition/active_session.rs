@@ -44,7 +44,7 @@ use crate::interface::uds::sessions::synchronize_transcript_controller::Synchron
 pub fn assemble_session_handles(
     inputs: SessionLoopInputs,
     store: Arc<dyn SessionStore>,
-    list_sessions: SessionDiscoveryHandles,
+    discovery: SessionDiscoveryHandles,
     export: Option<Arc<dyn SessionExportPort>>,
     identities: Arc<dyn FreshSessionIdentityGenerator>,
     home: SessionHomeContext,
@@ -109,7 +109,7 @@ pub fn assemble_session_handles(
     };
     SessionHandles {
         store,
-        list_sessions,
+        discovery,
         active_session,
         read_history: Arc::new(ReadHistoryController::new(read_history)),
         recover_message: Arc::new(RecoverMessageController::new(recover_message)),

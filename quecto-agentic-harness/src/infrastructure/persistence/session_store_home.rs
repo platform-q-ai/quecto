@@ -130,6 +130,16 @@ impl FileSessionStore {
     pub fn layout(&self) -> &super::super::session_layout::FlatSessionLayout {
         &self.layout
     }
+    /// The summary walk over every record — the walk `SessionStore::list`
+    /// answers with — as an inherent method (R1-H9): the catalogue's metadata
+    /// query joins it with the home listing without naming the store port.
+    pub(in crate::infrastructure::persistence) async fn summaries(
+        &self,
+    ) -> Result<Vec<crate::domain::session::SessionSummary>, DomainError> {
+        use crate::application::sessions::dto::SessionListQuery;
+        let all = SessionListQuery::All;
+        super::session_store_list::list_summaries(&self.layout, &all, self.summaries.clone()).await
+    }
     /// The listing summary this store's walk validated for `path` at exactly
     /// `stamp`, for the derived index to carry; `None` when the walk has not
     /// seen that version.

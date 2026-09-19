@@ -69,7 +69,6 @@ pub mod uds_parent_control;
 mod uds_query;
 mod uds_reader;
 mod uds_reader_dispatch;
-mod uds_search_numbers;
 pub mod uds_session;
 pub mod uds_session_handles;
 pub mod uds_session_switch_runtime;

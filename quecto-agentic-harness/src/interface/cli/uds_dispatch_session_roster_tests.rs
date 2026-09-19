@@ -737,7 +737,7 @@ pub(crate) fn ephemeral_read_handles(
 pub(crate) fn list_handle(
     base: &std::path::Path,
 ) -> crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles {
-    composed_sessions(base).list_sessions
+    composed_sessions(base).discovery
 }
 
 /// The composed catalogue handles for `base` (#1845, #1848), for rigs that

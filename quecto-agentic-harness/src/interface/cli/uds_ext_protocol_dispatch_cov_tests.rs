@@ -85,7 +85,7 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
             tmp.path(),
         ),
         fleet_teardown: None,
-        list_sessions: list_handle(tmp.path()),
+        discovery: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("shadow-disabled"), &tools).await;
@@ -154,7 +154,7 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
             tmp.path(),
         ),
         fleet_teardown: None,
-        list_sessions: list_handle(tmp.path()),
+        discovery: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("deny-reg"), &tools).await;
@@ -224,7 +224,7 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
             tmp.path(),
         ),
         fleet_teardown: None,
-        list_sessions: list_handle(tmp.path()),
+        discovery: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("reg-stable"), &tools).await;

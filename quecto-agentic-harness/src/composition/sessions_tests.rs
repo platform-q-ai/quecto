@@ -21,7 +21,7 @@ async fn handles_over_the_file_store_list_what_the_store_saved() {
     handles.store.save(&session).await.unwrap();
 
     let listed = handles
-        .list_sessions
+        .discovery
         .list(crate::application::sessions::dto::SessionListScope::Global)
         .await
         .unwrap();
@@ -67,7 +67,7 @@ async fn production_graph_save_restart_discovery_and_startup_share_home_authorit
 
     let restarted = build_session_handles(production_inputs(base.path(), identity.clone()));
     let listed = restarted
-        .list_sessions
+        .discovery
         .list(SessionListScope::Local)
         .await
         .unwrap();

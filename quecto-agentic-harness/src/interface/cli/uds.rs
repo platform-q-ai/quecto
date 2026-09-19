@@ -156,7 +156,7 @@ pub(crate) struct DispatchCtx<'a> {
     /// Fleet teardown (#1938) of delete-all and session transitions.
     pub fleet_teardown: Option<FleetTeardown>,
     /// Discovery (#1861, #2010): answers `list_sessions` and `search_session_metadata`.
-    pub list_sessions: ListSessionsHandle,
+    pub discovery: SessionDiscoveryHandles,
     /// Save current session (#1860, #1972): the one transaction every
     /// persistence trigger of this loop requests; it owns the watermark,
     /// the dirty latch and the killing-exit state on the active session.
@@ -171,7 +171,6 @@ pub(crate) struct DispatchCtx<'a> {
     pub catalogue: super::catalogue_handles::CatalogueHandles,
 }
 type FleetTeardown = std::sync::Arc<TerminateAllDelegatedAgents>;
-type ListSessionsHandle = SessionDiscoveryHandles;
 type SaveSessionHandle = std::sync::Arc<crate::application::sessions::use_cases::SaveSession>;
 
 impl<'a> DispatchCtx<'a> {

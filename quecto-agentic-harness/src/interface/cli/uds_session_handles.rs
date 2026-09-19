@@ -49,7 +49,7 @@ pub struct SessionHandles {
     /// The session store every session transaction of the loop runs against.
     pub store: Arc<dyn SessionStore>,
     /// Discovery (#2009, #2010): `list_sessions` and `search_session_metadata`, one owner each.
-    pub list_sessions: SessionDiscoveryHandles,
+    pub discovery: SessionDiscoveryHandles,
     /// The one active session of the loop (#1971): typed identity, the
     /// read model every transport reads, the persistence state.
     pub active_session: ActiveSessionHandle,

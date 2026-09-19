@@ -58,6 +58,14 @@ struct Facts {
 }
 
 impl SessionHomeCatalogue for Facts {
+    fn metadata(
+        &self,
+    ) -> crate::application::sessions::ports::session_home::Answer<
+        '_,
+        crate::application::sessions::ports::session_home::SessionMetadataSnapshot,
+    > {
+        panic!("only the metadata search asks the metadata query")
+    }
     fn read(&self, _: &SessionIdentity) -> Result<SessionHomeScope, DomainError> {
         *self.reads.lock().unwrap() += 1;
         let mut scopes = self.scopes.lock().unwrap();

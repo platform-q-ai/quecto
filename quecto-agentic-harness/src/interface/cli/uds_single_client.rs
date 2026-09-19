@@ -96,7 +96,7 @@ pub(super) async fn single_client_loop(
             workflow_state: workflow_state.clone(),
             workflow_config: None,
             fleet_teardown: None,
-            list_sessions: sessions.list_sessions.clone(),
+            discovery: sessions.discovery.clone(),
             save_session: sessions.save_session.clone(),
             rewrite: sessions.rewrite.clone(),
             switch: sessions.switch.clone(),

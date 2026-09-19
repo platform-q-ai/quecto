@@ -333,7 +333,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
             dir.path(),
         ),
         fleet_teardown: None,
-        list_sessions: list_handle(dir.path()),
+        discovery: list_handle(dir.path()),
     };
 
     run_dispatch_loop(

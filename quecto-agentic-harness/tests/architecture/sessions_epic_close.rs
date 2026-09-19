@@ -208,9 +208,6 @@ pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
 const SESSION_STORE_HOLDERS: &[&str] = &[
     // #2009 authority and derived catalogue share the composed store.
     "src/infrastructure/persistence/session_home_catalogue.rs",
-    // #2010 the catalogue's metadata query (a child module, split for the
-    // line ceiling) joins the store's summary walk with the home listing.
-    "src/infrastructure/persistence/session_home_catalogue_metadata.rs",
     "src/infrastructure/persistence/session_store_home.rs",
     "src/application/sessions/ports.rs",
     "src/application/sessions/use_cases/list_sessions.rs",

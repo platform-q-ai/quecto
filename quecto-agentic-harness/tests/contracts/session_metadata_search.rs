@@ -35,7 +35,7 @@ async fn search(
         scope,
         ..Default::default()
     };
-    let answer = world.handles.list_sessions.search(&request).await;
+    let answer = world.handles.discovery.search(&request).await;
     answer.expect("metadata search")
 }
 
@@ -48,7 +48,7 @@ fn keys(result: &SearchSessionMetadataResult) -> Vec<&str> {
 }
 
 async fn listed(world: &World) -> Vec<ListedSession> {
-    let rows = world.handles.list_sessions.list(SessionListScope::Global);
+    let rows = world.handles.discovery.list(SessionListScope::Global);
     rows.await.expect("global listing").sessions
 }
 

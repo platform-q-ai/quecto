@@ -54,16 +54,10 @@ pub trait SessionHomeCatalogue: Send + Sync {
     /// first, each with its listing summary and the home the listing shows —
     /// the catalogue's row, or the exact authority for a record the strict
     /// catalogue rejected. Validated against authority like [`Self::list`]
-    /// (same diagnostics, same recovery), and never a transcript read for a
-    /// record whose stamp is unchanged. An adapter without the projection is
-    /// observably unavailable, never an empty answer.
-    fn metadata(&self) -> Answer<'_, SessionMetadataSnapshot> {
-        Box::pin(async {
-            Err(DomainError::Session(
-                "session metadata query unavailable".into(),
-            ))
-        })
-    }
+    /// (same diagnostics, same recovery); a record version already read —
+    /// summarised or rejected — is never read again. Required (R1-H9): an
+    /// adapter that forgot it is a compile error, not a run-time refusal.
+    fn metadata(&self) -> Answer<'_, SessionMetadataSnapshot>;
     /// Only a new persistent identity can acquire a home. Call under ownership
     /// before the first transcript save; existing authority is immutable here.
     fn record_new(&self, identity: &SessionIdentity, home: &SessionHome)

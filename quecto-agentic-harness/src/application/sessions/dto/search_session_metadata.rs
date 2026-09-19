@@ -2,39 +2,9 @@
 //! stable-key rows, the freshness of the index they came from, and the query
 //! generation a client uses to discard an answer it no longer wants. Domain
 //! values only — no wire field, no adapter record.
+pub use super::search_limits::{QueryGeneration, SearchLimit};
 use super::{ListedSession, SessionListScope};
 use crate::domain::session_metadata_search::{MatchedField, QueryRefusal};
-
-/// The client's own counter of the query an answer belongs to, echoed
-/// unchanged: the application attaches no meaning to it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct QueryGeneration(pub u64);
-
-/// How many rows an answer may carry: 1 to [`SearchLimit::MAX`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SearchLimit(usize);
-
-impl SearchLimit {
-    pub const DEFAULT: usize = 200;
-    pub const MAX: usize = 500;
-
-    /// The requested limit brought into range; absent is the default.
-    pub fn clamped(requested: Option<u64>) -> Self {
-        let requested =
-            requested.map_or(Self::DEFAULT, |n| usize::try_from(n).unwrap_or(Self::MAX));
-        Self(requested.clamp(1, Self::MAX))
-    }
-
-    pub fn get(self) -> usize {
-        self.0
-    }
-}
-
-impl Default for SearchLimit {
-    fn default() -> Self {
-        Self::clamped(None)
-    }
-}
 
 #[derive(Debug, Clone, Default)]
 pub struct SearchSessionMetadataRequest {
@@ -78,16 +48,25 @@ pub struct SearchSessionMetadataResult {
 }
 
 impl SearchSessionMetadataResult {
-    /// The answer to a request that is not searched: no rows, and why.
-    pub fn refused(request: &SearchSessionMetadataRequest, refusal: QueryRefusal) -> Self {
+    /// The answer to `request` before anything matched.
+    pub fn empty(request: &SearchSessionMetadataRequest) -> Self {
         Self {
             generation: request.generation,
             scope: request.scope,
             rows: Vec::new(),
             total_matches: 0,
             searched: 0,
-            refused: Some(refusal),
+            refused: None,
             freshness: SearchFreshness::default(),
+        }
+    }
+
+    /// The answer to a request that is not searched: no rows, and why.
+    pub fn refused(request: &SearchSessionMetadataRequest, refusal: QueryRefusal) -> Self {
+        let refused = Some(refusal);
+        Self {
+            refused,
+            ..Self::empty(request)
         }
     }
 

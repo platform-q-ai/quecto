@@ -471,7 +471,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
             tmp.path(),
         ),
         fleet_teardown: None,
-        list_sessions: list_handle(tmp.path()),
+        discovery: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("reg-1"), &tools).await;
@@ -572,7 +572,7 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
             tmp.path(),
         ),
         fleet_teardown: None,
-        list_sessions: list_handle(tmp.path()),
+        discovery: list_handle(tmp.path()),
     };
 
     dispatch_register_tools(&mut ctx, Some("mixed-reject"), &tools).await;

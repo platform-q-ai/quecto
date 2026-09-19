@@ -6,19 +6,9 @@
 use super::super::uds_dispatch_query::{listed_row_json, safe_display};
 use super::{AgentEvent, DispatchCtx};
 use crate::application::sessions::dto::{
-    QueryGeneration, SearchLimit, SearchSessionMetadataRequest, SearchSessionMetadataResult,
+    SearchSessionMetadataRequest, SearchSessionMetadataResult,
 };
-use crate::domain::session_metadata_search::QueryRefusal;
 use crate::interface::cli::protocol::SessionListScopeCommand;
-use crate::interface::cli::uds_search_numbers::lenient_u64;
-
-/// The wire fields of one search, as the protocol decoded them.
-pub(super) struct SearchFields {
-    pub(super) query: String,
-    pub(super) scope: SessionListScopeCommand,
-    pub(super) generation: serde_json::Value,
-    pub(super) limit: serde_json::Value,
-}
 
 pub(super) async fn handle(
     ctx: &mut DispatchCtx<'_>,
@@ -26,28 +16,16 @@ pub(super) async fn handle(
     type_name: &str,
     fields: SearchFields,
 ) -> bool {
-    let (generation, limit) = (lenient_u64(&fields.generation), lenient_u64(&fields.limit));
-    let request = SearchSessionMetadataRequest {
-        query: fields.query,
-        scope: fields.scope.into(),
-        generation: QueryGeneration(generation.unwrap_or_default().unwrap_or_default()),
-        limit: SearchLimit::clamped(limit.unwrap_or_default()),
-    };
+    let scope = fields.scope;
+    let (request, malformed) = request_of(fields);
     // Not a number (R1-H5): refused in a correlated answer, nothing searched.
-    let malformed = match (generation, limit) {
-        (Err(()), _) => Some(QueryRefusal::NotANumber {
-            field: "generation",
-        }),
-        (_, Err(())) => Some(QueryRefusal::NotANumber { field: "limit" }),
-        _ => None,
-    };
     let answer = match malformed {
         Some(refusal) => Ok(SearchSessionMetadataResult::refused(&request, refusal)),
-        None => ctx.list_sessions.search(&request).await,
+        None => ctx.discovery.search(&request).await,
     };
     let event = match answer {
         Ok(result) => {
-            let data = search_json(&result, fields.scope, &request);
+            let data = search_json(&result, scope, &request);
             AgentEvent::ok(id, type_name, Some(data))
         }
         Err(error) => AgentEvent::err(id, type_name, safe_display(&error.to_string())),
@@ -91,6 +69,11 @@ pub(super) fn search_json(
         "rebuilt": result.freshness.rebuilt,
     })
 }
+
+#[path = "uds_search_numbers.rs"]
+mod uds_search_numbers;
+pub(super) use uds_search_numbers::SearchFields;
+use uds_search_numbers::request_of;
 
 #[cfg(test)]
 #[path = "uds_dispatch_search_tests.rs"]

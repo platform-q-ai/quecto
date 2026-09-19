@@ -39,7 +39,7 @@ async fn the_production_graph_searches_what_it_saved_by_title_key_and_path() {
 
     let restarted = build_session_handles(inputs(base.path(), identity.clone()));
     let listed = restarted
-        .list_sessions
+        .discovery
         .list(SessionListScope::Local)
         .await
         .unwrap();
@@ -54,7 +54,7 @@ async fn the_production_graph_searches_what_it_saved_by_title_key_and_path() {
             query: query.into(),
             ..Default::default()
         };
-        let found = restarted.list_sessions.search(&request).await.unwrap();
+        let found = restarted.discovery.search(&request).await.unwrap();
         assert_eq!(found.rows.len(), 1, "{query}");
         let row = &found.rows[0];
         assert!(row.matched.contains(&field), "{query}: {:?}", row.matched);
@@ -75,7 +75,7 @@ async fn the_production_graph_searches_what_it_saved_by_title_key_and_path() {
     };
     assert!(
         restarted
-            .list_sessions
+            .discovery
             .search(&absent)
             .await
             .unwrap()

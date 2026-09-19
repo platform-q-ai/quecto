@@ -14,7 +14,7 @@ async fn list_and_search_are_answered_by_their_composed_controllers() {
     session.messages.push(Message::user("find the BUNDLE"));
     sessions.store.save(&session).await.unwrap();
     sessions.store.release(&identity);
-    let discovery = sessions.list_sessions.clone();
+    let discovery = sessions.discovery.clone();
     let listed = discovery.list(SessionListScope::Global).await.unwrap();
     assert_eq!(listed.sessions.len(), 1);
     let request = SearchSessionMetadataRequest {

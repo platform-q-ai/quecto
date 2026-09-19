@@ -38,15 +38,7 @@ impl SearchSessionMetadata {
             Ok(query) => query,
             Err(refusal) => return Ok(SearchSessionMetadataResult::refused(request, refusal)),
         };
-        let mut result = SearchSessionMetadataResult {
-            generation: request.generation,
-            scope: request.scope,
-            rows: Vec::new(),
-            total_matches: 0,
-            searched: 0,
-            refused: None,
-            freshness: SearchFreshness::default(),
-        };
+        let mut result = SearchSessionMetadataResult::empty(request);
         let snapshot = self.home.catalogue.metadata().await?;
         result.freshness = SearchFreshness {
             diagnostics: snapshot.diagnostics,

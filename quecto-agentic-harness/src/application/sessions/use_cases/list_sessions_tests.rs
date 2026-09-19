@@ -196,6 +196,14 @@ fn observed_home(path: &Path) -> SessionHome {
 
 struct FixedCatalogue(Vec<(SessionIdentity, SessionHomeScope)>);
 impl SessionHomeCatalogue for FixedCatalogue {
+    fn metadata(
+        &self,
+    ) -> crate::application::sessions::ports::session_home::Answer<
+        '_,
+        crate::application::sessions::ports::session_home::SessionMetadataSnapshot,
+    > {
+        panic!("only the metadata search asks the metadata query")
+    }
     fn read(&self, _: &SessionIdentity) -> Result<SessionHomeScope, DomainError> {
         panic!("listing reads exact authority only for records the catalogue has no row for")
     }

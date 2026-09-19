@@ -14,6 +14,7 @@ pub mod resume_saved_session;
 pub mod retained_context;
 pub mod rewind_conversation;
 pub mod save_session;
+pub mod search_limits;
 pub mod search_session_metadata;
 pub mod session_report;
 pub mod start_fresh_conversation;

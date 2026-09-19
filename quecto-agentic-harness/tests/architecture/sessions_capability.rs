@@ -111,6 +111,13 @@ const CANONICAL_FILES: &[&str] = &[
     "src/interface/uds/sessions/search_session_metadata_controller.rs",
     "src/interface/cli/uds_discovery_handles.rs",
     "src/interface/cli/uds_dispatch_search.rs",
+    // #2010 review round 1: the text fold, the request's numbers (typed and
+    // on the wire), the rejection cache and the walk's seeding.
+    "src/domain/session_metadata_text.rs",
+    "src/application/sessions/dto/search_limits.rs",
+    "src/interface/cli/uds_search_numbers.rs",
+    "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
+    "src/infrastructure/persistence/session_home_catalogue_seed.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
@@ -758,9 +765,19 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     // PR #2018 perf: the derived index is stamp-based and persisted; its
     // on-disk shape is its own module, both pinned at delivered size.
+    // #2010 review (R1-H1): strict validation and the walk's seeding moved
+    // to child modules beside the rejection cache (482 → 468).
     (
         "src/infrastructure/persistence/session_home_catalogue.rs",
-        482,
+        468,
+    ),
+    (
+        "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
+        140,
+    ),
+    (
+        "src/infrastructure/persistence/session_home_catalogue_seed.rs",
+        83,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_index.rs",
@@ -783,21 +800,26 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // the row is one shared function (46 → 45).
     ("src/interface/cli/uds_dispatch_discovery.rs", 45),
     // #2010 metadata search: every new owner pinned at its delivered size.
+    // Review round 1 only lowered them; what it added lives in new owners
+    // (`search_limits`, `session_metadata_text`, `uds_search_numbers`).
     (
         "src/application/sessions/use_cases/search_session_metadata.rs",
-        162,
+        157,
     ),
     (
         "src/application/sessions/dto/search_session_metadata.rs",
-        88,
+        80,
     ),
+    ("src/application/sessions/dto/search_limits.rs", 33),
+    ("src/domain/session_metadata_text.rs", 58),
+    ("src/interface/cli/uds_search_numbers.rs", 62),
     ("src/domain/session_metadata_search.rs", 187),
     (
         "src/infrastructure/persistence/session_home_catalogue_metadata.rs",
-        46,
+        45,
     ),
     ("src/composition/session_search.rs", 23),
-    ("src/interface/cli/uds_dispatch_search.rs", 82),
+    ("src/interface/cli/uds_dispatch_search.rs", 80),
     ("src/interface/cli/uds_discovery_handles.rs", 44),
     (
         "src/interface/uds/sessions/search_session_metadata_controller.rs",
@@ -831,7 +853,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #1848: the adapter holds the change-reasoning-effort use case and
     // restores the startup effort through it (was 97).
     ("src/interface/cli/uds_session_switch_runtime.rs", 103),
-    ("src/interface/cli/uds.rs", 712),
+    // #2010 review (R1-H7): the discovery handles' alias is gone (712 → 711).
+    ("src/interface/cli/uds.rs", 711),
     ("src/interface/cli/uds_session_history.rs", 205),
     ("src/interface/cli/uds_session_message_range.rs", 290),
     ("src/interface/cli/uds_snapshots.rs", 256),
@@ -1430,7 +1453,7 @@ fn interface_never_lists_the_store_directly() {
         query.contains("handle_list_sessions(ctx, id, tn, *scope)")
             && std::fs::read_to_string("src/interface/cli/uds_dispatch_session.rs")
                 .unwrap()
-                .contains("ctx.list_sessions.list(requested).await"),
+                .contains("ctx.discovery.list(requested).await"),
         "the list_sessions command is answered through the composed controller"
     );
 }
