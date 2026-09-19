@@ -46,9 +46,11 @@ const PASTE_REFUSED: &str = "Paste refused: longer than 256 characters";
 const PASTE_CUT: &str = "Pasted the first line only";
 const STALLED: &str = "Search did not answer — edit the text or change Scope to retry";
 const DISCONNECTED: &str = "Disconnected — once reconnected, edit the text or change Scope";
-/// The cue of an owed Enter (R2-T3), and its form for a narrow panel.
+/// The cue of an owed Enter (R2-T3) and its forms for a narrow panel: the
+/// narrowest leads with the glyph, so no cut can take it (R3-T4).
 const OWED: &str = "Sessions · Searching… ⏎ will open the top match";
 const OWED_SHORT: &str = "Sessions · ⏎ Searching…";
+const OWED_TINY: &str = "⏎ Sessions…";
 /// The three focusable sections, in Tab order after `Results`. The user-facing
 /// names (`Sessions`, `Scope`, `Search`) live in [`Focus::label`].
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -310,11 +312,11 @@ impl ResumePicker {
             (Focus::Scope, Key::Enter | Key::Char(' ')) => return self.toggle_scope(),
             (Focus::Scope, Key::Left) => return self.change_scope(SessionListScope::Local),
             (Focus::Scope, Key::Right) => return self.change_scope(SessionListScope::Global),
-            (Focus::Query, Key::Char(c))
-                if typeable(*c) && self.query.chars().count() < QUERY_CAP =>
-            {
-                self.query.push(*c);
-                return self.query_changed();
+            (Focus::Query, Key::Char(c)) if self.query.chars().count() < QUERY_CAP => {
+                if let Some(c) = box_char(*c) {
+                    self.query.push(c);
+                    return self.query_changed();
+                }
             }
             // A paste is search text whichever section has focus (R2-T7).
             (_, Key::Paste(text)) => return self.paste(text),
@@ -358,14 +360,17 @@ impl ResumePicker {
     }
     /// A paste is search text, whichever section has focus (R1-T11, R2-T7):
     /// its first non-empty line — terminals send `\r` between lines — through
-    /// the typing filter, and the box takes the focus. More lines are dropped
+    /// the typing filter, runs of whitespace as one space, and the box takes
+    /// the focus. More lines are dropped
     /// with a notice. One that does not fit is refused whole — a truncated
     /// key would search for something the user never meant.
     fn paste(&mut self, text: &str) -> ResumePickerEvent {
         let lines = text.split(['\n', '\r']).map(str::trim);
         let mut lines = lines.filter(|line| !line.is_empty());
         let first = lines.next().unwrap_or_default();
-        let pasted: String = first.chars().filter(|c| typeable(*c)).collect();
+        let pasted: String = first.chars().filter_map(box_char).collect();
+        let words: Vec<&str> = pasted.split(' ').filter(|w| !w.is_empty()).collect();
+        let pasted = words.join(" ");
         if pasted.is_empty() {
             return ResumePickerEvent::Pending;
         }
@@ -439,7 +444,9 @@ impl ResumePicker {
             RowsState::Loading => "Sessions · Loading…",
             RowsState::Searching if self.pending_enter.is_none() => "Sessions · Searching…",
             RowsState::Searching if OWED.chars().count() <= width => OWED,
-            RowsState::Searching => OWED_SHORT,
+            RowsState::Searching if OWED_SHORT.chars().count() <= width => OWED_SHORT,
+            RowsState::Searching if width > 1 => OWED_TINY,
+            RowsState::Searching => "⏎",
             RowsState::Stalled => "Sessions · No answer",
             RowsState::Disconnected => "Sessions · Disconnected",
         }
@@ -587,11 +594,16 @@ impl ResumePicker {
         (lines, panel_width)
     }
 }
-/// What the search box accepts, typed or pasted alike (R2-T5): anything the
-/// harness's visible-text fold keeps — no control, bidi or zero-width
-/// character, and no whitespace but the space.
-fn typeable(c: char) -> bool {
-    c == ' ' || !(c.is_whitespace() || super::local_filter::invisible(c))
+/// What a character is in the search box, typed or pasted alike (R2-T5):
+/// itself when the harness's visible-text fold keeps it, a space when it is
+/// any whitespace — a tab, a no-break space, U+2028: a word break to the
+/// harness, so never deleted (R3-T5) — and nothing when it is a control,
+/// bidi or zero-width character.
+fn box_char(c: char) -> Option<char> {
+    if c.is_whitespace() {
+        return Some(' ');
+    }
+    (!super::local_filter::invisible(c)).then_some(c)
 }
 fn safe(text: &str) -> String {
     sanitize_truncate_chars_with_ellipsis(text, 512, "…")

@@ -152,9 +152,11 @@ fn the_owed_enter_opens_the_settled_top_row_not_the_progress_one() {
 fn the_unsettled_states_are_told_apart_on_a_narrow_panel() {
     let header = |picker: &mut ResumePicker, width| {
         let shown = frame(picker, width);
-        let line = shown.lines().find(|line| line.contains("Sessions ·"));
+        // The narrowest owed form leads with the glyph (R3-T4).
+        let at = |line: &str| line.find("⏎ Sess").or(line.find("Sessions ·"));
+        let line = shown.lines().find(|line| at(line).is_some());
         let line = line.unwrap_or_else(|| panic!("{shown}"));
-        let text = &line[line.find("Sessions").unwrap()..];
+        let text = &line[at(line).unwrap()..];
         text.trim_end_matches(['│', ' ']).to_string()
     };
     for width in [26, 28, 30, 34, 60, 90] {
@@ -244,7 +246,7 @@ fn typing_and_pasting_accept_the_same_characters() {
     let hostile = "a\u{1b}\u{202e}\u{200b}\u{feff}\u{ad}\tb\u{a0}c";
     let mut pasted = listed();
     pasted.handle_input(&Key::Paste(format!("{text}{hostile}")));
-    assert_eq!(pasted.query(), format!("{text}abc"));
+    assert_eq!(pasted.query(), format!("{text}a b c"));
     let mut typed = listed();
     typed.handle_input(&Key::BackTab);
     for ch in format!("{text}{hostile}").chars() {
