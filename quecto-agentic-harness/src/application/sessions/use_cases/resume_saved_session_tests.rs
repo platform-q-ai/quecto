@@ -453,7 +453,10 @@ fn rig_on_its_own_key(options: FreshOptions, saved: bool) -> FreshRig {
 /// after the claim step, the claim is the running loop's own (the store's
 /// claim is re-entrant, so the step took nothing new) and is never
 /// released (#1995). Returns the error and the journal.
-async fn refused_on_its_own_key(rig: &FreshRig, settled: bool) -> (String, Vec<String>) {
+async fn refused_on_its_own_key(
+    rig: &FreshRig,
+    settled: bool,
+) -> (ResumeSavedSessionError, Vec<String>) {
     let mut messages = conversation("");
     let mut runtime = rig.runtime();
     let fleet = rig.settled_fleet();
@@ -471,14 +474,14 @@ async fn refused_on_its_own_key(rig: &FreshRig, settled: bool) -> (String, Vec<S
         rig.store.released.lock().unwrap().is_empty(),
         "the loop's own claim must survive the refusal: {err}"
     );
-    (err.to_string(), rig.journal())
+    (err, rig.journal())
 }
 
 #[tokio::test]
 async fn a_missing_file_for_the_current_key_keeps_the_loops_own_claim() {
     let rig = rig_on_its_own_key(FreshOptions::default(), false);
     let (err, journal) = refused_on_its_own_key(&rig, false).await;
-    assert_eq!(err, "session not found: departing");
+    assert_eq!(err.to_string(), "session not found: departing");
     assert_eq!(
         journal,
         [
@@ -494,6 +497,7 @@ async fn a_load_error_for_the_current_key_keeps_the_loops_own_claim() {
     let rig = rig_on_its_own_key(FreshOptions::default(), true);
     rig.store.fail_load.store(true, Ordering::SeqCst);
     let (err, journal) = refused_on_its_own_key(&rig, false).await;
+    let err = err.to_string();
     assert!(err.starts_with("failed to load session:"), "{err}");
     assert_eq!(journal.last().unwrap(), "store.load(cli:departing)");
 }
@@ -505,7 +509,8 @@ async fn a_scope_refusal_for_the_current_key_keeps_the_loops_own_claim() {
         ..FreshOptions::default()
     };
     let rig = rig_on_its_own_key(options, true);
-    let (_, journal) = refused_on_its_own_key(&rig, false).await;
+    let (err, journal) = refused_on_its_own_key(&rig, false).await;
+    assert!(matches!(err, ResumeSavedSessionError::Scope(_)), "{err}");
     assert_eq!(journal.last().unwrap(), "store.load(cli:departing)");
 }
 
@@ -517,6 +522,7 @@ async fn a_kept_roster_for_the_current_key_keeps_the_loops_own_claim() {
     };
     let rig = rig_on_its_own_key(options, true);
     let (err, journal) = refused_on_its_own_key(&rig, true).await;
+    let err = err.to_string();
     assert!(err.contains("live"), "{err}");
     assert_eq!(journal.last().unwrap(), "store.load(cli:departing)");
     assert_eq!(rig.roster.unwrap().records.load(Ordering::SeqCst), 3);

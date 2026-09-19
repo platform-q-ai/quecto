@@ -8,9 +8,9 @@
 //! step: an ephemeral loop resumes nothing; the target is admitted by the
 //! affirmative rules of [`ResumeTarget`]; the departing session's children
 //! are settled and the departing session saved before anything is
-//! replaced (#1938); the target is claimed before it is read (#1460) and
-//! that claim is released on every failure after it — a missing target, a
-//! load error, a roster kept — unless it is the loop's own key (#1995); the
+//! replaced (#1938); the target is claimed before it is read (#1460) and,
+//! unless it is the loop's own key (#1995), that claim is released on every
+//! failure after it (a missing target, a load error, a roster kept); the
 //! loaded session's persisted child rows are history only (#1937) and the
 //! roster is replaced with zero operational rows; the store's ownership of
 //! the old identity is released immediately after the active key is replaced

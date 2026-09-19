@@ -335,6 +335,7 @@ Feature: UDS mode for headless agent operation
   Scenario: resume_session of the loop's own key with no saved file keeps the loop's ownership of it
     Given a live SpawnTool and AgentCmdTool backed by a mock LLM child
     And a restoring UDS harness with a subagent registry
+    Then a second claimant is refused session key "cli:restoring-master" while the harness serves
     When the client resumes session "restoring-master"
     Then the live resume is refused with the error "session not found: restoring-master"
     And a second claimant is refused session key "cli:restoring-master" while the harness serves
