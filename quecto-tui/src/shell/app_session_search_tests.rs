@@ -185,6 +185,9 @@ async fn a_failed_send_frees_the_flight_and_a_closed_picker_sends_nothing() {
     h.app_mut().handle_resume_selector_key(&Key::Escape);
     answer(&mut h, &request, "AFTER-ESCAPE", json!({}));
     assert!(h.app_mut().ac().sessions.resume_selector.is_none());
+    // The closed picker's search is nobody's: its answer settles and records nothing.
+    assert!(!h.app_mut().ac().sessions.search.is_in_flight());
+    assert!(!(h.app_mut().ac().sessions.home_versions).contains_key("cli:found"));
     assert!(h.drain_commands().await.is_empty());
     // No picker: a discovery request lists, and a queued search has nothing to send.
     let scope = crate::protocol::session_payloads::SessionListScope::Global;
