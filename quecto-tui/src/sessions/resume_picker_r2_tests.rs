@@ -186,7 +186,9 @@ fn the_unsettled_states_are_told_apart_on_a_narrow_panel() {
         "{said}"
     );
     picker.set_rows_state(RowsState::Disconnected);
-    assert!(frame(&mut picker, 90).contains("Disconnected — once reconnected"));
+    assert!(
+        frame(&mut picker, 90).contains("Not connected — restart quecto-tui to resume a session")
+    );
 }
 
 #[test]

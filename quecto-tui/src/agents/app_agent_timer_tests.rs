@@ -433,7 +433,6 @@ async fn resume_resets_the_clock_only_on_a_session_identity_change() {
 #[tokio::test(start_paused = true)]
 async fn only_the_owned_resume_answer_settles_the_latches() {
     let mut h = TuiHarness::new().await;
-    h.app_mut().ac_mut().pending_session_resume = Some("cli:mine".into());
     h.app_mut().test_arm_resume_session("resume-mine");
     h.app_mut().handle_response(
         Some("resume-other".into()),
@@ -448,7 +447,7 @@ async fn only_the_owned_resume_answer_settles_the_latches() {
     );
     assert_eq!(
         h.app_mut().test_pending_session_resume(),
-        (Some("cli:mine"), Some("resume-mine")),
+        Some("resume-mine"),
         "a foreign answer leaves this tab's resume in flight"
     );
     h.app_mut().handle_response(
@@ -460,8 +459,8 @@ async fn only_the_owned_resume_answer_settles_the_latches() {
     );
     assert_eq!(
         h.app_mut().test_pending_session_resume(),
-        (None, None),
-        "an owned failure clears the deferred session so a reattach cannot replay it"
+        None,
+        "an owned failure settles the resume in flight"
     );
     let notes = h.app_mut().notifications.messages();
     assert!(

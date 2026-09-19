@@ -37,28 +37,24 @@ fn bare_session_selection_still_current_tab() {
 }
 
 #[test]
-fn resume_key_and_selector_latch_deferred_resume_while_disconnected() {
+fn a_disconnected_resume_is_refused_aloud_and_leaves_nothing_in_flight() {
+    // The TUI never reconnects, so nothing is latched for later (#2044): the
+    // typed key and the picker row are both refused by `send_command`.
     let mut a = app();
     a.ac_mut().agent_connected = false;
     a.handle_submit("/resume my-session");
-    assert_eq!(
-        a.ac().pending_session_resume.as_deref(),
-        Some("my-session"),
-        "AC5: /resume <key> on a disconnected connection must latch deferred resume"
+    assert_eq!(a.ac().pending_session_resume_id, None);
+    assert!(
+        a.ac().disconnect_refusal_notified,
+        "/resume <key> on a dead connection must tell the user it was not sent"
     );
 
     let mut b = app();
     b.ac_mut().agent_connected = false;
     b.apply_resume_selection("session:sel-key");
-    assert_eq!(
-        b.ac().pending_session_resume.as_deref(),
-        Some("sel-key"),
-        "AC5: selector session rows must latch deferred resume when disconnected"
-    );
-    b.apply_resume_selection("plain-key");
-    assert_eq!(
-        b.ac().pending_session_resume.as_deref(),
-        Some("plain-key"),
-        "AC5: bare selector keys must also latch"
+    assert_eq!(b.ac().pending_session_resume_id, None);
+    assert!(
+        b.ac().disconnect_refusal_notified,
+        "a picker row chosen on a dead connection must tell the user it was not sent"
     );
 }

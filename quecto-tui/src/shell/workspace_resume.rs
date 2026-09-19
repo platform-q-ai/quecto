@@ -51,22 +51,9 @@ impl super::App {
         if session.is_empty() {
             self.send_list_sessions();
         } else {
-            // Latch when the connection is disconnected (AC5).
-            self.queue_or_send_session_resume(session);
-        }
-    }
-
-    /// Queue a session resume for the active tab; apply immediately if connected.
-    pub(crate) fn queue_or_send_session_resume(&mut self, session: &str) {
-        let session = session.trim();
-        if session.is_empty() {
-            return;
-        }
-        if self.ac().agent_connected {
-            self.ac_mut().pending_session_resume = Some(session.to_string());
+            // Disconnected: `send_command` refuses and says so; nothing is
+            // latched, because the TUI never reconnects (#2044).
             self.send_resume_session(session);
-        } else {
-            self.ac_mut().pending_session_resume = Some(session.to_string());
         }
     }
 }

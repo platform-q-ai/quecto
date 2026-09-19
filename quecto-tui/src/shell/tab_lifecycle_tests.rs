@@ -29,7 +29,6 @@ fn new_command_resets_workspace_not_just_active_session() {
     let master = a.conn_mut(TabId::MASTER).expect("master tab");
     master.name = Some("old name".into());
     master.session_key = Some("cli:old".into());
-    master.pending_session_resume = Some("cli:old".into());
 
     a.handle_submit("/new");
 
@@ -40,7 +39,6 @@ fn new_command_resets_workspace_not_just_active_session() {
     assert_eq!(a.ac().master_session.chat.entry_count(), 0);
     assert_eq!(a.ac().name, None);
     assert_eq!(a.ac().session_key, None);
-    assert_eq!(a.ac().pending_session_resume, None);
     assert_eq!(a.subagents.panel_nav_key, None);
     assert_eq!(a.subagents.panel_nav.selected(), 0);
 }

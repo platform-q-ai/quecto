@@ -973,6 +973,7 @@ fn tui_removed_multi_tab_symbols_do_not_come_back() {
         "unread_output",
         "tab_attach_",
         "attach_generation",
+        "queue_or_send_session_resume",
     ];
     fn scan(dir: &Path, hits: &mut Vec<String>) {
         for entry in fs::read_dir(dir).expect("read dir") {

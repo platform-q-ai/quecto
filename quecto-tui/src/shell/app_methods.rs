@@ -639,7 +639,6 @@ impl App {
         }
         master.name = None;
         master.session_key = None;
-        master.pending_session_resume = None;
         master.roster = crate::agents::view::ConnectionRoster::new();
         self.tabs
             .insert(crate::shell::connection::TabId::MASTER, master);

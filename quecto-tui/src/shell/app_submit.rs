@@ -67,8 +67,7 @@ impl App {
                     if session.is_empty() {
                         self.send_list_sessions();
                     } else {
-                        // Latch when the tab is still connecting / disconnected (AC5).
-                        self.queue_or_send_session_resume(session);
+                        self.send_resume_session(session);
                     }
                     return;
                 }

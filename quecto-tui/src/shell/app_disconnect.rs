@@ -55,9 +55,7 @@ impl App {
         self.ac_mut().agent_state.reset();
         self.ac_mut()
             .stop_coordinator_clock(tokio::time::Instant::now());
-        // The answer to an in-flight resume died with the connection; a
-        // `/resume` still latched in `pending_session_resume` is re-sent by
-        // the next attach.
+        // The answer to an in-flight resume died with the connection.
         self.ac_mut().pending_session_resume_id = None;
         // So did a metadata search or a listing the picker was waiting for.
         self.interrupt_session_discovery();

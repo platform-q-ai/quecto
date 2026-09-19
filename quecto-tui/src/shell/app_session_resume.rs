@@ -100,7 +100,7 @@ impl App {
             return;
         }
         // A picker selection carries the version its row was listed at; a
-        // typed key or a latched resume of another key carries none.
+        // typed key or a resume of another key carries none.
         let listed = self.ac_mut().sessions.selected_home_version.take();
         let mut selection = ResumeSelection::exact(session.trim());
         selection.expected_home_version = listed
@@ -148,7 +148,6 @@ impl App {
         let peers = id.is_some() && !owned;
         if owned {
             self.ac_mut().pending_session_resume_id = None;
-            self.ac_mut().pending_session_resume = None;
         }
         match parse_resume_answer(success, data.as_ref()) {
             ResumeAnswer::Resumed(ack) => {
@@ -203,7 +202,6 @@ impl App {
             && self.ac().pending_session_resume_acts
             && (id.is_none() || self.is_owned_resume_response(id));
         if ours && self.ac_mut().pending_session_resume_id.take().is_some() {
-            self.ac_mut().pending_session_resume = None;
             self.notify_response_error("Resume failed", error);
         }
     }

@@ -59,8 +59,6 @@ pub(crate) struct ConnectionState {
     pub(crate) child_exit_watch: Option<crate::shell::child_watch::ChildWatch>,
     /// Durable session key of this connection's master agent.
     pub(crate) session_key: Option<String>,
-    /// Session key latched by a `/resume` issued while disconnected.
-    pub(crate) pending_session_resume: Option<String>,
     /// Request id of this tab's in-flight `resume_session`, so only its own
     /// answer clears the resume latches; foreign answers (another client
     /// resuming the shared agent) still refresh the view (#1726).
@@ -171,7 +169,6 @@ impl ConnectionState {
             agent_ever_connected: true,
             child_exit_watch: None,
             session_key: None,
-            pending_session_resume: None,
             pending_session_resume_id: None,
             pending_session_resume_acts: false,
             surfaced_oversized_drops: 0,
