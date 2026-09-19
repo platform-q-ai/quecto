@@ -67,23 +67,39 @@ fn every_action_has_its_stable_wire_name() {
     );
 }
 
+fn ack(name: &str, key: Option<&str>) -> ResumeAnswer {
+    ResumeAnswer::Resumed(ResumeSessionAck {
+        name: name.into(),
+        session_key: key.map(str::to_string),
+    })
+}
+
 #[test]
 fn a_success_is_a_restore_unless_it_says_cancelled() {
-    let resumed = json!({"outcome": "resumed", "session": "a"});
+    let resumed = json!({"outcome": "resumed", "session": "a", "sessionKey": "cli:a"});
     let legacy = json!({"session": "a"});
     let cancelled = json!({"outcome": "cancelled", "session": "a"});
     assert_eq!(
         parse_resume_answer(true, Some(&resumed)),
-        ResumeAnswer::Resumed
+        ack("a", Some("cli:a"))
     );
-    assert_eq!(
-        parse_resume_answer(true, Some(&legacy)),
-        ResumeAnswer::Resumed
-    );
-    assert_eq!(parse_resume_answer(true, None), ResumeAnswer::Resumed);
+    assert_eq!(parse_resume_answer(true, Some(&legacy)), ack("a", None));
     assert_eq!(
         parse_resume_answer(true, Some(&cancelled)),
         ResumeAnswer::Cancelled
+    );
+}
+
+#[test]
+fn a_restore_without_a_readable_name_keeps_the_toast_visible() {
+    assert_eq!(
+        parse_resume_answer(true, Some(&json!({}))),
+        ack("session", None)
+    );
+    assert_eq!(parse_resume_answer(true, None), ack("session", None));
+    assert_eq!(
+        parse_resume_answer(true, Some(&json!({"session": 7}))),
+        ack("session", None)
     );
 }
 
@@ -152,10 +168,10 @@ fn an_unknown_kind_or_action_or_an_empty_offer_is_a_plain_refusal_never_a_guess(
         );
     }
     // A success is never a decision, whatever it carries.
-    assert_eq!(
+    assert!(matches!(
         parse_resume_answer(true, Some(&success)),
-        ResumeAnswer::Resumed
-    );
+        ResumeAnswer::Resumed(_)
+    ));
 }
 
 #[test]
@@ -172,23 +188,14 @@ fn a_refusal_carries_its_code_when_sent() {
 }
 
 #[test]
-fn hostile_metadata_is_made_safe_and_bounded() {
-    let mut data = decision_data();
-    data["session"] = json!("evil\u{1b}[2Jname");
-    data["executionPath"] = json!(format!("/x\u{7}{}", "y".repeat(2000)));
-    data["detail"] = json!("line\r\nbreak\u{1b}]0;title\u{7}");
-    data["actions"][0]["reason"] = json!("why\u{1b}[31m");
-    let ResumeAnswer::Decision(decision) = parse_resume_answer(false, Some(&data)) else {
-        panic!("decision expected");
-    };
-    let texts = [
-        decision.session.clone(),
-        decision.execution_path.clone().unwrap(),
-        decision.detail.clone().unwrap(),
-        decision.actions[0].reason.clone().unwrap(),
-    ];
-    for text in texts {
-        assert!(!text.chars().any(char::is_control), "{text:?}");
-        assert!(text.chars().count() <= 512);
+fn an_incomplete_decision_is_a_plain_refusal() {
+    for missing in ["session", "sessionKey", "kind", "homeVersion"] {
+        let mut data = decision_data();
+        data.as_object_mut().unwrap().remove(missing);
+        assert_eq!(
+            parse_resume_answer(false, Some(&data)),
+            ResumeAnswer::Refused(None),
+            "{missing}"
+        );
     }
 }

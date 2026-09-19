@@ -2,6 +2,7 @@
 //! TUI sends (stable identity, optional explicit action, the home version it
 //! was shown) and what the harness answers (restored, cancelled, a typed
 //! decision or a typed refusal). Availability is carried, never inferred.
+use super::state_payloads::ResumeSessionAck;
 use serde::{Deserialize, Serialize};
 
 /// An explicit action of a resume decision, by its stable wire name.
@@ -59,17 +60,15 @@ pub struct ResumeActionOffer {
     pub reason: Option<String>,
 }
 
-/// The typed decision of a `resume_session` answer.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// The typed decision of a `resume_session` answer. Its texts are untrusted
+/// metadata: the presentation makes them safe before it renders them.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResumeDecision {
     pub session: String,
     pub session_key: String,
     pub kind: ResumeDecisionKind,
     pub home_version: String,
-    #[serde(default)]
     pub execution_path: Option<String>,
-    #[serde(default)]
     pub detail: Option<String>,
     pub actions: Vec<ResumeActionOffer>,
 }
@@ -78,7 +77,7 @@ pub struct ResumeDecision {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResumeAnswer {
     /// History was restored (also every answer of a harness before #2011).
-    Resumed,
+    Resumed(ResumeSessionAck),
     /// The harness acknowledged a cancel: nothing changed.
     Cancelled,
     Decision(ResumeDecision),
@@ -86,47 +85,57 @@ pub enum ResumeAnswer {
     Refused(Option<String>),
 }
 
+/// The one typed shape every `resume_session` payload is read through.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct WireAnswer {
+    outcome: Option<String>,
+    code: Option<String>,
+    session: Option<String>,
+    session_key: Option<String>,
+    kind: Option<ResumeDecisionKind>,
+    home_version: Option<String>,
+    execution_path: Option<String>,
+    detail: Option<String>,
+    actions: Vec<ResumeActionOffer>,
+}
+
+impl WireAnswer {
+    /// A decision only when it is complete and every part of it is known.
+    fn into_decision(self) -> Option<ResumeDecision> {
+        (!self.actions.is_empty()).then_some(())?;
+        Some(ResumeDecision {
+            session: self.session?,
+            session_key: self.session_key?,
+            kind: self.kind?,
+            home_version: self.home_version?,
+            execution_path: self.execution_path,
+            detail: self.detail,
+            actions: self.actions,
+        })
+    }
+}
+
 /// Map a `resume_session` response. Only a success that does not say
-/// `cancelled` is a restore; only a failure that carries a complete, known
-/// decision opens a dialog — an unknown kind or action is a plain refusal,
-/// never a guessed choice. Every text is made safe for the terminal.
+/// `cancelled` is a restore (a missing `session` falls back to the literal
+/// `"session"` so the toast stays user-visible); only a failure that carries
+/// a complete, known decision opens a dialog — an unknown kind or action is a
+/// plain refusal, never a guessed choice.
 pub fn parse_resume_answer(success: bool, data: Option<&serde_json::Value>) -> ResumeAnswer {
-    let outcome = data
-        .and_then(|data| data.get("outcome"))
-        .and_then(serde_json::Value::as_str);
-    match (success, outcome) {
+    let wire = data
+        .and_then(|data| serde_json::from_value::<WireAnswer>(data.clone()).ok())
+        .unwrap_or_default();
+    match (success, wire.outcome.as_deref()) {
         (true, Some("cancelled")) => ResumeAnswer::Cancelled,
-        (true, _) => ResumeAnswer::Resumed,
-        (false, Some("decision")) => data
-            .and_then(|data| serde_json::from_value::<ResumeDecision>(data.clone()).ok())
-            .filter(|decision| !decision.actions.is_empty())
-            .map_or(ResumeAnswer::Refused(None), |decision| {
-                ResumeAnswer::Decision(safe_decision(decision))
-            }),
-        (false, _) => ResumeAnswer::Refused(
-            data.and_then(|data| data.get("code"))
-                .and_then(serde_json::Value::as_str)
-                .map(safe_text),
-        ),
+        (true, _) => ResumeAnswer::Resumed(ResumeSessionAck {
+            name: wire.session.unwrap_or_else(|| "session".to_string()),
+            session_key: wire.session_key,
+        }),
+        (false, Some("decision")) => wire
+            .into_decision()
+            .map_or(ResumeAnswer::Refused(None), ResumeAnswer::Decision),
+        (false, _) => ResumeAnswer::Refused(wire.code),
     }
-}
-
-fn safe_decision(mut decision: ResumeDecision) -> ResumeDecision {
-    decision.session = safe_text(&decision.session);
-    decision.execution_path = decision.execution_path.as_deref().map(safe_text);
-    decision.detail = decision.detail.as_deref().map(safe_text);
-    for offer in &mut decision.actions {
-        offer.reason = offer.reason.as_deref().map(safe_text);
-    }
-    decision
-}
-
-/// Untrusted metadata: no terminal controls, bounded length.
-fn safe_text(value: &str) -> String {
-    crate::components::ansi::sanitize_control(value)
-        .chars()
-        .take(512)
-        .collect()
 }
 
 #[cfg(test)]

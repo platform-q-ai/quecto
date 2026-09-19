@@ -142,7 +142,7 @@ impl World {
             .handles
             .switch
             .resume
-            .request(request, &mut messages, None, &mut runtime)
+            .execute(request, &mut messages, None, &mut runtime)
             .await;
         if result.is_err() {
             assert!(runtime.switched_to.is_empty(), "a refusal switches nothing");

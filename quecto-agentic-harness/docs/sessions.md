@@ -260,6 +260,38 @@ admission rechecks it after ownership admission for both explicit resume and
 startup; a discovery group is not permission to execute history in another
 directory.
 
+#### Typed resume decisions (#2011)
+
+`ResumeSavedSession::execute` takes a `ResumeRequest` (exact target, intent,
+optional expected `HomeVersion`) and answers a `ResumeOutcome` (`Resumed`,
+`Cancelled`) or a typed `ResumeSavedSessionError`, each with a stable `code()`.
+A target that exists but does not admit a restore is answered with
+`Decision(ResumeDecision)`: the `ResumeDecisionKind` (`CrossFolder`,
+`HomeMissing`, `HomeChanged`, `HomeUnknown`, `LegacyUnscoped`), the home version
+it was decided on, and the offers of the domain's one affirmative table
+(`ResumeDecisionKind::offered_actions`: Open original / Fork current / Cancel;
+Locate / Fork current / Cancel; Associate / Cancel). Each offer's availability
+comes from `ResumeActionCapabilities` — the set of actions whose executor is
+composed (`composition/resume_capabilities.rs`; `cancel_only()` until #2012,
+#2013 and #2014 add theirs there). An explicit action is refused before any
+effect (`ActionUnavailable` with the reason, or `ActionExecutedElsewhere` once
+its own transaction exists) and is never substituted; `Cancel` has no effect at
+all. `SessionHomeContext::classify` is the one classification (`admit`, the
+startup disposition, is derived from it); an undiscoverable current directory
+is the refusal `CurrentScopeUnavailable`, never a decision. The collaborators
+in `use_cases/resume_saved_session_decision.rs` run the same `decide` twice: an
+effect-free pre-flight — a decision or stale selection settles no child, saves
+nothing and claims nothing — and the authoritative re-check under the target's
+claim, where a changed `HomeVersion` is `StaleHomeVersion` and the claim is
+released (the loop's own key excepted, #1995). Exact-key resolution reads the
+`.home` authority and never the derived index. `HomeVersion::of` is a pure,
+process-stable digest of the authoritative scope (legacy and uninterpretable
+states included). The UDS edge is `interface/uds/sessions/
+resume_session_controller.rs` (wire fields → request) and
+`interface/cli/uds_dispatch_resume.rs` (typed answers, untrusted text made
+safe); the TUI renders the decision in `sessions/resume_decision.rs`, never
+infers availability, and sends identity + action + version.
+
 ### DTOs and the active session
 
 `src/application/sessions/dto/` carries requests, results and errors as domain

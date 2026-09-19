@@ -257,8 +257,16 @@ relationships and canonical paths define discovery grouping; the one
 eligibility rule is the domain's `SessionHome::admission`, and identical group
 membership does not authorize restore in another execution directory. The
 home context is composed once per loop over the one file store and is
-mandatory for resume. Cross-folder executors and metadata search are later
-slices, not #2009.
+mandatory for resume. Typed resume decisions (#2011) stay with that owner:
+`ResumeSavedSession::execute` answers a `ResumeRequest` with a `ResumeOutcome`,
+a typed `ResumeDecision` (pure kinds, actions and `HomeVersion` in
+`src/domain/resume_decision.rs`; DTOs in `dto/resume_decision.rs`; eligibility
+collaborators in `use_cases/resume_saved_session_decision.rs`) or a coded
+refusal; action availability is the capability set composed in
+`src/composition/resume_capabilities.rs`; the wire edge is
+`interface/uds/sessions/resume_session_controller.rs` and
+`interface/cli/uds_dispatch_resume.rs`. Cross-folder executors (#2012–#2014)
+and metadata search are later slices.
 
 Session persistence stores conversation messages, tool-call identity, durable
 context bookkeeping, workflow state, and enough metadata to resume or inspect a

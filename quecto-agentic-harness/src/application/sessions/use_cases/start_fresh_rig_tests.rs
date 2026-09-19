@@ -65,9 +65,6 @@ pub(crate) struct RecordingStore {
     pub(crate) sessions: Mutex<Vec<Session>>,
     pub(crate) owned_elsewhere: Mutex<Option<String>>,
     pub(crate) fail_load: AtomicBool,
-    /// `exists` affirms the seeded sessions (#2011 pre-flight); off, it
-    /// affirms nothing, so only the claimed path decides.
-    pub(crate) affirm_exists: AtomicBool,
 }
 
 impl RecordingStore {
@@ -156,15 +153,8 @@ impl SessionStore for RecordingStore {
     ) -> Fut<'a, ()> {
         self.write("save_clean_delta", messages)
     }
-    fn exists(&self, identity: &SessionIdentity) -> Fut<'_, bool> {
-        let seeded = self
-            .sessions
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|s| &s.key == identity);
-        let affirmed = self.affirm_exists.load(Ordering::SeqCst) && seeded;
-        Box::pin(async move { Ok(affirmed) })
+    fn exists(&self, _: &SessionIdentity) -> Fut<'_, bool> {
+        Box::pin(async { Ok(false) })
     }
     fn list(&self, _: &SessionListQuery) -> Fut<'_, Vec<SessionSummary>> {
         Box::pin(async { Ok(Vec::new()) })
@@ -441,7 +431,6 @@ pub(crate) fn build_fresh_rig(options: FreshOptions) -> FreshRig {
         sessions: Mutex::new(Vec::new()),
         owned_elsewhere: Mutex::new(None),
         fail_load: AtomicBool::new(false),
-        affirm_exists: AtomicBool::new(false),
     });
     let save = Arc::new(SaveSession::new(
         state.clone(),

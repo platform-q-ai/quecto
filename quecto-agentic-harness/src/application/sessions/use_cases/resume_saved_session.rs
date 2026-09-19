@@ -27,14 +27,13 @@ use super::clear_conversation::visible_message_count;
 use super::{DepartingChildren, SaveSession};
 use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::dto::{
-    ResumeActionCapabilities, ResumeSavedSessionError, ResumeTarget, SaveTrigger,
+    ResumeActionCapabilities, ResumeOutcome, ResumeRequest, ResumeSavedSessionError, SaveTrigger,
     SavedSessionResumed, SessionTransition, StartupSessionOpened,
 };
 use crate::application::sessions::ports::{FleetSettlement, SessionStore, SessionSwitchRuntime};
 use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::conversation_view::inject_system_prompt;
 use crate::domain::message::Message;
-use crate::domain::resume_decision::HomeVersion;
 use crate::domain::session::Session;
 use std::sync::Arc;
 
@@ -45,10 +44,8 @@ pub struct ResumeSavedSession {
     children: Arc<DepartingChildren>,
     /// A `--no-session` loop: nothing is claimed, loaded or resumed.
     ephemeral: bool,
-    /// Scope admission (#2009) is mandatory: no loop resumes without it.
-    home: SessionHomeContext,
-    /// The explicit actions this runtime can execute (#2011).
-    capabilities: ResumeActionCapabilities,
+    /// Mandatory scope admission (#2009) and the executable actions (#2011).
+    eligibility: Eligibility,
 }
 
 #[path = "resume_saved_session_admission.rs"]
@@ -56,6 +53,7 @@ mod resume_saved_session_admission;
 use resume_saved_session_admission::PendingClaim;
 #[path = "resume_saved_session_decision.rs"]
 mod resume_saved_session_decision;
+use resume_saved_session_decision::{Admitted, Eligibility, admit};
 #[path = "resume_saved_session_startup.rs"]
 mod resume_saved_session_startup;
 use resume_saved_session_startup::{admit_at_startup, admit_new_at_startup};
@@ -75,38 +73,41 @@ impl ResumeSavedSession {
             store,
             children,
             ephemeral,
-            home,
-            capabilities: ResumeActionCapabilities::cancel_only(),
+            eligibility: Eligibility {
+                home,
+                capabilities: ResumeActionCapabilities::cancel_only(),
+            },
         }
     }
 
-    /// Leave the current session for the saved session `raw_target` names:
-    /// the exact-key restore. `messages` is the loop's live conversation;
-    /// `fleet` the loop's fleet teardown, if it has one; `runtime` the loop
-    /// runtime the switch moves. [`Self::request`] is the typed entry.
-    pub async fn execute(
-        &self,
-        raw_target: &str,
-        messages: &mut Vec<Message>,
-        fleet: Option<&dyn FleetSettlement>,
-        runtime: &mut dyn SessionSwitchRuntime,
-    ) -> Result<SavedSessionResumed, ResumeSavedSessionError> {
-        let target = self.admit_target(raw_target)?;
-        self.restore(target, None, messages, fleet, runtime).await
+    /// Declare the explicit actions whose executor composition wired.
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: ResumeActionCapabilities) -> Self {
+        self.eligibility.capabilities = capabilities;
+        self
     }
 
-    /// The restore transaction of an admitted target. The effect-free
+    /// Answer a resume request (#2011): a cancel or an explicit action is
+    /// settled by [`admit`] before any effect; a restore leaves the current
+    /// session for the exact target. `messages` is the loop's live
+    /// conversation; `fleet` the loop's fleet teardown, if it has one;
+    /// `runtime` the loop runtime the switch moves. The effect-free
     /// pre-flight spares a decision the settlement; the claimed re-check of
-    /// `expected` and of the home is the authority.
-    async fn restore(
+    /// the expected version and of the home is the authority.
+    pub async fn execute(
         &self,
-        target: ResumeTarget,
-        expected: Option<&HomeVersion>,
+        request: &ResumeRequest,
         messages: &mut Vec<Message>,
         fleet: Option<&dyn FleetSettlement>,
         runtime: &mut dyn SessionSwitchRuntime,
-    ) -> Result<SavedSessionResumed, ResumeSavedSessionError> {
-        self.preflight(&target, expected).await?;
+    ) -> Result<ResumeOutcome, ResumeSavedSessionError> {
+        let target = match admit(self.ephemeral, &self.eligibility.capabilities, request)? {
+            Admitted::Cancelled(name) => return Ok(ResumeOutcome::Cancelled { name }),
+            Admitted::Restore(target) => target,
+        };
+        let expected = request.expected_home_version.as_ref();
+        let store = self.store.as_ref();
+        self.eligibility.preflight(store, &target, expected).await?;
         let transition = SessionTransition::Resume;
         self.children
             .settle(fleet, transition)
@@ -122,7 +123,10 @@ impl ResumeSavedSession {
             .map_err(ResumeSavedSessionError::Claim)?;
         let mut claim = PendingClaim::new(self.store.clone(), target.identity.clone());
         claim.release = old_identity != target.identity;
-        let loaded = self.load_claimed(&target, expected).await?;
+        let loaded = self
+            .eligibility
+            .load_claimed(store, &target, expected)
+            .await?;
         self.children
             .note_persisted_rows_are_history(loaded.subagent_roster.len());
         if let Err(refused) = self.children.reset_roster(transition) {
@@ -151,12 +155,12 @@ impl ResumeSavedSession {
             let spill_store = state.conversation().spill_store().cloned();
             state.switch_to(target.identity.clone(), spill_store, messages)
         };
-        Ok(SavedSessionResumed {
+        Ok(ResumeOutcome::Resumed(SavedSessionResumed {
             name: target.name,
             identity: target.identity,
             message_count: messages.len(),
             ledger,
-        })
+        }))
     }
 
     /// Open the session the loop was composed on, at startup: claim it
@@ -174,11 +178,11 @@ impl ResumeSavedSession {
             let mut claim = PendingClaim::new(self.store.clone(), identity.clone());
             let session = match self.store.load(&identity).await {
                 Ok(Some(session)) => {
-                    admit_at_startup(&self.home, &identity).await?;
+                    admit_at_startup(&self.eligibility.home, &identity).await?;
                     session
                 }
                 Ok(None) => {
-                    admit_new_at_startup(&self.home, &identity).await?;
+                    admit_new_at_startup(&self.eligibility.home, &identity).await?;
                     Session::new(identity.clone())
                 }
                 Err(err) => {

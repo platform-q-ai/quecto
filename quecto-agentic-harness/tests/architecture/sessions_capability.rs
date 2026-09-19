@@ -89,6 +89,14 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/use_cases/resume_saved_session_startup.rs",
     "src/application/sessions/dto/resume_disposition.rs",
     "src/application/sessions/dto/startup_refusal.rs",
+    // #2011 typed resume decisions extend the resume owner, not a new one.
+    "src/domain/resume_decision.rs",
+    "src/application/sessions/dto/resume_decision.rs",
+    "src/application/sessions/dto/resume_refusal_text.rs",
+    "src/application/sessions/use_cases/resume_saved_session_decision.rs",
+    "src/composition/resume_capabilities.rs",
+    "src/interface/uds/sessions/resume_session_controller.rs",
+    "src/interface/cli/uds_dispatch_resume.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
@@ -620,15 +628,35 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     // R2-H1/H2: startup admission (the actionable refusal, the orphan-home
     // rule) is its own helper; the shared admission shrank 67 → 48.
+    // #2011: the shared admission is the decision helper's now; this file
+    // keeps the claim guard alone (48 → 31) and startup reads the home itself
+    // (56 → 54).
     (
         "src/application/sessions/use_cases/resume_saved_session_admission.rs",
-        48,
+        31,
     ),
     (
         "src/application/sessions/use_cases/resume_saved_session_startup.rs",
-        56,
+        54,
     ),
-    ("src/application/sessions/dto/resume_saved_session.rs", 123),
+    // #2011: the eligibility collaborators of the one resume transaction —
+    // request admission, the effect-free pre-flight, the claimed re-check.
+    (
+        "src/application/sessions/use_cases/resume_saved_session_decision.rs",
+        158,
+    ),
+    // #2011: the refusal text moved to its own module (123 → 117 with the
+    // typed decision and refusal variants added).
+    ("src/application/sessions/dto/resume_saved_session.rs", 117),
+    ("src/application/sessions/dto/resume_refusal_text.rs", 61),
+    ("src/application/sessions/dto/resume_decision.rs", 168),
+    ("src/domain/resume_decision.rs", 179),
+    ("src/composition/resume_capabilities.rs", 15),
+    (
+        "src/interface/uds/sessions/resume_session_controller.rs",
+        55,
+    ),
+    ("src/interface/cli/uds_dispatch_resume.rs", 100),
     ("src/application/sessions/dto/resume_disposition.rs", 30),
     ("src/application/sessions/dto/startup_refusal.rs", 40),
     // D9 #1978: retained context.
@@ -713,10 +741,12 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // D10 #1979 hands the presenters the active session's key (was 190).
     // #2009: the discovery presenter is its own owner; the query extraction
     // shrinks below master (was 187).
-    ("src/interface/cli/uds_dispatch_query.rs", 174),
+    // #2011: one re-export line for the shared safe-display helper (174 → 173).
+    ("src/interface/cli/uds_dispatch_query.rs", 173),
     ("src/interface/cli/uds_dispatch_discovery.rs", 50),
     // #1848 reasoning-effort injection plus #2009 scoped session dispatch.
-    ("src/interface/cli/uds_dispatch_session.rs", 259),
+    // #2011: the resume answers are the resume presenter's (259 → 246).
+    ("src/interface/cli/uds_dispatch_session.rs", 246),
     ("src/interface/cli/uds_latest_report.rs", 85),
     // D9 #1978 hands the loop its retained-context handles as an input
     // (was 305 before D9).

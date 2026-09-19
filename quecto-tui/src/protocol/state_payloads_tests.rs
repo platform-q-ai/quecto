@@ -93,24 +93,3 @@ fn parse_set_model_id_reads_echoed_model() {
     );
     assert_eq!(parse_set_model_id(&json!({}), &sanitize), None);
 }
-
-#[test]
-fn parse_resume_session_name_defaults_when_missing() {
-    assert_eq!(parse_resume_session(&json!({"session": "abc"})).name, "abc");
-    assert_eq!(parse_resume_session(&json!({})).name, "session");
-}
-
-#[test]
-fn parse_resume_session_carries_the_session_key_when_reported() {
-    let ack = parse_resume_session(&json!({"session": "abc", "sessionKey": "cli:abc"}));
-    assert_eq!(
-        ack,
-        ResumeSessionAck {
-            name: "abc".into(),
-            session_key: Some("cli:abc".into())
-        }
-    );
-    let bare = parse_resume_session(&json!({"session": "abc"}));
-    assert_eq!(bare.session_key, None);
-    assert_eq!(parse_resume_session(&json!({})).name, "session");
-}

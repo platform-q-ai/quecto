@@ -3,6 +3,7 @@
 //! only — which actions exist and which are available is the harness's word;
 //! an unavailable action is shown, explained and never sent.
 use crate::components::{
+    ansi::sanitize_control,
     component::Component,
     select_list::{SelectItem, SelectList, SelectResult},
     select_overlay::build_select_overlay,
@@ -32,6 +33,11 @@ pub struct ResumeDecisionDialog {
 }
 
 const FOOTER: &str = "Enter choose · Esc cancel — nothing is restored or linked";
+
+/// No terminal controls, bounded length.
+fn safe_text(value: &str) -> String {
+    sanitize_control(value).chars().take(512).collect()
+}
 
 fn title(kind: ResumeDecisionKind) -> &'static str {
     match kind {
@@ -63,7 +69,15 @@ fn item(index: usize, offer: &ResumeActionOffer) -> SelectItem {
 }
 
 impl ResumeDecisionDialog {
-    pub fn new(decision: ResumeDecision) -> Self {
+    /// The decision's texts are untrusted metadata: made safe and bounded
+    /// here, once, before anything is rendered.
+    pub fn new(mut decision: ResumeDecision) -> Self {
+        decision.session = safe_text(&decision.session);
+        decision.execution_path = decision.execution_path.as_deref().map(safe_text);
+        decision.detail = decision.detail.as_deref().map(safe_text);
+        for offer in &mut decision.actions {
+            offer.reason = offer.reason.as_deref().map(safe_text);
+        }
         let items = decision
             .actions
             .iter()

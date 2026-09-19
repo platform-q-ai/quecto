@@ -151,3 +151,34 @@ fn a_decision_without_a_folder_shows_the_detail_or_a_placeholder() {
     assert!(text.contains("home path is not admissible"), "{text}");
     assert!(text.contains("Associate with a folder"), "{text}");
 }
+
+#[test]
+fn hostile_metadata_is_made_safe_and_bounded_before_it_is_rendered() {
+    let mut hostile = decision(
+        ResumeDecisionKind::HomeUnknown,
+        vec![
+            offer(ResumeAction::Locate, false, Some("why\u{1b}[31m")),
+            offer(ResumeAction::Cancel, true, None),
+        ],
+    );
+    hostile.session = "evil\u{1b}[2Jname".into();
+    hostile.execution_path = Some(format!("/x\u{7}{}", "y".repeat(2000)));
+    hostile.detail = Some("line\r\nbreak\u{1b}]0;title\u{7}".into());
+    let mut dialog = ResumeDecisionDialog::new(hostile);
+    let decision = dialog.decision().clone();
+    for text in [
+        decision.session.clone(),
+        decision.execution_path.clone().unwrap(),
+        decision.detail.clone().unwrap(),
+        decision.actions[0].reason.clone().unwrap(),
+    ] {
+        assert!(!text.chars().any(char::is_control), "{text:?}");
+        assert!(text.chars().count() <= 512);
+    }
+    let (lines, _) = dialog.render_overlay(120, 30);
+    let raw = lines.join("\n");
+    assert!(
+        !raw.contains("\u{1b}[2J") && !raw.contains('\u{7}'),
+        "{raw:?}"
+    );
+}

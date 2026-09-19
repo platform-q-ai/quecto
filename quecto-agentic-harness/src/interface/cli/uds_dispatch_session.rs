@@ -128,7 +128,7 @@ pub(super) async fn handle_resume_session(
             );
             let fleet = fleet_settlement_of(&ctx.fleet_teardown);
             resume
-                .request(&request, ctx.messages, fleet, &mut runtime)
+                .execute(&request, ctx.messages, fleet, &mut runtime)
                 .await
         }
         Err(refused) => Err(refused),

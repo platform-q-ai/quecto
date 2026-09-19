@@ -1,97 +1,91 @@
-//! The typed entry and the eligibility collaborators of the resume
-//! transaction (#2011). Not a second owner: `request` routes an intent to the
-//! one restore in the parent, and `decide` is the one eligibility check the
-//! effect-free pre-flight and the claimed re-check both run.
+//! The eligibility collaborators of the resume transaction (#2011). Not a
+//! second owner: `admit` routes a request's intent for the one transaction in
+//! the parent, and `decide` is the one eligibility check its effect-free
+//! pre-flight and its claimed re-check both run.
 use super::ResumeSavedSession;
 use crate::application::sessions::dto::{
     ActionAvailability, ResumeActionCapabilities, ResumeActionOffer, ResumeDecision, ResumeIntent,
-    ResumeOutcome, ResumeRequest, ResumeSavedSessionError, ResumeTarget,
+    ResumeRequest, ResumeSavedSessionError, ResumeTarget,
 };
-use crate::application::sessions::ports::{FleetSettlement, SessionSwitchRuntime};
+use crate::application::sessions::ports::SessionStore;
 use crate::application::sessions::session_home::{HomeObstacle, SessionHomeContext};
-use crate::domain::message::Message;
 use crate::domain::resume_decision::{HomeVersion, ResumeAction};
 use crate::domain::session::Session;
 use crate::domain::session_home::SessionHomeScope;
 
-impl ResumeSavedSession {
-    /// Declare the explicit actions whose executor composition wired.
-    #[must_use]
-    pub fn with_capabilities(mut self, capabilities: ResumeActionCapabilities) -> Self {
-        self.capabilities = capabilities;
-        self
-    }
+/// What the admission of a request leaves to do.
+pub(super) enum Admitted {
+    /// The client cancelled: nothing is settled, saved, claimed or restored.
+    Cancelled(String),
+    /// The one restore transaction, for this exact target.
+    Restore(ResumeTarget),
+}
 
-    /// Answer a typed resume request. `Cancel` has no effect at all. Every
-    /// other explicit action is refused before any effect — with the reason
-    /// its executor is not composed, or because it has its own transaction —
-    /// and is never replaced by a restore or by another action. `Restore`
-    /// runs the one restore transaction.
-    pub async fn request(
-        &self,
-        request: &ResumeRequest,
-        messages: &mut Vec<Message>,
-        fleet: Option<&dyn FleetSettlement>,
-        runtime: &mut dyn SessionSwitchRuntime,
-    ) -> Result<ResumeOutcome, ResumeSavedSessionError> {
-        let target = self.admit_target(&request.target)?;
-        match request.intent {
-            ResumeIntent::Act(ResumeAction::Cancel) => {
-                Ok(ResumeOutcome::Cancelled { name: target.name })
-            }
-            ResumeIntent::Act(action) => Err(self.refuse_action(action)),
-            ResumeIntent::Restore => {
-                let expected = request.expected_home_version.as_ref();
-                self.restore(target, expected, messages, fleet, runtime)
-                    .await
-                    .map(ResumeOutcome::Resumed)
-            }
-        }
+/// Admit a request before any effect. An ephemeral loop resumes nothing; the
+/// target is one of the accepted exact spellings — no prefix, no fuzzy
+/// match. `Cancel` has no effect at all. Every other explicit action is
+/// refused here — with the reason its executor is not composed, or because
+/// it has its own transaction — and is never replaced by a restore or by
+/// another action.
+pub(super) fn admit(
+    ephemeral: bool,
+    capabilities: &ResumeActionCapabilities,
+    request: &ResumeRequest,
+) -> Result<Admitted, ResumeSavedSessionError> {
+    if ephemeral {
+        return Err(ResumeSavedSessionError::Ephemeral);
     }
-
-    /// An ephemeral loop resumes nothing; the target is one of the accepted
-    /// exact spellings — no prefix, no fuzzy match.
-    pub(super) fn admit_target(&self, raw: &str) -> Result<ResumeTarget, ResumeSavedSessionError> {
-        if self.ephemeral {
-            return Err(ResumeSavedSessionError::Ephemeral);
-        }
-        ResumeTarget::parse(raw)
-    }
-
-    fn refuse_action(&self, action: ResumeAction) -> ResumeSavedSessionError {
-        match self.capabilities.availability(action) {
+    let target = ResumeTarget::parse(&request.target)?;
+    match request.intent {
+        ResumeIntent::Restore => Ok(Admitted::Restore(target)),
+        ResumeIntent::Act(ResumeAction::Cancel) => Ok(Admitted::Cancelled(target.name)),
+        ResumeIntent::Act(action) => Err(match capabilities.availability(action) {
             ActionAvailability::Unavailable(reason) => {
                 ResumeSavedSessionError::ActionUnavailable { action, reason }
             }
             ActionAvailability::Available => {
                 ResumeSavedSessionError::ActionExecutedElsewhere(action)
             }
-        }
+        }),
     }
+}
 
-    /// Decide without any effect, when the store affirms the target exists:
-    /// a decision or a stale selection then costs no settlement, save or
-    /// claim. An absent or unobservable target decides nothing here — the
-    /// claimed path reports it.
+/// The eligibility collaborators of one loop: the shared home observations
+/// and the explicit actions composition declared executable.
+pub(super) struct Eligibility {
+    pub(super) home: SessionHomeContext,
+    pub(super) capabilities: ResumeActionCapabilities,
+}
+
+impl Eligibility {
+    /// Decide without any effect: a decision or a stale selection of a
+    /// target the store can read then costs no settlement, save or claim.
+    /// An absent or unreadable target decides nothing here — the claimed
+    /// path reports it.
     pub(super) async fn preflight(
         &self,
+        store: &dyn SessionStore,
         target: &ResumeTarget,
         expected: Option<&HomeVersion>,
     ) -> Result<(), ResumeSavedSessionError> {
-        match self.store.exists(&target.identity).await {
-            Ok(true) => decide(&self.home, &self.capabilities, target, expected).await,
-            Ok(false) | Err(_) => Ok(()),
+        let Err(obstacle) = decide(&self.home, &self.capabilities, target, expected).await else {
+            return Ok(());
+        };
+        match store.load(&target.identity).await {
+            Ok(Some(_)) => Err(obstacle),
+            Ok(None) | Err(_) => Ok(()),
         }
     }
 
     /// Read the claimed target and re-decide under the claim; on `Err` the
-    /// guard releases a claim not the loop's own.
+    /// caller's guard releases a claim not the loop's own.
     pub(super) async fn load_claimed(
         &self,
+        store: &dyn SessionStore,
         target: &ResumeTarget,
         expected: Option<&HomeVersion>,
     ) -> Result<Session, ResumeSavedSessionError> {
-        match self.store.load(&target.identity).await {
+        match store.load(&target.identity).await {
             Ok(Some(session)) => {
                 decide(&self.home, &self.capabilities, target, expected).await?;
                 Ok(session)

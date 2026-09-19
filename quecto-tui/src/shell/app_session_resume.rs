@@ -108,9 +108,9 @@ impl App {
             self.ac_mut().pending_session_resume = None;
         }
         match parse_resume_answer(success, data.as_ref()) {
-            ResumeAnswer::Resumed => {
+            ResumeAnswer::Resumed(ack) => {
                 self.clear_message_recovery();
-                self.handle_resume_success(data);
+                self.handle_resume_success(data.is_some().then_some(ack));
             }
             // Nothing changed for anyone: no refresh, no toast.
             ResumeAnswer::Cancelled => {}
@@ -132,10 +132,10 @@ impl App {
             .is_some_and(|pending| id == Some(pending))
     }
 
-    fn handle_resume_success(&mut self, data: Option<serde_json::Value>) {
-        let ack = data
-            .as_ref()
-            .map(crate::protocol::state_payloads::parse_resume_session);
+    fn handle_resume_success(
+        &mut self,
+        ack: Option<crate::protocol::state_payloads::ResumeSessionAck>,
+    ) {
         // A resume into a session other than the one this tab is showing
         // (including one it has not learned yet) is a session boundary for
         // the Coordinator clock. An answer without an identity is not.

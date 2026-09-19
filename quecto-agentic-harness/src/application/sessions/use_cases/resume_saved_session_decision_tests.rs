@@ -21,7 +21,6 @@ use crate::domain::session_home::{
 };
 use crate::domain::session_identity::SessionIdentity;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 const HERE: &str = "/work/here";
@@ -88,9 +87,20 @@ impl WorkspaceDiscovery for Facts {
 struct Case {
     rig: FreshRig,
     facts: Arc<Facts>,
+    current: &'static str,
 }
 
 fn case_with(scopes: Vec<SessionHomeScope>, here_is_git: bool, current_fails: bool) -> Case {
+    case_on(OLD_KEY, scopes, here_is_git, current_fails)
+}
+
+/// A case whose loop stands for `current` (its own key when `cli:saved`).
+fn case_on(
+    current: &'static str,
+    scopes: Vec<SessionHomeScope>,
+    here_is_git: bool,
+    current_fails: bool,
+) -> Case {
     let facts = Arc::new(Facts {
         scopes: Mutex::new(scopes),
         reads: Mutex::new(0),
@@ -100,6 +110,7 @@ fn case_with(scopes: Vec<SessionHomeScope>, here_is_git: bool, current_fails: bo
     let home = SessionHomeContext::at(facts.clone(), facts.clone(), PathBuf::from(HERE));
     let rig = build_fresh_rig(FreshOptions {
         home: Some(home),
+        current_identity: current,
         ..FreshOptions::default()
     });
     rig.store.seed(Session {
@@ -108,8 +119,11 @@ fn case_with(scopes: Vec<SessionHomeScope>, here_is_git: bool, current_fails: bo
         workflow_run: None,
         subagent_roster: Vec::new(),
     });
-    rig.store.affirm_exists.store(true, Ordering::SeqCst);
-    Case { rig, facts }
+    Case {
+        rig,
+        facts,
+        current,
+    }
 }
 
 fn case(scope: SessionHomeScope) -> Case {
@@ -127,12 +141,16 @@ impl Case {
         let outcome = self
             .rig
             .resume
-            .request(request, &mut messages, Some(&fleet), &mut runtime)
+            .execute(request, &mut messages, Some(&fleet), &mut runtime)
             .await;
         if outcome.is_err() {
             assert_eq!(messages.len(), 1, "a refusal keeps the live conversation");
             assert_eq!(messages[0].content, "live");
-            assert_eq!(self.rig.identity(), OLD_KEY, "a refusal keeps the identity");
+            assert_eq!(
+                self.rig.identity(),
+                self.current,
+                "a refusal keeps the identity"
+            );
         }
         outcome
     }
@@ -141,8 +159,16 @@ impl Case {
         self.request(&ResumeRequest::restore("saved")).await
     }
 
+    /// Nothing was settled, saved, claimed, released or switched; the only
+    /// thing a pre-flight may do is read.
     fn assert_no_effect(&self) {
-        assert_eq!(self.rig.journal(), Vec::<String>::new(), "no effect at all");
+        let effects: Vec<_> = self
+            .rig
+            .journal()
+            .into_iter()
+            .filter(|entry| !entry.starts_with("store.load("))
+            .collect();
+        assert_eq!(effects, Vec::<String>::new(), "no effect at all");
         assert!(self.rig.store.claimed.lock().unwrap().is_empty());
     }
 }
@@ -323,6 +349,32 @@ async fn a_home_that_changes_after_the_preflight_is_refused_under_the_claim() {
     );
 }
 
+/// #1995 under #2011: the same refusal under the claim of the loop's OWN key
+/// releases nothing — the loop keeps owning the session it stands for.
+#[tokio::test]
+async fn a_claimed_refusal_of_the_loops_own_key_keeps_its_claim() {
+    let case = case_on(
+        "cli:saved",
+        vec![
+            SessionHomeScope::Scoped(folder(HERE)),
+            SessionHomeScope::Scoped(folder(ELSEWHERE)),
+        ],
+        false,
+        false,
+    );
+    let decision = decision_of(case.restore().await);
+    assert_eq!(decision.kind, ResumeDecisionKind::CrossFolder);
+    let journal = case.rig.journal();
+    assert!(
+        journal.contains(&"store.claim(cli:saved)".to_string()),
+        "{journal:?}"
+    );
+    assert!(
+        case.rig.store.released.lock().unwrap().is_empty(),
+        "the loop's own claim is never released: {journal:?}"
+    );
+}
+
 #[tokio::test]
 async fn without_an_expected_version_the_claimed_recheck_still_decides() {
     let case = case_with(
@@ -424,7 +476,7 @@ async fn every_explicit_action_is_refused_unavailable_and_never_substituted() {
 #[tokio::test]
 async fn a_composed_executor_makes_its_action_available_and_owned_elsewhere() {
     let base = case(SessionHomeScope::Scoped(folder(ELSEWHERE)));
-    let Case { rig, facts } = base;
+    let Case { rig, facts, .. } = base;
     let FreshRig { resume, .. } = rig;
     let resume = resume.with_capabilities(
         ResumeActionCapabilities::cancel_only().with(ResumeAction::OpenOriginal),
@@ -434,7 +486,7 @@ async fn a_composed_executor_makes_its_action_available_and_owned_elsewhere() {
     let mut runtime = rig.runtime();
     let decision = decision_of(
         resume
-            .request(
+            .execute(
                 &ResumeRequest::restore("saved"),
                 &mut messages,
                 None,
@@ -463,7 +515,7 @@ async fn a_composed_executor_makes_its_action_available_and_owned_elsewhere() {
         expected_home_version: None,
     };
     let refused = resume
-        .request(&request, &mut messages, None, &mut runtime)
+        .execute(&request, &mut messages, None, &mut runtime)
         .await
         .expect_err("owned elsewhere");
     assert!(matches!(
@@ -493,7 +545,7 @@ async fn an_ephemeral_loop_and_an_invalid_key_refuse_every_intent() {
         };
         let refused = rig
             .resume
-            .request(&request, &mut messages, None, &mut runtime)
+            .execute(&request, &mut messages, None, &mut runtime)
             .await
             .expect_err("ephemeral");
         assert!(matches!(refused, ResumeSavedSessionError::Ephemeral));
