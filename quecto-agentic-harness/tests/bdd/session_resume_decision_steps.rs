@@ -387,7 +387,7 @@ fn foreign_unchanged(world: &mut QuectoWorld) {
         world.stdout
     );
     assert!(sessions.join("cli_foreign.home").exists());
-    let layout = FlatSessionLayout::new(&base(world));
+    let layout = FlatSessionLayout::new(base(world));
     let claim = SessionOwnershipGuard::acquire(
         &layout,
         &SessionIdentity::from_persisted_key("cli:foreign"),
