@@ -6,7 +6,7 @@
 //! match); a corrupt index or record is recovered or diagnosed without hiding
 //! a sibling; and a selection made from an answer still passes — or fails —
 //! the resume transaction's own checks.
-use super::resume_decision::{World, identity};
+use super::resume_fixture::{World, identity};
 use quecto::application::sessions::dto::{
     ListedSession, ResumeOutcome, ResumeRequest, ResumeSavedSessionError,
     SearchSessionMetadataRequest, SearchSessionMetadataResult, SessionListScope,

@@ -229,6 +229,8 @@ mod workflow_run_source;
 
 #[path = "contracts/resume_decision_listing.rs"]
 mod resume_decision_listing;
+#[path = "contracts/resume_fixture.rs"]
+mod resume_fixture;
 #[path = "contracts/session_home_catalogue.rs"]
 mod session_home_catalogue;
 #[path = "contracts/session_metadata_search.rs"]

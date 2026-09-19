@@ -3,7 +3,7 @@
 //! resume transaction accepts — for every home state, from a cold index and
 //! from an index-seeded listing — and a well-formed but lying derived index
 //! can influence neither exact-key resolution nor admission.
-use super::resume_decision::{World, identity};
+use super::resume_fixture::{World, identity};
 use quecto::application::sessions::dto::{
     ListedSession, ResumeOutcome, ResumeRequest, ResumeSavedSessionError, SessionListScope,
 };
