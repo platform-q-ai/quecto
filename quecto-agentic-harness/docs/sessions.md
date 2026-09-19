@@ -293,7 +293,7 @@ pure matching rules in `domain/session_metadata_search.rs`.
   the index). A new or changed record is read once by each half, and with the
   index absent, unreadable or version-incompatible every record is — once per
   half, i.e. twice in all (the two halves validate differently; sharing the
-  read is follow-up work, see *Performance*). `tests/contracts/
+  read is follow-up work, #2042; see *Performance*). `tests/contracts/
   session_metadata_search.rs` counts zero transcript reads over 2,000 valid
   records plus an unparseable one and a 2 MiB cut-short one, warm and from a
   new process; `session_rejection_cache.rs` pins re-reading on change and the
@@ -364,7 +364,7 @@ pure matching rules in `domain/session_metadata_search.rs`.
   does not touch the directory). On a 5,201-record store a warm search takes
   ~90 ms against a 50 ms target: **missed, ~1.8×**. The cost is the two `stat`
   passes (store walk + catalogue scan); sharing one pass, or stamping in
-  parallel, is tracked as follow-up work. Commands are dispatched FIFO, as
+  parallel, is tracked as follow-up work (#2042). Commands are dispatched FIFO, as
   `list_sessions` is: a client that queues searches back-to-back delays its own
   `get_state`/`abort` by the sum — the TUI's single flight bounds that to two
   scans; a raw client gets no such bound.
