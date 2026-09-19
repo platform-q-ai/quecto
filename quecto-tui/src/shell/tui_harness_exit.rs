@@ -12,7 +12,7 @@ use std::time::Duration;
 impl TuiHarness {
     /// Spawn `sh -c script` in its own process group exactly like the
     /// production spawn, put it under the production child watcher, and
-    /// register it as a TUI-owned harness (as an in-flight tab spawn is).
+    /// register it as the TUI-owned harness of the connection.
     /// Returns its pid.
     pub fn adopt_owned_harness_script(&mut self, script: &str) -> u32 {
         let child = tokio::process::Command::new("sh")
@@ -25,11 +25,7 @@ impl TuiHarness {
             .expect("spawn stand-in harness");
         let pid = child.id().expect("child pid");
         let watch = watch_child(child, StderrTail::default());
-        self.app
-            .pending_tab_child_watches
-            .lock()
-            .expect("pending watches lock")
-            .push(watch);
+        self.app.set_child_exit_watch(watch);
         pid
     }
 
@@ -90,7 +86,7 @@ impl TuiHarness {
     }
 
     /// Terminate one adopted harness directly through the watcher API with
-    /// `budget` (the same helper tab close and `/new` use) and report.
+    /// `budget` (the same helper `/new` uses) and report.
     pub async fn terminate_adopted_harness(
         &mut self,
         settle: Duration,
@@ -99,12 +95,7 @@ impl TuiHarness {
             settle,
             force: settle,
         };
-        let watch = self
-            .app
-            .pending_tab_child_watches
-            .lock()
-            .expect("pending watches lock")
-            .pop()?;
+        let watch = self.app.take_all_child_exit_watches().pop()?;
         watch.terminate_with_budget(budget).await
     }
 

@@ -69,9 +69,6 @@ pub(super) enum SourcedRender {
     Immediate,
     /// Stream render: token events coalesce, everything else paints now.
     Stream { is_token: bool },
-    /// No paint, no deferred wakeup (#1466): a background-tab event; state
-    /// (and the tab's unread dot) updated silently.
-    Silent,
 }
 
 impl App {
@@ -97,32 +94,26 @@ impl App {
         match item {
             SourcedEvent::Tab(tab, ev) => {
                 let is_token = Self::is_token_event(&ev);
-                let was_running = self.tab_spinner_active(tab);
                 // Route to the owner tab (#1465); unknown tabs no-op.
-                let Some(paint) = self.with_routing_tab(tab, |app| {
+                self.with_routing_tab(tab, |app| {
                     app.handle_event(ev);
                     if app.surface_dropped_oversized_events() {
                         SourcedRender::Immediate
                     } else {
                         SourcedRender::Stream { is_token }
                     }
-                }) else {
-                    return SourcedRender::Stream { is_token };
-                };
-                self.background_render_gate(tab, paint, was_running)
+                })
+                .unwrap_or(SourcedRender::Stream { is_token })
             }
             SourcedEvent::Subagent(tab, agent_id, ev) => {
                 // Direct child feeds belong to the tab that opened them.
                 let stream = SourcedRender::Stream {
                     is_token: Self::is_token_event(&ev),
                 };
-                let was_running = self.tab_spinner_active(tab);
-                match self.with_routing_tab(tab, |app| {
+                let _ = self.with_routing_tab(tab, |app| {
                     app.route_subagent_event(&agent_id, ev);
-                }) {
-                    Some(()) => self.background_render_gate(tab, stream, was_running),
-                    None => stream,
-                }
+                });
+                stream
             }
             SourcedEvent::Closed(tab) => {
                 // Owner-targeted disconnect (#1465 / #1047 via #1462).
@@ -142,10 +133,6 @@ impl App {
         match render {
             SourcedRender::Immediate => self.render_and_note(coalescer),
             SourcedRender::Stream { is_token } => self.render_stream_event(coalescer, is_token),
-            // Background-tab event (#1466 decision 3): the coalescer is left
-            // untouched, so an idle loop stays idle no matter how many
-            // background tabs are streaming.
-            SourcedRender::Silent => {}
         }
     }
 
@@ -334,11 +321,6 @@ impl App {
                 }
                 Some(failure) = self.command_send_failure_rx.recv() => {
                     self.handle_command_send_failure(failure);
-                    self.render_and_note(&mut stream_render_coalescer);
-                }
-                // Background /tab-new spawn + workspace reattach results (#1465).
-                Some(outcome) = self.tab_attach_rx.recv() => {
-                    self.apply_tab_attach_outcome(outcome);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
                 // Master-connection fan-in (`SourcedEvent::Tab` / `Closed`):
@@ -687,8 +669,6 @@ impl App {
                 self.active_chat_mut().scroll_down(10);
                 return;
             }
-            // Tab-switch chords (#1466 decision 5) — see `handle_tab_switch_key`.
-            _ if self.handle_tab_switch_key(&key) => return,
             _ => {}
         }
 

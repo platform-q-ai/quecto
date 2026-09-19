@@ -23,8 +23,6 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 pub use crate::shell::process::{LeaderBudget, LeaderEnd, LeaderIdentity, LeaderTermination};
 
-pub(crate) type ChildWatchRegistry = std::sync::Arc<std::sync::Mutex<Vec<ChildWatch>>>;
-
 /// Maximum stderr lines retained in a [`StderrTail`] ring buffer.
 pub const STDERR_TAIL_MAX_LINES: usize = 20;
 
@@ -180,10 +178,6 @@ impl ChildWatch {
     /// OS pid captured when the watcher was created (may be gone if reaped).
     pub fn pid(&self) -> Option<u32> {
         self.pid
-    }
-
-    pub(crate) fn same_child_as(&self, other: &Self) -> bool {
-        self.pid == other.pid && self.term_tx.same_channel(&other.term_tx)
     }
 
     /// The recorded exit detail, if the child has exited and been reaped.

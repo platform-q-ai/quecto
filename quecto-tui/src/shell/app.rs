@@ -50,10 +50,6 @@ pub struct App {
     tabs: HashMap<crate::shell::connection::TabId, connection_state::ConnectionState>,
     /// Which tab is focused for input, render, and active command send.
     active_tab: crate::shell::connection::TabId,
-    /// This TUI's workspace identity (#1466 decision 1): a UUID minted at
-    /// startup (never cwd-derived) plus its auto-generated human label.
-    pub(crate) workspace_id: String,
-    pub(crate) workspace_label: String,
     /// When set, `active_conn(_mut)` temporarily targets this tab so inbound
     /// `SourcedEvent` routing can mutate the owner without flipping focus.
     routing_tab_override: Option<crate::shell::connection::TabId>,
@@ -106,17 +102,11 @@ pub struct App {
     /// burst (#1470 review). All tabs share this one channel, so the select
     /// arm count stays independent of N.
     pub(super) tab_event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
-    /// Sender half of `tab_event_rx`, retained so newly spawned/reattached tabs
-    /// can join the same fan-in (#1465 AC1/AC2/AC6).
+    /// Sender half of `tab_event_rx`, retained so the fan-in stays open after
+    /// the connection's feed task ends (the select arm never sees a closed
+    /// channel). Read by tests only; collapses with the fan-in in #2044 PR 2.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) tab_event_tx: Option<mpsc::Sender<crate::shell::connection::SourcedEvent>>,
-    /// Background tab spawn/reattach results (#1465).
-    pub(super) tab_attach_tx: Option<mpsc::Sender<tab_lifecycle::TabAttachOutcome>>,
-    pub(super) tab_attach_rx: mpsc::Receiver<tab_lifecycle::TabAttachOutcome>,
-    /// Monotonic attach epoch so recycled TabIds reject stale spawn outcomes (#1465 F2).
-    pub(super) next_attach_generation: u64,
-    /// Parent CLI policy inherited by secondary tab spawns (#1465 F8).
-    pub(crate) tab_spawn_policy: Option<crate::shell::cli::TabSpawnPolicy>,
-    pub(crate) pending_tab_child_watches: crate::shell::child_watch::ChildWatchRegistry,
 }
 
 /// Id of the TUI's single (master) agent connection. With one replicant
@@ -146,7 +136,6 @@ impl App {
         // interleave fairly with sub-agent bursts (#1462 / #1470 review).
         let subagents = SubagentUi::new();
         let (tab_event_tx, tab_event_rx) = mpsc::channel(256);
-        let (tab_attach_tx, tab_attach_rx) = mpsc::channel(8);
         let connection = crate::shell::connection::Connection::spawn(
             client,
             crate::shell::connection::TabId::MASTER,
@@ -170,8 +159,6 @@ impl App {
                 tabs
             },
             active_tab: crate::shell::connection::TabId::MASTER,
-            workspace_id: crate::shell::workspace_manifest::generate_workspace_id(),
-            workspace_label: crate::shell::workspace_manifest::generate_workspace_label(),
             routing_tab_override: None,
             editor: Editor::new(),
             autocomplete: Autocomplete::new(builtin_commands().to_vec(), 8),
@@ -200,11 +187,6 @@ impl App {
             disconnect_diag_rx,
             tab_event_rx,
             tab_event_tx: Some(tab_event_tx),
-            tab_attach_tx: Some(tab_attach_tx),
-            tab_attach_rx,
-            next_attach_generation: 1,
-            tab_spawn_policy: None,
-            pending_tab_child_watches: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         };
         app.set_thinking_visibility(thinking_visible);
         app
@@ -357,8 +339,6 @@ mod app_submit;
 mod app_thinking_visibility;
 #[path = "app_time.rs"]
 mod app_time;
-#[path = "tab_activity.rs"]
-mod tab_activity;
 #[path = "tab_lifecycle.rs"]
 mod tab_lifecycle;
 #[path = "thinking_preferences.rs"]
@@ -637,9 +617,6 @@ mod app_live_inflight_1259_tests;
 #[cfg(test)]
 #[path = "app_methods_tests.rs"]
 mod app_methods_tests;
-#[cfg(test)]
-#[path = "app_multi_tab_polish_tests.rs"]
-mod app_multi_tab_polish_tests;
 #[cfg(test)]
 #[path = "../conversation/app_paged_history_review_tests.rs"]
 mod app_paged_history_review_tests;

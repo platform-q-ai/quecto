@@ -45,7 +45,7 @@ pub const QUERY_CAP: usize = 256;
 const PASTE_REFUSED: &str = "Paste refused: longer than 256 characters";
 const PASTE_CUT: &str = "Pasted the first line only";
 const STALLED: &str = "Search did not answer — edit the text or change Scope to retry";
-const DISCONNECTED: &str = "Disconnected — once reconnected, edit the text or change Scope";
+const DISCONNECTED: &str = "Not connected — restart quecto-tui to resume a session";
 /// The cue of an owed Enter (R2-T3) and its forms for a narrow panel: the
 /// narrowest leads with the glyph, so no cut can take it (R3-T4).
 const OWED: &str = "Sessions · Searching… ⏎ will open the top match";

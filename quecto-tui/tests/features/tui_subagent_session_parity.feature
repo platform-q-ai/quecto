@@ -96,3 +96,20 @@ Feature: Sub-agent session view + interaction parity, Tab focus model, focus div
     Then a vertical divider is drawn between the panel and the body
     When I press Tab
     Then the divider styling reflects the focused pane
+
+  Scenario: A user message to a live restored sub-agent is delivered
+    Given a running sub-agent restored from a resumed session is focused
+    When the user submits a message to it
+    Then the user entry appears in the sub-agent transcript
+    And no delivery-failure error is surfaced
+
+  Scenario: A user message to a reachable but detached sub-agent is delivered
+    Given a reachable sub-agent still marked detached is focused
+    When the user submits a message to it
+    Then the user entry appears in the sub-agent transcript
+    And no delivery-failure error is surfaced
+
+  Scenario: A user message to a dead sub-agent still surfaces an error
+    Given a dead restored sub-agent is focused
+    When the user submits a message to it
+    Then a delivery failure naming the sub-agent is visibly surfaced
