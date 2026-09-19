@@ -147,7 +147,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         } => {
             let fields = ResumeFields {
                 session,
-                action: action.map(Into::into),
+                action: action.map(|action| action.0),
                 expected_home_version,
             };
             handle_resume_session(ctx, id.as_deref(), &type_name, fields).await
@@ -457,6 +457,9 @@ mod resume_e2e_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_resume_persist_tests.rs"]
 mod resume_persist_tests;
+#[cfg(test)]
+#[path = "uds_dispatch_resume_picker_tests.rs"]
+mod resume_picker_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_1093_tests.rs"]
 mod tests_1093;

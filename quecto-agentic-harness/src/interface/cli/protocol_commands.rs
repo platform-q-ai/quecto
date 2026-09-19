@@ -20,27 +20,25 @@ impl From<SessionListScopeCommand> for crate::application::sessions::dto::Sessio
     }
 }
 
-/// The explicit action of `resume_session` (#2011) as spelled on the wire;
-/// any other spelling is rejected at the protocol boundary.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ResumeActionCommand {
-    OpenOriginal,
-    ForkCurrent,
-    Locate,
-    Associate,
-    Cancel,
+/// The explicit action of `resume_session` (#2011) on the wire. Its spelling
+/// is the domain's one table (`ResumeAction::name` / `from_name`): any other
+/// spelling is rejected at the protocol boundary, and no second table can
+/// drift from the names every answer carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResumeActionCommand(pub crate::domain::resume_decision::ResumeAction);
+
+impl Serialize for ResumeActionCommand {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0.name())
+    }
 }
 
-impl From<ResumeActionCommand> for crate::domain::resume_decision::ResumeAction {
-    fn from(action: ResumeActionCommand) -> Self {
-        match action {
-            ResumeActionCommand::OpenOriginal => Self::OpenOriginal,
-            ResumeActionCommand::ForkCurrent => Self::ForkCurrent,
-            ResumeActionCommand::Locate => Self::Locate,
-            ResumeActionCommand::Associate => Self::Associate,
-            ResumeActionCommand::Cancel => Self::Cancel,
-        }
+impl<'de> Deserialize<'de> for ResumeActionCommand {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        crate::domain::resume_decision::ResumeAction::from_name(&name)
+            .map(Self)
+            .ok_or_else(|| serde::de::Error::custom("unknown resume action"))
     }
 }
 

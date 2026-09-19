@@ -5,7 +5,6 @@ use super::{SaveSessionError, SessionTransitionRefused};
 use crate::application::sessions::conversation_ledger::LedgerAdvance;
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
-use crate::domain::session::USER_CHAT_PREFIX;
 use crate::domain::session_identity::SessionIdentity;
 use crate::domain::workflow::WorkflowRunPersisted;
 #[path = "resume_disposition.rs"]
@@ -13,42 +12,13 @@ mod resume_disposition;
 use super::{ResumeDecision, StartupRefusal};
 use crate::domain::resume_decision::ResumeAction;
 pub use resume_disposition::ResumeDisposition;
+#[path = "resume_target.rs"]
+mod resume_target;
+pub use resume_target::ResumeTarget;
+#[path = "resume_refusal_code.rs"]
+mod resume_refusal_code;
 #[path = "resume_refusal_text.rs"]
 mod resume_refusal_text;
-
-/// The saved session a client asked to resume: the name as the client
-/// spelled it (trimmed; echoed in the acknowledgement and the not-found
-/// refusal) and the identity it denotes. The accepted variants, each
-/// admitted affirmatively: a full user-chat key (`chat-…`, the `/resume`
-/// picker's selection), an already-qualified legacy `cli:<name>` key (kept
-/// as it is, never re-prefixed), and a typed legacy `<name>` (a `cli:<name>`
-/// session). Every other spelling is refused; the allowlist is the domain's
-/// session-name allowlist and admits no new character.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResumeTarget {
-    pub name: String,
-    pub identity: SessionIdentity,
-}
-
-impl ResumeTarget {
-    pub fn parse(raw: &str) -> Result<Self, ResumeSavedSessionError> {
-        let name = raw.trim();
-        let identity = if let Some(suffix) = name.strip_prefix("cli:")
-            && SessionIdentity::is_valid_cli_name(suffix)
-        {
-            SessionIdentity::named_cli(suffix)
-        } else if name.starts_with(USER_CHAT_PREFIX) {
-            SessionIdentity::user_chat(name)
-        } else {
-            SessionIdentity::named_cli(name)
-        }
-        .map_err(|_| ResumeSavedSessionError::InvalidName)?;
-        Ok(Self {
-            name: name.to_string(),
-            identity,
-        })
-    }
-}
 
 /// A saved session was resumed: the departing one was settled and saved,
 /// the target claimed and loaded, its history and workflow restored, and
@@ -80,6 +50,8 @@ pub struct StartupSessionOpened {
 /// loop's own never (#1995); children the fleet already settled stay settled.
 #[derive(Debug)]
 pub enum ResumeSavedSessionError {
+    /// The agent is running a turn: the interface admits no resume (#2011).
+    Busy,
     /// A `--no-session` loop resumes nothing.
     Ephemeral,
     /// The target is not one of the accepted spellings.
@@ -90,6 +62,8 @@ pub enum ResumeSavedSessionError {
     StaleHomeVersion,
     /// This runtime's own execution directory cannot be discovered (#2011).
     CurrentScopeUnavailable(String),
+    /// An explicit action must name the home version it was decided on.
+    HomeVersionRequired(ResumeAction),
     /// No executor of `action` is composed; nothing else was done instead.
     ActionUnavailable {
         action: ResumeAction,

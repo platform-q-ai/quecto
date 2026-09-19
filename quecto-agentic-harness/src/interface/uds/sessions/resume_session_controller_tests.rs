@@ -14,7 +14,10 @@ fn a_bare_key_is_an_exact_restore() {
 
 #[test]
 fn an_action_and_a_version_are_carried_typed() {
-    let version = HomeVersion::of(&SessionHomeScope::LegacyUnscoped);
+    let version = HomeVersion::of(
+        &crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:s"),
+        &SessionHomeScope::LegacyUnscoped,
+    );
     let request = ResumeFields {
         session: "cli:one".into(),
         action: Some(ResumeAction::ForkCurrent),

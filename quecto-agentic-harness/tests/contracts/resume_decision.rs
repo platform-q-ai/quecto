@@ -51,23 +51,23 @@ impl SessionSwitchRuntime for Runtime {
 }
 
 /// A store with one active loop in `here` and saved sessions elsewhere.
-struct World {
+pub(super) struct World {
     _temp: tempfile::TempDir,
-    base: PathBuf,
-    here: PathBuf,
-    layout: FlatSessionLayout,
-    store: Arc<FileSessionStore>,
-    handles: SessionHandles,
+    pub(super) base: PathBuf,
+    pub(super) here: PathBuf,
+    pub(super) layout: FlatSessionLayout,
+    pub(super) store: Arc<FileSessionStore>,
+    pub(super) handles: SessionHandles,
 }
 
 const ACTIVE: &str = "cli:active";
 
-fn identity(key: &str) -> SessionIdentity {
+pub(super) fn identity(key: &str) -> SessionIdentity {
     SessionIdentity::from_persisted_key(key)
 }
 
 impl World {
-    async fn new() -> Self {
+    pub(super) async fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
         let base = temp.path().join("base");
         let here = temp.path().join("here");
@@ -114,7 +114,7 @@ impl World {
 
     /// Save `key` as a session whose home is `dir` (created), through the
     /// real store and the real discovery, then release it as a finished run.
-    async fn saved_in(&self, key: &str, dir: &Path) -> PathBuf {
+    pub(super) async fn saved_in(&self, key: &str, dir: &Path) -> PathBuf {
         std::fs::create_dir_all(dir).unwrap();
         let dir = dir.canonicalize().unwrap();
         let home = GitScopeDiscovery::default().discover(&dir).unwrap();
@@ -123,7 +123,7 @@ impl World {
         dir
     }
 
-    async fn save_transcript(&self, key: &str) {
+    pub(super) async fn save_transcript(&self, key: &str) {
         let mut session = Session::new(identity(key));
         session
             .messages
@@ -132,7 +132,7 @@ impl World {
         self.store.release(&identity(key));
     }
 
-    async fn request(
+    pub(super) async fn request(
         &self,
         request: &ResumeRequest,
     ) -> (Result<ResumeOutcome, ResumeSavedSessionError>, Vec<Message>) {
@@ -150,7 +150,7 @@ impl World {
         (result, messages)
     }
 
-    async fn decision(&self, key: &str) -> ResumeDecision {
+    pub(super) async fn decision(&self, key: &str) -> ResumeDecision {
         let files = self.files();
         let (result, messages) = self.request(&ResumeRequest::restore(key)).await;
         let Err(ResumeSavedSessionError::Decision(decision)) = result else {
@@ -160,7 +160,7 @@ impl World {
         *decision
     }
 
-    fn files(&self) -> Vec<(PathBuf, Vec<u8>)> {
+    pub(super) fn files(&self) -> Vec<(PathBuf, Vec<u8>)> {
         let mut files: Vec<_> = std::fs::read_dir(self.base.join("sessions"))
             .unwrap()
             .filter_map(Result::ok)
@@ -180,7 +180,7 @@ impl World {
     /// The refusal invariants: the live conversation and identity stand, no
     /// transcript or home changed, the active claim is held and the target's
     /// is free for another process.
-    async fn assert_untouched(
+    pub(super) async fn assert_untouched(
         &self,
         target: &str,
         messages: &[Message],
@@ -408,6 +408,10 @@ async fn an_exact_miss_never_resolves_a_prefix_neighbour_and_leaks_no_claim() {
         world
             .assert_untouched("cli:neighbour", &messages, &files)
             .await;
+        assert!(
+            !world.layout.session_file(&identity(ACTIVE)).exists(),
+            "a miss is known before any effect: not even the departing save ran"
+        );
         let competitor = FileSessionStore::new(world.layout.clone());
         let missed = SessionIdentity::named_cli(near.trim_start_matches("cli:")).unwrap();
         competitor
@@ -445,13 +449,17 @@ async fn the_home_version_is_the_authoritys_and_a_stale_one_is_refused() {
     let world = World::new().await;
     world.saved_in("cli:mine", &world.here).await;
     let catalogue = FileSessionHomeCatalogue::with_store(world.store.clone());
-    let scope = catalogue.read(&identity("cli:mine")).unwrap();
-    let listed = HomeVersion::of(&scope);
+    let mine = identity("cli:mine");
+    let scope = catalogue.read(&mine).unwrap();
+    let listed = HomeVersion::of(&mine, &scope);
     assert_eq!(
-        HomeVersion::of(&catalogue.read(&identity("cli:mine")).unwrap()),
+        HomeVersion::of(&mine, &catalogue.read(&mine).unwrap()),
         listed
     );
-    assert_ne!(listed, HomeVersion::of(&SessionHomeScope::LegacyUnscoped));
+    assert_ne!(
+        listed,
+        HomeVersion::of(&mine, &SessionHomeScope::LegacyUnscoped)
+    );
     // The authority is replaced after the client was shown `listed`.
     let other = world
         .saved_in("cli:other", &world.base.join("../other"))
@@ -513,12 +521,13 @@ async fn cancel_and_every_unavailable_action_touch_nothing() {
     world
         .saved_in("cli:theirs", &world.base.join("../elsewhere"))
         .await;
+    let shown = world.decision("cli:theirs").await.home_version;
     let files = world.files();
     for action in ResumeAction::ALL {
         let request = ResumeRequest {
             target: "cli:theirs".into(),
             intent: ResumeIntent::Act(action),
-            expected_home_version: None,
+            expected_home_version: Some(shown.clone()),
         };
         let (result, messages) = world.request(&request).await;
         match (action, result) {

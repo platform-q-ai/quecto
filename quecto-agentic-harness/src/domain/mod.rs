@@ -52,3 +52,4 @@ pub mod attempt_diagnostics;
 
 pub mod resume_decision;
 pub mod session_home;
+mod stable_digest;

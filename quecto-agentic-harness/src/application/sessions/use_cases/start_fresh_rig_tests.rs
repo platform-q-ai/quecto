@@ -65,6 +65,8 @@ pub(crate) struct RecordingStore {
     pub(crate) sessions: Mutex<Vec<Session>>,
     pub(crate) owned_elsewhere: Mutex<Option<String>>,
     pub(crate) fail_load: AtomicBool,
+    /// Every saved session vanishes at the next claim (deleted by a peer).
+    pub(crate) vanish_on_claim: AtomicBool,
 }
 
 impl RecordingStore {
@@ -96,6 +98,9 @@ impl SessionStore for RecordingStore {
             .lock()
             .unwrap()
             .push(identity.runtime_key().to_string());
+        if self.vanish_on_claim.load(Ordering::SeqCst) {
+            self.sessions.lock().unwrap().clear();
+        }
         if self.owned_elsewhere.lock().unwrap().as_deref() == Some(identity.runtime_key()) {
             return Err(DomainError::Session(format!(
                 "session {} is owned by another live process",
@@ -153,8 +158,13 @@ impl SessionStore for RecordingStore {
     ) -> Fut<'a, ()> {
         self.write("save_clean_delta", messages)
     }
-    fn exists(&self, _: &SessionIdentity) -> Fut<'_, bool> {
-        Box::pin(async { Ok(false) })
+    fn exists(&self, identity: &SessionIdentity) -> Fut<'_, bool> {
+        if self.fail_load.load(Ordering::SeqCst) {
+            return Box::pin(async { Err(DomainError::Session("unreadable store".into())) });
+        }
+        let sessions = self.sessions.lock().unwrap();
+        let found = sessions.iter().any(|session| &session.key == identity);
+        Box::pin(async move { Ok(found) })
     }
     fn list(&self, _: &SessionListQuery) -> Fut<'_, Vec<SessionSummary>> {
         Box::pin(async { Ok(Vec::new()) })
@@ -431,6 +441,7 @@ pub(crate) fn build_fresh_rig(options: FreshOptions) -> FreshRig {
         sessions: Mutex::new(Vec::new()),
         owned_elsewhere: Mutex::new(None),
         fail_load: AtomicBool::new(false),
+        vanish_on_claim: AtomicBool::new(false),
     });
     let save = Arc::new(SaveSession::new(
         state.clone(),

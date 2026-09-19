@@ -13,7 +13,10 @@ fn every_refusal() -> Vec<ResumeSavedSessionError> {
     let decision = ResumeDecision {
         target: ResumeTarget::parse("old").unwrap(),
         kind,
-        home_version: HomeVersion::of(&SessionHomeScope::LegacyUnscoped),
+        home_version: HomeVersion::of(
+            &ResumeTarget::parse("old").unwrap().identity,
+            &SessionHomeScope::LegacyUnscoped,
+        ),
         execution_dir: None,
         detail: None,
         offers: kind
@@ -26,6 +29,8 @@ fn every_refusal() -> Vec<ResumeSavedSessionError> {
             .collect(),
     };
     vec![
+        ResumeSavedSessionError::Busy,
+        ResumeSavedSessionError::HomeVersionRequired(ResumeAction::Locate),
         ResumeSavedSessionError::Ephemeral,
         ResumeSavedSessionError::InvalidName,
         ResumeSavedSessionError::Decision(Box::new(decision)),
@@ -57,6 +62,8 @@ fn every_refusal_has_a_distinct_stable_code() {
     assert_eq!(
         codes,
         [
+            "busy",
+            "home_version_required",
             "ephemeral",
             "invalid_name",
             "decision_required",
@@ -78,6 +85,8 @@ fn every_refusal_has_a_distinct_stable_code() {
 fn every_refusal_reads_as_what_happened_and_what_to_do() {
     let texts: Vec<_> = every_refusal().iter().map(ToString::to_string).collect();
     let expected = [
+        "while agent is running",
+        "locate needs the home version",
         "ephemeral mode",
         "alphanumeric",
         "session resume unavailable: legacy session requires explicit first association",
@@ -96,5 +105,5 @@ fn every_refusal_reads_as_what_happened_and_what_to_do() {
         assert!(text.contains(needle), "{needle:?} in {text:?}");
     }
     // The reason of an undiscoverable cwd is untrusted detail: not echoed.
-    assert!(!texts[4].contains("cwd deleted"));
+    assert!(!texts[6].contains("cwd deleted"));
 }

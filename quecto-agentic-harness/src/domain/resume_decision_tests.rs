@@ -22,72 +22,104 @@ fn git(dir: &str, common: &str) -> SessionHomeScope {
     })
 }
 
-#[test]
-fn a_version_is_deterministic_and_pinned_across_releases() {
-    assert_eq!(
-        HomeVersion::of(&folder("/a")),
-        HomeVersion::of(&folder("/a"))
-    );
-    // Pinned: a token a client holds must mean the same authority tomorrow.
-    assert_eq!(
-        HomeVersion::of(&SessionHomeScope::LegacyUnscoped).as_str(),
-        format!("h1-{}", legacy_digest())
-    );
+fn id(key: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(key)
 }
 
-/// Pinned literally: a scoped home's token must not drift with a refactor.
-#[test]
-fn a_scoped_version_is_pinned_to_its_literal_token() {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for field in [&b"scoped"[..], b"/a", b"folder", b"/a", b"saved_here"] {
-        for byte in (field.len() as u64).to_le_bytes().iter().chain(field) {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-    assert_eq!(
-        HomeVersion::of(&folder("/a")).as_str(),
-        format!("h1-{hash:016x}")
-    );
+fn of(scope: &SessionHomeScope) -> HomeVersion {
+    HomeVersion::of(&id("cli:a"), scope)
 }
 
-fn legacy_digest() -> String {
-    // FNV-1a of the 8-byte little-endian length 6 followed by "legacy".
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in 6u64.to_le_bytes().iter().chain(b"legacy") {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+/// Pinned literally (computed independently of this code): a token a client
+/// holds must mean the same authority tomorrow, so no refactor — not even one
+/// made symmetrically in the algorithm and a re-implementation — may move it.
+#[test]
+fn every_state_is_pinned_to_its_literal_token() {
+    assert_eq!(of(&folder("/a")), of(&folder("/a")));
+    for (scope, token) in [
+        (SessionHomeScope::LegacyUnscoped, "h1-80bb5ff133c7b54b"),
+        (folder("/a"), "h1-0dcc716908d9c85e"),
+        (git("/a", "/a/.git"), "h1-28dc33537e6d8d17"),
+        (
+            SessionHomeScope::Unavailable("bad".into()),
+            "h1-da4dfebd3a260889",
+        ),
+    ] {
+        assert_eq!(of(&scope).as_str(), token, "{scope:?}");
     }
-    format!("{hash:016x}")
 }
 
 #[test]
 fn every_authoritative_fact_changes_the_version() {
     let versions = [
-        HomeVersion::of(&SessionHomeScope::LegacyUnscoped),
-        HomeVersion::of(&SessionHomeScope::Unavailable("bad".into())),
-        HomeVersion::of(&SessionHomeScope::Unavailable("worse".into())),
-        HomeVersion::of(&folder("/a")),
-        HomeVersion::of(&folder("/b")),
-        HomeVersion::of(&git("/a", "/a/.git")),
-        HomeVersion::of(&git("/a", "/other/.git")),
-        HomeVersion::of(&git("/a/sub", "/a/.git")),
+        of(&SessionHomeScope::LegacyUnscoped),
+        of(&SessionHomeScope::Unavailable("bad".into())),
+        of(&SessionHomeScope::Unavailable("worse".into())),
+        of(&folder("/a")),
+        of(&folder("/b")),
+        of(&git("/a", "/a/.git")),
+        of(&git("/a", "/other/.git")),
+        of(&git("/a/sub", "/a/.git")),
     ];
     let distinct: std::collections::BTreeSet<_> = versions.iter().cloned().collect();
     assert_eq!(distinct.len(), versions.len(), "{versions:?}");
 }
 
+/// #2014 authorizes a write with the token: it names one record. Two legacy
+/// records, and two sessions saved in one folder, never share one.
+#[test]
+fn a_version_is_bound_to_the_session_identity() {
+    for scope in [
+        SessionHomeScope::LegacyUnscoped,
+        SessionHomeScope::Unavailable("bad".into()),
+        folder("/a"),
+        git("/a", "/a/.git"),
+    ] {
+        assert_ne!(
+            HomeVersion::of(&id("cli:a"), &scope),
+            HomeVersion::of(&id("cli:b"), &scope),
+            "{scope:?}"
+        );
+    }
+}
+
+/// Each pair concatenates to the same bytes when the length prefixes are
+/// dropped — only the prefixes tell the fields apart.
 #[test]
 fn field_boundaries_are_unambiguous() {
+    // exec "/x" + kind "git" + common "/ygit/z"  vs  exec "/xgit/y" + "git" + "/z"
+    assert_ne!(of(&git("/x", "/ygit/z")), of(&git("/xgit/y", "/z")));
+    // exec "/a" + "folder" + "/afolder/b"  vs  exec "/afolder/a" + "folder" + "/b"
+    let folder_in = |exec: &str, directory: &str| {
+        SessionHomeScope::Scoped(SessionHome {
+            execution_dir: PathBuf::from(exec),
+            group: WorkspaceGroup::Folder {
+                directory: PathBuf::from(directory),
+            },
+            provenance: AssociationProvenance::SavedHere,
+        })
+    };
     assert_ne!(
-        HomeVersion::of(&git("/ab", "/c")),
-        HomeVersion::of(&git("/a", "b/c"))
+        of(&folder_in("/a", "/afolder/b")),
+        of(&folder_in("/afolder/a", "/b"))
+    );
+    // identity "cli:a" + "unavailable" + "unavailableb"  vs
+    // identity "cli:aunavailable" + "unavailable" + "b"
+    assert_ne!(
+        HomeVersion::of(
+            &id("cli:a"),
+            &SessionHomeScope::Unavailable("unavailableb".into())
+        ),
+        HomeVersion::of(
+            &id("cli:aunavailable"),
+            &SessionHomeScope::Unavailable("b".into())
+        )
     );
 }
 
 #[test]
 fn only_the_produced_shape_parses() {
-    let version = HomeVersion::of(&folder("/a"));
+    let version = of(&folder("/a"));
     assert_eq!(HomeVersion::parse(version.as_str()), Some(version));
     for hostile in [
         "",
@@ -126,8 +158,6 @@ fn every_kind_offers_exactly_its_contracted_actions_ending_in_cancel() {
         assert_eq!(kind.offered_actions(), [Locate, ForkCurrent, Cancel]);
     }
     assert_eq!(LegacyUnscoped.offered_actions(), [Associate, Cancel]);
-    assert!(CrossFolder.offers(OpenOriginal) && !CrossFolder.offers(Locate));
-    assert!(!LegacyUnscoped.offers(ForkCurrent) && !LegacyUnscoped.offers(OpenOriginal));
 }
 
 #[test]

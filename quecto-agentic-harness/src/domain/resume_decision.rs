@@ -3,20 +3,28 @@
 //! obstacle a home can present, and the one affirmative table of which actions
 //! each kind offers. No filesystem, Git, UI or process call lives here.
 use super::session_home::{AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup};
+use super::session_identity::SessionIdentity;
+use super::stable_digest::Fnv1a;
 
-/// Opaque version of a session's authoritative home metadata. Two reads that
-/// yield the same token saw the same authority; a client echoes the token it
-/// was shown and the transaction refuses a selection whose token is stale.
+/// Opaque version of one session's authoritative home metadata, bound to that
+/// session's identity: two reads that yield the same token saw the same
+/// authority of the same session, and no two sessions — two legacy records,
+/// two sessions saved in one folder — ever share a token. A client echoes the
+/// token it was shown and the transaction refuses a selection whose token is
+/// stale, so a token can authorize a change of exactly the record it names.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct HomeVersion(String);
 
 const VERSION_PREFIX: &str = "h1-";
 
 impl HomeVersion {
-    /// The version of `scope`: a deterministic digest of every authoritative
-    /// fact, the legacy and uninterpretable states included.
-    pub fn of(scope: &SessionHomeScope) -> Self {
+    /// The version of `identity`'s home `scope`: a deterministic digest of
+    /// the identity and of every authoritative fact, the legacy and
+    /// uninterpretable states included.
+    pub fn of(identity: &SessionIdentity, scope: &SessionHomeScope) -> Self {
         let mut digest = Fnv1a::default();
+        digest.field(b"session");
+        digest.field(identity.runtime_key().as_bytes());
         match scope {
             SessionHomeScope::LegacyUnscoped => digest.field(b"legacy"),
             SessionHomeScope::Unavailable(reason) => {
@@ -25,7 +33,7 @@ impl HomeVersion {
             }
             SessionHomeScope::Scoped(home) => digest.home(home),
         }
-        Self(format!("{VERSION_PREFIX}{:016x}", digest.0))
+        Self(format!("{VERSION_PREFIX}{:016x}", digest.value()))
     }
 
     /// Admit a token a client sent: exactly the shape [`Self::of`] produces.
@@ -43,29 +51,7 @@ impl HomeVersion {
     }
 }
 
-/// FNV-1a over length-prefixed fields: stable across processes and releases,
-/// unlike the standard hasher, and unambiguous across field boundaries.
-struct Fnv1a(u64);
-
-impl Default for Fnv1a {
-    fn default() -> Self {
-        Self(0xcbf2_9ce4_8422_2325)
-    }
-}
-
 impl Fnv1a {
-    fn bytes(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            self.0 ^= u64::from(*byte);
-            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-
-    fn field(&mut self, bytes: &[u8]) {
-        self.bytes(&(bytes.len() as u64).to_le_bytes());
-        self.bytes(bytes);
-    }
-
     fn home(&mut self, home: &SessionHome) {
         self.field(b"scoped");
         self.field(home.execution_dir.as_os_str().as_encoded_bytes());
@@ -115,7 +101,8 @@ impl ResumeAction {
         }
     }
 
-    /// Exact-name admission; nothing else denotes an action.
+    /// Exact-name admission — the wire parse goes through it, so the names
+    /// above are the one spelling table; nothing else denotes an action.
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|action| action.name() == name)
     }
@@ -158,10 +145,6 @@ impl ResumeDecisionKind {
             }
             Self::LegacyUnscoped => &[Associate, Cancel],
         }
-    }
-
-    pub fn offers(self, action: ResumeAction) -> bool {
-        self.offered_actions().contains(&action)
     }
 }
 

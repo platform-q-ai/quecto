@@ -5,7 +5,10 @@ fn decision(kind: ResumeDecisionKind, capabilities: &ResumeActionCapabilities) -
     ResumeDecision {
         target: ResumeTarget::parse("cli:elsewhere").unwrap(),
         kind,
-        home_version: HomeVersion::of(&SessionHomeScope::LegacyUnscoped),
+        home_version: HomeVersion::of(
+            &ResumeTarget::parse("cli:elsewhere").unwrap().identity,
+            &SessionHomeScope::LegacyUnscoped,
+        ),
         execution_dir: None,
         detail: None,
         offers: kind
@@ -47,18 +50,23 @@ fn only_cancel_is_executable_until_an_executor_is_declared() {
 }
 
 #[test]
-fn every_unavailable_reason_names_its_slice_and_is_distinct() {
+fn every_unavailable_reason_says_what_to_do_is_distinct_and_names_no_issue() {
     let none = ResumeActionCapabilities::cancel_only();
     let reasons: Vec<String> = [
-        (ResumeAction::OpenOriginal, "#2012"),
-        (ResumeAction::ForkCurrent, "#2013"),
-        (ResumeAction::Locate, "#2014"),
-        (ResumeAction::Associate, "#2014"),
+        (ResumeAction::OpenOriginal, "start quecto in that folder"),
+        (ResumeAction::ForkCurrent, "forking the transcript"),
+        (ResumeAction::Locate, "the transcript is preserved"),
+        (
+            ResumeAction::Associate,
+            "start a new session with `-s <name>`",
+        ),
     ]
     .into_iter()
     .map(|(action, slice)| match none.availability(action) {
         ActionAvailability::Unavailable(reason) => {
             assert!(reason.contains(slice), "{reason}");
+            // For people: no internal tracker number reaches the dialog.
+            assert!(!reason.contains('#'), "{reason}");
             reason
         }
         ActionAvailability::Available => panic!("{action:?} is not executable"),
@@ -81,7 +89,8 @@ fn a_decision_names_the_obstacle_every_offer_and_the_first_reason() {
         "session resume unavailable: session belongs to a different execution directory; \
          choose open_original (unavailable) / fork_current (unavailable) / cancel"
     );
-    assert!(text.contains("#2012"), "{text}");
+    assert!(text.contains("start quecto in that folder"), "{text}");
+    assert!(!text.contains('#'), "{text}");
     let legacy = decision(ResumeDecisionKind::LegacyUnscoped, &none).to_string();
     assert!(
         legacy.contains("associate (unavailable) / cancel"),

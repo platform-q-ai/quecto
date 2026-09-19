@@ -92,8 +92,7 @@ impl ResumeSavedSession {
     /// session for the exact target. `messages` is the loop's live
     /// conversation; `fleet` the loop's fleet teardown, if it has one;
     /// `runtime` the loop runtime the switch moves. The effect-free
-    /// pre-flight spares a decision the settlement; the claimed re-check of
-    /// the expected version and of the home is the authority.
+    /// pre-flight spares a miss or decision the settlement; the claimed re-check is the authority.
     pub async fn execute(
         &self,
         request: &ResumeRequest,
@@ -107,7 +106,9 @@ impl ResumeSavedSession {
         };
         let expected = request.expected_home_version.as_ref();
         let store = self.store.as_ref();
-        self.eligibility.preflight(store, &target, expected).await?;
+        let old_identity = self.state.read().await.identity().clone();
+        let own = old_identity == target.identity;
+        (self.eligibility.preflight(store, &target, expected, own)).await?;
         let transition = SessionTransition::Resume;
         self.children
             .settle(fleet, transition)
@@ -117,12 +118,11 @@ impl ResumeSavedSession {
             .save(messages, SaveTrigger::Routine)
             .await
             .map_err(ResumeSavedSessionError::Save)?;
-        let old_identity = self.state.read().await.identity().clone();
         self.store
             .claim(&target.identity)
             .map_err(ResumeSavedSessionError::Claim)?;
         let mut claim = PendingClaim::new(self.store.clone(), target.identity.clone());
-        claim.release = old_identity != target.identity;
+        claim.release = !own;
         let loaded = self
             .eligibility
             .load_claimed(store, &target, expected)

@@ -316,8 +316,25 @@ async fn new_session_updates_tools_and_clears_new_spill_key() {
 async fn resume_blocked_while_streaming() {
     let mut fx = Fixture::new();
     fx.session.set_streaming(true);
+    let key = fx.current_session_key();
+    let (tx, mut rx) = tokio::sync::broadcast::channel(8);
     let mut ctx = fx.ctx();
+    ctx.broadcast_tx = Some(tx);
     assert!(!handle_resume_session(&mut ctx, Some("rs"), "resume_session", "other".into()).await);
+    // Typed like every other resume refusal (#2011 R1-H2), and nothing moved.
+    let answer: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+    assert_eq!(answer["id"], "rs");
+    assert_eq!(answer["success"], false);
+    assert_eq!(
+        answer["data"],
+        serde_json::json!({"outcome": "refused", "code": "busy"})
+    );
+    assert_eq!(
+        answer["error"],
+        "cannot resume a session while agent is running"
+    );
+    assert!(rx.try_recv().is_err(), "nothing else is announced");
+    assert_eq!(ctx.sessions.current_session_key().await, key);
 }
 
 #[tokio::test]

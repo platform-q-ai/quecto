@@ -1,7 +1,6 @@
 //! Presenter of the `resume_session` answers (#2011): the restored and
-//! cancelled acknowledgements, the typed decision and every typed refusal.
-//! It names wire fields and makes untrusted metadata safe; it decides nothing
-//! — availability, offers and codes are the application's.
+//! cancelled acknowledgements, the typed decision and every typed refusal. It
+//! names wire fields and makes untrusted metadata safe; it decides nothing.
 use super::super::uds_dispatch_query::safe_display;
 use super::AgentEvent;
 use crate::application::sessions::dto::{
@@ -47,7 +46,8 @@ pub(super) fn refusal_event(
             "action": action.name(),
             "reason": safe_display(reason),
         }),
-        ResumeSavedSessionError::ActionExecutedElsewhere(action) => serde_json::json!({
+        ResumeSavedSessionError::ActionExecutedElsewhere(action)
+        | ResumeSavedSessionError::HomeVersionRequired(action) => serde_json::json!({
             "outcome": "refused",
             "code": code,
             "action": action.name(),

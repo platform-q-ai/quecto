@@ -3,9 +3,9 @@
 //! decision offers the action as unavailable, with the reason, and Cancel.
 use crate::application::sessions::dto::ResumeActionCapabilities;
 
-/// No executor is composed yet: #2012 adds `OpenOriginal`, #2013
-/// `ForkCurrent`, #2014 `Locate` and `Associate` — each with
-/// `.with(ResumeAction::…)` here, when it wires its use case.
+/// No executor is composed yet. #2012 (`OpenOriginal`), #2013 (`ForkCurrent`)
+/// and #2014 (`Locate`, `Associate`) add `.with(ResumeAction::…)` here together
+/// with the action's dispatch route: a flip alone fails the route test.
 pub fn composed() -> ResumeActionCapabilities {
     ResumeActionCapabilities::cancel_only()
 }

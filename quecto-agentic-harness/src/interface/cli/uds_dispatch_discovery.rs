@@ -8,7 +8,7 @@ pub(in crate::interface::cli) fn discovery_json(
     result: &crate::application::sessions::dto::ListSessionsResult,
     scope: crate::interface::cli::protocol::SessionListScopeCommand,
 ) -> serde_json::Value {
-    use crate::domain::{resume_decision::HomeVersion, session_home::SessionHomeScope};
+    use crate::domain::session_home::SessionHomeScope;
     let sessions: Vec<_> = result
         .sessions
         .iter()
@@ -25,7 +25,7 @@ pub(in crate::interface::cli) fn discovery_json(
             value["homeState"] = serde_json::json!(state);
             value["executionPath"] = serde_json::json!(execution_path);
             value["resumeEligible"] = serde_json::json!(row.resume_eligible);
-            value["homeVersion"] = serde_json::json!(HomeVersion::of(&row.home).as_str());
+            value["homeVersion"] = serde_json::json!(row.home_version().as_str());
             value
         })
         .collect();
@@ -37,13 +37,9 @@ pub(in crate::interface::cli) fn discovery_json(
     })
 }
 
-/// Untrusted persisted metadata is bounded and cannot inject terminal controls.
-pub(in crate::interface::cli) fn safe_display(raw: &str) -> String {
-    raw.chars()
-        .take(4096)
-        .map(|ch| if ch.is_control() { '\u{fffd}' } else { ch })
-        .collect()
-}
+#[path = "uds_safe_display.rs"]
+mod uds_safe_display;
+pub(in crate::interface::cli) use uds_safe_display::safe_display;
 
 #[cfg(test)]
 #[path = "uds_dispatch_discovery_tests.rs"]

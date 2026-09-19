@@ -80,19 +80,19 @@ impl ResumeActionCapabilities {
 fn unavailable_reason(action: ResumeAction) -> &'static str {
     match action {
         ResumeAction::OpenOriginal => {
-            "opening the original folder in a fresh runtime is not available yet (#2012); \
+            "opening the original folder in a fresh runtime is not available yet; \
              start quecto in that folder to continue this session"
         }
         ResumeAction::ForkCurrent => {
-            "forking the transcript into the current folder is not available yet (#2013)"
+            "forking the transcript into the current folder is not available yet"
         }
         ResumeAction::Locate => {
-            "locating a moved session folder is not available yet (#2014); \
+            "locating a moved session folder is not available yet; \
              the transcript is preserved"
         }
         ResumeAction::Associate => {
-            "explicit association of a legacy session with a folder is not available yet \
-             (#2014); start a new session with `-s <name>` — the old transcript stays in \
+            "explicit association of a legacy session with a folder is not available yet; \
+             start a new session with `-s <name>` — the old transcript stays in \
              place and visible under All Folders"
         }
         ResumeAction::Cancel => "cancel is always available",

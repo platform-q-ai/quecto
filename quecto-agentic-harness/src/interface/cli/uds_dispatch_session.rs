@@ -108,11 +108,8 @@ pub(super) async fn handle_resume_session(
     fields: ResumeFields,
 ) -> bool {
     if ctx.session.is_streaming() {
-        let ev = AgentEvent::err(
-            id,
-            type_name,
-            "cannot resume a session while agent is running",
-        );
+        let busy = crate::application::sessions::dto::ResumeSavedSessionError::Busy;
+        let ev = uds_dispatch_resume::refusal_event(id, type_name, &busy);
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }

@@ -325,7 +325,7 @@ async fn a_target_owned_elsewhere_is_refused_at_the_claim_and_nothing_is_release
 }
 
 #[tokio::test]
-async fn a_missing_target_releases_the_claim_just_taken_and_keeps_the_session() {
+async fn a_missing_target_is_answered_before_any_effect_and_keeps_the_session() {
     let rig = build_fresh_rig(FreshOptions::default());
     let mut messages = conversation("");
     rig.record(&messages);
@@ -342,15 +342,9 @@ async fn a_missing_target_releases_the_claim_just_taken_and_keeps_the_session() 
         .expect_err("refused");
     assert!(matches!(err, ResumeSavedSessionError::NotFound(_)));
     assert_eq!(err.to_string(), "session not found: cli:gone");
-    assert_eq!(
-        rig.journal(),
-        [
-            "store.save_clean_delta",
-            "store.claim(cli:gone)",
-            "store.load(cli:gone)",
-            "store.release(cli:gone)@active=cli:departing",
-        ]
-    );
+    // #2011: known absent by the pre-flight — no save, no claim to release.
+    // The miss under the claim is pinned in the pre-flight tests.
+    assert_eq!(rig.journal(), Vec::<String>::new());
     assert_eq!(rig.identity(), OLD_KEY);
     assert_eq!(messages.len(), 2);
     assert!(rig.resolves(&messages[0]));
@@ -567,7 +561,7 @@ async fn a_scope_refusal_for_the_current_key_keeps_the_loops_own_claim() {
     let rig = rig_on_its_own_key(options, true);
     let (err, journal) = refused_on_its_own_key(&rig, false).await;
     assert!(matches!(err, ResumeSavedSessionError::Decision(_)), "{err}");
-    assert_eq!(journal.last().unwrap(), "store.load(cli:departing)");
+    assert_eq!(journal, Vec::<String>::new(), "decided by the pre-flight");
 }
 
 #[tokio::test]
@@ -608,7 +602,7 @@ async fn a_scope_refusal_of_another_key_takes_no_claim_at_all() {
         .await
         .expect_err("refused");
     assert!(matches!(err, ResumeSavedSessionError::Decision(_)), "{err}");
-    assert_eq!(rig.journal(), ["store.load(cli:saved)"]);
+    assert_eq!(rig.journal(), Vec::<String>::new());
     assert!(rig.store.claimed.lock().unwrap().is_empty());
     assert_eq!(rig.identity(), OLD_KEY);
 }

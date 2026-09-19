@@ -23,6 +23,15 @@ pub struct ListedSession {
     pub resume_eligible: bool,
 }
 
+impl ListedSession {
+    /// The version a selection of this row echoes (#2011): the token of this
+    /// identity's home as listed — the one the resume transaction recomputes
+    /// from the authority and compares.
+    pub fn home_version(&self) -> crate::domain::resume_decision::HomeVersion {
+        crate::domain::resume_decision::HomeVersion::of(&self.summary.identity, &self.home)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ListSessionsResult {
     pub sessions: Vec<ListedSession>,

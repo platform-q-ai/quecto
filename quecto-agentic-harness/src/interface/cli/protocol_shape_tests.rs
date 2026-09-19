@@ -614,6 +614,42 @@ fn core_command_type_names() {
     );
 }
 
+/// The wire spelling of every action IS `ResumeAction::name` (one table):
+/// each parses to itself and serializes back; any other spelling, and any
+/// non-string, is a parse error; `null` is an absent action — a restore.
+#[test]
+fn resume_session_actions_are_spelled_by_the_domains_one_table() {
+    use crate::domain::resume_decision::ResumeAction;
+    let parse = |action: &str| {
+        let line = format!(r#"{{"type":"resume_session","session":"s","action":{action}}}"#);
+        serde_json::from_str::<AgentCommand>(&line)
+    };
+    for action in ResumeAction::ALL {
+        let command = parse(&format!("\"{}\"", action.name())).unwrap();
+        let AgentCommand::ResumeSession { action: parsed, .. } = &command else {
+            panic!("resume_session expected");
+        };
+        assert_eq!(parsed.map(|parsed| parsed.0), Some(action));
+        let wire = serde_json::to_value(&command).unwrap();
+        assert_eq!(wire["action"], action.name());
+    }
+    for unknown in [
+        "\"find\"",
+        "\"Cancel\"",
+        "\"\"",
+        "\"restore\"",
+        "5",
+        "true",
+        "[]",
+    ] {
+        assert!(parse(unknown).is_err(), "{unknown}");
+    }
+    let AgentCommand::ResumeSession { action, .. } = parse("null").unwrap() else {
+        panic!("resume_session expected");
+    };
+    assert_eq!(action, None, "null is an absent action: a restore");
+}
+
 // ─── clear_history (#408) ────────────────────────────────────────────────────
 
 #[test]

@@ -93,6 +93,10 @@ const CANONICAL_FILES: &[&str] = &[
     "src/domain/resume_decision.rs",
     "src/application/sessions/dto/resume_decision.rs",
     "src/application/sessions/dto/resume_refusal_text.rs",
+    "src/application/sessions/dto/resume_refusal_code.rs",
+    "src/application/sessions/dto/resume_target.rs",
+    "src/domain/stable_digest.rs",
+    "src/interface/cli/uds_safe_display.rs",
     "src/application/sessions/use_cases/resume_saved_session_decision.rs",
     "src/composition/resume_capabilities.rs",
     "src/interface/uds/sessions/resume_session_controller.rs",
@@ -647,10 +651,16 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     // #2011: the refusal text moved to its own module (123 → 117 with the
     // typed decision and refusal variants added).
-    ("src/application/sessions/dto/resume_saved_session.rs", 117),
-    ("src/application/sessions/dto/resume_refusal_text.rs", 61),
+    // Review R1: the target and the stable codes are their own modules
+    // (117 → 91, 61 → 47).
+    ("src/application/sessions/dto/resume_saved_session.rs", 91),
+    ("src/application/sessions/dto/resume_refusal_text.rs", 47),
+    ("src/application/sessions/dto/resume_refusal_code.rs", 25),
+    ("src/application/sessions/dto/resume_target.rs", 39),
     ("src/application/sessions/dto/resume_decision.rs", 168),
-    ("src/domain/resume_decision.rs", 182),
+    // Review R1: the digest is its own pure module (182 → 165).
+    ("src/domain/resume_decision.rs", 165),
+    ("src/domain/stable_digest.rs", 30),
     ("src/composition/resume_capabilities.rs", 15),
     (
         "src/interface/uds/sessions/resume_session_controller.rs",
@@ -743,10 +753,12 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // shrinks below master (was 187).
     // #2011: one re-export line for the shared safe-display helper (174 → 173).
     ("src/interface/cli/uds_dispatch_query.rs", 173),
-    ("src/interface/cli/uds_dispatch_discovery.rs", 50),
+    // #2011 review: the safe rendering is its own module (50 → 46).
+    ("src/interface/cli/uds_dispatch_discovery.rs", 46),
+    ("src/interface/cli/uds_safe_display.rs", 25),
     // #1848 reasoning-effort injection plus #2009 scoped session dispatch.
     // #2011: the resume answers are the resume presenter's (259 → 246).
-    ("src/interface/cli/uds_dispatch_session.rs", 246),
+    ("src/interface/cli/uds_dispatch_session.rs", 243),
     ("src/interface/cli/uds_latest_report.rs", 85),
     // D9 #1978 hands the loop its retained-context handles as an input
     // (was 305 before D9).

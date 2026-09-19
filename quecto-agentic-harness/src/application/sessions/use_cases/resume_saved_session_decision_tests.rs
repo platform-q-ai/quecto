@@ -27,6 +27,15 @@ const HERE: &str = "/work/here";
 const ELSEWHERE: &str = "/work/elsewhere";
 const GONE: &str = "/work/gone";
 
+fn saved_identity() -> SessionIdentity {
+    SessionIdentity::from_persisted_key("cli:saved")
+}
+
+/// Some version a client was shown; an action's admission needs one.
+fn shown() -> HomeVersion {
+    HomeVersion::of(&saved_identity(), &SessionHomeScope::LegacyUnscoped)
+}
+
 fn folder(dir: &str) -> SessionHome {
     SessionHome {
         execution_dir: PathBuf::from(dir),
@@ -159,15 +168,10 @@ impl Case {
         self.request(&ResumeRequest::restore("saved")).await
     }
 
-    /// Nothing was settled, saved, claimed, released or switched; the only
-    /// thing a pre-flight may do is read.
+    /// Nothing was settled, saved, claimed, released or switched — and no
+    /// transcript was read: the pre-flight asks the store for existence only.
     fn assert_no_effect(&self) {
-        let effects: Vec<_> = self
-            .rig
-            .journal()
-            .into_iter()
-            .filter(|entry| !entry.starts_with("store.load("))
-            .collect();
+        let effects = self.rig.journal();
         assert_eq!(effects, Vec::<String>::new(), "no effect at all");
         assert!(self.rig.store.claimed.lock().unwrap().is_empty());
     }
@@ -214,7 +218,10 @@ async fn another_folder_is_a_cross_folder_decision_with_no_effect() {
         ]
     );
     assert_eq!(decision.execution_dir, Some(PathBuf::from(ELSEWHERE)));
-    assert_eq!(decision.home_version, HomeVersion::of(&saved));
+    assert_eq!(
+        decision.home_version,
+        HomeVersion::of(&saved_identity(), &saved)
+    );
     assert_eq!(decision.target.identity.runtime_key(), "cli:saved");
     for offer in &decision.offers {
         let cancel = offer.action == ResumeAction::Cancel;
@@ -294,7 +301,10 @@ async fn a_stale_expected_version_is_refused_before_any_effect() {
     let request = ResumeRequest {
         target: "saved".into(),
         intent: ResumeIntent::Restore,
-        expected_home_version: Some(HomeVersion::of(&SessionHomeScope::LegacyUnscoped)),
+        expected_home_version: Some(HomeVersion::of(
+            &saved_identity(),
+            &SessionHomeScope::LegacyUnscoped,
+        )),
     };
     let refused = case.request(&request).await.expect_err("stale");
     assert!(matches!(refused, ResumeSavedSessionError::StaleHomeVersion));
@@ -308,7 +318,7 @@ async fn the_current_expected_version_restores() {
     let request = ResumeRequest {
         target: "saved".into(),
         intent: ResumeIntent::Restore,
-        expected_home_version: Some(HomeVersion::of(&scope)),
+        expected_home_version: Some(HomeVersion::of(&saved_identity(), &scope)),
     };
     assert!(matches!(
         case.request(&request).await,
@@ -326,7 +336,7 @@ async fn a_home_that_changes_after_the_preflight_is_refused_under_the_claim() {
     let request = ResumeRequest {
         target: "saved".into(),
         intent: ResumeIntent::Restore,
-        expected_home_version: Some(HomeVersion::of(&listed)),
+        expected_home_version: Some(HomeVersion::of(&saved_identity(), &listed)),
     };
     let refused = case
         .request(&request)
@@ -407,10 +417,8 @@ async fn an_exact_miss_is_not_found_and_never_a_neighbouring_key() {
         );
         assert_eq!(refused.code(), "not_found");
     }
-    let claimed = case.rig.store.claimed.lock().unwrap().clone();
-    let released = case.rig.store.released.lock().unwrap().clone();
-    assert_eq!(claimed, released, "every claim of a miss is released");
-    assert!(!claimed.contains(&"cli:saved".to_string()));
+    // Known absent before any effect: nothing settled, saved or claimed.
+    case.assert_no_effect();
 }
 
 /// The exact-key path reads the authority and never the derived index: the
@@ -458,7 +466,7 @@ async fn every_explicit_action_is_refused_unavailable_and_never_substituted() {
         let request = ResumeRequest {
             target: "saved".into(),
             intent: ResumeIntent::Act(action),
-            expected_home_version: None,
+            expected_home_version: Some(shown()),
         };
         let refused = case.request(&request).await.expect_err("unavailable");
         assert!(
@@ -512,7 +520,7 @@ async fn a_composed_executor_makes_its_action_available_and_owned_elsewhere() {
     let request = ResumeRequest {
         target: "saved".into(),
         intent: ResumeIntent::Act(ResumeAction::OpenOriginal),
-        expected_home_version: None,
+        expected_home_version: Some(shown()),
     };
     let refused = resume
         .execute(&request, &mut messages, None, &mut runtime)
@@ -558,3 +566,6 @@ async fn an_ephemeral_loop_and_an_invalid_key_refuse_every_intent() {
     assert!(matches!(refused, ResumeSavedSessionError::InvalidName));
     case.assert_no_effect();
 }
+
+#[path = "resume_saved_session_preflight_tests.rs"]
+mod preflight;

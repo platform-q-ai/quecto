@@ -1,7 +1,6 @@
 //! The eligibility collaborators of the resume transaction (#2011). Not a
-//! second owner: `admit` routes a request's intent for the one transaction in
-//! the parent, and `decide` is the one eligibility check its effect-free
-//! pre-flight and its claimed re-check both run.
+//! second owner: `admit` routes a request's intent for the one transaction in the
+//! parent; `decide` is the one check its pre-flight and its claimed re-check run.
 use super::ResumeSavedSession;
 use crate::application::sessions::dto::{
     ActionAvailability, ResumeActionCapabilities, ResumeActionOffer, ResumeDecision, ResumeIntent,
@@ -22,11 +21,10 @@ pub(super) enum Admitted {
 }
 
 /// Admit a request before any effect. An ephemeral loop resumes nothing; the
-/// target is one of the accepted exact spellings — no prefix, no fuzzy
-/// match. `Cancel` has no effect at all. Every other explicit action is
-/// refused here — with the reason its executor is not composed, or because
-/// it has its own transaction — and is never replaced by a restore or by
-/// another action.
+/// target is one exact accepted spelling. `Cancel` has no effect at all.
+/// Every other explicit action is refused here — it names no version, its
+/// executor is not composed, or it has its own transaction — and is never
+/// replaced by a restore or by another action.
 pub(super) fn admit(
     ephemeral: bool,
     capabilities: &ResumeActionCapabilities,
@@ -39,6 +37,9 @@ pub(super) fn admit(
     match request.intent {
         ResumeIntent::Restore => Ok(Admitted::Restore(target)),
         ResumeIntent::Act(ResumeAction::Cancel) => Ok(Admitted::Cancelled(target.name)),
+        ResumeIntent::Act(action) if request.expected_home_version.is_none() => {
+            Err(ResumeSavedSessionError::HomeVersionRequired(action))
+        }
         ResumeIntent::Act(action) => Err(match capabilities.availability(action) {
             ActionAvailability::Unavailable(reason) => {
                 ResumeSavedSessionError::ActionUnavailable { action, reason }
@@ -58,22 +59,22 @@ pub(super) struct Eligibility {
 }
 
 impl Eligibility {
-    /// Decide without any effect: a decision or a stale selection of a
-    /// target the store can read then costs no settlement, save or claim.
-    /// An absent or unreadable target decides nothing here — the claimed
-    /// path reports it.
+    /// Decide without any effect, by the store's existence check (no
+    /// transcript is read): an absent target is `not_found`, a decision or
+    /// stale selection of a present one is answered at once. The loop's `own`
+    /// key is excepted (the departing save may first write it); an unreadable
+    /// store decides nothing here — the claimed path reports it.
     pub(super) async fn preflight(
         &self,
         store: &dyn SessionStore,
         target: &ResumeTarget,
         expected: Option<&HomeVersion>,
+        own: bool,
     ) -> Result<(), ResumeSavedSessionError> {
-        let Err(obstacle) = decide(&self.home, &self.capabilities, target, expected).await else {
-            return Ok(());
-        };
-        match store.load(&target.identity).await {
-            Ok(Some(_)) => Err(obstacle),
-            Ok(None) | Err(_) => Ok(()),
+        match SessionStore::exists(store, &target.identity).await {
+            Ok(true) => decide(&self.home, &self.capabilities, target, expected).await,
+            Ok(false) if !own => Err(ResumeSavedSessionError::NotFound(target.name.clone())),
+            Ok(false) | Err(_) => Ok(()),
         }
     }
 
@@ -97,9 +98,8 @@ impl Eligibility {
 }
 
 /// The one eligibility check: the authoritative home is read fresh (never the
-/// derived index), the version the client was shown must still be it, and
-/// only an affirmatively admitted home passes. Everything else is a typed
-/// decision or refusal.
+/// derived index), the version the client was shown must still be it, and only
+/// an affirmatively admitted home passes. All else is a decision or refusal.
 async fn decide(
     home: &SessionHomeContext,
     capabilities: &ResumeActionCapabilities,
@@ -110,7 +110,7 @@ async fn decide(
         .catalogue
         .read(&target.identity)
         .map_err(ResumeSavedSessionError::Load)?;
-    let home_version = HomeVersion::of(&scope);
+    let home_version = HomeVersion::of(&target.identity, &scope);
     if expected.is_some_and(|expected| *expected != home_version) {
         return Err(ResumeSavedSessionError::StaleHomeVersion);
     }
