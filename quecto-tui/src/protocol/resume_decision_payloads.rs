@@ -76,13 +76,18 @@ pub struct ResumeDecision {
 /// What a `resume_session` answer says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResumeAnswer {
-    /// History was restored (also every answer of a harness before #2011).
+    /// History was restored: the harness said `resumed` — or, before #2011,
+    /// said nothing (a success then could only be a restore).
     Resumed(ResumeSessionAck),
     /// The harness acknowledged a cancel: nothing changed.
     Cancelled,
     Decision(ResumeDecision),
     /// A refusal; the stable code when the harness sent one.
     Refused(Option<String>),
+    /// A success this TUI cannot read as a restore: an outcome it does not
+    /// know (named here, untrusted) or a payload it cannot decode. Nothing
+    /// local may change on it.
+    Unrecognized(Option<String>),
 }
 
 /// The one typed shape every `resume_session` payload is read through.
@@ -116,21 +121,31 @@ impl WireAnswer {
     }
 }
 
-/// Map a `resume_session` response. Only a success that does not say
-/// `cancelled` is a restore (a missing `session` falls back to the literal
-/// `"session"` so the toast stays user-visible); only a failure that carries
-/// a complete, known decision opens a dialog — an unknown kind or action is a
-/// plain refusal, never a guessed choice.
+/// Map a `resume_session` response — affirmatively. A restore is ONLY a
+/// success whose outcome is `resumed`, or is absent (a harness before #2011
+/// names no outcome, and its every success was a restore; a missing `session`
+/// falls back to the literal `"session"` so the toast stays user-visible).
+/// Every other success — an outcome this TUI does not know (a later slice's
+/// `forked`, `opened_elsewhere`…), a `decision`/`refused` that claims success,
+/// a payload that does not decode — is [`ResumeAnswer::Unrecognized`]: this
+/// runtime's history was not replaced as far as the TUI can tell, so nothing
+/// local may change. Only a failure that carries a complete, known decision
+/// opens a dialog — an unknown kind or action is a plain refusal, never a
+/// guessed choice.
 pub fn parse_resume_answer(success: bool, data: Option<&serde_json::Value>) -> ResumeAnswer {
-    let wire = data
-        .and_then(|data| serde_json::from_value::<WireAnswer>(data.clone()).ok())
-        .unwrap_or_default();
+    let wire = match data.map(|data| serde_json::from_value::<WireAnswer>(data.clone())) {
+        None => WireAnswer::default(),
+        Some(Ok(wire)) => wire,
+        Some(Err(_)) if success => return ResumeAnswer::Unrecognized(None),
+        Some(Err(_)) => return ResumeAnswer::Refused(None),
+    };
     match (success, wire.outcome.as_deref()) {
         (true, Some("cancelled")) => ResumeAnswer::Cancelled,
-        (true, _) => ResumeAnswer::Resumed(ResumeSessionAck {
+        (true, Some("resumed") | None) => ResumeAnswer::Resumed(ResumeSessionAck {
             name: wire.session.unwrap_or_else(|| "session".to_string()),
             session_key: wire.session_key,
         }),
+        (true, Some(_)) => ResumeAnswer::Unrecognized(wire.outcome),
         (false, Some("decision")) => wire
             .into_decision()
             .map_or(ResumeAnswer::Refused(None), ResumeAnswer::Decision),

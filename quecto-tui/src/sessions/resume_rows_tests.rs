@@ -14,7 +14,7 @@ fn summary(key: &str, at: Option<u64>, eligible: bool, dir: Option<&str>) -> Res
 }
 
 #[test]
-fn rows_are_newest_first_with_stable_ids_and_an_affirmative_eligible_allowlist() {
+fn rows_are_newest_first_with_stable_ids_and_their_listed_versions() {
     let rows = ResumeRows::project(
         vec![
             summary("chat-old", Some(10), true, Some("/repo")),
@@ -33,10 +33,6 @@ fn rows_are_newest_first_with_stable_ids_and_an_affirmative_eligible_allowlist()
             "session:chat-old",
             "session:chat-undated"
         ]
-    );
-    assert_eq!(
-        rows.eligible_keys.iter().collect::<Vec<_>>(),
-        vec!["chat-old"]
     );
     assert!(SESSION_ROW_PREFIX == "session:");
     // Every row that was listed with a version carries it, eligible or not.
@@ -64,7 +60,7 @@ fn rows_are_newest_first_with_stable_ids_and_an_affirmative_eligible_allowlist()
 fn empty_hints_distinguish_no_records_from_no_resumable_rows() {
     let none = ResumeRows::project(Vec::new(), false, |_| String::new());
     assert_eq!(none.empty_hint, Some("No persisted sessions found."));
-    assert!(none.items.is_empty() && none.eligible_keys.is_empty());
+    assert!(none.items.is_empty() && none.home_versions.is_empty());
     let filtered = ResumeRows::project(Vec::new(), true, |_| String::new());
     assert_eq!(
         filtered.empty_hint,

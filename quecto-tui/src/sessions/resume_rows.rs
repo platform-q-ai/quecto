@@ -1,9 +1,7 @@
-//! Discovery rows as the picker presents them (#2009): newest first, stable
-//! `session:<key>` IDs, safe copy, and the affirmative allowlist of keys the
-//! shell may activate. No eligibility is decided here — the backend's
-//! `resumeEligible` is carried, never inferred.
-use std::collections::BTreeSet;
-
+//! Discovery rows as the picker presents them (#2009, #2011): newest first,
+//! stable `session:<key>` IDs, safe copy, and the home version each row was
+//! listed at. No eligibility is decided or enforced here — the backend's
+//! `resumeEligible` is only worded, and every selection is asked of the harness.
 use crate::components::select_list::SelectItem;
 use crate::protocol::session_payloads::ResumeSessionSummary;
 
@@ -14,8 +12,6 @@ const INELIGIBLE: &str = "Needs a decision (Enter)";
 
 pub struct ResumeRows {
     pub items: Vec<SelectItem>,
-    /// Keys the backend admitted; a selection outside this set is refused.
-    pub eligible_keys: BTreeSet<String>,
     /// The home version each row was listed at (#2011), echoed on selection.
     pub home_versions: std::collections::BTreeMap<String, String>,
     /// The status line to show when there is nothing to pick.
@@ -36,11 +32,6 @@ impl ResumeRows {
             (true, true) => Some("No resumable CLI sessions found."),
             (true, false) => Some("No persisted sessions found."),
         };
-        let eligible_keys = sessions
-            .iter()
-            .filter(|s| s.resume_eligible)
-            .map(|s| s.key.clone())
-            .collect();
         let home_versions = sessions
             .iter()
             .filter_map(|s| Some((s.key.clone(), s.home_version.clone()?)))
@@ -70,7 +61,6 @@ impl ResumeRows {
             .collect();
         Self {
             items,
-            eligible_keys,
             home_versions,
             empty_hint,
         }

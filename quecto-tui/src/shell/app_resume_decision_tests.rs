@@ -183,3 +183,6 @@ async fn switching_tabs_closes_the_dialog() {
     h.app_mut().close_tab_switch_overlays();
     assert!(h.app_mut().ac().sessions.resume_decision.is_none());
 }
+
+#[path = "app_resume_answer_tests.rs"]
+mod answers;

@@ -22,7 +22,9 @@ impl App {
         ));
         self.ac_mut().sessions.pending_list_id = Some(id.clone());
         self.ac_mut().sessions.scope = scope;
-        self.ac_mut().sessions.eligible_keys.clear();
+        // The rows on screen are about to be replaced: their versions with them.
+        self.ac_mut().sessions.home_versions.clear();
+        self.ac_mut().sessions.selected_home_version = None;
         if self.ac().sessions.resume_selector.is_none() {
             self.ac_mut().sessions.resume_selector = Some(
                 crate::sessions::resume_picker::ResumePicker::new(Vec::new(), scope),
@@ -92,9 +94,12 @@ impl App {
         }
     }
 
-    /// Every `resume_session` answer refreshes the view (the agent's session
-    /// changed for all its clients); only this tab's own answer settles the
-    /// resume latches, so a foreign answer cannot cancel an in-flight resume.
+    /// A restore refreshes the view whoever asked (the agent's session changed
+    /// for all its clients); only this tab's own answer settles the resume
+    /// latches, so a foreign answer cannot cancel an in-flight resume. A
+    /// decision, a refusal and an unreadable answer are told only to the tab
+    /// that asked: another tab's id is a peer's (an answer with no id at all
+    /// is nobody's in particular, and its failure is still toasted).
     pub(in crate::shell) fn handle_resume_response(
         &mut self,
         id: Option<&str>,
@@ -103,6 +108,7 @@ impl App {
         error: Option<String>,
     ) {
         let owned = self.is_owned_resume_response(id);
+        let peers = id.is_some() && !owned;
         if owned {
             self.ac_mut().pending_session_resume_id = None;
             self.ac_mut().pending_session_resume = None;
@@ -114,7 +120,8 @@ impl App {
             }
             // Nothing changed for anyone: no refresh, no toast.
             ResumeAnswer::Cancelled => {}
-            // Only the tab that asked decides; a peer's decision is not ours.
+            // A peer's decision, refusal or unreadable answer is not this tab's.
+            _ if peers => {}
             ResumeAnswer::Decision(decision) if owned => {
                 self.ac_mut().sessions.resume_decision = Some(
                     crate::sessions::resume_decision::ResumeDecisionDialog::new(decision),
@@ -122,6 +129,30 @@ impl App {
             }
             ResumeAnswer::Decision(_) => {}
             ResumeAnswer::Refused(_) => self.notify_response_error("Resume failed", error),
+            // A success this TUI cannot read as a restore changes nothing here:
+            // no key adopted, no clock reset, no manifest write, no "Resumed".
+            ResumeAnswer::Unrecognized(outcome) => {
+                let outcome = outcome.unwrap_or_else(|| "an unreadable answer".to_string());
+                let outcome = crate::components::ansi::sanitize_untrusted_label(&outcome, 40);
+                self.notify(
+                    &format!("Resume answered \u{201c}{outcome}\u{201d}, which this TUI does not understand — nothing was changed here"),
+                    NotifyLevel::Warning,
+                );
+            }
+        }
+    }
+
+    /// The harness rejected a line it could not decode as `resume_session` —
+    /// an action newer than the harness. A `parse_error` carries no `id`, so
+    /// the request in flight would never be answered: settle it here, change
+    /// nothing, and say so. Any other parse error is not a resume's.
+    pub(in crate::shell) fn handle_resume_parse_error(&mut self, error: Option<String>) {
+        let ours = error
+            .as_deref()
+            .is_some_and(|e| e.contains("resume action"));
+        if ours && self.ac_mut().pending_session_resume_id.take().is_some() {
+            self.ac_mut().pending_session_resume = None;
+            self.notify_response_error("Resume failed", error);
         }
     }
 

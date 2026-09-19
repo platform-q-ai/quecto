@@ -198,13 +198,12 @@ impl App {
         manifest_path: &std::path::Path,
     ) {
         // Presentation coordination is the sessions feature's: rows, IDs,
-        // safe copy and the eligible allowlist come back projected.
+        // safe copy and the listed home versions come back projected.
         let rows = crate::sessions::resume_rows::ResumeRows::project(
             session_payloads::parse_resume_sessions(data),
             session_payloads::has_session_entries(data),
             format_unix_minutes,
         );
-        self.ac_mut().sessions.eligible_keys = rows.eligible_keys;
         self.ac_mut().sessions.home_versions = rows.home_versions;
         self.open_resume_selector_with_workspaces(rows.items, manifest_path, rows.empty_hint);
     }

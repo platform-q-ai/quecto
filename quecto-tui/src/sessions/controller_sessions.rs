@@ -7,7 +7,6 @@ pub(crate) struct SessionsFlow {
     pub(super) resume_selector: Option<ResumePicker>,
     pub(super) pending_list_id: Option<String>,
     pub(super) scope: crate::protocol::session_payloads::SessionListScope,
-    pub(super) eligible_keys: std::collections::BTreeSet<String>,
     /// The home version each listed row was shown at (#2011), by key.
     pub(super) home_versions: std::collections::BTreeMap<String, String>,
     /// The decision dialog of a session that cannot simply be restored (#2011).

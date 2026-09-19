@@ -252,6 +252,18 @@ pub fn sanitize_control_truncated(s: &str, max_chars: usize) -> (String, bool) {
     (out, false)
 }
 
+/// [`sanitize_control`] for untrusted *metadata* shown as a label (a path, a
+/// name, a reason — never prose): it also drops the zero-width characters
+/// (U+200B–U+200D, U+2060, U+FEFF) that hide or split text invisibly, and
+/// bounds the result to `max_chars`. Chat text keeps them (emoji joiners).
+pub fn sanitize_untrusted_label(s: &str, max_chars: usize) -> String {
+    sanitize_control(s)
+        .chars()
+        .filter(|ch| !matches!(ch, '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}'))
+        .take(max_chars)
+        .collect()
+}
+
 /// Whether `ch` survives control/escape sanitization.
 ///
 /// Drops ASCII/Unicode control characters (optionally keeping `\n`) and the

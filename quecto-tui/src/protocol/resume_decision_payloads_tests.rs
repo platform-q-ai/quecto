@@ -75,7 +75,7 @@ fn ack(name: &str, key: Option<&str>) -> ResumeAnswer {
 }
 
 #[test]
-fn a_success_is_a_restore_unless_it_says_cancelled() {
+fn only_a_success_that_says_resumed_or_names_no_outcome_is_a_restore() {
     let resumed = json!({"outcome": "resumed", "session": "a", "sessionKey": "cli:a"});
     let legacy = json!({"session": "a"});
     let cancelled = json!({"outcome": "cancelled", "session": "a"});
@@ -90,6 +90,50 @@ fn a_success_is_a_restore_unless_it_says_cancelled() {
     );
 }
 
+/// Fail closed (review R1-T1): a success is NOT a restore because it is a
+/// success. A later slice's outcome, a decision or refusal that claims
+/// success, an empty or non-string outcome and a payload that does not decode
+/// all change nothing — however much they look like an acknowledgement.
+#[test]
+fn every_other_success_is_unrecognized_and_never_a_restore() {
+    for outcome in [
+        "opened_elsewhere",
+        "forked",
+        "decision",
+        "refused",
+        "Resumed",
+        "",
+        " resumed",
+    ] {
+        let data =
+            json!({"outcome": outcome, "session": "cli:foreign", "sessionKey": "cli:foreign"});
+        assert_eq!(
+            parse_resume_answer(true, Some(&data)),
+            ResumeAnswer::Unrecognized(Some(outcome.to_string())),
+            "{outcome:?}"
+        );
+    }
+    for garbage in [
+        json!({"outcome": 7, "sessionKey": "cli:foreign"}),
+        json!({"outcome": "resumed", "sessionKey": ["cli:foreign"]}),
+        json!({"session": 7}),
+        json!("resumed"),
+        json!([1, 2]),
+        json!(null),
+    ] {
+        assert_eq!(
+            parse_resume_answer(true, Some(&garbage)),
+            ResumeAnswer::Unrecognized(None),
+            "{garbage}"
+        );
+    }
+    // The same garbage on a failure is a plain refusal.
+    assert_eq!(
+        parse_resume_answer(false, Some(&json!({"outcome": 7}))),
+        ResumeAnswer::Refused(None)
+    );
+}
+
 #[test]
 fn a_restore_without_a_readable_name_keeps_the_toast_visible() {
     assert_eq!(
@@ -97,10 +141,6 @@ fn a_restore_without_a_readable_name_keeps_the_toast_visible() {
         ack("session", None)
     );
     assert_eq!(parse_resume_answer(true, None), ack("session", None));
-    assert_eq!(
-        parse_resume_answer(true, Some(&json!({"session": 7}))),
-        ack("session", None)
-    );
 }
 
 #[test]
@@ -167,11 +207,11 @@ fn an_unknown_kind_or_action_or_an_empty_offer_is_a_plain_refusal_never_a_guess(
             "{data}"
         );
     }
-    // A success is never a decision, whatever it carries.
-    assert!(matches!(
+    // A success is never a decision, whatever it carries — and no restore.
+    assert_eq!(
         parse_resume_answer(true, Some(&success)),
-        ResumeAnswer::Resumed(_)
-    ));
+        ResumeAnswer::Unrecognized(Some("decision".into()))
+    );
 }
 
 #[test]
