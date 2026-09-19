@@ -73,8 +73,8 @@ pub struct StartupSessionOpened {
 
 /// Why no saved session was resumed. Every failure precedes the key
 /// replacement: the current session, its key, its conversation and its
-/// roster records are kept; a claim taken on the target is released;
-/// children the fleet already settled stay settled.
+/// roster records are kept; a claim taken on another key is released, the
+/// loop's own never (#1995); children the fleet already settled stay settled.
 #[derive(Debug)]
 pub enum ResumeSavedSessionError {
     /// A `--no-session` loop resumes nothing.

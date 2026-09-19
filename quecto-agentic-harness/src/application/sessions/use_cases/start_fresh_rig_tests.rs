@@ -308,6 +308,9 @@ pub(crate) struct FreshOptions {
     pub(crate) roster: Option<(usize, usize)>,
     pub(crate) fresh_identity: &'static str,
     pub(crate) current_identity: &'static str,
+    /// Every saved home reads as legacy-unscoped, so scope admission
+    /// refuses any loaded target (#1995).
+    pub(crate) legacy_homes: bool,
 }
 
 impl Default for FreshOptions {
@@ -320,6 +323,7 @@ impl Default for FreshOptions {
             roster: Some((0, 0)),
             fresh_identity: FRESH_KEY,
             current_identity: OLD_KEY,
+            legacy_homes: false,
         }
     }
 }
@@ -463,7 +467,7 @@ pub(crate) fn build_fresh_rig(options: FreshOptions) -> FreshRig {
             store.clone(),
             children.clone(),
             options.ephemeral,
-            permissive_home(),
+            rig_home(options.legacy_homes),
         ),
         state,
         store,
@@ -580,7 +584,10 @@ async fn the_fakes_journal_and_fail_as_told() {
 /// A home context whose every observation admits: the rigs exercise the
 /// transaction's ordering, not scope admission (covered by the composed
 /// real-adapter tests and `session_home` fakes).
-pub(crate) fn permissive_home() -> crate::application::sessions::session_home::SessionHomeContext {
+///
+/// `legacy` instead makes every saved home read as legacy-unscoped, which
+/// scope admission refuses (#1995: a refusal after the claim step).
+fn rig_home(legacy: bool) -> crate::application::sessions::session_home::SessionHomeContext {
     use crate::application::sessions::ports::session_home::{
         HomeCatalogueSnapshot, SessionHomeCatalogue, WorkspaceDiscovery,
     };
@@ -596,7 +603,7 @@ pub(crate) fn permissive_home() -> crate::application::sessions::session_home::S
             provenance: AssociationProvenance::SavedHere,
         }
     }
-    struct Permissive;
+    struct Permissive(bool);
     impl WorkspaceDiscovery for Permissive {
         fn discover(&self, path: &std::path::Path) -> Result<SessionHome, DomainError> {
             Ok(home_at(path))
@@ -604,6 +611,9 @@ pub(crate) fn permissive_home() -> crate::application::sessions::session_home::S
     }
     impl SessionHomeCatalogue for Permissive {
         fn read(&self, _: &SessionIdentity) -> Result<SessionHomeScope, DomainError> {
+            if self.0 {
+                return Ok(SessionHomeScope::LegacyUnscoped);
+            }
             Ok(SessionHomeScope::Scoped(home_at(std::path::Path::new(
                 "/rig",
             ))))
@@ -623,8 +633,8 @@ pub(crate) fn permissive_home() -> crate::application::sessions::session_home::S
         }
     }
     crate::application::sessions::session_home::SessionHomeContext::at(
-        Arc::new(Permissive),
-        Arc::new(Permissive),
+        Arc::new(Permissive(legacy)),
+        Arc::new(Permissive(legacy)),
         "/rig".into(),
     )
 }

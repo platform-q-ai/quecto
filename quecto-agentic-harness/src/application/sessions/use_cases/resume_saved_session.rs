@@ -8,12 +8,12 @@
 //! step: an ephemeral loop resumes nothing; the target is admitted by the
 //! affirmative rules of [`ResumeTarget`]; the departing session's children
 //! are settled and the departing session saved before anything is
-//! replaced (#1938); the target is claimed before it is read (#1460) and
-//! that claim is released on every failure after it — a missing target, a
-//! load error, a roster that cannot be replaced; the loaded session's
-//! persisted child rows are history only (#1937) and the roster is
-//! replaced with zero operational rows; the store's ownership of the old
-//! identity is released immediately after the active key is replaced
+//! replaced (#1938); the target is claimed before it is read (#1460) and,
+//! unless it is the loop's own key (#1995), that claim is released on every
+//! failure after it (missing target, load error, scope refusal, kept roster); the
+//! loaded session's persisted child rows are history only (#1937) and the
+//! roster is replaced with zero operational rows; the store's ownership of
+//! the old identity is released immediately after the active key is replaced
 //! (commit), when the two differ; the tracker, the agent and its tools
 //! adopt the new key; the session-scoped effort is reset; the conversation
 //! and the persisted watermark become the loaded history and the workflow
@@ -140,7 +140,7 @@ impl ResumeSavedSession {
         })
     }
 
-    /// Read the claimed target; the caller releases the claim on `Err`.
+    /// Read the claimed target; on `Err` the guard releases a claim not the loop's own.
     async fn load_claimed(
         &self,
         target: &ResumeTarget,

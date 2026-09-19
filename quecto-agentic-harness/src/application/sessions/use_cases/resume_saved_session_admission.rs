@@ -8,8 +8,8 @@ use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::session_identity::SessionIdentity;
 use std::sync::Arc;
 
-/// The target's claim, held while it is loaded and admitted: released on
-/// every refusal or failure after it, kept once the switch commits.
+/// The target's claim, held while it is loaded and admitted: released on every
+/// failure after it unless the caller clears `release` (own key, #1995); kept on commit.
 pub(super) struct PendingClaim {
     store: Arc<dyn SessionStore>,
     identity: SessionIdentity,
