@@ -374,6 +374,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/subagent_payloads.rs` | `protocol` typed subagent roster wire DTOs incl. versioned environment metadata (#1369 slice 4; split from `client.rs` for the 750-line baseline) |
 | `protocol/workflow_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `sessions/resume_picker.rs` | `sessions` (scope-aware presentation, #2009; the search box reports its text — typed or pasted, up to 256 characters — and filters nothing; `RowsState` settled/loading/searching/stalled/disconnected, the deferred Enter and its cue, the cursor rule for replaced rows and the status notice, #2010) |
+| `sessions/clock.rs` | `sessions` time source of the `/resume` picker's deadlines (owed Enter, search flight): tokio's clock in production, a manually advanced one in the headless harness, so time is an input of every test (#2010 R3-T1) |
 | `sessions/session_search.rs` | `sessions` metadata-search flight control: single flight, latest wins, settled only by the sent id with the latest generation, overtaken answers as progress, the 5 s give-up with one retry (#2010) |
 | `sessions/local_filter.rs` | `sessions` literal filter over the listed rows for a harness without `search_session_metadata` (#2010) |
 | `protocol/session_search_payloads.rs` | `protocol` typed `search_session_metadata` exchange: request (query, scope, generation) and answer (rows via the discovery-row parser with repository label and matched fields, generation, echoed scope, total, truncation, refusal) (#2010) |
