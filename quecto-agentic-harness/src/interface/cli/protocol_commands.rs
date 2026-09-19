@@ -1,5 +1,15 @@
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PresentJsonValue(Option<serde_json::Value>);
+
+fn present_json_value<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<PresentJsonValue>, D::Error> {
+    Option::<serde_json::Value>::deserialize(deserializer)
+        .map(|value| Some(PresentJsonValue(value)))
+}
 
 /// Discovery scope of `list_sessions` (#2009) as spelled on the wire; the
 /// dispatch edge maps it onto the application's scope.
@@ -174,8 +184,12 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         session: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        action: Option<Option<serde_json::Value>>,
+        #[serde(
+            default,
+            deserialize_with = "present_json_value",
+            skip_serializing_if = "Option::is_none"
+        )]
+        action: Option<PresentJsonValue>,
         #[serde(
             default,
             rename = "expectedHomeVersion",
