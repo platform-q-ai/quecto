@@ -39,6 +39,22 @@ Feature: Typed resume decisions through the production runtime
     And the operator requests the session "cli:local" by exact key
     Then the runtime answers the resume as restored to "cli:local"
 
+  Scenario: A picker selection restores with the home version its row was listed at
+    Given saved production sessions in two different folders
+    When the operator opens resume through the production socket and TUI
+    And the operator selects the listed local session
+    Then the resume request carries the listed home version
+    And the runtime answers the resume as restored to "cli:local"
+    And the TUI reports the resumed session
+
+  Scenario: Another row's listed version authorizes nothing for this session
+    Given saved production sessions in two different folders
+    When the operator opens resume through the production socket and TUI
+    And the operator selects All Folders in the resume picker
+    And a socket client requests the session "cli:local" with the listed version of "cli:foreign"
+    Then the runtime refuses the resume with code "stale_home_version"
+    And the active conversation and every claim are unchanged
+
   Scenario: A selection whose home changed after it was listed is refused as stale
     Given saved production sessions in two different folders
     When the operator opens resume through the production socket and TUI
@@ -93,7 +109,7 @@ Feature: Typed resume decisions through the production runtime
   Scenario Outline: A direct socket request for an action is never substituted
     Given saved production sessions in two different folders
     When the operator opens resume with the active local conversation
-    And a socket client requests the foreign session with action "<action>"
+    And a socket client requests the foreign session with action "<action>" and the version of its decision
     Then the runtime refuses the resume with code "<code>"
     And the active conversation and every claim are unchanged
 
@@ -103,6 +119,20 @@ Feature: Typed resume decisions through the production runtime
       | fork_current  | action_unavailable |
       | locate        | action_unavailable |
       | associate     | action_unavailable |
+
+  Scenario Outline: An action that names no home version is refused
+    Given saved production sessions in two different folders
+    When the operator opens resume with the active local conversation
+    And a socket client requests the foreign session with action "<action>"
+    Then the runtime refuses the resume with code "home_version_required"
+    And the active conversation and every claim are unchanged
+
+    Examples:
+      | action        |
+      | open_original |
+      | fork_current  |
+      | locate        |
+      | associate     |
 
   Scenario: A direct socket cancel is acknowledged without any effect
     Given saved production sessions in two different folders
@@ -123,6 +153,14 @@ Feature: Typed resume decisions through the production runtime
     When a fresh runtime attempts to start with the foreign session
     Then startup refuses naming the other execution directory
     And the foreign transcript and home metadata are unchanged
+
+  Scenario: Invisible reordering characters in a recorded folder never reach a client
+    Given saved production sessions in two different folders
+    And the foreign session home names a directory with bidi and zero-width characters
+    When the operator opens resume with the active local conversation
+    And the operator requests the session "cli:foreign" by exact key
+    Then the runtime answers a "home_missing" decision offering "locate,fork_current,cancel"
+    And neither the answer nor the TUI frame carries a bidi or zero-width character
 
   Scenario: Hostile home metadata is rendered safely in the decision
     Given saved production sessions in two different folders

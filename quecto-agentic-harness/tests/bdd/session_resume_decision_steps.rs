@@ -80,6 +80,54 @@ fn request_action(world: &mut QuectoWorld, action: String) {
     resume_roundtrip(world, &request.to_string());
 }
 
+/// The action with the version of the decision the runtime answers for it.
+#[when(
+    expr = "a socket client requests the foreign session with action {string} and the version of its decision"
+)]
+fn request_action_with_version(world: &mut QuectoWorld, action: String) {
+    let ask = serde_json::json!({
+        "type": "resume_session", "id": "s2011-decision", "session": "cli:foreign",
+    });
+    resume_roundtrip(world, &ask.to_string());
+    let version = answer(world)["data"]["homeVersion"].clone();
+    assert!(version.is_string(), "a decision first: {}", world.stderr);
+    snapshot(world);
+    let request = serde_json::json!({
+        "type": "resume_session",
+        "id": format!("s2011-direct-{action}"),
+        "session": "cli:foreign",
+        "action": action,
+        "expectedHomeVersion": version,
+    });
+    resume_roundtrip(world, &request.to_string());
+}
+
+fn listed_row(world: &QuectoWorld, key: &str) -> serde_json::Value {
+    let listing: serde_json::Value = world
+        .agent_events
+        .iter()
+        .rev()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .find(|event| event["command"] == "list_sessions")
+        .expect("listing");
+    let rows = listing["data"]["sessions"].as_array().unwrap();
+    let row = rows.iter().find(|row| row["key"] == key);
+    row.unwrap_or_else(|| panic!("{key} listed: {listing}"))
+        .clone()
+}
+
+#[when(expr = "a socket client requests the session {string} with the listed version of {string}")]
+fn request_with_another_rows_version(world: &mut QuectoWorld, key: String, other: String) {
+    let version = listed_row(world, &other)["homeVersion"].clone();
+    assert_ne!(version, listed_row(world, &key)["homeVersion"]);
+    snapshot(world);
+    let request = serde_json::json!({
+        "type": "resume_session", "id": "s2011-wrong-row", "session": key,
+        "expectedHomeVersion": version,
+    });
+    resume_roundtrip(world, &request.to_string());
+}
+
 #[then(expr = "the runtime answers a {string} decision offering {string}")]
 fn answers_decision(world: &mut QuectoWorld, kind: String, offered: String) {
     let decision = assert_scope_refusal(world, &kind);
@@ -233,20 +281,7 @@ fn select_listed(world: &mut QuectoWorld) {
 
 #[then("the resume request carries the listed home version")]
 fn carries_listed_version(world: &mut QuectoWorld) {
-    let listing: serde_json::Value = world
-        .agent_events
-        .iter()
-        .rev()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-        .find(|event| event["command"] == "list_sessions")
-        .expect("listing");
-    let row = listing["data"]["sessions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|row| row["key"] == "cli:local")
-        .expect("local row")
-        .clone();
+    let row = listed_row(world, "cli:local");
     let listed = row["homeVersion"].as_str().expect("listed version");
     let process = world.session_scope_process.as_ref().unwrap();
     let request = process.last_resume_request.as_ref().expect("request");
@@ -336,7 +371,9 @@ fn explains_unavailable(world: &mut QuectoWorld) {
     assert!(
         messages
             .iter()
-            .any(|m| m.contains("Open original folder is unavailable") && m.contains("#2012")),
+            .any(|m| m.contains("Open original folder is unavailable")
+                && m.contains("start quecto in that folder")
+                && !m.contains('#')),
         "{messages:?}"
     );
     let frame = drive(world, TuiHarness::full_frame);
@@ -411,6 +448,42 @@ fn hostile_home(world: &mut QuectoWorld) {
         serde_json::to_vec(&record).unwrap(),
     )
     .unwrap();
+}
+
+const INVISIBLE: [char; 5] = ['\u{202e}', '\u{202c}', '\u{200b}', '\u{2066}', '\u{feff}'];
+
+#[given("the foreign session home names a directory with bidi and zero-width characters")]
+fn bidi_home(world: &mut QuectoWorld) {
+    let hostile: String = format!("/srv/s2011-{}-gpj.exe", String::from_iter(INVISIBLE));
+    let hostile = hostile.as_bytes().to_vec();
+    let record = serde_json::json!({
+        "version": 1,
+        "execution_dir": hostile,
+        "group_kind": "folder",
+        "group_path": hostile,
+        "provenance": "saved_here",
+    });
+    fs::write(
+        base(world).join("sessions/cli_foreign.home"),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+}
+
+#[then("neither the answer nor the TUI frame carries a bidi or zero-width character")]
+fn no_invisible_characters(world: &mut QuectoWorld) {
+    let response = answer(world);
+    let path = response["data"]["executionPath"].as_str().expect("a path");
+    assert!(
+        path.contains("gpj.exe"),
+        "the recorded folder is shown: {path}"
+    );
+    let frame = drive(world, TuiHarness::full_frame);
+    for text in [response.to_string(), frame] {
+        for ch in INVISIBLE {
+            assert!(!text.contains(ch), "U+{:04X} in {text:?}", ch as u32);
+        }
+    }
 }
 
 #[then("neither the answer nor the TUI frame carries a raw control character")]
