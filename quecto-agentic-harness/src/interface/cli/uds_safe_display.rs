@@ -4,22 +4,21 @@
 /// Untrusted persisted metadata is bounded and cannot inject terminal controls
 /// or invisibly reorder or hide text.
 pub(in crate::interface::cli) fn safe_display(raw: &str) -> String {
-    raw.chars()
-        .take(4096)
-        .map(|ch| {
-            if is_unsafe_display(ch) {
-                '\u{fffd}'
-            } else {
-                ch
-            }
-        })
-        .collect()
+    let shown = raw.chars().take(4096);
+    let safe = shown.map(|ch| if unsafe_display(ch) { '\u{fffd}' } else { ch });
+    safe.collect()
 }
 
-/// Terminal controls, and the invisible format characters that reorder or
-/// hide text (bidi embeddings, overrides and isolates, zero-width characters
-/// and marks, the byte-order mark): none reaches a client.
-fn is_unsafe_display(ch: char) -> bool {
+/// Terminal controls, and the invisible format characters that reorder, hide
+/// or split text: every Bidi_Control character, zero-width characters and
+/// marks, line/paragraph separators, the soft hyphen, the grapheme joiner, the
+/// Mongolian selectors, invisible operators, interlinear annotations, tag
+/// characters and the byte-order mark. Emoji/ideographic variation selectors
+/// stay: they change how a visible glyph is drawn and conceal nothing.
+fn unsafe_display(ch: char) -> bool {
     ch.is_control()
-        || matches!(ch, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}')
+        || matches!(ch,
+            '\u{ad}' | '\u{34f}' | '\u{61c}' | '\u{180b}'..='\u{180f}'
+            | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{206f}'
+            | '\u{feff}' | '\u{fff9}'..='\u{fffb}' | '\u{e0000}'..='\u{e007f}')
 }

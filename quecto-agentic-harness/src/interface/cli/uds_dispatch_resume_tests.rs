@@ -194,27 +194,51 @@ fn the_busy_and_version_required_refusals_are_typed() {
     );
 }
 
+/// Every character that invisibly reorders, hides or splits text.
+fn invisible_characters() -> impl Iterator<Item = char> {
+    ['\u{ad}', '\u{34f}', '\u{61c}', '\u{feff}']
+        .into_iter()
+        .chain('\u{180b}'..='\u{180f}')
+        .chain('\u{200b}'..='\u{200f}')
+        .chain('\u{2028}'..='\u{202e}')
+        .chain('\u{2060}'..='\u{206f}')
+        .chain('\u{fff9}'..='\u{fffb}')
+        .chain('\u{e0000}'..='\u{e007f}')
+}
+
 /// Invisible reordering and zero-width characters never reach a client
-/// (R1-T6): bidi embeddings/overrides/isolates, zero-width characters and
-/// marks, the byte-order mark.
+/// (R1-T6, R2-H2): every Bidi_Control character (U+061C included), zero-width
+/// characters and marks, line and paragraph separators, the soft hyphen, the
+/// invisible operators, interlinear annotations, tag characters, the BOM.
 #[test]
 fn a_decisions_texts_carry_no_bidi_or_zero_width_characters() {
     let mut hostile = decision(ResumeDecisionKind::CrossFolder);
     let path = "/srv/\u{202e}gpj.exe\u{202c}/a\u{200b}b\u{2066}c\u{2069}\u{feff}\u{200f}";
     hostile.execution_dir = Some(std::path::PathBuf::from(path));
-    hostile.detail = Some("moved\u{202a}\u{200d}".into());
+    hostile.detail = Some(invisible_characters().collect());
     let refusal = ResumeSavedSessionError::Decision(Box::new(hostile));
     let event = json(&refusal_event(None, "resume_session", &refusal));
     let text = event.to_string();
-    for ch in ('\u{200b}'..='\u{200f}')
-        .chain('\u{202a}'..='\u{202e}')
-        .chain('\u{2066}'..='\u{2069}')
-        .chain(['\u{feff}'])
-    {
+    for ch in invisible_characters() {
         assert!(!text.contains(ch), "U+{:04X} in {text}", ch as u32);
     }
     assert_eq!(
         event["data"]["executionPath"],
         "/srv/\u{fffd}gpj.exe\u{fffd}/a\u{fffd}b\u{fffd}c\u{fffd}\u{fffd}\u{fffd}"
+    );
+}
+
+/// The review's live reproduction (R2-H2), and what stays: an emoji's
+/// variation selector is presentation, not concealment.
+#[test]
+fn the_arabic_letter_mark_separators_and_soft_hyphen_are_replaced() {
+    let mut hostile = decision(ResumeDecisionKind::HomeMissing);
+    let path = "/var/tmp/x\u{061c}\u{2028}\u{2060}\u{00ad}\u{202e}y\u{2764}\u{fe0f}";
+    hostile.execution_dir = Some(std::path::PathBuf::from(path));
+    let refusal = ResumeSavedSessionError::Decision(Box::new(hostile));
+    let event = json(&refusal_event(None, "resume_session", &refusal));
+    assert_eq!(
+        event["data"]["executionPath"],
+        "/var/tmp/x\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}y\u{2764}\u{fe0f}"
     );
 }
