@@ -499,12 +499,14 @@ impl GcOrphanedEnvironments {
                 // its container (under the shipped adapter it has exited
                 // by design). Only an explicit kill moves it to `stopped`;
                 // the collector never does (round 3 H1, #2033).
-                EnvironmentStatus::Retained => {
+                EnvironmentStatus::Retained | EnvironmentStatus::Preserved => {
                     keep(
                         report,
                         format!(
-                            "recorded {} as retained ({container_state}); kept with its state dir until an explicit kill (`quecto container kill {}`)",
-                            record.environment_ref, record.environment_ref
+                            "recorded {} as {} ({container_state}); kept with its state dir until an explicit kill (`quecto container kill {}`)",
+                            record.environment_ref,
+                            record.status_label(),
+                            record.environment_ref
                         ),
                     );
                     return;

@@ -53,6 +53,41 @@ pub struct RestoreRegistry {
     hosted: Arc<dyn HostedSwarmRunInspection>,
 }
 
+/// The fast, script-free half of a durable registry restore.
+///
+/// Startup owns the registry immediately. A top-level agent also owns one
+/// reconciliation job, prepared from the exact records that were seeded. The
+/// job is deliberately explicit rather than detached here: the transport must
+/// bind and announce readiness before choosing where to run blocking runtime
+/// inspections.
+pub struct PreparedRegistry {
+    pub registry: EnvironmentRegistry,
+    pub reconciliation: Option<ReconcileRegistry>,
+    pub report: RestoredRegistry,
+}
+
+/// The slow half of startup restore. It may invoke retained inspect scripts and
+/// must therefore run on a blocking worker after the control socket is ready.
+pub struct ReconcileRegistry {
+    restore: RestoreRegistry,
+    registry: EnvironmentRegistry,
+    records: Vec<EnvironmentRecord>,
+}
+
+impl std::fmt::Debug for ReconcileRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReconcileRegistry")
+            .field("records", &self.records.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ReconcileRegistry {
+    pub fn execute(self) -> RestoredRegistry {
+        self.restore.reconcile_records(&self.registry, self.records)
+    }
+}
+
 impl std::fmt::Debug for RestoreRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RestoreRegistry").finish_non_exhaustive()
@@ -85,6 +120,14 @@ pub fn unfinished_run_reason(run: &HostedSwarmRun) -> String {
         run.id,
         run.describe()
     )
+}
+
+fn preserving_stop_in_flight(record: &EnvironmentRecord) -> bool {
+    record
+        .metadata
+        .get("stop_in_progress")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
 }
 
 fn unreadable_store_reason(error: &str) -> String {
@@ -201,6 +244,97 @@ impl RestoreRegistry {
         self.execute_as(session, RestoreMode::Correct)
     }
 
+    /// Prepare a top-level agent's two-phase restore.
+    ///
+    /// This phase only reads and seeds the durable document. In particular it
+    /// never invokes [`EnvironmentProcess::observe`], so an inspect script
+    /// cannot delay transport readiness. An unreadable document retains the
+    /// same defensive semantics as [`Self::execute`]: misses are unknowable and
+    /// ref allocation remains journal-backed (and therefore refuses collisions).
+    pub fn prepare(&self, session: &str) -> PreparedRegistry {
+        match self.store.load() {
+            Ok(records) => {
+                let registry =
+                    EnvironmentRegistry::with_journal(self.journal(RestoreMode::Correct), session);
+                registry.restore(records.clone());
+                let reconciliation = ReconcileRegistry {
+                    restore: self.clone(),
+                    registry: registry.clone(),
+                    records,
+                };
+                PreparedRegistry {
+                    registry,
+                    reconciliation: Some(reconciliation),
+                    report: RestoredRegistry::default(),
+                }
+            }
+            Err(error) => {
+                let read_error = format!("{READ_FAILED}: {error}");
+                PreparedRegistry {
+                    registry: EnvironmentRegistry::unreadable(
+                        self.journal(RestoreMode::Correct),
+                        session,
+                        &read_error,
+                    ),
+                    reconciliation: None,
+                    report: RestoredRegistry {
+                        read_error: Some(read_error),
+                        ..RestoredRegistry::default()
+                    },
+                }
+            }
+        }
+    }
+
+    fn reconcile_records(
+        &self,
+        registry: &EnvironmentRegistry,
+        records: Vec<EnvironmentRecord>,
+    ) -> RestoredRegistry {
+        let mut report = RestoredRegistry::default();
+        for record in records {
+            self.reconcile_record(registry, record, &mut report);
+        }
+        report
+    }
+
+    fn reconcile_record(
+        &self,
+        registry: &EnvironmentRegistry,
+        record: EnvironmentRecord,
+        report: &mut RestoredRegistry,
+    ) {
+        let expected = record.status.clone();
+        let mut judged = record;
+        let corrected = self.judge(&mut judged, report);
+        if corrected {
+            match self.store.correct(&judged, &expected) {
+                Ok(CorrectionOutcome::Applied) => {}
+                Ok(CorrectionOutcome::Superseded(current)) => {
+                    report.diagnostics.push(format!(
+                        "{} changed while it was being checked ({} → {}); the other session's state stands",
+                        judged.environment_ref,
+                        judged.status_label(),
+                        current.status_label()
+                    ));
+                    judged = *current;
+                }
+                Ok(CorrectionOutcome::Forgotten) => return,
+                Err(error) => {
+                    report.diagnostics.push(format!(
+                        "{} could not be corrected in the durable registry: {error}",
+                        judged.environment_ref
+                    ));
+                    // Keep the loaded in-memory snapshot aligned with the
+                    // durable truth. A later operation must not compare-and-set
+                    // from a correction that was never recorded.
+                    return;
+                }
+            }
+        }
+        registry.reconcile_restored(expected, judged);
+    }
+
     /// [`Self::execute`] without an effect on the store (round 3 H1,
     /// #2033): every correction is seeded in memory and reported as what
     /// a correcting restore would write. For a registry that only reads
@@ -311,6 +445,44 @@ impl RestoreRegistry {
                 true
             }
             EnvironmentStatus::Stopped => false,
+            // A preserving stop deliberately removes the runtime while keeping
+            // checkout and board state. Runtime absence must never relabel it
+            // destructively during restart reconciliation.
+            EnvironmentStatus::Preserved => false,
+            EnvironmentStatus::Killing if preserving_stop_in_flight(record) => {
+                // The durable intent was written before invoking the preserving
+                // stop. Runtime absence is therefore its receipt after a crash:
+                // recover with the same status-CAS used by every restore
+                // correction, never by falling through to destructive cleanup.
+                match self.process.observe(record) {
+                    EnvironmentLiveness::Gone => {
+                        record.status = EnvironmentStatus::Preserved;
+                        record.last_error = None;
+                        if let Some(metadata) = record.metadata.as_object_mut() {
+                            metadata.remove("stop_in_progress");
+                            metadata.insert(
+                                "preserved".to_string(),
+                                serde_json::json!(
+                                    "runtime stopped; workspace retained for data recovery"
+                                ),
+                            );
+                        }
+                        report.restored.push(environment_ref);
+                        true
+                    }
+                    EnvironmentLiveness::Running => {
+                        report.unverified.push((
+                            environment_ref,
+                            "preserving stop in flight; runtime still running".to_string(),
+                        ));
+                        false
+                    }
+                    EnvironmentLiveness::Unknown(error) => {
+                        report.unverified.push((environment_ref, error));
+                        false
+                    }
+                }
+            }
             EnvironmentStatus::Killing => {
                 // Whether its session is still settling the kill cannot
                 // be told from here: say so, change nothing.

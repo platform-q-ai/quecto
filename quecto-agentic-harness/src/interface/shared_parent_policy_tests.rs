@@ -29,6 +29,50 @@ fn parent_prompt_contains_only_role_and_routing_guidance() {
     }
 }
 
+#[test]
+fn parent_cleanup_requires_preservation_before_explicit_container_removal() {
+    for prompt in [
+        build_system_prompt(&None, false),
+        build_agent_system_prompt(None, None, false, ""),
+    ] {
+        let report = prompt
+            .find("receive the coordinator's final report")
+            .unwrap();
+        let exported = prompt.find("confirm those exports are accessible").unwrap();
+        let unpushed = prompt.find("Preserve any unpushed work").unwrap();
+        let terminate = prompt.find("terminate remaining agents").unwrap();
+        let stop = prompt.find("eligible for `stop_container`").unwrap();
+        let preserved = prompt.find("reports `preserved`").unwrap();
+        let kill = prompt.find("call `kill_container`").unwrap();
+        let verify = prompt.find("every target is `stopped`").unwrap();
+        assert!(report < exported);
+        assert!(exported < unpushed);
+        assert!(unpushed < terminate);
+        assert!(terminate < stop);
+        assert!(stop < preserved);
+        assert!(preserved < kill);
+        assert!(kill < verify);
+        assert!(prompt.contains("completed swarms"));
+        assert!(prompt.contains("coordinators already exited or were killed"));
+        assert!(
+            prompt.contains(
+                "Surface and retry `killing`, `cleanup-failed`, retained, or stop-failed"
+            )
+        );
+        assert!(prompt.contains("no live members or active responsibilities"));
+        assert!(
+            prompt.contains("never stop a running, paused, blocked, or decision-waiting swarm")
+        );
+        assert!(prompt.contains("destructive user-authorized cleanup"));
+    }
+    for prompt in [
+        build_system_prompt(&None, true),
+        build_agent_system_prompt(None, None, true, ""),
+    ] {
+        assert!(!prompt.contains("destructive user-authorized cleanup"));
+    }
+}
+
 /// Given either prompt builder, the approved playbook belongs only to the parent.
 #[test]
 fn parent_playbook_contract_is_excluded_from_children() {

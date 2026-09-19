@@ -271,6 +271,13 @@ pub(crate) fn cmd_agent(
         &build.extension_prompt_snippets,
     ));
     let mut out = AgentOutput { stdout, stderr };
+    // One-shot mode has no readiness transport to protect. Reconcile before
+    // running its sole prompt so the model sees the same verified fleet as
+    // before the two-phase UDS startup split.
+    if let Some(reconciliation) = build.environment_reconciliation {
+        let report = reconciliation.execute();
+        crate::composition::environments::report_environment_reconciliation(&report);
+    }
     // The interface never constructs a session store (#1970): without
     // composition's builder there is nothing to persist against.
     let Some(sessions) = ctx.sessions else {
@@ -305,6 +312,8 @@ pub(crate) struct AgentBuildResult {
     pub subagent_registry: Option<SubagentRegistry>,
     pub harness_lifecycle: Option<SharedHarnessLifecycle>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
+    pub environment_reconciliation:
+        Option<crate::application::environments::use_cases::ReconcileRegistry>,
     pub workspace: std::path::PathBuf,
 }
 pub(crate) fn build_agent_from_config(
@@ -425,6 +434,7 @@ pub(crate) fn build_agent_from_config(
         subagent_registry,
         harness_lifecycle,
         workflow_state,
+        environment_reconciliation,
         workspace,
     } = match build_tool_registry(ToolRegistryArgs {
         base_dir,
@@ -519,6 +529,7 @@ pub(crate) fn build_agent_from_config(
         subagent_registry,
         harness_lifecycle,
         workflow_state,
+        environment_reconciliation,
         workspace,
     })
 }
@@ -669,6 +680,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         notification_rx: build.notification_rx,
         subagent_registry: build.subagent_registry,
         harness_lifecycle: build.harness_lifecycle,
+        environment_reconciliation: build.environment_reconciliation,
         workflow_state: build.workflow_state,
         workflow_config: build.workflow_config,
         broadcast_tx,

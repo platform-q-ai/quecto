@@ -45,7 +45,10 @@ impl EnvironmentControlSlot {
 pub(super) fn is_container_command(args: &serde_json::Value) -> bool {
     matches!(
         args.get("command").and_then(|v| v.as_str()),
-        Some("get_containers") | Some("kill_container") | Some("get_container_configs")
+        Some("get_containers")
+            | Some("stop_container")
+            | Some("kill_container")
+            | Some("get_container_configs")
     )
 }
 
@@ -71,9 +74,39 @@ pub(super) async fn execute_container_command(
             },
             None => error("container config listing is not available in this session".to_string()),
         },
+        Some("stop_container") => match kill_environment {
+            None => error("environment control is not available in this session".to_string()),
+            Some(uc) => match decode_target(args, "stop_container") {
+                Ok(target) => match uc.stop_container(&target).await {
+                    Ok(preserved) => {
+                        let mut result = capped_agents_json(&preserved.record.members);
+                        result["preserved"] = serde_json::json!(preserved.record.environment_ref);
+                        result["settled"] = serde_json::json!(
+                            preserved
+                                .members
+                                .settled
+                                .iter()
+                                .map(|member| serde_json::json!({
+                                    "agent": member.member,
+                                    "result": member.result.as_str()
+                                }))
+                                .collect::<Vec<_>>()
+                        );
+                        ToolResult {
+                            content: result.to_string(),
+                            is_error: false,
+                            image_blocks: vec![],
+                            delivery_metadata: None,
+                        }
+                    }
+                    Err(reason) => error(reason.to_string()),
+                },
+                Err(reason) => error(reason),
+            },
+        },
         Some("kill_container") => match kill_environment {
             None => error("environment control is not available in this session".to_string()),
-            Some(uc) => match decode_target(args) {
+            Some(uc) => match decode_target(args, "kill_container") {
                 Ok(target) => match uc.kill_container(&target).await {
                     Ok(killed) => ToolResult {
                         content: kill_container_result_json(&killed).to_string(),
@@ -90,13 +123,15 @@ pub(super) async fn execute_container_command(
     }
 }
 
-fn decode_target(args: &serde_json::Value) -> Result<EnvironmentTarget, String> {
+fn decode_target(args: &serde_json::Value, operation: &str) -> Result<EnvironmentTarget, String> {
     let env_ref = optional_str(args, "ref")?;
     let name = optional_str(args, "name")?;
     match (env_ref, name) {
         (Some(env_ref), None) => Ok(EnvironmentTarget::Ref(env_ref)),
         (None, Some(name)) => Ok(EnvironmentTarget::Name(name)),
-        _ => Err("kill_container requires exactly one of 'ref' or 'name'".to_string()),
+        _ => Err(format!(
+            "{operation} requires exactly one of 'ref' or 'name'"
+        )),
     }
 }
 

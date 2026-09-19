@@ -17,168 +17,11 @@
 //! #2033), so a document repaired in place is seen without a restart.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-/// Lifecycle status of one committed environment.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EnvironmentStatus {
-    /// Live and joinable.
-    Running,
-    /// A kill claim is outstanding; not joinable, not yet stopped.
-    Killing,
-    /// Kill succeeded; terminal. The record stays listed, the ref is never reused.
-    Stopped,
-    /// Kill failed; retryable via another kill, with `last_error` retained.
-    CleanupFailed,
-    /// Emptied after its swarm run ended or lost its coordinator (#1924): the
-    /// final-member kill was deliberately withheld so the board, checkout and
-    /// unpushed work survive for inspection. Killable only by an explicit
-    /// `kill_container`; a join is admitted for inspection but never revives
-    /// it (no automatic teardown can follow), so a rolled-back or exited
-    /// joiner leaves it retained.
-    Retained,
-}
-
-/// How a caller addresses an existing environment.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EnvironmentTarget {
-    /// Session-scoped `CN` ref minted by this registry.
-    Ref(String),
-    /// Optional user-facing environment name; must resolve unambiguously.
-    Name(String),
-}
-
-/// Resolution failures. Never guesses: unknown, ambiguous, stopped, and stale
-/// targets each fail with their own actionable error.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EnvironmentLookupError {
-    Unknown(String),
-    Ambiguous(String),
-    Stopped(String),
-    Stale(String),
-    /// The durable registry could not be read at startup (round 2 F-B,
-    /// #2033): a target this session did not create is not unknown, it is
-    /// unknowable, and the store's own account says why.
-    Unreadable(String),
-}
-
-impl std::fmt::Display for EnvironmentLookupError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unknown(t) => write!(f, "environment '{t}' is unknown in this session"),
-            Self::Ambiguous(t) => write!(f, "environment name '{t}' is ambiguous in this session"),
-            Self::Stopped(t) => write!(f, "environment '{t}' is stopped"),
-            Self::Stale(t) => write!(
-                f,
-                "environment '{t}' is stale: cleanup is pending or failed; retry kill_container"
-            ),
-            Self::Unreadable(error) => write!(f, "registry unreadable: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for EnvironmentLookupError {}
-
-/// One committed script-managed environment known to this session.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnvironmentRecord {
-    /// Session-local, never-reused ref (e.g. `C1`) minted by this registry.
-    pub environment_ref: String,
-    /// Script/runtime-owned environment identity from the create result.
-    pub environment_id: String,
-    /// Hidden environment UUID minted by Quecto; distinct from the ref, the
-    /// runtime id, and every member agent UUID.
-    pub environment_uuid: String,
-    /// Optional user-facing environment name.
-    pub name: Option<String>,
-    /// Workspace path reported by the create result; shared by all members.
-    pub workspace_path: PathBuf,
-    /// Repository URL the environment was created for.
-    pub repository: String,
-    /// Name of the configured container script set that created it.
-    pub script_name: String,
-    /// Exec argv retained at create time; joins use this even if the
-    /// configured default script set changes later.
-    pub retained_exec_argv: Vec<String>,
-    /// Kill argv retained at create time; final-member and explicit cleanup
-    /// use this exactly once per successful kill.
-    pub retained_kill_argv: Vec<String>,
-    /// Cleanup argv retained at create time. Runs instead of `kill` when a
-    /// launch fails after creation, and serves as the final-member teardown
-    /// fallback for script sets without a configured `kill` — retained on the
-    /// record so it survives the creator exiting before other members.
-    pub retained_cleanup_argv: Vec<String>,
-    /// Inspect argv retained at create time. Runs exactly once per dead
-    /// member post-mortem; retained on the record (surviving zero members and
-    /// failed inspects) so it stays available for retry (#1369 slice 3).
-    pub retained_inspect_argv: Vec<String>,
-    /// Member agent UUIDs, in join order.
-    pub members: Vec<String>,
-    pub status: EnvironmentStatus,
-    /// Metadata object from the create result.
-    pub metadata: serde_json::Value,
-    /// Last cleanup error, retained while status is `CleanupFailed`.
-    pub last_error: Option<String>,
-    /// Where the record came from (#2024 S4d): created by this session, or
-    /// restored from the durable registry another (or an earlier) session
-    /// wrote.
-    pub origin: EnvironmentOrigin,
-    /// Key of the session that created the environment (empty for a
-    /// session-less run).
-    pub created_by: String,
-    /// Creation time as seconds since the Unix epoch, when the creator
-    /// recorded one.
-    pub created_at: Option<u64>,
-}
-
-/// Whether this session created the environment or inherited it from the
-/// durable registry (#2024 S4d).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum EnvironmentOrigin {
-    /// Committed by this session's own create: this session owns its
-    /// final-member teardown.
-    #[default]
-    Created,
-    /// Seeded at startup from the durable registry: members of the creating
-    /// session are unknown here, and a joiner leaving it never triggers the
-    /// final-member kill — only an explicit kill ends it.
-    Restored,
-}
-
-impl EnvironmentRecord {
-    /// User-facing status label: a live environment with no members reads as
-    /// `empty`, otherwise the lifecycle status names itself.
-    pub fn status_label(&self) -> &'static str {
-        match self.status {
-            EnvironmentStatus::Running if self.members.is_empty() => "empty",
-            EnvironmentStatus::Running => "running",
-            EnvironmentStatus::Killing => "killing",
-            EnvironmentStatus::Stopped => "stopped",
-            EnvironmentStatus::CleanupFailed => "cleanup-failed",
-            EnvironmentStatus::Retained => "retained",
-        }
-    }
-
-    /// Mark the record retained (#1924): `Retained`, no members, `reason`
-    /// under `metadata.retained` (the one key that says why a box is kept).
-    pub fn retain_with(&mut self, reason: &str) {
-        self.status = EnvironmentStatus::Retained;
-        self.members.clear();
-        if let Some(object) = self.metadata.as_object_mut() {
-            object.insert("retained".to_string(), serde_json::json!(reason));
-        } else {
-            self.metadata = serde_json::json!({ "retained": reason });
-        }
-    }
-}
-
-/// Mint the hidden environment UUID committed with each new environment.
-/// Distinct from the `CN` ref, the runtime id, and agent UUIDs by
-/// construction (fresh v4 UUID per environment).
-pub fn mint_environment_uuid() -> String {
-    uuid::Uuid::new_v4().to_string()
-}
+#[path = "environment_registry_model.rs"]
+mod model;
+pub use model::*;
 
 pub use super::environment_journal::{
     EnvironmentJournal, JournalWrite, RecordedFn, RefAllocationError, merge_metadata,
@@ -395,6 +238,39 @@ impl EnvironmentRegistry {
         }
     }
 
+    /// Apply a deferred startup reconciliation only while the in-memory
+    /// record is still the restored snapshot that was inspected. A join,
+    /// kill, stop or another reconciliation that changed its status wins;
+    /// slow startup inspection can never overwrite that newer transition.
+    ///
+    /// The durable store has already performed its own status compare-and-set
+    /// before this call. Consequently the adopted status becomes the status
+    /// known to be journalled, and no second store write is issued here.
+    pub fn reconcile_restored(
+        &self,
+        expected: EnvironmentStatus,
+        mut judged: EnvironmentRecord,
+    ) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(current) = state.entries.get(&judged.environment_ref) else {
+            return false;
+        };
+        if current.origin != EnvironmentOrigin::Restored || current.status != expected {
+            return false;
+        }
+
+        // Reconciliation judges runtime/store facts, not session membership.
+        // Preserve members that joined while inspection was outside the lock.
+        judged.members.clone_from(&current.members);
+        judged.origin = EnvironmentOrigin::Restored;
+        let environment_ref = judged.environment_ref.clone();
+        state
+            .journalled
+            .insert(environment_ref.clone(), judged.status.clone());
+        state.entries.insert(environment_ref, judged);
+        true
+    }
+
     /// Report the record under `environment_ref` as changed, after the
     /// state lock is released: the snapshot and the write happen under
     /// the journal order lock, so a later transition never reaches the
@@ -518,9 +394,9 @@ impl EnvironmentRegistry {
         let record = self.resolve(target)?;
         match record.status {
             EnvironmentStatus::Running | EnvironmentStatus::Retained => Ok(record),
-            EnvironmentStatus::Stopped => Err(EnvironmentLookupError::Stopped(
-                record.environment_ref.clone(),
-            )),
+            EnvironmentStatus::Stopped | EnvironmentStatus::Preserved => Err(
+                EnvironmentLookupError::Stopped(record.environment_ref.clone()),
+            ),
             EnvironmentStatus::Killing | EnvironmentStatus::CleanupFailed => Err(
                 EnvironmentLookupError::Stale(record.environment_ref.clone()),
             ),
@@ -542,11 +418,12 @@ impl EnvironmentRegistry {
                 // a name freed by a stopped environment can be reused without
                 // a false ambiguity for the rest of the session.
                 let named = |r: &&EnvironmentRecord| r.name.as_deref() == Some(name.as_str());
-                let mut live = state
-                    .entries
-                    .values()
-                    .filter(named)
-                    .filter(|r| r.status != EnvironmentStatus::Stopped);
+                let mut live = state.entries.values().filter(named).filter(|r| {
+                    !matches!(
+                        r.status,
+                        EnvironmentStatus::Stopped | EnvironmentStatus::Preserved
+                    )
+                });
                 match (live.next(), live.next()) {
                     (Some(record), None) => Ok(record.clone()),
                     (Some(_), Some(_)) => Err(EnvironmentLookupError::Ambiguous(name.clone())),
@@ -583,9 +460,9 @@ impl EnvironmentRegistry {
                 }
                 Ok(())
             }
-            EnvironmentStatus::Stopped => Err(EnvironmentLookupError::Stopped(
-                record.environment_ref.clone(),
-            )),
+            EnvironmentStatus::Stopped | EnvironmentStatus::Preserved => Err(
+                EnvironmentLookupError::Stopped(record.environment_ref.clone()),
+            ),
             EnvironmentStatus::Killing | EnvironmentStatus::CleanupFailed => Err(
                 EnvironmentLookupError::Stale(record.environment_ref.clone()),
             ),
@@ -640,7 +517,8 @@ impl EnvironmentRegistry {
         let claimable = match record.status {
             EnvironmentStatus::Running
             | EnvironmentStatus::CleanupFailed
-            | EnvironmentStatus::Retained => true,
+            | EnvironmentStatus::Retained
+            | EnvironmentStatus::Preserved => true,
             EnvironmentStatus::Killing => record.origin == EnvironmentOrigin::Restored,
             EnvironmentStatus::Stopped => false,
         };
@@ -662,10 +540,74 @@ impl EnvironmentRegistry {
             EnvironmentStatus::Killing
             | EnvironmentStatus::Running
             | EnvironmentStatus::CleanupFailed
-            | EnvironmentStatus::Retained => Err(EnvironmentLookupError::Stale(
+            | EnvironmentStatus::Retained
+            | EnvironmentStatus::Preserved => Err(EnvironmentLookupError::Stale(
                 record.environment_ref.clone(),
             )),
         }
+    }
+
+    /// Claim a retained environment for a non-destructive runtime stop.
+    /// Only the affirmative `Retained` state is eligible: a live or uncertain
+    /// environment is never stopped merely because it has no negative flag.
+    pub fn begin_stop(&self, environment_ref: &str) -> Result<KillClaim, EnvironmentLookupError> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let record = state
+            .entries
+            .get_mut(environment_ref)
+            .ok_or_else(|| EnvironmentLookupError::Unknown(environment_ref.to_string()))?;
+        if record.status != EnvironmentStatus::Retained {
+            return match record.status {
+                EnvironmentStatus::Stopped | EnvironmentStatus::Preserved => Err(
+                    EnvironmentLookupError::Stopped(record.environment_ref.clone()),
+                ),
+                EnvironmentStatus::Running
+                | EnvironmentStatus::Killing
+                | EnvironmentStatus::CleanupFailed
+                | EnvironmentStatus::Retained => Err(EnvironmentLookupError::Stale(
+                    record.environment_ref.clone(),
+                )),
+            };
+        }
+        record.status = EnvironmentStatus::Killing;
+        if let Some(metadata) = record.metadata.as_object_mut() {
+            metadata.insert("stop_in_progress".to_string(), serde_json::json!(true));
+        }
+        let claim = KillClaim {
+            environment_ref: record.environment_ref.clone(),
+        };
+        state.kill_claims.insert(environment_ref.to_string());
+        drop(state);
+        self.journal_ref(environment_ref);
+        Ok(claim)
+    }
+
+    /// Commit data-preserved after a successful runtime stop. The claim uses
+    /// the same exclusive lane as destructive kill, so the two effects cannot
+    /// race. The workspace and metadata remain untouched.
+    pub fn complete_stop(&self, claim: KillClaim) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        // A successful preserving stop clears its own previous stop error, but
+        // never erases a truthfully persisted post-mortem inspect failure.
+        let keep_error = state.inspect_failures.contains(&claim.environment_ref);
+        state.kill_claims.remove(&claim.environment_ref);
+        if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
+            debug_assert_eq!(record.status, EnvironmentStatus::Killing);
+            record.status = EnvironmentStatus::Preserved;
+            record.members.clear();
+            if !keep_error {
+                record.last_error = None;
+            }
+            if let Some(metadata) = record.metadata.as_object_mut() {
+                metadata.remove("stop_in_progress");
+                metadata.insert(
+                    "preserved".to_string(),
+                    serde_json::json!("runtime stopped; workspace retained for data recovery"),
+                );
+            }
+        }
+        drop(state);
+        self.journal_ref(&claim.environment_ref);
     }
 
     /// Commit stopped after a successful kill. Members are gone by definition.
@@ -695,6 +637,24 @@ impl EnvironmentRegistry {
         if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
             debug_assert_eq!(record.status, EnvironmentStatus::Killing);
             record.retain_with(reason);
+        }
+        drop(state);
+        self.journal_ref(&claim.environment_ref);
+    }
+
+    /// Release a failed non-destructive stop for retry without widening the
+    /// destructive-kill state machine. The environment returns to `Retained`;
+    /// its data and the actionable stop error remain visible.
+    pub fn fail_stop(&self, claim: KillClaim, error: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.kill_claims.remove(&claim.environment_ref);
+        if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
+            debug_assert_eq!(record.status, EnvironmentStatus::Killing);
+            record.status = EnvironmentStatus::Retained;
+            record.last_error = Some(error.to_string());
+            if let Some(metadata) = record.metadata.as_object_mut() {
+                metadata.remove("stop_in_progress");
+            }
         }
         drop(state);
         self.journal_ref(&claim.environment_ref);

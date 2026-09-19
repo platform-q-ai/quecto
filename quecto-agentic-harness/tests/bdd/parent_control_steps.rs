@@ -434,6 +434,7 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
             notification_rx: Some(notification_rx),
             subagent_registry: Some(registry_for_loop),
             harness_lifecycle: None,
+            environment_reconciliation: None,
             workflow_state,
             workflow_config,
             broadcast_tx: None,

@@ -196,8 +196,14 @@ rm -rf "$state/$id"
 /// composition restores for `session` — what a harness start does.
 fn compose_session(world: &mut QuectoWorld, session: &str) {
     let base = base_path(world);
-    let registry =
-        quecto::composition::environments::build_environment_registry(&base, session, true);
+    let quecto::interface::cli::EnvironmentRegistryBuild {
+        registry,
+        reconciliation,
+    } = quecto::composition::environments::build_environment_registry(&base, session, true);
+    if let Some(reconciliation) = reconciliation {
+        let report = reconciliation.execute();
+        quecto::composition::environments::report_environment_reconciliation(&report);
+    }
     let subagent_registry = world
         .agent_cmd_registry
         .as_ref()

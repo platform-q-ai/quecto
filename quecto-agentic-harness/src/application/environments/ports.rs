@@ -34,6 +34,17 @@ pub trait EnvironmentProcessCommands: Send + Sync {
         argv: &'a [String],
     ) -> PortFuture<'a, Result<serde_json::Value, String>>;
 
+    /// Run a retained non-destructive runtime stop once. `Ok` means runtime
+    /// processes are gone while the adapter preserved the environment state.
+    fn run_retained_stop<'a>(
+        &'a self,
+        environment_id: &'a str,
+        argv: &'a [String],
+    ) -> PortFuture<'a, Result<(), String>> {
+        let _ = (environment_id, argv);
+        Box::pin(async { Err("runtime stop is not supported by this adapter".to_string()) })
+    }
+
     /// Run the retained `kill` once. `Ok` means the script reported success
     /// (the environment is gone); `Err` carries the script's own account.
     fn run_retained_kill<'a>(

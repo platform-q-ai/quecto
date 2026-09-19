@@ -122,6 +122,22 @@ impl KillEnvironment {
         }
     }
 
+    /// Preserve a retained environment's data while retiring its runtime.
+    /// Kept on the same composed control owner as kill so existing sessions
+    /// gain the capability without a second mutable composition slot.
+    pub async fn stop_container(
+        &self,
+        target: &EnvironmentTarget,
+    ) -> Result<super::PreservedEnvironment, super::StopEnvironmentError> {
+        super::StopEnvironment::new(
+            self.registry.clone(),
+            self.members.clone(),
+            self.commands.clone(),
+        )
+        .stop_container(target)
+        .await
+    }
+
     pub async fn kill_container(
         &self,
         target: &EnvironmentTarget,
