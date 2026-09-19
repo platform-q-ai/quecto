@@ -672,6 +672,9 @@ mod app_tool_policy_cache_tests;
 #[path = "app_tool_policy_tests.rs"]
 mod app_tool_policy_tests;
 #[cfg(test)]
+#[path = "app_two_clients_ownership_tests.rs"]
+mod app_two_clients_ownership_tests;
+#[cfg(test)]
 #[path = "../workflow/app_workflow_box_width_tests.rs"]
 mod app_workflow_box_width_tests;
 #[cfg(test)]
