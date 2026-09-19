@@ -12,6 +12,7 @@ pub mod discovery_diagnostics;
 pub mod resume_decision;
 pub mod resume_picker;
 pub mod resume_rows;
+pub mod session_search;
 
 #[cfg(test)]
 #[path = "resume_rows_tests.rs"]

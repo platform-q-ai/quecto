@@ -36,7 +36,7 @@ fn baseline_async_refresh_preserves_stable_identity() {
 use super::resume_picker::{ResumePicker, ResumePickerEvent};
 use crate::protocol::session_payloads::SessionListScope;
 #[test]
-fn scope_focus_and_query_cycle_with_title_only_filter() {
+fn scope_focus_and_query_cycle_reporting_the_search_text_without_filtering() {
     let mut picker = ResumePicker::new(vec![item("a"), item("b")], SessionListScope::Local);
     picker.handle_input(&Key::Tab);
     assert_eq!(
@@ -45,17 +45,43 @@ fn scope_focus_and_query_cycle_with_title_only_filter() {
     );
     picker.sync_items(vec![item("a"), item("b")]);
     picker.handle_input(&Key::Tab);
-    picker.handle_input(&Key::Char('b'));
-    assert_eq!(picker.selected_item().unwrap().value, "b");
+    assert_eq!(
+        picker.handle_input(&Key::Char('b')),
+        ResumePickerEvent::QueryChanged("b".into())
+    );
+    // The picker filters nothing: both rows stay until an answer replaces them.
+    assert_eq!((picker.item_count(), picker.query()), (2, "b"));
+    picker.sync_items(vec![item("b")]);
     picker.handle_input(&Key::Tab);
     assert_eq!(
         picker.handle_input(&Key::Enter),
         ResumePickerEvent::Selected("b".into())
     );
     picker.handle_input(&Key::BackTab);
-    picker.handle_input(&Key::Backspace);
-    picker.handle_input(&Key::Char('/'));
+    assert_eq!(
+        picker.handle_input(&Key::Backspace),
+        ResumePickerEvent::QueryChanged(String::new())
+    );
+    assert_eq!(
+        picker.handle_input(&Key::Backspace),
+        ResumePickerEvent::Pending,
+        "nothing to erase"
+    );
+    assert_eq!(
+        picker.handle_input(&Key::Char('/')),
+        ResumePickerEvent::QueryChanged("/".into())
+    );
+    assert_eq!(
+        picker.handle_input(&Key::Char('\u{1b}')),
+        ResumePickerEvent::Pending
+    );
+    assert_eq!(
+        picker.handle_input(&Key::Char('\u{202e}')),
+        ResumePickerEvent::Pending
+    );
+    picker.sync_items(Vec::new());
     assert!(picker.selected_item().is_none());
+    assert_eq!(picker.scope(), SessionListScope::Global);
     assert_eq!(
         picker.handle_input(&Key::Escape),
         ResumePickerEvent::Dismissed

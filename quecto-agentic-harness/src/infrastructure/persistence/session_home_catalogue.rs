@@ -35,7 +35,7 @@ mod session_home_catalogue_metadata;
 pub struct FileSessionHomeCatalogue {
     layout: FlatSessionLayout,
     store: std::sync::Arc<FileSessionStore>,
-    published: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    published: std::sync::Arc<std::sync::Mutex<Option<(Vec<u8>, Catalogue)>>>,
     projection: std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, Projection>>>,
     transcript_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -197,8 +197,8 @@ impl FileSessionHomeCatalogue {
     /// the projected stamp, else one full read, strictly validated.
     fn projected_identity(&self, path: &PathBuf) -> Result<SessionIdentity, DomainError> {
         let before = stamp(path)?;
-        if let Some(cached) = self.cached_if_current(path, &before)? {
-            return Ok(cached.identity);
+        if let Some(identity) = self.cached_if_current(path, &before)? {
+            return Ok(identity);
         }
         self.transcript_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -228,14 +228,14 @@ impl FileSessionHomeCatalogue {
         &self,
         path: &std::path::Path,
         before: &[u64],
-    ) -> Result<Option<Projection>, DomainError> {
+    ) -> Result<Option<SessionIdentity>, DomainError> {
         Ok(self
             .projection
             .lock()
             .map_err(error)?
             .get(path)
-            .cloned()
-            .filter(|cached| cached.entry.stamp == before))
+            .filter(|cached| cached.entry.stamp == before)
+            .map(|cached| cached.identity.clone()))
     }
     /// The home beside `path`'s record: the projected observation when the
     /// sidecar still carries the projected stamp, else one exact read, cached
@@ -424,8 +424,7 @@ impl SessionHomeCatalogue for FileSessionHomeCatalogue {
     }
     fn list(&self) -> Result<HomeCatalogueSnapshot, DomainError> {
         // Serialize list/publication within this adapter. A well-formed index
-        // seeds the projection, trusted only through stamps: every record is
-        // stat-ed, and any that changed (or is new) is read and validated.
+        // seeds the projection; every record is stat-ed, a changed one re-read.
         let mut published = self.published.lock().map_err(error)?;
         let path = self.layout.home_catalogue_file();
         // Only a missing index is "absent"; a read failure is recovery.
@@ -434,22 +433,25 @@ impl SessionHomeCatalogue for FileSessionHomeCatalogue {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => Some(format!("unreadable index: {e}").into_bytes()),
         };
-        let cached = disk.as_ref().map(|bytes| Catalogue::decode(bytes));
-        if published
-            .as_ref()
-            .is_some_and(|previous| Some(previous) == disk.as_ref())
-        {
-            // Our own unchanged publication: the projection is current.
-        } else {
-            match &cached {
-                Some(Ok(index)) => self.seed_projection(index)?,
-                _ => self.projection.lock().map_err(error)?.clear(),
+        // Our own unchanged publication needs no decode and no re-seed.
+        let ours = published
+            .take()
+            .filter(|(bytes, _)| Some(bytes) == disk.as_ref());
+        let cached = match ours {
+            Some((_, index)) => Some(Ok(index)),
+            None => {
+                let cached = disk.as_ref().map(|bytes| Catalogue::decode(bytes));
+                match &cached {
+                    Some(Ok(index)) => self.seed_projection(index)?,
+                    _ => self.projection.lock().map_err(error)?.clear(),
+                }
+                cached
             }
-        }
+        };
         let (authority, mut result) = self.scan()?;
-        match &cached {
-            Some(Ok(index)) if *index == authority => {
-                *published = disk;
+        match cached {
+            Some(Ok(index)) if index == authority => {
+                *published = disk.map(|bytes| (bytes, authority));
                 return Ok(result);
             }
             // A well-formed index superseded by newer authority (an autosave
@@ -462,13 +464,12 @@ impl SessionHomeCatalogue for FileSessionHomeCatalogue {
                     .diagnostics
                     .push(format!("home catalogue {reason}; rebuilt from authority"));
             }
-            // An index that never existed (first use, a fresh install) is
-            // built, not recovered: nothing to report.
+            // Never existed (first use): built, not recovered — no report.
             None => {}
         }
         let bytes = serde_json::to_vec(&authority).map_err(error)?;
         match atomic_write(&path, &bytes, false) {
-            Ok(()) => *published = Some(bytes),
+            Ok(()) => *published = Some((bytes, authority)),
             Err(e) => {
                 *published = None;
                 result

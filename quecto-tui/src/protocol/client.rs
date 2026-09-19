@@ -136,6 +136,12 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    SearchSessionMetadata {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(flatten)]
+        search: super::session_search_payloads::SessionSearchRequest,
+    },
     NewSession {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -406,35 +412,6 @@ pub struct CommandSender {
 impl Command {
     pub fn with_inspection_agent_id(&self, agent_id: &str, ns: &str) -> Option<Self> {
         super::inspection_routing::with_inspection_agent_id(self, agent_id, ns)
-    }
-    pub fn kind(&self) -> &'static str {
-        match self {
-            Self::Prompt { .. } => "prompt",
-            Self::Steer { .. } => "steer",
-            Self::FollowUp { .. } => "follow_up",
-            Self::Abort { .. } => "abort",
-            Self::GetState { .. } => "get_state",
-            Self::GetMessages { .. } => "get_messages",
-            Self::GetMessagesTail { .. } => "get_messages_tail",
-            Self::GetMessage { .. } => "get_message",
-            Self::GetSessionStats { .. } => "get_session_stats",
-            Self::PersistSession { .. } => "persist_session",
-            Self::GetToolCatalogue { .. } => "get_tool_catalogue",
-            Self::SetToolPolicy { .. } => "set_tool_policy",
-            Self::ListModels { .. } => "list_models",
-            Self::RefreshModels { .. } => "refresh_models",
-            Self::ListSessions { .. } => "list_sessions",
-            Self::NewSession { .. } => "new_session",
-            Self::ResumeSession { .. } => "resume_session",
-            Self::SetModel { .. } => "set_model",
-            Self::SetEffort { .. } => "set_effort",
-            Self::SetWorkflowAutomation { .. } => "set_workflow_automation",
-            Self::ClearHistory { .. } => "clear_history",
-            Self::RewindTo { .. } => "rewind_to",
-            Self::GetSubagents { .. } => "get_subagents",
-            Self::DeleteAllSubagents { .. } => "delete_all_subagents",
-            Self::Sync { .. } => "sync",
-        }
     }
 }
 /// Serialize a command to JSON-lines wire form (JSON + trailing newline).

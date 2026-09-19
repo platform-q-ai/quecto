@@ -16,6 +16,8 @@ pub(crate) struct SessionsFlow {
     pub(super) resume_decision: Option<crate::sessions::resume_decision::ResumeDecisionDialog>,
     /// The picker selection's key and listed version, consumed by its send.
     pub(super) selected_home_version: Option<(String, String)>,
+    /// Which metadata search is in flight and which answer may be shown (#2010).
+    pub(super) search: crate::sessions::session_search::SearchFlight,
     /// Discovery diagnostics already toasted in this process (#2018).
     pub(super) shown_diagnostics: std::collections::BTreeSet<String>,
     /// Session stats fallback to learn real context window for current session/model.
@@ -73,7 +75,13 @@ impl super::App {
             return;
         };
         match selector.handle_key(&key) {
-            ResumePickerEvent::ScopeChanged(scope) => self.request_session_scope(scope),
+            // A scope or search-text edit asks the harness again (#2010): the
+            // picker filters nothing and the TUI decides no scope or match.
+            ResumePickerEvent::ScopeChanged(scope) => self.request_session_discovery(scope),
+            ResumePickerEvent::QueryChanged(_) => {
+                let scope = self.ac().sessions.scope;
+                self.request_session_discovery(scope);
+            }
             ResumePickerEvent::Selected(choice) => {
                 let key = choice
                     .strip_prefix(crate::sessions::resume_rows::SESSION_ROW_PREFIX)
@@ -85,11 +93,13 @@ impl super::App {
                 self.ac_mut().sessions.selected_home_version =
                     version.map(|version| (key.to_string(), version));
                 self.ac_mut().sessions.resume_selector = None;
+                self.ac_mut().sessions.search.abandon();
                 self.apply_resume_selection(&choice);
             }
             ResumePickerEvent::Dismissed => {
                 self.ac_mut().sessions.resume_selector = None;
                 self.ac_mut().sessions.pending_list_id = None;
+                self.ac_mut().sessions.search.abandon();
             }
             ResumePickerEvent::Pending => {}
         }

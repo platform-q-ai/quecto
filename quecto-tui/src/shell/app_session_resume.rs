@@ -13,6 +13,7 @@ const STALE_LIST: &str = "List out of date — reopen /resume and pick again";
 
 impl App {
     pub(in crate::shell) fn send_list_sessions(&mut self) {
+        self.ac_mut().sessions.search.abandon();
         self.request_session_scope(crate::protocol::session_payloads::SessionListScope::Local);
     }
 
@@ -20,6 +21,8 @@ impl App {
         &mut self,
         scope: crate::protocol::session_payloads::SessionListScope,
     ) {
+        // A listing replaces whatever a search in flight would have shown.
+        self.ac_mut().sessions.search.superseded();
         let id = self.ac().namespaced_id(&format!(
             "resume-list-{}",
             super::super::app_events::uuid_like()
@@ -65,6 +68,22 @@ impl App {
                 }
                 self.open_resume_selector(&data);
             }
+        }
+    }
+
+    /// The picker opened for this answer; with no rows to show it closes, so
+    /// an empty overlay never lingers.
+    pub(in crate::shell) fn handle_session_list_failure(
+        &mut self,
+        id: Option<&str>,
+        error: Option<String>,
+    ) {
+        let pending = self.ac().sessions.pending_list_id.as_deref();
+        if pending.is_some_and(|pending| Some(pending) == id) {
+            self.ac_mut().sessions.pending_list_id = None;
+            self.ac_mut().sessions.resume_selector = None;
+            self.ac_mut().sessions.search.abandon();
+            self.notify_response_error("Could not list sessions", error);
         }
     }
 
@@ -218,6 +237,9 @@ impl App {
         self.send_state_resync();
     }
 }
+
+#[path = "app_session_search.rs"]
+mod app_session_search;
 
 #[cfg(test)]
 #[path = "app_resume_decision_tests.rs"]

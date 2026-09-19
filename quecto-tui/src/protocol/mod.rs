@@ -18,6 +18,7 @@ pub mod presentation_payloads;
 pub mod range_accumulator;
 pub mod resume_decision_payloads;
 pub mod session_payloads;
+pub mod session_search_payloads;
 pub mod state_payloads;
 pub mod subagent_payloads;
 pub mod workflow_payloads;

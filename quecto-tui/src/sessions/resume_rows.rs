@@ -1,12 +1,16 @@
-//! Discovery rows as the picker presents them (#2009, #2011): newest first,
+//! Discovery rows as the picker presents them (#2009, #2011, #2010): listed
+//! rows newest first, searched rows in the harness's order with their key,
 //! stable `session:<key>` IDs, safe copy, and the home version each row was
-//! listed at. No eligibility is decided or enforced here — the backend's
+//! shown at. No eligibility is decided or enforced here — the backend's
 //! `resumeEligible` is only worded, and every selection is asked of the harness.
+use crate::components::ansi::sanitize_untrusted_label;
 use crate::components::select_list::SelectItem;
 use crate::protocol::session_payloads::ResumeSessionSummary;
 
 pub const SESSION_ROW_PREFIX: &str = "session:";
 const NO_HOME: &str = "No folder on record";
+/// A session saved before folders were tracked: said outright, not implied.
+const UNSCOPED: &str = "Unscoped · no folder on record";
 const ELIGIBLE: &str = "Resume";
 /// Why Enter on the row restores nothing at once, in the picker's own words
 /// ("Local Folder" / "All Folders"): the session lives in another folder, or
@@ -34,10 +38,29 @@ impl ResumeRows {
         when: impl Fn(u64) -> String,
     ) -> Self {
         sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_unix_secs.unwrap_or(0)));
-        let empty_hint = match (sessions.is_empty(), had_entries) {
-            (false, _) => None,
-            (true, true) => Some("No resumable CLI sessions found."),
-            (true, false) => Some("No persisted sessions found."),
+        Self::rows(sessions, had_entries, when, false)
+    }
+
+    /// Project a metadata-search answer (#2010): the harness's order (best
+    /// match first) is kept, and each row names its stable key.
+    pub fn project_searched(
+        sessions: Vec<ResumeSessionSummary>,
+        when: impl Fn(u64) -> String,
+    ) -> Self {
+        Self::rows(sessions, true, when, true)
+    }
+
+    fn rows(
+        sessions: Vec<ResumeSessionSummary>,
+        had_entries: bool,
+        when: impl Fn(u64) -> String,
+        searched: bool,
+    ) -> Self {
+        let empty_hint = match (sessions.is_empty(), searched, had_entries) {
+            (false, ..) => None,
+            (true, true, _) => Some("No sessions match."),
+            (true, false, true) => Some("No resumable CLI sessions found."),
+            (true, false, false) => Some("No persisted sessions found."),
         };
         let home_versions = sessions
             .iter()
@@ -59,12 +82,22 @@ impl ResumeRows {
                     (false, Some(_)) => ELSEWHERE,
                     (false, None) => NO_FOLDER,
                 };
+                let folder = match (&session.execution_dir, session.unscoped) {
+                    (Some(folder), _) => folder.as_str(),
+                    (None, true) => UNSCOPED,
+                    (None, false) => NO_HOME,
+                };
+                let key = if searched {
+                    format!(" · key {}", sanitize_untrusted_label(&session.key, 128))
+                } else {
+                    String::new()
+                };
                 SelectItem {
                     value: format!("{SESSION_ROW_PREFIX}{}", session.key),
-                    label: session.title,
+                    label: sanitize_untrusted_label(&session.title, 512),
                     description: Some(format!(
-                        "{} · {when} ({} msgs) · {action}",
-                        session.execution_dir.as_deref().unwrap_or(NO_HOME),
+                        "{} · {when} ({} msgs) · {action}{key}",
+                        sanitize_untrusted_label(folder, 512),
                         session.message_count,
                     )),
                 }

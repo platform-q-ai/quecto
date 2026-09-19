@@ -1,7 +1,8 @@
 //! Session discovery presentation: modal-local focus, safe rows and stable IDs.
+//! The rows are the harness's answer, shown as given: the search box reports
+//! its text ([`ResumePickerEvent::QueryChanged`]) and filters nothing itself.
 use crate::components::{
     component::Component,
-    fuzzy::fuzzy_filter,
     list_rows::SelectionStyle,
     select_list::{SelectItem, SelectList, SelectResult},
     select_overlay::build_select_overlay,
@@ -14,6 +15,8 @@ use crate::shell::keys::Key;
 #[derive(Debug, PartialEq, Eq)]
 pub enum ResumePickerEvent {
     ScopeChanged(SessionListScope),
+    /// The search text was edited (#2010); the rows stay until an answer replaces them.
+    QueryChanged(String),
     Selected(String),
     Dismissed,
     Pending,
@@ -89,7 +92,6 @@ struct HitLayout {
 }
 pub struct ResumePicker {
     list: SelectList,
-    items: Vec<SelectItem>,
     scope: SessionListScope,
     focus: Focus,
     query: String,
@@ -105,7 +107,6 @@ impl ResumePicker {
     pub fn new(items: Vec<SelectItem>, scope: SessionListScope) -> Self {
         let mut picker = Self {
             list: SelectList::new(Vec::new(), 12),
-            items: Vec::new(),
             scope,
             focus: Focus::Results,
             query: String::new(),
@@ -116,7 +117,7 @@ impl ResumePicker {
         picker
     }
     pub fn sync_items(&mut self, items: Vec<SelectItem>) {
-        self.items = items
+        let items: Vec<_> = items
             .into_iter()
             .map(|mut item| {
                 item.label = safe(&item.label);
@@ -124,14 +125,14 @@ impl ResumePicker {
                 item
             })
             .collect();
-        self.filter();
-    }
-    fn filter(&mut self) {
-        let items: Vec<_> = fuzzy_filter(&self.items, &self.query, |i| &i.label)
-            .into_iter()
-            .cloned()
-            .collect();
         self.list.sync_items(items);
+    }
+    /// The search text as typed; what it matches is the harness's decision.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+    pub fn scope(&self) -> SessionListScope {
+        self.scope
     }
     pub fn item_count(&self) -> usize {
         self.list.item_count()
@@ -195,11 +196,10 @@ impl ResumePicker {
                     && self.query.chars().count() < 64 =>
             {
                 self.query.push(*c);
-                self.filter();
+                return ResumePickerEvent::QueryChanged(self.query.clone());
             }
-            (Focus::Query, Key::Backspace) => {
-                self.query.pop();
-                self.filter();
+            (Focus::Query, Key::Backspace) if self.query.pop().is_some() => {
+                return ResumePickerEvent::QueryChanged(self.query.clone());
             }
             (Focus::Query, Key::Enter) => self.focus = Focus::Results,
             (Focus::Results, key) if self.result_rows > 0 => {
