@@ -7,6 +7,7 @@ use quecto::application::durable_prefix::DurablePrefixLatch;
 use quecto::application::sessions::dto::{
     ResumeDecision, ResumeOutcome, ResumeRequest, ResumeSavedSessionError,
 };
+use quecto::application::sessions::ports::session_home::WorkspaceDiscovery;
 use quecto::application::sessions::ports::session_runtime::TurnAccountingReset;
 use quecto::application::sessions::ports::{
     SessionKeyPropagation, SessionStore, SessionSwitchRuntime,
