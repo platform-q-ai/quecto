@@ -94,13 +94,13 @@ pub(super) async fn handle_new_session(
     false
 }
 
-/// `resume_session` (#1863, D8 #1977, #2011): admitted only while the agent
-/// is idle; the controller maps the wire fields and the transaction is the
-/// application's — target admission, the typed decision or refusal,
-/// settlement, save, claim, load, restore and switch. On a restore the
-/// roster reset is broadcast, then the ledger position, then the response —
-/// the same on-socket order as before the migration. A cancel, a decision
-/// and a refusal announce nothing but their answer.
+/// `resume_session` (#1863, D8 #1977, #2011): the controller maps the wire
+/// fields and the transaction is the application's — admission, the typed
+/// decision or refusal, settlement, save, claim, load, restore and switch.
+/// The `busy` guard is defensive and unreachable today: turns and dispatch
+/// share one task, so a mid-turn request is queued and RUNS after the turn.
+/// On a restore the roster reset is broadcast, then the ledger position, then
+/// the response. A cancel, a decision and a refusal announce only their answer.
 pub(super) async fn handle_resume_session(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
