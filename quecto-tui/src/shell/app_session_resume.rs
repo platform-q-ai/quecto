@@ -106,6 +106,11 @@ impl App {
     /// decision, a refusal and an unreadable answer are told only to the tab
     /// that asked: another tab's id is a peer's (an answer with no id at all
     /// is nobody's in particular, and its failure is still toasted).
+    /// Each tab has its own harness connection and an answer is applied to
+    /// the tab it was routed to, so a decision that arrives after the user
+    /// switched away is parked on the asking tab and shown when they return; a
+    /// second send overwrites the id in flight, and the first answer then
+    /// counts as a peer's (a restore still refreshes, a decision is dropped).
     pub(in crate::shell) fn handle_resume_response(
         &mut self,
         id: Option<&str>,
