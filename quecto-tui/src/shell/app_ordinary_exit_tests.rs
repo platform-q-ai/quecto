@@ -431,7 +431,7 @@ async fn ordinary_exit_barrier_ignores_a_foreign_persist_failure() {
     tokio::spawn(async move {
         let cmd: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
         let own = cmd["id"].as_str().unwrap().to_string();
-        let foreign = persist_answer("someone-else:persist-exit", false, Some("foreign failure"));
+        let foreign = persist_answer("tab0:another-request", false, Some("foreign failure"));
         event_tx.send(foreign).await.unwrap();
         event_tx
             .send(persist_answer(&own, true, None))
@@ -462,7 +462,7 @@ async fn ordinary_exit_barrier_is_not_released_by_a_foreign_persist_success() {
         let cmd: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
         let own = cmd["id"].as_str().unwrap().to_string();
         event_tx
-            .send(persist_answer("someone-else:persist-exit", true, None))
+            .send(persist_answer("tab0:another-request", true, None))
             .await
             .unwrap();
         event_tx

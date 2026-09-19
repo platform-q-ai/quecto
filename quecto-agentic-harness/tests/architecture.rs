@@ -965,14 +965,12 @@ enum RemovedSymbol {
     /// removed families (`tab_event_tx` / `tab_event_rx`, a module and its
     /// `_tests` sibling). `on_tab_event_x` does not start with it and passes.
     Prefix(&'static str),
-    /// CALL ban: exactly this identifier directly followed by `(`.
-    Call(&'static str),
 }
 
 impl RemovedSymbol {
     fn name(self) -> &'static str {
         match self {
-            Self::Word(name) | Self::Prefix(name) | Self::Call(name) => name,
+            Self::Word(name) | Self::Prefix(name) => name,
         }
     }
 
@@ -981,16 +979,20 @@ impl RemovedSymbol {
     /// too, and boundary matching leaves ordinary prose ("tabs", "the active
     /// table") legal — the history lives here and in the ADRs instead.
     fn is_in(self, line: &str) -> bool {
-        identifier_tokens(line).any(|(token, followed_by)| match self {
+        identifier_tokens(line).any(|token| self.matches(token))
+    }
+
+    /// Whether one identifier token is this removed symbol.
+    fn matches(self, token: &str) -> bool {
+        match self {
             Self::Word(name) => token == name,
             Self::Prefix(prefix) => token.starts_with(prefix),
-            Self::Call(name) => token == name && followed_by == Some('('),
-        })
+        }
     }
 }
 
-/// The identifier tokens of `line`, each with the character right after it.
-fn identifier_tokens(line: &str) -> impl Iterator<Item = (&str, Option<char>)> {
+/// The identifier tokens of `line`: its maximal `[A-Za-z0-9_]` runs.
+fn identifier_tokens(line: &str) -> impl Iterator<Item = &str> {
     fn is_identifier_char(c: char) -> bool {
         c.is_ascii_alphanumeric() || c == '_'
     }
@@ -1003,17 +1005,18 @@ fn identifier_tokens(line: &str) -> impl Iterator<Item = (&str, Option<char>)> {
             .unwrap_or(from_token.len());
         let (token, after) = from_token.split_at(len);
         rest = after;
-        Some((token, after.chars().next()))
+        Some(token)
     })
 }
 
 /// The names removed with the multi-tab features (#2044). Every identifier
 /// that carried one of these on the pre-removal tree is still matched.
 const REMOVED_MULTI_TAB_SYMBOLS: &[RemovedSymbol] = {
-    use RemovedSymbol::{Call, Prefix, Word};
+    use RemovedSymbol::{Prefix, Word};
     &[
         Prefix("TabSwitch"),
         Prefix("workspace_manifest"),
+        Word("seed_workspace_manifest"),
         Prefix("apply_workspace_manifest"),
         Word("test_workspace_manifest"),
         Prefix("tab_registry"),
@@ -1040,7 +1043,8 @@ const REMOVED_MULTI_TAB_SYMBOLS: &[RemovedSymbol] = {
         Word("active_tab_index"),
         Word("test_set_active_tab"),
         Word("ordered_tab_ids"),
-        Call("conn_for"),
+        // Whole identifier: also `conn_for (`, `conn_for::<T>(`, `App::conn_for`.
+        Word("conn_for"),
         Prefix("tab_event_"),
         Prefix("tab_lifecycle"),
         Word("close_tab_switch_overlays"),
@@ -1057,7 +1061,7 @@ const REMOVED_MULTI_TAB_SYMBOLS: &[RemovedSymbol] = {
 /// #2044 R1-8: the ratchet's matcher works on identifier boundaries.
 #[test]
 fn removed_symbol_matcher_respects_identifier_boundaries() {
-    use RemovedSymbol::{Call, Prefix, Word};
+    use RemovedSymbol::{Prefix, Word};
     for (ban, line) in [
         (Word("active_tab"), "let t = self.active_tab;"),
         (Word("active_tab"), "// the active_tab field"),
@@ -1068,7 +1072,10 @@ fn removed_symbol_matcher_respects_identifier_boundaries() {
             "let (tab_event_tx, tab_event_rx) = channel();",
         ),
         (Prefix("tab_lifecycle"), "mod tab_lifecycle_tests;"),
-        (Call("conn_for"), "app.conn_for(id)"),
+        (Word("conn_for"), "app.conn_for(id)"),
+        (Word("conn_for"), "let f = App::conn_for;"),
+        (Word("conn_for"), "self.conn_for::<Master>(id)"),
+        (Word("conn_for"), "// see conn_for"),
     ] {
         assert!(ban.is_in(line), "{ban:?} must match `{line}`");
     }
@@ -1079,8 +1086,8 @@ fn removed_symbol_matcher_respects_identifier_boundaries() {
         (Word("TabId"), "struct TabIdentity;"),
         (Word("TabId"), "struct StabId;"),
         (Prefix("tab_event_"), "fn on_tab_event_key() {}"),
-        (Call("conn_for"), "let conn_for_master = 1; // conn_for"),
-        (Call("conn_for"), "fn my_conn_for(id: u8) {}"),
+        (Word("conn_for"), "let conn_for_master = 1;"),
+        (Word("conn_for"), "fn my_conn_for(id: u8) {}"),
     ] {
         assert!(!ban.is_in(line), "{ban:?} must not match `{line}`");
     }
@@ -1102,8 +1109,10 @@ fn tui_removed_multi_tab_symbols_do_not_come_back() {
             } else if path.extension().is_some_and(|ext| ext == "rs") {
                 let content = fs::read_to_string(&path).expect("read file");
                 for (n, line) in content.lines().enumerate() {
+                    // Tokenise the line once; every ban reads the same tokens.
+                    let tokens: Vec<&str> = identifier_tokens(line).collect();
                     for symbol in REMOVED_MULTI_TAB_SYMBOLS {
-                        if symbol.is_in(line) {
+                        if tokens.iter().any(|token| symbol.matches(token)) {
                             let name = symbol.name();
                             hits.push(format!("{}:{}: {name}", path.display(), n + 1));
                         }
