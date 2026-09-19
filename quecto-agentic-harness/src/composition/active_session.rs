@@ -25,10 +25,10 @@ use crate::infrastructure::persistence::session_snapshot_sources::{
     RegistryRosterSource, WorkflowEngineRunSource,
 };
 use crate::infrastructure::tools::delegated_roster::RegistryDelegatedRoster;
+use crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles;
 use crate::interface::cli::uds_session_handles::{
     ConversationRewriteHandles, SessionHandles, SessionLoopInputs, SessionSwitchHandles,
 };
-use crate::interface::uds::sessions::controller::ListSessionsController;
 use crate::interface::uds::sessions::read_history_controller::ReadHistoryController;
 use crate::interface::uds::sessions::recover_message_controller::RecoverMessageController;
 use crate::interface::uds::sessions::synchronize_transcript_controller::SynchronizeTranscriptController;
@@ -44,7 +44,7 @@ use crate::interface::uds::sessions::synchronize_transcript_controller::Synchron
 pub fn assemble_session_handles(
     inputs: SessionLoopInputs,
     store: Arc<dyn SessionStore>,
-    list_sessions: Arc<ListSessionsController>,
+    discovery: SessionDiscoveryHandles,
     export: Option<Arc<dyn SessionExportPort>>,
     identities: Arc<dyn FreshSessionIdentityGenerator>,
     home: SessionHomeContext,
@@ -109,7 +109,7 @@ pub fn assemble_session_handles(
     };
     SessionHandles {
         store,
-        list_sessions,
+        discovery,
         active_session,
         read_history: Arc::new(ReadHistoryController::new(read_history)),
         recover_message: Arc::new(RecoverMessageController::new(recover_message)),

@@ -598,8 +598,14 @@ fn then_uds_protocol_supports_resuming_session(_world: &mut QuectoWorld) {
     expr = "the quecto-tui protocol client should still send the harness session command {string}"
 )]
 fn then_tui_client_still_sends_session_command(_world: &mut QuectoWorld, command: String) {
-    let client = std::fs::read_to_string("../quecto-tui/src/protocol/client.rs")
-        .expect("read quecto-tui protocol client source");
+    // The command names live in `client_classes.rs`, split from `client.rs`
+    // for its line cap (#2010); both files are the protocol client.
+    let client = ["client.rs", "client_classes.rs"]
+        .map(|file| {
+            std::fs::read_to_string(format!("../quecto-tui/src/protocol/{file}"))
+                .expect("read quecto-tui protocol client source")
+        })
+        .concat();
     let needle = format!("=> \"{command}\"");
     assert!(
         client.contains(&needle),

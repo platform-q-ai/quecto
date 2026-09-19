@@ -15,7 +15,7 @@ use quecto::infrastructure::persistence::session_home_catalogue::FileSessionHome
 use std::os::unix::ffi::OsStrExt;
 
 async fn rows(world: &World) -> Vec<ListedSession> {
-    let listed = world.handles.list_sessions.list(SessionListScope::Global);
+    let listed = world.handles.discovery.list(SessionListScope::Global);
     listed.await.expect("global listing").sessions
 }
 

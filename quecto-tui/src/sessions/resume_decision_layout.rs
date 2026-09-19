@@ -70,7 +70,7 @@ pub(super) fn path_lines(path: &str, width: usize, max_lines: usize) -> Vec<Stri
 /// `text` bounded to `max_chars` characters by dropping its MIDDLE: a long
 /// path keeps the tail that tells it from its neighbours (never a head-only
 /// cut, which shows two different folders as one).
-pub(super) fn bounded_ends(text: &str, max_chars: usize) -> String {
+pub(in crate::sessions) fn bounded_ends(text: &str, max_chars: usize) -> String {
     let count = text.chars().count();
     if count <= max_chars {
         return text.to_string();

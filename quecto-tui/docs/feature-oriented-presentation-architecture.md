@@ -75,6 +75,23 @@ retaining the harness's opaque `SessionIdentity` and global flat layout. The
 rows and diagnostics; `shell` owns runtime, correlation and rendering. No Git,
 filesystem or launch eligibility policy belongs in the TUI. Cross-folder action
 execution and global metadata search are not part of this first slice.
+Global metadata search (#2010) keeps that split: the harness owns scope,
+matching, order and freshness (`search_session_metadata`); `protocol` maps the
+request and the answer; `sessions` owns the search box's flight control (one
+search in flight, latest wins; only the latest generation's answer under the
+sent id *settles* the rows, an overtaken one is progress, a lost one is retried
+once and given up), what the picker's rows are worth (`RowsState`: Enter and
+the mouse act on settled rows only; an Enter typed ahead is owed to the settled
+answer's top row — only while a SEARCH of typed text is in the air, never
+while a listing loads — is shown in the header while owed, and is withdrawn by
+any other key or click, a lost connection, the first timeout, or one answer
+window (5 s) after the keypress, whichever comes first) and the row
+wording; `shell` owns the request id, the timeout tick and the toasts. An old
+harness is recognised only by a `parse_error` that rejects the search command
+itself (`unknown variant`), with a search of this tab in flight. The picker reports its text and matches nothing —
+with one exception that adds no policy: against a harness that predates the
+command, `sessions/local_filter.rs` filters the rows already listed by the
+harness's own visible-text rule.
 
 ## Policy worth extracting
 
@@ -356,12 +373,17 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/client_result_text.rs` | `protocol` tool-result text extraction (split from `client.rs` for the 750-line cap, #1679 P4; protocol-mapper allowlist as a `client.rs` relocation) |
 | `protocol/subagent_payloads.rs` | `protocol` typed subagent roster wire DTOs incl. versioned environment metadata (#1369 slice 4; split from `client.rs` for the 750-line baseline) |
 | `protocol/workflow_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
-| `sessions/resume_picker.rs` | `sessions` (scope-aware presentation, #2009) |
+| `sessions/resume_picker.rs` | `sessions` (scope-aware presentation, #2009; the search box reports its text — typed or pasted, up to 256 characters — and filters nothing; `RowsState` settled/loading/searching/stalled/disconnected, the deferred Enter and its cue, the cursor rule for replaced rows and the status notice, #2010) |
+| `sessions/clock.rs` | `sessions` time source of the `/resume` picker's deadlines (owed Enter, search flight): tokio's clock in production, a manually advanced one in the headless harness, so time is an input of every test (#2010 R3-T1) |
+| `sessions/session_search.rs` | `sessions` metadata-search flight control: single flight, latest wins, settled only by the sent id with the latest generation, overtaken answers as progress, the 5 s give-up with one retry (#2010) |
+| `sessions/local_filter.rs` | `sessions` literal filter over the listed rows for a harness without `search_session_metadata` (#2010) |
+| `protocol/session_search_payloads.rs` | `protocol` typed `search_session_metadata` exchange: request (query, scope, generation) and answer (rows via the discovery-row parser with repository label and matched fields, generation, echoed scope, total, truncation, refusal) (#2010) |
+| `shell/app_session_search.rs` | `shell` edge of the picker's search: request id, send, settle/progress, the timeout service, the old-harness fallback, the status notice and the toasts (#2010) |
 | `sessions/discovery_diagnostics.rs` | `sessions` discovery-diagnostic toast policy: once per process, batches summarised (#2018) |
 | `sessions/resume_decision.rs` | `sessions` resume decision dialog, laid over the whole terminal frame (not the body pane): the title the user picked with its key beneath, the recorded folder and the harness's detail under it, harness-offered actions in order, every unavailable one marked at every width and never sent (Enter toasts a short pointer at the reason under the cursor); Cancel, Escape and Ctrl-C send nothing; untrusted text made safe (controls, bidi, every invisible character, bounded combining marks), a folder bounded from both ends; the reason takes the free rows, sections are shed by importance, and with many offers or a very low terminal the list scrolls so the border survives (#2011) |
 | `sessions/resume_decision_wording.rs` | `sessions` dialog words: long and short titles and action labels in plain language, the footer, the unavailable mark — the widest wording that fits every row, a clipped label ending in an ellipsis (#2011) |
 | `sessions/resume_decision_layout.rs` | `sessions` pure dialog text layout: whole-word wrap, bounded sections with a marked cut, a folder path that keeps both ends on screen and when bounded to 512 characters (#2011) |
-| `sessions/resume_rows.rs` | `sessions` discovery-row projection: order, stable IDs, safe copy, the home version and the title each row was listed with, and why Enter on an ineligible row opens options ("Saved in another folder" / "No folder on record") (#2009, #2011) |
+| `sessions/resume_rows.rs` | `sessions` discovery-row projection (searched rows keep the harness's order and name their stable key; they show `ID`, repository and matched fields, a long folder loses its middle, and a session saved before folders were tracked is labelled "No folder recorded (older session)", #2010): order, stable IDs, safe copy, the home version and the title each row was listed with, and why Enter on an ineligible row opens options ("Saved in another folder" / "No folder on record") (#2009, #2011) |
 | `sessions/controller_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `sessions/mod.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `setup/mod.rs` | `setup` walkthrough prompt templates + `/setup` variant parser (#2024 S6; pure text, no filesystem/UDS/policy) |

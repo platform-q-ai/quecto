@@ -626,6 +626,14 @@ fn rig_home(legacy: bool) -> crate::application::sessions::session_home::Session
         }
     }
     impl SessionHomeCatalogue for Permissive {
+        fn metadata(
+            &self,
+        ) -> crate::application::sessions::ports::session_home::Answer<
+            '_,
+            crate::application::sessions::ports::session_home::SessionMetadataSnapshot,
+        > {
+            panic!("only the metadata search asks the metadata query")
+        }
         fn read(&self, _: &SessionIdentity) -> Result<SessionHomeScope, DomainError> {
             if self.0 {
                 return Ok(SessionHomeScope::LegacyUnscoped);

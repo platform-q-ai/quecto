@@ -165,6 +165,10 @@ pub struct TuiWorld {
     pub tui_render_diff: Option<String>,
     /// TUI Esc-abort-recovery BDD: command lines drained from the headless harness.
     pub tui_last_commands: Vec<String>,
+    /// Ids of the metadata searches a step has answered (#2010).
+    pub tui_search_answered: Vec<String>,
+    /// `list_sessions` requests sent before the search box was typed into (#2010).
+    pub tui_lists_before_typing: usize,
     pub tui_subagent_commands: Option<tokio::sync::mpsc::Receiver<String>>,
     /// Last master attach-backfill (user, assistant) pair for re-delivery steps (#1050).
     pub tui_last_master_backfill: Option<(String, String)>,
@@ -370,6 +374,7 @@ mod tui_paged_history_steps;
 mod tui_per_connection_state_steps;
 mod tui_pid_safety_steps;
 mod tui_resume_decisions_steps;
+mod tui_session_search_steps;
 mod tui_setup_steps;
 mod tui_stdin_buffer_cap_steps;
 mod tui_stdin_retry_steps;

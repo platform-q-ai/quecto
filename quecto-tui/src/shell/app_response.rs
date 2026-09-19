@@ -261,20 +261,9 @@ impl App {
             "list_sessions" if success => {
                 self.handle_session_list_response(id.as_deref(), data);
             }
-            "list_sessions" => {
-                if self
-                    .ac()
-                    .sessions
-                    .pending_list_id
-                    .as_deref()
-                    .is_some_and(|pending| Some(pending) == id.as_deref())
-                {
-                    // The picker opened for this answer; with no rows to
-                    // show it closes, so an empty overlay never lingers.
-                    self.ac_mut().sessions.pending_list_id = None;
-                    self.ac_mut().sessions.resume_selector = None;
-                    self.notify_response_error("Could not list sessions", error);
-                }
+            "list_sessions" => self.handle_session_list_failure(id.as_deref(), error),
+            "search_session_metadata" => {
+                self.handle_session_search_response(id.as_deref(), success, data, error);
             }
             "get_tool_catalogue" if success => self.handle_get_tool_catalogue(id.as_deref(), data),
             "get_tool_catalogue" => {
@@ -359,7 +348,10 @@ impl App {
                 self.notify_response_error("Could not delete subagents", error)
             }
             "agent_error" => self.handle_agent_error(error),
-            "parse_error" => self.handle_resume_parse_error(id.as_deref(), error),
+            "parse_error" => {
+                self.handle_search_parse_error(id.as_deref(), error.as_deref());
+                self.handle_resume_parse_error(id.as_deref(), error);
+            }
             _ => {}
         }
     }

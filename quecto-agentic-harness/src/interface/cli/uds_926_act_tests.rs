@@ -112,7 +112,7 @@ impl ActEnv {
                 self.tmp.path(),
             ),
             fleet_teardown: None,
-            list_sessions: list_handle(self.tmp.path()),
+            discovery: list_handle(self.tmp.path()),
         }
     }
 }

@@ -69,6 +69,12 @@ impl SelectList {
         self.navigator.clamp(self.items.len());
     }
 
+    /// Put the cursor on the first row (a ranked answer's best match).
+    pub fn select_first(&mut self) {
+        self.navigator.set_selected(0);
+        self.navigator.clamp(self.items.len());
+    }
+
     /// Use the same navigation window for rendering and pointer hit testing.
     pub fn set_max_visible(&mut self, max_visible: usize) {
         self.max_visible = max_visible;

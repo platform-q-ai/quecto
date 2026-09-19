@@ -1,5 +1,6 @@
 //! Versioned optional authority. Transcript saves never rewrite these bytes.
 use super::FileSessionStore;
+use crate::application::sessions::dto::SessionListQuery;
 use crate::domain::{
     error::DomainError,
     session_home::{AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup},
@@ -130,9 +131,25 @@ impl FileSessionStore {
     pub fn layout(&self) -> &super::super::session_layout::FlatSessionLayout {
         &self.layout
     }
+    /// The summary walk `SessionStore::list` answers with, and the records
+    /// it had to skip.
+    pub(in crate::infrastructure::persistence) async fn walk(
+        &self,
+        query: &SessionListQuery,
+    ) -> Result<super::session_store_list::Walk, DomainError> {
+        super::session_store_list::walk(&self.layout, query, self.summaries.clone()).await
+    }
+    /// The walk over every record, as an inherent method (R1-H9): the
+    /// catalogue's metadata query joins it with the home listing without
+    /// naming the store port.
+    pub(in crate::infrastructure::persistence) async fn summaries(
+        &self,
+    ) -> Result<super::session_store_list::Walk, DomainError> {
+        self.walk(&SessionListQuery::All).await
+    }
     /// The listing summary this store's walk validated for `path` at exactly
     /// `stamp`, for the derived index to carry; `None` when the walk has not
-    /// seen that version.
+    /// summarised that version.
     pub(in crate::infrastructure::persistence) fn summary_at(
         &self,
         path: &Path,

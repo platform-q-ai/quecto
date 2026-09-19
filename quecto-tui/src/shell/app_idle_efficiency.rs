@@ -8,11 +8,14 @@ impl App {
             .map(tokio::time::Instant::from_std);
         let subagent_gc_deadline =
             next_exited_subagent_gc_deadline(&self.ac().roster.tracked, EXITED_SUBAGENT_GRACE);
-        match (notification_deadline, subagent_gc_deadline) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(a), None) | (None, Some(a)) => Some(a),
-            (None, None) => None,
-        }
+        // A metadata search that is never answered is given up on time (#2010).
+        let search_deadline = self.ac().sessions.search.deadline();
+        // …and an Enter owed to its answer expires on time (R2-T3).
+        let picker = self.ac().sessions.resume_selector.as_ref();
+        let enter_deadline = picker.and_then(|picker| picker.enter_deadline());
+        let deadlines = [notification_deadline, subagent_gc_deadline];
+        let search = [search_deadline, enter_deadline];
+        deadlines.into_iter().chain(search).flatten().min()
     }
 
     pub(super) fn needs_animation_tick(&self, kitty_fallback_pending: bool) -> bool {
@@ -50,6 +53,9 @@ impl App {
                     needs_render = true;
                 }
             }
+        }
+        if self.service_search_timeout(self.clock.now()) {
+            needs_render = true;
         }
         // GC expired notifications.
         if self.notifications.gc() {

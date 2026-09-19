@@ -232,7 +232,7 @@ pub(super) async fn handle_list_sessions(
     scope: crate::interface::cli::protocol::SessionListScopeCommand,
 ) {
     let requested = crate::application::sessions::dto::SessionListScope::from(scope);
-    let event = match ctx.list_sessions.list(requested).await {
+    let event = match ctx.discovery.list(requested).await {
         Ok(result) => {
             let data = super::uds_dispatch_query::discovery_json(&result, scope);
             AgentEvent::ok(id, type_name, Some(data))

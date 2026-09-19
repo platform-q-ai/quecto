@@ -1,13 +1,10 @@
 //! The on-disk shape of the derived `home.catalogue` (version 2). Per record:
-//! the authority's file stamp (device, inode, length, mode, mtime, ctime), the
-//! `.home` observation with the sidecar's stamp, and the listing summary the
-//! store's walk validated at that stamp. No transcript content beyond the
-//! title, no digests: an unchanged stamp is reused without a read.
-//!
-//! Trust: an entry is reused only while its file carries the recorded stamp,
-//! yields only the identity it was keyed under, and its paths pass the sidecar
-//! decoder's rule. A doctored entry can at most misreport a home or title in
-//! the listing; admission reads the sidecar exactly, never this index.
+//! the authority's file stamp, the `.home` observation with the sidecar's
+//! stamp, and the listing summary the store's walk validated at that stamp.
+//! No digests, no content beyond the title, and no rejections (R2-H2: a
+//! pre-release head wrote a `rejected` map) — the index can misreport a row,
+//! never remove one. Trust: an entry is reused only while its file carries its
+//! stamp, as the identity it is keyed under; admission never reads this index.
 use super::super::session_store::session_store_home::admissible_home_path;
 use crate::domain::session_home::{
     AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup,
@@ -15,14 +12,17 @@ use crate::domain::session_home::{
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
-/// Bumped when the entry shape changes; older indexes rebuild once, with a diagnostic.
+/// Bumped on an incompatible shape; older indexes rebuild once, diagnosed.
 pub(super) const VERSION: u32 = 2;
 
-#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
 pub(super) struct Catalogue {
     pub(super) version: u32,
     /// Keyed by persisted session key.
     pub(super) records: BTreeMap<String, IndexEntry>,
+    /// Legacy, ignored; its presence alone gets the index republished without.
+    #[serde(default, skip_serializing, deserialize_with = "super::legacy_key")]
+    rejected: Option<serde::de::IgnoredAny>,
 }
 
 impl Catalogue {
@@ -30,6 +30,7 @@ impl Catalogue {
         Self {
             version: VERSION,
             records,
+            rejected: None,
         }
     }
     /// A readable index: current version and well-formed; anything else names why.
@@ -54,8 +55,7 @@ pub(super) struct IndexEntry {
     pub(super) summary: Option<SummaryEntry>,
 }
 
-/// The listing data of one record beyond its identity and stamp: the store
-/// walk derives everything else (key, mtime) from those.
+/// The listing data beyond identity and stamp (the walk derives key, mtime).
 #[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Debug)]
 pub(in crate::infrastructure::persistence) struct SummaryEntry {
     pub(in crate::infrastructure::persistence) title: String,

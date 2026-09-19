@@ -16,7 +16,8 @@ mod layout;
 mod wording;
 use crate::protocol::resume_decision_payloads::{ResumeAction, ResumeDecision, ResumeSelection};
 use crate::shell::keys::Key;
-use layout::{bounded_ends, path_lines, wrap_bounded, wrap_words};
+pub(super) use layout::bounded_ends;
+use layout::{path_lines, wrap_bounded, wrap_words};
 pub use wording::UNAVAILABLE_POINTER;
 use wording::{FOOTER, FOOTERS, NO_FOLDER, NO_REASON, RowWording, titles};
 

@@ -1,8 +1,7 @@
-//! Sessions composition (#1970–#1978): the flat layout, the file store and
-//! the retention store over it, the export root, the fresh-identity
-//! generator, the list use case and, through
-//! `composition::active_session` and `composition::retention`, the active
-//! session, its use cases and the retained-context graph.
+//! Sessions composition (#1970–#1978): the flat layout, the file store and the
+//! retention store over it, the export root, the fresh-identity generator,
+//! the list use case and, through `composition::active_session`, `retention`
+//! and `session_search`, the active session, its use cases and discovery.
 use crate::application::sessions::ports::{FreshSessionIdentityGenerator, SessionStore};
 use crate::application::sessions::use_cases::ListSessions;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
@@ -54,11 +53,12 @@ pub fn build_session_handles_over(
     let home = super::session_home::build_session_home(store.clone());
     let store: Arc<dyn SessionStore> = store;
     let list_sessions = Arc::new(ListSessions::new(store.clone()).with_home(home.clone()));
+    let list = Arc::new(ListSessionsController::new(list_sessions));
     let export = super::session_report::build_session_export(&inputs.base_dir);
     super::active_session::assemble_session_handles(
         inputs,
         store,
-        Arc::new(ListSessionsController::new(list_sessions)),
+        super::session_search::discovery_handles(list, home.clone()),
         Some(export),
         build_fresh_session_identity(),
         home,

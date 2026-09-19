@@ -107,7 +107,7 @@ impl Fx {
             switch: switch_handles_for(&self.session_key),
             catalogue: catalogue_handles(self._tmp.path()),
             fleet_teardown: None,
-            list_sessions: list_handle(self._tmp.path()),
+            discovery: list_handle(self._tmp.path()),
         }
     }
 }

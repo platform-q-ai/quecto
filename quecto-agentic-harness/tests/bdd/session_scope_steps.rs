@@ -29,12 +29,12 @@ impl Drop for ScopeProcess {
         let _ = self.child.wait();
     }
 }
-fn command(base: &Path, cwd: &Path) -> Command {
+pub(super) fn command(base: &Path, cwd: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_quecto"));
     command.env("QUECTO_BASE_DIR", base).current_dir(cwd);
     command
 }
-fn save(base: &Path, cwd: &Path, name: &str, title: &str) {
+pub(super) fn save(base: &Path, cwd: &Path, name: &str, title: &str) {
     let mut child = command(base, cwd)
         .args(["agent", "-s", name, "-m", title])
         .stdout(Stdio::null())
@@ -76,7 +76,7 @@ pub(super) fn drive<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) 
     let _guard = handle.enter();
     f(&mut world.tui_parity.as_mut().unwrap().0)
 }
-fn exchange(world: &mut QuectoWorld) {
+pub(super) fn exchange(world: &mut QuectoWorld) {
     let handle = world.tui_parity_rt.as_ref().unwrap().handle().clone();
     let commands = handle.block_on(world.tui_parity.as_mut().unwrap().0.drain_commands());
     let lists: Vec<_> = commands
@@ -127,7 +127,7 @@ fn open_ephemeral(world: &mut QuectoWorld) {
 fn open_active(world: &mut QuectoWorld) {
     open_runtime(world, &["-s", "local"]);
 }
-fn open_runtime(world: &mut QuectoWorld, mode: &[&str]) {
+pub(super) fn open_runtime(world: &mut QuectoWorld, mode: &[&str]) {
     let base = world.cli_context.base_dir.as_ref().unwrap();
     let socket = base.join("scope.sock");
     let cwd = world.cli_context.cwd.as_ref().expect("execution directory");
@@ -255,7 +255,12 @@ pub(super) fn emitted_resume_request(world: &mut QuectoWorld) -> String {
 /// `world.stderr` and hand it to the TUI. A malformed request is answered by
 /// the protocol boundary's `parse_error`, which carries no id.
 pub(super) fn resume_roundtrip(world: &mut QuectoWorld, request: &str) {
-    let id = serde_json::from_str::<serde_json::Value>(request).unwrap()["id"].clone();
+    // Only the id is decoded: a request may carry a number no `f64` holds.
+    #[derive(serde::Deserialize)]
+    struct Correlated {
+        id: serde_json::Value,
+    }
+    let id = serde_json::from_str::<Correlated>(request).unwrap().id;
     let process = world.session_scope_process.as_mut().unwrap();
     writeln!(process.stream, "{request}").unwrap();
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -282,6 +287,41 @@ pub(super) fn resume_roundtrip(world: &mut QuectoWorld, request: &str) {
             result => panic!("socket read failed: {result:?}"),
         }
         assert!(Instant::now() < deadline, "resume response timed out");
+    }
+}
+/// Send one `request` line over the production socket and return the answer
+/// correlated by its `id` (#2010): success or failure, exactly as answered.
+pub(super) fn socket_roundtrip(
+    world: &mut QuectoWorld,
+    request: &str,
+) -> (String, serde_json::Value) {
+    // Only the id is decoded: a request may carry a number no `f64` holds.
+    #[derive(serde::Deserialize)]
+    struct Correlated {
+        id: serde_json::Value,
+    }
+    let id = serde_json::from_str::<Correlated>(request).unwrap().id;
+    let process = world.session_scope_process.as_mut().unwrap();
+    writeln!(process.stream, "{request}").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut line = String::new();
+    loop {
+        match process.reader.read_line(&mut line) {
+            Ok(n) if n > 0 => {
+                let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+                if value["id"] == id && value["type"] == "response" {
+                    return (line, value);
+                }
+                line.clear();
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            result => panic!("socket read failed: {result:?}"),
+        }
+        assert!(Instant::now() < deadline, "no answer to {request}");
     }
 }
 /// The typed decision (#2011) a home that does not admit a restore is answered with.
@@ -414,7 +454,7 @@ pub(super) fn query(world: &mut QuectoWorld, kind: &str) -> serde_json::Value {
     }
 }
 
-fn git(cwd: &Path, args: &[&str]) {
+pub(super) fn git(cwd: &Path, args: &[&str]) {
     let output = Command::new("git")
         // A hook-run test inherits GIT_DIR/GIT_WORK_TREE; they must not redirect the fixture.
         .env_remove("GIT_DIR")

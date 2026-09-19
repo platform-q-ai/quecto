@@ -55,6 +55,38 @@ impl TuiHarness {
         self
     }
 
+    /// Run the production seam every tab/session switch closes overlays
+    /// through (`close_tab_switch_overlays`). With a modal open the switch
+    /// keys go to the modal, so a test of "the picker was closed by a switch"
+    /// drives the seam itself.
+    pub fn close_overlays_for_tab_switch(&mut self) -> &mut Self {
+        self.app.close_tab_switch_overlays();
+        self.capture();
+        self
+    }
+
+    /// The harness's manual clock (#2010 R3-T1): it stands still until a
+    /// test says time passed, so no deadline depends on how long a step took.
+    pub fn now(&self) -> tokio::time::Instant {
+        self.app.clock.now()
+    }
+
+    /// Move the clock without waking anything: what an answer that beats the
+    /// idle tick finds.
+    pub fn advance_clock(&mut self, by: std::time::Duration) -> &mut Self {
+        self.app.clock.advance(by);
+        self
+    }
+
+    /// `by` passes with no input and no answer, then the idle loop's timeout
+    /// service wakes, as its deadline arm would (#2010 R2-T3).
+    pub fn pass_time(&mut self, by: std::time::Duration) -> &mut Self {
+        self.app.clock.advance(by);
+        self.app.service_search_timeout(self.app.clock.now());
+        self.capture();
+        self
+    }
+
     /// Drain any deferred stream paint the way the loop's deadline arm would:
     /// if a coalesced paint is pending, treat its deadline as reached and
     /// paint. Lets tests assert "no frame even after the loop settles"

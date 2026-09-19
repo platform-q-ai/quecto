@@ -16,7 +16,7 @@ use crate::application::sessions::use_cases::{
     ClearConversation, ResumeSavedSession, RewindConversation, SaveSession, StartFreshConversation,
 };
 use crate::domain::session_identity::SessionIdentity;
-use crate::interface::uds::sessions::controller::ListSessionsController;
+use crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles;
 use crate::interface::uds::sessions::export_report_controller::ExportSessionReportController;
 use crate::interface::uds::sessions::read_history_controller::ReadHistoryController;
 use crate::interface::uds::sessions::recover_message_controller::RecoverMessageController;
@@ -48,8 +48,8 @@ pub struct SessionLoopInputs {
 pub struct SessionHandles {
     /// The session store every session transaction of the loop runs against.
     pub store: Arc<dyn SessionStore>,
-    /// Scoped discovery (#2009): maps the UDS `list_sessions` command to the single query owner.
-    pub list_sessions: Arc<ListSessionsController>,
+    /// Discovery (#2009, #2010): `list_sessions` and `search_session_metadata`, one owner each.
+    pub discovery: SessionDiscoveryHandles,
     /// The one active session of the loop (#1971): typed identity, the
     /// read model every transport reads, the persistence state.
     pub active_session: ActiveSessionHandle,

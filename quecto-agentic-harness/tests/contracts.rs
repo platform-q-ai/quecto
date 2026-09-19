@@ -233,6 +233,10 @@ mod resume_decision;
 mod resume_decision_listing;
 #[path = "contracts/session_home_catalogue.rs"]
 mod session_home_catalogue;
+#[path = "contracts/session_metadata_search.rs"]
+mod session_metadata_search;
+#[path = "contracts/session_rejection_cache.rs"]
+mod session_rejection_cache;
 #[path = "contracts/workspace_discovery.rs"]
 mod workspace_discovery;
 #[path = "contracts/workspace_origin.rs"]

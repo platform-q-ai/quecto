@@ -139,6 +139,21 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             false
         }
         AgentCommand::NewSession { .. } => handle_new_session(ctx, id.as_deref(), &type_name).await,
+        AgentCommand::SearchSessionMetadata {
+            query,
+            scope,
+            generation,
+            limit,
+            ..
+        } => {
+            let fields = uds_dispatch_search::SearchFields {
+                query,
+                scope,
+                generation,
+                limit,
+            };
+            uds_dispatch_search::handle(ctx, id.as_deref(), &type_name, fields).await
+        }
         AgentCommand::ResumeSession {
             session,
             action,
@@ -426,6 +441,9 @@ pub(super) async fn dispatch_ext_command(
     };
     false
 }
+
+#[path = "uds_dispatch_search.rs"]
+mod uds_dispatch_search;
 
 #[cfg(test)]
 #[path = "uds_dispatch_935_clamp_tests.rs"]

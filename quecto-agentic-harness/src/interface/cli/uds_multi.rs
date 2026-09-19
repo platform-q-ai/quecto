@@ -360,7 +360,7 @@ pub(super) async fn multi_client_loop(
         workflow_state: wf_state.clone(),
         workflow_config: wf_config,
         fleet_teardown,
-        list_sessions: sessions.list_sessions.clone(),
+        discovery: sessions.discovery.clone(),
         save_session: sessions.save_session.clone(),
         rewrite: sessions.rewrite.clone(),
         switch: sessions.switch.clone(),

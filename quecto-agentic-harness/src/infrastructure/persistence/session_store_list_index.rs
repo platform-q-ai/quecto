@@ -1,18 +1,18 @@
-//! The summary walk's cache: per record path, the stamp the summary was
-//! validated at and the summary itself. A cold process seeds it once from the
-//! derived index the home catalogue publishes, so an unchanged directory is
-//! listed with one `stat` per file; every entry is still reused only while
-//! the file carries its recorded stamp (the walk's own rule).
+//! The summary walk's cache: per record path, the stamp the record was read
+//! at and its summary — or why that version could not be summarised (a verdict
+//! on bytes read in full, R1-H1; an I/O failure is never cached, R2-H1). A cold
+//! process seeds the summaries once from the derived index, so an unchanged
+//! directory costs one `stat` per file; an entry is reused only at its stamp.
 use crate::domain::error::DomainError;
 use crate::domain::session::SessionSummary;
 
-use super::super::super::session_home_catalogue::persisted_summaries;
+use super::super::super::session_home_catalogue::persisted_walk;
 use super::super::super::session_layout::FlatSessionLayout;
 
 #[derive(Debug, Default)]
 pub(in crate::infrastructure::persistence) struct SummaryCache {
     pub(in crate::infrastructure::persistence) reads: usize,
-    pub(super) entries: std::collections::BTreeMap<std::path::PathBuf, (Vec<u64>, SessionSummary)>,
+    pub(super) entries: super::super::super::session_home_catalogue::WalkEntries,
     seeded: bool,
 }
 
@@ -29,20 +29,20 @@ impl SummaryCache {
         if !cache.seeded {
             cache.seeded = true;
             debug_assert!(cache.entries.is_empty(), "seeding an already-used cache");
-            cache.entries = persisted_summaries(layout);
+            cache.entries = persisted_walk(layout);
         }
         Ok(cache)
     }
 
-    /// The summary validated for `path` at exactly `stamp`, if any.
+    /// The summary the walk validated for `path` at exactly `stamp`.
     pub(in crate::infrastructure::persistence) fn summary_at(
         &self,
         path: &std::path::Path,
         stamp: &[u64],
     ) -> Option<&SessionSummary> {
-        self.entries
-            .get(path)
-            .filter(|(validated, _)| validated == stamp)
-            .map(|(_, summary)| summary)
+        let (validated, summary) = self.entries.get(path)?;
+        (validated == stamp)
+            .then_some(summary.as_ref().ok())
+            .flatten()
     }
 }

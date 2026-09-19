@@ -10,16 +10,20 @@ use super::SummaryCache;
 mod session_store_list_record;
 use session_store_list_record::summary_of;
 
+/// One walk's answer: the summaries, newest first, and every admitted record
+/// it could not list this time, as `(file name, why)`.
+pub(in crate::infrastructure::persistence) type Walk = (Vec<SessionSummary>, Vec<(String, String)>);
+
 pub(super) fn scan(
     layout: &FlatSessionLayout,
     query: &SessionListQuery,
     cache: &std::sync::Mutex<SummaryCache>,
-) -> Result<Vec<SessionSummary>, DomainError> {
+) -> Result<Walk, DomainError> {
     let mut cache = SummaryCache::seeded(cache, layout)?;
-    let mut summaries = Vec::new();
+    let (mut summaries, mut skipped) = (Vec::new(), Vec::new());
     let entries = match std::fs::read_dir(layout.sessions_dir()) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(summaries),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((summaries, skipped)),
         Err(e) => {
             return Err(DomainError::Session(format!(
                 "failed to read sessions dir: {e}"
@@ -29,22 +33,17 @@ pub(super) fn scan(
     for entry in entries {
         let entry = entry.map_err(|e| DomainError::Session(e.to_string()))?;
         let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let prefix = query.key_prefix();
         let admitted = FlatSessionLayout::is_session_record(&path)
-            && query.key_prefix().is_none_or(|prefix| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(&layout.record_name_prefix(prefix))
-            });
+            && prefix.is_none_or(|p| name.starts_with(&layout.record_name_prefix(p)));
         if admitted {
-            let Some(summary) = summary_of(layout, &path, &mut cache) else {
-                continue;
-            };
-            if query
-                .key_prefix()
-                .is_none_or(|prefix| prefix.admits(&summary.identity))
-            {
-                summaries.push(summary);
+            match summary_of(layout, &path, &mut cache) {
+                Ok(summary) if prefix.is_none_or(|p| p.admits(&summary.identity)) => {
+                    summaries.push(summary);
+                }
+                Ok(_) => {}
+                Err(why) => skipped.push((name, why)),
             }
         }
     }
@@ -56,5 +55,5 @@ pub(super) fn scan(
             .cmp(&a.updated_unix_secs)
             .then_with(|| a.title.cmp(&b.title))
     });
-    Ok(summaries)
+    Ok((summaries, skipped))
 }

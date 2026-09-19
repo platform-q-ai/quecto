@@ -7,12 +7,14 @@ use crate::protocol::resume_decision_payloads::{
     ResumeAnswer, ResumeSelection, parse_resume_answer,
 };
 use crate::sessions::resume_decision::ResumeDecisionDialog;
+use crate::sessions::resume_picker::RowsState;
 
 /// The toast of a `stale_home_version` refusal.
 const STALE_LIST: &str = "List out of date — reopen /resume and pick again";
 
 impl App {
     pub(in crate::shell) fn send_list_sessions(&mut self) {
+        self.ac_mut().sessions.search.abandon();
         self.request_session_scope(crate::protocol::session_payloads::SessionListScope::Local);
     }
 
@@ -20,6 +22,8 @@ impl App {
         &mut self,
         scope: crate::protocol::session_payloads::SessionListScope,
     ) {
+        // A listing replaces whatever a search in flight would have shown.
+        self.ac_mut().sessions.search.superseded();
         let id = self.ac().namespaced_id(&format!(
             "resume-list-{}",
             super::super::app_events::uuid_like()
@@ -32,13 +36,21 @@ impl App {
         self.ac_mut().sessions.selected_home_version = None;
         if self.ac().sessions.resume_selector.is_none() {
             self.ac_mut().sessions.resume_selector = Some(
-                crate::sessions::resume_picker::ResumePicker::new(Vec::new(), scope),
+                crate::sessions::resume_picker::ResumePicker::new(Vec::new(), scope)
+                    .with_clock(self.clock.clone()),
             );
         }
-        self.send_command(Command::ListSessions {
+        if !self.send_command(Command::ListSessions {
             id: Some(id),
             scope,
-        });
+        }) {
+            // Never sent: nothing to await — the picker says so (R1-T4).
+            self.ac_mut().sessions.pending_list_id = None;
+            let picker = self.ac_mut().sessions.resume_selector.as_mut();
+            picker.map(|picker| picker.set_rows_state(RowsState::Disconnected));
+            return;
+        }
+        self.sync_picker_rows_state();
     }
 
     pub(in crate::shell) fn handle_session_list_response(
@@ -65,6 +77,20 @@ impl App {
                 }
                 self.open_resume_selector(&data);
             }
+        }
+    }
+
+    /// The picker opened for this answer; with no rows to show it closes, so
+    /// an empty overlay never lingers.
+    pub(in crate::shell) fn handle_session_list_failure(
+        &mut self,
+        id: Option<&str>,
+        error: Option<String>,
+    ) {
+        let pending = self.ac().sessions.pending_list_id.as_deref();
+        if pending.is_some_and(|pending| Some(pending) == id) {
+            self.ac_mut().sessions.close_picker();
+            self.notify_response_error("Could not list sessions", error);
         }
     }
 
@@ -218,6 +244,9 @@ impl App {
         self.send_state_resync();
     }
 }
+
+#[path = "app_session_search.rs"]
+mod app_session_search;
 
 #[cfg(test)]
 #[path = "app_resume_decision_tests.rs"]

@@ -96,7 +96,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
             tmp.path(),
         ),
         fleet_teardown: None,
-        list_sessions: list_handle(tmp.path()),
+        discovery: list_handle(tmp.path()),
     };
 
     let (mut client, server) = tokio::net::UnixStream::pair().expect("socketpair");

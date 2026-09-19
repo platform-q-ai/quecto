@@ -27,6 +27,38 @@ pub const COMMAND_WRITER_USER_RESERVED: usize = 64;
 pub const COMMAND_WRITER_INTERACTIVE_FLOOR: usize = 32;
 
 impl Command {
+    /// The wire `type` of the command (split from `client.rs` for its line cap).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Prompt { .. } => "prompt",
+            Self::Steer { .. } => "steer",
+            Self::FollowUp { .. } => "follow_up",
+            Self::Abort { .. } => "abort",
+            Self::GetState { .. } => "get_state",
+            Self::GetMessages { .. } => "get_messages",
+            Self::GetMessagesTail { .. } => "get_messages_tail",
+            Self::GetMessage { .. } => "get_message",
+            Self::GetSessionStats { .. } => "get_session_stats",
+            Self::PersistSession { .. } => "persist_session",
+            Self::GetToolCatalogue { .. } => "get_tool_catalogue",
+            Self::SetToolPolicy { .. } => "set_tool_policy",
+            Self::ListModels { .. } => "list_models",
+            Self::RefreshModels { .. } => "refresh_models",
+            Self::ListSessions { .. } => "list_sessions",
+            Self::SearchSessionMetadata { .. } => "search_session_metadata",
+            Self::NewSession { .. } => "new_session",
+            Self::ResumeSession { .. } => "resume_session",
+            Self::SetModel { .. } => "set_model",
+            Self::SetEffort { .. } => "set_effort",
+            Self::SetWorkflowAutomation { .. } => "set_workflow_automation",
+            Self::ClearHistory { .. } => "clear_history",
+            Self::RewindTo { .. } => "rewind_to",
+            Self::GetSubagents { .. } => "get_subagents",
+            Self::DeleteAllSubagents { .. } => "delete_all_subagents",
+            Self::Sync { .. } => "sync",
+        }
+    }
+
     /// Interactive user actions that must not lose to background fan-in on
     /// the shared ordered writer queue (#1238).
     pub fn is_interactive_user(&self) -> bool {

@@ -1830,5 +1830,6 @@ pub mod inference_admission_provider_steps;
 mod inference_admission_steps;
 mod list_sessions_steps;
 mod model_default_steps;
+mod session_metadata_search_steps;
 mod session_resume_decision_steps;
 mod session_scope_steps;

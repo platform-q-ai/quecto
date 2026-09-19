@@ -91,7 +91,10 @@ impl World {
                 subagent_registry: None,
             },
             store.clone(),
-            Arc::new(ListSessionsController::new(Arc::new(list))),
+            quecto::composition::session_search::discovery_handles(
+                Arc::new(ListSessionsController::new(Arc::new(list))),
+                home.clone(),
+            ),
             None,
             quecto::composition::sessions::build_fresh_session_identity(),
             home,

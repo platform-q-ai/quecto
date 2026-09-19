@@ -225,7 +225,7 @@ impl Fixture {
             workflow_state: None,
             workflow_config: None,
             fleet_teardown: None,
-            list_sessions: self.sessions.list_sessions.clone(),
+            discovery: self.sessions.discovery.clone(),
             save_session: self.sessions.save_session.clone(),
             rewrite: self.sessions.rewrite.clone(),
             switch: self.sessions.switch.clone(),

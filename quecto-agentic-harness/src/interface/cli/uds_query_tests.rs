@@ -205,7 +205,7 @@ impl Fx {
                 self._tmp.path(),
             ),
             fleet_teardown: None,
-            list_sessions: list_handle(self._tmp.path()),
+            discovery: list_handle(self._tmp.path()),
         }
     }
 }

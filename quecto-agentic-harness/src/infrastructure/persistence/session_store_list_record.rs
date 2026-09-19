@@ -1,14 +1,15 @@
-//! One admitted record of the summary walk: the cached summary when its
-//! signature is unchanged, else one header read validated against the
-//! layout. Every skip is logged — a hand-renamed or symlinked file, an
-//! unreadable or invalid one, a file replaced mid-read — so no record ever
-//! vanishes from the list silently.
+//! One admitted record of the summary walk: what the cache holds for its
+//! unchanged stamp — a summary or a remembered verdict — else one read, its
+//! header validated against the layout. Every skip is logged and returned —
+//! a hand-renamed or symlinked file, an unreadable or invalid one, a file
+//! replaced mid-read — so no record ever vanishes from the list silently.
 use crate::domain::message::Role;
 use crate::domain::session::SessionSummary;
 use crate::domain::session_identity::SessionIdentity;
 
 use super::super::super::super::session_home_catalogue::stamp;
 use super::super::super::super::session_layout::FlatSessionLayout;
+use super::super::super::super::session_record_read::read_record;
 use super::super::super::session_store_records::SessionHeader;
 use super::super::super::{first_user_message, parse_session_header, str_to_role};
 use super::super::SummaryCache;
@@ -17,62 +18,60 @@ pub(super) fn summary_of(
     layout: &FlatSessionLayout,
     path: &std::path::Path,
     cache: &mut SummaryCache,
-) -> Option<SessionSummary> {
-    let before = match stamp(path) {
-        Ok(before) => before,
-        Err(error) => {
-            skipped(path, "not a regular session record", &error);
-            return None;
-        }
-    };
-    if let Some((_, summary)) = cache
-        .entries
-        .get(path)
-        .filter(|(version, _)| *version == before)
-    {
-        return Some(summary.clone());
+) -> Result<SessionSummary, String> {
+    let before = stamp(path).map_err(|e| skipped(path, "not a regular session record", &e))?;
+    if let Some((_, known)) = cache.entries.get(path).filter(|(at, _)| *at == before) {
+        // A cached verdict is not read — or logged — again, but is still
+        // named in every answer it is missing from (R2-H1).
+        return known.clone();
     }
     cache.reads += 1;
-    let content = match std::fs::read_to_string(path) {
-        Ok(content) => content,
-        Err(error) => {
-            skipped(path, "unreadable session file", &error);
-            return None;
-        }
-    };
-    let header = match parse_session_header(&content) {
-        Ok(header) => header,
-        Err(error) => {
-            skipped(path, "invalid session file", &error);
-            return None;
-        }
-    };
-    let identity = SessionIdentity::from_persisted_key(header.key.as_ref());
-    if layout.session_file(&identity) != path {
-        skipped(
-            path,
-            "session file name does not match its key",
-            &format_args!("key {:?}", header.key),
-        );
-        return None;
-    }
+    // An I/O failure is no verdict on the content: never cached (R2-H1).
+    let bytes = read_record(path).map_err(|e| skipped(path, "unreadable session file", &e))?;
+    let verdict = summary_in(layout, path, &bytes, &before);
     if !stamp(path).is_ok_and(|after| before == after) {
-        skipped(path, "session file changed while listing", &"retry");
-        return None;
+        return Err(skipped(
+            path,
+            "session file changed while listing",
+            &"retry",
+        ));
     }
-    let summary = summarize(header, identity, &before);
-    cache
-        .entries
-        .insert(path.to_path_buf(), (before, summary.clone()));
-    Some(summary)
+    let version = (before, verdict.clone());
+    cache.entries.insert(path.to_path_buf(), version);
+    verdict
 }
 
-fn skipped(path: &std::path::Path, why: &str, detail: &dyn std::fmt::Display) {
+/// The verdict on a record's bytes, read in full.
+fn summary_in(
+    layout: &FlatSessionLayout,
+    path: &std::path::Path,
+    bytes: &[u8],
+    stamp: &[u64],
+) -> Result<SessionSummary, String> {
+    let content =
+        std::str::from_utf8(bytes).map_err(|e| skipped(path, "invalid session file", &e))?;
+    let header =
+        parse_session_header(content).map_err(|e| skipped(path, "invalid session file", &e))?;
+    let identity = SessionIdentity::from_persisted_key(header.key.as_ref());
+    if layout.session_file(&identity) != path {
+        let key = format!("key {:?}", header.key);
+        return Err(skipped(
+            path,
+            "session file name does not match its key",
+            &key,
+        ));
+    }
+    Ok(summarize(header, identity, stamp))
+}
+
+/// Logs the skip and returns it as the walk's diagnostic text.
+fn skipped(path: &std::path::Path, why: &str, detail: &dyn std::fmt::Display) -> String {
     tracing::warn!(
         path = %path.display(),
         detail = %detail,
         "skipping {why} while listing sessions"
     );
+    format!("{why}: {detail}")
 }
 
 fn summarize(

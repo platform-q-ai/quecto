@@ -6,6 +6,7 @@ use super::AgentEvent;
 use crate::application::sessions::dto::{
     ActionAvailability, ResumeDecision, ResumeOutcome, ResumeSavedSessionError,
 };
+use crate::domain::session_path_text::display_path;
 
 /// The answer to a request that was not refused.
 pub(super) fn outcome_event(
@@ -79,6 +80,8 @@ fn decision_json(decision: &ResumeDecision, code: &str) -> serde_json::Value {
             })
         })
         .collect();
+    // Spelled as every discovery row spells it (R3-H2): one folder, one text.
+    let path = decision.execution_dir.as_deref().map(display_path);
     serde_json::json!({
         "outcome": "decision",
         "code": code,
@@ -86,10 +89,7 @@ fn decision_json(decision: &ResumeDecision, code: &str) -> serde_json::Value {
         "sessionKey": decision.target.identity.runtime_key(),
         "kind": decision.kind.name(),
         "homeVersion": decision.home_version.as_str(),
-        "executionPath": decision
-            .execution_dir
-            .as_ref()
-            .map(|dir| safe_display(&dir.to_string_lossy())),
+        "executionPath": path.as_deref().map(safe_display),
         "detail": decision.detail.as_deref().map(safe_display),
         "actions": actions,
     })

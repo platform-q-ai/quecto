@@ -130,6 +130,7 @@ the architecture tests refuse a use case the docs do not name.
 | Use case | Catalogue | Triggered by | Owns |
 |----------|-----------|--------------|------|
 | `ListSessions` | #1861 | `list_sessions` | local/global discovery over saved summaries and authoritative home metadata, newest first |
+| `SearchSessionMetadata` | #2010 | `search_session_metadata` | local/global search of saved-session metadata — title, exact opaque key, repository label, path — with scope, literal visible-text match, rank order, limit and advisory eligibility; never transcript content |
 | `ReadHistory` | #1856 | `get_messages`, connect-time snapshot, child transcript forwarding | stable-id cursor selection and chronological paging of the live, published or persisted transcript |
 | `RecoverMessage` | #1858 | `get_message` | full-copy recovery of a possibly collapsed message (ledger, then retention store), content ranges, tool-call arguments |
 | `SynchronizeTranscript` | #1857 | `sync` (idle loop and busy reader) | epoch/revision reconciliation, reset-or-delta selection |
@@ -156,7 +157,7 @@ Declared only under `src/application/sessions/ports.rs` and
 
 | Port | Adapter (production) | What it supplies |
 |------|----------------------|------------------|
-| `SessionHomeCatalogue` | `infrastructure/persistence/session_home_catalogue.rs` (`FileSessionHomeCatalogue`) | exact authoritative home reads, first-save home recording, derived catalogue validation and recovery |
+| `SessionHomeCatalogue` | `infrastructure/persistence/session_home_catalogue.rs` (`FileSessionHomeCatalogue`, its metadata query in `session_home_catalogue_metadata.rs`) | exact authoritative home reads, first-save home recording, derived catalogue validation and recovery, and the metadata query (#2010): every listed session once with its listing summary and home, validated by stamp; a record version already read — summarised, **or rejected** in this process (`session_home_catalogue_rejections.rs`: content verdicts only, in memory only) — is never read again |
 | `WorkspaceDiscovery` | `infrastructure/workspace/git_scope_discovery.rs` (`GitScopeDiscovery`), using `filesystem_scope.rs` | canonical execution directory and real Git common-dir/worktree grouping; observable discovery failure |
 | `SessionStore` | `infrastructure/persistence/session_store.rs` (`FileSessionStore`) | claim/release/load/save/save_delta/save_clean_delta/exists/list, keyed by `SessionIdentity` |
 | `ContextSpillStore` | `infrastructure/persistence/context_spill.rs` (`FileContextSpillStore`) | append/recall/list_entries/has_entries/clear/scrub_sync of the retention namespace |
@@ -211,8 +212,26 @@ always applied, so a transcript rewritten in place with its length and mtime
 restored (new ctime) or replaced by a new inode is re-read. A cold process
 over thousands of unchanged transcripts therefore lists in the time of the
 walk, not of reading every transcript. The index is rewritten only after a
-rebuild or when an entry changed. An entry is never trusted beyond its stamp:
-a doctored entry can at most misreport a home or title in the listing, and
+rebuild or when an entry changed. A record the strict validation **rejected**
+is remembered by stamp too, so an unchanged corrupt record — a 100 MB append
+cut short, say — costs one `stat` per query like a good one and still yields
+its one file-named diagnostic on every answer; it is read again the moment its
+stamp changes. Two rules bound that memory. **Only a verdict on content is
+remembered**: the bytes were read in full and failed to parse or validate. An
+I/O failure (no file descriptors, permission, a device error, a delete racing
+the read) says nothing about the record, so neither the catalogue nor the
+store's walk caches it: the record is named in that answer's diagnostics
+(`<file>: session record unavailable: …`, or `<file>: session record not
+listed: …` when only the walk missed it) and read again on the next query.
+**And it is never persisted**: rejections live in memory, per process, and the
+index carries none — so the derived index can never hide a session, mixed
+harness versions cannot hand each other a verdict, and deleting
+`home.catalogue` is always a complete recovery. The price is that each process
+reads a corrupt record once (per validating half). An index that still carries
+the `rejected` map one pre-release build wrote is read without it and
+republished without it, silently. A summary seeds only beside its own file; a
+doctored entry can at most misreport a home or title in the listing — it can
+never remove a row — and
 exact-key reads and resume admission read the `.home` sidecar, never the
 index, so no entry can make a session resume-eligible. A store-listed record the strict catalogue has no row
 for (a crash-truncated transcript mid-append) is not dropped: its `.home` is read
@@ -227,7 +246,12 @@ recorded key names that very file: a hand-renamed record, a symlink into the
 sessions directory, an unreadable or invalid file, or a file replaced while it
 was being read is skipped — deliberately, so no alias or foreign file can pose
 as a session — and every skip is a `tracing::warn!` naming the path and the
-reason, so nothing vanishes from the list silently.
+reason, and is returned by the walk so `search_session_metadata` names the file
+in its diagnostics, so nothing vanishes from the list silently. `list_sessions`
+names every record the catalogue's validation rejected — nearly always the same
+files — but a record only the walk failed to read (a transient I/O failure
+between the two reads) is in the log alone there, as it always was: the listing
+reads the store through the `SessionStore::list` port, which answers rows only.
 
 **Git is a runtime dependency of scoped sessions.** Discovery runs the `git`
 found on PATH (resolved once, spawned by absolute path off the async executor,
@@ -259,6 +283,111 @@ directory, which must be the current execution directory in the same group —
 admission rechecks it after ownership admission for both explicit resume and
 startup; a discovery group is not permission to execute history in another
 directory.
+
+#### Metadata search (#2010)
+
+`SearchSessionMetadata` (`use_cases/search_session_metadata.rs`) is the one
+owner of the picker's search. It consumes the `SessionHomeCatalogue` metadata
+query and `WorkspaceDiscovery` through the loop's `SessionHomeContext`; it holds
+no store. DTOs live in `dto/search_session_metadata.rs` (request with scope,
+`QueryGeneration` and `SearchLimit`; `SessionMetadataRow` — a `ListedSession`
+plus the repository label and the matched fields; `SearchFreshness`), and the
+pure matching rules in `domain/session_metadata_search.rs`.
+
+- **What is matched.** The listing title (the first user message, as the index
+  holds it), the **exact opaque key**, the **repository label** and the
+  **execution path**. Nothing else exists in the query's input, so transcript
+  content can never match: no transcript is ever read to MATCH. What is read
+  is decided by freshness alone — the adapter joins the store's summary walk
+  with the validated home listing, both stamp-checked and index-seeded, so a
+  record version that was already read costs one `stat` per half and is not
+  opened again, whether it was summarised or — in this process — **rejected**
+  (a corrupt or cut-short record is remembered by stamp with its diagnostic, in
+  memory only: a new process reads it once; a failed READ is never remembered).
+  A new or changed record is read once by each half, and with the
+  index absent, unreadable or version-incompatible every record is — once per
+  half, i.e. twice in all (the two halves validate differently; sharing the
+  read is follow-up work, #2042; see *Performance*). `tests/contracts/
+  session_metadata_search.rs` counts zero transcript reads over 2,000 valid
+  records plus an unparseable one and a 2 MiB cut-short one, warm, and from a
+  new process exactly those two rejected records once per half;
+  `session_rejection_cache.rs` pins re-reading on change, that a transient read
+  failure is retried and leaves no trace, and that a persisted rejection — even
+  at the correct stamp of a valid record — hides nothing.
+- **How.** Literal text, never a pattern: regex, glob, SQL and shell
+  metacharacters are ordinary characters. Query and fields are compared as
+  *visible text* — control characters and invisible format characters (bidi
+  controls, zero-width characters, the soft hyphen, tags, the BOM) are dropped
+  from both sides, whitespace runs collapsed, and case **folded**
+  (`domain/session_metadata_text.rs`): the whole text is Unicode lower-cased,
+  then final sigma is a sigma (`οδος` finds `ΟΔΟΣ`), sharp s is `ss` (`straße`
+  finds `STRASSE`), a dotless `ı` is an `i`, and the combining dot a dotted
+  capital `İ` lower-cases into is dropped after an `i` (`istanbul` finds
+  `İstanbul`) — so a hidden character can neither hide a record nor forge a
+  match. Two limits remain: code points are compared as stored (the harness
+  ships no normalization tables: a decomposed `é` is not a composed one), and
+  ligatures and other full-fold expansions (`ﬁ`) are not expanded. Whitespace separates terms; **every**
+  term must occur in the title, the label or the path. A key matches only when
+  the whole trimmed query equals it byte for byte — no fragment, no case fold.
+  A path that is not UTF-8 is matched and presented with each byte that is no
+  text spelled `\xNN` (`caf\xE9`) and a literal backslash doubled
+  (`domain/session_path_text.rs`: a folder really named `caf\xE9` is
+  `caf\\xE9`), so the spelling is injective and two folders stay
+  distinguishable by `executionPath` and `repositoryLabel` alone. A query of
+  more than 256 visible characters — counted before the fold, so `ß` is one —
+  is refused whole (`refused`, `domain/session_query_refusal.rs`), never
+  searched as a prefix; the answer echoes the visible text that was searched;
+  a query with nothing visible names every session in scope.
+- **Repository label.** For a Git home, the directory that holds the `.git`
+  common dir (so linked worktrees share their repository's label) or a bare
+  repository's name without `.git`; for a folder home, the folder's name.
+  Legacy unscoped and unavailable homes have no label and no path: they are
+  found by title and key, and presented with `homeState` so a client labels
+  them explicitly.
+- **Scope, order, limit.** `global` is every listed session; `local` is the
+  current workspace group and, without current workspace facts, nothing — never
+  everything. In `local` every row shares the group's root and its repository
+  label, so neither can tell two rows apart and any word occurring in them
+  would match every row: a Local search matches the title, the exact key, and
+  the path **below the group root** (for a linked worktree outside the root,
+  below their common ancestor) — a sub-folder's or a worktree's own name still
+  finds its row, reported as `path`; the repository label is not matched. Rows are ordered by the best matched field (key, title,
+  repository, path), then newest first (undated last), then key: a total order.
+  At most `limit` rows (default 200, 1–500) are returned, with `totalMatches`
+  and `truncated`.
+- **Freshness.** Every search validates against authority exactly as a listing
+  does: same diagnostics (a corrupt record and a `.home` that needs repair are
+  each named by file, once per query; siblings stay), same
+  recovery (`rebuilt` with a diagnostic for an unparseable index, silent refresh
+  for a superseded one), and a store-listed record the strict catalogue rejects
+  keeps the home admission would read. Exact-key resume never depends on it.
+- **Selection.** A row is a listing row and carries the same identity-bound
+  `homeVersion` (the contract suite asserts search row = list row = authority).
+  Selecting one goes to `ResumeSavedSession` like any other row: a session
+  deleted since is `not_found`, a re-homed one `stale_home_version`, a
+  cross-folder one a typed decision. Eligibility in a row is advisory, decided
+  by the one domain rule over the single discovery of the current directory the
+  query makes (a home saved anywhere else can never admit, so nothing is
+  discovered per row).
+- **Generation.** `generation` is the client's own counter, echoed unchanged;
+  the application attaches no meaning to it. The TUI sends at most one search at
+  a time per picker (an edit made meanwhile goes out when the answer arrives —
+  latest wins). Only the answer that carries the id that was sent **and** the
+  latest generation *settles* the picker — Enter and the mouse act on settled
+  rows only, and an Enter typed ahead is applied to the settled answer's top
+  row. An overtaken answer is shown as progress (never across a scope change
+  or a cleared box); a search unanswered for 5 s is re-issued once, then given
+  up. Typing faster than a round trip costs two searches per burst; typing
+  slower costs one per key.
+- **Performance.** Every query stamps every record (no time-limited cache, no
+  directory-mtime short-circuit — transcripts are appended in place, which
+  does not touch the directory). On a 5,201-record store a warm search takes
+  ~90 ms against a 50 ms target: **missed, ~1.8×**. The cost is the two `stat`
+  passes (store walk + catalogue scan); sharing one pass, or stamping in
+  parallel, is tracked as follow-up work (#2042). Commands are dispatched FIFO, as
+  `list_sessions` is: a client that queues searches back-to-back delays its own
+  `get_state`/`abort` by the sum — the TUI's single flight bounds that to two
+  scans; a raw client gets no such bound.
 
 #### Typed resume decisions (#2011)
 
@@ -532,6 +661,6 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 
 ## See also
 
-- UDS Protocol Reference (`docs {"name":"uds-protocol"}`) — `list_sessions`, `resume_session`, `new_session`, `persist_session`, `get_state`, `get_messages`, `get_message`, `sync`, `get_report`, `get_session_stats`, `clear_history`, `rewind_to`
+- UDS Protocol Reference (`docs {"name":"uds-protocol"}`) — `list_sessions`, `search_session_metadata`, `resume_session`, `new_session`, `persist_session`, `get_state`, `get_messages`, `get_message`, `sync`, `get_report`, `get_session_stats`, `clear_history`, `rewind_to`
 - Harness architecture map (`docs/architecture/harness-architecture-map.md`) — the sessions capability in the layer model
 - Subagents (`docs {"name":"subagents"}`) — each subagent gets its own session

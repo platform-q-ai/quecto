@@ -19,7 +19,7 @@ use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
 use crate::domain::message::Message;
-use crate::interface::uds::sessions::controller::ListSessionsController;
+use crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles;
 use futures::FutureExt;
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
@@ -155,8 +155,8 @@ pub(crate) struct DispatchCtx<'a> {
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     /// Fleet teardown (#1938) of delete-all and session transitions.
     pub fleet_teardown: Option<FleetTeardown>,
-    /// List saved sessions (#1861, #1970): answers the `list_sessions` command.
-    pub list_sessions: ListSessionsHandle,
+    /// Discovery (#1861, #2010): answers `list_sessions` and `search_session_metadata`.
+    pub discovery: SessionDiscoveryHandles,
     /// Save current session (#1860, #1972): the one transaction every
     /// persistence trigger of this loop requests; it owns the watermark,
     /// the dirty latch and the killing-exit state on the active session.
@@ -171,7 +171,6 @@ pub(crate) struct DispatchCtx<'a> {
     pub catalogue: super::catalogue_handles::CatalogueHandles,
 }
 type FleetTeardown = std::sync::Arc<TerminateAllDelegatedAgents>;
-type ListSessionsHandle = std::sync::Arc<ListSessionsController>;
 type SaveSessionHandle = std::sync::Arc<crate::application::sessions::use_cases::SaveSession>;
 
 impl<'a> DispatchCtx<'a> {

@@ -54,6 +54,7 @@ const SESSIONS_USE_CASES: &[&str] = &[
     "RetainContext",
     "RewindConversation",
     "SaveSession",
+    "SearchSessionMetadata",
     "StartFreshConversation",
     "SynchronizeTranscript",
 ];
@@ -65,6 +66,11 @@ const TRANSACTION_OWNERS: &[(&str, &str, &str)] = &[
         "ListSessions",
         "src/application/sessions/use_cases/list_sessions.rs",
         "pub async fn discover(",
+    ),
+    (
+        "SearchSessionMetadata",
+        "src/application/sessions/use_cases/search_session_metadata.rs",
+        "pub async fn search(",
     ),
     (
         "ReadHistory",

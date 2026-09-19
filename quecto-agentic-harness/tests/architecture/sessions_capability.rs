@@ -102,6 +102,29 @@ const CANONICAL_FILES: &[&str] = &[
     "src/composition/resume_capabilities.rs",
     "src/interface/uds/sessions/resume_session_controller.rs",
     "src/interface/cli/uds_dispatch_resume.rs",
+    // #2010 global metadata search: one new query owner and its edges.
+    "src/domain/session_metadata_search.rs",
+    "src/application/sessions/dto/search_session_metadata.rs",
+    "src/application/sessions/use_cases/search_session_metadata.rs",
+    "src/infrastructure/persistence/session_home_catalogue_metadata.rs",
+    "src/composition/session_search.rs",
+    "src/interface/uds/sessions/search_session_metadata_controller.rs",
+    "src/interface/cli/uds_discovery_handles.rs",
+    "src/interface/cli/uds_dispatch_search.rs",
+    // #2010 review round 1: the text fold, the request's numbers (typed and
+    // on the wire), the rejection cache and the walk's seeding.
+    "src/domain/session_metadata_text.rs",
+    "src/application/sessions/dto/search_limits.rs",
+    "src/interface/cli/uds_search_numbers.rs",
+    "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
+    // Round 3 (R3-H1): naming the walk's skips, linear in the bad records.
+    "src/infrastructure/persistence/session_home_catalogue_skipped.rs",
+    "src/infrastructure/persistence/session_home_catalogue_seed.rs",
+    "src/infrastructure/persistence/session_record_read.rs",
+    "src/domain/session_path_text.rs",
+    "src/domain/session_query_refusal.rs",
+    "src/interface/cli/protocol_search_rescue.rs",
+    "src/interface/cli/uds_freshness_json.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
@@ -228,6 +251,16 @@ const COMPOSED_CONSTRUCTORS: &[(&str, &str)] = &[
     (
         "ListSessionsController::new(",
         "src/composition/sessions.rs",
+    ),
+    // #2010 metadata search: its use case and controller beside the list
+    // controller in the discovery handles.
+    (
+        "SearchSessionMetadata::new(",
+        "src/composition/session_search.rs",
+    ),
+    (
+        "SearchSessionMetadataController::new(",
+        "src/composition/session_search.rs",
     ),
     ("FileSessionStore::new(", "src/composition/sessions.rs"),
     (
@@ -719,19 +752,19 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/persistence/session_ownership.rs", 229),
     // R2-H2: the empty-save delete moved beside the home sidecar it now
     // removes (`session_store_home.rs`); the store is back at 687.
-    ("src/infrastructure/persistence/session_store.rs", 687),
+    ("src/infrastructure/persistence/session_store.rs", 685),
     (
         "src/infrastructure/persistence/session_store_catalogue.rs",
         23,
     ),
     // PR #2018 perf: the summary cache moved to its own module, seeded once
     // per process from the persisted index (31 → 29; the walk 62 → 60).
-    ("src/infrastructure/persistence/session_store_list.rs", 29),
+    ("src/infrastructure/persistence/session_store_list.rs", 28),
     // R2-L3: the per-record read (cached summary, header parse, layout
     // check, every skip logged) is its own helper; the walk shrank 110 → 62.
     (
         "src/infrastructure/persistence/session_store_list_scan.rs",
-        60,
+        59,
     ),
     (
         "src/infrastructure/persistence/session_store_list_index.rs",
@@ -739,9 +772,28 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     // PR #2018 perf: the derived index is stamp-based and persisted; its
     // on-disk shape is its own module, both pinned at delivered size.
+    // #2010 review (R1-H1): strict validation and the walk's seeding moved
+    // to child modules beside the rejection cache (482 → 468). Round 2
+    // (R2-H1/H2): rejections are in memory only and never seeded, so every
+    // owner shrank (468 → 446, 139 → 110, 83 → 44); the one record read both
+    // halves share is its own seam (`session_record_read.rs`).
     (
         "src/infrastructure/persistence/session_home_catalogue.rs",
-        482,
+        446,
+    ),
+    // Round 3: naming the walk's skips is its own owner (R3-H1), and the
+    // legacy `rejected` key's presence rule lives here (R3-H6): 110 as before.
+    (
+        "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
+        110,
+    ),
+    (
+        "src/infrastructure/persistence/session_home_catalogue_skipped.rs",
+        34,
+    ),
+    (
+        "src/infrastructure/persistence/session_home_catalogue_seed.rs",
+        44,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_index.rs",
@@ -749,8 +801,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     (
         "src/infrastructure/persistence/session_store_list_record.rs",
-        98,
+        95,
     ),
+    ("src/infrastructure/persistence/session_record_read.rs", 48),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),
     ("src/interface/cli/agent/run_session.rs", 130),
@@ -760,8 +813,41 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // shrinks below master (was 187).
     // #2011: one re-export line for the shared safe-display helper (174 → 173).
     ("src/interface/cli/uds_dispatch_query.rs", 173),
-    // #2011 review: the safe rendering is its own module (50 → 46).
-    ("src/interface/cli/uds_dispatch_discovery.rs", 46),
+    // #2011 review: the safe rendering is its own module (50 → 46). #2010:
+    // the row is one shared function (46 → 45).
+    ("src/interface/cli/uds_dispatch_discovery.rs", 42),
+    // #2010 metadata search: every new owner pinned at its delivered size.
+    // Review round 1 only lowered them; what it added lives in new owners
+    // (`search_limits`, `session_metadata_text`, `uds_search_numbers`).
+    (
+        "src/application/sessions/use_cases/search_session_metadata.rs",
+        157,
+    ),
+    (
+        "src/application/sessions/dto/search_session_metadata.rs",
+        80,
+    ),
+    ("src/application/sessions/dto/search_limits.rs", 33),
+    ("src/domain/session_metadata_text.rs", 51),
+    ("src/interface/cli/uds_search_numbers.rs", 62),
+    ("src/domain/session_metadata_search.rs", 168),
+    (
+        "src/infrastructure/persistence/session_home_catalogue_metadata.rs",
+        45,
+    ),
+    // Review round 2: the refusal, the injective path spelling, the rescue of
+    // a number no `f64` holds and the bounded freshness tail are new owners.
+    ("src/domain/session_path_text.rs", 23),
+    ("src/domain/session_query_refusal.rs", 31),
+    ("src/interface/cli/protocol_search_rescue.rs", 51),
+    ("src/interface/cli/uds_freshness_json.rs", 33),
+    ("src/composition/session_search.rs", 23),
+    ("src/interface/cli/uds_dispatch_search.rs", 80),
+    ("src/interface/cli/uds_discovery_handles.rs", 44),
+    (
+        "src/interface/uds/sessions/search_session_metadata_controller.rs",
+        39,
+    ),
     ("src/interface/cli/uds_safe_display.rs", 24),
     // #1848 reasoning-effort injection plus #2009 scoped session dispatch.
     // #2011: the resume answers are the resume presenter's (259 → 246).
@@ -790,7 +876,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #1848: the adapter holds the change-reasoning-effort use case and
     // restores the startup effort through it (was 97).
     ("src/interface/cli/uds_session_switch_runtime.rs", 103),
-    ("src/interface/cli/uds.rs", 712),
+    // #2010 review (R1-H7): the discovery handles' alias is gone (712 → 711).
+    ("src/interface/cli/uds.rs", 711),
     ("src/interface/cli/uds_session_history.rs", 205),
     ("src/interface/cli/uds_session_message_range.rs", 290),
     ("src/interface/cli/uds_snapshots.rs", 256),
@@ -1389,7 +1476,7 @@ fn interface_never_lists_the_store_directly() {
         query.contains("handle_list_sessions(ctx, id, tn, *scope)")
             && std::fs::read_to_string("src/interface/cli/uds_dispatch_session.rs")
                 .unwrap()
-                .contains("ctx.list_sessions.list(requested).await"),
+                .contains("ctx.discovery.list(requested).await"),
         "the list_sessions command is answered through the composed controller"
     );
 }
