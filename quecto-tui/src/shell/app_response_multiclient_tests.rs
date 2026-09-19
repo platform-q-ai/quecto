@@ -394,12 +394,10 @@ async fn rewind_request_ids_use_fresh_production_tokens_per_request() {
 
 // --- #1463: minted correlation ids carry a connection namespace -------------
 //
-// Phase 2 of the multi-session TUI (epic #1467): every correlation id this
-// client mints is scoped to its connection, so a broadcast response can never
-// match a pending latch on another tab. The master tab is `TabId(0)`; its
-// namespace prefix is `tab0:`.
+// Every correlation id this client mints carries the connection namespace
+// prefix `tab0:` (#1463; a constant since #2044).
 
-/// Namespace prefix every master-tab minted correlation id must carry (#1463).
+/// Namespace prefix every minted correlation id must carry (#1463).
 const MASTER_NAMESPACE: &str = "tab0:";
 
 #[track_caller]
@@ -468,20 +466,6 @@ async fn message_recovery_ids_carry_connection_namespace() {
     for id in app.ac().message_recovery_batches.keys() {
         assert_namespaced(id, "message-recovery batch id");
     }
-}
-
-#[tokio::test]
-async fn minted_ids_derive_namespace_from_tab_id() {
-    // Guard against a hard-coded "tab0:" literal satisfying every assertion
-    // above (#1463 review): a connection re-keyed to tab 1 must mint tab1: ids.
-    let mut h = harness().await;
-    h.app_mut().test_set_master_tab(1);
-    let id = mint_resume_id(&mut h).await;
-    assert!(
-        id.starts_with("tab1:"),
-        "minted id namespaces must derive from the connection's tab id, \
-         not a constant prefix (#1463): got {id:?}"
-    );
 }
 
 #[tokio::test]
@@ -612,23 +596,5 @@ async fn foreign_namespace_response_does_not_resolve_pending_resume() {
     assert!(
         !frame.contains("foreign resumed user"),
         "a foreign-namespace transcript must not land in this tab:\n{frame}"
-    );
-}
-
-#[tokio::test]
-async fn disconnect_diag_completion_for_another_tab_leaves_this_latch_pending() {
-    // The disconnect-diagnosis pending latch is keyed per tab (#1463,
-    // accepted phase-2 debt from PR #1470): a completion attributed to some
-    // other tab must not clear (or emit through) this tab's latch.
-    let mut h = harness().await;
-    h.app_mut().ac_mut().disconnect_diag_pending = true;
-    h.app_mut().finish_agent_stream_closed(
-        crate::shell::connection::TabId(1),
-        Some("other tab's exit detail".into()),
-    );
-    assert!(
-        h.app_mut().ac().disconnect_diag_pending,
-        "a diagnosis completion keyed to another tab must leave this tab's \
-         pending latch set (#1463)"
     );
 }

@@ -17,7 +17,7 @@ impl App {
             id: None,
             env_key: None,
             prefix: String::new(),
-            label: conn.master_panel_label().to_string(),
+            label: conn.display_name().to_string(),
             status: Self::master_status_for(conn).to_string(),
             workflow: master_wf,
             admission: conn

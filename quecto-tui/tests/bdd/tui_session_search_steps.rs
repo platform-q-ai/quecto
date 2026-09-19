@@ -509,10 +509,10 @@ fn when_refuse(world: &mut TuiWorld, reason: String) {
     respond(world, &request["id"], "search_session_metadata", data);
 }
 
-#[when("the picker is closed by a tab switch")]
-fn when_tab_switch_closes(world: &mut TuiWorld) {
+#[when("the picker is closed by a session switch")]
+fn when_session_switch_closes(world: &mut TuiWorld) {
     drive(world, |h| {
-        h.close_overlays_for_tab_switch();
+        h.close_overlays_for_session_switch();
     });
 }
 

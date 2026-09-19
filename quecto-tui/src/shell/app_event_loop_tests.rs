@@ -457,16 +457,9 @@ async fn handle_submit_new_starts_fresh_session_forgetting_the_old_key() {
     a.ac_mut().master_session.chat.add_entry(ChatEntry::User {
         text: "keep master".into(),
     });
-    a.test_insert_disconnected_tab(1);
-    let tab1 = crate::shell::connection::TabId(1);
-    a.conn_mut(tab1).unwrap().session_key = Some("cli:old-tab".into());
-    a.conn_mut(tab1).unwrap().name = Some("worker".into());
-    a.test_set_active_tab(1);
 
     a.handle_submit("/new");
 
-    assert_eq!(a.tabs.len(), 1, "/new must close departing workspace tabs");
-    assert_eq!(a.active_tab, crate::shell::connection::TabId::MASTER);
     assert_eq!(
         a.ac().session_key,
         None,

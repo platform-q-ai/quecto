@@ -1,11 +1,10 @@
 //! Step definitions for `tui_per_connection_state.feature` (#1463).
 //!
-//! Phase 2 of the multi-session TUI (epic #1467): connection-scoped state
-//! moves off `App` into the per-tab connection structures (behind the
-//! `ac()`/`ac()` seam), and every minted correlation id
-//! gains a connection namespace so a broadcast response can never match a
-//! pending latch on another tab. The master tab is `TabId(0)`, so its
-//! namespace prefix is `tab0:`. The prefix assertion is an explicit contract
+//! Connection-scoped state lives in the connection state (behind the
+//! `ac()`/`ac_mut()` seam), and every minted correlation id carries the
+//! connection namespace prefix `tab0:` (a constant since #2044), so a
+//! broadcast response under another prefix can never match a pending latch
+//! here. The prefix assertion is an explicit contract
 //! pin of the id encoding; the second scenario pins the isolation the
 //! encoding buys (a foreign-namespace response resolves nothing here).
 
@@ -13,8 +12,7 @@ use super::*;
 use quecto_tui::protocol::client::Event;
 use quecto_tui::shell::app::tui_harness::TuiHarness;
 
-/// Namespace prefix minted correlation ids must carry for the master tab
-/// (`TabId(0)`), pinned by #1463.
+/// Namespace prefix minted correlation ids must carry, pinned by #1463.
 const MASTER_NAMESPACE: &str = "tab0:";
 
 fn harness(world: &mut TuiWorld) -> &mut TuiHarness {

@@ -28,14 +28,14 @@ use tokio::sync::mpsc;
 
 #[path = "tui_harness_disconnect.rs"]
 mod disconnect;
+#[path = "tui_harness_drivers.rs"]
+mod drivers;
 #[path = "tui_harness_events.rs"]
 mod events;
 #[path = "tui_harness_exit.rs"]
 mod exit;
 #[path = "tui_harness_sourced.rs"]
 mod sourced;
-#[path = "tui_harness_tabs.rs"]
-mod tabs;
 // Re-export the scenario event builders so callers keep using
 // `tui_harness::subagent(..)` etc. `normalize` stays module-internal.
 pub use events::*;

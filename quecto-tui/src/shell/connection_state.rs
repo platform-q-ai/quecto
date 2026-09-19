@@ -1,26 +1,24 @@
-//! Per-tab connection state (#1463, epic #1467).
+//! Connection state (#1463; single connection since #2044).
 //!
-//! Phase 2 of the multi-session TUI bundles everything scoped to ONE master
-//! connection — its transport handle plus the agent-lifecycle state that
-//! phase 1 left on `App` — into this struct, reached through
-//! [`App::active_conn`] / [`App::active_conn_mut`]. At N=1 the app owns
-//! exactly one; the accessors are the dispatch seam where tab selection
-//! lands with N>1, mirroring the proven `active_session_mut()` seam.
+//! Everything scoped to the TUI's ONE master connection — its transport
+//! handle plus the agent-lifecycle state — lives in this struct, owned by
+//! `App` and reached through [`App::active_conn`] / [`App::active_conn_mut`].
 
 use super::*;
 
-/// Everything owned by one tab's master connection. Move order follows the
+/// The correlation-id prefix every minted request id carries (#1463). One
+/// constant for the one connection; ownership of an answer is decided by
+/// exact pending-id equality, never by this prefix.
+pub(crate) const ID_NAMESPACE: &str = "tab0:";
+
+/// Everything owned by the master connection. Move order follows the
 /// issue's blast-radius clusters; fields arrive cluster by cluster.
 pub(crate) struct ConnectionState {
-    /// The tab's transport: the master connection behind its feed task
+    /// The connection's transport: the master connection behind its feed task
     /// (#1462). The feed task owns the [`Client`]; this is the command/state
     /// handle.
     pub(crate) transport: crate::shell::connection::Connection,
-    /// Optional human label for this tab. N=1 leaves it unset so rendered
-    /// frames stay byte-identical; N>1 tab creation can set it and the render
-    /// path will paint it wherever the active tab's master is named (#1464).
-    pub(crate) name: Option<String>,
-    /// The tab's master agent session, modeled as just another
+    /// The connection's master agent session, modeled as just another
     /// [`SessionView`] (#828) so render/input share ONE active-session path
     /// with sub-agents (`active_agent_id == None` selects this). Only
     /// `spinner`/`agent_state` stay master-local; sub-agents derive
@@ -28,7 +26,7 @@ pub(crate) struct ConnectionState {
     pub(crate) master_session: SessionView,
     /// Agent run state machine (abort-aware, #502).
     pub(crate) agent_state: AgentRunState,
-    /// Working spinner for the tab's own agent turn; `None` when idle.
+    /// Working spinner for the connection's own agent turn; `None` when idle.
     pub(crate) spinner: Option<Spinner>,
     /// Connected agent's own id (get_state sessionKey), vs descendants' (#997).
     pub(crate) connected_agent_id: Option<String>,
@@ -59,7 +57,7 @@ pub(crate) struct ConnectionState {
     pub(crate) child_exit_watch: Option<crate::shell::child_watch::ChildWatch>,
     /// Durable session key of this connection's master agent.
     pub(crate) session_key: Option<String>,
-    /// Request id of this tab's in-flight `resume_session`, so only its own
+    /// Request id of the connection's in-flight `resume_session`, so only its own
     /// answer clears the resume latches; foreign answers (another client
     /// resuming the shared agent) still refresh the view (#1726).
     pub(crate) pending_session_resume_id: Option<String>,
@@ -70,9 +68,9 @@ pub(crate) struct ConnectionState {
     /// reported exactly once (#1047).
     pub(crate) surfaced_oversized_drops: u64,
     /// Whether a stream-closed disconnect diagnosis is resolving off-loop
-    /// (#1462 scope 3) for THIS tab: set by `begin_agent_stream_closed` when
+    /// (#1462 scope 3) for the connection: set by `begin_agent_stream_closed` when
     /// it spawns the bounded #1047 waits, cleared by
-    /// `finish_agent_stream_closed` for the matching tab only (#1463). The
+    /// `finish_agent_stream_closed` (#1463). The
     /// harness keys its diagnosis pumping off this latch.
     pub(crate) disconnect_diag_pending: bool,
     /// One "commands are not being sent" notice per disconnect episode
@@ -94,27 +92,27 @@ pub(crate) struct ConnectionState {
     pub(crate) message_recovery_batches: HashMap<String, MessageRecoveryBatch>,
     pub(crate) pending_stub_recall: HashMap<String, app_paged_history::StubRecall>,
     pub(crate) failed_stub_recalls: HashSet<(Option<String>, String)>,
-    /// Exact correlation id for this tab's in-flight resume transcript fetch
+    /// Exact correlation id for the connection's in-flight resume transcript fetch
     /// (#1237). `get_messages` responses are broadcast; fixed literals would
     /// clobber peers.
     pub(crate) pending_resume_messages_id: Option<String>,
-    /// Exact correlation id for this tab's post-rewind transcript refresh (#1237).
+    /// Exact correlation id for the connection's post-rewind transcript refresh (#1237).
     pub(crate) pending_rewind_refresh_id: Option<String>,
-    /// Exact correlation id for this tab's solicited attach backfill (#1237).
+    /// Exact correlation id for the connection's solicited attach backfill (#1237).
     /// Id-less busy-connect snapshots must not clear this pending.
     pub(crate) pending_attach_backfill_id: Option<String>,
     /// Local sequence suffix for minted solicited `get_messages` ids (#1237).
     pub(crate) solicited_get_messages_seq: u64,
-    /// Rewind flow state (#997) for this tab's conversation.
+    /// Rewind flow state (#997) for the connection's conversation.
     pub(crate) rewind: RewindFlow,
-    /// Session pick/resume flow state for this tab's agent.
+    /// Session pick/resume flow state for the connection's agent.
     pub(crate) sessions: SessionsFlow,
-    /// Workflow flow state for this tab's agent.
+    /// Workflow flow state for the connection's agent.
     pub(crate) workflow: WorkflowFlow,
-    /// The model/effort the tab's agent currently runs with (#1463);
+    /// The model/effort the connection's agent currently runs with (#1463);
     /// selector overlays stay global on `App`.
     pub(crate) inference: app_inference::ConnInference,
-    /// This tab's agent tree: tracked children, their sessions and feeds
+    /// The connection's agent tree: tracked children, their sessions and feeds
     /// (#1463 cluster 6); the panel focus/cursor half stays global.
     pub(crate) roster: crate::agents::view::ConnectionRoster,
 }
@@ -147,7 +145,7 @@ impl ConnectionState {
         self.stopped_at = Some(now);
     }
 
-    /// Bundle a freshly spawned transport with the connected-tab defaults.
+    /// Bundle a freshly spawned transport with the connected defaults.
     pub(crate) fn new(
         transport: crate::shell::connection::Connection,
         master_session: SessionView,
@@ -155,7 +153,6 @@ impl ConnectionState {
         let started_at = tokio::time::Instant::now();
         Self {
             transport,
-            name: None,
             master_session,
             agent_state: AgentRunState::new(),
             spinner: None,
@@ -192,13 +189,12 @@ impl ConnectionState {
         }
     }
 
-    /// The correlation-id namespace prefix for this connection's tab
-    /// (#1463): `tab{N}:`. Every id the tab mints carries it, so broadcast
-    /// responses can never match another tab's pending latches.
+    /// The correlation-id namespace prefix every minted id carries (#1463).
+    /// A constant since the TUI became a single-connection client (#2044):
+    /// the wire format of ids is unchanged.
     pub(crate) fn id_namespace(&self) -> String {
-        // Kept as an owned String for call-site compatibility; derived from
-        // the tab id so it can never drift from the transport (#1463).
-        format!("tab{}:", self.transport.tab().0)
+        // Kept as an owned String for call-site compatibility.
+        ID_NAMESPACE.to_string()
     }
 
     /// Mint `suffix` under this connection's namespace (#1463).
@@ -206,41 +202,22 @@ impl ConnectionState {
         format!("{}{suffix}", self.id_namespace())
     }
 
-    /// The label to render for this tab's main-pane title.
+    /// The label of the master agent in the main-pane title and the pinned
+    /// coordinator panel row.
     pub(crate) fn display_name(&self) -> &str {
-        self.name
-            .as_deref()
-            .filter(|name| !name.is_empty())
-            .unwrap_or("Coordinator")
-    }
-
-    /// The label to render for this tab's pinned coordinator panel row. N=1 uses
-    /// the Coordinator fallback; named tabs paint the tab name.
-    pub(crate) fn master_panel_label(&self) -> &str {
-        self.display_name()
+        "Coordinator"
     }
 }
 
 impl App {
-    /// Resolve which tab `active_conn*` should address: routing override
-    /// (inbound event owner) if set, otherwise the focused `active_tab`.
-    fn effective_tab(&self) -> crate::shell::connection::TabId {
-        self.routing_tab_override.unwrap_or(self.active_tab)
-    }
-
-    /// The focused (or routing-override) tab's connection state.
+    /// The TUI's one connection state.
     pub(crate) fn active_conn(&self) -> &ConnectionState {
-        let tab = self.effective_tab();
-        self.tabs
-            .get(&tab)
-            .unwrap_or_else(|| panic!("missing connection state for effective tab {tab:?}"))
+        &self.conn
     }
 
     /// Mutable counterpart to [`Self::active_conn`].
     pub(crate) fn active_conn_mut(&mut self) -> &mut ConnectionState {
-        let tab = self.effective_tab();
-        self.conn_mut(tab)
-            .unwrap_or_else(|| panic!("missing connection state for effective tab {tab:?}"))
+        &mut self.conn
     }
 
     /// Short alias for dense call sites (line-budget / rustfmt).
@@ -255,42 +232,10 @@ impl App {
         self.active_conn_mut()
     }
 
-    /// Immutable lookup for a specific tab (None if unknown).
-    pub(crate) fn conn_for(
-        &self,
-        tab: crate::shell::connection::TabId,
-    ) -> Option<&ConnectionState> {
-        self.tabs.get(&tab)
-    }
-
-    /// Mutable lookup for a specific tab (None if unknown).
-    pub(crate) fn conn_mut(
-        &mut self,
-        tab: crate::shell::connection::TabId,
-    ) -> Option<&mut ConnectionState> {
-        self.tabs.get_mut(&tab)
-    }
-
-    /// Run `f` with `active_conn*` temporarily addressing `tab` so existing
-    /// handlers can mutate the event owner without changing focus (#1465).
-    /// Unknown tabs are a no-op (AC7: no ghost state, no active fallthrough).
-    pub(crate) fn with_routing_tab<R>(
-        &mut self,
-        tab: crate::shell::connection::TabId,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> Option<R> {
-        self.conn_for(tab)?;
-        let prev = self.routing_tab_override;
-        self.routing_tab_override = Some(tab);
-        let out = f(self);
-        self.routing_tab_override = prev;
-        Some(out)
-    }
-
-    /// Close global overlay surfaces when switching the active tab/session.
-    /// N=1 session switches use the same seam; this preserves compose-frame
-    /// idempotence by doing the state transition outside render composition.
-    pub(crate) fn close_tab_switch_overlays(&mut self) {
+    /// Close global overlay surfaces when switching the active session. This
+    /// preserves compose-frame idempotence by doing the state transition
+    /// outside render composition.
+    pub(crate) fn close_session_switch_overlays(&mut self) {
         let conn = self.active_conn_mut();
         conn.sessions.close_picker();
         conn.sessions.resume_decision = None;
@@ -302,7 +247,7 @@ impl App {
         self.inference.model_selector = None;
         self.inference.effort_selector = None;
         // Global model-selector open latch must not fire on the newly focused
-        // tab after a switch (#1465 F10).
+        // session after a switch (#1465 F10).
         self.inference.model_registry.open_pending = false;
     }
 }

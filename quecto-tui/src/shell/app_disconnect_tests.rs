@@ -221,3 +221,132 @@ async fn send_command_refuses_when_disconnected() {
         "a known-dead connection must refuse the enqueue"
     );
 }
+
+/// How many times the stderr-tail transcript header of a disconnect notice
+/// (#1047) was written into the master transcript.
+fn stderr_transcript_headers(app: &super::App) -> usize {
+    app.ac()
+        .master_session
+        .chat
+        .entries()
+        .iter()
+        .filter(|entry| {
+            matches!(entry, ChatEntry::Status { text }
+                if text.starts_with("Agent disconnected — recent agent stderr"))
+        })
+        .count()
+}
+
+/// #2044 R1-1: finishing the stream-closed disconnect CONSUMES the diagnosis
+/// latch. The notice (toast + stderr-tail transcript entries) is emitted
+/// once; a later completion for the same episode — a duplicate or a stale
+/// one — takes the toast-only branch and never writes the stderr tail into
+/// the transcript a second time (#1470 r3).
+#[tokio::test]
+async fn finishing_the_stream_closed_disconnect_consumes_the_diagnosis_latch() {
+    use crate::shell::child_watch::{StderrTail, watch_child};
+
+    let mut h = TuiHarness::new().await;
+    let tail = StderrTail::default();
+    tail.push("thread 'main' panicked at latch-pin".to_string());
+    tail.mark_drained();
+    let child = tokio::process::Command::new("sh")
+        .args(["-c", "exit 7"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn exiting child");
+    h.app_mut().set_child_exit_watch(watch_child(child, tail));
+
+    h.app_mut().begin_agent_stream_closed();
+    assert!(
+        h.app_mut().ac().disconnect_diag_pending,
+        "precondition: an owned child defers the diagnosis behind the latch"
+    );
+    h.pump_disconnect_diagnosis().await;
+
+    assert!(
+        !h.app_mut().ac().disconnect_diag_pending,
+        "finishing the disconnect must clear the diagnosis latch"
+    );
+    assert_eq!(
+        stderr_transcript_headers(h.app_mut()),
+        1,
+        "the finished disconnect writes the stderr tail into the transcript once"
+    );
+
+    h.app_mut()
+        .finish_agent_stream_closed(Some("late completion".to_string()));
+
+    assert_eq!(
+        stderr_transcript_headers(h.app_mut()),
+        1,
+        "a completion after the latch was consumed must not write the transcript again"
+    );
+    let messages = h.notification_messages();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message == "Agent disconnected — late completion"),
+        "the late diagnosis still surfaces as a toast (#1470 r6), got {messages:?}"
+    );
+}
+
+/// #2044 R1-5: the duplicate gate. A second `Closed` sentinel in the same
+/// disconnect episode is a no-op on an ownerless connection — exactly one
+/// "Agent disconnected" notice, not one per sentinel.
+#[tokio::test]
+async fn a_second_closed_sentinel_does_not_repeat_the_disconnect_notice() {
+    use crate::shell::connection::SourcedEvent;
+
+    let mut h = TuiHarness::new().await;
+    let app = h.app_mut();
+
+    app.route_sourced(SourcedEvent::Closed);
+    app.route_sourced(SourcedEvent::Closed);
+
+    let messages = app.notifications.messages();
+    let notices = messages
+        .iter()
+        .filter(|message| message.as_str() == "Agent disconnected")
+        .count();
+    assert_eq!(
+        notices, 1,
+        "one disconnect episode raises one notice, got {messages:?}"
+    );
+}
+
+/// #2044 R1-5: with an owned child the duplicate gate also keeps the
+/// off-loop diagnosis single — a second sentinel must not spawn a second
+/// diagnosis task, whose completion would repeat the notice.
+#[tokio::test(start_paused = true)]
+async fn a_second_closed_sentinel_does_not_start_a_second_diagnosis() {
+    use crate::shell::connection::SourcedEvent;
+
+    let mut h = TuiHarness::new().await;
+    let app = h.app_mut();
+    app.set_child_exit_watch(crate::shell::child_watch::ChildWatch::for_tests(Some(77)));
+
+    app.route_sourced(SourcedEvent::Closed);
+    app.route_sourced(SourcedEvent::Closed);
+    h.pump_disconnect_diagnosis().await;
+
+    let second = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        h.app_mut().disconnect_diag_rx.recv(),
+    )
+    .await;
+    assert!(
+        second.is_err(),
+        "one disconnect episode reports one diagnosis, got a second: {second:?}"
+    );
+    let messages = h.notification_messages();
+    let notices = messages
+        .iter()
+        .filter(|message| message.starts_with("Agent disconnected"))
+        .count();
+    assert_eq!(
+        notices, 1,
+        "one disconnect episode raises one notice, got {messages:?}"
+    );
+}

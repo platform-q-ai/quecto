@@ -80,9 +80,10 @@ pub struct LeaderBudget {
 }
 
 impl LeaderBudget {
-    /// Budget for a leader whose live direct-child count the TUI knows
-    /// (`None`: unknown, assume the 3-pass worst case).
-    pub fn for_children(children: Option<usize>) -> Self {
+    /// Budget for a leader whose live direct-child count the TUI knows. A
+    /// caller with no roster (startup-failure cleanup) uses
+    /// [`Self::WORST_CASE`].
+    pub fn for_children(children: usize) -> Self {
         Self {
             settle: fleet_settle_budget(children),
             force: HARNESS_FORCE_EXIT_AFTER,
@@ -107,11 +108,8 @@ impl LeaderBudget {
 }
 
 /// Batches the fleet needs for `children` unresponsive direct children,
-/// clamped to `1..=HARNESS_MAX_PASSES`; unknown counts assume the maximum.
-pub fn fleet_batches(children: Option<usize>) -> u32 {
-    let Some(children) = children else {
-        return HARNESS_MAX_PASSES;
-    };
+/// clamped to `1..=HARNESS_MAX_PASSES`.
+pub fn fleet_batches(children: usize) -> u32 {
     let batches = children.div_ceil(HARNESS_SETTLEMENT_BOUND).max(1);
     u32::try_from(batches)
         .unwrap_or(HARNESS_MAX_PASSES)
@@ -119,7 +117,7 @@ pub fn fleet_batches(children: Option<usize>) -> u32 {
 }
 
 /// `fleet_batches(children)` × 25 s + 5 s persist slack.
-pub fn fleet_settle_budget(children: Option<usize>) -> Duration {
+pub fn fleet_settle_budget(children: usize) -> Duration {
     HARNESS_COMPENSATION_WAIT
         .saturating_mul(fleet_batches(children))
         .saturating_add(LEADER_PERSIST_SLACK)

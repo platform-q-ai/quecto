@@ -399,7 +399,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_idle_efficiency.rs` | `shell` event-loop policy (relocated, #1257 Phase 6) |
 | `shell/app_methods.rs` | `shell` composition methods (relocated, #1257 Phase 6) |
 | `shell/app_methods_send.rs` | `shell` send/selection helpers split for line budget (#1465) |
-| `shell/app_ordinary_exit.rs` | `shell` ordinary-exit finalization (#1586 Phase 4) |
+| `shell/app_ordinary_exit.rs` | `shell` ordinary-exit finalization: exit persist, durability barrier and owned-leader settlement (#1586 Phase 4, #2044) |
 | `shell/app_render_helpers.rs` | `shell` render helper extraction (line-count split, #1334 PR 4) |
 | `shell/app_response.rs` | `shell` response dispatch seam (relocated, #1257 Phase 6; protocol-mapper allowlist #1220) |
 | `shell/app_response_test_api.rs` | `shell` response/connection test and harness API (#1465) |
@@ -414,15 +414,14 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/agent_args.rs` | `shell` `quecto agent` argument line built from the TUI flags (split from `cli.rs` for the 750-line cap; `--model`/`--effort` pass-through, #2024 S2) |
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
 | `shell/cli_startup_exit.rs` | `shell` startup-failure leader-only agent termination with a stderr notice (#1956) |
-| `shell/connection.rs` | `shell` master-connection feed task and `Source`-keyed fan-in seam (#1462) |
-| `shell/connection_state.rs` | `shell` per-connection state bundle behind the `active_conn()` seam (#1463) |
+| `shell/connection.rs` | `shell` master-connection feed task and `SourcedEvent` channel seam (#1462; one connection since #2044) |
+| `shell/connection_state.rs` | `shell` state of the one owned connection behind the `active_conn()` seam (#1463, #2044) |
 | `shell/keys.rs` | `shell` input mapping primitive (relocated, #1257 Phase 1) |
 | `shell/mod.rs` | `shell` module root |
 | `shell/process.rs` | `shell` leader-only harness termination + post-exit canary, budget derived from the harness teardown (#1956) |
 | `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
 | `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
 | `shell/socket_path.rs` | `shell` shared socket-path validation policy for every connect (#1460) |
-| `shell/tab_lifecycle.rs` | `shell` ordinary-exit persist fan-out and child-watch collection over the connection map (#1465 P3; collapses in #2044 PR 2) |
 | `shell/workspace_resume.rs` | `shell` session-only `/resume` selector open and selection dispatch (#1465 P4, #2044) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
@@ -431,9 +430,9 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/tui_harness.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_layout.rs` | `shell` harness layout probes split for line budget (#1465) |
 | `shell/tui_harness_sourced.rs` | `shell` fan-in/feed-task harness drivers for the #1462 seam |
-| `shell/tui_harness_tabs.rs` | `shell` harness clock, overlay-close, frame and sub-agent delivery drivers (#1466, #2044) |
 | `shell/tui_harness_tool_policy.rs` | `shell` tool policy test-harness event helpers (#1334 PR 4) |
 | `shell/tui_harness_disconnect.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
+| `shell/tui_harness_drivers.rs` | `shell` harness clock, overlay-close, frame and sub-agent delivery drivers (#1466, #2044) |
 | `shell/tui_harness_exit.rs` | `shell` test harness support for the leader-only ordinary exit (#1956) |
 | `shell/tui_harness_events.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_panel.rs` | `shell` shared panel-chrome text helpers for test suites (#1369 slice 5) |

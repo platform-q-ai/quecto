@@ -279,30 +279,28 @@ impl App {
     /// Select may be rebuilt after expiry before the armed timer is serviced.
     pub(in crate::shell::app) fn needs_admission_tick(&self) -> bool {
         let now = tokio::time::Instant::now();
-        self.tabs.values().any(|state| {
-            state.admission_view.as_ref().is_some_and(|view| {
-                let projected = elapsed_view(view, state.admission_observed_at, now);
-                projected.waiting > 0
-                    || projected.has_active_dated_cooldown_after(0)
-                    || state.master_session.footer.admission()
-                        != projected.status_label().as_deref()
-            }) || state
-                .admission_children
-                .iter()
-                .any(|(id, (view, observed))| {
-                    let projected = child_projection(
-                        view,
-                        *observed,
-                        now,
-                        state.admission_unversioned_clears.contains(id),
-                    );
-                    state.roster.tracked.contains_key(id)
-                        && (projected.waiting > 0
-                            || projected.has_active_dated_cooldown_after(0)
-                            || state.roster.admission_labels.get(id)
-                                != projected.compact_label().as_ref())
-                })
-        })
+        let state = &self.conn;
+        state.admission_view.as_ref().is_some_and(|view| {
+            let projected = elapsed_view(view, state.admission_observed_at, now);
+            projected.waiting > 0
+                || projected.has_active_dated_cooldown_after(0)
+                || state.master_session.footer.admission() != projected.status_label().as_deref()
+        }) || state
+            .admission_children
+            .iter()
+            .any(|(id, (view, observed))| {
+                let projected = child_projection(
+                    view,
+                    *observed,
+                    now,
+                    state.admission_unversioned_clears.contains(id),
+                );
+                state.roster.tracked.contains_key(id)
+                    && (projected.waiting > 0
+                        || projected.has_active_dated_cooldown_after(0)
+                        || state.roster.admission_labels.get(id)
+                            != projected.compact_label().as_ref())
+            })
     }
 
     /// Transition events are snapshots, not clock ticks. Project elapsed local
@@ -310,56 +308,54 @@ impl App {
     pub(in crate::shell::app) fn tick_admission_labels(&mut self) -> bool {
         let now = tokio::time::Instant::now();
         let mut changed = false;
-        for state in self.tabs.values_mut() {
-            if let Some(view) = &state.admission_view {
-                let view = elapsed_view(view, state.admission_observed_at, now);
-                let label = view.status_label();
-                if state.master_session.footer.admission() != label.as_deref() {
-                    if view.waiting > 0 {
-                        if let Some(label) = &label {
-                            let message = format!("⏳ {} (Esc to interrupt)", capitalize(label));
-                            if let Some(spinner) = &mut state.spinner
-                                && state.admission_spinner_message.as_deref()
-                                    == Some(spinner.message())
-                            {
-                                spinner.set_message(&message);
-                            }
-                            state.admission_spinner_message = Some(message);
+        let state = &mut self.conn;
+        if let Some(view) = &state.admission_view {
+            let view = elapsed_view(view, state.admission_observed_at, now);
+            let label = view.status_label();
+            if state.master_session.footer.admission() != label.as_deref() {
+                if view.waiting > 0 {
+                    if let Some(label) = &label {
+                        let message = format!("⏳ {} (Esc to interrupt)", capitalize(label));
+                        if let Some(spinner) = &mut state.spinner
+                            && state.admission_spinner_message.as_deref() == Some(spinner.message())
+                        {
+                            spinner.set_message(&message);
                         }
+                        state.admission_spinner_message = Some(message);
                     }
-                    state
-                        .master_session
-                        .footer
-                        .set_admission(label, view.compact_label());
-                    changed = true;
                 }
+                state
+                    .master_session
+                    .footer
+                    .set_admission(label, view.compact_label());
+                changed = true;
             }
-            state
-                .admission_children
-                .retain(|id, _| state.roster.tracked.contains_key(id));
-            state
-                .roster
-                .admission_labels
-                .retain(|id, _| state.roster.tracked.contains_key(id));
-            for (id, (view, observed)) in &state.admission_children {
-                let projected = child_projection(
-                    view,
-                    *observed,
-                    now,
-                    state.admission_unversioned_clears.contains(id),
-                );
-                let label = projected.compact_label();
-                if state.roster.admission_labels.get(id) != label.as_ref() {
-                    match label {
-                        Some(label) => {
-                            state.roster.admission_labels.insert(id.clone(), label);
-                        }
-                        None => {
-                            state.roster.admission_labels.remove(id);
-                        }
+        }
+        state
+            .admission_children
+            .retain(|id, _| state.roster.tracked.contains_key(id));
+        state
+            .roster
+            .admission_labels
+            .retain(|id, _| state.roster.tracked.contains_key(id));
+        for (id, (view, observed)) in &state.admission_children {
+            let projected = child_projection(
+                view,
+                *observed,
+                now,
+                state.admission_unversioned_clears.contains(id),
+            );
+            let label = projected.compact_label();
+            if state.roster.admission_labels.get(id) != label.as_ref() {
+                match label {
+                    Some(label) => {
+                        state.roster.admission_labels.insert(id.clone(), label);
                     }
-                    changed = true;
+                    None => {
+                        state.roster.admission_labels.remove(id);
+                    }
                 }
+                changed = true;
             }
         }
         changed

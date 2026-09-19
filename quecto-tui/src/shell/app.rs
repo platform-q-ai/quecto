@@ -43,16 +43,9 @@ use app_message_recovery::{MessageRecoveryBatch, PendingMessageRecovery};
 pub struct App {
     terminal: Terminal,
     renderer: DiffRenderer<std::io::Stdout>,
-    /// Per-tab connection states (#1465 / epic #1467). Indexed by [`TabId`];
-    /// the active tab is selected by `active_tab`. Call sites reach the
-    /// active slot via `ac()` / `ac()`, and a specific
-    /// tab via `conn_for` / `conn_mut`.
-    tabs: HashMap<crate::shell::connection::TabId, connection_state::ConnectionState>,
-    /// Which tab is focused for input, render, and active command send.
-    active_tab: crate::shell::connection::TabId,
-    /// When set, `active_conn(_mut)` temporarily targets this tab so inbound
-    /// `SourcedEvent` routing can mutate the owner without flipping focus.
-    routing_tab_override: Option<crate::shell::connection::TabId>,
+    /// The TUI's one connection state (#2044): the transport plus all
+    /// agent-lifecycle state. Call sites reach it via `ac()` / `ac_mut()`.
+    conn: connection_state::ConnectionState,
     editor: Editor,
     autocomplete: Autocomplete,
     workspace: WorkspaceFlow,
@@ -61,7 +54,7 @@ pub struct App {
     should_exit: bool,
     exit_policy: app_ordinary_exit::OrdinaryExitPolicy,
     stdin_buffer: crate::shell::stdin_buffer::StdinBuffer,
-    /// Global selector-overlay half of the inference flow; per-tab
+    /// Global selector-overlay half of the inference flow; the agent's
     /// model/effort state lives on `conn` (#1463).
     inference: InferenceFlow,
     /// Sub-agent / multi-session UI state (#997).
@@ -91,34 +84,26 @@ pub struct App {
     /// stderr-drain waits (#1047) onto a task carrying this sender, so a
     /// dying child can never stall the select loop; the loop finishes the
     /// disconnect when the diagnosis lands here.
-    /// Keyed by the closing tab (#1470 r3) so N>1 tabs can never
-    /// misattribute an exit detail.
-    disconnect_diag_tx: mpsc::Sender<(crate::shell::connection::TabId, Option<String>)>,
-    disconnect_diag_rx: mpsc::Receiver<(crate::shell::connection::TabId, Option<String>)>,
-    /// Dedicated fan-in for master-connection events (`SourcedEvent::Tab` /
-    /// `Closed`). A separate channel from the sub-agent fan-in restores the
-    /// deleted dedicated select arm's fair interleave: master events and the
-    /// close sentinel can no longer queue FIFO behind a chatty sub-agent
-    /// burst (#1470 review). All tabs share this one channel, so the select
-    /// arm count stays independent of N.
-    pub(super) tab_event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
-    /// Sender half of `tab_event_rx`, retained so the fan-in stays open after
-    /// the connection's feed task ends (the select arm never sees a closed
-    /// channel). Read by tests only; collapses with the fan-in in #2044 PR 2.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) tab_event_tx: Option<mpsc::Sender<crate::shell::connection::SourcedEvent>>,
+    disconnect_diag_tx: mpsc::Sender<Option<String>>,
+    disconnect_diag_rx: mpsc::Receiver<Option<String>>,
+    /// The master connection's event channel (`SourcedEvent::Master` /
+    /// `Closed`), fed by the connection's feed task. A separate channel from
+    /// the sub-agent fan-in keeps the fair interleave: master events and the
+    /// close sentinel can never queue FIFO behind a chatty sub-agent burst
+    /// (#1470 review). It closes once the feed task has ended.
+    pub(super) master_event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
+    /// Test-only injection handle into `master_event_rx`.
+    #[cfg(test)]
+    pub(super) master_event_tx: Option<mpsc::Sender<crate::shell::connection::SourcedEvent>>,
 }
 
-/// Id of the TUI's single (master) agent connection. With one replicant
-/// agent per tab (#1463, epic #1467) each connection carries its own id.
+/// Id of the TUI's single (master) agent connection.
 pub(crate) const MASTER_CONNECTION_ID: &str = "master";
 
 struct CommandSendFailure {
     command: Command,
     error: String,
-    /// Connection the send failed on — `MASTER_CONNECTION_ID` for today's
-    /// single connection — so the rollback/notice cannot be misrouted
-    /// cross-tab once there are N per-tab connections (#1460).
+    /// Connection the send failed on — `MASTER_CONNECTION_ID` (#1460).
     connection: String,
 }
 
@@ -135,31 +120,20 @@ impl App {
         // master-connection events ride their own dedicated fan-in so they
         // interleave fairly with sub-agent bursts (#1462 / #1470 review).
         let subagents = SubagentUi::new();
-        let (tab_event_tx, tab_event_rx) = mpsc::channel(256);
-        let connection = crate::shell::connection::Connection::spawn(
-            client,
-            crate::shell::connection::TabId::MASTER,
-            tab_event_tx.clone(),
-        );
+        let (master_event_tx, master_event_rx) = mpsc::channel(256);
+        #[cfg(test)]
+        let master_event_tx_for_tests = master_event_tx.clone();
+        let connection = crate::shell::connection::Connection::spawn(client, master_event_tx);
 
         let thinking_visible = thinking_preferences::load_thinking_visible();
 
         let mut app = Self {
             terminal,
             renderer: DiffRenderer::new(std::io::stdout()),
-            tabs: {
-                let mut tabs = std::collections::HashMap::new();
-                tabs.insert(
-                    crate::shell::connection::TabId::MASTER,
-                    connection_state::ConnectionState::new(
-                        connection,
-                        SessionView::with_footer(footer),
-                    ),
-                );
-                tabs
-            },
-            active_tab: crate::shell::connection::TabId::MASTER,
-            routing_tab_override: None,
+            conn: connection_state::ConnectionState::new(
+                connection,
+                SessionView::with_footer(footer),
+            ),
             editor: Editor::new(),
             autocomplete: Autocomplete::new(builtin_commands().to_vec(), 8),
             workspace: WorkspaceFlow::new(git_branch, git_repo),
@@ -185,8 +159,9 @@ impl App {
             command_send_failure_rx,
             disconnect_diag_tx,
             disconnect_diag_rx,
-            tab_event_rx,
-            tab_event_tx: Some(tab_event_tx),
+            master_event_rx,
+            #[cfg(test)]
+            master_event_tx: Some(master_event_tx_for_tests),
         };
         app.set_thinking_visibility(thinking_visible);
         app
@@ -339,8 +314,6 @@ mod app_submit;
 mod app_thinking_visibility;
 #[path = "app_time.rs"]
 mod app_time;
-#[path = "tab_lifecycle.rs"]
-mod tab_lifecycle;
 #[path = "thinking_preferences.rs"]
 mod thinking_preferences;
 #[path = "workspace_resume.rs"]
@@ -567,6 +540,9 @@ mod app_clipboard_tests;
 #[path = "app_conversation_characterization_tests/mod.rs"]
 mod app_conversation_characterization_tests;
 #[cfg(test)]
+#[path = "../agents/app_coordinator_label_tests.rs"]
+mod app_coordinator_label_tests;
+#[cfg(test)]
 #[path = "app_cov_tests.rs"]
 mod app_cov_tests;
 #[cfg(test)]
@@ -617,6 +593,9 @@ mod app_live_inflight_1259_tests;
 #[cfg(test)]
 #[path = "app_methods_tests.rs"]
 mod app_methods_tests;
+#[cfg(test)]
+#[path = "app_new_session_tests.rs"]
+mod app_new_session_tests;
 #[cfg(test)]
 #[path = "../conversation/app_paged_history_review_tests.rs"]
 mod app_paged_history_review_tests;
@@ -684,12 +663,6 @@ mod app_subagent_workflow_sticky_tests;
 #[path = "../agents/app_subagents_tests.rs"]
 mod app_subagents_tests;
 #[cfg(test)]
-#[path = "app_tab_collection_tests.rs"]
-mod app_tab_collection_tests;
-#[cfg(test)]
-#[path = "../agents/app_tab_render_tests.rs"]
-mod app_tab_render_tests;
-#[cfg(test)]
 #[path = "app_text_input_1277_tests.rs"]
 mod app_text_input_1277_tests;
 #[cfg(test)]
@@ -698,6 +671,9 @@ mod app_tool_policy_cache_tests;
 #[cfg(test)]
 #[path = "app_tool_policy_tests.rs"]
 mod app_tool_policy_tests;
+#[cfg(test)]
+#[path = "app_two_clients_ownership_tests.rs"]
+mod app_two_clients_ownership_tests;
 #[cfg(test)]
 #[path = "../workflow/app_workflow_box_width_tests.rs"]
 mod app_workflow_box_width_tests;
