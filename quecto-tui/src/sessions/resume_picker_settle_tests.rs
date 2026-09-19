@@ -234,7 +234,11 @@ fn searching_a_notice_and_an_empty_answer_are_rendered() {
     assert!(!shown.contains("No items"), "{shown}");
     // Unanswered and nothing asking.
     picker.set_rows_state(RowsState::Stalled);
-    assert!(frame(&mut picker).contains("Sessions · Search did not answer"));
+    let shown = frame(&mut picker);
+    assert!(
+        shown.contains("Sessions · No answer") && shown.contains("Search did not answer — edit"),
+        "{shown}"
+    );
     // Every state fits a short, narrow terminal without panicking.
     for (width, height) in [(20, 8), (10, 5), (40, 12), (120, 40)] {
         let _ = picker.render(width, height);
@@ -245,11 +249,6 @@ fn searching_a_notice_and_an_empty_answer_are_rendered() {
 #[test]
 fn a_paste_into_the_search_box_is_sanitised_single_line_and_bounded() {
     let mut picker = listed();
-    // Ignored outside the search box.
-    assert_eq!(
-        picker.handle_input(&Key::Paste("x".into())),
-        ResumePickerEvent::Pending
-    );
     picker.handle_input(&Key::BackTab);
     assert_eq!(
         picker.handle_input(&Key::Paste(

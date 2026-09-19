@@ -160,7 +160,7 @@ async fn a_failed_or_refused_search_says_so_and_leaves_the_picker_usable() {
     );
     assert!(h.full_frame().contains("LISTED") && !h.app_mut().ac().sessions.search.is_in_flight());
     assert!(
-        h.full_frame().contains("Sessions · Search did not answer"),
+        h.full_frame().contains("Sessions · No answer"),
         "a failed search leaves the text unanswered"
     );
     type_text(&mut h, "b");

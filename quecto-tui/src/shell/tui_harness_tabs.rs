@@ -65,6 +65,15 @@ impl TuiHarness {
         self
     }
 
+    /// Let the metadata search in flight go unanswered past its deadline, the
+    /// way the idle loop's timeout service finds it (#2010 R2-T3).
+    pub fn search_answer_overdue(&mut self) -> &mut Self {
+        let late = tokio::time::Instant::now() + crate::sessions::session_search::ANSWER_TIMEOUT;
+        self.app.service_search_timeout(late);
+        self.capture();
+        self
+    }
+
     /// Drain any deferred stream paint the way the loop's deadline arm would:
     /// if a coalesced paint is pending, treat its deadline as reached and
     /// paint. Lets tests assert "no frame even after the loop settles"

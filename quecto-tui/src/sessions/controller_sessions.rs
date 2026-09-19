@@ -80,7 +80,9 @@ impl super::App {
             Key::MousePress(x, y) => {
                 let (panel, divider, _) = self.frame_split();
                 let Some(x) = usize::from(*x).checked_sub(panel + divider) else {
-                    return;
+                    // A click outside the picker still withdraws an owed Enter.
+                    let picker = self.ac_mut().sessions.resume_selector.as_mut();
+                    return picker.map_or((), |picker| picker.withdraw_enter());
                 };
                 Key::MousePress(x as u16, *y)
             }

@@ -49,6 +49,32 @@ Feature: The /resume picker searches session metadata through the harness (#2010
     Then one resume request is sent for "cli:answered" carrying version "h1-00000000000000c1"
     And the resume picker is closed
 
+  Scenario: Enter typed before the first listing arrives resumes nothing
+    When I submit /resume again and press Enter twice before its listing arrives
+    And the harness answers the session list in flight for "local" with 2 listed sessions
+    Then no resume request was sent
+    And the resume picker shows "LISTED-ONE"
+    And the resume picker does not show "will open"
+
+  Scenario: An owed Enter is on screen and a focus change withdraws it
+    When I type "zebr" into the resume search box
+    And I press Enter twice in the resume picker
+    Then the resume picker shows "Sessions · Searching… ⏎ will open the top match"
+    When I press Tab in the resume picker
+    Then the resume picker does not show "will open"
+    When the harness answers every search until "zebr" with a hostile row
+    Then no resume request was sent
+
+  Scenario: An owed Enter is withdrawn when the search is not answered in time
+    When I type "z" into the resume search box
+    And I press Enter twice in the resume picker
+    And the search in flight is not answered in time
+    Then the resume picker shows "Sessions · Searching…"
+    And the resume picker does not show "will open"
+    When the harness answers the search in flight with the session "LATE-ZEBRA"
+    Then the resume picker shows "LATE-ZEBRA"
+    And no resume request was sent
+
   Scenario: Enter typed ahead of an answer with no match resumes nothing
     When I type "q" into the resume search box
     And I press Enter twice in the resume picker
@@ -71,6 +97,12 @@ Feature: The /resume picker searches session metadata through the harness (#2010
   Scenario: A pasted key is searched whole
     When I paste "  chat-1700000000-abc  " into the resume search box
     Then one metadata search is in flight for "chat-1700000000-abc" in scope "global"
+
+  Scenario: A paste with the focus on Sessions goes to the search box, first line only
+    When I press Tab in the resume picker
+    And I paste "cli:one\rcli:two\r" into the resume search box
+    Then one metadata search is in flight for "cli:one" in scope "global"
+    And the resume picker shows "Pasted the first line only"
 
   Scenario: A picker closed by a tab switch abandons its search
     When I type "a" into the resume search box
@@ -130,7 +162,8 @@ Feature: The /resume picker searches session metadata through the harness (#2010
     And the harness fails the search in flight with "sessions dir unreadable"
     Then a toast says "Could not search sessions"
     And the resume picker shows "LISTED-ONE"
-    And the resume picker shows "Sessions · Search did not answer"
+    And the resume picker shows "Sessions · No answer"
+    And the resume picker shows "Search did not answer — edit the text or change Scope to retry"
 
   Scenario: A harness without the command is told once and the box filters the listed rows
     When I type "two" into the resume search box

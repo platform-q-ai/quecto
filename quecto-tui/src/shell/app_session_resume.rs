@@ -46,7 +46,7 @@ impl App {
             // Never sent: nothing to await — the picker says so (R1-T4).
             self.ac_mut().sessions.pending_list_id = None;
             let picker = self.ac_mut().sessions.resume_selector.as_mut();
-            picker.map(|picker| picker.set_rows_state(RowsState::Stalled));
+            picker.map(|picker| picker.set_rows_state(RowsState::Disconnected));
             return;
         }
         self.sync_picker_rows_state();

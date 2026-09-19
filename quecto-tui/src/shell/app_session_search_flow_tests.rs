@@ -37,8 +37,13 @@ async fn enter_typed_ahead_of_the_answer_resumes_the_answered_row_never_a_listed
     assert!(sent(&commands, "resume_session").is_empty(), "{commands:?}");
     assert!(h.app_mut().ac().sessions.resume_selector.is_some());
     let first = sent(&commands, "search_session_metadata")[0].clone();
-    // The overtaken answer (for `z`) is shown as progress and resumes nothing.
-    answer(&mut h, &first, "PROGRESS", json!({}));
+    // The overtaken answer (for `z`) is shown as progress and resumes nothing
+    // — and its top row is not the one the owed Enter will open.
+    let progress = json!([
+        {"key": "cli:progress", "title": "PROGRESS", "homeVersion": "h1-00000000000000cc"},
+        {"key": "cli:found", "title": "ZEBRA PLAN", "homeVersion": "h1-00000000000000bb"}]);
+    answer(&mut h, &first, "unused", json!({ "sessions": progress }));
+    assert!(h.full_frame().contains("→ PROGRESS"), "{}", h.full_frame());
     let commands = h.drain_commands().await;
     assert!(sent(&commands, "resume_session").is_empty(), "{commands:?}");
     let latest = sent(&commands, "search_session_metadata")[0].clone();
@@ -195,7 +200,11 @@ async fn a_lost_answer_is_retried_once_then_given_up_and_every_edit_recovers() {
     assert!(searches(&mut h).await.is_empty(), "one retry only");
     let notes = h.notification_messages().join("\n");
     assert_eq!(notes.matches("Search did not answer").count(), 1, "{notes}");
-    assert!(h.full_frame().contains("Sessions · Search did not answer"));
+    let frame = h.full_frame();
+    assert!(
+        frame.contains("Sessions · No answer") && frame.contains("Search did not answer — edit"),
+        "{frame}"
+    );
     // Stalled rows are not acted on.
     key(&mut h, Key::Enter);
     key(&mut h, Key::Enter);
@@ -246,7 +255,7 @@ async fn a_lost_connection_frees_the_flight_and_the_next_edit_searches_again() {
     let dead = searches(&mut h).await[0].clone();
     h.app_mut().mark_agent_disconnected_for_test();
     assert!(!h.app_mut().ac().sessions.search.is_in_flight());
-    assert!(h.full_frame().contains("Sessions · Search did not answer"));
+    assert!(h.full_frame().contains("Sessions · Disconnected"));
     h.app_mut().ac_mut().agent_connected = true;
     answer(&mut h, &dead, "DEAD", json!({}));
     assert!(!h.full_frame().contains("DEAD"));
@@ -261,15 +270,13 @@ async fn a_lost_connection_frees_the_flight_and_the_next_edit_searches_again() {
     h.app_mut().mark_agent_disconnected_for_test();
     let frame = h.full_frame();
     assert!(
-        !frame.contains("Loading…") && frame.contains("did not answer"),
+        !frame.contains("Loading…") && frame.contains("Sessions · Disconnected"),
         "{frame}"
     );
 }
 
-/// Three listed rows, the search box focused.
-async fn open_three(h: &mut TuiHarness) {
-    h.app_mut().ac_mut().agent_connected = true;
-    h.app_mut().send_list_sessions();
+/// The awaited listing answered with three rows.
+fn list_three(h: &mut TuiHarness) {
     let id = h.app_mut().ac().sessions.pending_list_id.clone().unwrap();
     let listed = json!({"sessions": [
         {"key": "cli:a", "title": "Fix the RENDERER beta", "executionPath": "/work/app", "updatedUnixSecs": 30},
@@ -278,6 +285,13 @@ async fn open_three(h: &mut TuiHarness) {
     ]});
     h.app_mut()
         .handle_response(Some(id), "list_sessions".into(), true, Some(listed), None);
+}
+
+/// Three listed rows, the search box focused.
+async fn open_three(h: &mut TuiHarness) {
+    h.app_mut().ac_mut().agent_connected = true;
+    h.app_mut().send_list_sessions();
+    list_three(h);
     key(h, Key::Tab);
     key(h, Key::Tab);
     let _ = h.drain_commands().await;
@@ -325,7 +339,9 @@ async fn an_old_harness_costs_one_warning_and_the_box_still_narrows_the_listed_r
         for _ in 0..40 {
             key(&mut h, Key::Backspace);
         }
+        // The emptied box lists its scope again; the text filters that listing.
         let _ = h.drain_commands().await;
+        list_three(&mut h);
         type_text(&mut h, query);
         let frame = h.full_frame();
         assert!(

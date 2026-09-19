@@ -85,13 +85,8 @@ fn answer_in_flight(world: &mut TuiWorld, generation: Option<u64>, rows: Vec<ser
     respond(world, &request["id"], "search_session_metadata", data);
 }
 
-#[given(expr = "the resume picker is open on All Folders with {int} listed sessions")]
-fn given_picker_open(world: &mut TuiWorld, count: usize) {
-    world.tui_last_commands.clear();
-    world.tui_search_answered.clear();
-    drive(world, |h| {
-        h.submit("/resume");
-    });
+/// Answer the latest listing request, which must be for `scope`.
+fn answer_listing(world: &mut TuiWorld, scope: &str, count: usize) {
     let rows: Vec<_> = ["LISTED-ONE", "LISTED-TWO", "LISTED-THREE"][..count]
         .iter()
         .enumerate()
@@ -104,12 +99,57 @@ fn given_picker_open(world: &mut TuiWorld, count: usize) {
             )
         })
         .collect();
+    let lists = of_type(world, "list_sessions");
+    let list = lists.last().expect("a listing request").clone();
+    assert_eq!(list["scope"], scope);
+    let data =
+        serde_json::json!({"scope": scope, "sessions": rows, "diagnostics": [], "rebuilt": false});
+    respond(world, &list["id"], "list_sessions", data);
+}
+
+#[when(
+    expr = "the harness answers the session list in flight for {string} with {int} listed sessions"
+)]
+fn when_answer_listing(world: &mut TuiWorld, scope: String, count: usize) {
+    answer_listing(world, &scope, count);
+}
+
+#[when("I submit /resume again and press Enter twice before its listing arrives")]
+fn when_resume_enter_enter(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.press(Key::Escape);
+        h.submit("/resume");
+        h.press(Key::Enter).press(Key::Enter);
+    });
+}
+
+#[when("I press Tab in the resume picker")]
+fn when_tab(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.press(Key::Tab);
+    });
+}
+
+#[when("the search in flight is not answered in time")]
+fn when_overdue(world: &mut TuiWorld) {
+    // The search given up is no longer "in flight" for the later steps.
+    let lost = unanswered(world);
+    let lost = lost.iter().map(|s| s["id"].as_str().unwrap().to_string());
+    world.tui_search_answered.extend(lost);
+    drive(world, |h| {
+        h.search_answer_overdue();
+    });
+}
+
+#[given(expr = "the resume picker is open on All Folders with {int} listed sessions")]
+fn given_picker_open(world: &mut TuiWorld, count: usize) {
+    world.tui_last_commands.clear();
+    world.tui_search_answered.clear();
+    drive(world, |h| {
+        h.submit("/resume");
+    });
     for scope in ["local", "global"] {
-        let lists = of_type(world, "list_sessions");
-        let list = lists.last().expect("a listing request").clone();
-        assert_eq!(list["scope"], scope);
-        let data = serde_json::json!({"scope": scope, "sessions": rows, "diagnostics": [], "rebuilt": false});
-        respond(world, &list["id"], "list_sessions", data);
+        answer_listing(world, scope, count);
         if scope == "local" {
             // Sessions ▸ Scope, then Right selects All Folders.
             drive(world, |h| {
@@ -417,7 +457,7 @@ fn when_enter_twice(world: &mut TuiWorld) {
 #[when(expr = "I paste {string} into the resume search box")]
 fn when_paste(world: &mut TuiWorld, text: String) {
     drive(world, |h| {
-        h.press(Key::Paste(text));
+        h.press(Key::Paste(text.replace("\\r", "\r")));
     });
 }
 

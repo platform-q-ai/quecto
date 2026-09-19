@@ -91,6 +91,7 @@ impl App {
         // The echoed scope must be the one on screen (an absent echo is an
         // older harness's: the generation already covers a scope change).
         let scope = self.ac().sessions.scope;
+        let answered = answer.is_some();
         let answer = answer.filter(|answer| answer.scope.is_none_or(|echo| echo == scope));
         match self.ac_mut().sessions.search.settle(id, generation) {
             Settled::Foreign => return,
@@ -105,9 +106,13 @@ impl App {
             }
             Settled::Fresh => match answer {
                 Some(answer) => self.show_session_search(answer, data.as_ref()),
+                // An answer for another scope is no failure to report
+                // (R2-T8): the text just stays unanswered — "No answer".
                 None => {
                     self.ac_mut().sessions.search.unanswered();
-                    self.notify_response_error("Could not search sessions", error);
+                    if !answered {
+                        self.notify_response_error("Could not search sessions", error);
+                    }
                 }
             },
         }
@@ -162,6 +167,11 @@ impl App {
         let Some(overdue) = self.ac_mut().sessions.search.overdue(now) else {
             return false;
         };
+        // An Enter is owed to the FIRST flight only (R2-T3): whatever comes
+        // of this one, a keypress from five seconds ago opens nothing.
+        if let Some(picker) = self.ac_mut().sessions.resume_selector.as_mut() {
+            picker.withdraw_enter();
+        }
         match overdue {
             Overdue::Retry(generation) => self.send_session_search(generation),
             Overdue::GaveUp => self.notify(NO_ANSWER, NotifyLevel::Warning),
@@ -177,7 +187,8 @@ impl App {
     pub(in crate::shell) fn sync_picker_rows_state(&mut self) {
         let sessions = &mut self.ac_mut().sessions;
         let state = match (sessions.pending_list_id.is_some(), sessions.search.state()) {
-            (true, _) | (false, FlightState::Searching) => RowsState::Searching,
+            (true, _) => RowsState::Loading,
+            (false, FlightState::Searching) => RowsState::Searching,
             (false, FlightState::Settled) => RowsState::Settled,
             (false, FlightState::Stalled) => RowsState::Stalled,
         };
@@ -188,17 +199,19 @@ impl App {
     }
 
     /// The connection was lost: the flight and any awaited listing died with
-    /// it, the next connection is asked afresh, and an open picker says its
-    /// rows are unanswered instead of loading for ever (R1-T4).
+    /// it, the next connection is asked afresh, and an open picker whose
+    /// rows were awaited says "Disconnected" instead of loading for ever
+    /// (R1-T4, R2-T8) — whether a listing or a search died.
     pub(in crate::shell) fn interrupt_session_discovery(&mut self) {
         let sessions = &mut self.ac_mut().sessions;
         let awaited = sessions.pending_list_id.take().is_some();
         sessions.search.interrupted();
         sessions.search_unsupported = false;
+        let unanswered = awaited || sessions.search.state() != FlightState::Settled;
         self.sync_picker_rows_state();
         let picker = self.ac_mut().sessions.resume_selector.as_mut();
-        if let Some(picker) = picker.filter(|_| awaited) {
-            picker.set_rows_state(RowsState::Stalled);
+        if let Some(picker) = picker.filter(|_| unanswered) {
+            picker.set_rows_state(RowsState::Disconnected);
         }
     }
 
@@ -283,6 +296,9 @@ fn grouped(n: u64) -> String {
 #[cfg(test)]
 #[path = "app_session_search_flow_tests.rs"]
 mod flow_tests;
+#[cfg(test)]
+#[path = "app_session_search_r2_tests.rs"]
+mod r2_tests;
 #[cfg(test)]
 #[path = "app_session_search_tests.rs"]
 mod tests;
