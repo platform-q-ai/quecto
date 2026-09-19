@@ -61,11 +61,13 @@ Feature: Global session metadata search through the production runtime
     Then no searched session is displayed
     And the last search was answered in scope "local"
 
-  Scenario: A limit or generation that is no number is refused under the request's own id
+  Scenario: A limit or generation that cannot be used is answered under the request's own id
     Given saved production sessions with distinct title key repository and path
     When the operator opens resume through the production socket and TUI
     Then a production search whose limit is the text "seven" is refused under its own id without searching
-    And a production search with limit -1 and generation 7.9 is answered with limit 1 and generation 7
+    And a production search with limit -1 and generation 7 is answered with limit 1 and generation 7
+    And a production search whose generation is the fraction 7.9 is refused under its own id without searching
+    And a production search whose limit is the number 1e400 is answered under its own id with limit 500
 
   Scenario: Hostile queries are literal bounded and deterministic
     Given saved production sessions with distinct title key repository and path

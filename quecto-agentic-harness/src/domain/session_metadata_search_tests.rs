@@ -252,6 +252,16 @@ fn an_over_long_query_is_refused_whole_and_the_bound_counts_visible_characters()
         "query too long: 257 characters (at most 256 are searched)"
     );
     assert!(MetadataQuery::parse(&"é".repeat(100_000)).is_err());
+    // R2-H4: counted before the fold — `ß` is one character, though it is
+    // searched as `ss`; a whitespace run is the one space it is searched as.
+    assert!(MetadataQuery::parse(&"ß".repeat(MAX_QUERY_CHARS)).is_ok());
+    assert!(MetadataQuery::parse(&format!("{}   \t  y", "ß".repeat(254))).is_ok());
+    assert_eq!(
+        MetadataQuery::parse(&"ß".repeat(MAX_QUERY_CHARS + 1)).unwrap_err(),
+        QueryRefusal::TooLong { chars: 257 }
+    );
+    assert_eq!(MetadataQuery::shown("  a\u{200b}  ß\u{7} "), "a ß");
+    assert_eq!(MetadataQuery::shown(&"ß".repeat(300)), "ß".repeat(256));
 }
 
 #[test]

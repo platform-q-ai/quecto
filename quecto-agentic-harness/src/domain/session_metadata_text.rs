@@ -1,6 +1,7 @@
 //! The text of session metadata (#2010): what a safe renderer would show,
-//! folded so that the natural spelling of a word finds it, and how a path
-//! that is not text is spelled. Pure: no tables beyond `std`'s.
+//! and that text folded so that the natural spelling of a word finds it.
+//! Pure: no tables beyond `std`'s. (A path's spelling: `session_path_text`.)
+pub use super::session_path_text::display_path;
 
 /// The text a safe renderer would show, folded for comparison: every control
 /// and invisible format character dropped, whitespace runs collapsed to one
@@ -13,7 +14,7 @@
 /// (the harness carries no normalization tables) — and ligatures and other
 /// full-fold expansions (`ﬁ`) are not expanded.
 pub fn visible_text(raw: &str) -> String {
-    let shown: String = raw.chars().filter(|ch| !invisible(*ch)).collect();
+    let shown = shown_text(raw);
     let mut folded = String::with_capacity(shown.len());
     for ch in shown.to_lowercase().chars() {
         match ch {
@@ -24,7 +25,14 @@ pub fn visible_text(raw: &str) -> String {
             other => folded.push(other),
         }
     }
-    folded.split_whitespace().collect::<Vec<_>>().join(" ")
+    folded
+}
+
+/// The text a safe renderer would show, not yet folded: what a length bound
+/// counts and an echo repeats (R2-H4) — a fold may expand it (`ß` → `ss`).
+pub fn shown_text(raw: &str) -> String {
+    let shown: String = raw.chars().filter(|ch| !invisible(*ch)).collect();
+    shown.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Controls that are not whitespace, and the format characters that reorder,
@@ -36,21 +44,6 @@ fn invisible(ch: char) -> bool {
             '\u{ad}' | '\u{34f}' | '\u{61c}' | '\u{180b}'..='\u{180f}'
             | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}'
             | '\u{feff}' | '\u{fff9}'..='\u{fffb}' | '\u{e0000}'..='\u{e007f}')
-}
-
-/// A path as text. One that is text is itself; in one that is not, each byte
-/// that is no UTF-8 is spelled `\xNN` (R1-H10), so two folders that differ
-/// only in such a byte stay two — a lossy `U+FFFD` would make them one.
-pub fn display_path(path: &std::path::Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-    let mut shown = String::new();
-    for chunk in path.as_os_str().as_bytes().utf8_chunks() {
-        shown.push_str(chunk.valid());
-        for byte in chunk.invalid() {
-            shown.push_str(&format!("\\x{byte:02X}"));
-        }
-    }
-    shown
 }
 
 #[cfg(test)]

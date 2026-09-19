@@ -5,11 +5,9 @@
 //! reads a file, a transcript, Git or a clock; a query is literal text, never
 //! a pattern.
 use super::session_home::{SessionHome, SessionHomeScope, WorkspaceGroup};
-pub use super::session_metadata_text::{display_path, visible_text};
+pub use super::session_metadata_text::{display_path, shown_text, visible_text};
+pub use super::session_query_refusal::{MAX_QUERY_CHARS, QueryRefusal};
 use std::path::{Path, PathBuf};
-
-/// The longest query, in visible characters, that is searched at all.
-pub const MAX_QUERY_CHARS: usize = 256;
 
 /// The metadata a query can match, in rank order: an exact key outranks a
 /// title, a title a repository label, a label a path.
@@ -29,29 +27,6 @@ impl MatchedField {
             Self::Title => "title",
             Self::Repository => "repository",
             Self::Path => "path",
-        }
-    }
-}
-
-/// Why a query is answered with no rows instead of being searched.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QueryRefusal {
-    /// More visible characters than [`MAX_QUERY_CHARS`]: a prefix of it would
-    /// match records the whole query does not name.
-    TooLong { chars: usize },
-    /// A request field that must be a number was something else (R1-H5):
-    /// answered — correlated — rather than dropped as undecodable.
-    NotANumber { field: &'static str },
-}
-
-impl std::fmt::Display for QueryRefusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::TooLong { chars } => write!(
-                f,
-                "query too long: {chars} characters (at most {MAX_QUERY_CHARS} are searched)"
-            ),
-            Self::NotANumber { field } => write!(f, "{field} must be a number"),
         }
     }
 }
@@ -79,7 +54,7 @@ pub struct MetadataQuery {
 impl MetadataQuery {
     pub fn parse(raw: &str) -> Result<Self, QueryRefusal> {
         let visible = visible_text(raw);
-        let chars = visible.chars().count();
+        let chars = shown_text(raw).chars().count();
         if chars <= MAX_QUERY_CHARS {
             Ok(Self {
                 exact: raw.trim().to_string(),
@@ -92,6 +67,12 @@ impl MetadataQuery {
         } else {
             Err(QueryRefusal::TooLong { chars })
         }
+    }
+
+    /// The echo of `raw`: the visible text that is searched, before the
+    /// fold — of a refused query, its first [`MAX_QUERY_CHARS`] characters.
+    pub fn shown(raw: &str) -> String {
+        shown_text(raw).chars().take(MAX_QUERY_CHARS).collect()
     }
 
     /// A query with nothing visible in it names every session.

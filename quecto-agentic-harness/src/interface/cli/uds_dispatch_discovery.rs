@@ -28,17 +28,14 @@ pub(in crate::interface::cli) fn discovery_json(
     result: &ListSessionsResult,
     scope: crate::interface::cli::protocol::SessionListScopeCommand,
 ) -> serde_json::Value {
-    serde_json::json!({
-        "sessions": result.sessions.iter().map(listed_row_json).collect::<Vec<_>>(),
-        "scope": scope,
-        "diagnostics": result.diagnostics.iter().map(|s| safe_display(s)).collect::<Vec<_>>(),
-        "rebuilt": result.rebuilt,
-    })
+    let sessions: Vec<_> = result.sessions.iter().map(listed_row_json).collect();
+    let body = serde_json::json!({"sessions": sessions, "scope": scope});
+    freshened(body, &result.diagnostics, result.rebuilt)
 }
 
-#[path = "uds_safe_display.rs"]
-mod uds_safe_display;
-pub(in crate::interface::cli) use uds_safe_display::safe_display;
+#[path = "uds_freshness_json.rs"]
+mod uds_freshness_json;
+pub(in crate::interface::cli) use uds_freshness_json::{freshened, safe_display};
 
 #[cfg(test)]
 #[path = "uds_dispatch_discovery_tests.rs"]

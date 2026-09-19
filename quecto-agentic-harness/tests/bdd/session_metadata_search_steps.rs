@@ -652,13 +652,13 @@ fn limit_not_a_number(world: &mut QuectoWorld, limit: String) {
 }
 
 #[then(
-    expr = "a production search with limit -1 and generation 7.9 is answered with limit {int} and generation {int}"
+    expr = "a production search with limit -1 and generation 7 is answered with limit {int} and generation {int}"
 )]
 fn numbers_brought_into_range(world: &mut QuectoWorld, limit: u64, generation: u64) {
     let data = raw_search(
         world,
         "lenient-2",
-        serde_json::json!({"limit": -1, "generation": 7.9}),
+        serde_json::json!({"limit": -1, "generation": 7}),
     );
     assert!(data["refused"].is_null(), "{data}");
     assert_eq!(
@@ -671,4 +671,35 @@ fn numbers_brought_into_range(world: &mut QuectoWorld, limit: u64, generation: u
         "the limit holds: {data}"
     );
     assert_eq!(data["totalMatches"], 2, "{data}");
+}
+
+#[then(
+    "a production search whose generation is the fraction 7.9 is refused under its own id without searching"
+)]
+fn generation_not_an_integer(world: &mut QuectoWorld) {
+    let data = raw_search(world, "exact-1", serde_json::json!({"generation": 7.9}));
+    assert_eq!(
+        data["refused"], "generation must be an integer from 0 to 18446744073709551615",
+        "{data}"
+    );
+    assert_eq!(
+        (&data["generation"], &data["searched"]),
+        (&serde_json::json!(0), &serde_json::json!(0)),
+        "never a rounded echo: {data}"
+    );
+}
+
+#[then(
+    expr = "a production search whose limit is the number 1e400 is answered under its own id with limit {int}"
+)]
+fn limit_no_float_holds(world: &mut QuectoWorld, limit: u64) {
+    let request = r#"{"type":"search_session_metadata","id":"big-1","query":"otter","scope":"global","generation":3,"limit":1e400}"#;
+    let (_, answer) = socket_roundtrip(world, request);
+    let data = &answer["data"];
+    assert_eq!(answer["success"], true, "{answer}");
+    assert!(data["refused"].is_null(), "{answer}");
+    assert_eq!(
+        (&data["limit"], &data["generation"]),
+        (&serde_json::json!(limit), &serde_json::json!(3))
+    );
 }

@@ -255,7 +255,12 @@ pub(super) fn emitted_resume_request(world: &mut QuectoWorld) -> String {
 /// `world.stderr` and hand it to the TUI. A malformed request is answered by
 /// the protocol boundary's `parse_error`, which carries no id.
 pub(super) fn resume_roundtrip(world: &mut QuectoWorld, request: &str) {
-    let id = serde_json::from_str::<serde_json::Value>(request).unwrap()["id"].clone();
+    // Only the id is decoded: a request may carry a number no `f64` holds.
+    #[derive(serde::Deserialize)]
+    struct Correlated {
+        id: serde_json::Value,
+    }
+    let id = serde_json::from_str::<Correlated>(request).unwrap().id;
     let process = world.session_scope_process.as_mut().unwrap();
     writeln!(process.stream, "{request}").unwrap();
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -290,7 +295,12 @@ pub(super) fn socket_roundtrip(
     world: &mut QuectoWorld,
     request: &str,
 ) -> (String, serde_json::Value) {
-    let id = serde_json::from_str::<serde_json::Value>(request).unwrap()["id"].clone();
+    // Only the id is decoded: a request may carry a number no `f64` holds.
+    #[derive(serde::Deserialize)]
+    struct Correlated {
+        id: serde_json::Value,
+    }
+    let id = serde_json::from_str::<Correlated>(request).unwrap().id;
     let process = world.session_scope_process.as_mut().unwrap();
     writeln!(process.stream, "{request}").unwrap();
     let deadline = Instant::now() + Duration::from_secs(15);

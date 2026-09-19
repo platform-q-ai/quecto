@@ -250,6 +250,7 @@ Discover persisted sessions, newest first. Owner: `ListSessions` (#1861,
     {"key":"chat-1765930000-1a2b3c","title":"Fix the flaky test","messageCount":12,"updatedUnixSecs":1765930000,"updatedAt":1765930000,"homeState":"scoped","executionPath":"/work/project","resumeEligible":true}
   ],
   "diagnostics": [],
+  "diagnosticsTotal": 0,
   "rebuilt": false
 }
 ```
@@ -274,7 +275,13 @@ unassociated and unavailable-home records. Metadata search is its own command,
 [`search_session_metadata`](#search_session_metadata). Malformed records and discovery/catalogue failures produce diagnostics;
 one bad record does not hide valid siblings. A malformed record's diagnostic
 names its file so it can be repaired, e.g.
-`cli_slippery-keith.json: session record unavailable: expected value at line 79 column 6`. `rebuilt` reports derived catalogue
+`cli_slippery-keith.json: session record unavailable: expected value at line 79 column 6`.
+Diagnostics are **bounded per answer** (here and in `search_session_metadata`):
+`diagnostics` carries the first 20 lines and then one `… and N more` line,
+`diagnosticsTotal` how many there were in all — a store with a thousand corrupt
+records does not put a thousand lines into every answer. A record that could
+not be READ (an I/O failure, not a verdict on its content) is named the same
+way for that answer only and read again on the next query. `rebuilt` reports derived catalogue
 recovery — an unreadable or version-incompatible index, with a diagnostic — not
 transcript modification: an absent index (first use) is built silently and an
 index superseded by newer authority (a routine autosave) is refreshed silently.
@@ -313,10 +320,10 @@ a row.
 |---|---|---|---|
 | `type` | `"search_session_metadata"` | yes | |
 | `id` | string | no | Correlation ID |
-| `query` | string | yes | Literal text, never a pattern. Compared as visible text (controls and invisible format characters dropped, case folded — Unicode lower-casing plus final sigma = sigma, `ß` = `ss`, dotted/dotless `i` = `i`; no normalization, no ligature expansion — whitespace collapsed); whitespace separates terms and every term must occur in the title, repository label or path (in `local` scope: the title, or the path **below the workspace group's root** — the root and the label are every local row's, so they are not matched); the whole trimmed query must equal a key byte for byte to match it. Nothing visible names every session in scope. More than 256 visible characters is refused whole. A missing or non-string `query` is an uncorrelated `parse_error` |
+| `query` | string | yes | Literal text, never a pattern. Compared as visible text (controls and invisible format characters dropped, whitespace collapsed, then case folded — Unicode lower-casing plus final sigma = sigma, `ß` = `ss`, dotted/dotless `i` = `i`; no normalization, no ligature expansion); whitespace separates terms and every term must occur in the title, repository label or path (in `local` scope: the title, or the path **below the workspace group's root** — the root and the label are every local row's, so they are not matched); the whole trimmed query must equal a key byte for byte to match it. Nothing visible names every session in scope. More than 256 visible characters is refused whole — counted as typed, before the fold: `ß` is one character though it is searched as `ss`. A missing or non-string `query` is an uncorrelated `parse_error` |
 | `scope` | `"local"` or `"global"` | no | Defaults to local; unsupported values are rejected |
-| `generation` | number | no | The client's own counter, echoed so a client can discard an answer it no longer wants. Defaults to 0. Any JSON number is accepted and brought into `u64` (negative → 0, a fraction truncated, ≥ 2^64 → 2^64−1) — so send a non-negative integer to have it echoed **unchanged**, and one ≤ 2^53 if your JSON reader cannot round-trip larger integers. Anything that is not a number is a **correlated** refusal (`refused: "generation must be a number"`, `generation` echoed as 0), never an uncorrelated `parse_error` |
-| `limit` | number | no | Rows returned at most: 1–500, default 200. Any JSON number is accepted and clamped into range (negative or 0 → 1, a fraction truncated, anything larger → 500) and the effective value echoed. Anything that is not a number is a **correlated** refusal (`refused: "limit must be a number"`, the readable `generation` still echoed) |
+| `generation` | integer | no | The client's own counter, echoed so a client can discard an answer it no longer wants. Defaults to 0. It must be a JSON **integer from 0 to 18446744073709551615** (2^64−1) and is echoed exactly — never rounded, so an echo equal to what was sent is the answer to that request. Anything else — a fraction (`7.9`, `7.0`), a negative number, `-0`, an integer ≥ 2^64, a number no `f64` holds (`1e400`), a string, an array — is a **correlated** refusal (`refused: "generation must be an integer from 0 to 18446744073709551615"`, `generation` echoed as 0), never an uncorrelated `parse_error`. Send one ≤ 2^53 if your own JSON reader cannot round-trip larger integers |
+| `limit` | number | no | Rows returned at most: 1–500, default 200. Any JSON number is accepted and clamped into range (negative or 0 → 1, a fraction truncated, anything larger → 500 — a literal no `f64` holds, `1e400`, included) and the effective value echoed. Anything that is not a number is a **correlated** refusal (`refused: "limit must be a number"`, the readable `generation` still echoed) |
 
 **Response data:**
 
@@ -334,6 +341,7 @@ a row.
   "truncated": false,
   "refused": null,
   "diagnostics": [],
+  "diagnosticsTotal": 0,
   "rebuilt": false
 }
 ```
@@ -349,23 +357,27 @@ identity-bound `homeVersion`, to be echoed as `resume_session.expectedHomeVersio
 
 | Answer field | Type | Description |
 |---|---|---|
-| `query` | string | The query as received, safely rendered and bounded to 256 characters |
+| `query` | string | The visible text of the query — exactly what was searched, before the case fold (invisible and control characters dropped, whitespace collapsed) — safely rendered; of a refused over-long query, its first 256 characters |
 | `sessions` | row[] | Best first: best matched field (key, title, repository, path), then newest, then key |
 | `totalMatches` | integer | Matches in scope before `limit` |
 | `searched` | integer | Sessions in scope the query was matched against |
 | `truncated` | boolean | `totalMatches` exceeds the rows returned |
-| `refused` | string \| null | Why nothing was searched (`query too long: …`, `limit must be a number`, `generation must be a number`); the rows are then empty |
-| `diagnostics`, `rebuilt` | | As for `list_sessions`: every search validates the derived index against authority; a malformed record (`cli_x.json: session record unavailable: …`) and a sidecar that needs repair (`cli_x.home: home needs repair: …`) are each named by file, once per answer, and hide no sibling |
+| `refused` | string \| null | Why nothing was searched (`query too long: …`, `limit must be a number`, `generation must be an integer from 0 to 18446744073709551615`); the rows are then empty |
+| `diagnostics`, `rebuilt` | | As for `list_sessions`: every search validates the derived index against authority; a malformed record (`cli_x.json: session record unavailable: …`) and a sidecar that needs repair (`cli_x.home: home needs repair: …`) are each named by file, once per answer, and hide no sibling. Bounded as for `list_sessions`: the first 20 lines, then `… and N more`; `diagnosticsTotal` counts them all |
 
 `homeState` is `legacy_unscoped` for a session saved before folders were
 tracked: it is found by title and key, and a client labels it explicitly (the
 TUI shows "No folder recorded (older session)"). Local scope without current
 workspace facts searches nothing and says why in `diagnostics`. An
 `executionPath` or `repositoryLabel` that is not UTF-8 spells each byte that is
-no text as `\xNN` (`/work/caf\xE9`), so two such folders stay distinguishable.
+no text as `\xNN` (`/work/caf\xE9`) and doubles a literal backslash (a folder
+really named `caf\xE9` is `caf\\xE9`), so the spelling is injective: two
+different folders never share one, and a query matches what is shown.
 
 **Cost and ordering.** Every search stamps every saved record (about 90 ms on
-a 5,200-record store; the 50 ms target is missed). Commands are answered FIFO:
+a 5,200-record store; the 50 ms target is missed) and folds every path, so the
+cost is linear in the stored text: 3,600 homes under a 3,900-character
+non-ASCII path took a warm global search from 94 to about 320 ms (#2042). Commands are answered FIFO:
 searches queued back-to-back delay a later `get_state` or `abort` on the same
 connection by their sum. Send one search at a time and the latest text when it
 is answered, as the TUI does.

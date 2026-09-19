@@ -344,7 +344,7 @@ fn persistence_reach_predicate_catches_rogue_calls_and_spares_requests() {
         "let value = cell.load(Ordering::SeqCst);",
         "let page = history.recall(page_size);",
         "if path.exists() {",
-        "let sessions = ctx.list_sessions.list_all().await;",
+        "let sessions = ctx.discovery.list(requested).await;",
     ] {
         assert!(
             !reaches_a_persistence_method(benign),

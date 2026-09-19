@@ -326,9 +326,13 @@ pure matching rules in `domain/session_metadata_search.rs`.
   term must occur in the title, the label or the path. A key matches only when
   the whole trimmed query equals it byte for byte — no fragment, no case fold.
   A path that is not UTF-8 is matched and presented with each byte that is no
-  text spelled `\xNN` (`caf\xE9`), so two folders that differ only in such a
-  byte stay distinguishable by `executionPath` and `repositoryLabel` alone. A query of more than 256
-  visible characters is refused whole (`refused`), never searched as a prefix;
+  text spelled `\xNN` (`caf\xE9`) and a literal backslash doubled
+  (`domain/session_path_text.rs`: a folder really named `caf\xE9` is
+  `caf\\xE9`), so the spelling is injective and two folders stay
+  distinguishable by `executionPath` and `repositoryLabel` alone. A query of
+  more than 256 visible characters — counted before the fold, so `ß` is one —
+  is refused whole (`refused`, `domain/session_query_refusal.rs`), never
+  searched as a prefix; the answer echoes the visible text that was searched;
   a query with nothing visible names every session in scope.
 - **Repository label.** For a Git home, the directory that holds the `.git`
   common dir (so linked worktrees share their repository's label) or a bare

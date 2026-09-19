@@ -14,10 +14,14 @@ pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
     if line.trim().is_empty() {
         return Err("empty line".to_string());
     }
-    serde_json::from_str(line).map_err(|e| format!("parse error: {e}"))
+    serde_json::from_str(line)
+        .or_else(|e| protocol_search_rescue::rescued(line).ok_or(e))
+        .map_err(|e| format!("parse error: {e}"))
 }
 #[path = "protocol_commands.rs"]
 mod protocol_commands;
+#[path = "protocol_search_rescue.rs"]
+mod protocol_search_rescue;
 pub use protocol_commands::{
     AgentCommand, ResumeActionCommand, SessionListScopeCommand, StreamingBehavior,
     ToolPolicyApplyModeCommand, ToolPolicyMutationCommand, ToolPolicyOperationCommand,

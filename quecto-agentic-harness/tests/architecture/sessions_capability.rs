@@ -119,6 +119,10 @@ const CANONICAL_FILES: &[&str] = &[
     "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
     "src/infrastructure/persistence/session_home_catalogue_seed.rs",
     "src/infrastructure/persistence/session_record_read.rs",
+    "src/domain/session_path_text.rs",
+    "src/domain/session_query_refusal.rs",
+    "src/interface/cli/protocol_search_rescue.rs",
+    "src/interface/cli/uds_freshness_json.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
@@ -803,7 +807,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/uds_dispatch_query.rs", 173),
     // #2011 review: the safe rendering is its own module (50 → 46). #2010:
     // the row is one shared function (46 → 45).
-    ("src/interface/cli/uds_dispatch_discovery.rs", 45),
+    ("src/interface/cli/uds_dispatch_discovery.rs", 42),
     // #2010 metadata search: every new owner pinned at its delivered size.
     // Review round 1 only lowered them; what it added lives in new owners
     // (`search_limits`, `session_metadata_text`, `uds_search_numbers`).
@@ -816,13 +820,19 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         80,
     ),
     ("src/application/sessions/dto/search_limits.rs", 33),
-    ("src/domain/session_metadata_text.rs", 58),
+    ("src/domain/session_metadata_text.rs", 51),
     ("src/interface/cli/uds_search_numbers.rs", 62),
-    ("src/domain/session_metadata_search.rs", 187),
+    ("src/domain/session_metadata_search.rs", 168),
     (
         "src/infrastructure/persistence/session_home_catalogue_metadata.rs",
         45,
     ),
+    // Review round 2: the refusal, the injective path spelling, the rescue of
+    // a number no `f64` holds and the bounded freshness tail are new owners.
+    ("src/domain/session_path_text.rs", 23),
+    ("src/domain/session_query_refusal.rs", 31),
+    ("src/interface/cli/protocol_search_rescue.rs", 51),
+    ("src/interface/cli/uds_freshness_json.rs", 33),
     ("src/composition/session_search.rs", 23),
     ("src/interface/cli/uds_dispatch_search.rs", 80),
     ("src/interface/cli/uds_discovery_handles.rs", 44),

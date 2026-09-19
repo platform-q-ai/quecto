@@ -179,7 +179,10 @@ async fn the_answer_echoes_generation_scope_limit_and_a_safe_query() {
             &serde_json::json!(2)
         )
     );
-    assert_eq!(data["query"], "a\u{fffd}[31m\u{fffd}b");
+    assert_eq!(
+        data["query"], "a[31mb",
+        "the visible text that was searched"
+    );
     let defaults = serde_json::json!({"type": "search_session_metadata", "id": "g2", "query": ""});
     let data = answer(&mut fx, defaults).await["data"].clone();
     assert_eq!(
@@ -264,7 +267,7 @@ async fn hostile_queries_are_literal_bounded_and_answered_the_same_way_twice() {
     // Nothing visible: every session, not an error.
     let invisible = search(&mut fx, "\u{200b}\u{202e}\u{0}\u{7}", "global").await;
     assert_eq!(invisible["totalMatches"], 6);
-    assert_eq!(invisible["query"], "\u{fffd}\u{fffd}\u{fffd}\u{fffd}");
+    assert_eq!(invisible["query"], "");
     // Over-long: refused whole, the echo bounded, nothing searched.
     let long = search(&mut fx, &"z".repeat(100_000), "global").await;
     assert_eq!(
@@ -354,8 +357,9 @@ async fn a_searched_rows_version_restores_it_and_a_stale_one_is_refused() {
 }
 
 /// R1-H5: a client awaiting its id never hangs on `limit` or `generation`.
-/// Any JSON number is brought into range; anything else is a CORRELATED
-/// refusal that still echoes what could be read.
+/// Any JSON number is a `limit`, brought into range; a `generation` is an
+/// exact integer or nothing (R2-H10). Anything else is a CORRELATED refusal
+/// that still echoes what could be read.
 #[tokio::test]
 async fn limit_and_generation_are_read_leniently_and_a_non_number_is_a_correlated_refusal() {
     let mut fx = seeded().await;
@@ -382,10 +386,13 @@ async fn limit_and_generation_are_read_leniently_and_a_non_number_is_a_correlate
         );
         assert!(data["refused"].is_null(), "{limit}");
     }
+    let _ = beyond;
     for (generation, echoed) in [
-        (serde_json::json!(-1), 0u64),
-        (serde_json::json!(7.9), 7),
-        (beyond, u64::MAX),
+        (serde_json::json!(0), 0u64),
+        (
+            serde_json::json!(9_007_199_254_740_993u64),
+            9_007_199_254_740_993,
+        ),
         (serde_json::json!(u64::MAX), u64::MAX),
     ] {
         let line = serde_json::json!({"type": "search_session_metadata", "id": "g",
@@ -407,6 +414,16 @@ async fn limit_and_generation_are_read_leniently_and_a_non_number_is_a_correlate
         ("limit", serde_json::json!(true), 3),
         ("generation", serde_json::json!("7"), 0),
         ("generation", serde_json::json!({"n": 7}), 0),
+        // R2-H10: never echo a generation other than the one that was sent.
+        ("generation", serde_json::json!(-1), 0),
+        ("generation", serde_json::json!(7.9), 0),
+        ("generation", serde_json::json!(7.0), 0),
+        ("generation", serde_json::json!(9007199254740993.0), 0),
+        (
+            "generation",
+            serde_json::from_str("18446744073709551616").unwrap(),
+            0,
+        ),
     ] {
         let mut line = serde_json::json!({"type": "search_session_metadata", "id": "r",
             "query": "zebra", "scope": "global", "generation": 3});
@@ -414,11 +431,11 @@ async fn limit_and_generation_are_read_leniently_and_a_non_number_is_a_correlate
         let event = answer(&mut fx, line).await;
         let data = &event["data"];
         assert_eq!(event["success"], true, "{field}={value}: {event}");
-        assert_eq!(
-            data["refused"],
-            format!("{field} must be a number"),
-            "{value}"
-        );
+        let expected = match field {
+            "limit" => "limit must be a number",
+            _ => "generation must be an integer from 0 to 18446744073709551615",
+        };
+        assert_eq!(data["refused"], expected, "{value}");
         assert_eq!(
             data["generation"],
             serde_json::json!(generation),
@@ -433,4 +450,134 @@ async fn limit_and_generation_are_read_leniently_and_a_non_number_is_a_correlate
             (&serde_json::json!("zebra"), &serde_json::json!("global"))
         );
     }
+}
+
+/// The answer to a RAW protocol line, through the production line parser.
+async fn answer_to_line(fx: &mut Fixture, id: &str, raw: &str) -> serde_json::Value {
+    let command = crate::interface::cli::protocol::parse_command_line(raw).expect(raw);
+    let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+    let mut ctx = fx.ctx();
+    ctx.broadcast_tx = Some(tx);
+    assert!(!super::super::dispatch_command(command, &mut ctx).await);
+    std::iter::from_fn(|| rx.try_recv().ok())
+        .map(|frame| serde_json::from_str::<serde_json::Value>(&frame).unwrap())
+        .find(|event| event["id"] == id)
+        .expect("the correlated answer")
+}
+
+/// R2-H3: `1e400` is grammatical JSON that no `f64` holds; `serde_json`
+/// refuses it while lexing. The search is still answered under its id.
+#[tokio::test]
+async fn a_number_no_float_can_hold_is_still_answered_under_the_requests_id() {
+    let mut fx = seeded().await;
+    let line = |fields: &str| {
+        format!(
+            r#"{{"type":"search_session_metadata","id":"big","query":"","scope":"global",{fields}}}"#
+        )
+    };
+    for (fields, limit) in [
+        (r#""limit":1e400,"generation":5"#, 500),
+        (r#""generation":5,"limit":-1e400"#, 1),
+    ] {
+        let data = answer_to_line(&mut fx, "big", &line(fields)).await["data"].clone();
+        assert!(data["refused"].is_null(), "{fields}: {data}");
+        assert_eq!(
+            (&data["limit"], &data["generation"]),
+            (&serde_json::json!(limit), &serde_json::json!(5))
+        );
+    }
+    for fields in [r#""generation":1e400"#, r#""generation":-1e999,"limit":3"#] {
+        let data = answer_to_line(&mut fx, "big", &line(fields)).await["data"].clone();
+        assert_eq!(
+            data["refused"], "generation must be an integer from 0 to 18446744073709551615",
+            "{fields}"
+        );
+        assert_eq!(
+            (&data["generation"], &data["searched"]),
+            (&serde_json::json!(0), &serde_json::json!(0))
+        );
+    }
+    // A value that is no number stays refused, whatever it contains.
+    let data = answer_to_line(&mut fx, "big", &line(r#""limit":[1e400]"#)).await["data"].clone();
+    assert_eq!(data["refused"], "limit must be a number");
+    // Only a search is rescued, and only when the rest of it decodes.
+    use crate::interface::cli::protocol::parse_command_line;
+    for raw in [
+        r#"{"type":"list_sessions","id":"x","since":1e400}"#.to_string(),
+        r#"{"type":"search_session_metadata","id":"x","generation":1e400}"#.to_string(),
+        r#"{"type":"search_session_metadata","id":"x","query":"q","scope":"everywhere","limit":1e400}"#.to_string(),
+        r#"{"type":"search_session_metadata","id":"x","query":"q","limit":1e400"#.to_string(),
+    ] {
+        let error = parse_command_line(&raw).expect_err(&raw);
+        assert!(error.starts_with("parse error: "), "{error}");
+    }
+}
+
+/// R2-H4: the 256 bound counts the characters the user typed — a fold that
+/// expands (`ß` → `ss`) changes neither the bound nor the echo.
+#[tokio::test]
+async fn the_query_bound_and_the_echo_are_of_the_visible_text_before_it_is_folded() {
+    let mut fx = seeded().await;
+    saved(&fx, "cli:strasse", "Die lange STRASSE", None).await;
+    let padded = format!("{}stra\u{200b}ße", "\u{200b}".repeat(300));
+    let found = search(&mut fx, &padded, "global").await;
+    assert_eq!(
+        (keys(&found), &found["query"]),
+        (
+            vec!["cli:strasse".to_string()],
+            &serde_json::json!("straße")
+        )
+    );
+    let sharp = search(&mut fx, &"ß".repeat(256), "global").await;
+    assert!(sharp["refused"].is_null(), "{sharp}");
+    assert_eq!(sharp["query"], "ß".repeat(256));
+    let over = search(&mut fx, &format!(" \u{200b}{}", "ß".repeat(257)), "global").await;
+    assert_eq!(
+        over["refused"],
+        "query too long: 257 characters (at most 256 are searched)"
+    );
+    assert_eq!(
+        over["query"],
+        "ß".repeat(256),
+        "the first 256 visible characters"
+    );
+}
+
+/// R2-H5: an answer names at most 20 diagnostics and counts the rest.
+#[tokio::test]
+async fn diagnostics_are_bounded_per_answer_and_counted_in_full() {
+    let mut fx = seeded().await;
+    let sessions = fx.store.layout().sessions_dir().to_path_buf();
+    for n in 0..25 {
+        std::fs::write(sessions.join(format!("chat-rot-{n:02}.json")), b"{").unwrap();
+    }
+    let list = serde_json::json!({"type": "list_sessions", "id": "d1", "scope": "global"});
+    let listed = answer(&mut fx, list).await["data"].clone();
+    let found = search(&mut fx, "", "global").await;
+    for data in [&listed, &found] {
+        let lines = data["diagnostics"].as_array().unwrap();
+        assert_eq!(
+            (lines.len(), &data["diagnosticsTotal"]),
+            (21, &serde_json::json!(25)),
+            "{data}"
+        );
+        assert!(
+            lines[..20]
+                .iter()
+                .all(|l| l.as_str().unwrap().starts_with("chat-rot-"))
+        );
+        assert_eq!(lines[20], "… and 5 more");
+    }
+    // At the bound exactly: every line, no summary line.
+    for n in 20..25 {
+        std::fs::remove_file(sessions.join(format!("chat-rot-{n:02}.json"))).unwrap();
+    }
+    let found = search(&mut fx, "", "global").await;
+    assert_eq!(
+        (
+            found["diagnostics"].as_array().unwrap().len(),
+            &found["diagnosticsTotal"]
+        ),
+        (20, &serde_json::json!(20))
+    );
 }

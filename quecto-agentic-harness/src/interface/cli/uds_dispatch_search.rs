@@ -3,11 +3,12 @@
 //! and presents the typed answer. Rows are listing rows (same fields, same
 //! `homeVersion`) plus what matched; untrusted text is made safe. Nothing is
 //! matched, ordered, scoped or restored here.
-use super::super::uds_dispatch_query::{listed_row_json, safe_display};
+use super::super::uds_dispatch_query::{freshened, listed_row_json, safe_display};
 use super::{AgentEvent, DispatchCtx};
 use crate::application::sessions::dto::{
     SearchSessionMetadataRequest, SearchSessionMetadataResult,
 };
+use crate::domain::session_metadata_search::MetadataQuery;
 use crate::interface::cli::protocol::SessionListScopeCommand;
 
 pub(super) async fn handle(
@@ -34,7 +35,7 @@ pub(super) async fn handle(
     false
 }
 
-/// The answer: the echoed query (safe, bounded), scope and generation, the
+/// The answer: the echoed query (the visible text, bounded), scope and generation, the
 /// matched rows, how many matched and were searched, and the freshness.
 pub(super) fn search_json(
     result: &SearchSessionMetadataResult,
@@ -54,9 +55,8 @@ pub(super) fn search_json(
             value
         })
         .collect();
-    let safe = |lines: &[String]| lines.iter().map(|s| safe_display(s)).collect::<Vec<_>>();
-    serde_json::json!({
-        "query": safe_display(&request.query.chars().take(256).collect::<String>()),
+    let body = serde_json::json!({
+        "query": safe_display(&MetadataQuery::shown(&request.query)),
         "scope": scope,
         "generation": result.generation.0,
         "limit": request.limit.get(),
@@ -65,9 +65,9 @@ pub(super) fn search_json(
         "searched": result.searched,
         "truncated": result.truncated(),
         "refused": result.refused.as_ref().map(ToString::to_string),
-        "diagnostics": safe(&result.freshness.diagnostics),
-        "rebuilt": result.freshness.rebuilt,
-    })
+    });
+    let freshness = &result.freshness;
+    freshened(body, &freshness.diagnostics, freshness.rebuilt)
 }
 
 #[path = "uds_search_numbers.rs"]
