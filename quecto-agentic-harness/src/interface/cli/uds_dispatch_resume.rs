@@ -14,8 +14,7 @@ pub(super) fn outcome_event(
     outcome: &ResumeOutcome,
 ) -> AgentEvent {
     let data = match outcome {
-        // The name as the client spelled it, the key the loop now stands
-        // for, and the live conversation's length.
+        // The name as spelled, the key the loop now stands for, the live length.
         ResumeOutcome::Resumed(resumed) => serde_json::json!({
             "outcome": "resumed",
             "session": resumed.name,
@@ -47,6 +46,7 @@ pub(super) fn refusal_event(
             "reason": safe_display(reason),
         }),
         ResumeSavedSessionError::ActionExecutedElsewhere(action)
+        | ResumeSavedSessionError::ActionNotOffered(action)
         | ResumeSavedSessionError::HomeVersionRequired(action) => serde_json::json!({
             "outcome": "refused",
             "code": code,

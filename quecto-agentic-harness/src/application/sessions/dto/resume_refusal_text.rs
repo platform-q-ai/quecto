@@ -11,19 +11,19 @@ impl std::fmt::Display for ResumeSavedSessionError {
                 f.write_str("session name must contain only alphanumeric, '-', or '_'")
             }
             Self::Decision(decision) => write!(f, "{decision}"),
-            Self::StaleHomeVersion => f.write_str(
-                "session home changed since it was listed; refresh the list and choose again",
-            ),
+            Self::StaleHomeVersion => {
+                f.write_str("session list out of date; list and choose again")
+            }
             Self::CurrentScopeUnavailable(_) => f.write_str(
                 "session resume unavailable: the current execution directory cannot be \
                  discovered, so no saved session can be admitted here",
             ),
-            Self::HomeVersionRequired(action) => write!(
-                f,
-                "{} needs the home version of the decision it answers \
-                 (expectedHomeVersion); ask for the decision again",
-                action.name()
-            ),
+            Self::HomeVersionRequired(action) => {
+                write!(f, "{} needs expectedHomeVersion; ask again", action.name())
+            }
+            Self::ActionNotOffered(action) => {
+                write!(f, "{} is not offered for this session", action.name())
+            }
             Self::ActionUnavailable { action, reason } => {
                 write!(f, "{} is unavailable: {reason}", action.name())
             }

@@ -117,8 +117,22 @@ Feature: Typed resume decisions through the production runtime
       | action        | code               |
       | open_original | action_unavailable |
       | fork_current  | action_unavailable |
-      | locate        | action_unavailable |
-      | associate     | action_unavailable |
+      | locate        | action_not_offered |
+      | associate     | action_not_offered |
+
+  Scenario: An action on a missing session is not found whatever token it carries
+    Given saved production sessions in two different folders
+    When the operator opens resume with the active local conversation
+    And a socket client requests the session "cli:nosuch" with action "locate" and the version of the foreign decision
+    Then the runtime refuses the resume with code "not_found"
+    And the active conversation and every claim are unchanged
+
+  Scenario: An action carrying another session's version is stale before it is judged
+    Given saved production sessions in two different folders
+    When the operator opens resume with the active local conversation
+    And a socket client requests the session "cli:local" with action "open_original" and the version of the foreign decision
+    Then the runtime refuses the resume with code "stale_home_version"
+    And the active conversation and every claim are unchanged
 
   Scenario Outline: An action that names no home version is refused
     Given saved production sessions in two different folders

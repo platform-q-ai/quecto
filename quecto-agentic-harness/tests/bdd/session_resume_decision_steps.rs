@@ -85,6 +85,19 @@ fn request_action(world: &mut QuectoWorld, action: String) {
     expr = "a socket client requests the foreign session with action {string} and the version of its decision"
 )]
 fn request_action_with_version(world: &mut QuectoWorld, action: String) {
+    request_session_action_with_foreign_version(world, "cli:foreign".into(), action);
+}
+
+/// Any session, with a well-formed token the runtime really issued — the
+/// foreign decision's — so only the documented order decides the answer.
+#[when(
+    expr = "a socket client requests the session {string} with action {string} and the version of the foreign decision"
+)]
+fn request_session_action_with_foreign_version(
+    world: &mut QuectoWorld,
+    session: String,
+    action: String,
+) {
     let ask = serde_json::json!({
         "type": "resume_session", "id": "s2011-decision", "session": "cli:foreign",
     });
@@ -95,7 +108,7 @@ fn request_action_with_version(world: &mut QuectoWorld, action: String) {
     let request = serde_json::json!({
         "type": "resume_session",
         "id": format!("s2011-direct-{action}"),
-        "session": "cli:foreign",
+        "session": session,
         "action": action,
         "expectedHomeVersion": version,
     });

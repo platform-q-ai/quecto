@@ -1,10 +1,11 @@
 //! The eligibility collaborators of the resume transaction (#2011). Not a
 //! second owner: `admit` routes a request's intent for the one transaction in the
-//! parent; `decide` is the one check its pre-flight and its claimed re-check run.
+//! parent; `decide` is the one check its pre-flight, its claimed re-check and
+//! the refusal of an explicit action (`resume_saved_session_action.rs`) run.
 use super::ResumeSavedSession;
 use crate::application::sessions::dto::{
-    ActionAvailability, ResumeActionCapabilities, ResumeActionOffer, ResumeDecision, ResumeIntent,
-    ResumeRequest, ResumeSavedSessionError, ResumeTarget,
+    ResumeActionCapabilities, ResumeActionOffer, ResumeDecision, ResumeIntent, ResumeRequest,
+    ResumeSavedSessionError, ResumeTarget,
 };
 use crate::application::sessions::ports::SessionStore;
 use crate::application::sessions::session_home::{HomeObstacle, SessionHomeContext};
@@ -18,37 +19,25 @@ pub(super) enum Admitted {
     Cancelled(String),
     /// The one restore transaction, for this exact target.
     Restore(ResumeTarget),
+    /// Another explicit action on this exact target: `refuse_action` answers it.
+    Act(ResumeTarget, ResumeAction),
 }
 
 /// Admit a request before any effect. An ephemeral loop resumes nothing; the
 /// target is one exact accepted spelling. `Cancel` has no effect at all.
-/// Every other explicit action is refused here — it names no version, its
-/// executor is not composed, or it has its own transaction — and is never
-/// replaced by a restore or by another action.
 pub(super) fn admit(
     ephemeral: bool,
-    capabilities: &ResumeActionCapabilities,
     request: &ResumeRequest,
 ) -> Result<Admitted, ResumeSavedSessionError> {
     if ephemeral {
         return Err(ResumeSavedSessionError::Ephemeral);
     }
     let target = ResumeTarget::parse(&request.target)?;
-    match request.intent {
-        ResumeIntent::Restore => Ok(Admitted::Restore(target)),
-        ResumeIntent::Act(ResumeAction::Cancel) => Ok(Admitted::Cancelled(target.name)),
-        ResumeIntent::Act(action) if request.expected_home_version.is_none() => {
-            Err(ResumeSavedSessionError::HomeVersionRequired(action))
-        }
-        ResumeIntent::Act(action) => Err(match capabilities.availability(action) {
-            ActionAvailability::Unavailable(reason) => {
-                ResumeSavedSessionError::ActionUnavailable { action, reason }
-            }
-            ActionAvailability::Available => {
-                ResumeSavedSessionError::ActionExecutedElsewhere(action)
-            }
-        }),
-    }
+    Ok(match request.intent {
+        ResumeIntent::Restore => Admitted::Restore(target),
+        ResumeIntent::Act(ResumeAction::Cancel) => Admitted::Cancelled(target.name),
+        ResumeIntent::Act(action) => Admitted::Act(target, action),
+    })
 }
 
 /// The eligibility collaborators of one loop: the shared home observations
@@ -100,7 +89,7 @@ impl Eligibility {
 /// The one eligibility check: the authoritative home is read fresh (never the
 /// derived index), the version the client was shown must still be it, and only
 /// an affirmatively admitted home passes. All else is a decision or refusal.
-async fn decide(
+pub(super) async fn decide(
     home: &SessionHomeContext,
     capabilities: &ResumeActionCapabilities,
     target: &ResumeTarget,

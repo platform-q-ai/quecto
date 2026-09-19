@@ -535,10 +535,17 @@ async fn cancel_and_every_unavailable_action_touch_nothing() {
                 assert_eq!(name, "cli:theirs");
             }
             (
-                _,
+                ResumeAction::OpenOriginal | ResumeAction::ForkCurrent,
                 Err(ResumeSavedSessionError::ActionUnavailable {
                     action: refused, ..
                 }),
+            ) => {
+                assert_eq!(refused, action, "never substituted");
+            }
+            // A cross-folder decision offers neither (review R2-H3).
+            (
+                ResumeAction::Locate | ResumeAction::Associate,
+                Err(ResumeSavedSessionError::ActionNotOffered(refused)),
             ) => {
                 assert_eq!(refused, action, "never substituted");
             }

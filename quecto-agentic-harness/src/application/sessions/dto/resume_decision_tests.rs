@@ -54,17 +54,19 @@ fn every_unavailable_reason_says_what_to_do_is_distinct_and_names_no_issue() {
     let none = ResumeActionCapabilities::cancel_only();
     let reasons: Vec<String> = [
         (ResumeAction::OpenOriginal, "start quecto in that folder"),
-        (ResumeAction::ForkCurrent, "forking the transcript"),
-        (ResumeAction::Locate, "the transcript is preserved"),
-        (
-            ResumeAction::Associate,
-            "start a new session with `-s <name>`",
-        ),
+        (ResumeAction::ForkCurrent, "conversation stays as it is"),
+        (ResumeAction::Locate, "The saved conversation is kept"),
+        (ResumeAction::Associate, "stays listed under All Folders"),
     ]
     .into_iter()
     .map(|(action, slice)| match none.availability(action) {
         ActionAvailability::Unavailable(reason) => {
             assert!(reason.contains(slice), "{reason}");
+            // The fact first, and no internal vocabulary (review R2-T7).
+            assert!(reason.starts_with("Not available yet. "), "{reason}");
+            for internal in ["runtime", "legacy", "association", "transcript"] {
+                assert!(!reason.contains(internal), "{internal:?} in {reason}");
+            }
             // For people: no internal tracker number reaches the dialog.
             assert!(!reason.contains('#'), "{reason}");
             reason
@@ -97,7 +99,7 @@ fn a_decision_names_the_obstacle_every_offer_and_the_first_reason() {
         "{legacy}"
     );
     assert!(
-        legacy.contains("start a new session with `-s <name>`"),
+        legacy.contains("it stays listed under All Folders"),
         "{legacy}"
     );
 }

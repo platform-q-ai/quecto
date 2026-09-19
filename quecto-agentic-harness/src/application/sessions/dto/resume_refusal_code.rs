@@ -2,7 +2,6 @@
 use super::ResumeSavedSessionError;
 
 impl ResumeSavedSessionError {
-    /// The stable machine name of the refusal on every boundary.
     pub fn code(&self) -> &'static str {
         match self {
             Self::Busy => "busy",
@@ -12,6 +11,7 @@ impl ResumeSavedSessionError {
             Self::StaleHomeVersion => "stale_home_version",
             Self::CurrentScopeUnavailable(_) => "current_scope_unavailable",
             Self::HomeVersionRequired(_) => "home_version_required",
+            Self::ActionNotOffered(_) => "action_not_offered",
             Self::ActionUnavailable { .. } => "action_unavailable",
             Self::ActionExecutedElsewhere(_) => "action_executed_elsewhere",
             Self::StartupScope(_) => "startup_scope",

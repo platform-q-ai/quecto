@@ -41,6 +41,7 @@ fn every_refusal() -> Vec<ResumeSavedSessionError> {
             reason: "not yet".into(),
         },
         ResumeSavedSessionError::ActionExecutedElsewhere(ResumeAction::OpenOriginal),
+        ResumeSavedSessionError::ActionNotOffered(ResumeAction::Associate),
         ResumeSavedSessionError::StartupScope(StartupRefusal {
             key: "cli:old".into(),
             disposition: ResumeDisposition::LegacyUnscoped,
@@ -71,6 +72,7 @@ fn every_refusal_has_a_distinct_stable_code() {
             "current_scope_unavailable",
             "action_unavailable",
             "action_executed_elsewhere",
+            "action_not_offered",
             "startup_scope",
             "transition_refused",
             "save_failed",
@@ -86,14 +88,15 @@ fn every_refusal_reads_as_what_happened_and_what_to_do() {
     let texts: Vec<_> = every_refusal().iter().map(ToString::to_string).collect();
     let expected = [
         "while agent is running",
-        "locate needs the home version",
+        "locate needs expectedHomeVersion",
         "ephemeral mode",
         "alphanumeric",
         "session resume unavailable: legacy session requires explicit first association",
-        "refresh the list and choose again",
+        "session list out of date; list and choose again",
         "current execution directory cannot be discovered",
         "fork_current is unavailable: not yet",
         "open_original is not a restore",
+        "associate is not offered for this session",
         "session 'cli:old' cannot start here",
         "live",
         "failed to save current session",

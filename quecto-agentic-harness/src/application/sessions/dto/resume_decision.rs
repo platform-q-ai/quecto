@@ -76,24 +76,18 @@ impl ResumeActionCapabilities {
     }
 }
 
-/// What the user can do instead, while the executor is not delivered.
+/// What the user can do instead, while the executor is not delivered: the
+/// fact first, in words a dialog shows whole on an 80x24 terminal.
 fn unavailable_reason(action: ResumeAction) -> &'static str {
     match action {
         ResumeAction::OpenOriginal => {
-            "opening the original folder in a fresh runtime is not available yet; \
-             start quecto in that folder to continue this session"
+            "Not available yet. To continue this session, start quecto in that folder."
         }
-        ResumeAction::ForkCurrent => {
-            "forking the transcript into the current folder is not available yet"
-        }
-        ResumeAction::Locate => {
-            "locating a moved session folder is not available yet; \
-             the transcript is preserved"
-        }
+        ResumeAction::ForkCurrent => "Not available yet. The saved conversation stays as it is.",
+        ResumeAction::Locate => "Not available yet. The saved conversation is kept.",
         ResumeAction::Associate => {
-            "explicit association of a legacy session with a folder is not available yet; \
-             start a new session with `-s <name>` — the old transcript stays in \
-             place and visible under All Folders"
+            "Not available yet. This session predates folder tracking; \
+             it stays listed under All Folders."
         }
         ResumeAction::Cancel => "cancel is always available",
     }

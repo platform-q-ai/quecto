@@ -28,16 +28,14 @@ pub struct SavedSessionResumed {
     /// The name as the client spelled it.
     pub name: String,
     pub identity: SessionIdentity,
-    /// The live conversation's length after the restore, injected prompt
-    /// included (what the acknowledgement has always reported).
+    /// The live conversation's length after the restore, injected prompt included.
     pub message_count: usize,
     /// The ledger position after the switch, for the transports to announce.
     pub ledger: LedgerAdvance,
 }
 
-/// What opening the loop's session at startup yielded: the persisted
-/// conversation (empty for a new or ephemeral session) and the workflow run
-/// recorded with it, if any.
+/// What opening the loop's session at startup yielded: the persisted conversation
+/// (empty for a new or ephemeral session) and the workflow run recorded with it.
 #[derive(Debug, Clone)]
 pub struct StartupSessionOpened {
     pub messages: Vec<Message>,
@@ -64,6 +62,8 @@ pub enum ResumeSavedSessionError {
     CurrentScopeUnavailable(String),
     /// An explicit action must name the home version it was decided on.
     HomeVersionRequired(ResumeAction),
+    /// The target's decision kind (or plain restorability) never offers `action`.
+    ActionNotOffered(ResumeAction),
     /// No executor of `action` is composed; nothing else was done instead.
     ActionUnavailable {
         action: ResumeAction,

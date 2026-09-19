@@ -279,7 +279,7 @@ async fn a_legacy_session_is_a_decision_offering_association_and_cancel_only() {
     );
     let text = decision.to_string();
     assert!(text.contains("explicit first association"), "{text}");
-    assert!(text.contains("-s <name>"), "{text}");
+    assert!(text.contains("stays listed under All Folders"), "{text}");
     case.assert_no_effect();
 }
 
@@ -454,19 +454,20 @@ async fn cancel_has_no_effect_at_all() {
 }
 
 #[tokio::test]
-async fn every_explicit_action_is_refused_unavailable_and_never_substituted() {
-    for action in [
-        ResumeAction::OpenOriginal,
-        ResumeAction::ForkCurrent,
-        ResumeAction::Locate,
-        ResumeAction::Associate,
+async fn every_offered_action_is_refused_unavailable_and_never_substituted() {
+    let elsewhere = SessionHomeScope::Scoped(folder(ELSEWHERE));
+    let gone = SessionHomeScope::Scoped(folder(GONE));
+    for (scope, action) in [
+        (&elsewhere, ResumeAction::OpenOriginal),
+        (&elsewhere, ResumeAction::ForkCurrent),
+        (&gone, ResumeAction::Locate),
+        (&SessionHomeScope::LegacyUnscoped, ResumeAction::Associate),
     ] {
-        // Even for a session that WOULD restore here: an action is not a restore.
-        let case = case(SessionHomeScope::Scoped(folder(HERE)));
+        let case = case(scope.clone());
         let request = ResumeRequest {
             target: "saved".into(),
             intent: ResumeIntent::Act(action),
-            expected_home_version: Some(shown()),
+            expected_home_version: Some(HomeVersion::of(&saved_identity(), scope)),
         };
         let refused = case.request(&request).await.expect_err("unavailable");
         assert!(
@@ -520,7 +521,7 @@ async fn a_composed_executor_makes_its_action_available_and_owned_elsewhere() {
     let request = ResumeRequest {
         target: "saved".into(),
         intent: ResumeIntent::Act(ResumeAction::OpenOriginal),
-        expected_home_version: Some(shown()),
+        expected_home_version: Some(decision.home_version.clone()),
     };
     let refused = resume
         .execute(&request, &mut messages, None, &mut runtime)
@@ -567,5 +568,7 @@ async fn an_ephemeral_loop_and_an_invalid_key_refuse_every_intent() {
     case.assert_no_effect();
 }
 
+#[path = "resume_saved_session_action_tests.rs"]
+mod action_order;
 #[path = "resume_saved_session_preflight_tests.rs"]
 mod preflight;

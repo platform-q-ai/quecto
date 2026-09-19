@@ -98,6 +98,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/domain/stable_digest.rs",
     "src/interface/cli/uds_safe_display.rs",
     "src/application/sessions/use_cases/resume_saved_session_decision.rs",
+    "src/application/sessions/use_cases/resume_saved_session_action.rs",
     "src/composition/resume_capabilities.rs",
     "src/interface/uds/sessions/resume_session_controller.rs",
     "src/interface/cli/uds_dispatch_resume.rs",
@@ -645,9 +646,15 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     // #2011: the eligibility collaborators of the one resume transaction —
     // request admission, the effect-free pre-flight, the claimed re-check.
+    // Review R2-H3: the refusal order of an explicit action is its own
+    // module, so the helper shrinks (158 → 147).
     (
         "src/application/sessions/use_cases/resume_saved_session_decision.rs",
-        158,
+        147,
+    ),
+    (
+        "src/application/sessions/use_cases/resume_saved_session_action.rs",
+        52,
     ),
     // #2011: the refusal text moved to its own module (123 → 117 with the
     // typed decision and refusal variants added).
@@ -657,9 +664,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/dto/resume_refusal_text.rs", 47),
     ("src/application/sessions/dto/resume_refusal_code.rs", 25),
     ("src/application/sessions/dto/resume_target.rs", 39),
-    ("src/application/sessions/dto/resume_decision.rs", 168),
+    ("src/application/sessions/dto/resume_decision.rs", 162),
     // Review R1: the digest is its own pure module (182 → 165).
-    ("src/domain/resume_decision.rs", 165),
+    ("src/domain/resume_decision.rs", 163),
     ("src/domain/stable_digest.rs", 30),
     ("src/composition/resume_capabilities.rs", 15),
     (
@@ -755,7 +762,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/uds_dispatch_query.rs", 173),
     // #2011 review: the safe rendering is its own module (50 → 46).
     ("src/interface/cli/uds_dispatch_discovery.rs", 46),
-    ("src/interface/cli/uds_safe_display.rs", 25),
+    ("src/interface/cli/uds_safe_display.rs", 24),
     // #1848 reasoning-effort injection plus #2009 scoped session dispatch.
     // #2011: the resume answers are the resume presenter's (259 → 246).
     ("src/interface/cli/uds_dispatch_session.rs", 243),

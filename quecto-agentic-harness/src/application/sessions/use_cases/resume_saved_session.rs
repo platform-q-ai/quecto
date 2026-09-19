@@ -44,13 +44,15 @@ pub struct ResumeSavedSession {
     children: Arc<DepartingChildren>,
     /// A `--no-session` loop: nothing is claimed, loaded or resumed.
     ephemeral: bool,
-    /// Mandatory scope admission (#2009) and the executable actions (#2011).
+    /// Scope admission (#2009) and the executable actions (#2011).
     eligibility: Eligibility,
 }
 
 #[path = "resume_saved_session_admission.rs"]
 mod resume_saved_session_admission;
 use resume_saved_session_admission::PendingClaim;
+#[path = "resume_saved_session_action.rs"]
+mod resume_saved_session_action;
 #[path = "resume_saved_session_decision.rs"]
 mod resume_saved_session_decision;
 use resume_saved_session_decision::{Admitted, Eligibility, admit};
@@ -87,12 +89,11 @@ impl ResumeSavedSession {
         self
     }
 
-    /// Answer a resume request (#2011): a cancel or an explicit action is
-    /// settled by [`admit`] before any effect; a restore leaves the current
-    /// session for the exact target. `messages` is the loop's live
-    /// conversation; `fleet` the loop's fleet teardown, if it has one;
-    /// `runtime` the loop runtime the switch moves. The effect-free
-    /// pre-flight spares a miss or decision the settlement; the claimed re-check is the authority.
+    /// Answer a resume request (#2011): [`admit`] settles a cancel and hands
+    /// any other action to `refuse`, both before any effect; a restore leaves
+    /// the current session for the exact target. `fleet` is the loop's teardown,
+    /// if any; `runtime` the loop runtime the switch moves. The effect-free
+    /// pre-flight spares a miss the settlement; the claimed re-check decides.
     pub async fn execute(
         &self,
         request: &ResumeRequest,
@@ -100,15 +101,17 @@ impl ResumeSavedSession {
         fleet: Option<&dyn FleetSettlement>,
         runtime: &mut dyn SessionSwitchRuntime,
     ) -> Result<ResumeOutcome, ResumeSavedSessionError> {
-        let target = match admit(self.ephemeral, &self.eligibility.capabilities, request)? {
-            Admitted::Cancelled(name) => return Ok(ResumeOutcome::Cancelled { name }),
-            Admitted::Restore(target) => target,
-        };
         let expected = request.expected_home_version.as_ref();
         let store = self.store.as_ref();
+        let checks = &self.eligibility;
+        let target = match admit(self.ephemeral, request)? {
+            Admitted::Cancelled(name) => return Ok(ResumeOutcome::Cancelled { name }),
+            Admitted::Act(to, act) => return Err(checks.refuse(store, &to, expected, act).await),
+            Admitted::Restore(target) => target,
+        };
         let old_identity = self.state.read().await.identity().clone();
         let own = old_identity == target.identity;
-        (self.eligibility.preflight(store, &target, expected, own)).await?;
+        (checks.preflight(store, &target, expected, own)).await?;
         let transition = SessionTransition::Resume;
         self.children
             .settle(fleet, transition)
@@ -123,10 +126,7 @@ impl ResumeSavedSession {
             .map_err(ResumeSavedSessionError::Claim)?;
         let mut claim = PendingClaim::new(self.store.clone(), target.identity.clone());
         claim.release = !own;
-        let loaded = self
-            .eligibility
-            .load_claimed(store, &target, expected)
-            .await?;
+        let loaded = checks.load_claimed(store, &target, expected).await?;
         self.children
             .note_persisted_rows_are_history(loaded.subagent_roster.len());
         if let Err(refused) = self.children.reset_roster(transition) {
