@@ -133,13 +133,13 @@ async fn persisted_home_is_local_but_legacy_and_foreign_startup_are_refused() {
             refused,
             ResumeSavedSessionError::StartupScope(StartupRefusal {
                 disposition: ResumeDisposition::DifferentExecutionDirectory,
-                execution_dir: None,
+                execution_dir: Some(_),
                 ..
             })
         ),
         "{refused:?}"
     );
-    assert!(refused.to_string().contains("-s <name>"), "{refused}");
+    assert!(refused.to_string().contains("quecto-tui -s"), "{refused}");
     assert_eq!(state.read().await.identity(), &identity);
     let resume = resume_over(&state_of(&legacy), save, store, context);
     let refused = resume.open_at_startup().await.expect_err("legacy record");
@@ -157,11 +157,8 @@ async fn persisted_home_is_local_but_legacy_and_foreign_startup_are_refused() {
     let text = refused.to_string();
     for expected in [
         "session 'chat-legacy' cannot start here",
-        "predates workspace scoping",
-        "-s <name>",
-        "--no-session",
-        "Global list",
-        "#2014",
+        "legacy session requires explicit first association",
+        "saved transcript was not changed",
     ] {
         assert!(text.contains(expected), "{text}");
     }
