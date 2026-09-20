@@ -91,6 +91,14 @@ Feature: Global session metadata search through the production runtime
     And the searched session is deleted before the operator selects it
     Then the selection is refused as not found and the active conversation is unchanged
 
+  Scenario: A session re-homed between the search and the selection is refused as stale
+    Given saved production sessions with distinct title key repository and path
+    When the operator opens resume with the active local conversation
+    And the operator selects All Folders in the resume picker
+    And the operator searches the resume picker for "zebra-title"
+    And the searched session is re-homed before the operator selects it
+    Then the selection is refused as a stale home version and the active conversation is unchanged
+
   Scenario: Escape after a search changes nothing
     Given saved production sessions with distinct title key repository and path
     When the operator opens resume with the active local conversation
@@ -98,3 +106,14 @@ Feature: Global session metadata search through the production runtime
     And the operator searches the resume picker for "zebra-title"
     And the operator cancels the resume picker
     Then no resume was requested and no saved session or home changed
+
+  Scenario: A corrupt index and a corrupt record are diagnosed without hiding a match
+    Given saved production sessions with distinct title key repository and path
+    And the derived home catalogue is corrupt
+    And a corrupt session record sits beside the saved sessions
+    When the operator opens resume with the active local conversation
+    And the operator selects All Folders in the resume picker
+    And the operator searches the resume picker for "zebra-title"
+    Then the searched sessions displayed are exactly "ZEBRA-TITLE"
+    And the search answers name the corrupt record and a later search reports no recovery
+    And exact-key resume of "cli:bytitle" is still answered with a decision

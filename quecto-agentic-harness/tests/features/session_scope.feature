@@ -12,10 +12,27 @@ Feature: Folder-aware saved sessions through the production runtime
     When the operator selects All Folders in the resume picker
     Then both saved conversations are displayed with their execution folders
 
+  Scenario: Exact global lookup cannot reuse a foreign conversation
+    Given saved production sessions in two different folders
+    When the operator opens resume with the active local conversation
+    And the operator requests the foreign session by exact key
+    Then the runtime refuses replacement as a different-execution-directory scope error
+    And the selected conversation identity history and ownership are preserved
+
   Scenario: Git discovery groups linked worktrees but keeps nested repositories separate
     Given saved production sessions across real Git workspaces
     When the operator opens resume through the production socket and TUI
     Then the picker groups root subfolder and linked worktree but excludes nested sessions
+
+  Scenario: Corrupt authoritative home stays globally visible but cannot restore
+    Given saved production sessions in two different folders
+    And the foreign saved home metadata is corrupt
+    When the operator opens resume with the active local conversation
+    And the operator selects All Folders in the resume picker
+    Then both saved conversations remain discoverable without repairing the corrupt home
+    When the operator requests the foreign session by exact key
+    Then the runtime refuses replacement as an unavailable-home scope error
+    And the selected conversation identity history and ownership are preserved
 
   Scenario: An ephemeral runtime leaves no durable home record
     When the operator opens resume in an ephemeral production runtime

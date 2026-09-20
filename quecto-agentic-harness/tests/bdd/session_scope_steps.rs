@@ -8,7 +8,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// What only an open resume decision dialog says, whatever its kind.
-const DIALOG_OPEN: &str = "your current session is untouched";
+/// What only the open notice of a refused resume says (#2045).
+const DIALOG_OPEN: &str = "Enter or Esc to close";
 
 #[derive(Debug)]
 pub struct ScopeProcess {
@@ -328,9 +329,16 @@ pub(super) fn socket_roundtrip(
 pub(super) fn assert_scope_refusal(world: &mut QuectoWorld, kind: &str) -> serde_json::Value {
     let response: serde_json::Value = serde_json::from_str(&world.stderr).unwrap();
     assert_eq!(response["success"], false, "{response}");
-    assert_eq!(response["data"]["outcome"], "decision", "{response}");
-    assert_eq!(response["data"]["code"], "decision_required", "{response}");
+    assert_eq!(response["data"]["outcome"], "refused", "{response}");
     assert_eq!(response["data"]["kind"], kind, "{response}");
+    // #2045: each kind has its own stable code; nothing is offered.
+    let code = match kind {
+        "cross_folder" => "belongs_elsewhere",
+        "legacy_unscoped" => "no_home_recorded",
+        other => other,
+    };
+    assert_eq!(response["data"]["code"], code, "{response}");
+    assert!(response["data"].get("actions").is_none(), "{response}");
     let error = response["error"]
         .as_str()
         .expect("typed resume error string");
@@ -405,8 +413,8 @@ fn preserved_active_identity(world: &mut QuectoWorld) {
     drop(target);
     let frame = drive(world, TuiHarness::full_frame);
     assert!(
-        frame.contains(DIALOG_OPEN) && frame.contains("Cancel"),
-        "typed decision visible: {frame}"
+        frame.contains(DIALOG_OPEN) && !frame.contains("Cancel"),
+        "the plain notice is visible and offers nothing: {frame}"
     );
     // ScopeProcess waits for exit; both keys must be claimable after teardown.
     drop(world.session_scope_process.take());
