@@ -156,7 +156,7 @@ async fn an_older_harnesss_decision_shaped_refusal_still_opens_the_notice() {
     asked_and_answered(
         &mut h,
         json!({
-            "outcome": "decision", "code": "decision_required", "kind": "home_missing",
+            "outcome": "decision", "code": "decision_required", "kind": "cross_folder",
             "session": "cli:foreign", "sessionKey": "cli:foreign",
             "homeVersion": "h1-0123456789abcdef",
             "executionPath": "/work/gone", "detail": "No such file or directory",
@@ -166,7 +166,7 @@ async fn an_older_harnesss_decision_shaped_refusal_still_opens_the_notice() {
     .await;
     let frame = h.full_frame();
     assert!(
-        frame.contains("This session's folder is missing or unreadable"),
+        frame.contains("This session belongs to another folder"),
         "{frame}"
     );
     assert!(frame.contains("/work/gone"), "{frame}");

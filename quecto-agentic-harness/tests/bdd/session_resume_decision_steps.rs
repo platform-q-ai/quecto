@@ -149,7 +149,10 @@ fn carries_command(world: &mut QuectoWorld) {
 fn carries_no_command(world: &mut QuectoWorld) {
     let data = answer(world)["data"].clone();
     assert!(data["command"].is_null(), "{data}");
-    assert_eq!(data["resume"], "/resume cli:foreign", "{data}");
+    assert!(
+        data["resume"].is_null(),
+        "only a session that lives elsewhere is told to go there: {data}"
+    );
 }
 
 /// The runtime's REAL answer, asked for and rendered by a fresh production

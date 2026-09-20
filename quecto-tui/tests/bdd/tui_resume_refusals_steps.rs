@@ -308,7 +308,8 @@ fn then_both_ends(world: &mut TuiWorld) {
     let rows = notice_rows(world);
     let folder_rows: Vec<&String> = rows
         .iter()
-        .skip(1)
+        // The title wraps on a narrow terminal; the folder starts at its root.
+        .skip_while(|row| !row.starts_with('/'))
         .take_while(|row| !row.starts_with("Open quecto"))
         .collect();
     let folder = folder_rows.iter().map(|r| r.as_str()).collect::<String>();

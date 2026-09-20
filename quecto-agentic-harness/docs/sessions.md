@@ -411,9 +411,14 @@ from the REAL folder as one POSIX single-quoted word (a contract test runs it
 in `sh` against hostile names), or spells **no command** when it would not
 read the way it runs — a folder that is not UTF-8, or one holding a control,
 Bidi_Control or invisible format character. `quecto-tui` takes no session
-flag, so the second step travels as its own field (`/resume <key>`). The
-startup refusal is read by someone who ran `quecto … -s <key>`: it names the
-folder, `cd '<folder>'`, and "then run the same command again".
+flag, so the second step travels as its own field (`/resume <key>`). Both are
+sent for ONE kind only — `ResumeDecisionKind::resumes_by_opening_quecto_there`
+(cross-folder): a changed home may be this very folder, a missing one cannot
+be entered, and an unknown or unrecorded one names nowhere to go, so those
+refusals carry neither. The startup refusal is read by someone who ran
+`quecto … -s <key>`: under the same rule, only a session that lives in another
+folder is given the folder, `cd '<folder>'`, and "then run the same command
+again"; the others say why and that the saved transcript was not changed.
 
 A request that still names an `action` (a pre-#2045 client) is
 `ResumeSavedSessionError::LegacyAction` (`legacy_action_unsupported`): the

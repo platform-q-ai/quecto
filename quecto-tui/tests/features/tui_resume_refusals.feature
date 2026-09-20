@@ -47,6 +47,20 @@ Feature: /resume shows a plain notice when the harness refuses a session that li
     And the notice shows "/resume cli:foreign"
     And the notice never shows "quecto-tui -s"
 
+  Scenario Outline: Only a session that lives elsewhere is told to go there
+    When I submit the master prompt "/resume cli:foreign"
+    And the harness refuses the resume as "<kind>" with code "<code>"
+    Then the notice shows "<why>"
+    And the notice never shows "quecto-tui"
+    And the notice never shows "/resume cli:foreign"
+
+    Examples:
+      | kind            | code             | why                           |
+      | home_missing    | home_missing     | Bring that folder back        |
+      | home_changed    | home_changed     | is a different project now    |
+      | home_unknown    | home_unknown     | folder record can't be read   |
+      | legacy_unscoped | no_home_recorded | before quecto tracked folders |
+
   Scenario: A folder that cannot be read says why under the folder
     When I submit the master prompt "/resume cli:foreign"
     And the harness refuses the resume as "home_missing" with detail "Permission denied (os error 13)"
@@ -108,8 +122,8 @@ Feature: /resume shows a plain notice when the harness refuses a session that li
 
   Scenario: An older harness's decision still reads as the same notice with nothing to run
     When I submit the master prompt "/resume cli:foreign"
-    And an older harness answers the resume with a "home_missing" decision
-    Then the notice is titled "This session's folder is missing or unreadable"
+    And an older harness answers the resume with a "cross_folder" decision
+    Then the notice is titled "This session belongs to another folder"
     And the notice shows "Open quecto in that folder and resume it there."
 
   Scenario: A command the terminal could not show as written is not shown at all
