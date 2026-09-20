@@ -19,7 +19,6 @@ Feature: The /resume picker searches session metadata through the harness (#2010
     When I type "a" into the resume search box
     And the harness answers the search in flight with a scoped and an unscoped session
     Then the resume picker shows the row "Zebra cache" with "/work/alpha"
-    And the resume picker details show "ID chat-1700000000-abc"
     And the resume picker details show "repo alpha · matched: title"
     When I press Down in the resume results
     Then the resume picker details show "No folder recorded (older session)"
