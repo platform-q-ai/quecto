@@ -371,7 +371,7 @@ mod tui_paged_history_1094_steps;
 mod tui_paged_history_steps;
 mod tui_per_connection_state_steps;
 mod tui_pid_safety_steps;
-mod tui_resume_decisions_steps;
+mod tui_resume_refusals_steps;
 mod tui_session_search_steps;
 mod tui_setup_steps;
 mod tui_stdin_buffer_cap_steps;
