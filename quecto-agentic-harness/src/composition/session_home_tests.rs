@@ -139,7 +139,15 @@ async fn persisted_home_is_local_but_legacy_and_foreign_startup_are_refused() {
         ),
         "{refused:?}"
     );
-    assert!(refused.to_string().contains("quecto-tui -s"), "{refused}");
+    let said = refused.to_string();
+    assert!(
+        said.contains("\ncd '") && said.ends_with("then run the same command again"),
+        "{said}"
+    );
+    assert!(
+        !said.contains("quecto-tui"),
+        "the reader ran quecto, not the TUI: {said}"
+    );
     assert_eq!(state.read().await.identity(), &identity);
     let resume = resume_over(&state_of(&legacy), save, store, context);
     let refused = resume.open_at_startup().await.expect_err("legacy record");

@@ -120,6 +120,8 @@ const CANONICAL_FILES: &[&str] = &[
     "src/infrastructure/persistence/session_home_catalogue_seed.rs",
     "src/infrastructure/persistence/session_record_read.rs",
     "src/domain/session_path_text.rs",
+    // #2045: the shell command that opens quecto in a session's folder.
+    "src/domain/session_open_command.rs",
     "src/domain/session_query_refusal.rs",
     "src/interface/cli/protocol_search_rescue.rs",
     "src/interface/cli/uds_freshness_json.rs",
@@ -698,9 +700,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/interface/uds/sessions/resume_session_controller.rs",
         55,
     ),
-    ("src/interface/cli/uds_dispatch_resume.rs", 100),
+    ("src/interface/cli/uds_dispatch_resume.rs", 66),
     ("src/application/sessions/dto/resume_disposition.rs", 30),
-    ("src/application/sessions/dto/startup_refusal.rs", 40),
+    ("src/application/sessions/dto/startup_refusal.rs", 31),
     // D9 #1978: retained context.
     ("src/application/sessions/use_cases/recall_context.rs", 80),
     ("src/application/sessions/use_cases/retain_context.rs", 118),
@@ -830,6 +832,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // Review round 2: the refusal, the injective path spelling, the rescue of
     // a number no `f64` holds and the bounded freshness tail are new owners.
     ("src/domain/session_path_text.rs", 23),
+    ("src/domain/session_open_command.rs", 44),
     ("src/domain/session_query_refusal.rs", 31),
     ("src/interface/cli/protocol_search_rescue.rs", 51),
     ("src/interface/cli/uds_freshness_json.rs", 33),

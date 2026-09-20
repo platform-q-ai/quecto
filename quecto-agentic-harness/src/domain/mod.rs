@@ -54,6 +54,7 @@ pub mod resume_decision;
 pub mod session_home;
 pub mod session_metadata_search;
 pub mod session_metadata_text;
+pub mod session_open_command;
 pub mod session_path_text;
 pub mod session_query_refusal;
 mod stable_digest;

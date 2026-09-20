@@ -1,5 +1,6 @@
 //! Command-line wording for refusal to start a saved session in this folder.
 use super::resume_saved_session::ResumeDisposition;
+use crate::domain::session_open_command::cd_there_command;
 use crate::domain::session_path_text::display_path;
 use std::path::PathBuf;
 
@@ -21,18 +22,10 @@ impl std::fmt::Display for StartupRefusal {
             return f.write_str(". The saved transcript was not changed.");
         };
         write!(f, ". Open quecto there: {}", display_path(dir))?;
-        if let Some(raw) = dir.to_str() {
-            write!(
-                f,
-                "\ncd {} && quecto-tui -s {}",
-                shell_quote(raw),
-                shell_quote(&self.key)
-            )?;
+        // The reader ran this command themselves: they repeat it from there.
+        if let Some(cd) = cd_there_command(dir) {
+            write!(f, "\n{cd}\nthen run the same command again")?;
         }
         Ok(())
     }
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
 }
