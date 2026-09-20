@@ -13,7 +13,7 @@ impl App {
         self.ac_mut().rewind.request_seq = self.ac_mut().rewind.request_seq.wrapping_add(1);
         format!(
             "{}rewind-{kind}-{}-{}",
-            self.ac().id_namespace(),
+            String::new(),
             super::app_events::uuid_like(),
             self.ac().rewind.request_seq
         )

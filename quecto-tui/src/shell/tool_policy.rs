@@ -33,10 +33,7 @@ impl From<ScopeSelection> for ToolScope {
 
 impl App {
     pub(super) fn open_tool_policy_modal(&mut self) {
-        let id = self.ac().namespaced_id(&format!(
-            "tool-policy-catalogue-{}",
-            super::app_events::uuid_like()
-        ));
+        let id = format!("tool-policy-catalogue-{}", super::app_events::uuid_like());
         self.tool_policy_modal_pending_catalogue_id = Some(id.clone());
         self.send_command(Command::GetToolCatalogue { id: Some(id) });
         self.notify("Requested tool catalogue", NotifyLevel::Info);
@@ -113,7 +110,7 @@ impl App {
                     })
                     .collect::<Vec<_>>();
                 self.send_command(Command::SetToolPolicy {
-                    id: Some(self.ac().namespaced_id("tool-policy-apply")),
+                    id: Some("tool-policy-apply".to_string()),
                     mutations,
                     mode: ToolPolicyApplyMode::ImmediateIfIdle,
                     operation: ToolPolicyOperation::Replace,

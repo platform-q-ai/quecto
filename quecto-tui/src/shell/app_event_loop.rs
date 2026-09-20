@@ -170,10 +170,10 @@ impl App {
     pub(super) fn send_startup_requests(&mut self) {
         self.send_command(Command::GetState {
             agent_id: None,
-            id: Some(self.ac().namespaced_id("init")),
+            id: Some(format!("init-{}", super::app_events::uuid_like())),
         });
         self.send_command(Command::GetSubagents {
-            id: Some(self.ac().namespaced_id("init-subagents")),
+            id: Some(format!("init-subagents-{}", super::app_events::uuid_like())),
         });
         self.request_master_attach_backfill();
     }

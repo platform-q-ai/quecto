@@ -372,7 +372,7 @@ async fn rewind_request_ids_use_fresh_production_tokens_per_request() {
     for kind in ["open", "load", "to"] {
         let first_id = h.app_mut().next_rewind_request_id(kind);
         let second_id = h.app_mut().next_rewind_request_id(kind);
-        let prefix = format!("tab0:rewind-{kind}-");
+        let prefix = format!("rewind-{kind}-");
         let first_token = first_id
             .strip_prefix(&prefix)
             .and_then(|rest| rest.rsplit_once('-'))
@@ -392,84 +392,10 @@ async fn rewind_request_ids_use_fresh_production_tokens_per_request() {
     }
 }
 
-// --- #1463: minted correlation ids carry a connection namespace -------------
-//
-// Every correlation id this client mints carries the connection namespace
-// prefix `tab0:` (#1463; a constant since #2044).
-
-/// Namespace prefix every minted correlation id must carry (#1463).
-const MASTER_NAMESPACE: &str = "tab0:";
-
-#[track_caller]
-fn assert_namespaced(id: &str, what: &str) {
-    assert!(
-        id.starts_with(MASTER_NAMESPACE),
-        "{what} must be namespaced to its connection (#1463): \
-         expected prefix {MASTER_NAMESPACE:?}, got {id:?}"
-    );
-}
+// --- Minted startup correlation ids are unique per request. ---
 
 #[tokio::test]
-async fn minted_resume_id_carries_connection_namespace() {
-    let mut h = harness().await;
-    let id = mint_resume_id(&mut h).await;
-    assert_namespaced(&id, "solicited resume get_messages id");
-}
-
-#[tokio::test]
-async fn minted_rewind_refresh_id_carries_connection_namespace() {
-    let mut h = harness().await;
-    let id = mint_rewind_refresh_id(&mut h).await;
-    assert_namespaced(&id, "post-rewind refresh get_messages id");
-}
-
-#[tokio::test]
-async fn minted_attach_backfill_id_carries_connection_namespace() {
-    let mut h = harness().await;
-    let id = mint_attach_id(&mut h).await;
-    assert_namespaced(&id, "attach backfill get_messages id");
-}
-
-#[tokio::test]
-async fn rewind_flow_request_ids_carry_connection_namespace() {
-    let mut h = harness().await;
-    for kind in ["open", "load", "to"] {
-        let id = h.app_mut().next_rewind_request_id(kind);
-        assert_namespaced(&id, "rewind flow request id");
-    }
-}
-
-#[tokio::test]
-async fn message_recovery_ids_carry_connection_namespace() {
-    let mut h = harness().await;
-    // A finished run whose refs delivered no assistant content forces the
-    // #1060 fetch-on-miss recovery, minting one request id per ref plus a
-    // batch id.
-    h.app_mut().handle_event(Event::AgentStart);
-    h.app_mut().handle_event(Event::AgentEnd {
-        messages: vec![],
-        message_refs: vec!["m-1463".into()],
-    });
-    let _ = h.drain_commands().await;
-    let app = h.app_mut();
-    assert!(
-        !app.ac().pending_message_recovery.is_empty(),
-        "precondition: content-less refs mint recovery requests"
-    );
-    for id in app.ac().pending_message_recovery.keys() {
-        assert_namespaced(id, "message-recovery request id");
-    }
-    assert!(
-        !app.ac().message_recovery_batches.is_empty(),
-        "precondition: recovery mints a batch id"
-    );
-    for id in app.ac().message_recovery_batches.keys() {
-        assert_namespaced(id, "message-recovery batch id");
-    }
-}
-
-#[tokio::test]
-async fn startup_request_ids_carry_connection_namespace() {
+async fn startup_request_ids_are_freshly_minted() {
     // The connect-time literals ("init", "init-subagents") and the attach
     // backfill are minted ids too (#1463 scope).
     let mut h = harness().await;
@@ -485,116 +411,18 @@ async fn startup_request_ids_carry_connection_namespace() {
         3,
         "startup sends get_state + get_subagents + attach backfill: {commands:?}"
     );
-    for id in &ids {
-        assert_namespaced(id, "startup request id");
-    }
-    assert!(
-        ids.iter().any(|id| id.ends_with(":init")),
-        "get_state keeps its init suffix under the namespace: {ids:?}"
-    );
-    assert!(
-        ids.iter().any(|id| id.ends_with(":init-subagents")),
-        "get_subagents keeps its init-subagents suffix under the namespace: {ids:?}"
-    );
-}
-
-#[tokio::test]
-async fn stub_recall_ids_carry_connection_namespace() {
-    use super::app_paged_history_tests::prime_active_viewport;
-    let mut h = harness().await;
-    respond(
-        h.app_mut(),
-        Some("attach-backfill"),
-        "get_messages",
-        true,
-        serde_json::json!({
-            "messages": [{
-                "id": "stub-1463",
-                "role": "assistant",
-                "content": "[assistant stub — recall available]",
-                "collapsed": true,
-            }],
-            "hasMoreBefore": false,
-            "before": null,
-        }),
-    );
-    let _ = h.drain_commands().await;
-    prime_active_viewport(h.app_mut());
-    h.app_mut().handle_key(Key::PageUp);
-    let _ = h.drain_commands().await;
-    let app = h.app_mut();
-    assert!(
-        !app.ac().pending_stub_recall.is_empty(),
-        "precondition: a visible stub mints a recall request"
-    );
-    for id in app.ac().pending_stub_recall.keys() {
-        assert_namespaced(id, "stub-recall request id");
-    }
-}
-
-#[tokio::test]
-async fn routed_subagent_feed_ids_carry_connection_namespace() {
-    // The inspection-feed "initial" literals ride routed ids on the MASTER
-    // connection; broadcast responses to them must be tab-scoped too (#1463).
-    let mut h = harness().await;
-    h.app_mut()
-        .update_subagent_bar(vec![crate::protocol::client::SubagentInfoEvent {
-            agent_uuid: Some("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into()),
-            display_name: Some("worker-ns".into()),
-            agent_id: "worker-ns".into(),
-            status: "running".into(),
-            last_tool: None,
-            last_error: None,
-            compact: false,
-            pid: 1,
-            socket_path: None,
-            parent_id: None,
-            workflow: None,
-            read_only: false,
-            execution_backend: None,
-            environment: None,
-        }]);
-    h.app_mut()
-        .ensure_synced_subagent_feed("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
-    let commands = h.drain_commands().await;
-    let ids: Vec<String> = commands
-        .iter()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter_map(|cmd| cmd.get("id").and_then(|v| v.as_str()).map(str::to_owned))
-        .filter(|id| id.contains("subagent-"))
-        .collect();
-    assert!(
-        !ids.is_empty(),
-        "precondition: an inspection-only feed sends routed requests: {commands:?}"
-    );
-    for id in &ids {
-        assert_namespaced(id, "routed sub-agent feed request id");
-    }
-}
-
-#[tokio::test]
-async fn foreign_namespace_response_does_not_resolve_pending_resume() {
-    // The other side of the namespace boundary (#1463 review): prefixing on
-    // mint is worthless if matching strips or ignores the prefix.
-    let mut h = harness().await;
-    let id = mint_resume_id(&mut h).await;
-    let foreign = format!("tab1:{}", id.strip_prefix(MASTER_NAMESPACE).unwrap_or(&id));
-    respond(
-        h.app_mut(),
-        Some(&foreign),
-        "get_messages",
-        true,
-        legacy_messages("foreign resumed user", "foreign resumed assistant"),
-    );
+    let unique: std::collections::HashSet<_> = ids.iter().collect();
     assert_eq!(
-        h.app_mut().test_pending_resume_messages_id(),
-        Some(id.as_str()),
-        "a response bearing another tab's namespace must leave this tab's \
-         pending resume fetch unresolved (#1463)"
+        unique.len(),
+        ids.len(),
+        "startup ids must be unique: {ids:?}"
     );
-    let frame = b_frame(h.app_mut());
     assert!(
-        !frame.contains("foreign resumed user"),
-        "a foreign-namespace transcript must not land in this tab:\n{frame}"
+        ids.iter().any(|id| id.starts_with("init-")),
+        "get_state mints a fresh init id: {ids:?}"
+    );
+    assert!(
+        ids.iter().any(|id| id.starts_with("init-subagents-")),
+        "get_subagents mints a fresh init-subagents id: {ids:?}"
     );
 }

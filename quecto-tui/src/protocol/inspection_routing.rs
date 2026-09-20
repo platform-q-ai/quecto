@@ -1,21 +1,15 @@
 use super::client::Command;
 
-fn subagent_inspection_id(
-    ns: &str,
-    kind: &str,
-    agent_id: &str,
-    id: Option<String>,
-) -> Option<String> {
+fn subagent_inspection_id(kind: &str, agent_id: &str, id: Option<String>) -> Option<String> {
     let suffix = id.unwrap_or_default();
-    Some(format!("{ns}subagent-{kind}:{}:{}", agent_id.len(), agent_id,) + ":" + &suffix)
+    Some(format!(
+        "subagent-{kind}:{}:{agent_id}:{suffix}",
+        agent_id.len()
+    ))
 }
 
-/// `ns` is the owning tab's connection namespace (`tab{N}:`, #1463): minted
-/// ids carry it so broadcast responses can never match another tab's feeds.
-/// ONE routable-variant list serves both routing and namespacing (#1472 r1).
-/// Whether `cmd` is a routable inspection command — the side-effect-free
-/// gate for inspection-only feeds (#1472 r2: no Command clone, and no
-/// empty-namespace sentinel that could leak un-namespaced ids).
+/// Whether `cmd` is a routable, side-effect-free inspection command.
+/// This affirmative allowlist is shared by every inspection feed.
 pub(crate) fn is_inspection_routable(cmd: &Command) -> bool {
     matches!(
         cmd,
@@ -27,23 +21,23 @@ pub(crate) fn is_inspection_routable(cmd: &Command) -> bool {
     )
 }
 
-pub(crate) fn with_inspection_agent_id(cmd: &Command, agent_id: &str, ns: &str) -> Option<Command> {
+pub(crate) fn with_inspection_agent_id(cmd: &Command, agent_id: &str) -> Option<Command> {
     let routed_agent_id = Some(agent_id.to_string());
     Some(match cmd.clone() {
         Command::GetState { id, .. } => Command::GetState {
-            id: subagent_inspection_id(ns, "state", agent_id, id),
+            id: subagent_inspection_id("state", agent_id, id),
             agent_id: routed_agent_id.clone(),
         },
         Command::GetMessages {
             id, before, count, ..
         } => Command::GetMessages {
-            id: subagent_inspection_id(ns, "messages", agent_id, id),
+            id: subagent_inspection_id("messages", agent_id, id),
             before,
             count,
             agent_id: routed_agent_id.clone(),
         },
         Command::GetMessagesTail { id, count, .. } => Command::GetMessagesTail {
-            id: subagent_inspection_id(ns, "tail", agent_id, id),
+            id: subagent_inspection_id("tail", agent_id, id),
             count,
             agent_id: routed_agent_id,
         },
@@ -56,7 +50,7 @@ pub(crate) fn with_inspection_agent_id(cmd: &Command, agent_id: &str, ns: &str) 
             limit,
             ..
         } => Command::GetMessage {
-            id: subagent_inspection_id(ns, "message", agent_id, id),
+            id: subagent_inspection_id("message", agent_id, id),
             message_id,
             agent_id: routed_agent_id,
             tool_call_id,
@@ -70,7 +64,7 @@ pub(crate) fn with_inspection_agent_id(cmd: &Command, agent_id: &str, ns: &str) 
             since_rev,
             ..
         } => Command::Sync {
-            id: subagent_inspection_id(ns, "sync", agent_id, id),
+            id: subagent_inspection_id("sync", agent_id, id),
             epoch,
             since_rev,
             agent_id: routed_agent_id,

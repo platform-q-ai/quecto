@@ -55,7 +55,6 @@ fn inspection_routing_preserves_get_message_thinking_offset() {
             limit: Some(11),
         },
         "child-a",
-        "tab0:",
     )
     .expect("get_message with thinking cursor must route");
 

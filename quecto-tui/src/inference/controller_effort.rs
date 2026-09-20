@@ -91,7 +91,7 @@ impl App {
         // The TUI offers no pin for effort (#2024 S2 pins the model from
         // `/model`; effort defaults are the CLI's `quecto config set`).
         let cmd = Command::SetEffort {
-            id: Some(self.ac().namespaced_id("se")),
+            id: Some("se".to_string()),
             effort: effort.to_string(),
             persist: None,
         };
@@ -138,7 +138,7 @@ impl App {
     pub(super) fn send_state_resync(&mut self) {
         self.send_command(Command::GetState {
             agent_id: None,
-            id: Some(self.ac().namespaced_id("resync")),
+            id: Some("resync".to_string()),
         });
     }
 }

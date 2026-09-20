@@ -1,10 +1,9 @@
 use crate::components::effort_selector::EffortSelector;
 use crate::components::model_selector::{ModelEntry, ModelSelector};
 
-/// Global selector-overlay half of the inference flow (#1463): the model /
-/// effort selector overlays and registry are app-chrome shared across tabs;
-/// the per-connection model/effort STATE lives in [`ConnInference`] on
-/// `ConnectionState`.
+/// Global selector-overlay half of the inference flow: the model / effort
+/// selector overlays and registry are shared app chrome; the connection's
+/// model/effort state lives in [`ConnInference`] on `ConnectionState`.
 #[derive(Default)]
 pub(super) struct InferenceFlow {
     /// The model selector component (created on demand, pushed onto overlay stack).
@@ -14,8 +13,7 @@ pub(super) struct InferenceFlow {
     pub(super) effort_selector: Option<EffortSelector>,
 }
 
-/// Per-connection inference state (#1463): the model/effort the TAB's agent
-/// currently runs with, scoped to its connection.
+/// Connection inference state: the model and effort the connected agent uses.
 #[derive(Default)]
 pub(crate) struct ConnInference {
     pub(crate) current_model: Option<String>,

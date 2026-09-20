@@ -24,10 +24,7 @@ impl App {
     ) {
         // A listing replaces whatever a search in flight would have shown.
         self.ac_mut().sessions.search.superseded();
-        let id = self.ac().namespaced_id(&format!(
-            "resume-list-{}",
-            super::super::app_events::uuid_like()
-        ));
+        let id = format!("resume-list-{}", super::super::app_events::uuid_like());
         self.ac_mut().sessions.pending_list_id = Some(id.clone());
         self.ac_mut().sessions.scope = scope;
         // The rows on screen are about to be replaced: their versions with them.
@@ -112,9 +109,7 @@ impl App {
     /// The one `resume_session` send: stable identity, optional explicit
     /// action and the home version the user was shown (#2011).
     pub(in crate::shell) fn send_resume_selection(&mut self, resume: ResumeSelection) {
-        let id = self
-            .ac()
-            .namespaced_id(&format!("resume-{}", super::super::app_events::uuid_like()));
+        let id = format!("resume-{}", super::super::app_events::uuid_like());
         self.ac_mut().pending_session_resume_id = Some(id.clone());
 
         let sent = self.send_command(Command::ResumeSession {

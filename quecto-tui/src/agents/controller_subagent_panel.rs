@@ -121,7 +121,7 @@ impl App {
         }
         // No stream state observed yet: the child feed may have joined MID-TURN
         // and missed `agent_start`, so `session.running` reads a false
-        // negative. Fall back to the active tab's tracked status (`subagent_local`)
+        // negative. Fall back to the connection's tracked status (`subagent_local`)
         // so Esc still cancels a busy sub-agent instead of navigating to master.
         let ui = &self.ac().roster;
         match &ui.active_agent_id {
@@ -302,7 +302,7 @@ impl App {
                     .is_none_or(|fresh| fresh.elapsed().as_secs() > 0)
         });
         if stale {
-            let sync_id = self.ac().namespaced_id("subagent-sync");
+            let sync_id = "subagent-sync".to_string();
             if let Some(feed) = self.ac_mut().roster.feeds.get_mut(id) {
                 let _ = feed.cmd_tx.try_send(Command::Sync {
                     agent_id: None,

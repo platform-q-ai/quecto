@@ -47,7 +47,7 @@ pub enum Overdue {
 /// What to do with an answer that arrived.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Settled {
-    /// Not the search in flight (another tab's, a closed picker's): ignore it.
+    /// Not the exact search in flight (another client's, a closed picker's): ignore it.
     Foreign,
     /// The search in flight, overtaken by an edit: show it only as
     /// `progress`, never as the settled answer, and send the latest if `resend`.

@@ -60,9 +60,8 @@ impl App {
         let connect_dispatch = tracing::dispatcher::get_default(Clone::clone);
         let inspection_only = !usable_socket_path(socket.as_deref());
         // Every id this feed mints (direct-socket literals and routed
-        // inspection ids alike) carries the tab's connection namespace
-        // (#1463) so broadcast responses can never match another tab's feed.
-        let ns = self.ac().id_namespace();
+        // inspection ids alike) remains exactly attributable to this
+        // connection, so broadcast responses cannot settle another client.
         let handle = if !inspection_only {
             let path = std::path::PathBuf::from(socket.expect("checked usable socket"));
             let tx = self.subagents.event_tx.clone();
@@ -73,13 +72,13 @@ impl App {
                 };
                 let _ = client
                     .send(&Command::GetState {
-                        id: Some(crate::shell::connection::feed_id(&ns, "subagent-state")),
+                        id: Some("subagent-state".into()),
                         agent_id: None,
                     })
                     .await;
                 let _ = client
                     .send(&Command::Sync {
-                        id: Some(crate::shell::connection::feed_id(&ns, "subagent-sync")),
+                        id: Some("subagent-sync".into()),
                         epoch: 0,
                         since_rev: 0,
                         agent_id: None,
@@ -108,7 +107,7 @@ impl App {
                         id: Some("initial".into()),
                         agent_id: None,
                     }
-                    .with_inspection_agent_id(&agent_id, &ns)
+                    .with_inspection_agent_id(&agent_id)
                     .expect("get_state is routable inspection"),
                 );
                 let _ = root_sender.try_send(
@@ -118,7 +117,7 @@ impl App {
                         since_rev: 0,
                         agent_id: None,
                     }
-                    .with_inspection_agent_id(&agent_id, &ns)
+                    .with_inspection_agent_id(&agent_id)
                     .expect("sync is routable inspection"),
                 );
                 // A cold routed feed has no direct child stream to backfill from.
@@ -131,11 +130,11 @@ impl App {
                         count: 20,
                         agent_id: None,
                     }
-                    .with_inspection_agent_id(&agent_id, &ns)
+                    .with_inspection_agent_id(&agent_id)
                     .expect("get_messages_tail is routable inspection"),
                 );
                 while let Some(cmd) = cmd_rx.recv().await {
-                    if let Some(routed) = cmd.with_inspection_agent_id(&agent_id, &ns) {
+                    if let Some(routed) = cmd.with_inspection_agent_id(&agent_id) {
                         let _ = root_sender.try_send(&routed);
                     }
                 }

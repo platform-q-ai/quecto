@@ -99,7 +99,7 @@ fn delete_response(success: bool) -> Event {
 }
 
 fn reconcile_id(h: &mut TuiHarness) -> String {
-    h.app_mut().ac().namespaced_id("delete-all-reconcile")
+    "delete-all-reconcile".to_string()
 }
 
 #[tokio::test]

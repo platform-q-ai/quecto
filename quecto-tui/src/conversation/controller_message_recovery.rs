@@ -68,7 +68,7 @@ impl App {
         }
         let batch_id = format!(
             "{}recovery-batch-{}",
-            self.ac().id_namespace(),
+            String::new(),
             super::app_events::uuid_like()
         );
         self.ac_mut().message_recovery_batches.insert(
@@ -86,7 +86,7 @@ impl App {
             }
             let req_id = format!(
                 "{}msg-recovery-{}",
-                self.ac().id_namespace(),
+                String::new(),
                 super::app_events::uuid_like()
             );
             self.ac_mut().pending_message_recovery.insert(
@@ -199,7 +199,7 @@ impl App {
             }) => {
                 let req_id = format!(
                     "{}msg-recovery-{}",
-                    self.ac().id_namespace(),
+                    String::new(),
                     super::app_events::uuid_like()
                 );
                 let message_id = pending.message_id;
@@ -242,7 +242,7 @@ impl App {
             };
             let req_id = format!(
                 "{}msg-recovery-{}",
-                self.ac().id_namespace(),
+                String::new(),
                 super::app_events::uuid_like()
             );
             let message_id = pending.message_id;

@@ -1,6 +1,6 @@
 # ADR-0025 — TUI Ordinary Exit Terminates Owned Agents After Durable Roster Capture
 
-**Status:** Proposed.
+**Status:** Rejected — superseded by ADR-0027.
 
 **Supersedes:** ADR-0023 lifecycle inversion only. ADR-0023's process-per-tab topology and shared-state invariants still stand.
 

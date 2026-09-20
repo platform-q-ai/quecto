@@ -60,10 +60,10 @@ impl App {
             scope: picker.scope(),
             generation,
         };
-        let id = self.ac().namespaced_id(&format!(
+        let id = format!(
             "resume-search-{}",
             super::super::super::app_events::uuid_like()
-        ));
+        );
         let now = self.clock.now();
         self.ac_mut()
             .sessions

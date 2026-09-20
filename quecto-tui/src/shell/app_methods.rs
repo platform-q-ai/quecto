@@ -127,7 +127,7 @@ impl App {
     pub(super) fn toggle_workflow_auto_continue(&mut self) {
         let next = !self.ac().workflow.auto_continue;
         self.send_command(Command::SetWorkflowAutomation {
-            id: Some(self.ac().namespaced_id("workflow-auto")),
+            id: Some("workflow-auto".to_string()),
             auto_continue: Some(next),
             completion_nudge: None,
         });
@@ -136,7 +136,7 @@ impl App {
     pub(super) fn toggle_workflow_completion_nudge(&mut self) {
         let next = !self.ac().workflow.completion_nudge;
         self.send_command(Command::SetWorkflowAutomation {
-            id: Some(self.ac().namespaced_id("workflow-nudge")),
+            id: Some("workflow-nudge".to_string()),
             auto_continue: None,
             completion_nudge: Some(next),
         });
@@ -144,7 +144,7 @@ impl App {
 
     pub(super) fn send_session_stats(&mut self) {
         self.send_command(Command::GetSessionStats {
-            id: Some(self.ac().namespaced_id("stats")),
+            id: Some("stats".to_string()),
         });
     }
 
@@ -152,7 +152,7 @@ impl App {
     /// line). Routed by the "stats-footer" id in the response handler.
     pub(super) fn send_session_stats_footer(&mut self) {
         self.send_command(Command::GetSessionStats {
-            id: Some(self.ac().namespaced_id("stats-footer")),
+            id: Some("stats-footer".to_string()),
         });
     }
 

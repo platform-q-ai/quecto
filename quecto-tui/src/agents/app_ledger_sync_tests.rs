@@ -477,7 +477,7 @@ async fn issue_1605_periodic_refresh_uses_the_connection_namespace_and_cursor() 
     let command = rx.try_recv().expect("periodic refresh on the feed");
     assert!(
         matches!(command, Command::Sync { id: Some(id), epoch, since_rev, .. }
-        if id == "tab0:subagent-sync" && epoch == 3 && since_rev == 8)
+        if id == "subagent-sync" && epoch == 3 && since_rev == 8)
     );
 }
 

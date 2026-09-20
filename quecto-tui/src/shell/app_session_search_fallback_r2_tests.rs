@@ -76,7 +76,7 @@ async fn a_peers_parse_error_is_silent_and_our_own_adds_no_generic_toast() {
         (None, unknown),
         (None, malformed),
         (Some("other-tab:req-7".to_string()), unknown),
-        (Some("tab0:req-7".to_string()), malformed),
+        (Some("req-7".to_string()), malformed),
     ] {
         h.app_mut()
             .handle_response(id, "parse_error".into(), false, None, Some(error.into()));
