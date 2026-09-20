@@ -30,9 +30,13 @@ connection and presents one session at a time.
 
 - The TUI has no tab multiplexer, tab-agent registry, or workspace manifest.
   `/new` and `/resume` change the session through the existing connection.
-- Request correlation uses process-unique opaque ids and exact pending-id
-  equality. The client adds no tab namespace, and the harness continues to
-  treat ids as opaque.
+- Request ids are opaque and carry no tab namespace; the harness continues to
+  treat them as opaque. A request whose answer belongs to the asking client
+  (history and resume fetches, searches, the exit persist) is minted
+  process-unique and matched by exact pending-id equality. Requests for shared
+  harness state (model, effort, stats, roster refresh) keep fixed ids on
+  purpose: every attached client applies the same answer from one ordered
+  stream, so no correlation machinery is added for them.
 - Ctrl-D, `/exit`, and `/quit` retain the common ordinary-exit path established
   by ADR-0025's later lifecycle corrections: persist the current state, ask the
   one owned harness leader to shut down, and use its bounded settlement

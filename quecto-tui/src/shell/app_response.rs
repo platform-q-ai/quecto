@@ -172,8 +172,8 @@ impl App {
         error: Option<String>,
     ) {
         if let Some(agent_id) = id.as_deref().and_then(|id| {
-            // Own-namespace only (#1472 r2): a foreign rev-relative sync
-            // delta must never fast-forward this feed's rev.
+            // Routed ids are agent-keyed; a feed applies a rev-relative sync
+            // delta only through its own epoch/rev check (#1472 r2).
             routed_subagent_prefix(
                 id,
                 &[

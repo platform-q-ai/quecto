@@ -210,7 +210,7 @@ async fn a_failed_send_frees_the_flight_and_a_closed_picker_sends_nothing() {
 async fn a_harness_without_the_command_frees_the_flight_and_says_so() {
     let mut h = harness().await;
     open_picker(&mut h).await;
-    // Not about a search, or no search in flight: not this tab's.
+    // Not about a search, or no search in flight: not this client's.
     h.app_mut()
         .handle_search_parse_error(None, Some("unknown variant `search_session_metadata`"));
     assert!(h.notification_messages().is_empty());

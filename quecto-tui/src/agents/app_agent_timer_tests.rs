@@ -374,7 +374,7 @@ async fn late_agent_error_does_not_add_idle_time_to_coordinator_timer() {
 }
 
 /// A resume answer is a session boundary only when it names a different
-/// session (or one this tab had not learned yet); a failed resume and a
+/// session (or one this client had not learned yet); a failed resume and a
 /// resume into the same session keep the clock.
 #[tokio::test(start_paused = true)]
 async fn resume_resets_the_clock_only_on_a_session_identity_change() {
@@ -427,7 +427,7 @@ async fn resume_resets_the_clock_only_on_a_session_identity_change() {
     );
 }
 
-/// Only this tab's own resume answer settles its resume latches: a foreign
+/// Only this client's own resume answer settles its resume latches: a foreign
 /// answer (another client resumed the shared agent) still refreshes the view
 /// but leaves the in-flight resume to be answered.
 #[tokio::test(start_paused = true)]
@@ -448,7 +448,7 @@ async fn only_the_owned_resume_answer_settles_the_latches() {
     assert_eq!(
         h.app_mut().test_pending_session_resume(),
         Some("resume-mine"),
-        "a foreign answer leaves this tab's resume in flight"
+        "a foreign answer leaves this client's resume in flight"
     );
     h.app_mut().handle_response(
         Some("resume-mine".into()),

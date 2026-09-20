@@ -1055,6 +1055,15 @@ const REMOVED_MULTI_TAB_SYMBOLS: &[RemovedSymbol] = {
         Word("test_open_disconnected_tab"),
         Word("tui_harness_tabs"),
         Prefix("app_tab_collection"),
+        // #2044 PR 2b: request ids carry no tab namespace.
+        Word("ID_NAMESPACE"),
+        Word("id_namespace"),
+        Word("namespaced_id"),
+        Word("strip_tab_namespace"),
+        Word("feed_id"),
+        Word("MASTER_NAMESPACE"),
+        Word("assert_namespaced"),
+        Prefix("workspace_resume"),
     ]
 };
 

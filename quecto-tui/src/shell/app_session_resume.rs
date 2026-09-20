@@ -1,4 +1,4 @@
-//! `/resume` request and response handling: the request id owned by this tab,
+//! `/resume` request and response handling: the request id owned by this client,
 //! the Coordinator clock reset on a session identity change, and the view
 //! refresh every resume answer triggers (#1726). Child module of
 //! `app_response`.
@@ -122,10 +122,10 @@ impl App {
     }
 
     /// A restore refreshes the view whoever asked (the agent's session changed
-    /// for all its clients); only this tab's own answer settles the resume
+    /// for all its clients); only this client's own answer settles the resume
     /// latches, so a foreign answer cannot cancel an in-flight resume. A
     /// decision, a refusal and an unreadable answer are told only to the tab
-    /// that asked: another tab's id is a peer's (an answer with no id at all
+    /// that asked: another client's id is a peer's (an answer with no id at all
     /// is nobody's in particular, and its failure is still toasted).
     /// Each tab has its own harness connection and an answer is applied to
     /// the tab it was routed to, so a decision that arrives after the user
@@ -150,7 +150,7 @@ impl App {
                 self.handle_resume_success(data.is_some().then_some(ack));
             }
             // Nothing changed for anyone: no refresh, no toast.
-            // A peer's refusal or unreadable answer is not this tab's.
+            // A peer's refusal or unreadable answer is not this client's.
             _ if peers => {}
             ResumeAnswer::Elsewhere(refusal) if owned => {
                 let sessions = &self.ac().sessions;
@@ -190,7 +190,7 @@ impl App {
         &mut self,
         ack: Option<crate::protocol::state_payloads::ResumeSessionAck>,
     ) {
-        // A resume into a session other than the one this tab is showing
+        // A resume into a session other than the one this client is showing
         // (including one it has not learned yet) is a session boundary for
         // the Coordinator clock. An answer without an identity is not.
         if let Some(key) = ack.as_ref().and_then(|ack| ack.session_key.as_deref()) {

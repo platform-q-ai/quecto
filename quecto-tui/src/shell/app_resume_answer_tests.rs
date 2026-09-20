@@ -123,8 +123,8 @@ async fn asked_and_answered_with(
     );
 }
 
-/// Review R1-T9: another tab's refusal (or unreadable answer) is not this
-/// tab's — like another tab's decision. An answer with no id at all is
+/// Review R1-T9: another client's refusal (or unreadable answer) is not this
+/// client's — like another client's decision. An answer with no id at all is
 /// nobody's in particular and its failure is still toasted (pinned before).
 #[tokio::test]
 async fn a_peers_refusal_toasts_nothing_here() {

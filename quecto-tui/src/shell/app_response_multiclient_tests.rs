@@ -396,33 +396,64 @@ async fn rewind_request_ids_use_fresh_production_tokens_per_request() {
 
 #[tokio::test]
 async fn startup_request_ids_are_freshly_minted() {
-    // The connect-time literals ("init", "init-subagents") and the attach
-    // backfill are minted ids too (#1463 scope).
-    let mut h = harness().await;
-    h.app_mut().send_startup_requests();
-    let commands = h.drain_commands().await;
-    let ids: Vec<String> = commands
-        .iter()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter_map(|cmd| cmd.get("id").and_then(|v| v.as_str()).map(str::to_owned))
-        .collect();
+    // The connect-time requests are minted per client (#2044): two clients
+    // attached to one harness never send the same `init` / `init-subagents`
+    // id, and each keeps its family prefix.
+    async fn startup_ids(h: &mut TuiHarness) -> Vec<String> {
+        h.app_mut().send_startup_requests();
+        h.drain_commands()
+            .await
+            .iter()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter_map(|cmd| cmd.get("id").and_then(|v| v.as_str()).map(str::to_owned))
+            .collect()
+    }
+    let (mut a, mut b) = (harness().await, harness().await);
+    let (a_ids, b_ids) = (startup_ids(&mut a).await, startup_ids(&mut b).await);
     assert_eq!(
-        ids.len(),
+        a_ids.len(),
         3,
-        "startup sends get_state + get_subagents + attach backfill: {commands:?}"
+        "startup sends get_state + get_subagents + attach backfill: {a_ids:?}"
     );
-    let unique: std::collections::HashSet<_> = ids.iter().collect();
+    let family = |ids: &[String], subagents: bool| -> Vec<String> {
+        ids.iter()
+            .filter(|id| id.starts_with("init-"))
+            .filter(|id| id.starts_with("init-subagents-") == subagents)
+            .cloned()
+            .collect()
+    };
+    for subagents in [false, true] {
+        let (mine, theirs) = (family(&a_ids, subagents), family(&b_ids, subagents));
+        assert_eq!(mine.len(), 1, "one such request per client: {a_ids:?}");
+        assert_eq!(theirs.len(), 1, "one such request per client: {b_ids:?}");
+        assert_ne!(mine, theirs, "startup ids are unique per client");
+    }
+}
+
+#[tokio::test]
+async fn unmatched_response_does_not_resolve_pending_resume() {
+    // Ownership is exact pending-id equality (#1463, #2044): another client's
+    // answer of the SAME family must neither settle this client's pending
+    // resume fetch nor land its transcript here.
+    let (mut a, mut b) = (harness().await, harness().await);
+    let mine = mint_resume_id(&mut b).await;
+    let theirs = mint_resume_id(&mut a).await;
+    assert_ne!(mine, theirs, "two clients never mint the same resume id");
+    respond(
+        b.app_mut(),
+        Some(&theirs),
+        "get_messages",
+        true,
+        legacy_messages("foreign resumed user", "foreign resumed assistant"),
+    );
     assert_eq!(
-        unique.len(),
-        ids.len(),
-        "startup ids must be unique: {ids:?}"
+        b.app_mut().test_pending_resume_messages_id(),
+        Some(mine.as_str()),
+        "a peer's answer must leave this client's pending resume fetch unresolved"
     );
+    let frame = b_frame(b.app_mut());
     assert!(
-        ids.iter().any(|id| id.starts_with("init-")),
-        "get_state mints a fresh init id: {ids:?}"
-    );
-    assert!(
-        ids.iter().any(|id| id.starts_with("init-subagents-")),
-        "get_subagents mints a fresh init-subagents id: {ids:?}"
+        !frame.contains("foreign resumed user"),
+        "a peer's transcript must not land in this client:\n{frame}"
     );
 }

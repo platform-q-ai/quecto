@@ -476,6 +476,18 @@ async fn simultaneous_clients_each_release_on_own_success() {
 }
 
 #[tokio::test]
+async fn a_peers_failure_arriving_first_does_not_fail_a_successful_exit() {
+    // The peer's failed answer reaches the second client BEFORE its own
+    // success: it must wait for its own answer, not adopt the failure.
+    let (first, second) = simultaneous_exit_results(false, true).await;
+    assert_eq!(first, vec!["first failed".to_string()]);
+    assert!(
+        second.is_empty(),
+        "second client owns the successful answer"
+    );
+}
+
+#[tokio::test]
 async fn simultaneous_clients_do_not_adopt_the_other_clients_failure() {
     let (first, second) = simultaneous_exit_results(true, false).await;
     assert!(first.is_empty(), "first client owns the successful answer");
