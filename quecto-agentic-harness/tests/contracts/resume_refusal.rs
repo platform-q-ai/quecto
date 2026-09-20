@@ -297,3 +297,62 @@ async fn a_target_owned_by_another_live_process_is_refused_and_not_stolen() {
         ACTIVE
     );
 }
+
+/// #2045 acceptance: the command is RUN, not read. Whatever a folder is
+/// called, `cd` lands in exactly that folder and nothing in its name executes.
+#[test]
+fn the_command_changes_into_exactly_that_folder_whatever_it_is_called() {
+    use quecto::domain::session_open_command::{cd_there_command, open_there_command};
+    let root = tempfile::tempdir().unwrap();
+    let root_path = root.path().canonicalize().unwrap();
+    for name in [
+        "plain",
+        "a b  c",
+        "it's",
+        "$(touch PWNED)",
+        "`touch PWNED`; touch PWNED",
+        "&& touch PWNED #",
+        "-rf",
+        "q\"uo\"te",
+        "caf\u{e9} \u{65e5}\u{672c}",
+    ] {
+        let dir = root_path.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cd = cd_there_command(&dir).expect(name);
+        assert_eq!(
+            open_there_command(&dir),
+            Some(format!("{cd} && quecto-tui")),
+            "{name}"
+        );
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{cd} && pwd -P"))
+            .current_dir(&root_path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{name}: {output:?}");
+        let landed = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(
+            landed.trim_end_matches('\n'),
+            dir.to_str().unwrap(),
+            "{name}"
+        );
+    }
+    let planted: Vec<_> = walk(&root_path)
+        .into_iter()
+        .filter(|path| path.ends_with("PWNED"))
+        .collect();
+    assert!(planted.is_empty(), "a folder name executed: {planted:?}");
+}
+
+fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap().filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(walk(&path));
+        }
+        found.push(path);
+    }
+    found
+}
