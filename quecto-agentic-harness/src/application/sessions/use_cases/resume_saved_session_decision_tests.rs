@@ -1,10 +1,7 @@
 //! The typed resume decisions of the transaction (#2011): what is decided
 //! without any effect, what is re-decided under the claim, and that no
 //! refusal replaces the session or leaks a claim.
-use crate::application::sessions::dto::{
-    ActionAvailability, ResumeActionCapabilities, ResumeIntent, ResumeOutcome, ResumeRequest,
-    ResumeSavedSessionError,
-};
+use crate::application::sessions::dto::{ResumeOutcome, ResumeRequest, ResumeSavedSessionError};
 use crate::application::sessions::ports::session_home::{
     HomeCatalogueSnapshot, SessionHomeCatalogue, WorkspaceDiscovery,
 };
@@ -14,7 +11,7 @@ use crate::application::sessions::use_cases::start_fresh_rig::{
 };
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
-use crate::domain::resume_decision::{HomeVersion, ResumeAction, ResumeDecisionKind};
+use crate::domain::resume_decision::{HomeVersion, ResumeDecisionKind};
 use crate::domain::session::Session;
 use crate::domain::session_home::{
     AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup,
@@ -29,11 +26,6 @@ const GONE: &str = "/work/gone";
 
 fn saved_identity() -> SessionIdentity {
     SessionIdentity::from_persisted_key("cli:saved")
-}
-
-/// Some version a client was shown; an action's admission needs one.
-fn shown() -> HomeVersion {
-    HomeVersion::of(&saved_identity(), &SessionHomeScope::LegacyUnscoped)
 }
 
 fn folder(dir: &str) -> SessionHome {
@@ -185,6 +177,17 @@ impl Case {
     }
 }
 
+/// The stable refusal code of each kind (#2045).
+fn decision_code(decision: &crate::application::sessions::dto::ResumeDecision) -> &'static str {
+    match decision.kind {
+        ResumeDecisionKind::CrossFolder => "belongs_elsewhere",
+        ResumeDecisionKind::HomeMissing => "home_missing",
+        ResumeDecisionKind::HomeChanged => "home_changed",
+        ResumeDecisionKind::HomeUnknown => "home_unknown",
+        ResumeDecisionKind::LegacyUnscoped => "no_home_recorded",
+    }
+}
+
 fn decision_of(
     result: Result<ResumeOutcome, ResumeSavedSessionError>,
 ) -> crate::application::sessions::dto::ResumeDecision {
@@ -194,17 +197,11 @@ fn decision_of(
     }
 }
 
-fn offered(decision: &crate::application::sessions::dto::ResumeDecision) -> Vec<ResumeAction> {
-    decision.offers.iter().map(|offer| offer.action).collect()
-}
-
 #[tokio::test]
 async fn the_same_execution_directory_restores() {
     let case = case(SessionHomeScope::Scoped(folder(HERE)));
     let outcome = case.restore().await.expect("restored");
-    let ResumeOutcome::Resumed(resumed) = outcome else {
-        panic!("resumed expected");
-    };
+    let ResumeOutcome::Resumed(resumed) = outcome;
     assert_eq!(resumed.identity.runtime_key(), "cli:saved");
     assert_eq!(case.rig.identity(), "cli:saved");
     // The pre-flight and the claimed re-check each read the authority.
@@ -217,25 +214,13 @@ async fn another_folder_is_a_cross_folder_decision_with_no_effect() {
     let case = case(saved.clone());
     let decision = decision_of(case.restore().await);
     assert_eq!(decision.kind, ResumeDecisionKind::CrossFolder);
-    assert_eq!(
-        offered(&decision),
-        [
-            ResumeAction::OpenOriginal,
-            ResumeAction::ForkCurrent,
-            ResumeAction::Cancel
-        ]
-    );
+    assert_eq!(decision.kind.refusal_code(), decision_code(&decision));
     assert_eq!(decision.execution_dir, Some(PathBuf::from(ELSEWHERE)));
     assert_eq!(
         decision.home_version,
         HomeVersion::of(&saved_identity(), &saved)
     );
     assert_eq!(decision.target.identity.runtime_key(), "cli:saved");
-    for offer in &decision.offers {
-        let cancel = offer.action == ResumeAction::Cancel;
-        assert_eq!(offer.availability == ActionAvailability::Available, cancel);
-    }
-    assert!(decision.offer(ResumeAction::Locate).is_none());
     case.assert_no_effect();
 }
 
@@ -244,14 +229,7 @@ async fn an_unobservable_home_is_a_home_missing_decision_carrying_the_reason() {
     let case = case(SessionHomeScope::Scoped(folder(GONE)));
     let decision = decision_of(case.restore().await);
     assert_eq!(decision.kind, ResumeDecisionKind::HomeMissing);
-    assert_eq!(
-        offered(&decision),
-        [
-            ResumeAction::Locate,
-            ResumeAction::ForkCurrent,
-            ResumeAction::Cancel
-        ]
-    );
+    assert_eq!(decision.kind.refusal_code(), decision_code(&decision));
     assert!(decision.detail.as_deref().unwrap().contains("No such file"));
     case.assert_no_effect();
 }
@@ -277,17 +255,13 @@ async fn uninterpretable_metadata_is_a_home_unknown_decision_without_a_path() {
 }
 
 #[tokio::test]
-async fn a_legacy_session_is_a_decision_offering_association_and_cancel_only() {
+async fn a_legacy_session_is_refused_as_having_no_folder_recorded() {
     let case = case(SessionHomeScope::LegacyUnscoped);
     let decision = decision_of(case.restore().await);
     assert_eq!(decision.kind, ResumeDecisionKind::LegacyUnscoped);
-    assert_eq!(
-        offered(&decision),
-        [ResumeAction::Associate, ResumeAction::Cancel]
-    );
+    assert_eq!(decision.kind.refusal_code(), decision_code(&decision));
     let text = decision.to_string();
-    assert!(text.contains("explicit first association"), "{text}");
-    assert!(text.contains("stays listed under All Folders"), "{text}");
+    assert!(text.contains("no folder recorded"), "{text}");
     case.assert_no_effect();
 }
 
@@ -308,7 +282,6 @@ async fn a_stale_expected_version_is_refused_before_any_effect() {
     let case = case(SessionHomeScope::Scoped(folder(HERE)));
     let request = ResumeRequest {
         target: "saved".into(),
-        intent: ResumeIntent::Restore,
         expected_home_version: Some(HomeVersion::of(
             &saved_identity(),
             &SessionHomeScope::LegacyUnscoped,
@@ -325,7 +298,6 @@ async fn the_current_expected_version_restores() {
     let case = case(scope.clone());
     let request = ResumeRequest {
         target: "saved".into(),
-        intent: ResumeIntent::Restore,
         expected_home_version: Some(HomeVersion::of(&saved_identity(), &scope)),
     };
     assert!(matches!(
@@ -343,7 +315,6 @@ async fn a_home_that_changes_after_the_preflight_is_refused_under_the_claim() {
     let case = case_with(vec![listed.clone(), moved], false, false);
     let request = ResumeRequest {
         target: "saved".into(),
-        intent: ResumeIntent::Restore,
         expected_home_version: Some(HomeVersion::of(&saved_identity(), &listed)),
     };
     let refused = case
@@ -442,131 +413,24 @@ async fn a_corrupt_index_cannot_block_exact_key_resolution() {
 }
 
 #[tokio::test]
-async fn cancel_has_no_effect_at_all() {
-    let case = case(SessionHomeScope::Scoped(folder(ELSEWHERE)));
-    let request = ResumeRequest {
-        target: "saved".into(),
-        intent: ResumeIntent::Act(ResumeAction::Cancel),
-        expected_home_version: None,
-    };
-    let outcome = case.request(&request).await.expect("cancelled");
-    assert_eq!(
-        outcome,
-        ResumeOutcome::Cancelled {
-            name: "saved".into()
-        }
-    );
-    assert_eq!(case.rig.identity(), OLD_KEY);
-    assert_eq!(*case.facts.reads.lock().unwrap(), 0);
-    case.assert_no_effect();
-}
-
-#[tokio::test]
-async fn every_offered_action_is_refused_unavailable_and_never_substituted() {
-    let elsewhere = SessionHomeScope::Scoped(folder(ELSEWHERE));
-    let gone = SessionHomeScope::Scoped(folder(GONE));
-    for (scope, action) in [
-        (&elsewhere, ResumeAction::OpenOriginal),
-        (&elsewhere, ResumeAction::ForkCurrent),
-        (&gone, ResumeAction::Locate),
-        (&SessionHomeScope::LegacyUnscoped, ResumeAction::Associate),
-    ] {
-        let case = case(scope.clone());
-        let request = ResumeRequest {
-            target: "saved".into(),
-            intent: ResumeIntent::Act(action),
-            expected_home_version: Some(HomeVersion::of(&saved_identity(), scope)),
-        };
-        let refused = case.request(&request).await.expect_err("unavailable");
-        assert!(
-            matches!(
-                &refused,
-                ResumeSavedSessionError::ActionUnavailable { action: refused_action, reason }
-                    if *refused_action == action && !reason.is_empty()
-            ),
-            "{action:?}: {refused:?}"
-        );
-        case.assert_no_effect();
-    }
-}
-
-#[tokio::test]
-async fn a_composed_executor_makes_its_action_available_and_owned_elsewhere() {
-    let base = case(SessionHomeScope::Scoped(folder(ELSEWHERE)));
-    let Case { rig, facts, .. } = base;
-    let FreshRig { resume, .. } = rig;
-    let resume = resume.with_capabilities(
-        ResumeActionCapabilities::cancel_only().with(ResumeAction::OpenOriginal),
-    );
-    let mut messages = vec![Message::user("live")];
-    let rig = build_fresh_rig(FreshOptions::default());
-    let mut runtime = rig.runtime();
-    let decision = decision_of(
-        resume
-            .execute(
-                &ResumeRequest::restore("saved"),
-                &mut messages,
-                None,
-                &mut runtime,
-            )
-            .await,
-    );
-    let availability = |action| decision.offer(action).unwrap().availability.clone();
-    assert_eq!(
-        availability(ResumeAction::OpenOriginal),
-        ActionAvailability::Available
-    );
-    assert!(matches!(
-        availability(ResumeAction::ForkCurrent),
-        ActionAvailability::Unavailable(_)
-    ));
-    let text = decision.to_string();
-    assert!(
-        text.contains("open_original /") && text.contains("fork_current (unavailable)"),
-        "{text}"
-    );
-    // The restore owner never executes it: the executor has its own transaction.
-    let request = ResumeRequest {
-        target: "saved".into(),
-        intent: ResumeIntent::Act(ResumeAction::OpenOriginal),
-        expected_home_version: Some(decision.home_version.clone()),
-    };
-    let refused = resume
-        .execute(&request, &mut messages, None, &mut runtime)
-        .await
-        .expect_err("owned elsewhere");
-    assert!(matches!(
-        refused,
-        ResumeSavedSessionError::ActionExecutedElsewhere(ResumeAction::OpenOriginal)
-    ));
-    assert_eq!(refused.code(), "action_executed_elsewhere");
-    assert!(*facts.reads.lock().unwrap() >= 1);
-}
-
-#[tokio::test]
-async fn an_ephemeral_loop_and_an_invalid_key_refuse_every_intent() {
+async fn an_ephemeral_loop_and_an_invalid_key_are_refused() {
     let rig = build_fresh_rig(FreshOptions {
         ephemeral: true,
         ..FreshOptions::default()
     });
     let mut messages = Vec::new();
     let mut runtime = rig.runtime();
-    for intent in [
-        ResumeIntent::Restore,
-        ResumeIntent::Act(ResumeAction::Cancel),
-    ] {
-        let request = ResumeRequest {
-            target: "saved".into(),
-            intent,
-            expected_home_version: None,
-        };
-        let refused = rig
-            .resume
-            .execute(&request, &mut messages, None, &mut runtime)
-            .await
-            .expect_err("ephemeral");
-        assert!(matches!(refused, ResumeSavedSessionError::Ephemeral));
-    }
+    let refused = rig
+        .resume
+        .execute(
+            &ResumeRequest::restore("saved"),
+            &mut messages,
+            None,
+            &mut runtime,
+        )
+        .await
+        .expect_err("ephemeral");
+    assert!(matches!(refused, ResumeSavedSessionError::Ephemeral));
     let case = case(SessionHomeScope::Scoped(folder(HERE)));
     let refused = case
         .request(&ResumeRequest::restore("bad name!"))

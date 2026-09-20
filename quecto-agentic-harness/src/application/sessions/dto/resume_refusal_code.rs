@@ -9,6 +9,7 @@ impl ResumeSavedSessionError {
             Self::InvalidName => "invalid_name",
             Self::Decision(decision) => decision.kind.refusal_code(),
             Self::StaleHomeVersion => "stale_home_version",
+            Self::LegacyAction => "legacy_action_unsupported",
             Self::CurrentScopeUnavailable(_) => "current_scope_unavailable",
             Self::StartupScope(_) => "startup_scope",
             Self::Refused(_) => "transition_refused",

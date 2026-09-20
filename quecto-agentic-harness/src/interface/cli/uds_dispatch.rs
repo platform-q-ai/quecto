@@ -7,8 +7,6 @@ use super::uds_dispatch_forwarding::try_forward_subagent_targeted_command;
 pub(super) use super::uds_dispatch_get_message_forward::{
     ForwardGetMessage, forward_subagent_get_message,
 };
-#[path = "uds_dispatch_legacy_resume.rs"]
-mod legacy_resume;
 use super::uds_dispatch_runtime::{SetModelArgs, handle_set_effort, handle_set_model};
 #[cfg(test)]
 pub(super) use super::uds_dispatch_session::{
@@ -28,7 +26,6 @@ use crate::interface::cli::protocol::{
 };
 use crate::interface::cli::uds_ext_protocol;
 use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
-use legacy_resume::legacy_resume_action_event;
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     if let Some(result) = try_forward_subagent_targeted_command(&cmd, ctx).await {
         return result;
@@ -162,14 +159,10 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             expected_home_version,
             ..
         } => {
-            if action.is_some() {
-                let event = legacy_resume_action_event(id, type_name);
-                emit_event_to_broadcast_or_writer(ctx, &event).await;
-                return false;
-            }
             let fields = ResumeFields {
                 session,
                 expected_home_version,
+                legacy_action: action.is_some(),
             };
             handle_resume_session(ctx, id.as_deref(), &type_name, fields).await
         }
@@ -483,6 +476,9 @@ mod resume_e2e_tests;
 #[path = "uds_dispatch_resume_persist_tests.rs"]
 mod resume_persist_tests;
 
+#[cfg(test)]
+#[path = "uds_dispatch_resume_picker_tests.rs"]
+mod resume_picker_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_1093_tests.rs"]
 mod tests_1093;

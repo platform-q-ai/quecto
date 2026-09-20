@@ -105,32 +105,3 @@ async fn an_unreadable_store_is_reported_by_the_claimed_path() {
         "store.release(cli:saved)@active=cli:departing"
     );
 }
-
-/// An explicit action acts on the authority the client was shown: without
-/// that version it is refused before anything — for a composed executor too —
-/// and is never replaced by a restore. Cancel needs none.
-#[tokio::test]
-async fn an_action_without_the_version_it_was_shown_is_refused() {
-    for action in ResumeAction::ALL {
-        let case = case(SessionHomeScope::Scoped(folder(HERE)));
-        let request = ResumeRequest {
-            target: "saved".into(),
-            intent: ResumeIntent::Act(action),
-            expected_home_version: None,
-        };
-        let result = case.request(&request).await;
-        if action == ResumeAction::Cancel {
-            assert!(matches!(result, Ok(ResumeOutcome::Cancelled { .. })));
-        } else {
-            let refused = result.expect_err("version required");
-            assert!(
-                matches!(&refused, ResumeSavedSessionError::HomeVersionRequired(a) if *a == action),
-                "{action:?}: {refused:?}"
-            );
-            assert_eq!(refused.code(), "home_version_required");
-            assert!(refused.to_string().contains(action.name()), "{refused}");
-        }
-        assert_eq!(*case.facts.reads.lock().unwrap(), 0);
-        case.assert_no_effect();
-    }
-}

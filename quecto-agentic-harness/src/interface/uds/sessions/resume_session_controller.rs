@@ -7,10 +7,16 @@ use crate::domain::resume_decision::HomeVersion;
 pub struct ResumeFields {
     pub session: String,
     pub expected_home_version: Option<String>,
+    /// The request carried an `action` — present, whatever its value (even
+    /// `null`): a pre-#2045 client. It is refused, never read as a restore.
+    pub legacy_action: bool,
 }
 
 impl ResumeFields {
     pub fn into_request(self) -> Result<ResumeRequest, ResumeSavedSessionError> {
+        if self.legacy_action {
+            return Err(ResumeSavedSessionError::LegacyAction);
+        }
         let expected_home_version = match self.expected_home_version {
             Some(raw) => {
                 Some(HomeVersion::parse(&raw).ok_or(ResumeSavedSessionError::StaleHomeVersion)?)
@@ -29,6 +35,7 @@ impl From<String> for ResumeFields {
         Self {
             session,
             expected_home_version: None,
+            legacy_action: false,
         }
     }
 }

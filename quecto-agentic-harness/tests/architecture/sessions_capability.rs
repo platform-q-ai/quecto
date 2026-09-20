@@ -700,7 +700,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/interface/uds/sessions/resume_session_controller.rs",
         55,
     ),
-    ("src/interface/cli/uds_dispatch_resume.rs", 66),
+    ("src/interface/cli/uds_dispatch_resume.rs", 68),
     ("src/application/sessions/dto/resume_disposition.rs", 30),
     ("src/application/sessions/dto/startup_refusal.rs", 31),
     // D9 #1978: retained context.

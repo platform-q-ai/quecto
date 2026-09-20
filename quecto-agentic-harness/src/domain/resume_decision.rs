@@ -110,7 +110,7 @@ impl std::fmt::Display for ResumeDecisionKind {
             Self::HomeMissing => "session directory is missing, moved or inaccessible",
             Self::HomeChanged => "session directory's workspace changed since it was saved",
             Self::HomeUnknown => "session home metadata cannot be interpreted",
-            Self::LegacyUnscoped => "legacy session requires explicit first association",
+            Self::LegacyUnscoped => "session has no folder recorded, so it cannot be resumed here",
         })
     }
 }

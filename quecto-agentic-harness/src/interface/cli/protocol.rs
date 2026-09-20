@@ -686,6 +686,9 @@ mod event_tests;
 #[cfg(test)]
 #[path = "protocol_policy_tests.rs"]
 mod policy_tests;
+#[cfg(test)]
+#[path = "protocol_shape_tests.rs"]
+mod shape_tests;
 
 #[cfg(test)]
 #[path = "protocol_1060_tests.rs"]

@@ -1151,34 +1151,49 @@ fn tui_removed_multi_tab_symbols_do_not_come_back() {
 /// A test file that is not compiled passes every gate while pinning nothing
 /// (#2049 found two; #2056 switched off six to get green).
 fn uncompiled_test_files(files: &[(String, String)]) -> Vec<String> {
+    use std::collections::{HashMap, HashSet};
     let name_of = |path: &str| path.rsplit('/').next().unwrap_or(path).to_string();
-    let declares = |content: &str, name: &str| {
-        let stem = name.trim_end_matches(".rs");
-        // `#[path = "x_tests.rs"]`, or a relative `#[path = "../dir/x_tests.rs"]`.
-        let path_attrs = [format!("\"{name}\""), format!("/{name}\"")];
-        let module = format!("mod {stem};");
-        content.lines().any(|line| {
-            let line = line.trim();
-            let by_path =
-                line.starts_with("#[path") && path_attrs.iter().any(|attr| line.contains(attr));
-            !line.starts_with("//") && (by_path || line.ends_with(&module))
+    // What each file declares, read once: the file name of every
+    // `#[path = "x_tests.rs"]` / `#[path = "../dir/x_tests.rs"]`, and
+    // `<stem>.rs` for every `mod <stem>;`. A comment declares nothing.
+    let declared_by: HashMap<&str, HashSet<String>> = files
+        .iter()
+        .map(|(path, content)| {
+            let names = content
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.starts_with("//"))
+                .filter_map(|line| {
+                    if line.starts_with("#[path") {
+                        let quoted = line.split('"').nth(1)?;
+                        return Some(name_of(quoted));
+                    }
+                    let stem = line.strip_suffix(';')?.rsplit(' ').next()?;
+                    (line.starts_with("mod ") || line.contains(" mod "))
+                        .then(|| format!("{stem}.rs"))
+                })
+                .collect();
+            (path.as_str(), names)
         })
-    };
+        .collect();
     // Compiled: every non-test file, then — to a fixpoint — every test file a
     // COMPILED file declares. A test file declared only by an uncompiled test
     // file is itself uncompiled.
-    let mut compiled: Vec<&(String, String)> = files
+    let mut compiled: HashSet<&str> = files
         .iter()
-        .filter(|(path, _)| !name_of(path).ends_with("_tests.rs"))
+        .map(|(path, _)| path.as_str())
+        .filter(|path| !name_of(path).ends_with("_tests.rs"))
         .collect();
     loop {
-        let next: Vec<&(String, String)> = files
+        let reachable: HashSet<&String> = compiled
             .iter()
-            .filter(|file| !compiled.iter().any(|known| known.0 == file.0))
-            .filter(|(path, _)| {
-                let name = name_of(path);
-                compiled.iter().any(|(_, content)| declares(content, &name))
-            })
+            .filter_map(|path| declared_by.get(path))
+            .flatten()
+            .collect();
+        let next: Vec<&str> = files
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .filter(|path| !compiled.contains(path) && reachable.contains(&name_of(path)))
             .collect();
         if next.is_empty() {
             break;
@@ -1187,8 +1202,8 @@ fn uncompiled_test_files(files: &[(String, String)]) -> Vec<String> {
     }
     let mut missing: Vec<String> = files
         .iter()
-        .filter(|file| !compiled.iter().any(|known| known.0 == file.0))
         .map(|(path, _)| path.clone())
+        .filter(|path| !compiled.contains(path.as_str()))
         .collect();
     missing.sort();
     missing
@@ -1232,9 +1247,8 @@ fn uncompiled_test_files_are_found_by_name_not_by_mention() {
     );
 }
 
-/// Every test file under `quecto-tui/src` is compiled by some module.
-#[test]
-fn tui_test_files_are_all_compiled() {
+/// The uncompiled test files under `root`, as paths relative to it.
+fn uncompiled_test_files_under(root: &str) -> Vec<String> {
     fn collect(dir: &Path, files: &mut Vec<(String, String)>) {
         for entry in fs::read_dir(dir).expect("read dir") {
             let path = entry.expect("dir entry").path();
@@ -1247,18 +1261,72 @@ fn tui_test_files_are_all_compiled() {
         }
     }
     let mut files = Vec::new();
-    collect(Path::new(TUI_SRC), &mut files);
+    collect(Path::new(root), &mut files);
     assert!(
-        files.len() > 100,
-        "scanned {} files under {TUI_SRC}",
+        files.len() >= 20,
+        "scanned {} files under {root}",
         files.len()
     );
-    let missing = uncompiled_test_files(&files);
+    uncompiled_test_files(&files)
+        .into_iter()
+        .map(|path| {
+            path.trim_start_matches(root)
+                .trim_start_matches('/')
+                .to_string()
+        })
+        .collect()
+}
+
+/// Every test file under `quecto-tui/src` is compiled by some module.
+#[test]
+fn tui_test_files_are_all_compiled() {
+    let missing = uncompiled_test_files_under(TUI_SRC);
     assert!(
         missing.is_empty(),
         "test files no module compiles (declare them, or delete them with the code they tested):\n{}",
         missing.join("\n")
     );
+}
+
+/// The same for the harness and the API. The files listed were already
+/// uncompiled on master when the ratchet arrived (#2056): the list only
+/// shrinks — declare a file (and make it pass) or delete it, then remove it
+/// here. Nothing may be added.
+#[test]
+fn harness_and_api_test_files_are_all_compiled() {
+    for (root, known) in [
+        (
+            "src",
+            &[
+                "application/agent_loop_context_gauge_tests.rs",
+                "domain/workflow/engine/templates_cov_tests.rs",
+                "infrastructure/tools/tests/spawn_validation_tests.rs",
+                "interface/cli/protocol_type_name_tests.rs",
+            ][..],
+        ),
+        (
+            "../quecto-api/src",
+            &["infrastructure/http/router_handler_tests.rs"][..],
+        ),
+    ] {
+        let missing = uncompiled_test_files_under(root);
+        let new: Vec<_> = missing
+            .iter()
+            .filter(|path| !known.contains(&path.as_str()))
+            .collect();
+        assert!(
+            new.is_empty(),
+            "{root}: test files no module compiles (declare them, or delete them with the code they tested): {new:?}"
+        );
+        let stale: Vec<_> = known
+            .iter()
+            .filter(|path| !missing.iter().any(|m| m == *path))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "{root}: now compiled or gone — remove from the known list: {stale:?}"
+        );
+    }
 }
 
 #[test]

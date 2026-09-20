@@ -117,3 +117,7 @@ impl std::fmt::Debug for ResumeSavedSession {
             .finish_non_exhaustive()
     }
 }
+
+#[cfg(test)]
+#[path = "resume_saved_session_decision_tests.rs"]
+mod tests;

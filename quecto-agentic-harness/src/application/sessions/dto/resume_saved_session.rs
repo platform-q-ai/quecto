@@ -57,6 +57,9 @@ pub enum ResumeSavedSessionError {
     Decision(Box<ResumeDecision>),
     /// The home changed since the client was shown it (#2011).
     StaleHomeVersion,
+    /// The request still names an `action` (#2045 removed them): refused
+    /// under its own id — never read as a restore, never a parse error.
+    LegacyAction,
     /// This runtime's own execution directory cannot be discovered (#2011).
     CurrentScopeUnavailable(String),
     /// The loop's own composed session does not admit at startup (#2009).

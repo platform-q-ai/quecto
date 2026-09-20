@@ -14,6 +14,7 @@ impl std::fmt::Display for ResumeSavedSessionError {
             Self::StaleHomeVersion => {
                 f.write_str("session list out of date; list and choose again")
             }
+            Self::LegacyAction => f.write_str("resume actions are no longer supported"),
             Self::CurrentScopeUnavailable(_) => f.write_str(
                 "session resume unavailable: the current execution directory cannot be \
                  discovered, so no saved session can be admitted here",
@@ -27,3 +28,7 @@ impl std::fmt::Display for ResumeSavedSessionError {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "resume_refusal_text_tests.rs"]
+mod tests;

@@ -231,6 +231,8 @@ mod workflow_run_source;
 mod resume_decision_listing;
 #[path = "contracts/resume_fixture.rs"]
 mod resume_fixture;
+#[path = "contracts/resume_refusal.rs"]
+mod resume_refusal;
 #[path = "contracts/session_home_catalogue.rs"]
 mod session_home_catalogue;
 #[path = "contracts/session_metadata_search.rs"]

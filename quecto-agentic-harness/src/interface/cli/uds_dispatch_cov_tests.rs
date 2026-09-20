@@ -694,6 +694,7 @@ async fn resume_stale_token_changes_nothing() {
     let fields = ResumeFields {
         session: "other".into(),
         expected_home_version: Some("not-a-version".to_string()),
+        legacy_action: false,
     };
     {
         let mut ctx = fx.ctx();
