@@ -9,12 +9,14 @@ use crate::shell::keys::Key;
 #[path = "resume_decision_layout.rs"]
 mod layout;
 pub(super) use layout::bounded_ends;
-use layout::{path_lines, wrap_bounded, wrap_exact};
+use layout::{path_lines, wrap_bounded, wrap_exact, wrap_words};
 
 const LIMIT: usize = 512;
 /// A command is shown whole or not at all: never cut to a label's length.
 const COMMAND_LIMIT: usize = 16 * 1024;
 const FOOTER: &str = "Enter or Esc to close";
+/// The footer on a panel too narrow for it: never a clipped sentence.
+const FOOTER_NARROW: &str = "Esc closes";
 
 pub struct ResumeDecisionDialog {
     refusal: ResumeRefusal,
@@ -45,9 +47,10 @@ impl ResumeDecisionDialog {
         build_select_overlay(width, height, |content| self.lines(content, budget))
     }
 
-    /// Title, what was picked, the folder, the harness's detail, how to open
-    /// it, the footer. When the panel is too short the explanatory lines go
-    /// first — the way to open the session and the footer are kept whole.
+    /// Title, what was picked, the folder, the harness's detail, what to do,
+    /// the footer. When the panel is too short the explanatory lines go first;
+    /// what to do is then shown in the fullest form that fits WHOLE — a command
+    /// is never shown in part (#2056 review): a cut command is not the command.
     fn lines(&self, content: usize, budget: usize) -> Vec<String> {
         let refusal = &self.refusal;
         let mut context: Vec<String> = Vec::new();
@@ -60,34 +63,74 @@ impl ResumeDecisionDialog {
         if let Some(detail) = &refusal.detail {
             context.extend(wrap_bounded(detail, content, 2));
         }
-        let mut how: Vec<String> = Vec::new();
-        match (&refusal.command, &refusal.resume) {
-            (Some(command), resume) => {
-                how.push("Open quecto there:".to_string());
-                how.extend(wrap_exact(command, content));
-                if let Some(resume) = resume {
-                    how.push("then type:".to_string());
-                    how.extend(wrap_exact(resume, content));
+        // Nothing here is wider than the panel: the overlay would clip it with
+        // an ellipsis, and a clipped label reads as a broken one.
+        let heading = wrap_bounded(title(refusal.code), content, 3);
+        let footer = [FOOTER, FOOTER_NARROW, "Esc"]
+            .into_iter()
+            .find(|text| text.chars().count() <= content)
+            .unwrap_or("Esc");
+        // Title and footer are always shown; `room` is what is left between them.
+        let room = budget.saturating_sub(heading.len() + 1);
+        let how = self
+            .what_to_do(content)
+            .into_iter()
+            .find(|form| form.len() <= room)
+            .unwrap_or_default();
+        context.truncate(room - how.len());
+        let mut lines: Vec<String> = heading.iter().map(|line| theme::bold(line)).collect();
+        lines.extend(context);
+        lines.extend(how);
+        lines.push(theme::dim(footer));
+        lines
+    }
+
+    /// What to do, fullest form first. Going to the recorded folder resumes
+    /// ONE kind — a session that lives in another folder — so only that kind
+    /// is ever shown a command or a resume step, whatever the harness sent.
+    fn what_to_do(&self, content: usize) -> Vec<Vec<String>> {
+        let refusal = &self.refusal;
+        if refusal.code != ResumeRefusalCode::BelongsElsewhere {
+            let why = match refusal.code {
+                ResumeRefusalCode::HomeMissing => {
+                    "A session resumes only in the folder it was saved in. Bring that folder back to resume it."
                 }
+                ResumeRefusalCode::HomeChanged => {
+                    "That folder is a different project now than when this was saved, so it can't be resumed."
+                }
+                ResumeRefusalCode::HomeUnknown => {
+                    "Its folder record can't be read, so it can't be resumed."
+                }
+                _ => "It was saved before quecto tracked folders, so it can't be resumed.",
+            };
+            return vec![wrap_bounded(why, content, 3)];
+        }
+        // A label wraps on words; what is to be typed is cut at the column only.
+        let step = |label: &str, text: &str| {
+            let mut lines = wrap_words(label, content);
+            lines.extend(wrap_exact(text, content));
+            lines
+        };
+        let mut forms = Vec::new();
+        match (&refusal.command, &refusal.resume) {
+            (Some(command), Some(resume)) => {
+                let mut whole = step("Open quecto there:", command);
+                whole.extend(step("then type:", resume));
+                forms.push(whole);
+                forms.push(step("Open quecto in that folder, then type:", resume));
             }
+            (Some(command), None) => forms.push(step("Open quecto there:", command)),
             (None, Some(resume)) => {
-                how.push("Open quecto in that folder, then type:".to_string());
-                how.extend(wrap_exact(resume, content));
-            }
-            // An older harness names no command and no step: still say what to do.
-            (None, None) if refusal.execution_path.is_some() => {
-                how.push("Open quecto in that folder and resume it there.".to_string());
+                forms.push(step("Open quecto in that folder, then type:", resume));
             }
             (None, None) => {}
         }
-        let fixed = 1 + how.len() + 1;
-        context.truncate(budget.saturating_sub(fixed));
-        let mut lines = vec![theme::bold(title(refusal.code))];
-        lines.extend(context);
-        lines.extend(how);
-        lines.truncate(budget.saturating_sub(1).max(1));
-        lines.push(theme::dim(FOOTER));
-        lines
+        // An older harness names neither; and the last form that always fits.
+        forms.push(wrap_words(
+            "Open quecto in that folder and resume it there.",
+            content,
+        ));
+        forms
     }
 }
 

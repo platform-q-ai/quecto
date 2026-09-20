@@ -181,6 +181,18 @@ fn kinds_have_stable_names_and_a_readable_reason() {
             HomeUnknown,
             LegacyUnscoped
         ]
+        .map(|kind| kind.resumes_by_opening_quecto_there()),
+        [true, false, false, false, false],
+        "only a session that lives in another folder is resumed by going there"
+    );
+    assert_eq!(
+        [
+            CrossFolder,
+            HomeMissing,
+            HomeChanged,
+            HomeUnknown,
+            LegacyUnscoped
+        ]
         .map(|kind| kind.refusal_code()),
         [
             "belongs_elsewhere",

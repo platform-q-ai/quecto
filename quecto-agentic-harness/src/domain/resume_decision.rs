@@ -92,6 +92,14 @@ impl ResumeDecisionKind {
         }
     }
 
+    /// Whether opening quecto in the recorded folder resumes the session —
+    /// an affirmative list of one: a session that lives in ANOTHER folder. A
+    /// changed home may be this very folder, a missing one cannot be entered,
+    /// and the other two name no usable folder (#2056 review).
+    pub fn resumes_by_opening_quecto_there(self) -> bool {
+        matches!(self, Self::CrossFolder)
+    }
+
     pub fn refusal_code(self) -> &'static str {
         match self {
             Self::CrossFolder => "belongs_elsewhere",

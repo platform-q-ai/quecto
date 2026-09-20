@@ -184,6 +184,109 @@ fn a_short_panel_keeps_how_to_open_it_and_drops_the_explanation_first() {
     assert!(!text.contains("some detail from the harness"), "{shown:#?}");
 }
 
+/// #2056 review: a command that does not fit is not shown in part. On every
+/// terminal size, for a short and for a very long folder, the panel either
+/// shows the command character for character or does not show one at all —
+/// and it always says what to type, and always keeps its footer.
+#[test]
+fn a_command_is_shown_whole_or_not_at_all_on_every_size() {
+    let long = format!("/srv/{}", "a-very-long-directory-name/".repeat(24));
+    for folder in [FOLDER.to_string(), long] {
+        let command = format!("cd '{folder}' && quecto-tui");
+        for width in [24, 40, 60, 80, 120] {
+            for height in [10, 12, 16, 20, 24, 40] {
+                let mut refused = elsewhere();
+                refused.execution_path = Some(folder.clone());
+                refused.command = Some(command.clone());
+                let mut dialog = ResumeDecisionDialog::new(refused, Some("A picked title"));
+                let shown = lines(&mut dialog, width, height);
+                let text = unwrapped(&shown);
+                let at = format!(
+                    "{width}x{height}, folder of {} chars: {shown:#?}",
+                    folder.len()
+                );
+                if text.contains("cd '") {
+                    assert!(text.contains(&command), "a partial command at {at}");
+                    assert!(text.contains("then type:"), "{at}");
+                }
+                // The footer is never clipped: the panel picks a form that fits.
+                assert!(
+                    shown.iter().any(|line| {
+                        let inside = line.trim_matches(['│', ' ']);
+                        [FOOTER, FOOTER_NARROW, "Esc"].contains(&inside)
+                    }),
+                    "the footer is lost at {at}"
+                );
+                if height >= 16 && width >= 40 {
+                    assert!(
+                        text.contains("/resume cli:foreign"),
+                        "the step is lost at {at}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_required_small_terminal_falls_back_rather_than_cutting_a_long_command() {
+    let folder = format!("/srv/{}", "a-very-long-directory-name/".repeat(24));
+    let mut refused = elsewhere();
+    refused.execution_path = Some(folder.clone());
+    refused.command = Some(format!("cd '{folder}' && quecto-tui"));
+    let mut dialog = ResumeDecisionDialog::new(refused, None);
+    let text = unwrapped(&lines(&mut dialog, 40, 20));
+    assert!(!text.contains("cd '"), "{text}");
+    // The label wraps on words at this width; nothing in it is clipped.
+    assert!(
+        text.replace(' ', "")
+            .contains("Openquectointhatfolder,thentype:"),
+        "{text}"
+    );
+    assert!(
+        text.contains("/resume cli:foreign") && text.contains(FOOTER),
+        "{text}"
+    );
+}
+
+/// #2056 review: going to the recorded folder resumes ONE kind. The others say
+/// why the session can't be resumed — and never show a command or a step,
+/// even if a harness sent them.
+#[test]
+fn only_a_session_that_lives_elsewhere_is_told_to_go_there() {
+    for (code, kind, says) in [
+        (
+            ResumeRefusalCode::HomeMissing,
+            "home_missing",
+            "Bring that folder back",
+        ),
+        (
+            ResumeRefusalCode::HomeChanged,
+            "home_changed",
+            "a different project now",
+        ),
+        (
+            ResumeRefusalCode::HomeUnknown,
+            "home_unknown",
+            "folder record can't be read",
+        ),
+        (
+            ResumeRefusalCode::NoHomeRecorded,
+            "legacy_unscoped",
+            "before quecto tracked folders",
+        ),
+    ] {
+        // `refusal()` carries a command and a resume step: a harness that sent them.
+        let mut dialog = ResumeDecisionDialog::new(refusal(code, kind), None);
+        let shown = lines(&mut dialog, 100, 30).join(" ");
+        let shown = shown.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(shown.contains(says), "{kind}: {shown}");
+        for never in ["cd '", "quecto-tui", "/resume", "Open quecto"] {
+            assert!(!shown.contains(never), "{kind} shows {never:?}: {shown}");
+        }
+    }
+}
+
 #[test]
 fn every_key_it_answers_only_closes_it() {
     let mut dialog = ResumeDecisionDialog::new(elsewhere(), None);

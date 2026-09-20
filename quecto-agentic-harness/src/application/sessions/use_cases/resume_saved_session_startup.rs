@@ -1,6 +1,7 @@
 //! Startup admission of the loop's own composed session (#2009): the same
 //! scope rule as an explicit resume, worded for the command line, and the
 //! orphan rule for a key that has a home sidecar but no transcript.
+use crate::application::sessions::dto::resume_saved_session::ResumeDisposition;
 use crate::application::sessions::dto::{ResumeSavedSessionError, StartupRefusal};
 use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::{session_home::SessionHomeScope, session_identity::SessionIdentity};
@@ -13,9 +14,14 @@ pub(super) async fn admit_at_startup(
         .read(identity)
         .map_err(ResumeSavedSessionError::Load)?;
     home.admit(&scope).await.map_err(|disposition| {
-        let execution_dir = match &scope {
-            SessionHomeScope::Scoped(saved) => Some(saved.execution_dir.clone()),
-            SessionHomeScope::LegacyUnscoped | SessionHomeScope::Unavailable(_) => None,
+        // "Open quecto there" is true of one disposition only (an affirmative
+        // list): a session that lives in ANOTHER folder. A changed home may be
+        // this very folder, and a missing one cannot be entered (#2056 review).
+        let execution_dir = match (&disposition, &scope) {
+            (ResumeDisposition::DifferentExecutionDirectory, SessionHomeScope::Scoped(saved)) => {
+                Some(saved.execution_dir.clone())
+            }
+            _ => None,
         };
         ResumeSavedSessionError::StartupScope(StartupRefusal {
             key: identity.runtime_key().to_string(),
