@@ -12,6 +12,6 @@ pub(crate) enum Focus {
 pub(crate) const SUBAGENT_PANEL_WIDTH: usize = 34;
 
 /// Maximum retained sub-agent sessions before the oldest non-active is
-/// evicted. The cap is per tab (#1466 decision 2): each tab's roster owns its
-/// own retained set, bounding TUI-side warm feeds at 30 per tab.
+/// evicted. The connection roster owns its retained set, bounding TUI-side
+/// warm feeds at 30 sessions.
 pub(crate) const MAX_RETAINED_SESSIONS: usize = 30;

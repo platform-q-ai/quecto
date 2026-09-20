@@ -59,5 +59,5 @@ impl super::App {
 }
 
 #[cfg(test)]
-#[path = "workspace_resume_tests.rs"]
-mod workspace_resume_tests;
+#[path = "session_resume_selector_tests.rs"]
+mod session_resume_selector_tests;

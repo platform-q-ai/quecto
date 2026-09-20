@@ -516,7 +516,7 @@ on the next reload) with the `quecto config set` command to run instead.
 
 **Default model and effort per repository (#2024 S2).** `agents.defaults.model`
 and `agents.defaults.effort` in the overlay pin what every agent started in
-that directory starts on — `quecto agent`, a `quecto-tui` tab, a spawned local
+that directory starts on — `quecto agent`, `quecto-tui`, a spawned local
 child — while a sibling repository keeps the global default. Pin one with
 `quecto config set agents.defaults.model '"provider/model"'`, from a running
 session with `set_model … "persist":"local"` (`"global"` for the run's global

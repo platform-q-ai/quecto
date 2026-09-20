@@ -177,7 +177,7 @@ async fn discovery_mouse_global_uses_full_frame_coordinates_with_panel() {
     );
 }
 
-/// R2-L5: an error answer to this tab's own list request closes the picker
+/// R2-L5: an error answer to this client's own list request closes the picker
 /// `request_session_scope` opened for it; a foreign or stale error leaves the
 /// live request and its picker alone.
 #[tokio::test]

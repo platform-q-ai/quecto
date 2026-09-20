@@ -60,10 +60,10 @@ impl App {
             scope: picker.scope(),
             generation,
         };
-        let id = self.ac().namespaced_id(&format!(
+        let id = format!(
             "resume-search-{}",
             super::super::super::app_events::uuid_like()
-        ));
+        );
         let now = self.clock.now();
         self.ac_mut()
             .sessions
@@ -77,7 +77,7 @@ impl App {
         }
     }
 
-    /// Only the answer of the latest edit, under this tab's id, SETTLES the
+    /// Only the answer of the latest edit, under this client's id, SETTLES the
     /// rows. An overtaken one is still newer than what is on screen, so it is
     /// shown as progress (R1-T3) — never for another scope or a cleared box —
     /// while the box stays unsettled and the latest edit goes out.
@@ -131,7 +131,7 @@ impl App {
     /// answered. It is given up, the user is told ONCE per connection, no
     /// further search is sent on it, and the box filters the listed rows here
     /// instead (R1-T5). `parse_error` is broadcast and `get_state` advertises
-    /// no command list, so it is this tab's only when the search command is
+    /// no command list, so it is this client's only when the search command is
     /// THE variant it rejects — a harness that knows the command names it in
     /// every unknown-command error, among the expected ones (R2-T2) — AND a
     /// search is in flight here and, should an id come with it, under that id.

@@ -123,8 +123,8 @@ async fn asked_and_answered_with(
     );
 }
 
-/// Review R1-T9: another tab's refusal (or unreadable answer) is not this
-/// tab's — like another tab's decision. An answer with no id at all is
+/// Review R1-T9: another client's refusal (or unreadable answer) is not this
+/// client's — like another client's decision. An answer with no id at all is
 /// nobody's in particular and its failure is still toasted (pinned before).
 #[tokio::test]
 async fn a_peers_refusal_toasts_nothing_here() {
@@ -224,8 +224,8 @@ async fn a_bare_success_reports_a_restore_without_adopting_a_key() {
     );
 }
 
-/// A peer tab's quiet footer refresh stays quiet; a solicited `/session`
-/// answer is shown (the sessions controller's stats routing).
+/// The fixed quiet footer refresh stays quiet; a solicited `/session` answer
+/// is shown (the sessions controller's stats routing).
 #[tokio::test]
 async fn a_peers_quiet_stats_refresh_is_dropped_and_a_solicited_one_is_shown() {
     let mut h = harness().await;
@@ -240,13 +240,17 @@ async fn a_peers_quiet_stats_refresh_is_dropped_and_a_solicited_one_is_shown() {
     };
     let before = chat(&mut h);
     h.app_mut().handle_response(
-        Some("tab9:stats-footer".into()),
+        Some("stats-footer".into()),
         "get_session_stats".into(),
         true,
         Some(data.clone()),
         None,
     );
-    assert_eq!(chat(&mut h), before, "a peer's quiet refresh adds nothing");
+    assert_eq!(
+        chat(&mut h),
+        before,
+        "the quiet footer refresh adds nothing"
+    );
     h.app_mut().handle_response(
         Some("session-1".into()),
         "get_session_stats".into(),

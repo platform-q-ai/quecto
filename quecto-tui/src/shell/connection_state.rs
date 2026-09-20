@@ -6,11 +6,6 @@
 
 use super::*;
 
-/// The correlation-id prefix every minted request id carries (#1463). One
-/// constant for the one connection; ownership of an answer is decided by
-/// exact pending-id equality, never by this prefix.
-pub(crate) const ID_NAMESPACE: &str = "tab0:";
-
 /// Everything owned by the master connection. Move order follows the
 /// issue's blast-radius clusters; fields arrive cluster by cluster.
 pub(crate) struct ConnectionState {
@@ -183,19 +178,6 @@ impl ConnectionState {
             inference: app_inference::ConnInference::default(),
             roster: crate::agents::view::ConnectionRoster::new(),
         }
-    }
-
-    /// The correlation-id namespace prefix every minted id carries (#1463).
-    /// A constant since the TUI became a single-connection client (#2044):
-    /// the wire format of ids is unchanged.
-    pub(crate) fn id_namespace(&self) -> String {
-        // Kept as an owned String for call-site compatibility.
-        ID_NAMESPACE.to_string()
-    }
-
-    /// Mint `suffix` under this connection's namespace (#1463).
-    pub(crate) fn namespaced_id(&self, suffix: &str) -> String {
-        format!("{}{suffix}", self.id_namespace())
     }
 
     /// The label of the master agent in the main-pane title and the pinned

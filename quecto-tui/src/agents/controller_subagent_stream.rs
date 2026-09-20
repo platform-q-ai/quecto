@@ -128,7 +128,7 @@ impl App {
                     // Re-sync on the child's own connection so effort vocabulary
                     // tracks the new model (agent resets effort to low on switch).
                     let _ = self.send_to_active_subagent(Command::GetState {
-                        id: Some(self.ac().namespaced_id("resync")),
+                        id: Some("resync".to_string()),
                         agent_id: None,
                     });
                 }
@@ -493,7 +493,7 @@ impl App {
         for message_id in refs {
             let req_id = format!(
                 "{}msg-recovery-{}",
-                self.ac().id_namespace(),
+                String::new(),
                 super::app_events::uuid_like()
             );
             self.ac_mut().pending_message_recovery.insert(

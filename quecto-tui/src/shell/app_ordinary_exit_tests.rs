@@ -225,7 +225,7 @@ async fn ordinary_exit_barrier_uses_single_overall_deadline_for_incidental_event
 fn ordinary_exit_finalization_errors_emit_to_post_cleanup_stderr() {
     let errors = vec![
         "ordinary-exit persistence enqueue failed: channel closed".to_string(),
-        "tab 0: disk full".to_string(),
+        "disk full".to_string(),
         "ordinary-exit persistence barrier timed out".to_string(),
     ];
     let mut stderr = Vec::new();
@@ -235,7 +235,7 @@ fn ordinary_exit_finalization_errors_emit_to_post_cleanup_stderr() {
     let stderr = String::from_utf8(stderr).expect("stderr utf8");
     for expected in [
         "ordinary-exit persistence enqueue failed: channel closed",
-        "tab 0: disk full",
+        "disk full",
         "ordinary-exit persistence barrier timed out",
     ] {
         assert!(
@@ -362,8 +362,8 @@ async fn ordinary_exit_persistence_distinguishes_owned_killing_from_detach_and_e
         let id = a.enqueue_ordinary_exit_snapshot_persist().unwrap();
         let cmd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
         assert_eq!(cmd["type"], "persist_session");
-        assert_eq!(id, "tab0:persist-exit");
-        assert_eq!(cmd["id"], "tab0:persist-exit");
+        assert!(id.starts_with("persist-exit-"), "minted exit id: {id}");
+        assert_eq!(cmd["id"], id);
         if owned && kill_owned {
             assert_eq!(cmd["restoreReason"], "ordinary_tui_exit_stopped");
         } else {
@@ -417,6 +417,83 @@ fn persist_answer(id: &str, success: bool, error: Option<&str>) -> SourcedEvent 
     })
 }
 
+/// Run two exit barriers against the same broadcast response sequence. Each
+/// client must ignore the other client's answer and finish from its own.
+async fn simultaneous_exit_results(
+    first_success: bool,
+    second_success: bool,
+) -> (Vec<String>, Vec<String>) {
+    let mut first = TuiHarness::new().await;
+    let mut second = TuiHarness::new().await;
+    let (first_conn, _first_rx) = Connection::live_for_tests();
+    let (second_conn, _second_rx) = Connection::live_for_tests();
+    first.app_mut().test_attach_connection(first_conn, None);
+    second.app_mut().test_attach_connection(second_conn, None);
+
+    let first_id = first
+        .app_mut()
+        .enqueue_ordinary_exit_snapshot_persist()
+        .unwrap();
+    let second_id = second
+        .app_mut()
+        .enqueue_ordinary_exit_snapshot_persist()
+        .unwrap();
+    assert_ne!(first_id, second_id, "simultaneous exits require unique ids");
+
+    for app in [first.app_mut(), second.app_mut()] {
+        let tx = app.master_event_tx.clone().unwrap();
+        tx.send(persist_answer(
+            &first_id,
+            first_success,
+            Some("first failed"),
+        ))
+        .await
+        .unwrap();
+        tx.send(persist_answer(
+            &second_id,
+            second_success,
+            Some("second failed"),
+        ))
+        .await
+        .unwrap();
+    }
+
+    tokio::join!(
+        first
+            .app_mut()
+            .await_ordinary_exit_durability_barrier(first_id),
+        second
+            .app_mut()
+            .await_ordinary_exit_durability_barrier(second_id)
+    )
+}
+
+#[tokio::test]
+async fn simultaneous_clients_each_release_on_own_success() {
+    let (first, second) = simultaneous_exit_results(true, true).await;
+    assert!(first.is_empty());
+    assert!(second.is_empty());
+}
+
+#[tokio::test]
+async fn a_peers_failure_arriving_first_does_not_fail_a_successful_exit() {
+    // The peer's failed answer reaches the second client BEFORE its own
+    // success: it must wait for its own answer, not adopt the failure.
+    let (first, second) = simultaneous_exit_results(false, true).await;
+    assert_eq!(first, vec!["first failed".to_string()]);
+    assert!(
+        second.is_empty(),
+        "second client owns the successful answer"
+    );
+}
+
+#[tokio::test]
+async fn simultaneous_clients_do_not_adopt_the_other_clients_failure() {
+    let (first, second) = simultaneous_exit_results(true, false).await;
+    assert!(first.is_empty(), "first client owns the successful answer");
+    assert_eq!(second, vec!["second failed".to_string()]);
+}
+
 /// #2044 R1-3: only the answer to THIS exit's persist id ends the barrier. A
 /// foreign `persist_session` failure arriving first is ignored — the own
 /// success then ends the barrier with no error.
@@ -431,7 +508,7 @@ async fn ordinary_exit_barrier_ignores_a_foreign_persist_failure() {
     tokio::spawn(async move {
         let cmd: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
         let own = cmd["id"].as_str().unwrap().to_string();
-        let foreign = persist_answer("tab0:another-request", false, Some("foreign failure"));
+        let foreign = persist_answer("another-request", false, Some("foreign failure"));
         event_tx.send(foreign).await.unwrap();
         event_tx
             .send(persist_answer(&own, true, None))
@@ -462,7 +539,7 @@ async fn ordinary_exit_barrier_is_not_released_by_a_foreign_persist_success() {
         let cmd: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
         let own = cmd["id"].as_str().unwrap().to_string();
         event_tx
-            .send(persist_answer("tab0:another-request", true, None))
+            .send(persist_answer("another-request", true, None))
             .await
             .unwrap();
         event_tx
@@ -475,7 +552,7 @@ async fn ordinary_exit_barrier_is_not_released_by_a_foreign_persist_success() {
 
     assert_eq!(
         finalization_errors,
-        vec!["tab 0: own disk full".to_string()],
+        vec!["own disk full".to_string()],
         "a success answering a different id must not end the barrier"
     );
 }

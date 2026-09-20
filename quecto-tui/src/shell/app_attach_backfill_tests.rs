@@ -67,7 +67,7 @@ fn is_attach_backfill_get_messages(line: &str) -> bool {
         return false;
     }
     v.get("id").and_then(|i| i.as_str()).is_some_and(|id| {
-        let id = id.strip_prefix("tab0:").unwrap_or(id);
+        let id = id.strip_prefix("").unwrap_or(id);
         id == ATTACH_BACKFILL_ID || id.starts_with("attach-backfill-")
     })
 }
@@ -89,13 +89,13 @@ async fn request_master_attach_backfill_sends_get_messages_with_dedicated_id() {
         .find_map(|line| {
             let v: serde_json::Value = serde_json::from_str(line).ok()?;
             let id = v.get("id")?.as_str()?;
-            let local = id.strip_prefix("tab0:").unwrap_or(id);
+            let local = id.strip_prefix("").unwrap_or(id);
             (local == ATTACH_BACKFILL_ID || local.starts_with("attach-backfill-"))
                 .then(|| id.to_string())
         })
         .expect("attach id");
     assert!(
-        id.starts_with("tab0:attach-backfill-") && id != ATTACH_BACKFILL_ID,
+        id.starts_with("attach-backfill-") && id != ATTACH_BACKFILL_ID,
         "attach id must be uniquely minted, got {id}"
     );
     assert_eq!(

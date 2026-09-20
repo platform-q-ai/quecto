@@ -410,8 +410,8 @@ pub struct CommandSender {
     pub(crate) tx: mpsc::Sender<String>,
 }
 impl Command {
-    pub fn with_inspection_agent_id(&self, agent_id: &str, ns: &str) -> Option<Self> {
-        super::inspection_routing::with_inspection_agent_id(self, agent_id, ns)
+    pub fn with_inspection_agent_id(&self, agent_id: &str) -> Option<Self> {
+        super::inspection_routing::with_inspection_agent_id(self, agent_id)
     }
 }
 /// Serialize a command to JSON-lines wire form (JSON + trailing newline).

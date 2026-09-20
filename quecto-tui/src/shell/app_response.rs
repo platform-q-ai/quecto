@@ -17,25 +17,6 @@ fn routed_subagent_prefix<'a>(id: &'a str, prefixes: &[&str]) -> Option<&'a str>
         .find_map(|prefix| routed_subagent_id(id, prefix))
 }
 
-/// Strip a `tab{N}:` connection namespace (#1463) from a correlation id —
-/// ANY tab's, not just this one's. Family/prefix CLASSIFICATION treats
-/// another tab's solicited traffic exactly like another client's (routed
-/// responses stay agent-keyed; solicited get_messages families drop), while
-/// exact pending latches always compare the full namespaced id, so a foreign
-/// tab's response can never resolve this tab's pendings.
-pub(super) fn strip_tab_namespace(id: &str) -> &str {
-    let Some(rest) = id.strip_prefix("tab") else {
-        return id;
-    };
-    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-    if digits == 0 {
-        return id;
-    }
-    match rest[digits..].strip_prefix(':') {
-        Some(stripped) => stripped,
-        None => id,
-    }
-}
 use crate::protocol::client::{Event, ToolCatalogueEntry};
 
 /// Family prefix for the master attach-time history backfill (#1050 / #1237).
@@ -93,8 +74,7 @@ impl App {
         self.ac_mut().solicited_get_messages_seq =
             self.ac_mut().solicited_get_messages_seq.wrapping_add(1);
         let id = format!(
-            "{}{}-{}-{}",
-            self.ac().id_namespace(),
+            "{}-{}-{}",
             kind.id_prefix(),
             super::app_events::uuid_like(),
             self.ac().solicited_get_messages_seq
@@ -192,14 +172,8 @@ impl App {
         error: Option<String>,
     ) {
         if let Some(agent_id) = id.as_deref().and_then(|id| {
-            // Own-namespace only (#1472 r2): a foreign rev-relative sync
-            // delta must never fast-forward this feed's rev.
-            let id = id
-                .strip_prefix(self.ac().id_namespace().as_str())
-                .unwrap_or(id);
-            if id.starts_with("tab") && id.contains(':') {
-                return None;
-            }
+            // Routed ids are agent-keyed; a feed applies a rev-relative sync
+            // delta only through its own epoch/rev check (#1472 r2).
             routed_subagent_prefix(
                 id,
                 &[
@@ -427,7 +401,7 @@ impl App {
             self.reconcile_master_retention_trim();
             return;
         }
-        if id.is_some_and(|id| strip_tab_namespace(id).starts_with("history-page-")) {
+        if id.is_some_and(|id| id.starts_with("history-page-")) {
             // Another client's older page (get_messages responses are broadcast
             // to every client) or one orphaned by a resume: it is paged from a
             // DIFFERENT depth, so prepending it would create an interior gap.
@@ -449,9 +423,7 @@ impl App {
             self.reconcile_master_retention_trim();
             return;
         }
-        if id.is_some_and(|id| {
-            Self::is_foreign_solicited_get_messages_family(strip_tab_namespace(id))
-        }) {
+        if id.is_some_and(Self::is_foreign_solicited_get_messages_family) {
             // Foreign (or stale bare-literal) resume/rewind-open/rewind-refresh/attach family id:
             // drop. Must not fall through to legacy replace — that is the
             // multi-client clobber (#1237).

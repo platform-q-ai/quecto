@@ -40,7 +40,7 @@ impl SessionsFlow {
     }
 
     /// The ONE way the picker closes — Escape, a selection, a failed listing,
-    /// a tab switch (R1-T7): whatever it asked is nobody's any more, so a
+    /// a connection change (R1-T7): whatever it asked is nobody's any more, so a
     /// late answer finds no flight and no awaited listing.
     pub(crate) fn close_picker(&mut self) {
         self.resume_selector = None;
@@ -116,21 +116,18 @@ impl super::App {
         self.apply_resume_selection(choice);
     }
 
-    /// Route a successful `get_session_stats` response (#1472 r2): the own
-    /// quiet footer refresh updates gauges silently, a PEER's quiet refresh
-    /// (any tab namespace or legacy bare literal) is dropped silently, and
-    /// only a user-solicited /session shows the chat Status line.
+    /// Route a successful `get_session_stats` response (#1472 r2): a quiet
+    /// footer refresh — this client's or a peer's, the id is shared because the
+    /// stats are the harness's — updates gauges silently; only a user-solicited
+    /// /session shows the chat Status line.
     pub(super) fn handle_session_stats_response(
         &mut self,
         id: Option<&str>,
         data: Option<serde_json::Value>,
     ) {
         let Some(data) = data else { return };
-        if id == Some(self.ac().namespaced_id("stats-footer").as_str()) {
+        if id == Some("stats-footer") {
             self.update_footer_stats(&data);
-        } else if id.is_some_and(|i| super::app_response::strip_tab_namespace(i) == "stats-footer")
-        {
-            // Peer quiet refresh: stay quiet.
         } else {
             self.show_session_stats(&data);
         }

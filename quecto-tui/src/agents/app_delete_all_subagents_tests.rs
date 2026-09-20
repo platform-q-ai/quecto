@@ -98,8 +98,8 @@ fn delete_response(success: bool) -> Event {
     }
 }
 
-fn reconcile_id(h: &mut TuiHarness) -> String {
-    h.app_mut().ac().namespaced_id("delete-all-reconcile")
+fn reconcile_id() -> String {
+    "delete-all-reconcile".to_string()
 }
 
 #[tokio::test]
@@ -129,7 +129,7 @@ async fn roster_payloads_are_ignored_until_the_reconcile_reply_arrives() {
 
     h.app_mut().handle_event(delete_response(true));
     let cmds = h.drain_commands().await;
-    let id = reconcile_id(&mut h);
+    let id = reconcile_id();
     assert!(
         cmds.iter()
             .any(|c| c.contains("\"type\":\"get_subagents\"") && c.contains(&id)),
@@ -183,7 +183,7 @@ async fn failed_delete_response_still_reconciles_and_lifts_the_guard() {
 
     h.app_mut().handle_event(delete_response(false));
     let cmds = h.drain_commands().await;
-    let id = reconcile_id(&mut h);
+    let id = reconcile_id();
     assert!(
         cmds.iter().any(|c| c.contains(&id)),
         "a failed delete must still reconcile so the panel shows the kernel's truth: {cmds:?}"

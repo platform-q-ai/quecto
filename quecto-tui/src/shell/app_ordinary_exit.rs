@@ -196,7 +196,7 @@ impl App {
     pub(crate) fn enqueue_ordinary_exit_snapshot_persist(
         &mut self,
     ) -> Result<String, crate::protocol::client::ClientError> {
-        let id = self.ac().namespaced_id("persist-exit");
+        let id = format!("persist-exit-{}", super::app_events::uuid_like());
         let stops_owned_agent = self.exit_policy.kill_owned && self.ac().child_exit_watch.is_some();
         self.ac()
             .transport
@@ -251,7 +251,6 @@ impl App {
             }
             let msg = error
                 .unwrap_or_else(|| "failed to persist session before ordinary exit".to_string());
-            let msg = format!("tab 0: {msg}");
             self.notify(&msg, NotifyLevel::Error);
             return vec![msg];
         }

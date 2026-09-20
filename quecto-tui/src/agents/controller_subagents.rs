@@ -15,7 +15,7 @@ const DELETE_ALL_RECONCILE_ID: &str = "delete-all-reconcile";
 impl App {
     pub(super) fn delete_all_subagents(&mut self) {
         if !self.send_command(Command::DeleteAllSubagents {
-            id: Some(self.ac().namespaced_id("delete-all-subagents")),
+            id: Some("delete-all-subagents".to_string()),
         }) {
             return;
         }
@@ -178,7 +178,7 @@ impl App {
         if !self.ac().roster.is_delete_pending() {
             return;
         }
-        let id = self.ac().namespaced_id(DELETE_ALL_RECONCILE_ID);
+        let id = DELETE_ALL_RECONCILE_ID.to_string();
         self.request_roster_refresh(Some(id));
     }
 
@@ -186,7 +186,7 @@ impl App {
     /// [`Self::reconcile_after_delete_all`]. Recognising it lifts the guard
     /// (the caller then applies the payload as authoritative).
     pub(super) fn take_delete_all_reconcile(&mut self, id: Option<&str>) -> bool {
-        let expected = self.ac().namespaced_id(DELETE_ALL_RECONCILE_ID);
+        let expected = DELETE_ALL_RECONCILE_ID.to_string();
         if id != Some(expected.as_str()) {
             return false;
         }

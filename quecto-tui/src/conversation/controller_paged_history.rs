@@ -84,7 +84,7 @@ impl App {
         if self.ac().roster.active_agent_id.is_some() {
             return None;
         }
-        let ns = self.ac().id_namespace();
+        let ns = String::new();
         let session = self.active_session_mut();
         let at_oldest = session.chat.is_at_oldest_loaded_history();
         let request = session.history.next_page_request(
@@ -130,7 +130,7 @@ impl App {
             }
             let req_id = format!(
                 "{}stub-recall-{}",
-                self.ac().id_namespace(),
+                String::new(),
                 super::app_events::uuid_like()
             );
             self.ac_mut().pending_stub_recall.insert(
@@ -219,7 +219,7 @@ impl App {
             }) => {
                 let req_id = format!(
                     "{}stub-recall-{}",
-                    self.ac().id_namespace(),
+                    String::new(),
                     super::app_events::uuid_like()
                 );
                 self.ac_mut().pending_stub_recall.insert(

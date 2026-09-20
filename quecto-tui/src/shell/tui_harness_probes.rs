@@ -107,7 +107,7 @@ impl TuiHarness {
             .map(|s| s.message().to_string())
     }
 
-    /// #2011: the session this tab stands for.
+    /// #2011: the session this client stands for.
     pub fn session_key(&self) -> Option<String> {
         self.app.ac().session_key.clone()
     }

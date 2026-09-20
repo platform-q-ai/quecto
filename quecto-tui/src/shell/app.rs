@@ -314,10 +314,10 @@ mod app_submit;
 mod app_thinking_visibility;
 #[path = "app_time.rs"]
 mod app_time;
+#[path = "session_resume_selector.rs"]
+mod session_resume_selector;
 #[path = "thinking_preferences.rs"]
 mod thinking_preferences;
-#[path = "workspace_resume.rs"]
-mod workspace_resume;
 use crate::agents::roster::{
     gc_exited_subagents, next_exited_subagent_gc_deadline, subagent_status_is_active,
 };

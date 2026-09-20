@@ -421,7 +421,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
 | `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
 | `shell/socket_path.rs` | `shell` shared socket-path validation policy for every connect (#1460) |
-| `shell/workspace_resume.rs` | `shell` session-only `/resume` selector open and selection dispatch (#1465 P4, #2044) |
+| `shell/session_resume_selector.rs` | `shell` session-only `/resume` selector open and selection dispatch (#2044) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
 | `shell/thinking_preferences.rs` | `shell` durable model-thinking visibility preference storage (#1231) |

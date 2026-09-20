@@ -163,8 +163,8 @@ impl FeedState {
 }
 
 /// The per-connection roster half of the sub-agent UI (#1463): everything
-/// scoped to ONE tab's agent tree — its tracked children, their sessions and
-/// feeds, and which of them is focused. Lives on `ConnectionState`.
+/// scoped to the connection's agent tree — its tracked children, their
+/// sessions and feeds, and which of them is focused. Lives on `ConnectionState`.
 pub(crate) struct ConnectionRoster {
     /// Client-side subagent state for immediate bar updates (#525).
     /// Updated from tool events (spawn/agent_cmd) and server pushes.

@@ -1,20 +1,18 @@
 @tui
-Feature: Per-connection state bundled into the tab's connection (N=1)
-  As a TUI user running multiple agent tabs
-  I want each tab's connection to own its connection-scoped state,
-  with every correlation id it mints namespaced to that connection
-  So that broadcast responses can never land on the wrong tab's
-  pending latches
+Feature: Single-connection request ownership
+  As a TUI user
+  I want one connection to own all pending request state
+  So that only the exact response for a pending request can resolve it
 
-  @done @issue-1463
-  Scenario: Solicited transcript fetches carry their connection's namespace
+  @done @issue-2044
+  Scenario: A solicited transcript fetch receives a distinct correlation id
     Given a fresh headless TUI harness
-    When a resume response arrives on the master connection
-    Then the solicited transcript fetch it mints should carry the master connection's namespace
+    When a resume response arrives on the TUI connection
+    Then the solicited transcript fetch should have a correlation id distinct from the resume response
 
-  @done @issue-1463
-  Scenario: A response bearing another connection's id does not resolve this tab's pending fetch
+  @done @issue-2044
+  Scenario: A non-matching response id does not resolve the pending transcript fetch
     Given a fresh headless TUI harness
-    And a resume response arrives on the master connection
-    When a transcript response arrives bearing another connection's id
-    Then this tab's pending transcript fetch should remain unresolved
+    And a resume response arrives on the TUI connection
+    When a transcript response arrives bearing a non-matching id
+    Then the pending transcript request id should remain unchanged

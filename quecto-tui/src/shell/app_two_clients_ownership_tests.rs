@@ -1,6 +1,6 @@
 //! Two TUI clients attached to ONE harness (#2044): every answer is broadcast
-//! to both, both mint ids under the same constant prefix, and an answer is a
-//! client's own only when its id equals that client's pending id.
+//! to both, and an answer is a client's own only when its id exactly equals
+//! that client's process-unique pending id.
 
 use super::tui_harness::TuiHarness;
 use crate::protocol::client::Event;
@@ -43,11 +43,6 @@ async fn a_refused_resume_is_told_only_to_the_client_that_asked() {
     let a_id = typed_resume(&mut a, "ghost-a").await;
     let b_id = typed_resume(&mut b, "ghost-b").await;
     assert_ne!(a_id, b_id, "two clients never mint the same resume id");
-    assert_eq!(
-        a_id.split(':').next(),
-        b_id.split(':').next(),
-        "both clients mint under the same prefix: it cannot tell them apart"
-    );
 
     broadcast_refusal([&mut a, &mut b], &a_id);
 

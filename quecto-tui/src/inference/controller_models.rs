@@ -47,7 +47,7 @@ impl App {
             return;
         }
         let cmd = Command::SetModel {
-            id: Some(self.ac().namespaced_id("sm")),
+            id: Some("sm".to_string()),
             model: Some(model.to_string()),
             provider: None,
             model_id: None,
@@ -83,7 +83,7 @@ impl App {
         if !self.inference.model_registry.open_pending {
             self.inference.model_registry.open_pending = true;
             self.send_command(Command::ListModels {
-                id: Some(self.ac().namespaced_id("model-selector")),
+                id: Some("model-selector".to_string()),
             });
         }
     }
@@ -155,7 +155,7 @@ impl App {
     pub(super) fn send_refresh_models(&mut self) {
         self.notify("Refreshing model catalogue…", NotifyLevel::Info);
         self.send_command(Command::RefreshModels {
-            id: Some(self.ac().namespaced_id("refresh-models")),
+            id: Some("refresh-models".to_string()),
             source: None,
         });
     }
