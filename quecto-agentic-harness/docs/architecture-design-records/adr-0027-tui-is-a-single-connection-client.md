@@ -48,12 +48,18 @@ connection and presents one session at a time.
 
 - Connection ownership and response routing have one authority instead of a
   dormant tab layer.
-- Multiple independent TUI processes may attach to a multi-client harness.
-  Their process-unique request ids prevent one client from consuming another's
-  solicited response; broadcast events remain broadcast by protocol design.
+- One TUI per harness is the supported arrangement. The UDS bus is
+  multi-client by protocol design — events are broadcast to every attached
+  client — and that serves other kinds of client (the API, tools, observers).
+  Several TUIs attached to one harness is NOT a designed topology: it may work,
+  but it carries no guarantees, and no correlation machinery is added to make
+  it safe. The exit-persist id is process-unique because that is cheap and a
+  wrongly released exit barrier loses data; that is not a promise of multi-TUI
+  support.
 - Session resume preserves the single-session behavior and does not restore a
   workspace of tabs.
-- Users who need concurrent top-level views run independent TUI instances.
+- A user who wants another top-level view starts another TUI with its own
+  harness.
 - ADR-0023 remains historical evidence for the rejected topology. ADR-0025
   remains historical evidence for the exit decision and its corrections; only
   its tab/manifest framing is superseded.
