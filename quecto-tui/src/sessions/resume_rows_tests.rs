@@ -55,7 +55,7 @@ fn rows_are_newest_first_with_stable_ids_and_their_listed_versions() {
     let undated = rows.items[2].description.as_deref().unwrap();
     assert!(
         undated.starts_with("No folder on record · unknown time")
-            && undated.ends_with(" · Enter for options"),
+            && undated.ends_with(" · Can't be resumed"),
         "{undated}"
     );
 }
@@ -104,7 +104,7 @@ fn searched_rows_keep_the_harness_order_and_name_key_folder_and_unscoped_state()
     );
     assert_eq!(
         described[1],
-        "No folder recorded (older session) · t99 (3 msgs) · Enter for options · ID cli:legacy"
+        "No folder recorded (older session) · t99 (3 msgs) · Can't be resumed · ID cli:legacy"
     );
     assert!(
         described[2].starts_with("No folder on record · t50"),
@@ -124,7 +124,7 @@ fn searched_rows_keep_the_harness_order_and_name_key_folder_and_unscoped_state()
     let rows = ResumeRows::project(vec![listed], true, |secs| format!("t{secs}"));
     assert_eq!(
         rows.items[0].description.as_deref(),
-        Some("No folder recorded (older session) · t9 (3 msgs) · Enter for options")
+        Some("No folder recorded (older session) · t9 (3 msgs) · Can't be resumed")
     );
 }
 
@@ -206,6 +206,6 @@ fn a_session_without_a_folder_is_worded_for_a_user() {
     let rows = ResumeRows::project(vec![legacy], true, |secs| format!("t{secs}"));
     assert_eq!(
         rows.items[0].description.as_deref(),
-        Some("No folder recorded (older session) · t9 (3 msgs) · Enter for options")
+        Some("No folder recorded (older session) · t9 (3 msgs) · Can't be resumed")
     );
 }

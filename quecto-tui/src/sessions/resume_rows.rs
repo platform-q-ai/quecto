@@ -16,12 +16,13 @@ const UNSCOPED: &str = "No folder recorded (older session)";
 /// folders apart, and the action and ID after it stay on screen.
 const FOLDER_CHARS: usize = 64;
 const ELIGIBLE: &str = "Resume";
-/// Why Enter on the row restores nothing at once, in the picker's own words
-/// ("Local Folder" / "All Folders"): the session lives in another folder, or
-/// no folder is on record for it (the row already says so where a folder
-/// would be).
+/// Why Enter on the row restores nothing, in the picker's own words ("Local
+/// Folder" / "All Folders"): the session lives in another folder — Enter opens
+/// the notice that says how to open it there — or no folder is on record for
+/// it (the row already says so where a folder would be), and nothing is
+/// offered for it (#2045).
 const ELSEWHERE: &str = "In another folder";
-const NO_FOLDER: &str = "Enter for options";
+const NO_FOLDER: &str = "Can't be resumed";
 
 pub struct ResumeRows {
     pub items: Vec<SelectItem>,
