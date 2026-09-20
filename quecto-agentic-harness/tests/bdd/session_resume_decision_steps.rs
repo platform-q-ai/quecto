@@ -1,5 +1,5 @@
-//! Production-process → socket → typed TUI acceptance for the resume
-//! decisions of #2011. The runtime, the store, the folders and the claims are
+//! Production-process → socket → typed TUI acceptance for a refused resume
+//! (#2011, #2045). The runtime, the store, the folders and the claims are
 //! real; the TUI is the production app driven through its harness.
 use super::session_scope_steps::{
     assert_scope_refusal, drive, emitted_resume_request, query, resume_roundtrip,
@@ -13,8 +13,8 @@ use quecto_tui::shell::app::tui_harness::TuiHarness;
 use quecto_tui::shell::keys::Key;
 use std::os::unix::fs::PermissionsExt;
 
-/// What only an open resume decision dialog says, whatever its kind.
-const DIALOG_OPEN: &str = "your current session is untouched";
+/// What only the open notice of a refused resume says, whatever its kind.
+const NOTICE_OPEN: &str = "Enter or Esc to close";
 fn base(world: &QuectoWorld) -> PathBuf {
     world.cli_context.base_dir.clone().expect("base dir")
 }
@@ -82,41 +82,6 @@ fn request_action(world: &mut QuectoWorld, action: String) {
     resume_roundtrip(world, &request.to_string());
 }
 
-/// The action with the version of the decision the runtime answers for it.
-#[when(
-    expr = "a socket client requests the foreign session with action {string} and the version of its decision"
-)]
-fn request_action_with_version(world: &mut QuectoWorld, action: String) {
-    request_session_action_with_foreign_version(world, "cli:foreign".into(), action);
-}
-
-/// Any session, with a well-formed token the runtime really issued — the
-/// foreign decision's — so only the documented order decides the answer.
-#[when(
-    expr = "a socket client requests the session {string} with action {string} and the version of the foreign decision"
-)]
-fn request_session_action_with_foreign_version(
-    world: &mut QuectoWorld,
-    session: String,
-    action: String,
-) {
-    let ask = serde_json::json!({
-        "type": "resume_session", "id": "s2011-decision", "session": "cli:foreign",
-    });
-    resume_roundtrip(world, &ask.to_string());
-    let version = answer(world)["data"]["homeVersion"].clone();
-    assert!(version.is_string(), "a decision first: {}", world.stderr);
-    snapshot(world);
-    let request = serde_json::json!({
-        "type": "resume_session",
-        "id": format!("s2011-direct-{action}"),
-        "session": session,
-        "action": action,
-        "expectedHomeVersion": version,
-    });
-    resume_roundtrip(world, &request.to_string());
-}
-
 fn listed_row(world: &QuectoWorld, key: &str) -> serde_json::Value {
     let listing: serde_json::Value = world
         .agent_events
@@ -143,36 +108,51 @@ fn request_with_another_rows_version(world: &mut QuectoWorld, key: String, other
     resume_roundtrip(world, &request.to_string());
 }
 
-#[then(expr = "the runtime answers a {string} decision offering {string}")]
-fn answers_decision(world: &mut QuectoWorld, kind: String, offered: String) {
-    let decision = assert_scope_refusal(world, &kind);
-    let actions: Vec<_> = decision["actions"]
-        .as_array()
-        .expect("actions")
-        .iter()
-        .map(|offer| offer["action"].as_str().unwrap().to_string())
-        .collect();
-    assert_eq!(actions.join(","), offered, "{decision}");
+#[then(expr = "the runtime refuses the resume as {string} with code {string}")]
+fn refused_as(world: &mut QuectoWorld, kind: String, code: String) {
+    let refusal = assert_scope_refusal(world, &kind);
+    assert_eq!(refusal["code"], code, "{refusal}");
+    assert_eq!(refusal["sessionKey"], "cli:foreign", "{refusal}");
     assert!(
-        decision["homeVersion"]
-            .as_str()
-            .is_some_and(|v| v.starts_with("h1-")),
-        "{decision}"
+        refusal.get("actions").is_none(),
+        "nothing is offered: {refusal}"
     );
 }
 
-#[then("every offered action except cancel is unavailable with a reason")]
-fn only_cancel_available(world: &mut QuectoWorld) {
-    let decision = answer(world)["data"].clone();
-    for offer in decision["actions"].as_array().expect("actions") {
-        let cancel = offer["action"] == "cancel";
-        assert_eq!(offer["available"], cancel, "{offer}");
-        assert_eq!(
-            offer["reason"].as_str().is_some_and(|r| !r.is_empty()),
-            !cancel,
-            "{offer}"
-        );
-    }
+/// The folder the foreign session was saved in, as the runtime reports it.
+fn foreign_folder(world: &QuectoWorld) -> String {
+    answer(world)["data"]["executionPath"]
+        .as_str()
+        .expect("executionPath")
+        .to_string()
+}
+
+#[then(
+    "the refusal carries the command that opens quecto in the foreign folder and the resume step"
+)]
+fn carries_command(world: &mut QuectoWorld) {
+    let data = answer(world)["data"].clone();
+    let folder = foreign_folder(world);
+    assert_eq!(
+        data["command"],
+        format!("cd '{folder}' && quecto-tui"),
+        "quecto-tui takes no session flag: {data}"
+    );
+    assert_eq!(data["resume"], "/resume cli:foreign", "{data}");
+    assert!(
+        std::path::Path::new(&folder).is_dir(),
+        "{folder} is the real folder"
+    );
+}
+
+#[then("the refusal carries no command")]
+fn carries_no_command(world: &mut QuectoWorld) {
+    let data = answer(world)["data"].clone();
+    assert!(data["command"].is_null(), "{data}");
+    assert!(
+        data["resume"].is_null(),
+        "only a session that lives elsewhere is told to go there: {data}"
+    );
 }
 
 /// The runtime's REAL answer, asked for and rendered by a fresh production
@@ -197,56 +177,49 @@ fn real_answer_rendered_at(world: &QuectoWorld, columns: usize, rows: usize) -> 
     h.full_frame()
 }
 
-#[then(expr = "the TUI shows the decision dialog titled {string}")]
-fn dialog_titled(world: &mut QuectoWorld, title: String) {
+#[then(expr = "the TUI shows the notice titled {string}")]
+fn notice_titled(world: &mut QuectoWorld, title: String) {
     let frame = drive(world, TuiHarness::full_frame);
     assert!(frame.contains(&title), "{frame}");
-    let labels = [
+    assert!(frame.contains(NOTICE_OPEN), "{frame}");
+    for gone in [
         "Open original folder",
-        "Copy into this folder as a new session",
-        "Cancel",
-    ];
-    for row in labels {
-        assert!(frame.contains(row), "missing {row}: {frame}");
+        "Copy into this folder",
+        "unavailable",
+    ] {
+        assert!(
+            !frame.contains(gone),
+            "nothing is offered ({gone}): {frame}"
+        );
     }
-    assert!(frame.contains("unavailable"), "{frame}");
     // On an ordinary and on a small terminal the same real answer is whole:
-    // every unavailable row is marked, the footer and border are inside, and
-    // the runtime's OWN reason for the offer under the cursor is on screen in
-    // full — word for word, nothing elided (review R2-T1).
-    let reason = answer(world)["data"]["actions"][0]["reason"].clone();
-    let reason = reason
+    // the title, the command character for character (wrapped at the column,
+    // never elided), the resume step, and the footer inside the border.
+    let command = answer(world)["data"]["command"]
         .as_str()
-        .expect("the first offer's reason")
+        .expect("command")
         .to_string();
     for (columns, rows) in [(80, 24), (40, 20)] {
         let frame = real_answer_rendered_at(world, columns, rows);
-        let marked = frame
-            .lines()
-            .filter(|l| l.contains("(n/a)") || l.contains("— unavailable") || l.contains('✗'))
-            .count();
-        assert_eq!(
-            marked, 2,
-            "{columns}x{rows}: both unavailable rows marked: {frame}"
-        );
-        assert!(frame.contains("Esc cancel"), "{columns}x{rows}: {frame}");
-        let bottom = frame.lines().position(|l| l.contains('└'));
-        let footer = frame.lines().position(|l| l.contains("Esc cancel"));
-        assert!(footer < bottom, "{columns}x{rows}: {frame}");
         let inside = |line: &str| {
             let end = line.rfind('│')?;
             let start = line[..end].rfind('│')? + '│'.len_utf8();
             Some(line[start..end].trim().to_string())
         };
         let said: Vec<String> = frame.lines().filter_map(inside).collect();
-        let said = said.join(" ");
-        let said = said.split_whitespace().collect::<Vec<_>>().join(" ");
+        let joined = said.join("");
         assert!(
-            said.contains(&reason),
-            "{columns}x{rows}: {reason:?} in full: {frame}"
+            joined.contains(&command.replace(' ', "")) || said.join(" ").contains(&command),
+            "{columns}x{rows}: {command:?} whole: {frame}"
         );
         assert!(
-            said.contains("This session belongs to another folder"),
+            said.join(" ").contains("/resume cli:foreign"),
+            "{columns}x{rows}: {frame}"
+        );
+        let bottom = frame.lines().position(|l| l.contains('└'));
+        let footer = frame.lines().position(|l| l.contains(NOTICE_OPEN));
+        assert!(
+            footer.is_some() && footer < bottom,
             "{columns}x{rows}: {frame}"
         );
     }
@@ -337,7 +310,7 @@ fn tui_resumed(world: &mut QuectoWorld) {
         "{messages:?}"
     );
     let frame = drive(world, TuiHarness::full_frame);
-    assert!(!frame.contains(DIALOG_OPEN), "no decision dialog: {frame}");
+    assert!(!frame.contains(NOTICE_OPEN), "no decision dialog: {frame}");
 }
 
 #[when("the local session home is rewritten after the listing")]
@@ -401,29 +374,15 @@ fn restore_foreign_access(world: &QuectoWorld) {
     }
 }
 
-#[then("the decision message keeps the explicit-association guidance")]
-fn keeps_guidance(world: &mut QuectoWorld) {
-    let response = answer(world);
-    let error = response["error"].as_str().expect("message");
-    let needles = [
-        "explicit first association",
-        "Not available yet.",
-        "stays listed under All Folders",
-    ];
-    for needle in needles {
-        assert!(error.contains(needle), "missing {needle:?}: {error}");
-    }
-}
-
 #[then("no home metadata was created for the foreign session")]
 fn no_foreign_home(world: &mut QuectoWorld) {
     assert!(!base(world).join("sessions/cli_foreign.home").exists());
 }
 
-#[when("the operator cancels the decision dialog")]
+#[when("the operator closes the notice")]
 fn cancel_dialog(world: &mut QuectoWorld) {
     let frame = drive(world, TuiHarness::full_frame);
-    assert!(frame.contains(DIALOG_OPEN), "dialog open first: {frame}");
+    assert!(frame.contains(NOTICE_OPEN), "dialog open first: {frame}");
     drive(world, |h| {
         h.press(Key::Escape);
     });
@@ -434,62 +393,15 @@ fn sent_commands(world: &mut QuectoWorld) -> Vec<String> {
     handle.block_on(world.tui_parity.as_mut().unwrap().0.drain_commands())
 }
 
-#[then("the decision dialog is closed and no command was sent")]
+#[then("the notice is closed and no command was sent")]
 fn dialog_closed(world: &mut QuectoWorld) {
     let commands = sent_commands(world);
-    assert!(commands.is_empty(), "Cancel emits no command: {commands:?}");
+    assert!(
+        commands.is_empty(),
+        "closing emits no command: {commands:?}"
+    );
     let frame = drive(world, TuiHarness::full_frame);
-    assert!(!frame.contains(DIALOG_OPEN), "{frame}");
-}
-
-#[when("the operator chooses the first offered action in the decision dialog")]
-fn choose_first(world: &mut QuectoWorld) {
-    drive(world, |h| {
-        h.press(Key::Enter);
-    });
-}
-
-#[then("the TUI explains the action is unavailable and keeps the dialog open")]
-fn explains_unavailable(world: &mut QuectoWorld) {
-    let messages = drive(world, |h| h.notification_messages());
-    assert!(
-        messages
-            .iter()
-            .any(|m| m == "Not available yet — see the reason below"),
-        "{messages:?}"
-    );
-    // The reason the toast points at is the runtime's own, under the cursor.
-    let frame = drive(world, TuiHarness::full_frame);
-    assert!(
-        frame.contains("To continue this session, start quecto in that folder.")
-            && !frame.contains('#'),
-        "{frame}"
-    );
-    assert!(
-        frame.contains("This session belongs to another folder"),
-        "{frame}"
-    );
-}
-
-#[then("the decision dialog sent no command")]
-fn dialog_sent_nothing(world: &mut QuectoWorld) {
-    let commands = sent_commands(world);
-    assert!(commands.is_empty(), "{commands:?}");
-}
-
-#[then("the runtime answers the resume as cancelled")]
-fn cancelled(world: &mut QuectoWorld) {
-    let response = answer(world);
-    assert_eq!(response["success"], true, "{response}");
-    assert_eq!(response["data"]["outcome"], "cancelled", "{response}");
-    assert_eq!(response["data"]["session"], "cli:foreign", "{response}");
-}
-
-#[then("the socket rejects the malformed resume request")]
-fn rejected_malformed(world: &mut QuectoWorld) {
-    let response = answer(world);
-    assert_eq!(response["command"], "parse_error", "{response}");
-    assert_eq!(response["success"], false, "{response}");
+    assert!(!frame.contains(NOTICE_OPEN), "{frame}");
 }
 
 #[then("startup refuses naming the other execution directory")]
@@ -498,7 +410,10 @@ fn startup_names_directory(world: &mut QuectoWorld) {
         world
             .stderr
             .contains("session 'cli:foreign' cannot start here")
-            && world.stderr.contains("different execution directory"),
+            && world.stderr.contains("different execution directory")
+            && world.stderr.contains("\ncd '")
+            && world.stderr.contains("then run the same command again")
+            && !world.stderr.contains("quecto-tui"),
         "{}",
         world.stderr
     );
@@ -592,6 +507,6 @@ fn no_control_characters(world: &mut QuectoWorld) {
         !frame.contains("[2J") && !frame.contains('\u{7}'),
         "{frame:?}"
     );
-    let title = "quecto can't read where this session was saved";
+    let title = "This session's folder can't be read";
     assert!(frame.contains(title), "{frame}");
 }

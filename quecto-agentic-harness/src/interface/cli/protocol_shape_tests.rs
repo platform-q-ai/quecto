@@ -614,40 +614,41 @@ fn core_command_type_names() {
     );
 }
 
-/// The wire spelling of every action IS `ResumeAction::name` (one table):
-/// each parses to itself and serializes back; any other spelling, and any
-/// non-string, is a parse error; `null` is an absent action — a restore.
+/// #2045 removed resume actions. The field survives only to be NOTICED: any
+/// `action` that is present — a string, an unknown spelling, a number, an
+/// object, even `null` — parses (so the request is refused under its own id,
+/// never an id-less parse error, never read as a restore); only an absent
+/// field is a plain restore request.
 #[test]
-fn resume_session_actions_are_spelled_by_the_domains_one_table() {
-    use crate::domain::resume_decision::ResumeAction;
-    let parse = |action: &str| {
-        let line = format!(r#"{{"type":"resume_session","session":"s","action":{action}}}"#);
-        serde_json::from_str::<AgentCommand>(&line)
+fn a_resume_request_that_still_carries_an_action_parses_as_present() {
+    let parse = |tail: &str| {
+        let line = format!(r#"{{"type":"resume_session","id":"r1","session":"s"{tail}}}"#);
+        serde_json::from_str::<AgentCommand>(&line).unwrap()
     };
-    for action in ResumeAction::ALL {
-        let command = parse(&format!("\"{}\"", action.name())).unwrap();
-        let AgentCommand::ResumeSession { action: parsed, .. } = &command else {
+    for present in [
+        r#","action":"open_original""#,
+        r#","action":"cancel""#,
+        r#","action":"find""#,
+        r#","action":"""#,
+        r#","action":5"#,
+        r#","action":true"#,
+        r#","action":[]"#,
+        r#","action":{"name":"fork_current"}"#,
+        r#","action":null"#,
+    ] {
+        let AgentCommand::ResumeSession { action, id, .. } = parse(present) else {
             panic!("resume_session expected");
         };
-        assert_eq!(parsed.map(|parsed| parsed.0), Some(action));
-        let wire = serde_json::to_value(&command).unwrap();
-        assert_eq!(wire["action"], action.name());
+        assert!(action.is_some(), "{present} is present");
+        assert_eq!(id.as_deref(), Some("r1"), "{present} keeps its id");
     }
-    for unknown in [
-        "\"find\"",
-        "\"Cancel\"",
-        "\"\"",
-        "\"restore\"",
-        "5",
-        "true",
-        "[]",
-    ] {
-        assert!(parse(unknown).is_err(), "{unknown}");
-    }
-    let AgentCommand::ResumeSession { action, .. } = parse("null").unwrap() else {
+    let AgentCommand::ResumeSession { action, .. } = parse("") else {
         panic!("resume_session expected");
     };
-    assert_eq!(action, None, "null is an absent action: a restore");
+    assert!(
+        action.is_none(),
+        "an absent action is a plain restore request"
+    );
 }
 
 // ─── clear_history (#408) ────────────────────────────────────────────────────

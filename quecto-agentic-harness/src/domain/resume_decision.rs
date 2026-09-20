@@ -66,46 +66,6 @@ impl Fnv1a {
     }
 }
 
-/// An explicit choice a user can make about a session that cannot simply be
-/// restored here. `Cancel` is always executable; every other action needs an
-/// executor composed into the runtime (#2012 open, #2013 fork, #2014 locate
-/// and associate).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ResumeAction {
-    OpenOriginal,
-    ForkCurrent,
-    Locate,
-    Associate,
-    Cancel,
-}
-
-impl ResumeAction {
-    pub const ALL: [Self; 5] = [
-        Self::OpenOriginal,
-        Self::ForkCurrent,
-        Self::Locate,
-        Self::Associate,
-        Self::Cancel,
-    ];
-
-    /// The stable name of the action on every boundary.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::OpenOriginal => "open_original",
-            Self::ForkCurrent => "fork_current",
-            Self::Locate => "locate",
-            Self::Associate => "associate",
-            Self::Cancel => "cancel",
-        }
-    }
-
-    /// Exact-name admission — the wire parse goes through it, so the names
-    /// above are the one spelling table; nothing else denotes an action.
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|action| action.name() == name)
-    }
-}
-
 /// Why a saved session cannot simply be restored in this runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResumeDecisionKind {
@@ -132,16 +92,21 @@ impl ResumeDecisionKind {
         }
     }
 
-    /// The affirmative table: the only actions this kind ever offers, in
-    /// presentation order. None of them is a restore; `Cancel` is always last.
-    pub fn offered_actions(self) -> &'static [ResumeAction] {
-        use ResumeAction::{Associate, Cancel, ForkCurrent, Locate, OpenOriginal};
+    /// Whether opening quecto in the recorded folder resumes the session —
+    /// an affirmative list of one: a session that lives in ANOTHER folder. A
+    /// changed home may be this very folder, a missing one cannot be entered,
+    /// and the other two name no usable folder (#2056 review).
+    pub fn resumes_by_opening_quecto_there(self) -> bool {
+        matches!(self, Self::CrossFolder)
+    }
+
+    pub fn refusal_code(self) -> &'static str {
         match self {
-            Self::CrossFolder => &[OpenOriginal, ForkCurrent, Cancel],
-            Self::HomeMissing | Self::HomeChanged | Self::HomeUnknown => {
-                &[Locate, ForkCurrent, Cancel]
-            }
-            Self::LegacyUnscoped => &[Associate, Cancel],
+            Self::CrossFolder => "belongs_elsewhere",
+            Self::HomeMissing => "home_missing",
+            Self::HomeChanged => "home_changed",
+            Self::HomeUnknown => "home_unknown",
+            Self::LegacyUnscoped => "no_home_recorded",
         }
     }
 }
@@ -153,7 +118,7 @@ impl std::fmt::Display for ResumeDecisionKind {
             Self::HomeMissing => "session directory is missing, moved or inaccessible",
             Self::HomeChanged => "session directory's workspace changed since it was saved",
             Self::HomeUnknown => "session home metadata cannot be interpreted",
-            Self::LegacyUnscoped => "legacy session requires explicit first association",
+            Self::LegacyUnscoped => "session has no folder recorded, so it cannot be resumed here",
         })
     }
 }

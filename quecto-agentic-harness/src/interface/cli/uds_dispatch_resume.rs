@@ -1,59 +1,36 @@
-//! Presenter of the `resume_session` answers (#2011): the restored and
-//! cancelled acknowledgements, the typed decision and every typed refusal. It
-//! names wire fields and makes untrusted metadata safe; it decides nothing.
+//! Presenter of `resume_session` restored acknowledgements and typed refusals.
 use super::super::uds_dispatch_query::safe_display;
 use super::AgentEvent;
-use crate::application::sessions::dto::{
-    ActionAvailability, ResumeDecision, ResumeOutcome, ResumeSavedSessionError,
-};
+use crate::application::sessions::dto::{ResumeDecision, ResumeOutcome, ResumeSavedSessionError};
+use crate::domain::session_open_command::{open_there_command, resume_step};
 use crate::domain::session_path_text::display_path;
 
-/// The answer to a request that was not refused.
 pub(super) fn outcome_event(
     id: Option<&str>,
     command: &str,
     outcome: &ResumeOutcome,
 ) -> AgentEvent {
-    let data = match outcome {
-        // The name as spelled, the key the loop now stands for, the live length.
-        ResumeOutcome::Resumed(resumed) => serde_json::json!({
+    let ResumeOutcome::Resumed(resumed) = outcome;
+    AgentEvent::ok(
+        id,
+        command,
+        Some(serde_json::json!({
             "outcome": "resumed",
             "session": resumed.name,
             "sessionKey": resumed.identity.runtime_key(),
             "messageCount": resumed.message_count,
-        }),
-        ResumeOutcome::Cancelled { name } => serde_json::json!({
-            "outcome": "cancelled",
-            "session": name,
-        }),
-    };
-    AgentEvent::ok(id, command, Some(data))
+        })),
+    )
 }
 
-/// The answer to a refused request: the safe text for people, and the typed
-/// decision or refusal for clients.
 pub(super) fn refusal_event(
     id: Option<&str>,
     command: &str,
     refusal: &ResumeSavedSessionError,
 ) -> AgentEvent {
-    let code = refusal.code();
     let data = match refusal {
-        ResumeSavedSessionError::Decision(decision) => decision_json(decision, code),
-        ResumeSavedSessionError::ActionUnavailable { action, reason } => serde_json::json!({
-            "outcome": "refused",
-            "code": code,
-            "action": action.name(),
-            "reason": safe_display(reason),
-        }),
-        ResumeSavedSessionError::ActionExecutedElsewhere(action)
-        | ResumeSavedSessionError::ActionNotOffered(action)
-        | ResumeSavedSessionError::HomeVersionRequired(action) => serde_json::json!({
-            "outcome": "refused",
-            "code": code,
-            "action": action.name(),
-        }),
-        _ => serde_json::json!({ "outcome": "refused", "code": code }),
+        ResumeSavedSessionError::Decision(decision) => decision_json(decision, refusal.code()),
+        _ => serde_json::json!({ "outcome": "refused", "code": refusal.code() }),
     };
     AgentEvent::Response {
         id: id.map(str::to_owned),
@@ -65,33 +42,24 @@ pub(super) fn refusal_event(
 }
 
 fn decision_json(decision: &ResumeDecision, code: &str) -> serde_json::Value {
-    let actions: Vec<_> = decision
-        .offers
-        .iter()
-        .map(|offer| {
-            let reason = match &offer.availability {
-                ActionAvailability::Available => None,
-                ActionAvailability::Unavailable(reason) => Some(safe_display(reason)),
-            };
-            serde_json::json!({
-                "action": offer.action.name(),
-                "available": reason.is_none(),
-                "reason": reason,
-            })
-        })
-        .collect();
-    // Spelled as every discovery row spells it (R3-H2): one folder, one text.
     let path = decision.execution_dir.as_deref().map(display_path);
+    // `quecto-tui` takes no session flag: `command` gets the user there, `resume`
+    // is what to type inside — for the one kind going there resumes, and only
+    // when they read the way they run.
+    let there = decision.kind.resumes_by_opening_quecto_there();
+    let folder = decision.execution_dir.as_deref().filter(|_| there);
+    let command = folder.and_then(open_there_command);
+    let resume = folder.and_then(|_| resume_step(&decision.target.name));
     serde_json::json!({
-        "outcome": "decision",
+        "outcome": "refused",
         "code": code,
         "session": safe_display(&decision.target.name),
         "sessionKey": decision.target.identity.runtime_key(),
         "kind": decision.kind.name(),
-        "homeVersion": decision.home_version.as_str(),
         "executionPath": path.as_deref().map(safe_display),
         "detail": decision.detail.as_deref().map(safe_display),
-        "actions": actions,
+        "command": command,
+        "resume": resume,
     })
 }
 

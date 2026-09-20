@@ -54,11 +54,13 @@ that exits with nothing to save leaves no transcript and no home sidecar.
 saved before workspace scoping has no `.home`; because history is never
 associated with a folder implicitly, `quecto agent -m hello` over a pre-existing
 `cli:default`, or `-s <name>` over a pre-existing named session, exits 1 with
-`session '<key>' cannot start here: it predates workspace scoping and has no
-home ...`. The text names the way out — start under a new name with `-s <name>`,
-or run `--no-session` — and the old transcript is preserved untouched and stays
-visible, unassociated, in the Global list of `/resume`. Explicit association of
-a legacy session with a folder is a later slice (#2014). The same wording covers
+`session '<key>' cannot start here: it has no folder recorded (it was saved
+before quecto tracked folders); start under a new name with -s <name>, or run
+--no-session. The saved transcript was not changed.` The text names the way
+out, and the old transcript is preserved untouched and stays
+visible, with no folder recorded, in the All Folders list of `/resume`.
+Associating such a session with a folder was descoped (#2045, #2014 not
+planned): there is no installed base to migrate. The same wording covers
 a session saved in another execution directory (start it from there, or start a
 new name) and a home that is unavailable or whose workspace changed.
 
@@ -365,7 +367,7 @@ pure matching rules in `domain/session_metadata_search.rs`.
   `homeVersion` (the contract suite asserts search row = list row = authority).
   Selecting one goes to `ResumeSavedSession` like any other row: a session
   deleted since is `not_found`, a re-homed one `stale_home_version`, a
-  cross-folder one a typed decision. Eligibility in a row is advisory, decided
+  cross-folder one the typed `belongs_elsewhere` refusal. Eligibility in a row is advisory, decided
   by the one domain rule over the single discovery of the current directory the
   query makes (a home saved anywhere else can never admit, so nothing is
   discovered per row).
@@ -389,79 +391,71 @@ pure matching rules in `domain/session_metadata_search.rs`.
   `get_state`/`abort` by the sum — the TUI's single flight bounds that to two
   scans; a raw client gets no such bound.
 
-#### Typed resume decisions (#2011)
+#### A session that belongs elsewhere is refused (#2011, #2045)
 
-`ResumeSavedSession::execute` takes a `ResumeRequest` (exact target, intent,
-optional expected `HomeVersion`) and answers a `ResumeOutcome` (`Resumed`,
-`Cancelled`) or a typed `ResumeSavedSessionError`, each with a stable `code()`.
-A target that exists but does not admit a restore is answered with
-`Decision(ResumeDecision)`: the `ResumeDecisionKind` (`CrossFolder`,
-`HomeMissing`, `HomeChanged`, `HomeUnknown`, `LegacyUnscoped`), the home version
-it was decided on, and the offers of the domain's one affirmative table
-(`ResumeDecisionKind::offered_actions`: Open original / Fork current / Cancel;
-Locate / Fork current / Cancel; Associate / Cancel). Each offer's availability
-comes from `ResumeActionCapabilities` — the set of actions whose executor is
-composed (`composition/resume_capabilities.rs`; `cancel_only()` until #2012,
-#2013 and #2014 add theirs there). An explicit action is refused before any
-effect and is never substituted. `Eligibility::refuse`
-(`use_cases/resume_saved_session_action.rs`) answers it in one fixed order:
-the target exists (`NotFound`; the loop's own key has no exception — an action
-saves nothing), it names a version (`HomeVersionRequired`: an action acts on
-the authority the client was shown), that version is the authority's
-(`StaleHomeVersion` — another session's token included), the decision kind
-offers the action (`ActionNotOffered`, also for any action on a session that
-simply restores), and its executor is composed (`ActionUnavailable` with the
-reason — text for people, no tracker numbers — or `ActionExecutedElsewhere`
-once its own transaction exists).
+`ResumeSavedSession::execute` takes a `ResumeRequest` (exact target, optional
+expected `HomeVersion`) and answers `ResumeOutcome::Resumed` or a typed
+`ResumeSavedSessionError`, each with a stable `code()`. A target that exists
+but does not admit a restore here is `Decision(ResumeDecision)`: the
+`ResumeDecisionKind` (`CrossFolder`, `HomeMissing`, `HomeChanged`,
+`HomeUnknown`, `LegacyUnscoped`), the home version it was judged on, the
+recorded folder and the adapter's detail. Each kind has its own refusal code
+(`ResumeDecisionKind::refusal_code`: `belongs_elsewhere`, `home_missing`,
+`home_changed`, `home_unknown`, `no_home_recorded`). **Nothing is offered and
+nothing follows**: the descope of #2045 removed the resume actions (Open
+original, Fork, Locate, Associate, Cancel), their capability set, their
+composition and their refusal codes — quecto is a lightweight harness, and a
+session from another folder is resumed by opening quecto there. The client is
+told how: `domain/session_open_command.rs` spells `cd '<folder>' && quecto-tui`
+from the REAL folder as one POSIX single-quoted word (a contract test runs it
+in `sh` against hostile names), or spells **no command** when it would not
+read the way it runs — a folder that is not UTF-8, or one holding a control,
+Bidi_Control or invisible format character. `quecto-tui` takes no session
+flag, so the second step travels as its own field (`/resume <key>`). Both are
+sent for ONE kind only — `ResumeDecisionKind::resumes_by_opening_quecto_there`
+(cross-folder): a changed home may be this very folder, a missing one cannot
+be entered, and an unknown or unrecorded one names nowhere to go, so those
+refusals carry neither. The startup refusal is read by someone who ran
+`quecto … -s <key>`: under the same rule, only a session that lives in another
+folder is given the folder, `cd '<folder>'`, and "then run the same command
+again"; the others say why and that the saved transcript was not changed.
 
-**Hand-off to the executors (#2012–#2014).** `ActionExecutedElsewhere` is the
-contract of those slices: a capability composed in `resume_capabilities.rs`
-makes the dialog row selectable at once, so the same change must route the
-action in the dispatch before this owner —
-`every_composed_capability_has_a_dispatch_route`
-(`uds_dispatch_resume_picker_tests.rs`) asks each action of a session whose
-decision offers it and fails a flip that lands alone. An executor that routes
-its action before this owner no longer passes through `refuse`, so it
-must itself keep the same order: (a) the existence pre-flight, (b) the token,
-required and re-checked **under the target's claim** (the pre-flight here is
-effect-free and claims nothing), and (c) that the decision kind it observes
-under that claim offers the action. The token of an uninterpretable home is
-bound to the identity and the category only, never to the reader's error text,
-so it survives a harness upgrade that rewords the error — and authorizes a
-write over *any* uninterpretable content of that one record.
+A request that still names an `action` (a pre-#2045 client) is
+`ResumeSavedSessionError::LegacyAction` (`legacy_action_unsupported`): the
+wire field is presence-sensitive — any value, even `null` — so such a request
+is refused under its own id through the ordinary refusal path, never a
+`parse_error` and never read as a restore.
 
-`Cancel` has no effect at all and needs no version; its `success:true` answer
-is broadcast like every response, which a pre-#2011 peer client misreads as a
-restore (a false notice, no state change — see `uds-protocol.md`). The
-interface's idle gate is the typed refusal `Busy` — a defensive guard: turns
-and dispatch share one task, so a mid-turn request is queued and **executes
-after the turn**, and the guard is unreachable today. `SessionHomeContext::classify` is the one classification (`admit`, the
-startup disposition, is derived from it); an undiscoverable current directory
-is the refusal `CurrentScopeUnavailable`, never a decision. The collaborators
-in `use_cases/resume_saved_session_decision.rs` run the same `decide` twice: an
-effect-free pre-flight — it asks `SessionStore::exists` (no transcript is read)
-and answers an absent target `NotFound`, a decision or a stale selection at
-once, so none of them settles a child, saves or claims anything (the loop's own
-key is excepted from the early `NotFound`: the departing save may be what first
-writes it) — and the authoritative re-check under the target's
-claim, where a changed `HomeVersion` is `StaleHomeVersion` and the claim is
-released (the loop's own key excepted, #1995). Exact-key resolution reads the
-`.home` authority and never the derived index. `HomeVersion::of(identity, scope)` is a pure,
-process-stable digest of the session identity and the authoritative scope
-(legacy and uninterpretable states included — the latter by category, not by
-error wording): two sessions — two legacy
-records, two sessions saved in one folder — never share a token, so #2014 can
-authorize a write of exactly the record a token names. A `list_sessions` row
-carries `ListedSession::home_version()`, the same function over the listed
-home; the contract `resume_decision_listing.rs` pins row version == authority
-version for every home state, cold and index-seeded, and that a well-formed
-lying index yields only `StaleHomeVersion`. The wire action names are the
-domain's one table (`ResumeAction::name` / `from_name`; the protocol type
-parses through it). The UDS edge is `interface/uds/sessions/
+The interface's idle gate is the typed refusal `Busy` — a defensive guard:
+turns and dispatch share one task, so a mid-turn request is queued and
+**executes after the turn**, and the guard is unreachable today.
+`SessionHomeContext::classify` is the one classification (`admit`, the startup
+disposition, is derived from it); an undiscoverable current directory is the
+refusal `CurrentScopeUnavailable`. The collaborators in
+`use_cases/resume_saved_session_decision.rs` run the same `decide` twice: an
+effect-free pre-flight — it asks `SessionStore::exists` (no transcript is
+read) and answers an absent target `NotFound`, a session that belongs
+elsewhere or a stale selection at once, so none of them settles a child, saves
+or claims anything (the loop's own key is excepted from the early `NotFound`:
+the departing save may be what first writes it) — and the authoritative
+re-check under the target's claim, where a changed `HomeVersion` is
+`StaleHomeVersion` and the claim is released (the loop's own key excepted,
+#1995). Exact-key resolution reads the `.home` authority and never the derived
+index; an exact miss never resolves a prefix or fuzzy neighbour.
+`HomeVersion::of(identity, scope)` is a pure, process-stable digest of the
+session identity and the authoritative scope (legacy and uninterpretable
+states included — the latter by category, not by error wording): two sessions
+never share a token. A `list_sessions` row carries
+`ListedSession::home_version()`, the same function over the listed home; the
+contract `resume_decision_listing.rs` pins row version == authority version
+for every home state, cold and index-seeded, and that a well-formed lying
+index yields only `StaleHomeVersion`; `resume_refusal.rs` pins every kind, the
+no-effect invariants and the single ownership over the real adapters. The UDS edge is `interface/uds/sessions/
 resume_session_controller.rs` (wire fields → request) and
 `interface/cli/uds_dispatch_resume.rs` (typed answers, untrusted text made
-safe); the TUI renders the decision in `sessions/resume_decision.rs`, never
-infers availability, and sends identity + action + version.
+safe); the TUI shows the refusal as a plain notice
+(`sessions/resume_decision.rs`) that sends nothing, and a selection sends
+identity + the listed version — never an action.
 
 ### DTOs and the active session
 

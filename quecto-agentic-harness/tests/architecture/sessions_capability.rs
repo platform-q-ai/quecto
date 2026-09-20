@@ -98,8 +98,6 @@ const CANONICAL_FILES: &[&str] = &[
     "src/domain/stable_digest.rs",
     "src/interface/cli/uds_safe_display.rs",
     "src/application/sessions/use_cases/resume_saved_session_decision.rs",
-    "src/application/sessions/use_cases/resume_saved_session_action.rs",
-    "src/composition/resume_capabilities.rs",
     "src/interface/uds/sessions/resume_session_controller.rs",
     "src/interface/cli/uds_dispatch_resume.rs",
     // #2010 global metadata search: one new query owner and its edges.
@@ -122,6 +120,8 @@ const CANONICAL_FILES: &[&str] = &[
     "src/infrastructure/persistence/session_home_catalogue_seed.rs",
     "src/infrastructure/persistence/session_record_read.rs",
     "src/domain/session_path_text.rs",
+    // #2045: the shell command that opens quecto in a session's folder.
+    "src/domain/session_open_command.rs",
     "src/domain/session_query_refusal.rs",
     "src/interface/cli/protocol_search_rescue.rs",
     "src/interface/cli/uds_freshness_json.rs",
@@ -679,15 +679,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     // #2011: the eligibility collaborators of the one resume transaction —
     // request admission, the effect-free pre-flight, the claimed re-check.
-    // Review R2-H3: the refusal order of an explicit action is its own
-    // module, so the helper shrinks (158 → 147).
+    // #2045 removes explicit resume actions; eligibility remains effect-free.
     (
         "src/application/sessions/use_cases/resume_saved_session_decision.rs",
         147,
-    ),
-    (
-        "src/application/sessions/use_cases/resume_saved_session_action.rs",
-        52,
     ),
     // #2011: the refusal text moved to its own module (123 → 117 with the
     // typed decision and refusal variants added).
@@ -701,14 +696,13 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // Review R1: the digest is its own pure module (182 → 165).
     ("src/domain/resume_decision.rs", 163),
     ("src/domain/stable_digest.rs", 30),
-    ("src/composition/resume_capabilities.rs", 15),
     (
         "src/interface/uds/sessions/resume_session_controller.rs",
         55,
     ),
-    ("src/interface/cli/uds_dispatch_resume.rs", 100),
+    ("src/interface/cli/uds_dispatch_resume.rs", 68),
     ("src/application/sessions/dto/resume_disposition.rs", 30),
-    ("src/application/sessions/dto/startup_refusal.rs", 40),
+    ("src/application/sessions/dto/startup_refusal.rs", 31),
     // D9 #1978: retained context.
     ("src/application/sessions/use_cases/recall_context.rs", 80),
     ("src/application/sessions/use_cases/retain_context.rs", 118),
@@ -838,6 +832,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // Review round 2: the refusal, the injective path spelling, the rescue of
     // a number no `f64` holds and the bounded freshness tail are new owners.
     ("src/domain/session_path_text.rs", 23),
+    ("src/domain/session_open_command.rs", 44),
     ("src/domain/session_query_refusal.rs", 31),
     ("src/interface/cli/protocol_search_rescue.rs", 51),
     ("src/interface/cli/uds_freshness_json.rs", 33),

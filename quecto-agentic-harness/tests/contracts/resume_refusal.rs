@@ -1,220 +1,22 @@
-//! Contract of the resume decisions (#2011) over the REAL adapters: the file
-//! session store and its home authority, real Git/filesystem discovery, real
-//! cross-process-style claims — composed by the production composition
-//! function. Every refusal leaves the active session, the source files and
-//! the target's claim as they were.
-use quecto::application::durable_prefix::DurablePrefixLatch;
-use quecto::application::sessions::dto::{
-    ActionAvailability, ResumeDecision, ResumeIntent, ResumeOutcome, ResumeRequest,
-    ResumeSavedSessionError,
-};
-use quecto::application::sessions::ports::session_home::{
-    SessionHomeCatalogue, WorkspaceDiscovery,
-};
-use quecto::application::sessions::ports::session_runtime::TurnAccountingReset;
-use quecto::application::sessions::ports::{
-    SessionKeyPropagation, SessionStore, SessionSwitchRuntime,
-};
-use quecto::composition::session_home::session_home_in;
-use quecto::domain::message::Message;
-use quecto::domain::resume_decision::{HomeVersion, ResumeAction, ResumeDecisionKind};
-use quecto::domain::session::Session;
+//! Contract of a refused resume (#2011, #2045) over the REAL adapters: the
+//! file session store and its home authority, real Git/filesystem discovery,
+//! real cross-process-style claims — composed by the production composition
+//! function. A session that belongs elsewhere is refused with its kind and
+//! folder; every refusal leaves the active session, the source files and the
+//! target's claim as they were; only the same execution directory restores.
+use super::resume_fixture::{World, identity};
+use quecto::application::sessions::dto::{ResumeOutcome, ResumeRequest, ResumeSavedSessionError};
+use quecto::application::sessions::ports::SessionStore;
+use quecto::application::sessions::ports::session_home::SessionHomeCatalogue;
+use quecto::domain::resume_decision::{HomeVersion, ResumeDecisionKind};
 use quecto::domain::session_home::SessionHomeScope;
 use quecto::domain::session_identity::SessionIdentity;
-use quecto::domain::workflow::WorkflowRunPersisted;
 use quecto::infrastructure::persistence::session_home_catalogue::FileSessionHomeCatalogue;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
-use quecto::infrastructure::workspace::git_scope_discovery::GitScopeDiscovery;
-use quecto::interface::cli::uds_session_handles::{SessionHandles, SessionLoopInputs};
-use quecto::interface::uds::sessions::controller::ListSessionsController;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
-#[derive(Default)]
-struct Runtime {
-    switched_to: Vec<String>,
-}
-impl TurnAccountingReset for Runtime {
-    fn history_replaced(&mut self, _: usize) {}
-}
-impl SessionKeyPropagation for Runtime {
-    fn session_key_changed(&mut self, identity: &SessionIdentity) {
-        self.switched_to.push(identity.runtime_key().to_string());
-    }
-}
-impl SessionSwitchRuntime for Runtime {
-    fn reset_effort_to_default(&mut self) {}
-    fn reset_workflow(&mut self) {}
-    fn restore_workflow(&mut self, _: WorkflowRunPersisted) {}
-}
-
-/// A store with one active loop in `here` and saved sessions elsewhere.
-pub(super) struct World {
-    _temp: tempfile::TempDir,
-    pub(super) base: PathBuf,
-    pub(super) here: PathBuf,
-    pub(super) layout: FlatSessionLayout,
-    pub(super) store: Arc<FileSessionStore>,
-    pub(super) handles: SessionHandles,
-}
+use std::path::Path;
 
 const ACTIVE: &str = "cli:active";
-
-pub(super) fn identity(key: &str) -> SessionIdentity {
-    SessionIdentity::from_persisted_key(key)
-}
-
-impl World {
-    pub(super) async fn new() -> Self {
-        let temp = tempfile::tempdir().unwrap();
-        let base = temp.path().join("base");
-        let here = temp.path().join("here");
-        std::fs::create_dir_all(&here).unwrap();
-        let here = here.canonicalize().unwrap();
-        let layout = FlatSessionLayout::new(&base);
-        let store = Arc::new(FileSessionStore::new(layout.clone()));
-        let home = session_home_in(store.clone(), Ok(here.clone()));
-        let list = quecto::application::sessions::use_cases::ListSessions::new(store.clone())
-            .with_home(home.clone());
-        // The production graph, over an explicit execution directory.
-        let handles = quecto::composition::active_session::assemble_session_handles(
-            SessionLoopInputs {
-                base_dir: base.clone(),
-                identity: identity(ACTIVE),
-                ephemeral: false,
-                system_prompt: String::new(),
-                spill_store: None,
-                durable_prefix: DurablePrefixLatch::shared(),
-                workflow_state: None,
-                subagent_registry: None,
-            },
-            store.clone(),
-            quecto::composition::session_search::discovery_handles(
-                Arc::new(ListSessionsController::new(Arc::new(list))),
-                home.clone(),
-            ),
-            None,
-            quecto::composition::sessions::build_fresh_session_identity(),
-            home,
-        );
-        handles
-            .switch
-            .resume
-            .open_at_startup()
-            .await
-            .expect("startup");
-        Self {
-            _temp: temp,
-            base,
-            here,
-            layout,
-            store,
-            handles,
-        }
-    }
-
-    /// Save `key` as a session whose home is `dir` (created), through the
-    /// real store and the real discovery, then release it as a finished run.
-    pub(super) async fn saved_in(&self, key: &str, dir: &Path) -> PathBuf {
-        std::fs::create_dir_all(dir).unwrap();
-        let dir = dir.canonicalize().unwrap();
-        let home = GitScopeDiscovery::default().discover(&dir).unwrap();
-        self.store.record_new_home(&identity(key), &home).unwrap();
-        self.save_transcript(key).await;
-        dir
-    }
-
-    pub(super) async fn save_transcript(&self, key: &str) {
-        let mut session = Session::new(identity(key));
-        session
-            .messages
-            .push(Message::user(format!("history of {key}")));
-        self.store.save(&session).await.unwrap();
-        self.store.release(&identity(key));
-    }
-
-    pub(super) async fn request(
-        &self,
-        request: &ResumeRequest,
-    ) -> (Result<ResumeOutcome, ResumeSavedSessionError>, Vec<Message>) {
-        let mut messages = vec![Message::user("live conversation")];
-        let mut runtime = Runtime::default();
-        let result = self
-            .handles
-            .switch
-            .resume
-            .execute(request, &mut messages, None, &mut runtime)
-            .await;
-        if result.is_err() {
-            assert!(runtime.switched_to.is_empty(), "a refusal switches nothing");
-        }
-        (result, messages)
-    }
-
-    pub(super) async fn decision(&self, key: &str) -> ResumeDecision {
-        let files = self.files();
-        let (result, messages) = self.request(&ResumeRequest::restore(key)).await;
-        let Err(ResumeSavedSessionError::Decision(decision)) = result else {
-            panic!("decision expected: {result:?}");
-        };
-        self.assert_untouched(key, &messages, &files).await;
-        *decision
-    }
-
-    pub(super) fn files(&self) -> Vec<(PathBuf, Vec<u8>)> {
-        let mut files: Vec<_> = std::fs::read_dir(self.base.join("sessions"))
-            .unwrap()
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.is_file() && path.extension().is_some_and(|e| e != "lock"))
-            .filter(|path| !path.to_string_lossy().contains(".owner"))
-            .filter(|path| !path.to_string_lossy().contains("catalogue"))
-            // The departing session's own lifecycle save is permitted (a miss
-            // is only known under the claim, after that save).
-            .filter(|path| !path.to_string_lossy().contains("cli_active"))
-            .map(|path| (path.clone(), std::fs::read(&path).unwrap()))
-            .collect();
-        files.sort();
-        files
-    }
-
-    /// The refusal invariants: the live conversation and identity stand, no
-    /// transcript or home changed, the active claim is held and the target's
-    /// is free for another process.
-    pub(super) async fn assert_untouched(
-        &self,
-        target: &str,
-        messages: &[Message],
-        files: &[(PathBuf, Vec<u8>)],
-    ) {
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].content, "live conversation");
-        assert_eq!(
-            self.handles.read_handles().current_session_key().await,
-            ACTIVE
-        );
-        assert_eq!(
-            self.files(),
-            files,
-            "no transcript or home authority changed"
-        );
-        let competitor = FileSessionStore::new(self.layout.clone());
-        assert!(
-            competitor.claim(&identity(ACTIVE)).is_err(),
-            "active claim kept"
-        );
-        competitor
-            .claim(&identity(target))
-            .expect("the target's claim is not leaked");
-        competitor.release(&identity(target));
-    }
-}
-
-fn offered(decision: &ResumeDecision) -> Vec<ResumeAction> {
-    decision.offers.iter().map(|offer| offer.action).collect()
-}
 
 fn running_as_root() -> bool {
     // SAFETY: geteuid has no preconditions and cannot fail.
@@ -242,26 +44,15 @@ async fn the_same_execution_directory_restores_and_moves_the_single_ownership() 
 }
 
 #[tokio::test]
-async fn an_unrelated_directory_is_a_cross_folder_decision_with_every_executor_unavailable() {
+async fn an_unrelated_directory_is_refused_as_belonging_elsewhere_and_names_the_folder() {
     let world = World::new().await;
     let elsewhere = world
         .saved_in("cli:theirs", &world.base.join("../elsewhere"))
         .await;
     let decision = world.decision("cli:theirs").await;
     assert_eq!(decision.kind, ResumeDecisionKind::CrossFolder);
+    assert_eq!(decision.kind.refusal_code(), "belongs_elsewhere");
     assert_eq!(decision.execution_dir, Some(elsewhere));
-    assert_eq!(
-        offered(&decision),
-        [
-            ResumeAction::OpenOriginal,
-            ResumeAction::ForkCurrent,
-            ResumeAction::Cancel
-        ]
-    );
-    for offer in &decision.offers {
-        let cancel = offer.action == ResumeAction::Cancel;
-        assert_eq!(offer.availability == ActionAvailability::Available, cancel);
-    }
 }
 
 #[tokio::test]
@@ -306,14 +97,7 @@ async fn a_moved_directory_is_a_home_missing_decision() {
     std::fs::rename(&dir, dir.with_file_name("after")).unwrap();
     let decision = world.decision("cli:moved").await;
     assert_eq!(decision.kind, ResumeDecisionKind::HomeMissing);
-    assert_eq!(
-        offered(&decision),
-        [
-            ResumeAction::Locate,
-            ResumeAction::ForkCurrent,
-            ResumeAction::Cancel
-        ]
-    );
+    assert_eq!(decision.kind.refusal_code(), "home_missing");
     assert!(decision.detail.is_some(), "the adapter's reason is carried");
     assert!(!dir.exists(), "nothing was created in its place");
 }
@@ -386,10 +170,7 @@ async fn a_legacy_pretty_printed_transcript_is_a_legacy_decision_and_gains_no_ho
     assert!(!world.layout.home_file(&identity("cli:legacy")).exists());
     let decision = world.decision("cli:legacy").await;
     assert_eq!(decision.kind, ResumeDecisionKind::LegacyUnscoped);
-    assert_eq!(
-        offered(&decision),
-        [ResumeAction::Associate, ResumeAction::Cancel]
-    );
+    assert_eq!(decision.kind.refusal_code(), "no_home_recorded");
     assert!(path.exists());
     assert!(
         !world.layout.home_file(&identity("cli:legacy")).exists(),
@@ -477,7 +258,6 @@ async fn the_home_version_is_the_authoritys_and_a_stale_one_is_refused() {
     let files = world.files();
     let request = ResumeRequest {
         target: "cli:mine".into(),
-        intent: ResumeIntent::Restore,
         expected_home_version: Some(listed.clone()),
     };
     let (result, messages) = world.request(&request).await;
@@ -518,44 +298,61 @@ async fn a_target_owned_by_another_live_process_is_refused_and_not_stolen() {
     );
 }
 
-#[tokio::test]
-async fn cancel_and_every_unavailable_action_touch_nothing() {
-    let world = World::new().await;
-    world
-        .saved_in("cli:theirs", &world.base.join("../elsewhere"))
-        .await;
-    let shown = world.decision("cli:theirs").await.home_version;
-    let files = world.files();
-    for action in ResumeAction::ALL {
-        let request = ResumeRequest {
-            target: "cli:theirs".into(),
-            intent: ResumeIntent::Act(action),
-            expected_home_version: Some(shown.clone()),
-        };
-        let (result, messages) = world.request(&request).await;
-        match (action, result) {
-            (ResumeAction::Cancel, Ok(ResumeOutcome::Cancelled { name })) => {
-                assert_eq!(name, "cli:theirs");
-            }
-            (
-                ResumeAction::OpenOriginal | ResumeAction::ForkCurrent,
-                Err(ResumeSavedSessionError::ActionUnavailable {
-                    action: refused, ..
-                }),
-            ) => {
-                assert_eq!(refused, action, "never substituted");
-            }
-            // A cross-folder decision offers neither (review R2-H3).
-            (
-                ResumeAction::Locate | ResumeAction::Associate,
-                Err(ResumeSavedSessionError::ActionNotOffered(refused)),
-            ) => {
-                assert_eq!(refused, action, "never substituted");
-            }
-            (action, other) => panic!("{action:?}: {other:?}"),
-        }
-        world
-            .assert_untouched("cli:theirs", &messages, &files)
-            .await;
+/// #2045 acceptance: the command is RUN, not read. Whatever a folder is
+/// called, `cd` lands in exactly that folder and nothing in its name executes.
+#[test]
+fn the_command_changes_into_exactly_that_folder_whatever_it_is_called() {
+    use quecto::domain::session_open_command::{cd_there_command, open_there_command};
+    let root = tempfile::tempdir().unwrap();
+    let root_path = root.path().canonicalize().unwrap();
+    for name in [
+        "plain",
+        "a b  c",
+        "it's",
+        "$(touch PWNED)",
+        "`touch PWNED`; touch PWNED",
+        "&& touch PWNED #",
+        "-rf",
+        "q\"uo\"te",
+        "caf\u{e9} \u{65e5}\u{672c}",
+    ] {
+        let dir = root_path.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cd = cd_there_command(&dir).expect(name);
+        assert_eq!(
+            open_there_command(&dir),
+            Some(format!("{cd} && quecto-tui")),
+            "{name}"
+        );
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{cd} && pwd -P"))
+            .current_dir(&root_path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{name}: {output:?}");
+        let landed = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(
+            landed.trim_end_matches('\n'),
+            dir.to_str().unwrap(),
+            "{name}"
+        );
     }
+    let planted: Vec<_> = walk(&root_path)
+        .into_iter()
+        .filter(|path| path.ends_with("PWNED"))
+        .collect();
+    assert!(planted.is_empty(), "a folder name executed: {planted:?}");
+}
+
+fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap().filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(walk(&path));
+        }
+        found.push(path);
+    }
+    found
 }

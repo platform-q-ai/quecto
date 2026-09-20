@@ -116,7 +116,7 @@ impl App {
             .ac()
             .namespaced_id(&format!("resume-{}", super::super::app_events::uuid_like()));
         self.ac_mut().pending_session_resume_id = Some(id.clone());
-        self.ac_mut().pending_session_resume_acts = resume.action.is_some();
+
         let sent = self.send_command(Command::ResumeSession {
             id: Some(id),
             resume,
@@ -155,16 +155,17 @@ impl App {
                 self.handle_resume_success(data.is_some().then_some(ack));
             }
             // Nothing changed for anyone: no refresh, no toast.
-            ResumeAnswer::Cancelled => {}
-            // A peer's decision, refusal or unreadable answer is not this tab's.
+            // A peer's refusal or unreadable answer is not this tab's.
             _ if peers => {}
-            ResumeAnswer::Decision(decision) if owned => {
+            ResumeAnswer::Elsewhere(refusal) if owned => {
                 let sessions = &self.ac().sessions;
-                let title = sessions.listed_titles.get(&decision.session_key).cloned();
+                let key = refusal.session_key.as_deref();
+                let title = key.and_then(|key| sessions.listed_titles.get(key)).cloned();
                 self.ac_mut().sessions.resume_decision =
-                    Some(ResumeDecisionDialog::new(decision, title.as_deref()));
+                    Some(ResumeDecisionDialog::new(refusal, title.as_deref()));
             }
-            ResumeAnswer::Decision(_) => {}
+            // An answer with no id is nobody's in particular: no panel.
+            ResumeAnswer::Elsewhere(_) => {}
             // One truncated line: the instruction first, and no "home".
             ResumeAnswer::Refused(Some(code)) if code == "stale_home_version" => {
                 self.notify(STALE_LIST, NotifyLevel::Error);
@@ -180,29 +181,6 @@ impl App {
                     NotifyLevel::Warning,
                 );
             }
-        }
-    }
-
-    /// The harness rejected a line it could not decode as `resume_session` —
-    /// an action newer than the harness. A `parse_error` carries no `id`, so
-    /// the request in flight would never be answered: settle it here, change
-    /// nothing, and say so. `parse_error` is broadcast, so it is this tab's
-    /// only when the request in flight CARRIED an action (a plain restore can
-    /// never cause "unknown resume action" — that one is a peer's) and, should
-    /// an id come with it, the id is the one in flight.
-    pub(in crate::shell) fn handle_resume_parse_error(
-        &mut self,
-        id: Option<&str>,
-        error: Option<String>,
-    ) {
-        let about_an_action = error
-            .as_deref()
-            .is_some_and(|e| e.contains("resume action"));
-        let ours = about_an_action
-            && self.ac().pending_session_resume_acts
-            && (id.is_none() || self.is_owned_resume_response(id));
-        if ours && self.ac_mut().pending_session_resume_id.take().is_some() {
-            self.notify_response_error("Resume failed", error);
         }
     }
 

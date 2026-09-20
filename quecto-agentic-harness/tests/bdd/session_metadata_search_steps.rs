@@ -612,7 +612,8 @@ fn exact_key_independent(world: &mut QuectoWorld, key: String) {
     fs::write(base.join("sessions/home.catalogue"), b"\x00garbage").unwrap();
     let request = serde_json::json!({"type": "resume_session", "id": "exact-1", "session": key});
     let (_, answer) = socket_roundtrip(world, &request.to_string());
-    assert_eq!(answer["data"]["outcome"], "decision", "{answer}");
+    assert_eq!(answer["data"]["outcome"], "refused", "{answer}");
+    assert_eq!(answer["data"]["code"], "belongs_elsewhere", "{answer}");
     assert_eq!(answer["data"]["kind"], "cross_folder", "{answer}");
     let _ = command;
 }

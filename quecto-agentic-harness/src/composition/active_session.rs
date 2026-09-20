@@ -95,8 +95,7 @@ pub fn assemble_session_handles(
         departing_children.clone(),
         inputs.ephemeral,
         home,
-    )
-    .with_capabilities(super::resume_capabilities::composed());
+    );
     let switch = SessionSwitchHandles {
         fresh: Arc::new(StartFreshConversation::new(
             active_session.clone(),

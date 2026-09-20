@@ -1,48 +1,43 @@
 use super::*;
-use crate::domain::session_home::SessionHomeScope;
-
 #[test]
-fn a_bare_key_is_an_exact_restore() {
-    for fields in [
-        ResumeFields::from("chat-1-a"),
-        ResumeFields::from("chat-1-a".to_string()),
-    ] {
-        let request = fields.into_request().unwrap();
-        assert_eq!(request, ResumeRequest::restore("chat-1-a"));
-    }
-}
-
-#[test]
-fn an_action_and_a_version_are_carried_typed() {
-    let version = HomeVersion::of(
-        &crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:s"),
-        &SessionHomeScope::LegacyUnscoped,
-    );
+fn exact_restore_preserves_target_and_version() {
+    let raw = "h1-0123456789abcdef";
     let request = ResumeFields {
-        session: "cli:one".into(),
-        action: Some(ResumeAction::ForkCurrent),
-        expected_home_version: Some(version.as_str().to_string()),
+        session: "cli:saved".into(),
+        expected_home_version: Some(raw.into()),
+        legacy_action: false,
     }
     .into_request()
     .unwrap();
-    assert_eq!(request.target, "cli:one");
-    assert_eq!(request.intent, ResumeIntent::Act(ResumeAction::ForkCurrent));
-    assert_eq!(request.expected_home_version, Some(version));
+    assert_eq!(request.target, "cli:saved");
+    assert_eq!(request.expected_home_version.unwrap().as_str(), raw);
 }
-
 #[test]
-fn a_version_token_never_issued_is_stale_not_ignored() {
-    for hostile in ["", "latest", "h1-XYZ", "h1-0123456789abcde\u{1b}"] {
-        let refused = ResumeFields {
-            session: "cli:one".into(),
-            action: None,
-            expected_home_version: Some(hostile.into()),
+fn malformed_version_is_stale() {
+    let error = ResumeFields {
+        session: "saved".into(),
+        expected_home_version: Some("bad".into()),
+        legacy_action: false,
+    }
+    .into_request()
+    .unwrap_err();
+    assert_eq!(error.code(), "stale_home_version");
+}
+/// #2045: a request that still names an action is refused before anything
+/// else is read — a version that would parse, or one that would not, makes
+/// no difference, and nothing is ever restored from it.
+#[test]
+fn a_legacy_action_is_refused_whatever_else_the_request_says() {
+    for version in [None, Some("h1-0123456789abcdef"), Some("bad")] {
+        let error = ResumeFields {
+            session: "cli:saved".into(),
+            expected_home_version: version.map(str::to_string),
+            legacy_action: true,
         }
         .into_request()
-        .expect_err("refused");
-        assert!(
-            matches!(refused, ResumeSavedSessionError::StaleHomeVersion),
-            "{hostile:?}"
-        );
+        .unwrap_err();
+        assert_eq!(error.code(), "legacy_action_unsupported", "{version:?}");
+        assert_eq!(error.to_string(), "resume actions are no longer supported");
     }
+    assert!(!ResumeFields::from("cli:saved").legacy_action);
 }

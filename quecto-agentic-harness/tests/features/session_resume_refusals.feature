@@ -1,21 +1,22 @@
-@issue-2011 @done
-Feature: Typed resume decisions through the production runtime
-  A saved session whose home does not admit a restore here is answered with an
-  explicit, capability-driven decision — never a silent restore, never another
-  action in place of the one asked for.
+@issue-2011 @issue-2045 @done
+Feature: A saved session that belongs elsewhere is refused with a plain notice
+  A saved session whose folder does not admit a restore here is refused —
+  typed, under the asker's own id — and the client is told where it lives and
+  how to open it there. Nothing is offered and nothing is ever substituted:
+  no restore, no claim, no change to the conversation on screen.
 
   Background:
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "Saved reply"
 
-  Scenario: An exact key from an unrelated folder resolves globally into a cross-folder decision
+  Scenario: An exact key from an unrelated folder resolves globally and is refused as belonging elsewhere
     Given saved production sessions in two different folders
     When the operator opens resume with the active local conversation
     And the operator requests the foreign session by exact key
-    Then the runtime answers a "cross_folder" decision offering "open_original,fork_current,cancel"
-    And every offered action except cancel is unavailable with a reason
-    And the TUI shows the decision dialog titled "belongs to another folder"
+    Then the runtime refuses the resume as "cross_folder" with code "belongs_elsewhere"
+    And the refusal carries the command that opens quecto in the foreign folder and the resume step
+    And the TUI shows the notice titled "This session belongs to another folder"
     And the selected conversation identity history and ownership are preserved
 
   Scenario: An exact miss never falls back to a prefix or fuzzy match
@@ -64,13 +65,12 @@ Feature: Typed resume decisions through the production runtime
     And the runtime refuses the resume with code "stale_home_version"
     And the active conversation and every claim are unchanged
 
-  Scenario Outline: A home that cannot be observed yields an explicit decision
+  Scenario Outline: A home that cannot be observed is refused with its own kind
     Given saved production sessions in two different folders
     And the foreign session home is <state>
     When the operator opens resume with the active local conversation
     And the operator requests the session "cli:foreign" by exact key
-    Then the runtime answers a "<kind>" decision offering "locate,fork_current,cancel"
-    And every offered action except cancel is unavailable with a reason
+    Then the runtime refuses the resume as "<kind>" with code "<kind>"
     And the active conversation and every claim are unchanged
 
     Examples:
@@ -79,88 +79,36 @@ Feature: Typed resume decisions through the production runtime
       | permission-inaccessible | home_missing |
       | unreadable metadata     | home_unknown |
 
-  Scenario: A legacy session requires an explicit first association
+  Scenario: A session with no folder recorded is refused and gains none
     Given saved production sessions in two different folders
     And the foreign saved home metadata is absent
     When the operator opens resume with the active local conversation
     And the operator requests the session "cli:foreign" by exact key
-    Then the runtime answers a "legacy_unscoped" decision offering "associate,cancel"
-    And every offered action except cancel is unavailable with a reason
-    And the decision message keeps the explicit-association guidance
+    Then the runtime refuses the resume as "legacy_unscoped" with code "no_home_recorded"
     And no home metadata was created for the foreign session
     And the active conversation and every claim are unchanged
 
-  Scenario: Cancel at the decision dialog changes nothing
+  Scenario: Closing the notice changes nothing and sends nothing
     Given saved production sessions in two different folders
     When the operator opens resume with the active local conversation
     And the operator requests the foreign session by exact key
-    And the operator cancels the decision dialog
-    Then the decision dialog is closed and no command was sent
+    And the operator closes the notice
+    Then the notice is closed and no command was sent
     And the active conversation and every claim are unchanged
 
-  Scenario: An unavailable action chosen in the dialog is explained and never sent
-    Given saved production sessions in two different folders
-    When the operator opens resume with the active local conversation
-    And the operator requests the foreign session by exact key
-    And the operator chooses the first offered action in the decision dialog
-    Then the TUI explains the action is unavailable and keeps the dialog open
-    And the decision dialog sent no command
-
-  Scenario Outline: A direct socket request for an action is never substituted
-    Given saved production sessions in two different folders
-    When the operator opens resume with the active local conversation
-    And a socket client requests the foreign session with action "<action>" and the version of its decision
-    Then the runtime refuses the resume with code "<code>"
-    And the active conversation and every claim are unchanged
-
-    Examples:
-      | action        | code               |
-      | open_original | action_unavailable |
-      | fork_current  | action_unavailable |
-      | locate        | action_not_offered |
-      | associate     | action_not_offered |
-
-  Scenario: An action on a missing session is not found whatever token it carries
-    Given saved production sessions in two different folders
-    When the operator opens resume with the active local conversation
-    And a socket client requests the session "cli:nosuch" with action "locate" and the version of the foreign decision
-    Then the runtime refuses the resume with code "not_found"
-    And the active conversation and every claim are unchanged
-
-  Scenario: An action carrying another session's version is stale before it is judged
-    Given saved production sessions in two different folders
-    When the operator opens resume with the active local conversation
-    And a socket client requests the session "cli:local" with action "open_original" and the version of the foreign decision
-    Then the runtime refuses the resume with code "stale_home_version"
-    And the active conversation and every claim are unchanged
-
-  Scenario Outline: An action that names no home version is refused
+  Scenario Outline: A request that still names an action is refused under its own id and restores nothing
     Given saved production sessions in two different folders
     When the operator opens resume with the active local conversation
     And a socket client requests the foreign session with action "<action>"
-    Then the runtime refuses the resume with code "home_version_required"
+    Then the runtime refuses the resume with code "legacy_action_unsupported"
     And the active conversation and every claim are unchanged
 
     Examples:
-      | action        |
-      | open_original |
-      | fork_current  |
-      | locate        |
-      | associate     |
-
-  Scenario: A direct socket cancel is acknowledged without any effect
-    Given saved production sessions in two different folders
-    When the operator opens resume with the active local conversation
-    And a socket client requests the foreign session with action "cancel"
-    Then the runtime answers the resume as cancelled
-    And the active conversation and every claim are unchanged
-
-  Scenario: An unknown action on the socket is rejected at the protocol boundary
-    Given saved production sessions in two different folders
-    When the operator opens resume with the active local conversation
-    And a socket client requests the foreign session with action "restore_anyway"
-    Then the socket rejects the malformed resume request
-    And the active conversation and every claim are unchanged
+      | action         |
+      | open_original  |
+      | fork_current   |
+      | cancel         |
+      | restore_anyway |
 
   Scenario: Startup repeats the guard for a session saved in another folder
     Given saved production sessions in two different folders
@@ -173,13 +121,15 @@ Feature: Typed resume decisions through the production runtime
     And the foreign session home names a directory with bidi and zero-width characters
     When the operator opens resume with the active local conversation
     And the operator requests the session "cli:foreign" by exact key
-    Then the runtime answers a "home_missing" decision offering "locate,fork_current,cancel"
+    Then the runtime refuses the resume as "home_missing" with code "home_missing"
+    And the refusal carries no command
     And neither the answer nor the TUI frame carries a bidi or zero-width character
 
-  Scenario: Hostile home metadata is rendered safely in the decision
+  Scenario: Hostile home metadata is rendered safely in the notice
     Given saved production sessions in two different folders
     And the foreign session home names a directory with terminal control characters
     When the operator opens resume with the active local conversation
     And the operator requests the session "cli:foreign" by exact key
-    Then the runtime answers a "home_unknown" decision offering "locate,fork_current,cancel"
+    Then the runtime refuses the resume as "home_unknown" with code "home_unknown"
+    And the refusal carries no command
     And neither the answer nor the TUI frame carries a raw control character

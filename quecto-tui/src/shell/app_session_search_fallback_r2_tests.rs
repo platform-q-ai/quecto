@@ -60,6 +60,56 @@ async fn a_parse_error_about_another_command_is_not_an_old_harness() {
     assert!(h.app_mut().ac().sessions.search_unsupported);
 }
 
+/// #2056 review: a `parse_error` is broadcast and carries no id, so it is
+/// nobody's in particular. A peer's malformed line — about any command, with
+/// or without an id, with nothing of ours in flight or with a search in
+/// flight it does not concern — is never reported here; and the one that IS
+/// ours (an old harness rejecting the search) says so once, with no generic
+/// "Protocol error" on top.
+#[tokio::test]
+async fn a_peers_parse_error_is_silent_and_our_own_adds_no_generic_toast() {
+    let mut h = harness().await;
+    let unknown = "parse error: unknown variant `frobnicate`, expected one of `prompt`, \
+                   `search_session_metadata` at line 1 column 20";
+    let malformed = "parse error: expected value at line 1 column 1";
+    for (id, error) in [
+        (None, unknown),
+        (None, malformed),
+        (Some("other-tab:req-7".to_string()), unknown),
+        (Some("tab0:req-7".to_string()), malformed),
+    ] {
+        h.app_mut()
+            .handle_response(id, "parse_error".into(), false, None, Some(error.into()));
+    }
+    assert_eq!(h.notification_messages(), Vec::<String>::new());
+
+    open_picker(&mut h).await;
+    type_text(&mut h, "z");
+    assert_eq!(searches(&mut h).await.len(), 1);
+    // In flight, and still a peer's error: about another command.
+    h.app_mut().handle_response(
+        None,
+        "parse_error".into(),
+        false,
+        None,
+        Some(unknown.into()),
+    );
+    assert_eq!(h.notification_messages(), Vec::<String>::new());
+    // Ours: an old harness rejects the search command itself.
+    let ours = "parse error: unknown variant `search_session_metadata`, expected one of \
+                `prompt`, `steer` at line 1 column 33";
+    h.app_mut()
+        .handle_response(None, "parse_error".into(), false, None, Some(ours.into()));
+    let notes = h.notification_messages();
+    assert_eq!(
+        notes.len(),
+        1,
+        "one compatibility warning, nothing else: {notes:?}"
+    );
+    assert!(!notes[0].contains("Protocol error"), "{notes:?}");
+    assert!(h.app_mut().ac().sessions.search_unsupported);
+}
+
 /// Fallback mode: text typed while the new scope's listing is awaited is
 /// applied to THAT listing when it arrives, never to the old scope's rows.
 #[tokio::test]

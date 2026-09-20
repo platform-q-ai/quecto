@@ -23,9 +23,8 @@ mod protocol_commands;
 #[path = "protocol_search_rescue.rs"]
 mod protocol_search_rescue;
 pub use protocol_commands::{
-    AgentCommand, ResumeActionCommand, SessionListScopeCommand, StreamingBehavior,
-    ToolPolicyApplyModeCommand, ToolPolicyMutationCommand, ToolPolicyOperationCommand,
-    ToolRegistration,
+    AgentCommand, SessionListScopeCommand, StreamingBehavior, ToolPolicyApplyModeCommand,
+    ToolPolicyMutationCommand, ToolPolicyOperationCommand, ToolRegistration,
 };
 
 // ─── Events (stdout) ─────────────────────────────────────────────────────────

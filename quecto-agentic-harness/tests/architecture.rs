@@ -1146,6 +1146,224 @@ fn tui_removed_multi_tab_symbols_do_not_come_back() {
     }
 }
 
+/// The `*_tests.rs` files no module compiles: neither named by a
+/// `#[path = "<file>"]` attribute nor declared as `mod <stem>;` anywhere.
+/// A test file that is not compiled passes every gate while pinning nothing
+/// (#2049 found two; #2056 switched off six to get green).
+fn uncompiled_test_files(files: &[(String, String)]) -> Vec<String> {
+    use std::collections::{HashMap, HashSet};
+    /// `dir/../x` and `dir/./x` as the path they name.
+    fn normalized(path: &str) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        for part in path.split('/') {
+            match part {
+                "." => {}
+                ".." if parts.last().is_some_and(|last| *last != "..") => {
+                    parts.pop();
+                }
+                other => parts.push(other),
+            }
+        }
+        parts.join("/")
+    }
+    // The files each file declares, read once and resolved from ITS folder —
+    // two folders may each hold an `x_tests.rs`, and declaring one compiles
+    // only that one. `#[path = "p"]` names `dir/p`; `mod m;` names `dir/m.rs`,
+    // `dir/m/mod.rs` or, from `dir/f.rs`, `dir/f/m.rs`. A comment declares nothing.
+    let declared_by: HashMap<&str, HashSet<String>> = files
+        .iter()
+        .map(|(path, content)| {
+            let (dir, file) = path.rsplit_once('/').unwrap_or(("", path.as_str()));
+            let own = file.trim_end_matches(".rs");
+            let mut names = HashSet::new();
+            for line in content.lines().map(str::trim) {
+                if line.starts_with("//") {
+                    continue;
+                }
+                if line.starts_with("#[path") {
+                    if let Some(quoted) = line.split('"').nth(1) {
+                        names.insert(normalized(&format!("{dir}/{quoted}")));
+                    }
+                    continue;
+                }
+                let declaration = line.strip_suffix(';').unwrap_or("");
+                let module = declaration
+                    .rsplit_once("mod ")
+                    .filter(|(before, _)| before.is_empty() || before.starts_with("pub"))
+                    .map(|(_, module)| module);
+                if let Some(module) = module {
+                    for candidate in [
+                        format!("{dir}/{module}.rs"),
+                        format!("{dir}/{module}/mod.rs"),
+                        format!("{dir}/{own}/{module}.rs"),
+                    ] {
+                        names.insert(normalized(&candidate));
+                    }
+                }
+            }
+            (path.as_str(), names)
+        })
+        .collect();
+    // Compiled: every non-test file, then — to a fixpoint — every test file a
+    // COMPILED file declares. A test file declared only by an uncompiled test
+    // file is itself uncompiled.
+    let mut compiled: HashSet<&str> = files
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .filter(|path| !path.ends_with("_tests.rs"))
+        .collect();
+    loop {
+        let reachable: HashSet<&String> = compiled
+            .iter()
+            .filter_map(|path| declared_by.get(path))
+            .flatten()
+            .collect();
+        let next: Vec<&str> = files
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .filter(|path| !compiled.contains(path) && reachable.contains(&normalized(path)))
+            .collect();
+        if next.is_empty() {
+            break;
+        }
+        compiled.extend(next);
+    }
+    let mut missing: Vec<String> = files
+        .iter()
+        .map(|(path, _)| path.clone())
+        .filter(|path| !compiled.contains(path.as_str()))
+        .collect();
+    missing.sort();
+    missing
+}
+
+#[test]
+fn uncompiled_test_files_are_found_by_name_not_by_mention() {
+    let file = |path: &str, content: &str| (path.to_string(), content.to_string());
+    let files = [
+        file(
+            "src/a.rs",
+            "#[cfg(test)]\n#[path = \"a_tests.rs\"]\nmod tests;",
+        ),
+        file("src/a_tests.rs", "#[path = \"a_more_tests.rs\"]\nmod more;"),
+        file("src/a_more_tests.rs", ""),
+        file("src/b.rs", "#[cfg(test)]\nmod b_tests;"),
+        file("src/b_tests.rs", ""),
+        file("src/e.rs", "#[path = \"../other/e_tests.rs\"]\nmod e;"),
+        file("other/e_tests.rs", ""),
+        // A longer name ending the same way is another file.
+        file("src/f.rs", "#[path = \"not_f_tests.rs\"]\nmod f;"),
+        file("src/not_f_tests.rs", ""),
+        file("src/f_tests.rs", ""),
+        // Mentioned in a comment and in prose only: not compiled.
+        file("src/c.rs", "// #[path = \"c_tests.rs\"]\n// see c_tests.rs"),
+        file("src/c_tests.rs", ""),
+        file("src/d_tests.rs", ""),
+        // Two folders, one file name: declaring one compiles only that one —
+        // how `domain/resume_decision_tests.rs` hid behind the dto's (#2056).
+        file("src/dto/h.rs", "#[path = \"h_tests.rs\"]\nmod tests;"),
+        file("src/dto/h_tests.rs", ""),
+        file("src/domain/h.rs", "pub fn h() {}"),
+        file("src/domain/h_tests.rs", ""),
+        // Declared only by a test file that is itself not compiled (#2056).
+        file("src/g_tests.rs", "#[path = \"g_more_tests.rs\"]\nmod more;"),
+        file("src/g_more_tests.rs", ""),
+    ];
+    assert_eq!(
+        uncompiled_test_files(&files),
+        [
+            "src/c_tests.rs",
+            "src/d_tests.rs",
+            "src/domain/h_tests.rs",
+            "src/f_tests.rs",
+            "src/g_more_tests.rs",
+            "src/g_tests.rs"
+        ]
+    );
+}
+
+/// The uncompiled test files under `root`, as paths relative to it.
+fn uncompiled_test_files_under(root: &str) -> Vec<String> {
+    fn collect(dir: &Path, files: &mut Vec<(String, String)>) {
+        for entry in fs::read_dir(dir).expect("read dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                collect(&path, files);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let content = fs::read_to_string(&path).expect("read file");
+                files.push((path.display().to_string(), content));
+            }
+        }
+    }
+    let mut files = Vec::new();
+    collect(Path::new(root), &mut files);
+    assert!(
+        files.len() >= 20,
+        "scanned {} files under {root}",
+        files.len()
+    );
+    uncompiled_test_files(&files)
+        .into_iter()
+        .map(|path| {
+            path.trim_start_matches(root)
+                .trim_start_matches('/')
+                .to_string()
+        })
+        .collect()
+}
+
+/// Every test file under `quecto-tui/src` is compiled by some module.
+#[test]
+fn tui_test_files_are_all_compiled() {
+    let missing = uncompiled_test_files_under(TUI_SRC);
+    assert!(
+        missing.is_empty(),
+        "test files no module compiles (declare them, or delete them with the code they tested):\n{}",
+        missing.join("\n")
+    );
+}
+
+/// The same for the harness and the API. The files listed were already
+/// uncompiled on master when the ratchet arrived (#2056): the list only
+/// shrinks — declare a file (and make it pass) or delete it, then remove it
+/// here. Nothing may be added.
+#[test]
+fn harness_and_api_test_files_are_all_compiled() {
+    for (root, known) in [
+        (
+            "src",
+            &[
+                "application/agent_loop_context_gauge_tests.rs",
+                "domain/workflow/engine/templates_cov_tests.rs",
+                "infrastructure/tools/tests/spawn_validation_tests.rs",
+                "interface/cli/protocol_type_name_tests.rs",
+            ][..],
+        ),
+        (
+            "../quecto-api/src",
+            &["infrastructure/http/router_handler_tests.rs"][..],
+        ),
+    ] {
+        let missing = uncompiled_test_files_under(root);
+        let new: Vec<_> = missing
+            .iter()
+            .filter(|path| !known.contains(&path.as_str()))
+            .collect();
+        assert!(
+            new.is_empty(),
+            "{root}: test files no module compiles (declare them, or delete them with the code they tested): {new:?}"
+        );
+        let stale: Vec<_> = known
+            .iter()
+            .filter(|path| !missing.iter().any(|m| m == *path))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "{root}: now compiled or gone — remove from the known list: {stale:?}"
+        );
+    }
+}
+
 #[test]
 fn tui_architecture_layers_exist() {
     assert!(

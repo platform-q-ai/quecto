@@ -133,12 +133,21 @@ async fn persisted_home_is_local_but_legacy_and_foreign_startup_are_refused() {
             refused,
             ResumeSavedSessionError::StartupScope(StartupRefusal {
                 disposition: ResumeDisposition::DifferentExecutionDirectory,
+                execution_dir: Some(_),
                 ..
             })
         ),
         "{refused:?}"
     );
-    assert!(refused.to_string().contains("-s <name>"), "{refused}");
+    let said = refused.to_string();
+    assert!(
+        said.contains("\ncd '") && said.ends_with("then run the same command again"),
+        "{said}"
+    );
+    assert!(
+        !said.contains("quecto-tui"),
+        "the reader ran quecto, not the TUI: {said}"
+    );
     assert_eq!(state.read().await.identity(), &identity);
     let resume = resume_over(&state_of(&legacy), save, store, context);
     let refused = resume.open_at_startup().await.expect_err("legacy record");
@@ -147,6 +156,7 @@ async fn persisted_home_is_local_but_legacy_and_foreign_startup_are_refused() {
             refused,
             ResumeSavedSessionError::StartupScope(StartupRefusal {
                 disposition: ResumeDisposition::LegacyUnscoped,
+                execution_dir: None,
                 ..
             })
         ),
@@ -155,13 +165,74 @@ async fn persisted_home_is_local_but_legacy_and_foreign_startup_are_refused() {
     let text = refused.to_string();
     for expected in [
         "session 'chat-legacy' cannot start here",
-        "predates workspace scoping",
-        "-s <name>",
-        "--no-session",
-        "Global list",
-        "#2014",
+        "it has no folder recorded",
+        "saved transcript was not changed",
     ] {
         assert!(text.contains(expected), "{text}");
+    }
+}
+
+/// #2056 review: "open quecto there" is advice for ONE disposition. A home
+/// that changed may be the very folder the user stands in — `cd` and running
+/// the same command again would refuse again, for ever — and a folder that is
+/// gone cannot be entered. Neither startup refusal names a folder or a `cd`.
+#[tokio::test]
+async fn a_changed_or_missing_home_gets_no_go_there_advice_at_startup() {
+    let temp = tempfile::tempdir().unwrap();
+    let here = temp.path().join("here");
+    let gone = temp.path().join("gone");
+    std::fs::create_dir(&here).unwrap();
+    std::fs::create_dir(&gone).unwrap();
+    let store = Arc::new(FileSessionStore::new(FlatSessionLayout::new(temp.path())));
+    for (key, saved_in) in [("chat-changed", &here), ("chat-missing", &gone)] {
+        let identity = SessionIdentity::user_chat(key).unwrap();
+        let state = state_of(&identity);
+        let saving = context(store.clone(), saved_in.clone());
+        save_over(&state, store.clone(), &saving)
+            .save(&mut vec![Message::user("saved")], SaveTrigger::Routine)
+            .await
+            .unwrap();
+        store.release(&identity);
+    }
+    // The folder of one becomes a git repository: the same directory, another
+    // workspace group. The folder of the other disappears.
+    let init = std::process::Command::new("git")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .current_dir(&here)
+        .args(["init", "-q"])
+        .status()
+        .unwrap();
+    assert!(init.success());
+    std::fs::remove_dir_all(&gone).unwrap();
+    for (key, disposition) in [
+        ("chat-changed", "workspace changed"),
+        ("chat-missing", "unavailable"),
+    ] {
+        let identity = SessionIdentity::user_chat(key).unwrap();
+        let state = state_of(&identity);
+        let now = context(store.clone(), here.clone());
+        let save = save_over(&state, store.clone(), &now);
+        let refused = resume_over(&state, save, store.clone(), now)
+            .open_at_startup()
+            .await
+            .expect_err(key);
+        let ResumeSavedSessionError::StartupScope(refusal) = &refused else {
+            panic!("{key}: {refused:?}");
+        };
+        assert_eq!(refusal.execution_dir, None, "{key}: no folder to go to");
+        let said = refused.to_string();
+        assert!(said.contains(disposition), "{key}: {said}");
+        for advice in ["Open quecto there", "cd '", "run the same command again"] {
+            assert!(
+                !said.contains(advice),
+                "{key} must not advise {advice:?}: {said}"
+            );
+        }
+        assert!(
+            said.ends_with("The saved transcript was not changed."),
+            "{said}"
+        );
     }
 }
 

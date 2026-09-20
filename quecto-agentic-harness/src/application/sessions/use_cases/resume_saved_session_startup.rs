@@ -1,13 +1,10 @@
-//! Startup admission of the loop's own composed session (#2009): the same
-//! scope rule as an explicit resume, worded for the command line, and the
-//! orphan rule for a key that has a home sidecar but no transcript.
+//! Startup admission of the loop's own composed session (#2009): the explicit
+//! resume's scope rule worded for the command line (only a session that lives
+//! in ANOTHER folder is told to go there), and the orphan rule for a lone home.
+use crate::application::sessions::dto::resume_saved_session::ResumeDisposition;
 use crate::application::sessions::dto::{ResumeSavedSessionError, StartupRefusal};
 use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::{session_home::SessionHomeScope, session_identity::SessionIdentity};
-
-/// The loaded transcript's home must admit the current directory: the same
-/// classification as an explicit resume, re-read under the claim. A refusal
-/// names the key and what the user can do now.
 pub(super) async fn admit_at_startup(
     home: &SessionHomeContext,
     identity: &SessionIdentity,
@@ -17,19 +14,22 @@ pub(super) async fn admit_at_startup(
         .read(identity)
         .map_err(ResumeSavedSessionError::Load)?;
     home.admit(&scope).await.map_err(|disposition| {
+        let elsewhere = matches!(disposition, ResumeDisposition::DifferentExecutionDirectory);
+        let execution_dir = match &scope {
+            SessionHomeScope::Scoped(saved) if elsewhere => Some(saved.execution_dir.clone()),
+            _ => None,
+        };
         ResumeSavedSessionError::StartupScope(StartupRefusal {
             key: identity.runtime_key().to_string(),
             disposition,
+            execution_dir,
         })
     })
 }
-
-/// A startup identity without a transcript is a genuinely new session,
-/// whatever sidecar is beside the absent transcript: a home there is an
-/// orphan (a save that never committed a message, a transcript removed
-/// by hand) and is discarded under the claim rather than admitted, so a
-/// key with no history never refuses to start, and a stale home can never
-/// be inherited by the first transcript written under the key.
+/// A startup identity without a transcript is a new session whatever sidecar
+/// is beside it: a home there is an orphan (a save that never committed, a
+/// transcript removed by hand), discarded under the claim so a key with no
+/// history never refuses to start and a stale home is never inherited.
 pub(super) async fn admit_new_at_startup(
     home: &SessionHomeContext,
     identity: &SessionIdentity,

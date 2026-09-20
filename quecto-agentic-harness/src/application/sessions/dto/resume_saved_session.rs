@@ -10,7 +10,6 @@ use crate::domain::workflow::WorkflowRunPersisted;
 #[path = "resume_disposition.rs"]
 mod resume_disposition;
 use super::{ResumeDecision, StartupRefusal};
-use crate::domain::resume_decision::ResumeAction;
 pub use resume_disposition::ResumeDisposition;
 #[path = "resume_target.rs"]
 mod resume_target;
@@ -58,19 +57,11 @@ pub enum ResumeSavedSessionError {
     Decision(Box<ResumeDecision>),
     /// The home changed since the client was shown it (#2011).
     StaleHomeVersion,
+    /// The request still names an `action` (#2045 removed them): refused
+    /// under its own id — never read as a restore, never a parse error.
+    LegacyAction,
     /// This runtime's own execution directory cannot be discovered (#2011).
     CurrentScopeUnavailable(String),
-    /// An explicit action must name the home version it was decided on.
-    HomeVersionRequired(ResumeAction),
-    /// The target's decision kind (or plain restorability) never offers `action`.
-    ActionNotOffered(ResumeAction),
-    /// No executor of `action` is composed; nothing else was done instead.
-    ActionUnavailable {
-        action: ResumeAction,
-        reason: String,
-    },
-    /// `action` has its own transaction; this owner restores and nothing else.
-    ActionExecutedElsewhere(ResumeAction),
     /// The loop's own composed session does not admit at startup (#2009).
     StartupScope(StartupRefusal),
     Refused(SessionTransitionRefused),

@@ -52,11 +52,9 @@ fn legacy_cli_default_and_named_sessions_are_refused_at_startup_with_actionable_
         assert_eq!(output.status.code(), Some(1), "{stderr}");
         for expected in [
             &format!("session '{key}' cannot start here"),
-            "predates workspace scoping",
-            "`-s <name>`",
-            "`--no-session`",
-            "Global list of /resume",
-            "#2014",
+            "it has no folder recorded",
+            "start under a new name with -s <name>, or run --no-session",
+            "saved transcript was not changed",
         ] {
             assert!(
                 stderr.contains(expected),

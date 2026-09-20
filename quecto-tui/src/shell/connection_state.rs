@@ -61,9 +61,6 @@ pub(crate) struct ConnectionState {
     /// answer clears the resume latches; foreign answers (another client
     /// resuming the shared agent) still refresh the view (#1726).
     pub(crate) pending_session_resume_id: Option<String>,
-    /// Whether the resume in flight carried an explicit action (#2011): only
-    /// such a request can be what an "unknown resume action" parse error is about.
-    pub(crate) pending_session_resume_acts: bool,
     /// Oversized-event drops already surfaced as a notification, so each is
     /// reported exactly once (#1047).
     pub(crate) surfaced_oversized_drops: u64,
@@ -167,7 +164,6 @@ impl ConnectionState {
             child_exit_watch: None,
             session_key: None,
             pending_session_resume_id: None,
-            pending_session_resume_acts: false,
             surfaced_oversized_drops: 0,
             disconnect_diag_pending: false,
             disconnect_refusal_notified: false,

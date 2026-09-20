@@ -27,10 +27,7 @@ pub use list_sessions::{ListSessionsRequest, ListSessionsResult, ListedSession, 
 pub use message_recovery::{
     ContentSelector, RecoveredContent, RecoveryError, RecoveryRequest, Utf8Range,
 };
-pub use resume_decision::{
-    ActionAvailability, ResumeActionCapabilities, ResumeActionOffer, ResumeDecision, ResumeIntent,
-    ResumeOutcome, ResumeRequest,
-};
+pub use resume_decision::{ResumeDecision, ResumeOutcome, ResumeRequest};
 pub use resume_saved_session::{
     ResumeSavedSessionError, ResumeTarget, SavedSessionResumed, StartupSessionOpened,
 };

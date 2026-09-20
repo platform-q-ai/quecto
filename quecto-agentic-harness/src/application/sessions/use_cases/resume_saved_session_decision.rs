@@ -4,24 +4,16 @@
 //! the refusal of an explicit action (`resume_saved_session_action.rs`) run.
 use super::ResumeSavedSession;
 use crate::application::sessions::dto::{
-    ResumeActionCapabilities, ResumeActionOffer, ResumeDecision, ResumeIntent, ResumeRequest,
-    ResumeSavedSessionError, ResumeTarget,
+    ResumeDecision, ResumeRequest, ResumeSavedSessionError, ResumeTarget,
 };
 use crate::application::sessions::ports::SessionStore;
 use crate::application::sessions::session_home::{HomeObstacle, SessionHomeContext};
-use crate::domain::resume_decision::{HomeVersion, ResumeAction};
+use crate::domain::resume_decision::HomeVersion;
 use crate::domain::session::Session;
 use crate::domain::session_home::SessionHomeScope;
 
 /// What the admission of a request leaves to do.
-pub(super) enum Admitted {
-    /// The client cancelled: nothing is settled, saved, claimed or restored.
-    Cancelled(String),
-    /// The one restore transaction, for this exact target.
-    Restore(ResumeTarget),
-    /// Another explicit action on this exact target: `refuse_action` answers it.
-    Act(ResumeTarget, ResumeAction),
-}
+pub(super) struct Admitted(pub(super) ResumeTarget);
 
 /// Admit a request before any effect. An ephemeral loop resumes nothing; the
 /// target is one exact accepted spelling. `Cancel` has no effect at all.
@@ -32,19 +24,13 @@ pub(super) fn admit(
     if ephemeral {
         return Err(ResumeSavedSessionError::Ephemeral);
     }
-    let target = ResumeTarget::parse(&request.target)?;
-    Ok(match request.intent {
-        ResumeIntent::Restore => Admitted::Restore(target),
-        ResumeIntent::Act(ResumeAction::Cancel) => Admitted::Cancelled(target.name),
-        ResumeIntent::Act(action) => Admitted::Act(target, action),
-    })
+    Ok(Admitted(ResumeTarget::parse(&request.target)?))
 }
 
 /// The eligibility collaborators of one loop: the shared home observations
 /// and the explicit actions composition declared executable.
 pub(super) struct Eligibility {
     pub(super) home: SessionHomeContext,
-    pub(super) capabilities: ResumeActionCapabilities,
 }
 
 impl Eligibility {
@@ -61,7 +47,7 @@ impl Eligibility {
         own: bool,
     ) -> Result<(), ResumeSavedSessionError> {
         match SessionStore::exists(store, &target.identity).await {
-            Ok(true) => decide(&self.home, &self.capabilities, target, expected).await,
+            Ok(true) => decide(&self.home, target, expected).await,
             Ok(false) if !own => Err(ResumeSavedSessionError::NotFound(target.name.clone())),
             Ok(false) | Err(_) => Ok(()),
         }
@@ -77,7 +63,7 @@ impl Eligibility {
     ) -> Result<Session, ResumeSavedSessionError> {
         match store.load(&target.identity).await {
             Ok(Some(session)) => {
-                decide(&self.home, &self.capabilities, target, expected).await?;
+                decide(&self.home, target, expected).await?;
                 Ok(session)
             }
             Ok(None) => Err(ResumeSavedSessionError::NotFound(target.name.clone())),
@@ -91,7 +77,6 @@ impl Eligibility {
 /// an affirmatively admitted home passes. All else is a decision or refusal.
 pub(super) async fn decide(
     home: &SessionHomeContext,
-    capabilities: &ResumeActionCapabilities,
     target: &ResumeTarget,
     expected: Option<&HomeVersion>,
 ) -> Result<(), ResumeSavedSessionError> {
@@ -110,14 +95,6 @@ pub(super) async fn decide(
         }
         Err(HomeObstacle::Decision(kind, detail)) => (kind, detail),
     };
-    let offers = kind
-        .offered_actions()
-        .iter()
-        .map(|action| ResumeActionOffer {
-            action: *action,
-            availability: capabilities.availability(*action),
-        })
-        .collect();
     let execution_dir = match scope {
         SessionHomeScope::Scoped(saved) => Some(saved.execution_dir),
         SessionHomeScope::LegacyUnscoped | SessionHomeScope::Unavailable(_) => None,
@@ -129,7 +106,6 @@ pub(super) async fn decide(
             home_version,
             execution_dir,
             detail,
-            offers,
         },
     )))
 }

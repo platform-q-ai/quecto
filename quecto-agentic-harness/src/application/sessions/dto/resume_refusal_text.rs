@@ -14,23 +14,10 @@ impl std::fmt::Display for ResumeSavedSessionError {
             Self::StaleHomeVersion => {
                 f.write_str("session list out of date; list and choose again")
             }
+            Self::LegacyAction => f.write_str("resume actions are no longer supported"),
             Self::CurrentScopeUnavailable(_) => f.write_str(
                 "session resume unavailable: the current execution directory cannot be \
                  discovered, so no saved session can be admitted here",
-            ),
-            Self::HomeVersionRequired(action) => {
-                write!(f, "{} needs expectedHomeVersion; ask again", action.name())
-            }
-            Self::ActionNotOffered(action) => {
-                write!(f, "{} is not offered for this session", action.name())
-            }
-            Self::ActionUnavailable { action, reason } => {
-                write!(f, "{} is unavailable: {reason}", action.name())
-            }
-            Self::ActionExecutedElsewhere(action) => write!(
-                f,
-                "{} is not a restore: request it through its own command",
-                action.name()
             ),
             Self::StartupScope(refusal) => write!(f, "{refusal}"),
             Self::Refused(refused) => write!(f, "{refused}"),

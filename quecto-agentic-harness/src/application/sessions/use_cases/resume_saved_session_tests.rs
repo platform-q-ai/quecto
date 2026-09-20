@@ -23,7 +23,6 @@ const TARGET: &str = "cli:saved";
 fn resumed(outcome: ResumeOutcome) -> SavedSessionResumed {
     match outcome {
         ResumeOutcome::Resumed(resumed) => resumed,
-        ResumeOutcome::Cancelled { name } => panic!("{name} was cancelled, not resumed"),
     }
 }
 

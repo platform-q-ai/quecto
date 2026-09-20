@@ -26,7 +26,6 @@ use crate::interface::cli::protocol::{
 };
 use crate::interface::cli::uds_ext_protocol;
 use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
-
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     if let Some(result) = try_forward_subagent_targeted_command(&cmd, ctx).await {
         return result;
@@ -162,8 +161,8 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         } => {
             let fields = ResumeFields {
                 session,
-                action: action.map(|action| action.0),
                 expected_home_version,
+                legacy_action: action.is_some(),
             };
             handle_resume_session(ctx, id.as_deref(), &type_name, fields).await
         }
@@ -451,6 +450,7 @@ mod clamp_935_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_cov2_tests.rs"]
 mod cov2_tests;
+
 #[cfg(test)]
 #[path = "uds_dispatch_cov_tests.rs"]
 mod cov_tests;
@@ -475,6 +475,7 @@ mod resume_e2e_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_resume_persist_tests.rs"]
 mod resume_persist_tests;
+
 #[cfg(test)]
 #[path = "uds_dispatch_resume_picker_tests.rs"]
 mod resume_picker_tests;
