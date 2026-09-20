@@ -114,3 +114,7 @@ impl std::fmt::Display for ResumeDecisionKind {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "resume_decision_tests.rs"]
+mod tests;

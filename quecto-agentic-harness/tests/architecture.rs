@@ -1152,27 +1152,55 @@ fn tui_removed_multi_tab_symbols_do_not_come_back() {
 /// (#2049 found two; #2056 switched off six to get green).
 fn uncompiled_test_files(files: &[(String, String)]) -> Vec<String> {
     use std::collections::{HashMap, HashSet};
-    let name_of = |path: &str| path.rsplit('/').next().unwrap_or(path).to_string();
-    // What each file declares, read once: the file name of every
-    // `#[path = "x_tests.rs"]` / `#[path = "../dir/x_tests.rs"]`, and
-    // `<stem>.rs` for every `mod <stem>;`. A comment declares nothing.
+    /// `dir/../x` and `dir/./x` as the path they name.
+    fn normalized(path: &str) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        for part in path.split('/') {
+            match part {
+                "." => {}
+                ".." if parts.last().is_some_and(|last| *last != "..") => {
+                    parts.pop();
+                }
+                other => parts.push(other),
+            }
+        }
+        parts.join("/")
+    }
+    // The files each file declares, read once and resolved from ITS folder —
+    // two folders may each hold an `x_tests.rs`, and declaring one compiles
+    // only that one. `#[path = "p"]` names `dir/p`; `mod m;` names `dir/m.rs`,
+    // `dir/m/mod.rs` or, from `dir/f.rs`, `dir/f/m.rs`. A comment declares nothing.
     let declared_by: HashMap<&str, HashSet<String>> = files
         .iter()
         .map(|(path, content)| {
-            let names = content
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.starts_with("//"))
-                .filter_map(|line| {
-                    if line.starts_with("#[path") {
-                        let quoted = line.split('"').nth(1)?;
-                        return Some(name_of(quoted));
+            let (dir, file) = path.rsplit_once('/').unwrap_or(("", path.as_str()));
+            let own = file.trim_end_matches(".rs");
+            let mut names = HashSet::new();
+            for line in content.lines().map(str::trim) {
+                if line.starts_with("//") {
+                    continue;
+                }
+                if line.starts_with("#[path") {
+                    if let Some(quoted) = line.split('"').nth(1) {
+                        names.insert(normalized(&format!("{dir}/{quoted}")));
                     }
-                    let stem = line.strip_suffix(';')?.rsplit(' ').next()?;
-                    (line.starts_with("mod ") || line.contains(" mod "))
-                        .then(|| format!("{stem}.rs"))
-                })
-                .collect();
+                    continue;
+                }
+                let declaration = line.strip_suffix(';').unwrap_or("");
+                let module = declaration
+                    .rsplit_once("mod ")
+                    .filter(|(before, _)| before.is_empty() || before.starts_with("pub"))
+                    .map(|(_, module)| module);
+                if let Some(module) = module {
+                    for candidate in [
+                        format!("{dir}/{module}.rs"),
+                        format!("{dir}/{module}/mod.rs"),
+                        format!("{dir}/{own}/{module}.rs"),
+                    ] {
+                        names.insert(normalized(&candidate));
+                    }
+                }
+            }
             (path.as_str(), names)
         })
         .collect();
@@ -1182,7 +1210,7 @@ fn uncompiled_test_files(files: &[(String, String)]) -> Vec<String> {
     let mut compiled: HashSet<&str> = files
         .iter()
         .map(|(path, _)| path.as_str())
-        .filter(|path| !name_of(path).ends_with("_tests.rs"))
+        .filter(|path| !path.ends_with("_tests.rs"))
         .collect();
     loop {
         let reachable: HashSet<&String> = compiled
@@ -1193,7 +1221,7 @@ fn uncompiled_test_files(files: &[(String, String)]) -> Vec<String> {
         let next: Vec<&str> = files
             .iter()
             .map(|(path, _)| path.as_str())
-            .filter(|path| !compiled.contains(path) && reachable.contains(&name_of(path)))
+            .filter(|path| !compiled.contains(path) && reachable.contains(&normalized(path)))
             .collect();
         if next.is_empty() {
             break;
@@ -1231,6 +1259,12 @@ fn uncompiled_test_files_are_found_by_name_not_by_mention() {
         file("src/c.rs", "// #[path = \"c_tests.rs\"]\n// see c_tests.rs"),
         file("src/c_tests.rs", ""),
         file("src/d_tests.rs", ""),
+        // Two folders, one file name: declaring one compiles only that one —
+        // how `domain/resume_decision_tests.rs` hid behind the dto's (#2056).
+        file("src/dto/h.rs", "#[path = \"h_tests.rs\"]\nmod tests;"),
+        file("src/dto/h_tests.rs", ""),
+        file("src/domain/h.rs", "pub fn h() {}"),
+        file("src/domain/h_tests.rs", ""),
         // Declared only by a test file that is itself not compiled (#2056).
         file("src/g_tests.rs", "#[path = \"g_more_tests.rs\"]\nmod more;"),
         file("src/g_more_tests.rs", ""),
@@ -1240,6 +1274,7 @@ fn uncompiled_test_files_are_found_by_name_not_by_mention() {
         [
             "src/c_tests.rs",
             "src/d_tests.rs",
+            "src/domain/h_tests.rs",
             "src/f_tests.rs",
             "src/g_more_tests.rs",
             "src/g_tests.rs"

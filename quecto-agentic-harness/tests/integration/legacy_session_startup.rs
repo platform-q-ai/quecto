@@ -52,7 +52,8 @@ fn legacy_cli_default_and_named_sessions_are_refused_at_startup_with_actionable_
         assert_eq!(output.status.code(), Some(1), "{stderr}");
         for expected in [
             &format!("session '{key}' cannot start here"),
-            "legacy session requires explicit first association",
+            "it has no folder recorded",
+            "start under a new name with -s <name>, or run --no-session",
             "saved transcript was not changed",
         ] {
             assert!(

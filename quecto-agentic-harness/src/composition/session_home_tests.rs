@@ -165,7 +165,7 @@ async fn persisted_home_is_local_but_legacy_and_foreign_startup_are_refused() {
     let text = refused.to_string();
     for expected in [
         "session 'chat-legacy' cannot start here",
-        "legacy session requires explicit first association",
+        "it has no folder recorded",
         "saved transcript was not changed",
     ] {
         assert!(text.contains(expected), "{text}");

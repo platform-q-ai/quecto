@@ -54,9 +54,10 @@ that exits with nothing to save leaves no transcript and no home sidecar.
 saved before workspace scoping has no `.home`; because history is never
 associated with a folder implicitly, `quecto agent -m hello` over a pre-existing
 `cli:default`, or `-s <name>` over a pre-existing named session, exits 1 with
-`session '<key>' cannot start here: it predates workspace scoping and has no
-home ...`. The text names the way out — start under a new name with `-s <name>`,
-or run `--no-session` — and the old transcript is preserved untouched and stays
+`session '<key>' cannot start here: it has no folder recorded (it was saved
+before quecto tracked folders); start under a new name with -s <name>, or run
+--no-session. The saved transcript was not changed.` The text names the way
+out, and the old transcript is preserved untouched and stays
 visible, with no folder recorded, in the All Folders list of `/resume`.
 Associating such a session with a folder was descoped (#2045, #2014 not
 planned): there is no installed base to migrate. The same wording covers

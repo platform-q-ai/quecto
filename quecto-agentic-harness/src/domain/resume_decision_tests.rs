@@ -151,30 +151,6 @@ fn only_the_produced_shape_parses() {
 }
 
 #[test]
-fn action_names_round_trip_and_nothing_else_is_an_action() {
-    for action in ResumeAction::ALL {
-        assert_eq!(ResumeAction::from_name(action.name()), Some(action));
-    }
-    for hostile in ["", "restore", "Cancel", "cancel ", "open-original"] {
-        assert_eq!(ResumeAction::from_name(hostile), None, "{hostile:?}");
-    }
-}
-
-#[test]
-fn every_kind_offers_exactly_its_contracted_actions_ending_in_cancel() {
-    use ResumeAction::{Associate, Cancel, ForkCurrent, Locate, OpenOriginal};
-    use ResumeDecisionKind::{CrossFolder, HomeChanged, HomeMissing, HomeUnknown, LegacyUnscoped};
-    assert_eq!(
-        CrossFolder.offered_actions(),
-        [OpenOriginal, ForkCurrent, Cancel]
-    );
-    for kind in [HomeMissing, HomeChanged, HomeUnknown] {
-        assert_eq!(kind.offered_actions(), [Locate, ForkCurrent, Cancel]);
-    }
-    assert_eq!(LegacyUnscoped.offered_actions(), [Associate, Cancel]);
-}
-
-#[test]
 fn kinds_have_stable_names_and_a_readable_reason() {
     use ResumeDecisionKind::{CrossFolder, HomeChanged, HomeMissing, HomeUnknown, LegacyUnscoped};
     let names: Vec<_> = [
@@ -197,6 +173,23 @@ fn kinds_have_stable_names_and_a_readable_reason() {
             "legacy_unscoped"
         ]
     );
+    assert_eq!(
+        [
+            CrossFolder,
+            HomeMissing,
+            HomeChanged,
+            HomeUnknown,
+            LegacyUnscoped
+        ]
+        .map(|kind| kind.refusal_code()),
+        [
+            "belongs_elsewhere",
+            "home_missing",
+            "home_changed",
+            "home_unknown",
+            "no_home_recorded"
+        ]
+    );
     assert!(
         CrossFolder
             .to_string()
@@ -205,9 +198,5 @@ fn kinds_have_stable_names_and_a_readable_reason() {
     assert!(HomeMissing.to_string().contains("missing"));
     assert!(HomeChanged.to_string().contains("workspace changed"));
     assert!(HomeUnknown.to_string().contains("cannot be interpreted"));
-    assert!(
-        LegacyUnscoped
-            .to_string()
-            .contains("explicit first association")
-    );
+    assert!(LegacyUnscoped.to_string().contains("no folder recorded"));
 }
