@@ -1146,6 +1146,121 @@ fn tui_removed_multi_tab_symbols_do_not_come_back() {
     }
 }
 
+/// The `*_tests.rs` files no module compiles: neither named by a
+/// `#[path = "<file>"]` attribute nor declared as `mod <stem>;` anywhere.
+/// A test file that is not compiled passes every gate while pinning nothing
+/// (#2049 found two; #2056 switched off six to get green).
+fn uncompiled_test_files(files: &[(String, String)]) -> Vec<String> {
+    let name_of = |path: &str| path.rsplit('/').next().unwrap_or(path).to_string();
+    let declares = |content: &str, name: &str| {
+        let stem = name.trim_end_matches(".rs");
+        // `#[path = "x_tests.rs"]`, or a relative `#[path = "../dir/x_tests.rs"]`.
+        let path_attrs = [format!("\"{name}\""), format!("/{name}\"")];
+        let module = format!("mod {stem};");
+        content.lines().any(|line| {
+            let line = line.trim();
+            let by_path =
+                line.starts_with("#[path") && path_attrs.iter().any(|attr| line.contains(attr));
+            !line.starts_with("//") && (by_path || line.ends_with(&module))
+        })
+    };
+    // Compiled: every non-test file, then — to a fixpoint — every test file a
+    // COMPILED file declares. A test file declared only by an uncompiled test
+    // file is itself uncompiled.
+    let mut compiled: Vec<&(String, String)> = files
+        .iter()
+        .filter(|(path, _)| !name_of(path).ends_with("_tests.rs"))
+        .collect();
+    loop {
+        let next: Vec<&(String, String)> = files
+            .iter()
+            .filter(|file| !compiled.iter().any(|known| known.0 == file.0))
+            .filter(|(path, _)| {
+                let name = name_of(path);
+                compiled.iter().any(|(_, content)| declares(content, &name))
+            })
+            .collect();
+        if next.is_empty() {
+            break;
+        }
+        compiled.extend(next);
+    }
+    let mut missing: Vec<String> = files
+        .iter()
+        .filter(|file| !compiled.iter().any(|known| known.0 == file.0))
+        .map(|(path, _)| path.clone())
+        .collect();
+    missing.sort();
+    missing
+}
+
+#[test]
+fn uncompiled_test_files_are_found_by_name_not_by_mention() {
+    let file = |path: &str, content: &str| (path.to_string(), content.to_string());
+    let files = [
+        file(
+            "src/a.rs",
+            "#[cfg(test)]\n#[path = \"a_tests.rs\"]\nmod tests;",
+        ),
+        file("src/a_tests.rs", "#[path = \"a_more_tests.rs\"]\nmod more;"),
+        file("src/a_more_tests.rs", ""),
+        file("src/b.rs", "#[cfg(test)]\nmod b_tests;"),
+        file("src/b_tests.rs", ""),
+        file("src/e.rs", "#[path = \"../other/e_tests.rs\"]\nmod e;"),
+        file("other/e_tests.rs", ""),
+        // A longer name ending the same way is another file.
+        file("src/f.rs", "#[path = \"not_f_tests.rs\"]\nmod f;"),
+        file("src/not_f_tests.rs", ""),
+        file("src/f_tests.rs", ""),
+        // Mentioned in a comment and in prose only: not compiled.
+        file("src/c.rs", "// #[path = \"c_tests.rs\"]\n// see c_tests.rs"),
+        file("src/c_tests.rs", ""),
+        file("src/d_tests.rs", ""),
+        // Declared only by a test file that is itself not compiled (#2056).
+        file("src/g_tests.rs", "#[path = \"g_more_tests.rs\"]\nmod more;"),
+        file("src/g_more_tests.rs", ""),
+    ];
+    assert_eq!(
+        uncompiled_test_files(&files),
+        [
+            "src/c_tests.rs",
+            "src/d_tests.rs",
+            "src/f_tests.rs",
+            "src/g_more_tests.rs",
+            "src/g_tests.rs"
+        ]
+    );
+}
+
+/// Every test file under `quecto-tui/src` is compiled by some module.
+#[test]
+fn tui_test_files_are_all_compiled() {
+    fn collect(dir: &Path, files: &mut Vec<(String, String)>) {
+        for entry in fs::read_dir(dir).expect("read dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                collect(&path, files);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let content = fs::read_to_string(&path).expect("read file");
+                files.push((path.display().to_string(), content));
+            }
+        }
+    }
+    let mut files = Vec::new();
+    collect(Path::new(TUI_SRC), &mut files);
+    assert!(
+        files.len() > 100,
+        "scanned {} files under {TUI_SRC}",
+        files.len()
+    );
+    let missing = uncompiled_test_files(&files);
+    assert!(
+        missing.is_empty(),
+        "test files no module compiles (declare them, or delete them with the code they tested):\n{}",
+        missing.join("\n")
+    );
+}
+
 #[test]
 fn tui_architecture_layers_exist() {
     assert!(
