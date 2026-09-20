@@ -114,24 +114,30 @@ async fn scoped_discovery_discards_old_answers_and_cancel_never_restores() {
     let asked = a.ac().pending_session_resume_id.clone().expect("asked");
     assert!(a.ac().sessions.resume_selector.is_none());
     assert_eq!(snapshot(a), before, "sending changes nothing");
-    let decision = serde_json::json!({
-        "outcome": "decision", "code": "decision_required", "session": "foreign",
-        "sessionKey": "foreign", "kind": "cross_folder", "homeVersion": "h1-0123456789abcdef",
+    let refusal = serde_json::json!({
+        "outcome": "refused", "code": "belongs_elsewhere", "session": "foreign",
+        "sessionKey": "foreign", "kind": "cross_folder",
         "executionPath": "/elsewhere", "detail": null,
-        "actions": [{"action": "cancel", "available": true, "reason": null}],
+        "command": "cd '/elsewhere' && quecto-tui", "resume": "/resume foreign",
     });
     a.handle_response(
         Some(asked),
         "resume_session".into(),
         false,
-        Some(decision),
+        Some(refusal),
         Some("session resume unavailable".into()),
     );
-    assert!(a.ac().sessions.resume_decision.is_none());
+    assert!(
+        a.ac().sessions.resume_decision.is_some(),
+        "the notice opens"
+    );
     assert!(a.ac().pending_session_resume_id.is_none());
-    assert_eq!(snapshot(a), before, "a decision changes nothing");
-    a.handle_resume_selector_key(&Key::Escape);
-    assert!(a.ac().sessions.resume_decision.is_none());
+    assert_eq!(snapshot(a), before, "a refusal changes nothing");
+    a.handle_key(Key::Escape);
+    assert!(
+        a.ac().sessions.resume_decision.is_none(),
+        "Escape closes it"
+    );
     assert!(a.ac().pending_session_resume_id.is_none());
     assert_eq!(snapshot(a), before, "Escape changes nothing");
     a.handle_session_list_response(Some(&current), Some(serde_json::json!({"sessions":[]})));

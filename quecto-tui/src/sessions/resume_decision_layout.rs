@@ -51,6 +51,22 @@ pub(super) fn wrap_bounded(text: &str, width: usize, max_lines: usize) -> Vec<St
     lines
 }
 
+/// `text` on as many lines as it needs, cut at the column and nowhere else:
+/// every character survives in order, so a command stays the command.
+pub(super) fn wrap_exact(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut rest = text.to_string();
+    while !rest.is_empty() {
+        let (head, tail) = split_at_width(&rest, width.max(1));
+        if head.is_empty() {
+            break; // a glyph wider than the column: nothing more can be placed
+        }
+        lines.push(head);
+        rest = tail;
+    }
+    lines
+}
+
 /// A path on at most `max_lines` lines of `width` columns: broken at the
 /// column (a path has no spaces) and, when it is longer than that, elided in
 /// the MIDDLE — its root and its last components are what the user acts on.

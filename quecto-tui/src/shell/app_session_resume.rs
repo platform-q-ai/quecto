@@ -9,6 +9,9 @@ use crate::protocol::resume_decision_payloads::{
 use crate::sessions::resume_decision::ResumeDecisionDialog;
 use crate::sessions::resume_picker::RowsState;
 
+/// The toast of a `stale_home_version` refusal.
+const STALE_LIST: &str = "List out of date — reopen /resume and pick again";
+
 impl App {
     pub(in crate::shell) fn send_list_sessions(&mut self) {
         self.ac_mut().sessions.search.abandon();
@@ -154,9 +157,18 @@ impl App {
             // Nothing changed for anyone: no refresh, no toast.
             // A peer's refusal or unreadable answer is not this tab's.
             _ if peers => {}
-            ResumeAnswer::Refused(Some(refusal)) if owned => {
+            ResumeAnswer::Elsewhere(refusal) if owned => {
+                let sessions = &self.ac().sessions;
+                let key = refusal.session_key.as_deref();
+                let title = key.and_then(|key| sessions.listed_titles.get(key)).cloned();
                 self.ac_mut().sessions.resume_decision =
-                    Some(ResumeDecisionDialog::new(refusal, None));
+                    Some(ResumeDecisionDialog::new(refusal, title.as_deref()));
+            }
+            // An answer with no id is nobody's in particular: no panel.
+            ResumeAnswer::Elsewhere(_) => {}
+            // One truncated line: the instruction first, and no "home".
+            ResumeAnswer::Refused(Some(code)) if code == "stale_home_version" => {
+                self.notify(STALE_LIST, NotifyLevel::Error);
             }
             ResumeAnswer::Refused(_) => self.notify_response_error("Resume failed", error),
             // A success this TUI cannot read as a restore changes nothing here:
@@ -206,3 +218,7 @@ impl App {
 
 #[path = "app_session_search.rs"]
 mod app_session_search;
+
+#[cfg(test)]
+#[path = "app_resume_decision_tests.rs"]
+mod resume_decision_tests;
