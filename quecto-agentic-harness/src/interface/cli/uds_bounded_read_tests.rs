@@ -96,6 +96,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
             tmp.path(),
         ),
         fleet_teardown: None,
+        owner_exit: None,
         discovery: list_handle(tmp.path()),
     };
 

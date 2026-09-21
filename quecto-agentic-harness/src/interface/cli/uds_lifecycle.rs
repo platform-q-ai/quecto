@@ -51,6 +51,9 @@ pub struct UdsLoopArgs<'a> {
     /// teardown graph freezes it. `None` builds a private one.
     pub harness_lifecycle:
         Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
+    /// The environment control slot (#2070) the loop hands its teardown.
+    pub environment_control:
+        Option<crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     /// Pre-created broadcast channel for workflow event emission (#598).
@@ -93,6 +96,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         notification_rx,
         subagent_registry,
         harness_lifecycle,
+        environment_control,
         workflow_state,
         workflow_config,
         broadcast_tx,
@@ -175,6 +179,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 broadcast_tx,
                 parent_control,
                 teardown_graph,
+                environment_control,
             },
             listener,
             &sessions,

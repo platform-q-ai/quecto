@@ -6,6 +6,7 @@
 //! interface declares the loop inputs and the handles it holds
 //! (`interface::cli::uds_teardown_handles`) and receives this builder
 //! through its `CliContext` (`run_composed`); it never names this module.
+use crate::infrastructure::tools::retained_environment_teardown::SlotRetainedEnvironmentTeardown;
 use std::sync::{Arc, Mutex};
 
 use crate::application::subagents::use_cases::{
@@ -127,6 +128,10 @@ pub fn build_teardown_graph(inputs: TeardownLoopInputs) -> TeardownHandles {
             persistence: persistence.clone(),
             exit: exit.clone(),
             spawner: Arc::new(TokioShutdownRunSpawner),
+            owner_exit: inputs.owner_exit,
+            retained: SlotRetainedEnvironmentTeardown::new(
+                inputs.environment_control.unwrap_or_default(),
+            ),
         },
     ));
     // The receiver of a selected termination is the direct owner of the

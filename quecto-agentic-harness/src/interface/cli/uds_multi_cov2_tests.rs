@@ -109,6 +109,7 @@ fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
         broadcast_tx: None,
         parent_control: None,
         teardown_graph: None,
+        environment_control: None,
     }
 }
 
@@ -333,6 +334,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
             dir.path(),
         ),
         fleet_teardown: None,
+        owner_exit: None,
         discovery: list_handle(dir.path()),
     };
 

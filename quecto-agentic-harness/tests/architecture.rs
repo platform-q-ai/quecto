@@ -3230,6 +3230,10 @@ const TEARDOWN_PORTS: &[&str] = &[
     "ShutdownClock",
     "CompositionExitReadiness",
     "ShutdownRunSpawner",
+    // The owner's exit (#2070): the announcement the shutdown reads, and
+    // the emptied retained environments it then ends.
+    "OwnerExitAnnouncement",
+    "RetainedEnvironmentTeardown",
     // Selected termination and lifecycle compensation (#1936).
     "OwnedChildTermination",
     "DelegatedAgentRegistry",

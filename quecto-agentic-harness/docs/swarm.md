@@ -324,16 +324,29 @@ Reconciliation preserves readable partial progress and retains uncertain ownersh
 A swarm container lives as long as its swarm, and no longer (#1924, #2070).
 A swarm ends only when its owner says so: the supervisor outside the swarm
 closes the run into its outcome (`swarm_control close`), or the owner
-explicitly leaves everything it owns behind — delete-all, or a session
-transition (`/new`, `/resume`) that succeeds. A `/resume` claims and loads
+explicitly leaves everything it owns behind — delete-all, a session
+transition (`/new`, `/resume`) that succeeds, or **an ordinary exit of the
+TUI that owns the harness** (Ctrl-D, `/exit`, `/quit` with the default
+kill-on-exit). A `/resume` claims and loads
 its target BEFORE the fleet is settled, so one that is refused — the session
 is held by another process, missing or unreadable — ends nothing. When the
 swarm has ended, the final member's exit removes the container, its checkout
 and its board with the retained `kill`, exactly as for an ordinary
 container; nothing is kept. (These reach the swarms whose coordinator is a
-live direct child of the harness that acts: one owned a level further down,
-and a container already emptied and `retained`, still need
-`kill_container`.)
+live direct child of the harness that acts: one owned a level further down
+still needs `kill_container`.)
+
+The TUI's ordinary exit reaches the harness as a bare termination signal —
+the same signal a logout, a reboot or an operator's `kill` sends — so the
+TUI **announces** the exit first: the `persist_session` it sends before
+signalling carries `restoreReason: "ordinary_tui_exit_stopped"`, and the
+harness records that the owner is exiting. The shutdown that follows is
+then the owner's word: its fleet teardown gives every swarm's container up,
+and the harness also ends the environments this session had emptied and
+kept `retained` earlier (a coordinator that crashed and left its box
+behind). A TUI that is killed or crashes sends no announcement, so that
+shutdown keeps every swarm resumable; `--detach-on-exit` announces nothing
+either, because the harness lives on.
 
 Nothing else ends a swarm. While its run has not been closed — `running`,
 `paused`, paused holding an outcome nobody closed yet, or `cancelled` (the

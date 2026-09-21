@@ -187,7 +187,8 @@ resumed, and an explicit `kill_container` removes them. That holds for the
 coordinator's own socket closing, for an `agent_cmd kill` of that one
 coordinator agent, and for the master's own process shutdown — which can be
 a crash (a termination signal, its last client gone, a lost parent), so it
-never counts as the owner's word. `metadata.retained` says which case
+never counts as the owner's word unless the owning TUI announced its exit
+beforehand. `metadata.retained` says which case
 applies:
 
 - **Orderly end, not yet closed** — the run was already paused holding an
@@ -743,8 +744,11 @@ the environment. The harness therefore tears down every subagent and
 environment on the signal before it exits, and the TUI's exit budget (two
 seconds) bounds how long the kill script may take. The exception is a swarm
 its owner has not closed (#1924, #2070): a signal can be a crash as easily as
-an exit, so that environment is `retained`, not killed — see "Swarm
-environments live as long as the swarm".
+an exit, so that environment is `retained`, not killed — unless the TUI
+announced its exit first (the `persist_session` with
+`restoreReason: "ordinary_tui_exit_stopped"` it sends before signalling),
+in which case the shutdown is the owner's word and the swarm's container
+goes too — see "Swarm environments live as long as the swarm".
 
 ### `inspect`
 

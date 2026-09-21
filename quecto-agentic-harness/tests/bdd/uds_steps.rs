@@ -453,6 +453,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             broadcast_tx: None,
             parent_control: None,
             teardown_graph: None,
+            environment_control: None,
         })
     });
 
@@ -2163,6 +2164,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             broadcast_tx: None,
             parent_control: None,
             teardown_graph: None,
+            environment_control: None,
         })
     });
 
@@ -2585,6 +2587,7 @@ fn mc_spawn_agent(
             broadcast_tx,
             parent_control: None,
             teardown_graph: None,
+            environment_control: None,
         })
     });
 

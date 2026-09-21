@@ -38,6 +38,8 @@ pub(super) fn rig_with(lineage: LineageSnapshot, cancellation: Arc<FakeCancellat
             persistence: persistence.clone(),
             exit: exit.clone(),
             spawner: spawner.clone(),
+            owner_exit: crate::infrastructure::tools::owner_exit::OwnerExitFlag::new(),
+            retained: crate::infrastructure::tools::retained_environment_teardown::SlotRetainedEnvironmentTeardown::new(Default::default()),
         },
     ));
     let terminate = Arc::new(TerminateDelegatedAgent::new(

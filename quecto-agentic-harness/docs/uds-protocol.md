@@ -924,7 +924,7 @@ Save the current session now, without waiting for the next turn boundary. Owner:
 |---|---|---|---|
 | `type` | `"persist_session"` | yes | |
 | `id` | string | no | Correlation ID |
-| `restoreReason` | string | no | `"ordinary_tui_exit_stopped"` marks a TUI's ordinary exit (#1586): the persisted sub-agent roster is emptied and the reason is stamped on the record. Any other value, or none, records the legacy unspecified reason |
+| `restoreReason` | string | no | `"ordinary_tui_exit_stopped"` marks a TUI's ordinary exit (#1586): the persisted sub-agent roster is emptied and the reason is stamped on the record — and it is the owner's exit announcement (#2070): the shutdown the TUI's signal then admits tears the fleet down on the owner's authority (a swarm's container goes) and ends the session's emptied `retained` environments. Any other value, or none, records the legacy unspecified reason and announces nothing |
 
 **Response:** the correlated `response` with `success: true`, or `success: false` carrying the store's error text verbatim.
 

@@ -248,7 +248,8 @@ supervisor `close`s it, or when its owner deletes all sub-agents or moves to
 another session (`/new`, a `/resume` that succeeds): the container, board and
 checkout are then removed once its coordinator is gone. Nothing else ends
 it — a coordinator that exits, crashes, is `kill`ed or cancels its own run,
-a refused `/resume`, and the master shutting down,
+a refused `/resume`, and the master shutting down (a crash, a lost client — anything but
+an ordinary TUI exit, which announces itself and removes the container like `close` does),
 leave the environment `retained` (`get_containers` lists it) so the run can
 be resumed; `kill_container` removes it. `metadata.retained` reads `run ended: <outcome>; ...`
 after an orderly end you have not closed yet (the run is untouched), or names the lost coordinator

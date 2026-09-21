@@ -206,6 +206,10 @@ mod model_default_persistence;
 mod model_runtime;
 #[path = "contracts/owned_child_termination.rs"]
 mod owned_child_termination;
+#[path = "contracts/owner_exit_announcement.rs"]
+mod owner_exit_announcement;
+#[path = "contracts/retained_environment_teardown.rs"]
+mod retained_environment_teardown;
 #[path = "contracts/shutdown_clock.rs"]
 mod shutdown_clock;
 #[path = "contracts/shutdown_run_spawner.rs"]

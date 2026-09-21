@@ -149,6 +149,23 @@ pub trait TurnCancellation: Send + Sync {
     fn cancel_in_flight_turn(&self) -> PortFuture<'_, bool>;
 }
 
+/// The owner's exit announcement (#2070). The TUI that owns this harness
+/// says it is exiting — over the protocol, before it signals the leader — and
+/// the shutdown that follows is then the owner's word: its fleet teardown
+/// gives every swarm's environment up. An unannounced shutdown (a crashed or
+/// killed client, a logout, an operator's signal) is not, and keeps them.
+pub trait OwnerExitAnnouncement: Send + Sync {
+    fn announce(&self);
+    fn announced(&self) -> bool;
+}
+
+/// Ends the environments this session emptied and kept `retained` — a
+/// coordinator that crashed earlier left its box behind — once the owner
+/// exits (#2070). Each answer names the environment and how its end went.
+pub trait RetainedEnvironmentTeardown: Send + Sync {
+    fn end_emptied_retained(&self) -> PortFuture<'_, Vec<(String, Result<(), String>)>>;
+}
+
 /// Persists the session as part of shutdown, for the recorded reason.
 pub trait ShutdownSessionPersistence: Send + Sync {
     fn persist_for_shutdown(&self, reason: ShutdownReason) -> PortFuture<'_, Result<(), String>>;

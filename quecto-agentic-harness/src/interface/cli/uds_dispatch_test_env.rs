@@ -234,6 +234,7 @@ impl DispatchTestEnv {
             workflow_state: Some(self.workflow.clone()),
             workflow_config: Some(workflow_test_config()),
             fleet_teardown: None,
+            owner_exit: None,
             discovery: self.sessions.discovery.clone(),
             save_session: self.sessions.save_session.clone(),
             rewrite: self.sessions.rewrite.clone(),

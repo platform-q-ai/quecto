@@ -41,8 +41,9 @@ use super::super::dto::{
     ShutdownTrigger, TerminateAllDelegatedAgentsRequest,
 };
 use super::super::ports::{
-    CompositionExitReadiness, ExitReadiness, ShutdownClock, ShutdownRunSpawner,
-    ShutdownSessionPersistence, SubagentLifecycleRepository, TurnCancellation,
+    CompositionExitReadiness, ExitReadiness, OwnerExitAnnouncement, RetainedEnvironmentTeardown,
+    ShutdownClock, ShutdownRunSpawner, ShutdownSessionPersistence, SubagentLifecycleRepository,
+    TurnCancellation,
 };
 use super::terminate_all_delegated_agents::TerminateAllDelegatedAgents;
 
@@ -63,6 +64,12 @@ struct Progress {
     /// re-drive of the admission runs it again; the claim ladder makes
     /// that safe.
     children_complete: bool,
+    /// The owner had announced this exit when the fleet step ran (#2070):
+    /// decided once, so a re-drive tears down on the same authority.
+    owner_exit: Option<bool>,
+    /// The emptied `retained` environments an owner exit ended; `None`
+    /// until that step has run (or was skipped for an unannounced exit).
+    retained_environments: Option<Vec<(String, Result<(), String>)>>,
     persistence: Option<PersistenceOutcome>,
     exit_signalled: bool,
 }
@@ -75,6 +82,7 @@ impl Progress {
             || !self.children_shut_down.is_empty()
             || !self.children_failed.is_empty()
             || self.children_complete
+            || self.retained_environments.is_some()
             || self.persistence.is_some()
             || self.exit_signalled
     }
@@ -309,6 +317,10 @@ impl PrepareHarnessShutdown {
 pub struct ExecuteHarnessShutdownPorts {
     /// The direct-children step: the fleet teardown (#1938).
     pub children: Arc<TerminateAllDelegatedAgents>,
+    /// Whether the owner announced this exit (#2070).
+    pub owner_exit: Arc<dyn OwnerExitAnnouncement>,
+    /// The emptied `retained` environments an owner exit ends (#2070).
+    pub retained: Arc<dyn RetainedEnvironmentTeardown>,
     pub cancellation: Arc<dyn TurnCancellation>,
     pub persistence: Arc<dyn ShutdownSessionPersistence>,
     pub exit: Arc<dyn CompositionExitReadiness>,
@@ -427,8 +439,18 @@ async fn drive(guard: RunGuard, ports: Arc<ExecuteHarnessShutdownPorts>, admissi
         let cancelled = ports.cancellation.cancel_in_flight_turn().await;
         transaction.with_progress(admission_id, |p| p.turn_cancelled = Some(cancelled));
     }
+    // Decided once, before the fleet is asked: an announcement that arrives
+    // mid-teardown changes nothing already under way.
+    let owner_exit = match done.owner_exit {
+        Some(decided) => decided,
+        None => {
+            let announced = ports.owner_exit.announced();
+            transaction.with_progress(admission_id, |p| p.owner_exit = Some(announced));
+            announced
+        }
+    };
     if !done.children_complete {
-        let fleet = settle_fleet(&ports).await;
+        let fleet = settle_fleet(&ports, owner_exit).await;
         transaction.with_progress(admission_id, |p| match fleet {
             Ok(outcome) => {
                 p.children_shut_down = outcome
@@ -446,6 +468,17 @@ async fn drive(guard: RunGuard, ports: Arc<ExecuteHarnessShutdownPorts>, admissi
             // runs the fleet again before finishing.
             Err(FleetTeardownError::Interrupted) => {}
         });
+    }
+    // The owner's exit also ends what this session left behind: boxes it
+    // emptied and kept `retained` for a resume nobody will ask for now.
+    // After the fleet, so a member finalised just now is not raced.
+    if done.retained_environments.is_none() {
+        let ended = if owner_exit {
+            ports.retained.end_emptied_retained().await
+        } else {
+            Vec::new()
+        };
+        transaction.with_progress(admission_id, |p| p.retained_environments = Some(ended));
     }
     if done.persistence.is_none() {
         let persistence = match ports.persistence.persist_for_shutdown(reason).await {
@@ -485,6 +518,8 @@ async fn drive(guard: RunGuard, ports: Arc<ExecuteHarnessShutdownPorts>, admissi
                 .persistence
                 .unwrap_or(PersistenceOutcome::Failed("not attempted".into())),
             exit_signalled: progress.exit_signalled,
+            owner_exit: progress.owner_exit.unwrap_or(false),
+            retained_environments: progress.retained_environments.unwrap_or_default(),
         }
     });
     complete(&transaction, outcome);
@@ -502,11 +537,19 @@ async fn drive(guard: RunGuard, ports: Arc<ExecuteHarnessShutdownPorts>, admissi
 /// nothing slipped in, and its results are merged.
 async fn settle_fleet(
     ports: &ExecuteHarnessShutdownPorts,
+    owner_exit: bool,
 ) -> Result<FleetTeardownOutcome, FleetTeardownError> {
+    use super::super::dto::FleetTeardownAuthority;
+    // A shutdown may be a crash (#2070): it is the owner's word only when
+    // the owner announced the exit beforehand.
+    let authority = if owner_exit {
+        FleetTeardownAuthority::Owner
+    } else {
+        FleetTeardownAuthority::Harness
+    };
     let request = || TerminateAllDelegatedAgentsRequest {
         reason: ShutdownReason::ParentShutdown,
-        // A shutdown may be a crash (#2070): never the owner's word.
-        authority: super::super::dto::FleetTeardownAuthority::Harness,
+        authority,
     };
     let mut outcome = ports.children.execute(request()).await?;
     if outcome.joined {
@@ -610,6 +653,9 @@ impl Future for JoinOutcome<'_> {
     }
 }
 
+#[cfg(test)]
+#[path = "harness_shutdown_owner_exit_tests.rs"]
+mod owner_exit_tests;
 #[cfg(test)]
 #[path = "harness_shutdown_sweep_tests.rs"]
 mod sweep_tests;

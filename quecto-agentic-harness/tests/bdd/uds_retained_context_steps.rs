@@ -195,6 +195,7 @@ fn when_model_recalls(world: &mut QuectoWorld) {
             broadcast_tx: None,
             parent_control: None,
             teardown_graph: None,
+            environment_control: None,
         })
     });
     let mut client = client;

@@ -155,14 +155,14 @@ pub(crate) struct DispatchCtx<'a> {
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     /// Fleet teardown (#1938) of delete-all and session transitions.
     pub fleet_teardown: Option<FleetTeardown>,
+    /// The owner's exit announcement (#2070): raised by the owning TUI's exit persist.
+    pub owner_exit: Option<uds_dispatch::uds_owner_exit::OwnerExit>,
     /// Discovery (#1861, #2010): answers `list_sessions` and `search_session_metadata`.
     pub discovery: SessionDiscoveryHandles,
-    /// Save current session (#1860, #1972): the one transaction every
-    /// persistence trigger of this loop requests; it owns the watermark,
-    /// the dirty latch and the killing-exit state on the active session.
+    /// Save current session (#1860, #1972): the one transaction every persistence
+    /// trigger requests; owns the watermark, dirty latch and killing-exit state.
     pub save_session: SaveSessionHandle,
-    /// Clear (#1864) and rewind (#1865) the conversation (#1975): the two
-    /// history-replacing transactions this loop requests once admitted.
+    /// Clear (#1864) and rewind (#1865) the conversation (#1975), once admitted.
     pub rewrite: super::uds_session_handles::ConversationRewriteHandles,
     /// Start a fresh conversation (#1862, #1976) or resume a saved one (#1863,
     /// #1977): the two session transitions this loop requests once admitted.

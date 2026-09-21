@@ -50,6 +50,14 @@ pub struct TeardownLoopInputs {
     pub exit_notify: Arc<Notify>,
     /// The binding this harness was launched with, or `unlaunched()`.
     pub binding: ParentControlBinding,
+    /// The owner's exit announcement (#2070) the dispatch loop raises when
+    /// the owning TUI's exit persist arrives; the shutdown reads it.
+    pub owner_exit: Arc<dyn crate::application::subagents::ports::OwnerExitAnnouncement>,
+    /// The environment control slot (#2070), for the emptied `retained`
+    /// environments an owner exit ends; `None` builds a teardown that ends
+    /// none (unit rigs).
+    pub environment_control:
+        Option<crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot>,
 }
 
 /// The handles one dispatch loop holds: what the connection layer needs,

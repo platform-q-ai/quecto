@@ -337,6 +337,8 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
             busy: args.busy.clone(),
             exit_notify: Arc::new(tokio::sync::Notify::new()),
             binding: crate::domain::parent_control::ParentControlBinding::unlaunched(),
+            owner_exit: crate::infrastructure::tools::owner_exit::OwnerExitFlag::new(),
+            environment_control: None,
         },
     );
     args.teardown = Some(graph.connections.clone());

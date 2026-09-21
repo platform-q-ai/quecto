@@ -304,6 +304,9 @@ pub(crate) struct AgentBuildResult {
     pub notification_rx: Option<NotificationRx>,
     pub subagent_registry: Option<SubagentRegistry>,
     pub harness_lifecycle: Option<SharedHarnessLifecycle>,
+    /// The environment control slot (#2070) the loop hands its teardown.
+    pub environment_control:
+        Option<crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workspace: std::path::PathBuf,
 }
@@ -424,6 +427,7 @@ pub(crate) fn build_agent_from_config(
         notification_rx,
         subagent_registry,
         harness_lifecycle,
+        environment_control,
         workflow_state,
         workspace,
     } = match build_tool_registry(ToolRegistryArgs {
@@ -518,6 +522,7 @@ pub(crate) fn build_agent_from_config(
         notification_rx,
         subagent_registry,
         harness_lifecycle,
+        environment_control,
         workflow_state,
         workspace,
     })
@@ -674,6 +679,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         broadcast_tx,
         parent_control,
         teardown_graph: ctx.teardown_graph,
+        environment_control: build.environment_control,
     });
     admission_startup::shutdown();
     // An ephemeral UDS server persisted spill content only for in-run recall.

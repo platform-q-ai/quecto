@@ -471,6 +471,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
             tmp.path(),
         ),
         fleet_teardown: None,
+        owner_exit: None,
         discovery: list_handle(tmp.path()),
     };
 
@@ -572,6 +573,7 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
             tmp.path(),
         ),
         fleet_teardown: None,
+        owner_exit: None,
         discovery: list_handle(tmp.path()),
     };
 

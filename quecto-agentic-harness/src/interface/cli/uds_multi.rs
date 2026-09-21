@@ -106,6 +106,10 @@ pub(super) struct MultiClientArgs<'a> {
     /// Composition's teardown handles builder; without it the loop runs with
     /// no teardown edge (unit rigs only).
     pub teardown_graph: Option<super::TeardownHandlesBuilder>,
+    /// The environment control slot the agent-control tools read (#2070):
+    /// an owner exit ends the emptied `retained` environments through it.
+    pub environment_control:
+        Option<crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot>,
 }
 
 /// A command line from a client.
@@ -181,6 +185,7 @@ pub(super) async fn multi_client_loop(
         broadcast_tx: pre_broadcast_tx,
         parent_control,
         teardown_graph,
+        environment_control,
     } = args;
 
     inject_system_prompt(&mut messages, &system_prompt);
@@ -274,6 +279,7 @@ pub(super) async fn multi_client_loop(
     let bind_deadline = parent_control
         .as_ref()
         .map(|launch| launch.bind_deadline.clone());
+    let owner_exit = crate::infrastructure::tools::owner_exit::OwnerExitFlag::new();
     let teardown = teardown_graph.map(|build| {
         build(super::uds_teardown_handles::TeardownLoopInputs {
             owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
@@ -292,6 +298,8 @@ pub(super) async fn multi_client_loop(
             binding: parent_control
                 .map(|launch| launch.binding)
                 .unwrap_or_else(crate::domain::parent_control::ParentControlBinding::unlaunched),
+            owner_exit: owner_exit.clone(),
+            environment_control,
         })
     });
     // SIGTERM/SIGINT and the last client's disconnect are delivered to the
@@ -360,6 +368,7 @@ pub(super) async fn multi_client_loop(
         workflow_state: wf_state.clone(),
         workflow_config: wf_config,
         fleet_teardown,
+        owner_exit: Some(owner_exit),
         discovery: sessions.discovery.clone(),
         save_session: sessions.save_session.clone(),
         rewrite: sessions.rewrite.clone(),

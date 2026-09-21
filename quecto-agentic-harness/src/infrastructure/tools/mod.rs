@@ -16,6 +16,7 @@ pub(crate) mod inherited_tool_policy;
 #[cfg(test)]
 #[path = "inherited_tool_policy_unit_tests.rs"]
 mod inherited_tool_policy_unit_tests;
+pub mod owner_exit;
 pub mod path_utils;
 mod process_tree;
 pub mod recall;
@@ -28,6 +29,7 @@ mod registry_inherited_policy;
 mod registry_lifecycle_compat;
 mod registry_tool_ids;
 mod registry_uds;
+pub mod retained_environment_teardown;
 pub mod spawn;
 mod spawn_binary;
 mod spawn_container;

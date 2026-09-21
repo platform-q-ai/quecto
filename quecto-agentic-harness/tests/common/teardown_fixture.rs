@@ -12,10 +12,10 @@ use quecto::application::subagents::dto::{
 use quecto::application::subagents::ports::{
     ChildRoutingError, Compensated, CompensationObservation, CompositionExitReadiness,
     ConclusionBudget, DelegatedAgentRegistry, DirectChildRouting, ExitReadiness,
-    OwnedChildTermination, PortFuture, ProtocolAttempt, ResolutionError, ShutdownClock,
-    ShutdownInstant, ShutdownRun, ShutdownRunSpawner, ShutdownSessionPersistence,
-    StoppingClaimError, SubagentLifecycleRepository, TeardownCompensation, TerminalClaim,
-    TerminationCause, TerminationConclusion, TurnCancellation,
+    OwnedChildTermination, OwnerExitAnnouncement, PortFuture, ProtocolAttempt, ResolutionError,
+    RetainedEnvironmentTeardown, ShutdownClock, ShutdownInstant, ShutdownRun, ShutdownRunSpawner,
+    ShutdownSessionPersistence, StoppingClaimError, SubagentLifecycleRepository,
+    TeardownCompensation, TerminalClaim, TerminationCause, TerminationConclusion, TurnCancellation,
 };
 use quecto::application::subagents::use_cases::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
@@ -487,6 +487,36 @@ impl TeardownCompensation for Rows {
 
 /// A fully wired two-phase transaction over the fakes above, with the
 /// fleet teardown as its children step.
+/// The owner's exit announcement (#2070): raised by the test.
+#[derive(Default)]
+pub struct OwnerExit(pub AtomicBool);
+
+impl OwnerExitAnnouncement for OwnerExit {
+    fn announce(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    fn announced(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// The emptied `retained` environments an owner exit ends (#2070): counts
+/// the asks and answers a fixed list.
+#[derive(Default)]
+pub struct RetainedEnvironments {
+    pub asked: AtomicUsize,
+    pub answer: Mutex<Vec<(String, Result<(), String>)>>,
+}
+
+impl RetainedEnvironmentTeardown for RetainedEnvironments {
+    fn end_emptied_retained(&self) -> PortFuture<'_, Vec<(String, Result<(), String>)>> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        let answer = self.answer.lock().unwrap().clone();
+        Box::pin(async move { answer })
+    }
+}
+
 pub struct Harness {
     pub lifecycle: Arc<Lifecycle>,
     pub routing: Arc<Routing>,
@@ -497,6 +527,8 @@ pub struct Harness {
     pub clock: Arc<Clock>,
     pub exit: Arc<Exit>,
     pub spawner: Arc<Spawner>,
+    pub owner_exit: Arc<OwnerExit>,
+    pub retained: Arc<RetainedEnvironments>,
     pub prepare: PrepareHarnessShutdown,
     pub execute: Arc<ExecuteHarnessShutdown>,
 }
@@ -523,6 +555,8 @@ impl Harness {
         ));
         let transaction = HarnessShutdownTransaction::new(lifecycle.clone(), clock.clone());
         let prepare = PrepareHarnessShutdown::new(transaction.clone());
+        let owner_exit = Arc::new(OwnerExit::default());
+        let retained = Arc::new(RetainedEnvironments::default());
         let execute = Arc::new(ExecuteHarnessShutdown::new(
             transaction,
             ExecuteHarnessShutdownPorts {
@@ -531,6 +565,8 @@ impl Harness {
                 persistence: persistence.clone(),
                 exit: exit.clone(),
                 spawner: spawner.clone(),
+                owner_exit: owner_exit.clone(),
+                retained: retained.clone(),
             },
         ));
         Self {
@@ -543,6 +579,8 @@ impl Harness {
             clock,
             exit,
             spawner,
+            owner_exit,
+            retained,
             prepare,
             execute,
         }

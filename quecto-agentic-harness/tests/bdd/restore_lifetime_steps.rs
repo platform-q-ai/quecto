@@ -345,6 +345,7 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             broadcast_tx,
             parent_control: None,
             teardown_graph: Some(build_teardown_graph),
+            environment_control: None,
         })
     });
     let deadline = Instant::now() + Duration::from_secs(10);
