@@ -442,6 +442,10 @@ mod effort_vocabulary {
     #[test]
     fn xai_grok_vocabularies_follow_the_documented_scales_and_never_offer_none() {
         assert_eq!(
+            levels("xai", TransportKind::OpenAiCompletions, "grok-4.7", true),
+            vec![Low, Medium, High, XHigh]
+        );
+        assert_eq!(
             levels("xai", TransportKind::OpenAiCompletions, "grok-4.6", true),
             vec![Low, Medium, High, XHigh]
         );
