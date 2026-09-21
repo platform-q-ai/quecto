@@ -353,21 +353,10 @@ fi
 # create never leaks an unreported environment directory.
 admission_dir="${QUECTO_ADMISSION_DIR:-}"
 if [ -n "$admission_dir" ]; then
-  # The broad identity mount and every authority mask must share one exact
-  # destination spelling. Only admit a canonical ~/.quecto path; otherwise a
-  # symlinked HOME could retain an rw alias around a canonical read-only mask.
-  quecto_dir="$HOME/.quecto"
-  case "$quecto_dir" in
-  /*) ;;
-  *) die "HOME/.quecto must be a normalized canonical path" ;;
-  esac
-  [ "$(realpath -m "$quecto_dir")" = "$quecto_dir" ] \
-    || die "HOME/.quecto must be a normalized canonical path"
   [ -d "$admission_dir" ] || die "QUECTO_ADMISSION_DIR '$admission_dir' is not a directory"
   # Mount destinations are intentionally kept in their configured spelling.
-  # Admit only normalized absolute paths: accepting aliases such as /./, /../,
-  # a trailing slash, or a symlink would classify one resolved path while the
-  # runtime mounts another spelling beneath the read-only authority mask.
+  # Admit only normalized absolute paths: /./, /../ or a trailing slash would
+  # classify one path while the runtime mounts another spelling.
   case "$admission_dir" in
   /*/ | */./* | */../* | */. | */..)
     die "QUECTO_ADMISSION_DIR '$admission_dir' must be a normalized absolute path without '.', '..', or a trailing slash"
@@ -375,8 +364,6 @@ if [ -n "$admission_dir" ]; then
   /*) ;;
   *) die "QUECTO_ADMISSION_DIR '$admission_dir' must be an absolute path" ;;
   esac
-  [ "$(realpath -m "$admission_dir")" = "$admission_dir" ] \
-    || die "QUECTO_ADMISSION_DIR '$admission_dir' must not contain symbolic-link aliases"
   admission_root="$(dirname "$admission_dir")"
   real_root="$(realpath -m "$admission_root")"
   real_quecto="$(realpath -m "$HOME/.quecto")"
@@ -384,7 +371,22 @@ if [ -n "$admission_dir" ]; then
   "$real_quecto")
     die "QUECTO_ADMISSION_DIR parent '$admission_root' is the identity-mounted ~/.quecto itself; use a subdirectory"
     ;;
-  "$real_quecto"/* | /*) ;;
+  "$real_quecto"/*)
+    # The authority lives inside the identity-mounted ~/.quecto, so the mask
+    # must land INSIDE that mount, at the same place. The identity mount is
+    # spelled "$HOME/.quecto"; a symlinked HOME is fine as long as the
+    # admission dir is spelled through the same alias (the harness derives it
+    # from HOME, so it is). What is refused is a mismatch — the canonical
+    # spelling under an aliased HOME, or a symlink inside ~/.quecto — because
+    # the mask would then sit beside the authority instead of over it.
+    case "$admission_root" in
+    "$HOME/.quecto"/*) ;;
+    *) die "QUECTO_ADMISSION_DIR '$admission_dir' resolves inside ~/.quecto but is not spelled under '$HOME/.quecto'; the read-only mask would miss the identity mount — spell it under \$HOME/.quecto" ;;
+    esac
+    [ "${admission_root#"$HOME/.quecto"}" = "${real_root#"$real_quecto"}" ] \
+      || die "QUECTO_ADMISSION_DIR '$admission_dir' reaches its authority through a symbolic link inside ~/.quecto; the read-only mask would miss the real directory"
+    ;;
+  /*) ;;
   *) die "QUECTO_ADMISSION_DIR '$admission_dir' has an unsupported parent path" ;;
   esac
 fi

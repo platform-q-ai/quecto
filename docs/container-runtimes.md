@@ -988,7 +988,7 @@ The repository is still cloned by the trusted host adapter and mounted at
 runtime; source and credentials are never baked into the image.
 
 `quecto container status` reports, one line each and exit 1 while anything
-is missing: the assets (`present (5 of 5, version 2)`, or which differ or
+is missing: the assets (`present (5 of 5, version 3)`, or which differ or
 are missing), the `standard` entry of the effective set (`default` with a
 `this repo's default` line when the overlay declares it labelled; `default
 by rule` plus a `note:` with the remedy — `quecto container init --refresh`

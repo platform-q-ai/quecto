@@ -18,8 +18,23 @@ fn executable(path: &Path, body: &str) {
     fs::set_permissions(path, p).unwrap();
 }
 
+/// How HOME and the admission directory are spelled on the host.
+#[derive(Clone, Copy, PartialEq)]
+enum Layout {
+    /// HOME is a real directory; the admission dir is spelled under it.
+    Plain,
+    /// HOME is a symlink and the admission dir is spelled through the SAME
+    /// alias — what the harness produces, since it derives the path from HOME.
+    AliasedHome,
+    /// HOME is a symlink but the admission dir uses the canonical spelling:
+    /// the mask would land beside the identity mount, not over the authority.
+    AliasedHomeCanonicalAdmission,
+    /// The admission root is reached through a symlink inside ~/.quecto.
+    LinkInsideQuecto,
+}
+
 fn run(admission_suffix: &str) -> (std::process::Output, PathBuf, String) {
-    run_with_layout(admission_suffix, false)
+    run_with_layout(admission_suffix, Layout::Plain)
 }
 
 fn assert_preflight_only(log: &Path) {
@@ -42,8 +57,12 @@ fn assert_state_empty(log: &Path) {
 
 fn run_with_layout(
     admission_suffix: &str,
-    symlink_home: bool,
+    layout: Layout,
 ) -> (std::process::Output, PathBuf, String) {
+    let symlink_home = matches!(
+        layout,
+        Layout::AliasedHome | Layout::AliasedHomeCanonicalAdmission
+    );
     let t = tempfile::tempdir().unwrap();
     let base = t.keep();
     let real_home = base.join("real-home");
@@ -61,10 +80,18 @@ fn run_with_layout(
     for d in [&home.join(".quecto"), &state, &socket_dir, &bin] {
         fs::create_dir_all(d).unwrap();
     }
-    let admission = if symlink_home {
-        real_home.join(admission_suffix)
-    } else {
-        home.join(admission_suffix)
+    let admission = match layout {
+        Layout::AliasedHomeCanonicalAdmission => real_home.join(admission_suffix),
+        Layout::Plain | Layout::AliasedHome => home.join(admission_suffix),
+        Layout::LinkInsideQuecto => {
+            // ~/.quecto/linked -> ~/.quecto/real-authority; the suffix's leaf
+            // is the client directory beneath the link.
+            let leaf = Path::new(admission_suffix).file_name().unwrap();
+            let real = home.join(".quecto/real-authority");
+            fs::create_dir_all(real.join(leaf)).unwrap();
+            std::os::unix::fs::symlink(&real, home.join(".quecto/linked")).unwrap();
+            home.join(".quecto/linked").join(leaf)
+        }
     };
     fs::create_dir_all(&admission).unwrap();
     let log = base.join("runtime.log");
@@ -131,17 +158,52 @@ fn rejection_oracles_detect_container_launch_and_state_allocation() {
 }
 
 #[test]
-fn rejects_symlinked_home_when_admission_uses_canonical_spelling() {
-    let (out, log, _) = run_with_layout(".quecto/admission/client", true);
-    assert!(!out.status.success());
+fn a_symlinked_home_works_when_the_admission_dir_is_spelled_through_the_same_alias() {
+    // What the harness produces on a host whose HOME is a symlink (it derives
+    // the admission dir from HOME): identity mount and mask agree, so the
+    // launch must succeed and the mask must sit under the alias spelling.
+    let (out, log, admission) = run_with_layout(".quecto/admission/client", Layout::AliasedHome);
     assert!(
-        String::from_utf8_lossy(&out.stderr)
-            .contains("HOME/.quecto must be a normalized canonical path"),
+        out.status.success(),
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_preflight_only(&log);
-    assert_state_empty(&log);
+    let calls = fs::read_to_string(log).unwrap();
+    let root = Path::new(&admission)
+        .parent()
+        .unwrap()
+        .display()
+        .to_string();
+    assert!(root.contains("alias-home"), "{root}");
+    let ro = calls.find(&format!("{root}:ro")).expect("mask mounted");
+    let rw = calls
+        .find(&format!("{admission}:rw"))
+        .expect("client mounted");
+    assert!(ro < rw);
+}
+
+#[test]
+fn rejects_a_mask_that_would_miss_the_identity_mount() {
+    // Canonical spelling under an aliased HOME, and a symlink inside
+    // ~/.quecto: in both the read-only mask would land beside the authority
+    // instead of over it. Refused before anything is allocated.
+    for (layout, message) in [
+        (
+            Layout::AliasedHomeCanonicalAdmission,
+            "is not spelled under",
+        ),
+        (
+            Layout::LinkInsideQuecto,
+            "through a symbolic link inside ~/.quecto",
+        ),
+    ] {
+        let (out, log, _) = run_with_layout(".quecto/admission/client", layout);
+        assert!(!out.status.success());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(message), "{stderr}");
+        assert_preflight_only(&log);
+        assert_state_empty(&log);
+    }
 }
 
 #[test]
