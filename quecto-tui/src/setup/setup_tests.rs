@@ -129,6 +129,15 @@ fn each_area_prompt_names_its_runbook_page_and_goal() {
                 "quecto container init",
                 "quecto container doctor",
                 "image-build line it prints",
+                // #2073: the container is THIS repo's — the agent reads the
+                // repo, proposes its Containerfile and asks before writing.
+                "what this repo builds and tests with",
+                "CI configuration",
+                ".quecto/containers/standard/Containerfile",
+                "ai.quecto.required-tools",
+                "SHOW me the Containerfile",
+                "already has its own",
+                "commit",
             ],
         ),
         (

@@ -41,12 +41,16 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
      3. spawn {"agent_id":"probe","task":"run pwd","container":true} …
    ```
    **`standard` is always this repo's default.** A global default (`the global default <name> does not apply in this repo`) is overridden here only — the global file is untouched, other repos keep it. Another overlay entry carrying `"default": true` loses the label in the same write (`displaced default: <name>`; select it by name). Launch policy applies the rule, not just the label: a repo-bound `standard` is what `container: true` selects even after `quecto config unset --local container_configs.standard.default` removed its label (possible only while another entry is labelled; a raw edit un-trusts the overlay instead) or the global file was re-labelled — `status` then says `default by rule` with the remedy (`init --refresh` or `quecto config set --local container_configs.standard.default true`). Init names what it displaced from the *effective* set: an overlay entry's label (`displaced default:`), else the global label it overrides. A re-init keeps the entry's `--repo`/`--image` unless the flag is given (`kept:`/`rewrote:` lines).
-2. **Build the image** — exactly the command init printed (a create never builds or pulls). Skip it when `quecto container status` already reports `image: image quecto-repo:local is present`:
+2. **Make the Containerfile this repo's** — skip when the repo already commits one (then *read* it: its `RUN` steps execute in your build). Init wrote a neutral starter; the container is only useful once it holds what this repo builds and tests with:
+   - Read the repo's manifests (`Cargo.toml`, `pyproject.toml`, `package.json`, `go.mod`, …) and its CI configuration: languages, the tools CI runs, the versions the repo pins.
+   - In the starter's marked section of `.quecto/containers/standard/Containerfile`, install that toolchain (pinned where the repo pins it) and declare what an agent must find on PATH: `LABEL ai.quecto.required-tools="python3 uv pytest ruff"`.
+   - Show the file and ask before writing it. Commit it afterwards — the next agent in this folder then builds the same container. `quecto container init --refresh` never replaces it.
+3. **Build the image** — exactly the command init printed (a create never builds or pulls). Skip it when `quecto container status` already reports `image: image quecto-repo:local is present`:
    ```
    podman build -t quecto-repo:local -f /repo/.quecto/containers/standard/Containerfile /repo/.quecto/containers/standard
    ```
    Expected: the last line is `Successfully tagged localhost/quecto-repo:local` (docker: `naming to docker.io/library/quecto-repo:local`). A docker-only host runs the same command with `docker`: the scripts drive whichever runtime the doctor's `runtime-cli` line names. **The image tag is the project's too**: without `--image`, init names it after the project folder (`quecto-<folder>:local`, lowercased, anything but letters/digits/single `.` `_` becoming `-`), so two repos on one machine build two images; a re-init keeps the tag the entry already has. **The Containerfile is the project's**: init writes a neutral starter only where none exists; edit it (toolchain + label), commit it, rebuild. It is never drift and `--refresh` never replaces it — only the four scripts are quecto's. In a repo you cloned, read its Containerfile before building it. The doctor is tooling-neutral: it asks any image for a shell and `git` (`image-base`), plus exactly the tools the image itself declares in `LABEL ai.quecto.required-tools="python3 uv pytest"` (`required-tools`; bare ASCII names separated by whitespace; no label, no extra check; redeclare the label in a derived image). The image needs `ENTRYPOINT []` or an entrypoint that executes its arguments.
-3. **Use** — from an agent started in this repository:
+4. **Use** — from an agent started in this repository:
    `spawn {"agent_id":"probe","task":"run pwd and git log -1 --oneline, then exit","container":true}` → the result names `environment_ref=C1 container_config=standard`; `agent_cmd {"agent_id":"*","command":"get_containers"}` lists it `running` with the repository; `agent_cmd {"agent_id":"*","command":"kill_container","ref":"C1"}` ends it (its members are terminated, the config's kill runs once; from the shell, `quecto container kill C1`). When the last member of an ordinary environment exits it tears itself down; a swarm container whose run has not been closed is `retained` (resumable) until `kill_container` / `quecto container kill`.
 
 ## Verify
@@ -87,7 +91,7 @@ container config "standard" (create: /repo/.quecto/containers/standard/scripts/c
 0 checks failed, 0 warnings
 ```
 
-Then the spawn in Do step 3: `environment_ref=C1 container_config=standard`, and `get_containers` shows `status: running`.
+Then the spawn in Do step 4: `environment_ref=C1 container_config=standard`, and `get_containers` shows `status: running`.
 
 ## Rollback
 
@@ -107,7 +111,7 @@ Running environments are unaffected until killed (`kill_container`, or `quecto c
 | init: `overlay … is not trusted …` | hand-written or edited overlay | review `quecto config get --local`, `quecto config trust`, retry |
 | init: `… carries a credential in its userinfo …` | userinfo in the URL | `git remote set-url origin <credential-free url>` or `--repo <url>` |
 | doctor `✗ runtime-cli` | no podman/docker on PATH, or the daemon not answering | install/start it; `QUECTO_CONTAINER_CLI=/abs/podman` overrides the choice |
-| doctor `✗ image  image quecto-repo:local is not present …` | step 2 skipped (create never pulls) | run the printed `podman build …` |
+| doctor `✗ image  image quecto-repo:local is not present …` | step 3 skipped (create never pulls) | run the printed `podman build …` |
 | doctor `✗ image-base  … missing git` | the image lacks a shell or `git` | add them to the Containerfile, rebuild |
 | doctor `✗ required-tools  … missing <tool>` / `… is not a tool name` | the image lacks a tool its `ai.quecto.required-tools` label declares, or the label is not a list of bare names | rebuild from the Containerfile, or correct the label |
 | doctor `✗ repo  --repo <url> is unreachable: …` | wrong URL, no network, or missing credentials (`repository … not found` for a private repo) | `gh auth login` / ssh key, or `quecto container init --repo <url>` with the right URL |
