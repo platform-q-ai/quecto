@@ -96,3 +96,42 @@ fn a_drifted_script_is_still_listed_beside_the_projects_containerfile() {
         "{out}"
     );
 }
+
+#[test]
+fn a_flag_the_entry_never_had_is_reported_as_added_not_rewritten() {
+    // A sandbox entry (no origin remote) has no --repo; giving one later is
+    // an addition, and the line must not read as replacing "(none)".
+    let rig = Rig::new();
+    let ctx = rig.ctx(status_image_present);
+    // <checkout>/.quecto/containers/standard
+    let assets_dir = rig.assets_dir();
+    let checkout = assets_dir.ancestors().nth(3).unwrap().to_path_buf();
+    let removed = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&checkout)
+        .args(["remote", "remove", "origin"])
+        .status()
+        .unwrap();
+    assert!(removed.success());
+    let first = rig.run(&ctx, &["container", "init"]);
+    assert_eq!(first.exit_code, 0, "{}", first.stderr);
+    let again = rig.run(
+        &ctx,
+        &[
+            "container",
+            "init",
+            "--repo",
+            "https://example.test/later.git",
+        ],
+    );
+    assert_eq!(again.exit_code, 0, "{}", again.stderr);
+    assert!(
+        again
+            .stdout
+            .contains("  added:   --repo https://example.test/later.git (the entry had none)\n"),
+        "{}",
+        again.stdout
+    );
+    assert!(!again.stdout.contains("(none)"), "{}", again.stdout);
+    assert!(!again.stdout.contains("rewrote:"), "{}", again.stdout);
+}

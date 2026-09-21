@@ -923,7 +923,7 @@ is written, so a refused init leaves the project untouched):
 Running `init` twice changes nothing (no files, byte-identical overlay).
 A re-init keeps the existing entry's `--repo` and `--image` unless the
 flag is given — the origin remote is not re-derived over a `--repo` you
-chose — and prints `kept:` / `rewrote:` lines for each so nothing changes
+chose — and prints `kept:` / `rewrote:` / `added:` lines for each so nothing changes
 silently.
 
 **The trust boundary: host-side scripts.** The overlay's trust record
@@ -1215,7 +1215,7 @@ Design properties:
 - **Image selection.** `--image <img>` on the create argv, or the
   `QUECTO_DOCKER_IMAGE` environment variable, with a sensible local default
   (`quecto-dev:local`; an entry written by `quecto container init` always
-  passes `--image`, named after the project folder). The `run` passes `--pull=never`: a tag that vanished
+  passes `--image`, by default named after the project folder). The `run` passes `--pull=never`: a tag that vanished
   between the preflight and the run fails instead of fetching whatever a
   registry serves under that name.
 - **Pid fence.** `create.sh` passes `--pids-limit` (default `16384`;
