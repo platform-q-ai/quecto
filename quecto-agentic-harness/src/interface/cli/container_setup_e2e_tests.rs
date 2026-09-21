@@ -123,7 +123,7 @@ impl ContainerRuntimePreflight for ImagePresent {
             PreflightCheck {
                 name: "image".into(),
                 status: CheckStatus::Passed,
-                detail: "image quecto-dev:local present".into(),
+                detail: "image quecto-checkout:local present".into(),
                 remedy: String::new(),
             },
         ])
@@ -137,7 +137,7 @@ impl ContainerRuntimePreflight for ImageMissing {
         Ok(vec![PreflightCheck {
             name: "image".into(),
             status: CheckStatus::Failed,
-            detail: "image quecto-dev:local not found".into(),
+            detail: "image quecto-checkout:local not found".into(),
             remedy: "build it".into(),
         }])
     }
@@ -277,14 +277,14 @@ fn init_materialises_the_bundle_writes_the_trusted_entry_and_status_is_then_read
         out.contains("--repo https://example.test/org/repo.git (the checkout's origin remote)"),
         "{out}"
     );
-    assert!(out.contains("--image quecto-dev:local"), "{out}");
+    assert!(out.contains("--image quecto-checkout:local"), "{out}");
     assert!(
         !out.contains("kept:"),
         "no existing entry to keep from: {out}"
     );
     assert!(
         out.contains(&format!(
-            "podman build -t quecto-dev:local -f {0}/Containerfile {0}",
+            "podman build -t quecto-checkout:local -f {0}/Containerfile {0}",
             assets_dir.display()
         )),
         "{out}"
@@ -313,7 +313,7 @@ fn init_materialises_the_bundle_writes_the_trusted_entry_and_status_is_then_read
         "{out}"
     );
     assert!(
-        out.contains("image:   image quecto-dev:local present\n"),
+        out.contains("image:   image quecto-checkout:local present\n"),
         "{out}"
     );
     assert!(!out.contains("remedy:"), "{out}");
@@ -428,7 +428,9 @@ fn a_re_init_keeps_the_entrys_values_and_reports_an_edited_asset_until_refreshed
     let out = &status.stdout;
     assert!(out.contains("assets:  present (5 of 5, version"), "{out}");
     assert!(
-        out.contains("image:   ✗ image quecto-dev:local not found\n           remedy: build it\n"),
+        out.contains(
+            "image:   ✗ image quecto-checkout:local not found\n           remedy: build it\n"
+        ),
         "{out}"
     );
 

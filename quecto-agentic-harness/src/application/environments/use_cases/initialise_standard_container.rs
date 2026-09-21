@@ -23,7 +23,7 @@ use crate::application::environments::dto::{
     AssetOutcome, AssetOwnership, AssetState, ContainerAsset, ContainerConfigDocument,
     ContainerConfigLayer, EntryValueChange, InitialiseStandardContainerError, RepositoryOrigin,
     STANDARD_CONTAINER_CONFIG, STANDARD_CONTAINER_DIR, STANDARD_CONTAINER_IMAGE,
-    StandardContainerReport, StandardContainerRequest, StandardEntryOutcome,
+    StandardContainerReport, StandardContainerRequest, StandardEntryOutcome, standard_image_for,
 };
 use crate::application::environments::ports::{
     ContainerAssetStore, ContainerConfigPersistence, ContainerConfigRoster, WorkspaceOrigin,
@@ -124,7 +124,10 @@ impl InitialiseStandardContainer {
         let image = match (&request.image, &previous_image) {
             (Some(image), _) => image.clone(),
             (None, Some(image)) => image.clone(),
-            (None, None) => STANDARD_CONTAINER_IMAGE.to_string(),
+            // An existing entry with no --image launches the adapter's own
+            // default: a re-init keeps that, it does not retag the entry.
+            (None, None) if existing.is_some() => STANDARD_CONTAINER_IMAGE.to_string(),
+            (None, None) => standard_image_for(&request.project),
         };
         let change = |previous: Option<&String>, current: Option<&String>| {
             existing.as_ref().map(|_| {

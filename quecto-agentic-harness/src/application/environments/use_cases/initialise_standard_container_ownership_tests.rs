@@ -81,3 +81,108 @@ fn a_missing_containerfile_is_written_as_the_starter_even_on_a_refresh() {
         b"FROM x".to_vec()
     );
 }
+
+// ─── A default image tag per repository (#2073) ─────────────────────────────
+
+/// A rig whose checkout toplevel is `project` (init refuses a project below
+/// the toplevel git reports).
+fn rig_at(project: &str) -> Rig {
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    *rig.origin.toplevel.lock().unwrap() = Some(PathBuf::from(project));
+    rig
+}
+
+#[test]
+fn two_projects_get_two_default_image_tags_named_after_their_directories() {
+    let tag = |project: &str| {
+        let rig = rig_at(project);
+        let report = rig.use_case.execute(&request(project)).unwrap();
+        let create = argv(&report.entry.entry, "create");
+        assert_eq!(create[create.len() - 2], "--image");
+        assert_eq!(create[create.len() - 1], report.image);
+        report.image
+    };
+    assert_eq!(tag("/work/shop-api"), "quecto-shop-api:local");
+    assert_eq!(tag("/work/quecto"), "quecto-quecto:local");
+    assert_ne!(tag("/work/a"), tag("/work/b"));
+}
+
+#[test]
+fn a_directory_name_becomes_a_valid_image_name() {
+    use crate::application::environments::dto::standard_image_for;
+    for (project, image) in [
+        ("/w/My Project", "quecto-my-project:local"),
+        ("/w/API_v2.1", "quecto-api_v2.1:local"),
+        ("/w/--weird--", "quecto-weird:local"),
+        ("/w/a__b..c", "quecto-a-b-c:local"),
+        ("/w/caf\u{e9}", "quecto-caf:local"),
+        ("/w/\u{65e5}\u{672c}", "quecto-dev:local"),
+        ("/", "quecto-dev:local"),
+    ] {
+        assert_eq!(standard_image_for(Path::new(project)), image, "{project}");
+    }
+    let long = format!("/w/{}", "x".repeat(300));
+    let image = standard_image_for(Path::new(&long));
+    assert_eq!(image, format!("quecto-{}:local", "x".repeat(100)));
+    // The cap counts the joiner too, and a name never ends in one.
+    for (folder, name) in [
+        ("x".repeat(100), "x".repeat(100)),
+        ("x".repeat(101), "x".repeat(100)),
+        (format!("{}-y", "x".repeat(99)), "x".repeat(99)),
+        (format!("{}.y", "x".repeat(99)), "x".repeat(99)),
+        (
+            format!("{}.y", "x".repeat(98)),
+            format!("{}.y", "x".repeat(98)),
+        ),
+        (
+            format!("{}-y", "x".repeat(98)),
+            format!("{}-y", "x".repeat(98)),
+        ),
+        (format!("{}---", "x".repeat(100)), "x".repeat(100)),
+    ] {
+        assert_eq!(
+            standard_image_for(Path::new(&format!("/w/{folder}"))),
+            format!("quecto-{name}:local"),
+            "{folder}"
+        );
+    }
+}
+
+#[test]
+fn an_existing_entry_keeps_the_tag_it_has() {
+    use crate::application::environments::dto::STANDARD_CONTAINER_IMAGE;
+    let rig = rig_at("/work/shop-api");
+    let mut first = request("/work/shop-api");
+    first.image = Some(STANDARD_CONTAINER_IMAGE.into());
+    rig.use_case.execute(&first).unwrap();
+    let again = rig.use_case.execute(&request("/work/shop-api")).unwrap();
+    assert_eq!(again.image, STANDARD_CONTAINER_IMAGE);
+}
+
+#[test]
+fn an_existing_entry_with_no_image_flag_keeps_the_adapters_default() {
+    use crate::application::environments::dto::{
+        ContainerConfigDocument, EntryValueChange, STANDARD_CONTAINER_IMAGE,
+    };
+    // A hand-written or older entry: no --image, so it launches the adapter's
+    // own default. A re-init spells that out; it does not retag the entry to
+    // an image nobody has built.
+    let rig = rig_at("/work/shop-api");
+    rig.persistence.written.lock().unwrap().push((
+        "standard".into(),
+        ContainerConfigDocument {
+            default: true,
+            create: vec!["/old/create.sh".into()],
+            exec: vec![],
+            inspect: vec![],
+            kill: vec![],
+            cleanup: vec![],
+        },
+    ));
+    let report = rig.use_case.execute(&request("/work/shop-api")).unwrap();
+    assert_eq!(report.image, STANDARD_CONTAINER_IMAGE);
+    assert_eq!(
+        report.image_change,
+        Some(EntryValueChange::Rewrote { previous: None })
+    );
+}

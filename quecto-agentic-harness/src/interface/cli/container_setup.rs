@@ -290,6 +290,12 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
                 "  kept:    {flag} {} (the existing entry's; pass {flag} to change it)\n",
                 value(current)
             )),
+            // The entry had no such flag: the value is now spelled out, not
+            // replaced ("was (none)" read as a retag that never happened).
+            Some(EntryValueChange::Rewrote { previous: None }) => out.push_str(&format!(
+                "  added:   {flag} {} (the entry had none)\n",
+                value(current)
+            )),
             Some(EntryValueChange::Rewrote { previous }) => out.push_str(&format!(
                 "  rewrote: {flag} {} (was {})\n",
                 value(current),
