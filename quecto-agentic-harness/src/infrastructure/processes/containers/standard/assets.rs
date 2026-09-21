@@ -18,7 +18,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::application::environments::dto::{
-    AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue,
+    AssetOutcome, AssetOwnership, AssetState, ContainerAsset, ContainerAssetCatalogue,
 };
 use crate::application::environments::ports::ContainerAssetStore;
 
@@ -39,14 +39,20 @@ const EXEC: &str = include_str!("../../../../../assets/standard-container/script
 const INSPECT: &str = include_str!("../../../../../assets/standard-container/scripts/inspect.sh");
 const KILL: &str = include_str!("../../../../../assets/standard-container/scripts/kill.sh");
 
-/// `(relative path, contents, executable)` of every asset, in the order
-/// init writes and status lists them.
-const ASSETS: &[(&str, &str, bool)] = &[
-    ("Containerfile", CONTAINERFILE, false),
-    ("scripts/create.sh", CREATE, true),
-    ("scripts/exec.sh", EXEC, true),
-    ("scripts/inspect.sh", INSPECT, true),
-    ("scripts/kill.sh", KILL, true),
+/// `(relative path, contents, executable, ownership)` of every asset, in the
+/// order init writes and status lists them. The Containerfile is a starter
+/// the project then owns (#2073); the scripts are the trusted adapter.
+const ASSETS: &[(&str, &str, bool, AssetOwnership)] = &[
+    (
+        "Containerfile",
+        CONTAINERFILE,
+        false,
+        AssetOwnership::Project,
+    ),
+    ("scripts/create.sh", CREATE, true, AssetOwnership::Bundle),
+    ("scripts/exec.sh", EXEC, true, AssetOwnership::Bundle),
+    ("scripts/inspect.sh", INSPECT, true, AssetOwnership::Bundle),
+    ("scripts/kill.sh", KILL, true, AssetOwnership::Bundle),
 ];
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -59,10 +65,11 @@ impl ContainerAssetStore for EmbeddedStandardAssets {
             build_command: BUILD_COMMAND.to_string(),
             assets: ASSETS
                 .iter()
-                .map(|(path, contents, executable)| ContainerAsset {
+                .map(|(path, contents, executable, ownership)| ContainerAsset {
                     path: (*path).to_string(),
                     contents: contents.as_bytes().to_vec(),
                     executable: *executable,
+                    ownership: *ownership,
                 })
                 .collect(),
         }

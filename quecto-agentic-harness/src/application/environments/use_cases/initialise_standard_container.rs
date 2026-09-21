@@ -217,7 +217,7 @@ impl InitialiseStandardContainer {
                 match state {
                     AssetState::Missing => AssetOutcome::Written,
                     AssetState::Identical => AssetOutcome::KeptIdentical,
-                    AssetState::ProjectOwned => AssetOutcome::KeptOwn,
+                    AssetState::Differs if asset.is_projects_own(state) => AssetOutcome::KeptOwn,
                     AssetState::Differs if request.refresh => AssetOutcome::Refreshed,
                     AssetState::Differs => AssetOutcome::KeptDiffering,
                     AssetState::Refused => {
@@ -293,7 +293,6 @@ impl InitialiseStandardContainer {
     ) -> Result<AssetState, InitialiseStandardContainerError> {
         self.assets
             .observe(root, assets_dir, asset)
-            .map(|observed| asset.judge(observed))
             .map_err(|reason| InitialiseStandardContainerError::Asset {
                 path: assets_dir.join(&asset.path),
                 reason,

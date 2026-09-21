@@ -7,8 +7,9 @@ use std::sync::{Arc, Mutex};
 
 use super::InitialiseStandardContainer;
 use crate::application::environments::dto::{
-    AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue, ContainerConfigDocument,
-    ContainerConfigEntry, ContainerConfigLayer, PersistedContainerConfig, StandardContainerRequest,
+    AssetOutcome, AssetOwnership, AssetState, ContainerAsset, ContainerAssetCatalogue,
+    ContainerConfigDocument, ContainerConfigEntry, ContainerConfigLayer, PersistedContainerConfig,
+    StandardContainerRequest,
 };
 use crate::application::environments::ports::{
     ContainerAssetStore, ContainerConfigPersistence, ContainerConfigRoster,
@@ -31,11 +32,13 @@ pub(super) fn catalogue() -> ContainerAssetCatalogue {
                 path: "Containerfile".into(),
                 contents: b"FROM x".to_vec(),
                 executable: false,
+                ownership: AssetOwnership::Project,
             },
             ContainerAsset {
                 path: "scripts/create.sh".into(),
                 contents: b"#!/bin/sh".to_vec(),
                 executable: true,
+                ownership: AssetOwnership::Bundle,
             },
         ],
     }

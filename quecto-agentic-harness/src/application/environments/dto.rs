@@ -403,13 +403,10 @@ pub struct ContainerAsset {
 }
 
 impl ContainerAsset {
-    /// What a store's observation means for this asset: other bytes in a
-    /// project-owned file are the project's own version, not drift.
-    pub fn judge(&self, observed: AssetState) -> AssetState {
-        match (self.ownership, observed) {
-            (AssetOwnership::Project, AssetState::Differs) => AssetState::ProjectOwned,
-            (AssetOwnership::Project | AssetOwnership::Bundle, state) => state,
-        }
+    /// The destination holds the project's own version of a project-owned
+    /// file: other bytes there are not drift.
+    pub fn is_projects_own(&self, observed: AssetState) -> bool {
+        self.ownership == AssetOwnership::Project && observed == AssetState::Differs
     }
 }
 
@@ -459,9 +456,6 @@ pub enum AssetState {
     Identical,
     /// The file exists with other bytes (an edit, an older version).
     Differs,
-    /// A project-owned file holding the project's own bytes. Never a
-    /// store's answer: [`ContainerAsset::judge`] derives it.
-    ProjectOwned,
     /// The destination cannot be judged or written through (a symbolic
     /// link, a directory in a file's place); init refuses it.
     Refused,
@@ -727,6 +721,9 @@ pub struct StandardContainerStatus {
     pub assets_dir: std::path::PathBuf,
     pub version: u32,
     pub assets: Vec<(std::path::PathBuf, AssetState)>,
+    /// Of `assets`, the project-owned files holding the project's own
+    /// version: present, and never drift.
+    pub projects_own: Vec<std::path::PathBuf>,
     /// The `standard` entry of the effective set, when present.
     pub entry: Option<ContainerConfigEntry>,
     /// What that entry is to `container: true` here; `None` without one.
@@ -747,20 +744,21 @@ impl StandardContainerStatus {
     pub fn assets_present(&self) -> usize {
         self.assets
             .iter()
-            .filter(|(_, state)| {
-                matches!(
-                    state,
-                    AssetState::Identical | AssetState::Differs | AssetState::ProjectOwned
-                )
-            })
+            .filter(|(_, state)| matches!(state, AssetState::Identical | AssetState::Differs))
             .count()
     }
 
+    /// Bundle-owned files with other bytes: drift. The project's own
+    /// Containerfile is not.
     pub fn assets_differing(&self) -> usize {
         self.assets
             .iter()
-            .filter(|(_, state)| *state == AssetState::Differs)
+            .filter(|(path, state)| *state == AssetState::Differs && !self.is_projects_own(path))
             .count()
+    }
+
+    pub fn is_projects_own(&self, path: &std::path::Path) -> bool {
+        self.projects_own.iter().any(|own| own == path)
     }
 
     /// Everything a container spawn needs is in place: every asset as
