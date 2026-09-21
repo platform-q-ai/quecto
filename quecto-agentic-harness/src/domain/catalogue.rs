@@ -238,8 +238,8 @@ pub struct ModelCapabilities {
 ///   `reasoning`** — those are the ids the endpoint router sends to the
 ///   Responses API; a non-reasoning id stays on Chat Completions, which
 ///   rejects `reasoning_effort` with function tools, so it offers nothing.
-/// - xAI Grok models declaring reasoning: `grok-4.6` = `low, medium, high,
-///   xhigh`; every other = `low, medium, high`. Reasoning cannot be
+/// - xAI Grok models declaring reasoning: `grok-4.6` and `grok-4.7` = `low,
+///   medium, high, xhigh`; every other = `low, medium, high`. Reasoning cannot be
 ///   disabled, so `none` is never offered.
 /// - Any other OpenAI-compatible endpoint (Fireworks, local servers, custom
 ///   providers): the common `low, medium, high` **only when the record
@@ -284,7 +284,14 @@ impl EffortVocabulary {
             TransportKind::OpenAiCompletions => match provider.as_str() {
                 "openai-oauth" => Self::OPENAI,
                 "openai-api" if reasoning => Self::OPENAI,
-                "xai" if reasoning && model_id.starts_with("grok-4.6") => Self::XAI_GROK_4_6,
+                "xai"
+                    if reasoning
+                        && ["grok-4.6", "grok-4.7"]
+                            .iter()
+                            .any(|prefix| model_id.starts_with(prefix)) =>
+                {
+                    Self::XAI_GROK_4_6
+                }
                 _ if reasoning => Self::COMMON,
                 _ => &[],
             },
