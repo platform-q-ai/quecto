@@ -50,6 +50,25 @@ fn a_refresh_restores_the_scripts_and_never_touches_the_projects_containerfile()
 }
 
 #[test]
+fn a_symbolic_link_in_the_containerfiles_place_is_still_refused() {
+    // Ownership changes what other BYTES mean, not what a link means.
+    for refresh in [false, true] {
+        let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+        rig.assets
+            .refuse
+            .lock()
+            .unwrap()
+            .insert(PathBuf::from(CONTAINERFILE));
+        let mut req = request("/p");
+        req.refresh = refresh;
+        let text = rig.use_case.execute(&req).unwrap_err().to_string();
+        assert!(text.contains("is a symbolic link"), "{text}");
+        assert!(rig.persistence.written.lock().unwrap().is_empty());
+        assert!(rig.assets.disk.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
 fn a_missing_containerfile_is_written_as_the_starter_even_on_a_refresh() {
     let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
     let mut refresh = request("/p");

@@ -31,6 +31,12 @@ impl ContainerAsset {
     pub fn is_projects_own(&self, observed: AssetState) -> bool {
         self.ownership == AssetOwnership::Project && observed == AssetState::Differs
     }
+
+    /// The destination holds other bytes than the bundle's in a file the
+    /// bundle owns: drift.
+    pub fn is_drift(&self, observed: AssetState) -> bool {
+        self.ownership == AssetOwnership::Bundle && observed == AssetState::Differs
+    }
 }
 
 /// What an asset's destination holds.

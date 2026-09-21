@@ -47,6 +47,7 @@ impl ContainerStatus {
         let catalogue = self.assets.catalogue();
         let mut asset_diagnostics = Vec::new();
         let mut projects_own = Vec::new();
+        let mut drifted = Vec::new();
         let assets = catalogue
             .assets
             .iter()
@@ -64,6 +65,9 @@ impl ContainerStatus {
                 };
                 if asset.is_projects_own(state) {
                     projects_own.push(path.clone());
+                }
+                if asset.is_drift(state) {
+                    drifted.push(path.clone());
                 }
                 (path, state)
             })
@@ -111,6 +115,7 @@ impl ContainerStatus {
             version: catalogue.version,
             assets,
             projects_own,
+            drifted,
             entry,
             standard_default,
             overlay_withheld,

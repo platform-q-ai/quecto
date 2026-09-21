@@ -22,7 +22,7 @@ fn the_projects_containerfile_survives_init_and_refresh_and_status_stays_ready()
         assert_eq!(run.exit_code, 0, "{args:?}: {}", run.stderr);
         assert!(
             run.stdout.contains(&format!(
-                "  kept   {} (this project's own; never replaced)\n",
+                "  kept   {} (this project's own; never replaced — review it before building)\n",
                 containerfile.display()
             )),
             "{args:?}: {}",
@@ -44,6 +44,32 @@ fn the_projects_containerfile_survives_init_and_refresh_and_status_stays_ready()
         "{out}"
     );
     assert!(out.contains("ready"), "{out}");
+}
+
+#[test]
+fn a_missing_script_is_not_ready_and_the_containerfile_is_still_yours() {
+    let rig = Rig::new();
+    let ctx = rig.ctx(status_image_present);
+    assert_eq!(rig.run(&ctx, &["container", "init"]).exit_code, 0);
+    let containerfile = rig.assets_dir().join("Containerfile");
+    std::fs::write(&containerfile, OWN).unwrap();
+    std::fs::remove_file(rig.assets_dir().join("scripts/exec.sh")).unwrap();
+
+    let status = rig.run(&ctx, &["container", "status"]);
+    assert_eq!(status.exit_code, 1);
+    let out = &status.stdout;
+    assert!(
+        out.contains("assets:  4 of 5 present, 0 differ from the embedded version"),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "           yours    {}\n",
+            containerfile.display()
+        )),
+        "{out}"
+    );
+    assert!(out.contains("           missing  "), "{out}");
 }
 
 #[test]

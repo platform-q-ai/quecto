@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::{EmbeddedStandardAssets, STANDARD_ASSET_VERSION};
-use crate::application::environments::dto::{AssetOutcome, AssetState};
+use crate::application::environments::dto::{AssetOutcome, AssetOwnership, AssetState};
 use crate::application::environments::ports::ContainerAssetStore;
 
 fn workspace_file(relative: &str) -> String {
@@ -12,6 +12,28 @@ fn workspace_file(relative: &str) -> String {
             .join(relative),
     )
     .unwrap()
+}
+
+/// Only the Containerfile is the project's. A script marked `Project` would
+/// read as `yours` in status and never be restored by `--refresh`.
+#[test]
+fn only_the_containerfile_is_project_owned() {
+    let owners: Vec<(String, AssetOwnership)> = EmbeddedStandardAssets
+        .catalogue()
+        .assets
+        .into_iter()
+        .map(|asset| (asset.path, asset.ownership))
+        .collect();
+    assert_eq!(
+        owners,
+        [
+            ("Containerfile".to_string(), AssetOwnership::Project),
+            ("scripts/create.sh".to_string(), AssetOwnership::Bundle),
+            ("scripts/exec.sh".to_string(), AssetOwnership::Bundle),
+            ("scripts/inspect.sh".to_string(), AssetOwnership::Bundle),
+            ("scripts/kill.sh".to_string(), AssetOwnership::Bundle),
+        ]
+    );
 }
 
 #[test]

@@ -196,7 +196,7 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
     }
     for path in &report.own {
         out.push_str(&format!(
-            "  kept   {} (this project's own; never replaced)\n",
+            "  kept   {} (this project's own; never replaced — review it before building)\n",
             path.display()
         ));
     }
@@ -208,7 +208,9 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
         ));
     }
     if report.written.is_empty() && report.refreshed.is_empty() && !report.dry_run {
-        out.push_str("  no files changed (existing files are never replaced without --refresh)\n");
+        out.push_str(
+            "  no files changed (a script is replaced only by --refresh; the project's Containerfile never)\n",
+        );
     }
     let entry = &report.entry;
     let location = entry
@@ -370,8 +372,9 @@ fn present_status(status: &StandardContainerStatus, out: &mut String) {
             status.version
         ));
         for path in &status.projects_own {
+            let file = path.file_name().unwrap_or_default().to_string_lossy();
             out.push_str(&format!(
-                "           Containerfile: this project's own ({})\n",
+                "           {file}: this project's own ({})\n",
                 path.display()
             ));
         }

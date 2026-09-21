@@ -842,7 +842,7 @@ step is a command with its expected output):
 | 6. inventory | `agent_cmd {"agent_id":"*","command":"get_containers"}` | the environment `running`, its `repository` |
 | 7. kill | `agent_cmd {"agent_id":"*","command":"kill_container","ref":"C1"}` | the environment gone from `get_containers` |
 | Rollback | `quecto config unset --local container_configs.standard`; `rm -r .quecto/containers/standard`; optionally `podman rmi quecto-dev:local` | `unset container_configs.standard in <repo>/.quecto/config.json (trusted)` |
-| Upgrade | `quecto container init --refresh`, `quecto container doctor` | each differing script `refreshed`; the Containerfile `kept … (this project's own; never replaced)` |
+| Upgrade | `quecto container init --refresh`, `quecto container doctor` | each differing script `refreshed`; the Containerfile `kept … (this project's own; never replaced — review it before building)` |
 
 Failures and their fixes are in the [troubleshooting runbook](#troubleshooting-runbook)
 below; the trust boundary and upgrade rules follow.
@@ -878,7 +878,8 @@ is written, so a refused init leaves the project untouched):
    embedded bytes, or differing. A differing **script** is drift (kept and
    reported; a launch refuses it; `--refresh` restores it). A differing
    **Containerfile** is the project's own: reported as `kept … (this
-   project's own; never replaced)`, by `--refresh` too. A symbolic link in a file's place or in
+   project's own; never replaced — review it before building)`, by
+   `--refresh` too. A symbolic link in a file's place or in
    any directory on the way from the project down (`.quecto`,
    `containers`, `standard`, `scripts`) is refused, not followed; `status`
    and `--dry-run` see the same and report it as `refused`.
@@ -894,11 +895,12 @@ is written, so a refused init leaves the project untouched):
 5. Materialises the missing files (the scripts byte-identical to
    `scripts/container-runtime/docker/*.sh`, executable), each written
    whole (temporary file, fsync, rename) and **never replaced** unless
-   `--refresh` is given: an edited file is kept and reported as differing
-   from the embedded version — and a launch refuses it (see the trust
-   boundary below); `quecto container init --refresh` renames the
-   embedded bytes over every differing file and reports each as
-   `refreshed`. Should a write still fail here (a
+   `--refresh` is given: an edited **script** is kept and reported as
+   differing from the embedded version — and a launch refuses it (see the
+   trust boundary below); `quecto container init --refresh` renames the
+   embedded bytes over every differing script and reports each as
+   `refreshed`. The Containerfile is the exception in both directions: the
+   project's version is kept as its own and `--refresh` never touches it. Should a write still fail here (a
    filesystem race after step 3), the error says the entry was already
    written and how to finish (run init again) or roll back
    (`quecto config unset --local container_configs.standard`).
@@ -964,15 +966,19 @@ checked at launch; it is the project's own file, so `status` lists it as
 `Containerfile: this project's own` (or `yours` beside a drifted script)
 and stays `ready`. Commit `.quecto/containers/standard/Containerfile` so the
 next agent in the folder builds the same container; the scripts and
-`.quecto/config.json` stay local (init materialises them).
+`.quecto/config.json` stay local (init materialises them). Because the file
+is the project's, quecto raises no flag over it: **read a cloned
+repository's Containerfile before you build it**, as you would any build
+script — its `RUN` steps execute in your build, and the image later gets the
+mounted checkout and the GitHub token. Init says so on the `kept` line.
 
 **Upgrades.** The comparison is against *this binary's* bundle, so a
 quecto that embeds a newer bundle than the one that materialised the
 files sees every changed script as `differs` — indistinguishable from an
 edit, and refused the same way (the message says so). After upgrading
 quecto, run `quecto container init --refresh` in each checkout: it
-renames the embedded bytes over every differing file, reports each as
-`refreshed`, and a newer quecto's assets replace an older one's. Review
+renames the embedded bytes over every differing script (never the
+project's Containerfile), reports each as `refreshed`, and a newer quecto's assets replace an older one's. Review
 the diff first if the checkout's copy carries local changes you meant to
 keep; environments created before the refresh are torn down by the
 refreshed scripts, which is what the check is for.

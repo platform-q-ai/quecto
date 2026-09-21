@@ -670,6 +670,8 @@ pub struct StandardContainerStatus {
     /// Of `assets`, the project-owned files holding the project's own
     /// version: present, and never drift.
     pub projects_own: Vec<std::path::PathBuf>,
+    /// Of `assets`, the bundle-owned files holding other bytes: drift.
+    pub drifted: Vec<std::path::PathBuf>,
     /// The `standard` entry of the effective set, when present.
     pub entry: Option<ContainerConfigEntry>,
     /// What that entry is to `container: true` here; `None` without one.
@@ -698,18 +700,15 @@ impl StandardContainerStatus {
     /// Bundle-owned files with other bytes: drift. The project's own
     /// Containerfile is not.
     pub fn assets_differing(&self) -> usize {
-        self.assets
-            .iter()
-            .filter(|(path, state)| *state == AssetState::Differs && !self.is_projects_own(path))
-            .count()
+        self.drifted.len()
     }
 
     pub fn is_projects_own(&self, path: &std::path::Path) -> bool {
         self.projects_own.iter().any(|own| own == path)
     }
 
-    /// Everything a container spawn needs is in place: every asset as
-    /// embedded, the entry present, the overlay applied, the image
+    /// Everything a container spawn needs is in place: every asset present
+    /// and no script drifted, the entry present, the overlay applied, the image
     /// present and passing every image check.
     pub fn healthy(&self) -> bool {
         self.assets_present() == self.assets.len()
