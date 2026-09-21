@@ -135,3 +135,30 @@ fn a_flag_the_entry_never_had_is_reported_as_added_not_rewritten() {
     assert!(!again.stdout.contains("(none)"), "{}", again.stdout);
     assert!(!again.stdout.contains("rewrote:"), "{}", again.stdout);
 }
+
+#[test]
+fn init_says_to_make_a_starter_it_wrote_this_projects_before_building() {
+    let rig = Rig::new();
+    let ctx = rig.ctx(status_image_present);
+    let containerfile = rig.assets_dir().join("Containerfile");
+    for args in [
+        &["container", "init", "--dry-run"][..],
+        &["container", "init"][..],
+    ] {
+        let first = rig.run(&ctx, args);
+        assert_eq!(first.exit_code, 0, "{}", first.stderr);
+        let hint = format!(
+            "  first: {} is a neutral starter — add this project's toolchain",
+            containerfile.display()
+        );
+        let out = &first.stdout;
+        assert!(out.contains(&hint), "{args:?}: {out}");
+        assert!(
+            out.find(&hint).unwrap() < out.find("  1. build the image").unwrap(),
+            "{out}"
+        );
+    }
+    // A Containerfile that was already there is not a starter this run wrote.
+    let again = rig.run(&ctx, &["container", "init"]);
+    assert!(!again.stdout.contains("  first: "), "{}", again.stdout);
+}

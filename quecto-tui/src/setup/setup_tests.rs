@@ -133,11 +133,15 @@ fn each_area_prompt_names_its_runbook_page_and_goal() {
                 // repo, proposes its Containerfile and asks before writing.
                 "what this repo builds and tests with",
                 "CI configuration",
-                ".quecto/containers/standard/Containerfile",
-                "ai.quecto.required-tools",
-                "SHOW me the Containerfile",
-                "already has its own",
-                "commit",
+                "ask me which to include rather than guessing",
+                "still the untouched starter",
+                "declares no `ai.quecto.required-tools` label",
+                "versions pinned",
+                "never copy the repo's source",
+                "SHOW me the Containerfile and ASK before writing it",
+                "change it only if I ask",
+                "an image built before the change is stale",
+                "commit `.quecto/containers/standard/Containerfile`",
             ],
         ),
         (
@@ -165,6 +169,29 @@ fn each_area_prompt_names_its_runbook_page_and_goal() {
             );
         }
     }
+}
+
+/// The container walkthrough is a sequence: the starter exists only after
+/// init, the image is built only after the Containerfile is this repo's,
+/// and the doctor judges the image that build produced.
+#[test]
+fn the_container_prompt_orders_init_containerfile_build_and_doctor() {
+    let prompt = setup_walkthrough_prompt(&SetupArea::Container);
+    let at = |needle: &str| {
+        prompt
+            .find(needle)
+            .unwrap_or_else(|| panic!("missing {needle:?}:\n{prompt}"))
+    };
+    let steps = [
+        at("what this repo builds and tests with"),
+        at("(1) `quecto container init`"),
+        at("(2) Read that Containerfile"),
+        at("SHOW me the Containerfile"),
+        at("(3) Run the image-build line it prints"),
+        at("(4) `quecto container doctor` again"),
+        at("commit `.quecto/containers/standard/Containerfile`"),
+    ];
+    assert!(steps.windows(2).all(|pair| pair[0] < pair[1]), "{steps:?}");
 }
 
 #[test]

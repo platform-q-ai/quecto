@@ -304,6 +304,18 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
         }
     }
     out.push_str("next:\n");
+    // A starter this run wrote is tooling-neutral: building it as it is
+    // gives a container without the project's toolchain.
+    if let Some(starter) = report
+        .written
+        .iter()
+        .find(|path| path.file_name().is_some_and(|name| name == "Containerfile"))
+    {
+        out.push_str(&format!(
+            "  first: {} is a neutral starter — add this project's toolchain and its ai.quecto.required-tools label before building (`/setup container` does it with you)\n",
+            starter.display()
+        ));
+    }
     out.push_str(&format!(
         "  1. build the image (a create never builds or pulls; the scripts drive whichever runtime `quecto container doctor` names on its runtime-cli line — run the same command with that runtime's CLI):\n     {}\n",
         report.build_command

@@ -36,16 +36,18 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
      --repo https://github.com/org/app.git (the checkout's origin remote): a new container is a fresh clone of it
      --state-dir under the quecto base directory; --image quecto-repo:local
    next:
+     first: /repo/.quecto/containers/standard/Containerfile is a neutral starter — add this project's toolchain … (only when this run wrote it)
      1. build the image … podman build -t quecto-repo:local -f /repo/.quecto/containers/standard/Containerfile /repo/.quecto/containers/standard
      2. quecto container doctor   — every check ✓
      3. spawn {"agent_id":"probe","task":"run pwd","container":true} …
    ```
    **`standard` is always this repo's default.** A global default (`the global default <name> does not apply in this repo`) is overridden here only — the global file is untouched, other repos keep it. Another overlay entry carrying `"default": true` loses the label in the same write (`displaced default: <name>`; select it by name). Launch policy applies the rule, not just the label: a repo-bound `standard` is what `container: true` selects even after `quecto config unset --local container_configs.standard.default` removed its label (possible only while another entry is labelled; a raw edit un-trusts the overlay instead) or the global file was re-labelled — `status` then says `default by rule` with the remedy (`init --refresh` or `quecto config set --local container_configs.standard.default true`). Init names what it displaced from the *effective* set: an overlay entry's label (`displaced default:`), else the global label it overrides. A re-init keeps the entry's `--repo`/`--image` unless the flag is given (`kept:`/`rewrote:` lines).
-2. **Make the Containerfile this repo's** — skip when the repo already commits one (then *read* it: its `RUN` steps execute in your build). Init wrote a neutral starter; the container is only useful once it holds what this repo builds and tests with:
+2. **Make the Containerfile this repo's** — skip only when the Containerfile already carries this repo's toolchain (an uncommented toolchain section or a `required-tools` label); then *read* it, since its `RUN` steps execute in your build. An untouched starter is not that, whoever wrote it and whenever: the container is only useful once it holds what this repo builds and tests with:
    - Read the repo's manifests (`Cargo.toml`, `pyproject.toml`, `package.json`, `go.mod`, …) and its CI configuration: languages, the tools CI runs, the versions the repo pins.
    - In the starter's marked section of `.quecto/containers/standard/Containerfile`, install that toolchain (pinned where the repo pins it) and declare what an agent must find on PATH: `LABEL ai.quecto.required-tools="python3 uv pytest ruff"`.
+   - Install tools only: never `COPY` the repo's source and never put a token, key or private index URL in the file — the checkout is mounted at run time. With several toolchains, or none you can identify, ask which to include.
    - Show the file and ask before writing it. Commit it afterwards — the next agent in this folder then builds the same container. `quecto container init --refresh` never replaces it.
-3. **Build the image** — exactly the command init printed (a create never builds or pulls). Skip it when `quecto container status` already reports `image: image quecto-repo:local is present`:
+3. **Build the image** — exactly the command init printed (a create never builds or pulls). Skip it only when `quecto container status` reports `image: image quecto-repo:local is present` **and** the Containerfile has not changed since that build; after step 2, always rebuild — the doctor would otherwise judge the old image:
    ```
    podman build -t quecto-repo:local -f /repo/.quecto/containers/standard/Containerfile /repo/.quecto/containers/standard
    ```
