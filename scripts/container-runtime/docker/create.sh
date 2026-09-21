@@ -222,29 +222,81 @@ else
     "fix the runtime-cli check first"
 fi
 
-# A present tag is not enough for this repository's standard development
-# container. Prove the compiler and every CI helper are executable before an
-# agent is admitted; this keeps a generic/tool-only image from failing only
-# after code has been changed. Custom images selected with --image must honour
-# the same development contract.
+# What an image must hold is tooling-neutral (#2073). The harness itself
+# needs only a shell (proven by running the probe at all) and git inside the
+# container; every other tool is the image's own promise, declared in its
+# `ai.quecto.required-tools` label (a whitespace-separated list of
+# executable names) and proven here before an agent is admitted, so an image
+# that lost a tool fails at the doctor and not after code has been changed.
+# No label, no extra check: nothing here knows a language.
+required_tools_label="ai.quecto.required-tools"
+required_tools_max=64
 if [ -n "$cli" ] && [ "$image_rc" = 0 ]; then
-  tools_rc=0
-  tools_error="$(bounded "$cli" run --rm --pull=never "$image" sh -c '
-    for tool in cargo rustc rustfmt cargo-clippy cargo-nextest cargo-llvm-cov cargo-deny cargo-machete; do
+  base_rc=0
+  base_error="$(bounded "$cli" run --rm --pull=never "$image" sh -c '
+    for tool in "$@"; do
       command -v "$tool" >/dev/null || { printf "missing %s\n" "$tool" >&2; exit 1; }
     done
-  ' 2>&1)" || tools_rc=$?
-  if [ "$tools_rc" = 0 ]; then
-    report ok dev-tools "image $image provides the Quecto development toolchain" ""
+  ' sh git 2>&1)" || base_rc=$?
+  if [ "$base_rc" = 0 ]; then
+    report ok image-base "image $image provides a shell and git" ""
   else
-    report fail dev-tools "image $image is not a Quecto development image: $(last_line "$tools_error")" \
-      "build the standard image printed by 'quecto container init --refresh'" "$EXIT_NO_IMAGE"
+    report fail image-base "image $image cannot host an agent: $(last_line "$base_error")" \
+      "install a POSIX shell and git in the image and rebuild it" "$EXIT_NO_IMAGE"
+  fi
+
+  label_rc=0
+  label_value="$(bounded "$cli" image inspect \
+    --format "{{ index .Config.Labels \"$required_tools_label\" }}" "$image" 2>&1)" || label_rc=$?
+  # An absent label prints an empty line (or Go's "<no value>").
+  [ "$label_value" = "<no value>" ] && label_value=""
+  required_tools=()
+  bad_tool=""
+  if [ "$label_rc" = 0 ]; then
+    read -r -d '' -a required_tools <<<"$label_value" || true
+    for tool in "${required_tools[@]}"; do
+      # Allowlist: a tool is a bare executable name. It is only ever passed
+      # as an argument, never spliced into the probe's script.
+      if [[ ! "$tool" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$ ]]; then
+        bad_tool="$tool"
+        break
+      fi
+    done
+  fi
+  if [ "$label_rc" != 0 ]; then
+    report fail required-tools "$cli could not read the $required_tools_label label of image $image (exit $label_rc): $(last_line "$label_value")" \
+      "check that the $cli daemon/service is running and that this user may use it (${cli} info)" "$EXIT_NO_RUNTIME"
+  elif [ -n "$bad_tool" ]; then
+    report fail required-tools "image $image declares '$bad_tool' in $required_tools_label, which is not a tool name" \
+      "list bare executable names separated by spaces (letters, digits, '.', '_', '+', '-') and rebuild the image" "$EXIT_NO_IMAGE"
+  elif [ "${#required_tools[@]}" -gt "$required_tools_max" ]; then
+    report fail required-tools "image $image declares ${#required_tools[@]} tools in $required_tools_label; at most $required_tools_max are checked" \
+      "shorten the label and rebuild the image" "$EXIT_NO_IMAGE"
+  elif [ "${#required_tools[@]}" = 0 ]; then
+    report ok required-tools "image $image declares no required tools ($required_tools_label is not set)" ""
+  else
+    tools_rc=0
+    tools_error="$(bounded "$cli" run --rm --pull=never "$image" sh -c '
+      for tool in "$@"; do
+        command -v "$tool" >/dev/null || { printf "missing %s\n" "$tool" >&2; exit 1; }
+      done
+    ' sh "${required_tools[@]}" 2>&1)" || tools_rc=$?
+    if [ "$tools_rc" = 0 ]; then
+      report ok required-tools "image $image provides the tools it declares: ${required_tools[*]}" ""
+    else
+      report fail required-tools "image $image does not provide a tool it declares in $required_tools_label: $(last_line "$tools_error")" \
+        "rebuild the image from its Containerfile, or correct the label" "$EXIT_NO_IMAGE"
+    fi
   fi
 elif [ -n "$cli" ]; then
-  report fail dev-tools "image $image could not be checked for the Quecto development toolchain" \
-    "fix the image check first, then build the standard development image" "$EXIT_NO_IMAGE"
+  report fail image-base "image $image could not be checked for a shell and git" \
+    "fix the image check first" "$EXIT_NO_IMAGE"
+  report fail required-tools "the tools image $image declares could not be checked" \
+    "fix the image check first" "$EXIT_NO_IMAGE"
 else
-  report warn dev-tools "the Quecto development toolchain was not checked: no container runtime" \
+  report warn image-base "the image's shell and git were not checked: no container runtime" \
+    "fix the runtime-cli check first"
+  report warn required-tools "the image's declared tools were not checked: no container runtime" \
     "fix the runtime-cli check first"
 fi
 

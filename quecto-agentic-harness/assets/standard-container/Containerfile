@@ -16,11 +16,17 @@ ARG CARGO_NEXTEST_VERSION=0.9.144
 ARG CARGO_LLVM_COV_VERSION=0.8.4
 ARG CARGO_DENY_VERSION=0.19.0
 ARG CARGO_MACHETE_VERSION=0.9.1
-ARG STANDARD_IMAGE_VERSION=2
+ARG STANDARD_IMAGE_VERSION=3
 
 LABEL org.opencontainers.image.title="Quecto development container" \
       org.opencontainers.image.version="${STANDARD_IMAGE_VERSION}" \
       org.opencontainers.image.description="Pinned Rust and CI tooling for developing platform-q-ai/quecto"
+
+# What this image promises its agents. `quecto container doctor` runs the
+# image and fails, naming the tool, if any of these is not on PATH. The check
+# is the image's own: an image without this label is asked for nothing beyond
+# a shell and git.
+LABEL ai.quecto.required-tools="cargo rustc rustfmt cargo-clippy cargo-nextest cargo-llvm-cov cargo-deny cargo-machete"
 
 RUN apt-get update \
  && apt-get install --no-install-recommends --yes \

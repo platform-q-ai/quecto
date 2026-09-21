@@ -27,7 +27,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
    ```
    Expected (`wrote` per file on a first run, `kept` on a re-run):
    ```
-   standard container bundle (version 3) at /repo/.quecto/containers/standard
+   standard container bundle (version 4) at /repo/.quecto/containers/standard
      wrote  /repo/.quecto/containers/standard/Containerfile
      wrote  /repo/.quecto/containers/standard/scripts/create.sh
      wrote  … exec.sh, inspect.sh, kill.sh
@@ -45,7 +45,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
    ```
    podman build -t quecto-dev:local -f /repo/.quecto/containers/standard/Containerfile /repo/.quecto/containers/standard
    ```
-   Expected: the last line is `Successfully tagged localhost/quecto-dev:local` (docker: `naming to docker.io/library/quecto-dev:local`). A docker-only host runs the same command with `docker`: the scripts drive whichever runtime the doctor's `runtime-cli` line names. A project that needs a toolchain derives `FROM quecto-dev:local` and passes `--image <tag>` to init.
+   Expected: the last line is `Successfully tagged localhost/quecto-dev:local` (docker: `naming to docker.io/library/quecto-dev:local`). A docker-only host runs the same command with `docker`: the scripts drive whichever runtime the doctor's `runtime-cli` line names. A project that needs a toolchain derives `FROM quecto-dev:local` and passes `--image <tag>` to init. The doctor is tooling-neutral: it asks any image for a shell and `git` (`image-base`), plus exactly the tools the image itself declares in `LABEL ai.quecto.required-tools="python3 uv pytest"` (`required-tools`; bare names separated by spaces; no label, no extra check).
 3. **Use** — from an agent started in this repository:
    `spawn {"agent_id":"probe","task":"run pwd and git log -1 --oneline, then exit","container":true}` → the result names `environment_ref=C1 container_config=standard`; `agent_cmd {"agent_id":"*","command":"get_containers"}` lists it `running` with the repository; `agent_cmd {"agent_id":"*","command":"kill_container","ref":"C1"}` ends it (its members are terminated, the config's kill runs once; from the shell, `quecto container kill C1`). When the last member of an ordinary environment exits it tears itself down; a swarm container whose run has not been closed is `retained` (resumable) until `kill_container` / `quecto container kill`.
 
@@ -59,7 +59,7 @@ Expected (exit 0; exit 1 — last line `not ready: …` — while any line is no
 
 ```
 standard container at /repo/.quecto/containers/standard
-  assets:  present (5 of 5, version 3)
+  assets:  present (5 of 5, version 4)
   config:  standard (default, overlay) in the effective configuration; --repo https://github.com/org/app.git
            this repo's default: `spawn container: true` selects it whatever the global file labels
   trust:   trusted (the repo-local overlay is applied)
@@ -106,6 +106,8 @@ Running environments are unaffected until killed (`kill_container`, or `quecto c
 | init: `… carries a credential in its userinfo …` | userinfo in the URL | `git remote set-url origin <credential-free url>` or `--repo <url>` |
 | doctor `✗ runtime-cli` | no podman/docker on PATH, or the daemon not answering | install/start it; `QUECTO_CONTAINER_CLI=/abs/podman` overrides the choice |
 | doctor `✗ image  image quecto-dev:local is not present …` | step 2 skipped (create never pulls) | run the printed `podman build …` |
+| doctor `✗ image-base  … missing git` | the image lacks a shell or `git` | add them to the Containerfile, rebuild |
+| doctor `✗ required-tools  … missing <tool>` / `… is not a tool name` | the image lacks a tool its `ai.quecto.required-tools` label declares, or the label is not a list of bare names | rebuild from the Containerfile, or correct the label |
 | doctor `✗ repo  --repo <url> is unreachable: …` | wrong URL, no network, or missing credentials (`repository … not found` for a private repo) | `gh auth login` / ssh key, or `quecto container init --repo <url>` with the right URL |
 | doctor `! gh  gh is not on PATH …` (warning) | children get no GitHub token | install `gh`, `gh auth login`; harmless if children never push |
 | doctor `✗ state-dir` | `<base_dir>/container-environments` not writable | fix ownership/permissions of the base dir |

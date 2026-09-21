@@ -981,14 +981,28 @@ Git/GitHub, Python and everyday utilities plus the complete pinned Quecto
 development toolchain: Rust and Cargo, rustfmt, Clippy, LLVM tools,
 `cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, and `cargo-machete`.
 `ENTRYPOINT []` lets the create adapter's child argv remain the container's
-main process. The preflight executes an allowlisted tool probe in the image;
-a generic or stale image is refused before an agent can edit code. The host
+main process. The host
 `quecto` binary is identity-mounted, so the image retains a compatible glibc.
 The repository is still cloned by the trusted host adapter and mounted at
 runtime; source and credentials are never baked into the image.
 
+**What the doctor asks of an image.** The adapter is tooling-neutral: it
+knows no language. Two checks run the image (`run --rm --pull=never`):
+
+- `image-base` — the image has a shell and `git`, which is all the harness
+  itself needs inside a container.
+- `required-tools` — the image's own promise. An image may declare
+  `LABEL ai.quecto.required-tools="python3 uv pytest ruff"` (bare executable
+  names separated by spaces: letters, digits, `.`, `_`, `+`, `-`; at most 64);
+  the doctor then proves each one is on `PATH` and fails **naming the missing
+  tool**, so an image that lost a tool is refused before an agent edits code.
+  No label, no extra check. A label that is not a list of tool names is
+  refused without being run. The Containerfile above declares its eight Rust
+  tools this way; a `--image` of your own is asked only for what *it*
+  declares.
+
 `quecto container status` reports, one line each and exit 1 while anything
-is missing: the assets (`present (5 of 5, version 3)`, or which differ or
+is missing: the assets (`present (5 of 5, version 4)`, or which differ or
 are missing), the `standard` entry of the effective set (`default` with a
 `this repo's default` line when the overlay declares it labelled; `default
 by rule` plus a `note:` with the remedy — `quecto container init --refresh`
@@ -1291,6 +1305,8 @@ container config "quecto" (create: /…/docker/create.sh --state-dir /var/tmp/en
 | `… status exit status: 5: … git is not on PATH` | `✗ git` | Install `git` (only needed for configs with `--repo`). |
 | `… gh is not on PATH: members will have no GitHub token` (a warning; the create proceeds) | `! gh` | Install `gh` and run `gh auth login` so members can push and use the GitHub API. |
 | `… status exit status: 6: … image quecto-dev:local is not present` | `✗ image` | Build the image (`podman build -t quecto-dev:local <dir>`) or pull it; the scripts never pull implicitly. Change `--image` / `QUECTO_DOCKER_IMAGE` if another image was meant. |
+| `… status exit status: 6: … image <img> cannot host an agent: missing git` | `✗ image-base` | The image needs a shell and `git`; add them to its Containerfile and rebuild. |
+| `… status exit status: 6: … image <img> does not provide a tool it declares in ai.quecto.required-tools: missing <tool>` | `✗ required-tools` | Rebuild the image from its Containerfile, or correct the `ai.quecto.required-tools` label. A label that is `not a tool name` must list bare executable names separated by spaces. |
 | `… status exit status: 7: … --repo <url> is unreachable: fatal: …` | `✗ repo` | Check the URL and your credentials (`ssh` key or `gh auth login`); fix `--repo` in the config's create argv. |
 | `… status exit status: 8: … state dir <dir> is not owned by the current user` / `cannot be created` | `✗ state-dir` | Point `--state-dir` at a directory you own. |
 | `unknown container config '<name>' (available container configs: …)` | (doctor refuses too) | Pick a listed name, or bind the repository: `quecto config set --local container_configs.<name> '{…,"default":true}'`. |

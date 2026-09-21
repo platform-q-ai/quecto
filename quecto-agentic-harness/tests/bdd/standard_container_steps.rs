@@ -449,7 +449,7 @@ fn when_materialised_preflight(world: &mut QuectoWorld) {
 fn given_fake_podman_accepting_run(world: &mut QuectoWorld) {
     let toolbox = Toolbox::build(world);
     let body = format!(
-        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = image ] && [ \"$2\" = exists ]; then exit 0; fi\nif [ \"$1\" = run ] && [ \"${{2:-}}\" = --rm ]; then exit 0; fi\nif [ \"$1\" = run ]; then echo deadbeef; exit 0; fi\nif [ \"$1\" = rm ]; then exit 0; fi\nexit 125\n",
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = image ] && [ \"$2\" = exists ]; then exit 0; fi\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then echo; exit 0; fi\nif [ \"$1\" = run ] && [ \"${{2:-}}\" = --rm ]; then exit 0; fi\nif [ \"$1\" = run ]; then echo deadbeef; exit 0; fi\nif [ \"$1\" = rm ]; then exit 0; fi\nexit 125\n",
         toolbox.podman_log().display()
     );
     write_executable(&toolbox.dir.join("podman"), &body);
@@ -685,11 +685,16 @@ fn given_fake_podman_running_on_host(world: &mut QuectoWorld) {
         r#"#!/usr/bin/env bash
 printf '%s\n' "$*" >> '{log}'
 case "$1" in
-  image) [ "$2" = exists ] && exit 0; exit 1 ;;
+  image)
+    [ "$2" = exists ] && exit 0
+    # No `ai.quecto.required-tools` label: an empty line.
+    [ "$2" = inspect ] && {{ echo; exit 0; }}
+    exit 1 ;;
   run)
     shift
-    # The standard preflight's short-lived allowlisted development-tool
-    # probe succeeds in this runtime fixture; lifecycle runs continue below.
+    # The preflight's short-lived image probes (a shell and git, then the
+    # image's declared tools) succeed in this runtime fixture; lifecycle
+    # runs continue below.
     if [ "${{1:-}}" = --rm ]; then exit 0; fi
     name=""
     while [ "$#" -gt 0 ] && [ "$1" != quecto-dev:local ]; do
