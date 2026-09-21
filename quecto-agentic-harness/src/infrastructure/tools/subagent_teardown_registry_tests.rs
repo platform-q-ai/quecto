@@ -339,6 +339,24 @@ fn causes_map_to_the_cleanup_contract_and_exit_kind() {
         FinalizeMode::ParentKill
     );
     assert_eq!(
+        finalize_mode(TerminationCause::EnvironmentKill),
+        FinalizeMode::ParentKill
+    );
+    // #2070: a harness shutdown can be a crash, so it keeps a swarm that has
+    // not ended; only an explicit owner act ends the owner's swarms.
+    assert_eq!(
+        finalize_mode(TerminationCause::FleetTeardown),
+        FinalizeMode::ParentKill
+    );
+    assert_eq!(
+        finalize_mode(TerminationCause::OwnerTeardown),
+        FinalizeMode::OwnerTeardown
+    );
+    assert_eq!(
+        exit_kind(TerminationCause::OwnerTeardown),
+        ExitSignalKind::Terminated
+    );
+    assert_eq!(
         finalize_mode(TerminationCause::LaunchRollback {
             owns_environment: true
         }),

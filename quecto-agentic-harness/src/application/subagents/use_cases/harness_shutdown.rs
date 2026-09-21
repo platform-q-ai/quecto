@@ -505,6 +505,8 @@ async fn settle_fleet(
 ) -> Result<FleetTeardownOutcome, FleetTeardownError> {
     let request = || TerminateAllDelegatedAgentsRequest {
         reason: ShutdownReason::ParentShutdown,
+        // A shutdown may be a crash (#2070): never the owner's word.
+        authority: super::super::dto::FleetTeardownAuthority::Harness,
     };
     let mut outcome = ports.children.execute(request()).await?;
     if outcome.joined {

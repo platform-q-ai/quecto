@@ -451,7 +451,9 @@ async fn exit_and_reason(
 }
 
 #[tokio::test]
-async fn coordinator_connection_closed_after_close_retains_the_closed_run() {
+async fn coordinator_connection_closed_after_close_removes_the_container() {
+    // #2070: the supervisor closed the run, so the swarm is over — its
+    // container goes when the coordinator does. The store is left as it was.
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
@@ -463,16 +465,20 @@ async fn coordinator_connection_closed_after_close_retains_the_closed_run() {
     let (environments, env_ref) = environment(kill, &checkout);
     let registry = register_member(dir.path(), &environments, &env_ref);
 
-    let reason = exit_and_reason(&environments, &env_ref, &registry)
-        .await
-        .expect("a closed run keeps its container");
-    assert!(!log.exists(), "no kill after close");
-    assert!(reason.starts_with("run closed: blocked"), "{reason}");
+    let retained = exit_and_reason(&environments, &env_ref, &registry).await;
+    assert_eq!(retained, None, "a closed run does not keep its container");
+    assert!(log.exists(), "the retained kill ran");
+    assert_eq!(
+        environments.get(&env_ref).unwrap().status,
+        EnvironmentStatus::Stopped
+    );
     assert_eq!(context.summary().unwrap()["status"], "blocked", "untouched");
 }
 
 #[tokio::test]
 async fn coordinator_connection_closed_after_cancel_retains_the_cancelled_run() {
+    // The coordinator agent cancels its own run; only the owner ends a
+    // swarm, so an agent cannot destroy its own box this way (#2070).
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
@@ -541,8 +547,9 @@ async fn expired_deadline_is_observed_before_the_loss_is_recorded() {
 
 #[tokio::test]
 async fn supervisor_kill_of_the_coordinator_retains_the_environment() {
-    // agent_cmd kill of the member: ParentKill through the shared cascade
-    // teardown, exactly as agent_cmd.rs and the master's shutdown call it.
+    // agent_cmd kill of that ONE member: ParentKill through the shared
+    // cascade teardown, as agent_cmd.rs calls it. The run has not ended
+    // (paused holding an outcome nobody closed), so the box is kept.
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
@@ -586,67 +593,8 @@ async fn supervisor_kill_of_the_coordinator_retains_the_environment() {
     assert!(environments.begin_kill(&env_ref).is_ok());
 }
 
-#[tokio::test]
-async fn master_shutdown_teardown_retains_a_swarm_environment() {
-    // The synchronous process-shutdown path (uds_shutdown run_teardown ->
-    // teardown_all -> cleanup_removed_entries_sync).
-    let dir = tempfile::tempdir().unwrap();
-    let checkout = dir.path().join("checkout");
-    let _context = create_running_swarm(&checkout);
-    let log = dir.path().join("kill-log.txt");
-    let kill = write_kill_script(dir.path(), &log);
-    let (environments, env_ref) = environment(kill, &checkout);
-    let registry = register_member(dir.path(), &environments, &env_ref);
-
-    let mut removed: Vec<(String, SubagentEntry)> = registry.lock().unwrap().drain().collect();
-    tokio::task::spawn_blocking(move || {
-        super::super::subagent_cleanup::cleanup_removed_entries_sync(
-            &mut removed,
-            crate::composition::environments::build_member_finalizer,
-        );
-    })
-    .await
-    .unwrap();
-
-    assert!(!log.exists(), "master shutdown keeps a swarm's box");
-    let record = environments.get(&env_ref).unwrap();
-    assert_eq!(record.status, EnvironmentStatus::Retained);
-    assert!(
-        record.metadata["retained"]
-            .as_str()
-            .unwrap()
-            .starts_with("coordinator killed by supervisor; run running"),
-        "{record:?}"
-    );
-}
-
-#[tokio::test]
-async fn master_shutdown_teardown_still_kills_an_ordinary_environment() {
-    let dir = tempfile::tempdir().unwrap();
-    let checkout = dir.path().join("checkout");
-    let _placeholder = bootstrap_placeholder(&checkout);
-    let log = dir.path().join("kill-log.txt");
-    let kill = write_kill_script(dir.path(), &log);
-    let (environments, env_ref) = environment(kill, &checkout);
-    let registry = register_member(dir.path(), &environments, &env_ref);
-    let mut removed: Vec<(String, SubagentEntry)> = registry.lock().unwrap().drain().collect();
-    tokio::task::spawn_blocking(move || {
-        super::super::subagent_cleanup::cleanup_removed_entries_sync(
-            &mut removed,
-            crate::composition::environments::build_member_finalizer,
-        );
-    })
-    .await
-    .unwrap();
-    assert_eq!(
-        std::fs::read_to_string(&log).unwrap_or_default().trim(),
-        "kill env-coordinator"
-    );
-    assert_eq!(
-        environments.get(&env_ref).unwrap().status,
-        EnvironmentStatus::Stopped
-    );
-}
+#[path = "subagent_monitor_coordinator_fleet_end_tests.rs"]
+mod fleet_end_tests;
 
 /// A create result without `metadata.checkout` (older / third-party script
 /// sets): the host probes `<workspace>/repo` then `<workspace>`.

@@ -31,9 +31,10 @@ pub enum EnvironmentStatus {
     Stopped,
     /// Kill failed; retryable via another kill, with `last_error` retained.
     CleanupFailed,
-    /// Emptied after its swarm run ended or lost its coordinator (#1924): the
+    /// Emptied while its owner had not ended the swarm it hosts (#1924,
+    /// #2070) — a lost coordinator, a crash, a run nobody closed: the
     /// final-member kill was deliberately withheld so the board, checkout and
-    /// unpushed work survive for inspection. Killable only by an explicit
+    /// unpushed work survive and the run can be resumed. Killable only by an explicit
     /// `kill_container`; a join is admitted for inspection but never revives
     /// it (no automatic teardown can follow), so a rolled-back or exited
     /// joiner leaves it retained.

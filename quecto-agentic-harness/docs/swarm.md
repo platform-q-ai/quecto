@@ -321,15 +321,34 @@ children outlive the invocation. This does not add containment for intentional
 process-group/session escapes.
 Reconciliation preserves readable partial progress and retains uncertain ownership. Keep the coordinator available to report to the parent.
 
-A swarm container is retained after every swarm end (#1924): the final
-member's exit never tears it down — nor does an `agent_cmd kill` of the
-coordinator or the master's own shutdown — so the full end state (board,
-checkout, unpushed branches, member logs) can be inspected, and only an
-explicit `kill_container` from the host master (or a later session, or
-manual removal) takes it down — `swarm_control close` makes the held outcome
-terminal but never removes the container. A closed or cancelled run keeps
-its box just the same (`metadata.retained` reads `run closed: <outcome>` or
-`run ended: cancelled`). When the
+A swarm container lives as long as its swarm, and no longer (#1924, #2070).
+A swarm ends only when its owner says so: the supervisor outside the swarm
+closes the run into its outcome (`swarm_control close`), or the owner
+explicitly leaves everything it owns behind — delete-all, or a session
+transition (`/new`, `/resume`) that succeeds. A `/resume` claims and loads
+its target BEFORE the fleet is settled, so one that is refused — the session
+is held by another process, missing or unreadable — ends nothing. When the
+swarm has ended, the final member's exit removes the container, its checkout
+and its board with the retained `kill`, exactly as for an ordinary
+container; nothing is kept. (These reach the swarms whose coordinator is a
+live direct child of the harness that acts: one owned a level further down,
+and a container already emptied and `retained`, still need
+`kill_container`.)
+
+Nothing else ends a swarm. While its run has not been closed — `running`,
+`paused`, paused holding an outcome nobody closed yet, or `cancelled` (the
+coordinator agent cancels its own run; an agent never ends a swarm) — the
+final member's exit withholds the teardown: the record becomes `retained`,
+so the board, checkout and unpushed branches survive and the run can be
+inspected and, once relaunching a coordinator is wired, resumed. That holds
+for a crash, a lost coordinator, an `agent_cmd kill` of that one member, and
+the master's own shutdown, which can be a crash too (a termination signal,
+its last client gone, a lost parent). A retained
+container is removed by an explicit `kill_container` (from the host master
+or a later session). A store that exists but cannot be read is kept as well:
+it is never proof that the run ended.
+
+When the
 coordinator's socket closes after an orderly end (the run already paused
 holding an outcome), the record becomes `retained` with `metadata.retained`
 reading `run ended: <outcome>; ...` and the run is untouched. When it closes

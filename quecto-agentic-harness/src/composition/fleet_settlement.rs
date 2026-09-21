@@ -1,10 +1,9 @@
 //! The fleet teardown as the sessions capability's settlement port (D7
-//! #1976, #1938): composition adapts the concrete subagents use case the
-//! loop holds late-bound (the teardown graph is built after the session
-//! handles) to the `FleetSettlement` port a session transition orders,
-//! so the two capabilities never name each other. A mapping only: every
-//! direct child is told the operator requested the shutdown, and the
-//! outcome is read as settled, unsettled or interrupted.
+//! #1976, #1938): composition adapts the subagents use case the loop holds
+//! late-bound to the `FleetSettlement` port a session transition orders, so
+//! the two capabilities never name each other. A mapping only: each direct
+//! child is told the operator asked, on the owner's authority (#2070 — a
+//! transition settles its fleet only once its target is proven).
 use std::future::Future;
 use std::pin::Pin;
 
@@ -20,6 +19,7 @@ impl FleetSettlement for TerminateAllDelegatedAgents {
             match self
                 .execute(TerminateAllDelegatedAgentsRequest {
                     reason: ShutdownReason::OperatorRequest,
+                    authority: crate::application::subagents::dto::FleetTeardownAuthority::Owner,
                 })
                 .await
             {

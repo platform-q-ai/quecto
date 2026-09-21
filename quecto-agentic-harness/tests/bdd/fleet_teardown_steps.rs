@@ -65,8 +65,10 @@ fn bounded<F: std::future::Future>(rt: &tokio::runtime::Runtime, future: F) -> F
 }
 
 fn request() -> TerminateAllDelegatedAgentsRequest {
+    // The operator's delete-all: the owner's explicit word (#2070).
     TerminateAllDelegatedAgentsRequest {
         reason: ShutdownReason::OperatorRequest,
+        authority: quecto::application::subagents::dto::FleetTeardownAuthority::Owner,
     }
 }
 
@@ -320,7 +322,7 @@ fn then_order(world: &mut QuectoWorld) {
     assert!(
         compensated
             .iter()
-            .all(|(_, cause)| *cause == TerminationCause::FleetTeardown)
+            .all(|(_, cause)| *cause == TerminationCause::OwnerTeardown)
     );
     // No row is left: the tombstones were pruned.
     assert!(harness.rows.phases.lock().unwrap().is_empty());

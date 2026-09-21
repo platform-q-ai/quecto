@@ -66,8 +66,12 @@ impl FinalizeEnvironmentMember {
             SwarmRunObservation::NoStore
         };
         if retains_environment(mode, &observed) {
-            self.retain(claim, &record, mode, &observed).await;
-            return;
+            // `None`: the owner closed the run between the observation and
+            // the loss record (#2070) — the swarm is over, the kill runs.
+            if let Some(reason) = self.retention(&record, mode, &observed).await {
+                self.registry.retain(claim, &reason);
+                return;
+            }
         }
 
         if mode.launch_rollback() || record.retained_kill_argv.is_empty() {
@@ -108,29 +112,29 @@ impl FinalizeEnvironmentMember {
         }
     }
 
-    /// The retained kill is withheld (#1924). On the member's own exit a
-    /// created run that has not ended is recorded as a coordinator loss
-    /// through the port (one store operation decides); a supervisor's kill
-    /// only records what it found. A store that refuses the loss record still
-    /// leaves the environment retained: losing the box is never the safer
-    /// outcome.
-    async fn retain(
+    /// The reason the retained kill is withheld (#1924), or `None` when it
+    /// must run after all. On the member's own exit a created run that has
+    /// not ended is recorded as a coordinator loss through the port (one
+    /// store operation decides); a supervisor's kill only records what it
+    /// found. A store that refuses the loss record still leaves the
+    /// environment retained: losing the box is never the safer outcome. The
+    /// one exception is a run its owner closed in between (#2070).
+    async fn retention(
         &self,
-        claim: KillClaim,
         record: &EnvironmentRecord,
         mode: MemberFinalizeMode,
         observed: &SwarmRunObservation,
-    ) {
-        let reason = match observed {
+    ) -> Option<String> {
+        Some(match observed {
             SwarmRunObservation::Run(hosted) if mode == MemberFinalizeMode::Exit => {
                 match self.hosted.record_lost_coordinator(record, hosted).await {
+                    Ok(loss) if !loss.lost && !loss.run.keeps_environment() => return None,
                     Ok(loss) => loss_reason(&hosted.coordinator, &loss),
                     Err(error) => unrecorded_loss_reason(hosted, &error),
                 }
             }
             observed => retention_reason(mode, observed),
-        };
-        self.registry.retain(claim, &reason);
+        })
     }
 
     async fn inspect_once(&self, env_ref: &str, agent_uuid: &str) {

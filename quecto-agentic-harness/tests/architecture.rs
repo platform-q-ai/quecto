@@ -4451,9 +4451,11 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
     // Session transitions settle the fleet before anything is replaced
     // (#1976, #1977): the fresh-session and resume transactions order it in
     // the application through the departing-children collaborator, over
-    // the fleet the composition adapts; the resume also claims and loads
-    // its target only after the settlement, and replaces the roster before
-    // the key moves (#1938).
+    // the fleet the composition adapts; the resume replaces the roster
+    // before the key moves (#1938). Since #2070 the resume claims (and, for
+    // another session, loads) its target BEFORE the settlement: the fleet
+    // goes on the owner's authority and ends its swarms, so a resume that
+    // would be refused must tear nothing down.
     for (file, command) in [
         (
             "src/application/sessions/use_cases/start_fresh_conversation.rs",
@@ -4480,7 +4482,7 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
     let propagate = resume
         .find(".session_key_changed(&target.identity)")
         .unwrap();
-    assert!(settle < claim && claim < reset && reset < propagate);
+    assert!(claim < settle && settle < reset && reset < propagate);
     let session = production_source("src/interface/cli/uds_dispatch_session.rs");
     assert!(
         !session.contains(".settle(") && !session.contains(".reset_roster("),

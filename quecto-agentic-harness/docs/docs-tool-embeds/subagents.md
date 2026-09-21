@@ -50,7 +50,7 @@ With `container_configs` configured, `spawn` can place a child in an isolated co
 - Success returns `environment_ref=C1 container_config=<name>` (ref durable, never reused); the child is a normal subagent.
 - Add a teammate to a running environment: `container: {"mode":"existing","ref":"C1"}` (or `"name"`); refs from `get_containers`.
 - `agent_cmd get_containers` (`agent_id: "*"`) lists every environment with status (`running`/`empty`/`killing`/`stopped`/`cleanup-failed`/`retained`), workspace, and members, plus other sessions' (`restored: true`, `session`): join an `empty`/`retained` one with `mode: existing`; kill it when done. `kill_container` with `ref` or `name` stops one: members are terminated, the config's kill runs once; the result carries the ref and up to 20 member ids (`omitted_agents` on overflow); failed kills are retryable. Leftovers: `quecto container ls|kill|gc`.
-- When the last member of an ordinary environment exits, it tears itself down. A swarm container is `retained` after the run ends (`metadata.retained` says why); it needs `kill_container`.
+- When the last member of an ordinary environment exits, it tears itself down. A swarm container is `retained` when its coordinator goes before the supervisor closed the run (`metadata.retained` says why); it needs `kill_container`. Once closed — or on delete-all, `/new`, a `/resume` that succeeds — it tears itself down too.
 
 ## Running a bounded swarm
 
