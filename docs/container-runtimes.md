@@ -834,7 +834,7 @@ step is a command with its expected output):
 | Step | Command (from the repository root) | Expected |
 |---|---|---|
 | Preconditions | `git rev-parse --show-toplevel`; `podman --version` (or `docker`); `jq --version`; `git ls-remote --exit-code origin`; `quecto status` | the toplevel is `pwd`; the tools answer; `ls-remote` exits 0; `Overlay: none` or `(trusted)` |
-| 1. init | `quecto container init` (`--repo <url>`, `--image <tag>`, `--dry-run`) | `wrote …` × 5, `container config "standard" written as container_configs.standard in <repo>/.quecto/config.json (trusted for exactly these bytes)`, `default: true`, then `next:` with the build command |
+| 1. init | `quecto container init` (`--repo <url>`, `--image <tag>`, `--dry-run`) | `wrote …` per missing file (× 5 in a bare repo; a committed Containerfile is `kept … (this project's own; …)`), `container config "standard" written as container_configs.standard in <repo>/.quecto/config.json (trusted for exactly these bytes)`, `default: true`, then `next:` with the build command |
 | 2. build | the printed `podman build -t quecto-<folder>:local -f <repo>/.quecto/containers/standard/Containerfile <repo>/.quecto/containers/standard` (skip when `status` already reports the image present) | `Successfully tagged localhost/quecto-<folder>:local` |
 | 3. verify | `quecto container status` | a header, the `assets/config/trust/image` lines (plus a `this repo's default` continuation, or a `note:` when the label was removed by hand), then `ready: spawn {"container":true} from an agent in this project`, exit 0 (exit 1 `not ready` while a script differs or a file is missing; the project's own Containerfile never counts) |
 | 4. doctor | `quecto container doctor` | every check `✓` (`gh` may be `!`), `0 checks failed`, exit 0 |
@@ -923,7 +923,7 @@ is written, so a refused init leaves the project untouched):
 Running `init` twice changes nothing (no files, byte-identical overlay).
 A re-init keeps the existing entry's `--repo` and `--image` unless the
 flag is given — the origin remote is not re-derived over a `--repo` you
-chose — and prints `kept:` / `rewrote:` lines for each so nothing changes
+chose — and prints `kept:` / `rewrote:` / `added:` lines for each so nothing changes
 silently.
 
 **The trust boundary: host-side scripts.** The overlay's trust record
@@ -975,8 +975,9 @@ a general one. The Containerfile is not a host-side script and is not
 checked at launch; it is the project's own file, so `status` lists it as
 `Containerfile: this project's own` (or `yours` beside a drifted script)
 and stays `ready`. Commit `.quecto/containers/standard/Containerfile` so the
-next agent in the folder builds the same container; the scripts and
-`.quecto/config.json` stay local (init materialises them). Because the file
+next agent in the folder builds the same container. This repository keeps
+the scripts and `.quecto/config.json` local (init materialises them); a
+repository that commits its scripts gets the integrity check on every pull. Because the file
 is the project's, quecto raises no flag over it: **read a cloned
 repository's Containerfile before you build it**, as you would any build
 script — its `RUN` steps execute in your build, and the image later gets the
@@ -1033,8 +1034,8 @@ knows no language. Two checks run the image (`run --rm --pull=never`):
   extra check. A label that is not a list of tool names is refused without
   being run. Quecto's own Containerfile declares its eight Rust tools this way;
   a `--image` of your own is asked only for what *it* declares. A label is
-  inherited through `FROM`: an image derived from this one keeps the Rust
-  list unless it redeclares the label. An image built before the label
+  inherited through `FROM`: an image derived from quecto's own keeps the
+  Rust list unless it redeclares the label. An image built before the label
   existed carries none and is asked only for a shell and git — rebuild it
   (`quecto container init --refresh` prints the command) to get the check
   back. It is skipped, and says so, while `image-base` fails.
@@ -1215,7 +1216,7 @@ Design properties:
 - **Image selection.** `--image <img>` on the create argv, or the
   `QUECTO_DOCKER_IMAGE` environment variable, with a sensible local default
   (`quecto-dev:local`; an entry written by `quecto container init` always
-  passes `--image`, named after the project folder). The `run` passes `--pull=never`: a tag that vanished
+  passes `--image`, by default named after the project folder). The `run` passes `--pull=never`: a tag that vanished
   between the preflight and the run fails instead of fetching whatever a
   registry serves under that name.
 - **Pid fence.** `create.sh` passes `--pids-limit` (default `16384`;

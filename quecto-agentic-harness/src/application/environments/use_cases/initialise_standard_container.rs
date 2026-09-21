@@ -246,6 +246,14 @@ impl InitialiseStandardContainer {
                     (AssetOwnership::Project, AssetOutcome::KeptDiffering) => AssetOutcome::KeptOwn,
                     (AssetOwnership::Project | AssetOwnership::Bundle, outcome) => outcome,
                 })
+                .inspect(|outcome| {
+                    assert!(
+                        asset.ownership == AssetOwnership::Bundle
+                            || *outcome != AssetOutcome::Refreshed,
+                        "a project-owned asset was replaced: {}",
+                        asset.path
+                    );
+                })
                 .map_err(|reason| InitialiseStandardContainerError::Asset {
                     path: path.clone(),
                     reason,

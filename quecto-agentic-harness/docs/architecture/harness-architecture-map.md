@@ -152,7 +152,8 @@ over three capability-local ports: `ContainerAssetStore` (adapted in
 `src/infrastructure/processes/containers/standard/assets.rs`, which embeds
 `assets/standard-container/Containerfile` and the official
 `scripts/container-runtime/docker/*.sh` byte-for-byte and materialises a
-missing file whole, never replacing one), `WorkspaceOrigin`
+missing file whole; only `--refresh` replaces a differing script, and
+nothing replaces the project-owned Containerfile — `AssetOwnership`), `WorkspaceOrigin`
 (`standard/workspace_origin.rs`, `git remote get-url origin`) and
 `ContainerConfigPersistence` — mapped in `composition/standard_container.rs`
 onto the configuration capability's `PatchConfiguration` (the

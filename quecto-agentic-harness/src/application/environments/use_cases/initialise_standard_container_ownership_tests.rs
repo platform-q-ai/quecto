@@ -129,6 +129,11 @@ fn a_directory_name_becomes_a_valid_image_name() {
         ("x".repeat(100), "x".repeat(100)),
         ("x".repeat(101), "x".repeat(100)),
         (format!("{}-y", "x".repeat(99)), "x".repeat(99)),
+        (format!("{}.y", "x".repeat(99)), "x".repeat(99)),
+        (
+            format!("{}.y", "x".repeat(98)),
+            format!("{}.y", "x".repeat(98)),
+        ),
         (
             format!("{}-y", "x".repeat(98)),
             format!("{}-y", "x".repeat(98)),

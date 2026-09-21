@@ -463,36 +463,31 @@ fn quectos_own_containerfile_declares_its_eight_rust_tools() {
 }
 
 /// The starter `quecto container init` writes into any project is neutral:
-/// it installs exactly the general agent tooling #2073 lists — one `RUN`,
-/// whose package set is an allowlist — promises no tool, and keeps the
-/// adapter's entrypoint contract.
+/// its whole instruction list is an allowlist — the pinned Debian base, one
+/// `RUN` installing exactly the general agent tooling #2073 lists, no
+/// promised tool, and the adapter's entrypoint contract. Anything else (a
+/// language base image, a second install step, a `COPY`) fails here.
 #[test]
 fn the_starter_containerfile_is_tooling_neutral() {
-    const GENERAL_TOOLING: &[&str] = &[
-        "bash",
-        "build-essential",
-        "ca-certificates",
-        "coreutils",
-        "curl",
-        "fd-find",
-        "findutils",
-        "gh",
-        "git",
-        "grep",
-        "jq",
-        "less",
-        "openssh-client",
-        "procps",
-        "python3",
-        "python3-venv",
-        "ripgrep",
-        "sed",
+    const INSTRUCTIONS: &[&str] = &[
+        "FROM docker.io/library/debian@sha256:abc9cb88a5587630d7f915f47b23b0668fe250fbfc6457aa4d52b534c1bbf73f",
+        "ARG DEBIAN_FRONTEND=noninteractive",
+        "LABEL org.opencontainers.image.title=\"Project development container\"",
+        "RUN apt-get update \
+         && apt-get install --no-install-recommends --yes \
+         bash build-essential ca-certificates coreutils curl fd-find findutils \
+         git gh grep jq less openssh-client procps python3 python3-venv ripgrep sed \
+         && rm -rf /var/lib/apt/lists/* \
+         && ln -sf /usr/bin/fdfind /usr/local/bin/fd",
+        "ENTRYPOINT []",
+        "CMD []",
+        "WORKDIR /workspace",
     ];
     let starter = fs::read_to_string(
         root().join("quecto-agentic-harness/assets/standard-container/Containerfile"),
     )
     .unwrap();
-    // Instructions only, with continuation lines joined.
+    // Instructions only, continuation lines joined, whitespace squeezed.
     let instructions: Vec<String> = starter
         .lines()
         .filter(|line| !line.trim_start().starts_with('#'))
@@ -503,31 +498,7 @@ fn the_starter_containerfile_is_tooling_neutral() {
         .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|line| !line.is_empty())
         .collect();
-    let runs: Vec<&String> = instructions
-        .iter()
-        .filter(|line| line.starts_with("RUN "))
-        .collect();
-    assert_eq!(runs.len(), 1, "{instructions:#?}");
-    let install = runs[0]
-        .split(" && ")
-        .find(|step| step.starts_with("apt-get install "))
-        .expect("the one RUN installs packages");
-    let mut packages: Vec<&str> = install
-        .split(' ')
-        .skip(2)
-        .filter(|word| !word.starts_with("--"))
-        .collect();
-    packages.sort_unstable();
-    assert_eq!(packages, GENERAL_TOOLING);
-    assert!(
-        instructions
-            .iter()
-            .all(|line| !line.contains("ai.quecto.required-tools")),
-        "the starter promises no tool: {instructions:#?}"
-    );
-    for kept in ["ENTRYPOINT []", "CMD []", "WORKDIR /workspace"] {
-        assert!(instructions.iter().any(|line| line == kept), "{kept}");
-    }
+    assert_eq!(instructions, INSTRUCTIONS);
 }
 
 /// The values of every `LABEL ai.quecto.required-tools="…"` instruction.

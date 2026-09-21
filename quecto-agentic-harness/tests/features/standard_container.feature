@@ -322,7 +322,7 @@ Feature: The standard container is landed on master
     Then the exit code should be 0
     And the output should contain "assets:  present (5 of 5, version 5)"
     And the output should contain "Containerfile: this project's own"
-    And the output should contain "ready"
+    And the output should contain "ready: spawn"
     And the output should not contain "differ"
     When I run the real quecto binary under the controlled PATH with arguments "container init --refresh"
     Then the exit code should be 0
