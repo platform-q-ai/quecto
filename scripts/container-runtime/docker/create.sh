@@ -185,7 +185,8 @@ case "$probe_timeout" in
 esac
 bounded() {
   if command -v timeout >/dev/null 2>&1; then
-    timeout "$probe_timeout" "$@"
+    # -k: a probed process that ignores SIGTERM is killed, not waited for.
+    timeout -k 2 "$probe_timeout" "$@"
   else
     "$@"
   fi
@@ -222,29 +223,131 @@ else
     "fix the runtime-cli check first"
 fi
 
-# A present tag is not enough for this repository's standard development
-# container. Prove the compiler and every CI helper are executable before an
-# agent is admitted; this keeps a generic/tool-only image from failing only
-# after code has been changed. Custom images selected with --image must honour
-# the same development contract.
-if [ -n "$cli" ] && [ "$image_rc" = 0 ]; then
-  tools_rc=0
-  tools_error="$(bounded "$cli" run --rm --pull=never "$image" sh -c '
-    for tool in cargo rustc rustfmt cargo-clippy cargo-nextest cargo-llvm-cov cargo-deny cargo-machete; do
+# What an image must hold is tooling-neutral (#2073). The harness itself
+# needs only a shell (proven by running the probe at all) and git inside the
+# container; every other tool is the image's own promise, declared in its
+# `ai.quecto.required-tools` label (a whitespace-separated list of
+# executable names) and proven here before an agent is admitted, so an image
+# that lost a tool fails at the doctor and not after code has been changed.
+# No label, no extra check: nothing here knows a language.
+required_tools_label="ai.quecto.required-tools"
+required_tools_max=64
+
+# Allowlist for one declared tool: a bare ASCII executable name, whatever the
+# host's locale makes of [A-Za-z]. A name is only ever passed to the probe as
+# an argument, never spliced into its script.
+is_tool_name() {
+  local LC_ALL=C
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$ ]]
+}
+
+# Runs the image and proves every argument is on its PATH. Sets probe_rc and
+# probe_error (stderr only: a runtime warning is not the probe's answer).
+probe_image_tools() {
+  probe_rc=0
+  probe_error="$(bounded "$cli" run --rm --pull=never "$image" sh -c '
+    for tool in "$@"; do
       command -v "$tool" >/dev/null || { printf "missing %s\n" "$tool" >&2; exit 1; }
     done
-  ' 2>&1)" || tools_rc=$?
-  if [ "$tools_rc" = 0 ]; then
-    report ok dev-tools "image $image provides the Quecto development toolchain" ""
+  ' sh "$@" 2>&1 >/dev/null)" || probe_rc=$?
+}
+
+# Reports a failed probe for what it was: the image's fault only when the
+# probe itself said so; a runtime that did not answer or could not run the
+# image is the runtime's.
+report_probe_failure() {
+  # $1=check  $2=what the image fails to be  $3=remedy for the image
+  local answer line missing=""
+  answer="$(last_line "$probe_error")"
+  # The probe's own answer is a `missing <tool>` line; a runtime may warn
+  # before it or after it, so every line is read, not only the last.
+  while IFS= read -r line; do
+    if [[ "$line" == "missing "* ]] && is_tool_name "${line#missing }"; then missing="$line"; fi
+  done <<<"${probe_error//$'\r'/}"
+  if [ "$probe_rc" = 1 ] && [ -n "$missing" ]; then
+    report fail "$1" "image $image $2: $missing" "$3" "$EXIT_NO_IMAGE"
+  elif [ "$probe_rc" = 124 ]; then
+    report fail "$1" "$cli did not answer within ${probe_timeout}s while running image $image" \
+      "check that the $cli daemon/service is running and reachable (${cli} info); QUECTO_REPO_CHECK_TIMEOUT raises the bound" "$EXIT_NO_RUNTIME"
+  elif [ "$probe_rc" = 126 ] || [ "$probe_rc" = 127 ]; then
+    report fail "$1" "image $image has no usable shell (exit $probe_rc): $answer" \
+      "install a POSIX shell (sh) in the image and rebuild it" "$EXIT_NO_IMAGE"
   else
-    report fail dev-tools "image $image is not a Quecto development image: $(last_line "$tools_error")" \
-      "build the standard image printed by 'quecto container init --refresh'" "$EXIT_NO_IMAGE"
+    report fail "$1" "$cli could not run image $image (exit $probe_rc): $answer" \
+      "check that the $cli daemon/service is running and that this user may use it (${cli} info)" "$EXIT_NO_RUNTIME"
+  fi
+}
+
+base_ok=0
+if [ -n "$cli" ] && [ "$image_rc" = 0 ]; then
+  probe_image_tools git
+  if [ "$probe_rc" = 0 ]; then
+    base_ok=1
+    report ok image-base "image $image provides a shell and git" ""
+  else
+    report_probe_failure image-base "cannot host an agent" \
+      "install a POSIX shell and git in the image and rebuild it"
   fi
 elif [ -n "$cli" ]; then
-  report fail dev-tools "image $image could not be checked for the Quecto development toolchain" \
-    "fix the image check first, then build the standard development image" "$EXIT_NO_IMAGE"
+  report fail image-base "image $image could not be checked for a shell and git" \
+    "fix the image check first" "$EXIT_NO_IMAGE"
 else
-  report warn dev-tools "the Quecto development toolchain was not checked: no container runtime" \
+  report warn image-base "the image's shell and git were not checked: no container runtime" \
+    "fix the runtime-cli check first"
+fi
+
+if [ "$base_ok" = 1 ]; then
+  # stdout alone is the label: the runtimes print warnings on stderr while
+  # exiting 0, and a warning is not a list of tools. stderr is read only to
+  # explain a failure.
+  label_rc=0
+  label_format="{{ index .Config.Labels \"$required_tools_label\" }}"
+  label_value="$(bounded "$cli" image inspect --format "$label_format" "$image" 2>/dev/null)" || label_rc=$?
+  label_value="${label_value//$'\r'/}"
+  # An absent label prints an empty line (or Go's "<no value>").
+  if [ "$label_value" = "<no value>" ]; then label_value=""; fi
+  required_tools=()
+  bad_tool=""
+  if [ "$label_rc" = 0 ]; then
+    read -r -d '' -a required_tools <<<"$label_value" || true
+    # (An empty array under `set -u` is an error before bash 4.4.)
+    if [ "${#required_tools[@]}" -gt 0 ]; then
+      for tool in "${required_tools[@]}"; do
+        if is_tool_name "$tool"; then continue; fi
+        bad_tool="${tool:0:64}"
+        break
+      done
+    fi
+  fi
+  if [ "$label_rc" = 124 ]; then
+    report fail required-tools "$cli did not answer within ${probe_timeout}s while reading the $required_tools_label label of image $image" \
+      "check that the $cli daemon/service is running and reachable (${cli} info); QUECTO_REPO_CHECK_TIMEOUT raises the bound" "$EXIT_NO_RUNTIME"
+  elif [ "$label_rc" != 0 ]; then
+    label_error="$(bounded "$cli" image inspect --format "$label_format" "$image" 2>&1 >/dev/null)" || true
+    report fail required-tools "$cli could not read the $required_tools_label label of image $image (exit $label_rc): $(last_line "$label_error")" \
+      "check that the $cli daemon/service is running and that this user may use it (${cli} info)" "$EXIT_NO_RUNTIME"
+  elif [ -n "$bad_tool" ]; then
+    report fail required-tools "image $image declares '$bad_tool' in $required_tools_label, which is not a tool name" \
+      "list bare executable names separated by spaces (ASCII letters, digits, '.', '_', '+', '-'; at most 64 characters each) and rebuild the image" "$EXIT_NO_IMAGE"
+  elif [ "${#required_tools[@]}" -gt "$required_tools_max" ]; then
+    report fail required-tools "image $image declares ${#required_tools[@]} tools in $required_tools_label; at most $required_tools_max are checked" \
+      "shorten the label and rebuild the image" "$EXIT_NO_IMAGE"
+  elif [ "${#required_tools[@]}" = 0 ]; then
+    report ok required-tools "image $image declares no required tools ($required_tools_label is not set)" ""
+  else
+    probe_image_tools "${required_tools[@]}"
+    if [ "$probe_rc" = 0 ]; then
+      report ok required-tools "image $image provides the tools it declares: ${required_tools[*]}" ""
+    else
+      report_probe_failure required-tools "does not provide a tool it declares in $required_tools_label" \
+        "rebuild the image from its Containerfile, or correct the label"
+    fi
+  fi
+elif [ -n "$cli" ]; then
+  report fail required-tools "the tools image $image declares were not checked" \
+    "fix the image-base check first" "$EXIT_NO_IMAGE"
+else
+  report warn required-tools "the image's declared tools were not checked: no container runtime" \
     "fix the runtime-cli check first"
 fi
 

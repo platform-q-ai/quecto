@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use super::ContainerStatus;
 use crate::application::environments::dto::{
-    AssetOutcome, AssetState, CheckStatus, ContainerAsset, ContainerAssetCatalogue,
+    AssetOutcome, AssetOwnership, AssetState, CheckStatus, ContainerAsset, ContainerAssetCatalogue,
     ContainerConfigEntry, ContainerConfigLayer, ContainerRuntimeTarget, DiagnosableContainerConfig,
     PreflightCheck, StandardDefault,
 };
@@ -12,6 +12,8 @@ use crate::application::environments::ports::{
     ContainerRuntimePreflight,
 };
 
+/// Asset `a{i}` is observed as the i-th state. `a0` stands for the
+/// Containerfile (the project's); the rest are the bundle's scripts.
 struct FixedAssets(Vec<AssetState>);
 
 impl ContainerAssetStore for FixedAssets {
@@ -27,6 +29,11 @@ impl ContainerAssetStore for FixedAssets {
                     path: format!("a{i}"),
                     contents: vec![],
                     executable: false,
+                    ownership: if i == 0 {
+                        AssetOwnership::Project
+                    } else {
+                        AssetOwnership::Bundle
+                    },
                 })
                 .collect(),
         }
@@ -160,6 +167,47 @@ fn a_complete_setup_is_healthy_and_the_image_check_comes_from_the_entrys_preflig
 }
 
 #[test]
+fn the_projects_own_containerfile_is_present_and_is_not_drift() {
+    let build = |states: Vec<AssetState>| {
+        ContainerStatus::new(
+            Arc::new(FixedAssets(states)),
+            Arc::new(FixedRoster(Ok(ContainerConfigRosterReport {
+                configs: vec![entry("standard", ContainerConfigLayer::Overlay)],
+                ..Default::default()
+            }))),
+            Arc::new(RecordingLookup {
+                answer: Ok(config()),
+                seen: Mutex::new(vec![]),
+            }),
+            Arc::new(FixedPreflight(Ok(vec![check(
+                "image",
+                CheckStatus::Passed,
+            )]))),
+        )
+        .execute(Path::new("/p"))
+    };
+    // a0 is the Containerfile: the project's version is not drift.
+    let own = build(vec![AssetState::Differs, AssetState::Identical]);
+    assert_eq!(own.assets_present(), 2);
+    assert_eq!(own.assets_differing(), 0);
+    assert_eq!(
+        own.projects_own,
+        [PathBuf::from("/p/.quecto/containers/standard/a0")]
+    );
+    assert!(own.healthy());
+    // a1 is a script: other bytes there are still drift.
+    let drift = build(vec![AssetState::Identical, AssetState::Differs]);
+    assert_eq!(drift.assets_differing(), 1);
+    assert_eq!(
+        drift.drifted,
+        [PathBuf::from("/p/.quecto/containers/standard/a1")]
+    );
+    assert!(own.drifted.is_empty());
+    assert!(drift.projects_own.is_empty());
+    assert!(!drift.healthy());
+}
+
+#[test]
 fn a_missing_bundle_and_no_entry_run_no_preflight() {
     let status = ContainerStatus::new(
         Arc::new(FixedAssets(vec![
@@ -214,6 +262,37 @@ fn a_failed_image_check_a_withheld_overlay_and_a_silent_preflight_are_reported_n
     );
     assert!(!failed.healthy());
     assert_eq!(failed.image.unwrap().status, CheckStatus::Failed);
+
+    // A present image that cannot host an agent, or lacks a tool it
+    // declares, is not ready either: status reports the first image check
+    // that failed, not only the lookup (#2073).
+    for failing in ["image-base", "required-tools"] {
+        let mut checks = vec![
+            check("image", CheckStatus::Passed),
+            check("image-base", CheckStatus::Passed),
+            check("required-tools", CheckStatus::Passed),
+            check("repo", CheckStatus::Failed),
+        ];
+        checks
+            .iter_mut()
+            .find(|check| check.name == failing)
+            .unwrap()
+            .status = CheckStatus::Failed;
+        let unusable = build(Ok(with_entry.clone()), Ok(checks));
+        assert!(!unusable.healthy(), "{failing}");
+        assert_eq!(unusable.image.unwrap().name, failing);
+    }
+    let usable = build(
+        Ok(with_entry.clone()),
+        Ok(vec![
+            check("image", CheckStatus::Passed),
+            check("image-base", CheckStatus::Passed),
+            check("required-tools", CheckStatus::Passed),
+            check("repo", CheckStatus::Failed),
+        ]),
+    );
+    assert!(usable.healthy());
+    assert_eq!(usable.image.unwrap().name, "image");
 
     let withheld = build(
         Ok(ContainerConfigRosterReport {

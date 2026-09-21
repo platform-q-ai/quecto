@@ -449,7 +449,7 @@ fn when_materialised_preflight(world: &mut QuectoWorld) {
 fn given_fake_podman_accepting_run(world: &mut QuectoWorld) {
     let toolbox = Toolbox::build(world);
     let body = format!(
-        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = image ] && [ \"$2\" = exists ]; then exit 0; fi\nif [ \"$1\" = run ] && [ \"${{2:-}}\" = --rm ]; then exit 0; fi\nif [ \"$1\" = run ]; then echo deadbeef; exit 0; fi\nif [ \"$1\" = rm ]; then exit 0; fi\nexit 125\n",
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = image ] && [ \"$2\" = exists ]; then exit 0; fi\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then echo; exit 0; fi\nif [ \"$1\" = run ] && [ \"${{2:-}}\" = --rm ]; then exit 0; fi\nif [ \"$1\" = run ]; then echo deadbeef; exit 0; fi\nif [ \"$1\" = rm ]; then exit 0; fi\nexit 125\n",
         toolbox.podman_log().display()
     );
     write_executable(&toolbox.dir.join("podman"), &body);
@@ -603,6 +603,27 @@ fn given_spawn_from_checkout_no_global_configs(world: &mut QuectoWorld) {
     std::fs::write(&config, serde_json::to_string_pretty(&document).unwrap()).unwrap();
 }
 
+/// A Containerfile no bundle ever shipped: the project's own (#2073).
+const PROJECTS_CONTAINERFILE: &str =
+    "FROM docker.io/library/python:3.13-slim\nLABEL ai.quecto.required-tools=\"python3 uv\"\n";
+
+#[when("the project writes its own standard Containerfile")]
+fn when_project_writes_its_containerfile(world: &mut QuectoWorld) {
+    std::fs::write(
+        assets_dir(world).join("Containerfile"),
+        PROJECTS_CONTAINERFILE,
+    )
+    .unwrap();
+}
+
+#[then("the project's own standard Containerfile should be unchanged")]
+fn then_projects_containerfile_unchanged(world: &mut QuectoWorld) {
+    assert_eq!(
+        std::fs::read_to_string(assets_dir(world).join("Containerfile")).unwrap(),
+        PROJECTS_CONTAINERFILE
+    );
+}
+
 fn invocation_marker(world: &QuectoWorld) -> PathBuf {
     base_path(world).join("create-invoked")
 }
@@ -685,11 +706,16 @@ fn given_fake_podman_running_on_host(world: &mut QuectoWorld) {
         r#"#!/usr/bin/env bash
 printf '%s\n' "$*" >> '{log}'
 case "$1" in
-  image) [ "$2" = exists ] && exit 0; exit 1 ;;
+  image)
+    [ "$2" = exists ] && exit 0
+    # No `ai.quecto.required-tools` label: an empty line.
+    [ "$2" = inspect ] && {{ echo; exit 0; }}
+    exit 1 ;;
   run)
     shift
-    # The standard preflight's short-lived allowlisted development-tool
-    # probe succeeds in this runtime fixture; lifecycle runs continue below.
+    # The preflight's short-lived image probes (a shell and git, then the
+    # image's declared tools) succeed in this runtime fixture; lifecycle
+    # runs continue below.
     if [ "${{1:-}}" = --rm ]; then exit 0; fi
     name=""
     while [ "$#" -gt 0 ] && [ "$1" != quecto-dev:local ]; do

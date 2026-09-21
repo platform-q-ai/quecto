@@ -356,7 +356,7 @@ fn a_re_init_keeps_the_entrys_values_and_reports_an_edited_asset_until_refreshed
         "{out}"
     );
     assert!(
-        out.contains("no files changed (existing files are never replaced without --refresh)"),
+        out.contains("no files changed (a script is replaced only by --refresh; the project's Containerfile never)"),
         "{out}"
     );
     assert!(

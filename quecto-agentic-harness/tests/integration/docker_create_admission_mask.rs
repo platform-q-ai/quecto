@@ -83,7 +83,9 @@ fn assert_preflight_only(log: &Path) {
     assert!(
         calls
             .iter()
-            .all(|call| { call.starts_with("image exists ") || call.starts_with("run --rm ") }),
+            .all(|call| ["image exists ", "image inspect ", "run --rm "]
+                .iter()
+                .any(|allowed| call.starts_with(allowed))),
         "rejected layout may invoke only allowlisted preflights, got:\n{calls}",
         calls = calls.join("\n")
     );
@@ -204,6 +206,7 @@ fn run_with_layout(admission_suffix: &str, layout: Layout) -> Run {
             r#"#!/usr/bin/env bash
 printf '%q ' "$@" >> {log:?}; printf '\n' >> {log:?}
 if [ "$1" = image ] && [ "$2" = exists ]; then exit 0; fi
+if [ "$1" = image ] && [ "$2" = inspect ]; then printf '\n'; exit 0; fi
 if [ "$1" = run ] && [ "${{2:-}}" = --rm ]; then exit 0; fi
 if [ "$1" = run ]; then
   mask=""; client=0

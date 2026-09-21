@@ -194,6 +194,12 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
             report.version
         ));
     }
+    for path in &report.own {
+        out.push_str(&format!(
+            "  kept   {} (this project's own; never replaced — review it before building)\n",
+            path.display()
+        ));
+    }
     for path in &report.differing {
         out.push_str(&format!(
             "  kept   {} (differs from the embedded version {}; a launch refuses it — review the change, then `quecto container init --refresh` restores it)\n",
@@ -202,7 +208,9 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
         ));
     }
     if report.written.is_empty() && report.refreshed.is_empty() && !report.dry_run {
-        out.push_str("  no files changed (existing files are never replaced without --refresh)\n");
+        out.push_str(
+            "  no files changed (a script is replaced only by --refresh; the project's Containerfile never)\n",
+        );
     }
     let entry = &report.entry;
     let location = entry
@@ -352,6 +360,7 @@ fn present_status(status: &StandardContainerStatus, out: &mut String) {
             let word = match state {
                 AssetState::Missing => "missing",
                 AssetState::Identical => "ok",
+                AssetState::Differs if status.is_projects_own(path) => "yours",
                 AssetState::Differs => "differs",
                 AssetState::Refused => "refused",
             };
@@ -362,6 +371,13 @@ fn present_status(status: &StandardContainerStatus, out: &mut String) {
             "  assets:  present ({present} of {total}, version {})\n",
             status.version
         ));
+        for path in &status.projects_own {
+            let file = path.file_name().unwrap_or_default().to_string_lossy();
+            out.push_str(&format!(
+                "           {file}: this project's own ({})\n",
+                path.display()
+            ));
+        }
     }
     match &status.entry {
         Some(entry) => {
@@ -442,6 +458,9 @@ fn present_status(status: &StandardContainerStatus, out: &mut String) {
 #[cfg(test)]
 #[path = "container_setup_e2e_tests.rs"]
 mod e2e_tests;
+#[cfg(test)]
+#[path = "container_setup_ownership_tests.rs"]
+mod ownership_tests;
 #[cfg(test)]
 #[path = "container_setup_tests.rs"]
 mod tests;
