@@ -43,7 +43,7 @@ fn the_projects_containerfile_survives_init_and_refresh_and_status_stays_ready()
         )),
         "{out}"
     );
-    assert!(out.contains("ready"), "{out}");
+    assert!(out.contains("ready: spawn"), "{out}");
 }
 
 #[test]
