@@ -19,16 +19,35 @@ fn executable(path: &Path, body: &str) {
 }
 
 fn run(admission_suffix: &str) -> (std::process::Output, PathBuf, String) {
+    run_with_layout(admission_suffix, false)
+}
+
+fn run_with_layout(
+    admission_suffix: &str,
+    symlink_home: bool,
+) -> (std::process::Output, PathBuf, String) {
     let t = tempfile::tempdir().unwrap();
     let base = t.keep();
-    let home = base.join("home");
+    let real_home = base.join("real-home");
+    let home = if symlink_home {
+        let alias = base.join("alias-home");
+        fs::create_dir_all(&real_home).unwrap();
+        std::os::unix::fs::symlink(&real_home, &alias).unwrap();
+        alias
+    } else {
+        real_home.clone()
+    };
     let state = base.join("state");
     let socket_dir = base.join("run");
     let bin = base.join("bin");
     for d in [&home.join(".quecto"), &state, &socket_dir, &bin] {
         fs::create_dir_all(d).unwrap();
     }
-    let admission = home.join(admission_suffix);
+    let admission = if symlink_home {
+        real_home.join(admission_suffix)
+    } else {
+        home.join(admission_suffix)
+    };
     fs::create_dir_all(&admission).unwrap();
     let log = base.join("runtime.log");
     let podman = bin.join("podman");
@@ -74,6 +93,35 @@ exit 125
         .output()
         .unwrap();
     (output, log, admission.to_string_lossy().into_owned())
+}
+
+#[test]
+fn rejects_symlinked_home_when_admission_uses_canonical_spelling() {
+    let (out, log, _) = run_with_layout(".quecto/admission/client", true);
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("HOME/.quecto must be a normalized canonical path"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !log.exists(),
+        "runtime must not be invoked on rejected layout"
+    );
+}
+
+#[test]
+fn rejects_identity_root_client_before_allocating_environment() {
+    let (out, log, _) = run(".quecto/client");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("identity-mounted ~/.quecto itself"));
+    assert!(
+        !log.exists(),
+        "runtime must not be invoked on rejected layout"
+    );
+    let state = log.parent().unwrap().join("state");
+    assert_eq!(fs::read_dir(state).unwrap().count(), 0);
 }
 
 #[test]

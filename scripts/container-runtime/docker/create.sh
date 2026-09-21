@@ -353,6 +353,16 @@ fi
 # create never leaks an unreported environment directory.
 admission_dir="${QUECTO_ADMISSION_DIR:-}"
 if [ -n "$admission_dir" ]; then
+  # The broad identity mount and every authority mask must share one exact
+  # destination spelling. Only admit a canonical ~/.quecto path; otherwise a
+  # symlinked HOME could retain an rw alias around a canonical read-only mask.
+  quecto_dir="$HOME/.quecto"
+  case "$quecto_dir" in
+  /*) ;;
+  *) die "HOME/.quecto must be a normalized canonical path" ;;
+  esac
+  [ "$(realpath -m "$quecto_dir")" = "$quecto_dir" ] \
+    || die "HOME/.quecto must be a normalized canonical path"
   [ -d "$admission_dir" ] || die "QUECTO_ADMISSION_DIR '$admission_dir' is not a directory"
   # Mount destinations are intentionally kept in their configured spelling.
   # Admit only normalized absolute paths: accepting aliases such as /./, /../,
