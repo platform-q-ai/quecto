@@ -1006,6 +1006,11 @@ knows no language. Two checks run the image (`run --rm --pull=never`):
   (`quecto container init --refresh` prints the command) to get the check
   back. It is skipped, and says so, while `image-base` fails.
 
+Both checks run the image as `run --rm <image> sh -c …`, exactly as a create
+runs the child: the image needs `ENTRYPOINT []` (as the Containerfile above
+declares) or an entrypoint that executes its arguments. One that ignores them
+answers for the probe, and for the agent.
+
 A probe the runtime could not run is reported as the runtime's failure, not
 the image's: no answer within `QUECTO_REPO_CHECK_TIMEOUT`, or a `run` that
 the runtime itself refused, exits 3 like any other runtime failure; an image
@@ -1062,10 +1067,13 @@ changes for parents without admission.
 The bundled adapter mounts the directory at its lexical normal form (a doubled
 slash, a `/./` or a trailing slash are the same directory) and records the
 configured spelling for `exec` to compare. It refuses, before any environment
-state exists: a relative path or one with control characters; a spelling whose
-normal form names a different directory (`..` through a symbolic link); a
-client directory that is itself a symbolic link (the read-write mount would
-expose whatever it points at); an authority that is `~/.quecto` itself; and —
+state exists: a relative path, or one with control characters or a `:` (it is
+mounted as `src:dst:mode`); a spelling with a `..` (the child opens the
+configured spelling, and only the normal form is mounted); a client directory
+that is itself a symbolic link (the read-write mount would expose whatever it
+points at); an authority that is `~/.quecto` itself, or that lives outside
+`~/.quecto` but inside the socket directory (mounted read-write whole, with
+nothing to mask it); and —
 when the authority lives inside the identity-mounted `~/.quecto` — a spelling
 that is not under `$HOME/.quecto` or reaches the authority through a symbolic
 link inside it, because the read-only mask would then miss the real directory.
@@ -1312,18 +1320,18 @@ warning or failure, and exits 1 when any check failed:
 
 ```
 container config "quecto" (create: /…/docker/create.sh --state-dir /var/tmp/envs --repo https://github.com/you/project)
-  ✓ runtime-cli  podman at /usr/bin/podman
-  ✓ jq           jq at /usr/bin/jq
-  ✓ git          git at /usr/bin/git
-  ✓ gh           gh at /usr/bin/gh
-  ✗ image        image quecto-dev:local is not present in the local podman store
+  ✓ runtime-cli     podman at /usr/bin/podman
+  ✓ jq              jq at /usr/bin/jq
+  ✓ git             git at /usr/bin/git
+  ✓ gh              gh at /usr/bin/gh
+  ✗ image           image quecto-dev:local is not present in the local podman store
     remedy: build it (podman build -t quecto-dev:local <dir with its Containerfile>) or pull it (podman pull quecto-dev:local); create never pulls implicitly
-  ✗ image-base   image quecto-dev:local could not be checked for a shell and git
+  ✗ image-base      image quecto-dev:local could not be checked for a shell and git
     remedy: fix the image check first
-  ✗ required-tools the tools image quecto-dev:local declares were not checked
+  ✗ required-tools  the tools image quecto-dev:local declares were not checked
     remedy: fix the image-base check first
-  ✓ repo         --repo https://github.com/you/project is reachable
-  ✓ state-dir    state dir /var/tmp/envs is writable and owned by the current user
+  ✓ repo            --repo https://github.com/you/project is reachable
+  ✓ state-dir       state dir /var/tmp/envs is writable and owned by the current user
 3 checks failed, 0 warnings
 ```
 

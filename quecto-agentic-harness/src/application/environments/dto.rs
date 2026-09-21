@@ -731,8 +731,9 @@ pub struct StandardContainerStatus {
     /// The checkout's overlay was not applied (untrusted or refused).
     pub overlay_withheld: bool,
     pub diagnostics: Vec<String>,
-    /// The create preflight's `image` check for the entry, when the
-    /// preflight could run.
+    /// What the entry's create preflight says of the image, when it could
+    /// run: the first failed image check (`image`, `image-base`,
+    /// `required-tools`), or else the `image` lookup.
     pub image: Option<PreflightCheck>,
     /// Why the preflight could not run (no entry, a script that refuses
     /// the mode), when it could not.
@@ -763,7 +764,7 @@ impl StandardContainerStatus {
 
     /// Everything a container spawn needs is in place: every asset as
     /// embedded, the entry present, the overlay applied, the image
-    /// present.
+    /// present and passing every image check.
     pub fn healthy(&self) -> bool {
         self.assets_present() == self.assets.len()
             && self.assets_differing() == 0

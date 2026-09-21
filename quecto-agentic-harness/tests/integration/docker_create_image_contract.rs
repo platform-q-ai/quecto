@@ -37,6 +37,8 @@ struct Image<'a> {
     run_rc: i32,
     /// `podman` or `docker`: the two look an image up differently.
     cli: &'a str,
+    /// The runtime also warns AFTER the container's own output.
+    warns_last: bool,
 }
 
 impl Default for Image<'_> {
@@ -47,6 +49,7 @@ impl Default for Image<'_> {
             inspect_rc: 0,
             run_rc: 0,
             cli: "podman",
+            warns_last: false,
         }
     }
 }
@@ -73,6 +76,22 @@ impl Preflight {
             .filter(|call| call.starts_with("run "))
             .count()
     }
+}
+
+/// A UTF-8 locale whose collation makes `[A-Za-z]` match accented letters,
+/// when this host has one.
+fn wide_locale() -> Option<&'static str> {
+    static LOCALE: std::sync::OnceLock<Option<&'static str>> = std::sync::OnceLock::new();
+    *LOCALE.get_or_init(|| {
+        let listed = Command::new("locale").arg("-a").output().ok()?;
+        let listed = String::from_utf8_lossy(&listed.stdout).to_lowercase();
+        ["en_US.UTF-8", "en_GB.UTF-8"].into_iter().find(|locale| {
+            let name = locale.to_lowercase().replace("utf-8", "utf8");
+            listed
+                .lines()
+                .any(|line| line.replace("utf-8", "utf8") == name)
+        })
+    })
 }
 
 fn preflight(image: &Image<'_>) -> Preflight {
@@ -111,12 +130,15 @@ if [ "$1" = image ] && [ "$2" = inspect ]; then exit 0; fi
 if [ "$1" = run ] && [ "$2" = --rm ] && [ "$3" = --pull=never ] && [ "$5" = sh ]; then
   [ {run_rc} = 0 ] || {{ echo "Error: the runtime said no" >&2; exit {run_rc}; }}
   shift 5
-  PATH={image_bin:?} exec /bin/sh "$@"
+  rc=0; PATH={image_bin:?} /bin/sh "$@" || rc=$?
+  [ {warns_last} = 0 ] || echo 'time="now" level=warning msg="lingering mount"' >&2
+  exit "$rc"
 fi
 exit 125
 "#,
             inspect_rc = image.inspect_rc,
             run_rc = image.run_rc,
+            warns_last = u8::from(image.warns_last),
         ),
     );
     executable(&bin.join("gh"), "#!/bin/sh\nexit 1\n");
@@ -128,6 +150,11 @@ exit 125
     } else {
         command.args(["--", "/bin/true", "--socket"]);
         command.arg(base.join("child.sock"));
+    }
+    // The allowlist must hold in a locale where [A-Za-z] matches more than
+    // ASCII; under C or C.UTF-8 it would hold with or without the guard.
+    if let Some(locale) = wide_locale() {
+        command.env("LC_ALL", locale);
     }
     let output = command
         .env("PATH", path)
@@ -198,6 +225,23 @@ fn a_label_naming_a_tool_the_image_lacks_fails_naming_that_tool() {
     let tools = run.line("required-tools");
     assert!(tools.starts_with("fail\t"), "{tools}");
     assert!(tools.contains("missing ruff"), "{tools}");
+}
+
+#[test]
+fn a_runtime_warning_after_the_answer_does_not_hide_the_missing_tool() {
+    const EXIT_NO_IMAGE: i32 = 6;
+    let image = Image {
+        label: Some("python3 ruff"),
+        tools: &["git", "python3"],
+        warns_last: true,
+        ..Image::default()
+    };
+    let tools = preflight(&image);
+    let line = tools.line("required-tools");
+    assert!(line.starts_with("fail\t"), "{line}");
+    assert!(line.contains("missing ruff"), "{line}");
+    assert!(line.contains("rebuild the image"), "{line}");
+    assert_eq!(invoke(&image, false).status, EXIT_NO_IMAGE);
 }
 
 #[test]

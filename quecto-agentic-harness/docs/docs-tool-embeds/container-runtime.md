@@ -14,7 +14,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
 - Rootless `podman` (preferred) or `docker` ≥ 20.10 on PATH, plus `jq` and `git`; `gh` logged in (`gh auth status`) if children must push or use the GitHub API (without it: a warning, no token inside).
 - The repository's `origin` remote is a URL the host can clone with its own credentials (`git ls-remote --exit-code origin` exits 0), with **no credential embedded** (init refuses `https://user:secret@…` and `https://ghp_…@…`). No remote = a sandbox entry (empty workspace), which init says.
 - `quecto status` shows `Overlay: none` or `(trusted)`. An `(untrusted)` overlay is refused by init whatever it declares: `quecto config trust` first (after review). `init` and `status` refuse an explicit `--config` (they work on this checkout's overlay); only `doctor` accepts one.
-- Disk and network for one image build (~300 MB: Debian trixie-slim + git, gh, jq, curl, ripgrep, fd, python3; no toolchain).
+- Disk and network for one image build (about 3.6 GB today: Debian trixie + git, gh, jq, curl, ripgrep, fd, python3 **and quecto's own pinned Rust toolchain**, which its `ai.quecto.required-tools` label declares; #2073 replaces it with a neutral starter each repo owns).
 
 ## Do
 
@@ -45,7 +45,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
    ```
    podman build -t quecto-dev:local -f /repo/.quecto/containers/standard/Containerfile /repo/.quecto/containers/standard
    ```
-   Expected: the last line is `Successfully tagged localhost/quecto-dev:local` (docker: `naming to docker.io/library/quecto-dev:local`). A docker-only host runs the same command with `docker`: the scripts drive whichever runtime the doctor's `runtime-cli` line names. A project that needs a toolchain derives `FROM quecto-dev:local` and passes `--image <tag>` to init. The doctor is tooling-neutral: it asks any image for a shell and `git` (`image-base`), plus exactly the tools the image itself declares in `LABEL ai.quecto.required-tools="python3 uv pytest"` (`required-tools`; bare ASCII names separated by whitespace; no label, no extra check; inherited through `FROM` unless redeclared).
+   Expected: the last line is `Successfully tagged localhost/quecto-dev:local` (docker: `naming to docker.io/library/quecto-dev:local`). A docker-only host runs the same command with `docker`: the scripts drive whichever runtime the doctor's `runtime-cli` line names. A project with other needs builds its own image and passes `--image <tag>` to init (deriving `FROM quecto-dev:local` inherits the Rust tools and their label). The doctor is tooling-neutral: it asks any image for a shell and `git` (`image-base`), plus exactly the tools the image itself declares in `LABEL ai.quecto.required-tools="python3 uv pytest"` (`required-tools`; bare ASCII names separated by whitespace; no label, no extra check; redeclare the label in a derived image). The image needs `ENTRYPOINT []` or an entrypoint that executes its arguments.
 3. **Use** — from an agent started in this repository:
    `spawn {"agent_id":"probe","task":"run pwd and git log -1 --oneline, then exit","container":true}` → the result names `environment_ref=C1 container_config=standard`; `agent_cmd {"agent_id":"*","command":"get_containers"}` lists it `running` with the repository; `agent_cmd {"agent_id":"*","command":"kill_container","ref":"C1"}` ends it (its members are terminated, the config's kill runs once; from the shell, `quecto container kill C1`). When the last member of an ordinary environment exits it tears itself down; a swarm container whose run has not been closed is `retained` (resumable) until `kill_container` / `quecto container kill`.
 
@@ -75,15 +75,15 @@ It resolves the effective config exactly as `spawn container: true` does, runs t
 
 ```
 container config "standard" (create: /repo/.quecto/containers/standard/scripts/create.sh --state-dir /home/me/.quecto/container-environments --repo https://github.com/org/app.git --image quecto-dev:local)
-  ✓ runtime-cli  podman at /usr/bin/podman
-  ✓ jq           jq at /usr/bin/jq
-  ✓ git          git at /usr/bin/git
-  ✓ gh           gh at /usr/bin/gh
-  ✓ image        image quecto-dev:local is present
-  ✓ image-base   image quecto-dev:local provides a shell and git
-  ✓ required-tools image quecto-dev:local declares no required tools (ai.quecto.required-tools is not set)   (or: provides the tools it declares: …)
-  ✓ repo         --repo https://github.com/org/app.git is reachable
-  ✓ state-dir    state dir /home/me/.quecto/container-environments is writable and owned by the current user   (or: will be created under writable /home/me/.quecto)
+  ✓ runtime-cli     podman at /usr/bin/podman
+  ✓ jq              jq at /usr/bin/jq
+  ✓ git             git at /usr/bin/git
+  ✓ gh              gh at /usr/bin/gh
+  ✓ image           image quecto-dev:local is present
+  ✓ image-base      image quecto-dev:local provides a shell and git
+  ✓ required-tools  image quecto-dev:local declares no required tools (ai.quecto.required-tools is not set)   (or: provides the tools it declares: …)
+  ✓ repo            --repo https://github.com/org/app.git is reachable
+  ✓ state-dir       state dir /home/me/.quecto/container-environments is writable and owned by the current user   (or: will be created under writable /home/me/.quecto)
 0 checks failed, 0 warnings
 ```
 
