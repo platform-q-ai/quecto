@@ -806,10 +806,15 @@ have named, `quecto-<environment_id>`).
 
 ## The standard container (`quecto container init`) (#2024 S4e)
 
-The supported way to give a repository a container is the standard bundle
-the binary carries: the official Docker/Podman adapter scripts (below) plus
-a Containerfile for the image they launch by default. `quecto container
-init` materialises it under the repository and binds the repository to it
+`standard` is the name of **each repository's own default container**: the
+one an agent grabs for this folder and this folder's needs. The bundle the
+binary carries is two things with two owners. The official Docker/Podman
+adapter scripts (below) are **quecto's**: trusted, language-neutral,
+versioned and integrity-checked. The Containerfile is **the project's**:
+init writes a neutral starter only where none exists, and from then on the
+file is yours to edit and commit — never counted as drift, never replaced,
+`--refresh` included. `quecto container
+init` materialises the bundle under the repository and binds the repository to it
 through the repo-local overlay; nothing is copied from the source tree and
 no config is hand-edited. Run it from the **repository root** (or pass
 `--project <root>`): the overlay is the working directory's own
@@ -831,13 +836,13 @@ step is a command with its expected output):
 | Preconditions | `git rev-parse --show-toplevel`; `podman --version` (or `docker`); `jq --version`; `git ls-remote --exit-code origin`; `quecto status` | the toplevel is `pwd`; the tools answer; `ls-remote` exits 0; `Overlay: none` or `(trusted)` |
 | 1. init | `quecto container init` (`--repo <url>`, `--image <tag>`, `--dry-run`) | `wrote …` × 5, `container config "standard" written as container_configs.standard in <repo>/.quecto/config.json (trusted for exactly these bytes)`, `default: true`, then `next:` with the build command |
 | 2. build | the printed `podman build -t quecto-dev:local -f <repo>/.quecto/containers/standard/Containerfile <repo>/.quecto/containers/standard` (skip when `status` already reports the image present) | `Successfully tagged localhost/quecto-dev:local` |
-| 3. verify | `quecto container status` | a header, the `assets/config/trust/image` lines (plus a `this repo's default` continuation, or a `note:` when the label was removed by hand), then `ready: spawn {"container":true} from an agent in this project`, exit 0 (exit 1 `not ready` while any file differs — a digest-pinned Containerfile included; then rely on the doctor) |
+| 3. verify | `quecto container status` | a header, the `assets/config/trust/image` lines (plus a `this repo's default` continuation, or a `note:` when the label was removed by hand), then `ready: spawn {"container":true} from an agent in this project`, exit 0 (exit 1 `not ready` while a script differs or a file is missing; the project's own Containerfile never counts) |
 | 4. doctor | `quecto container doctor` | every check `✓` (`gh` may be `!`), `0 checks failed`, exit 0 |
 | 5. spawn | from an agent in the repo: `spawn {"agent_id":"probe","task":"run pwd","container":true}` | `environment_ref=C1 container_config=standard` |
 | 6. inventory | `agent_cmd {"agent_id":"*","command":"get_containers"}` | the environment `running`, its `repository` |
 | 7. kill | `agent_cmd {"agent_id":"*","command":"kill_container","ref":"C1"}` | the environment gone from `get_containers` |
 | Rollback | `quecto config unset --local container_configs.standard`; `rm -r .quecto/containers/standard`; optionally `podman rmi quecto-dev:local` | `unset container_configs.standard in <repo>/.quecto/config.json (trusted)` |
-| Upgrade | `quecto container init --refresh`, rebuild if the Containerfile changed, `quecto container doctor` | each differing file `refreshed` |
+| Upgrade | `quecto container init --refresh`, `quecto container doctor` | each differing script `refreshed`; the Containerfile `kept … (this project's own; never replaced)` |
 
 Failures and their fixes are in the [troubleshooting runbook](#troubleshooting-runbook)
 below; the trust boundary and upgrade rules follow.
@@ -870,7 +875,10 @@ is written, so a refused init leaves the project untouched):
 3. Judges every destination under `<project>/.quecto/containers/standard/`
    — `Containerfile`, `scripts/create.sh`, `scripts/exec.sh`,
    `scripts/inspect.sh`, `scripts/kill.sh`: missing, identical to the
-   embedded bytes, or differing. A symbolic link in a file's place or in
+   embedded bytes, or differing. A differing **script** is drift (kept and
+   reported; a launch refuses it; `--refresh` restores it). A differing
+   **Containerfile** is the project's own: reported as `kept … (this
+   project's own; never replaced)`, by `--refresh` too. A symbolic link in a file's place or in
    any directory on the way from the project down (`.quecto`,
    `containers`, `standard`, `scripts`) is refused, not followed; `status`
    and `--dry-run` see the same and report it as `refused`.
@@ -952,7 +960,11 @@ image line carries the same refusal). Review a pulled change to
 An entry that names its own scripts elsewhere is vouched for by the
 overlay's trust alone: the integrity check is the standard bundle's, not
 a general one. The Containerfile is not a host-side script and is not
-checked at launch; `status` still reports it. The Containerfile pins its Debian base by digest and pins the Rust toolchain and Cargo helper versions. Upgrade those values only deliberately, rebuild the image, and run the documented development gates.
+checked at launch; it is the project's own file, so `status` lists it as
+`Containerfile: this project's own` (or `yours` beside a drifted script)
+and stays `ready`. Commit `.quecto/containers/standard/Containerfile` so the
+next agent in the folder builds the same container; the scripts and
+`.quecto/config.json` stay local (init materialises them).
 
 **Upgrades.** The comparison is against *this binary's* bundle, so a
 quecto that embeds a newer bundle than the one that materialised the
@@ -976,10 +988,15 @@ environment variables between an operator and a working container, and
 sat *before* the preflight, so `quecto container doctor` could never have
 reported on it. Pin a digest in `--image` if you want one.
 
-**Image contents.** A digest-pinned Debian trixie base with the shell,
-Git/GitHub, Python and everyday utilities plus the complete pinned Quecto
-development toolchain: Rust and Cargo, rustfmt, Clippy, LLVM tools,
-`cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, and `cargo-machete`.
+**Image contents.** The starter is tooling-neutral: a digest-pinned Debian
+trixie base with a shell, Git/GitHub, search (`ripgrep`, `fd`), `jq`, Python
+and a C toolchain for native dependencies — no language toolchain and no
+`ai.quecto.required-tools` label. It ends with a commented section showing
+where the project's toolchain and that label go. This repository's own
+container is the worked example: `.quecto/containers/standard/Containerfile`
+adds pinned Rust, Clippy, rustfmt, LLVM tools, `cargo-nextest`,
+`cargo-llvm-cov`, `cargo-deny` and `cargo-machete`, and declares those eight
+tools in its label.
 `ENTRYPOINT []` lets the create adapter's child argv remain the container's
 main process. The host
 `quecto` binary is identity-mounted, so the image retains a compatible glibc.
@@ -998,7 +1015,7 @@ knows no language. Two checks run the image (`run --rm --pull=never`):
   is on `PATH` and fails **naming the missing tool**, so an image that lost a
   tool is refused before an agent edits code. No label (or an empty one), no
   extra check. A label that is not a list of tool names is refused without
-  being run. The Containerfile above declares its eight Rust tools this way;
+  being run. Quecto's own Containerfile declares its eight Rust tools this way;
   a `--image` of your own is asked only for what *it* declares. A label is
   inherited through `FROM`: an image derived from this one keeps the Rust
   list unless it redeclares the label. An image built before the label
@@ -1007,8 +1024,7 @@ knows no language. Two checks run the image (`run --rm --pull=never`):
   back. It is skipped, and says so, while `image-base` fails.
 
 Both checks run the image as `run --rm <image> sh -c …`, exactly as a create
-runs the child: the image needs `ENTRYPOINT []` (as the Containerfile above
-declares) or an entrypoint that executes its arguments. One that ignores them
+runs the child: the image needs `ENTRYPOINT []` (as the starter declares) or an entrypoint that executes its arguments. One that ignores them
 answers for the probe, and for the agent.
 
 A probe the runtime could not run is reported as the runtime's failure, not
