@@ -22,6 +22,24 @@ fn run(admission_suffix: &str) -> (std::process::Output, PathBuf, String) {
     run_with_layout(admission_suffix, false)
 }
 
+fn assert_preflight_only(log: &Path) {
+    let calls = fs::read_to_string(log).expect("mandatory runtime preflight must be recorded");
+    let calls: Vec<_> = calls.lines().collect();
+    assert!(!calls.is_empty(), "mandatory runtime preflight must run");
+    assert!(
+        calls
+            .iter()
+            .all(|call| { call.starts_with("image exists ") || call.starts_with("run --rm ") }),
+        "rejected layout may invoke only allowlisted preflights, got:\n{calls}",
+        calls = calls.join("\n")
+    );
+}
+
+fn assert_state_empty(log: &Path) {
+    let state = log.parent().unwrap().join("state");
+    assert_eq!(fs::read_dir(state).unwrap().count(), 0);
+}
+
 fn run_with_layout(
     admission_suffix: &str,
     symlink_home: bool,
@@ -96,6 +114,23 @@ exit 125
 }
 
 #[test]
+fn rejection_oracles_detect_container_launch_and_state_allocation() {
+    let base = tempfile::tempdir().unwrap();
+    let log = base.path().join("runtime.log");
+    fs::write(
+        &log,
+        "image exists quecto-agent:latest\nrun --name forbidden\n",
+    )
+    .unwrap();
+    assert!(std::panic::catch_unwind(|| assert_preflight_only(&log)).is_err());
+
+    let state = base.path().join("state");
+    fs::create_dir(&state).unwrap();
+    fs::write(state.join("leaked-allocation"), "").unwrap();
+    assert!(std::panic::catch_unwind(|| assert_state_empty(&log)).is_err());
+}
+
+#[test]
 fn rejects_symlinked_home_when_admission_uses_canonical_spelling() {
     let (out, log, _) = run_with_layout(".quecto/admission/client", true);
     assert!(!out.status.success());
@@ -105,10 +140,8 @@ fn rejects_symlinked_home_when_admission_uses_canonical_spelling() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(
-        !log.exists(),
-        "runtime must not be invoked on rejected layout"
-    );
+    assert_preflight_only(&log);
+    assert_state_empty(&log);
 }
 
 #[test]
@@ -116,12 +149,8 @@ fn rejects_identity_root_client_before_allocating_environment() {
     let (out, log, _) = run(".quecto/client");
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("identity-mounted ~/.quecto itself"));
-    assert!(
-        !log.exists(),
-        "runtime must not be invoked on rejected layout"
-    );
-    let state = log.parent().unwrap().join("state");
-    assert_eq!(fs::read_dir(state).unwrap().count(), 0);
+    assert_preflight_only(&log);
+    assert_state_empty(&log);
 }
 
 #[test]
