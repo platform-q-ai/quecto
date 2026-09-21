@@ -783,12 +783,13 @@ snapshot, restored from a session or read from a coordination store.
   re-spawns the workers it needs with fresh identities. Session
   transitions settle the departing session's children first.
 - **Retained environment exception** (#1924, #2070): when a swarm
-  container's final member goes while its run has NOT ended — a lost
-  coordinator, a crash, a run paused holding an outcome nobody closed — the
+  container's final member goes while its owner has NOT ended the swarm — a
+  lost coordinator, a crash, the master's own shutdown, a run paused holding
+  an outcome nobody closed, a run its coordinator cancelled — the
   environment is *retained* (`metadata.retained` says why) rather than
   destroyed, so the run can be resumed; an explicit `kill_container` removes
-  it. A run its owner closed or cancelled, and the owner's own fleet teardown
-  (ordinary exit, delete-all, a session transition), remove the container.
+  it. A run the supervisor closed, and the owner's explicit teardown
+  (delete-all, a session transition), remove the container.
   `kill_container` asks every member to shut down first and runs the
   retained `kill` argv exactly once, only once all members settled.
 

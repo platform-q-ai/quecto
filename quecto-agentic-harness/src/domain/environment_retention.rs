@@ -20,10 +20,12 @@ pub enum MemberFinalizeMode {
     /// Parent-initiated termination of ONE member (`kill_container`, an
     /// operator kill): death by our own hand is not a post-mortem.
     ParentKill,
-    /// The owner is ending everything it owns (#2070): an ordinary exit,
-    /// delete-all, a session transition. Its swarms end with it, so nothing
-    /// is kept — whatever state their runs are in.
-    FleetTeardown,
+    /// The owner explicitly ended everything it owns (#2070): delete-all, a
+    /// session transition. Its swarms end with it, so nothing is kept —
+    /// whatever state their runs are in. A harness that is merely shutting
+    /// down (a signal, its last client gone, its parent lost) is NOT this:
+    /// that can be a crash, and stays a `ParentKill`.
+    OwnerTeardown,
     /// Rollback of a failed join into an environment someone else created.
     LaunchRollback,
     /// Rollback of the launch that created the environment: the environment
@@ -75,6 +77,19 @@ impl HostedSwarmRun {
             || (self.status == RunStatus::Paused && self.outcome.is_some_and(RunStatus::proposable))
     }
 
+    /// The run's owner closed it (#2070): the supervisor outside the swarm
+    /// made a held outcome terminal. `cancelled` is NOT this — the
+    /// coordinator agent writes it itself, and an agent never ends a swarm.
+    pub fn closed_by_owner(&self) -> bool {
+        self.status.proposable()
+    }
+
+    /// Whether an emptied environment hosting this run is kept: a created
+    /// run its owner has not closed can still be resumed.
+    pub fn keeps_environment(&self) -> bool {
+        self.created() && !self.closed_by_owner()
+    }
+
     /// Operator-facing description of the run's state.
     pub fn describe(&self) -> String {
         match (self.status, self.outcome) {
@@ -115,12 +130,14 @@ pub struct CoordinatorLoss {
 /// hosts a created swarm run is its coordinator (workers are the
 /// coordinator's in-container descendants, never members of the supervising
 /// session's environment record). A swarm's container lives as long as the
-/// swarm and no longer. A swarm ends only when its owner says so — the run
-/// closed into an outcome, cancelled, or the owner tearing down everything
-/// it owns — and then the box, its checkout and its board go with it. A
-/// crash, a lost coordinator or an agent that exited does NOT end the run:
-/// the box is kept so the run can be resumed, for the member's own exit and
-/// for a supervisor's `kill` of that one member alike. A launch rollback
+/// swarm and no longer. A swarm ends only when its owner says so — the
+/// supervisor closing the run into its outcome, or the owner explicitly
+/// tearing down everything it owns — and then the box, its checkout and its
+/// board go with it. A crash, a lost coordinator, an agent that exited or a
+/// coordinator that cancelled its own run does NOT end the swarm: the box is
+/// kept so the run can be resumed, for the member's own exit, for a
+/// supervisor's `kill` of that one member and for a harness shutdown (which
+/// may be a crash) alike. A launch rollback
 /// (nothing to keep) keeps its cleanup. A store that exists but cannot be
 /// read is kept too: it is never proof the run ended, and an explicit kill
 /// can always remove it later, while a destroyed box cannot be recovered.
@@ -128,7 +145,7 @@ pub fn retains_environment(mode: MemberFinalizeMode, observed: &SwarmRunObservat
     mode.inspectable_end()
         && match observed {
             SwarmRunObservation::NoStore => false,
-            SwarmRunObservation::Run(hosted) => hosted.created() && !hosted.status.terminal(),
+            SwarmRunObservation::Run(hosted) => hosted.keeps_environment(),
             SwarmRunObservation::Unreadable(_) => true,
         }
 }

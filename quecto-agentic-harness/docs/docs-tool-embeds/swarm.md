@@ -38,7 +38,8 @@ containers to evade its limit. See `docs {"name":"subagents"}` for launching.
   Verify: the spawn result names `container_config=standard`; the
   coordinator's `swarm op=create` succeeds; `agent_cmd get_containers` lists
   the environment `running`. Rollback: `kill_container` or `quecto container kill <ref|name>`
-  (the container is `retained` after a run ends and needs one of them;
+  (until the supervisor closes the run its container is `retained` when the
+  coordinator goes, and needs one of them;
   `quecto container gc` sweeps exited leftovers), then the container-runtime
   rollback if the repo should lose its config.
 
@@ -242,13 +243,13 @@ immediate terminal transition. `status` also reports `resume_blockers`: what a
 resume would refuse on right now (a passed deadline, a spent budget, or a lost
 coordinator).
 
-A swarm container lives as long as its swarm. The swarm ends when you
-`close` or `cancel_run` it, or when the master exits normally (or you
-delete all sub-agents, or start a new session): the container, board and
-checkout are then removed once its coordinator is gone. Until then a
-coordinator that exits, crashes or is `kill`ed leaves the environment
-`retained` (`get_containers` lists it) so the run can be resumed;
-`kill_container` removes it. `metadata.retained` reads `run ended: <outcome>; ...`
+A swarm container lives as long as its swarm. The swarm ends when the
+supervisor `close`s it, or when its owner deletes all sub-agents or starts a
+new session: the container, board and checkout are then removed once its
+coordinator is gone. Nothing else ends it — a coordinator that exits,
+crashes, is `kill`ed or cancels its own run, and the master shutting down,
+leave the environment `retained` (`get_containers` lists it) so the run can
+be resumed; `kill_container` removes it. `metadata.retained` reads `run ended: <outcome>; ...`
 after an orderly end you have not closed yet (the run is untouched), or names the lost coordinator
 when the socket closed on a running (or outcome-less paused) run: that run
 is paused holding `failed` and `resume_blockers` names the coordinator to

@@ -228,15 +228,28 @@ async fn drive(guard: RunGuard, reason: ShutdownReason) {
     }));
 }
 
+/// Why the fleet is going (#2070). `OperatorRequest` is what the two explicit
+/// owner acts ask with — delete-all and a session transition — and only those
+/// end the owner's swarms. Every other reason is the harness shutting down,
+/// which can be a crash: it keeps a swarm that has not ended.
+fn fleet_cause(reason: ShutdownReason) -> TerminationCause {
+    match reason {
+        ShutdownReason::OperatorRequest => TerminationCause::OwnerTeardown,
+        ShutdownReason::ParentShutdown
+        | ShutdownReason::SelectedTermination
+        | ShutdownReason::ParentConnectionLost
+        | ShutdownReason::ParentNeverBound
+        | ShutdownReason::TerminationSignal => TerminationCause::FleetTeardown,
+    }
+}
+
 impl Inner {
     async fn settle_child(
         &self,
         child: DelegatedAgentIdentity,
         reason: ShutdownReason,
     ) -> ChildSettlement {
-        self.settle
-            .settle(child, reason, TerminationCause::FleetTeardown)
-            .await
+        self.settle.settle(child, reason, fleet_cause(reason)).await
     }
 }
 

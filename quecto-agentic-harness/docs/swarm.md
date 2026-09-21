@@ -322,23 +322,24 @@ process-group/session escapes.
 Reconciliation preserves readable partial progress and retains uncertain ownership. Keep the coordinator available to report to the parent.
 
 A swarm container lives as long as its swarm, and no longer (#1924, #2070).
-A swarm ends only when its owner says so: the run is closed into its outcome
-(`swarm_control close`), cancelled (`cancel_run`), or the owner tears down
-everything it owns — an ordinary exit of the master (`/exit`, Ctrl+D),
-delete-all, or a session transition. When the swarm has ended, the final
-member's exit removes the container, its checkout and its board with the
-retained `kill`, exactly as for an ordinary container; nothing is kept.
+A swarm ends only when its owner says so: the supervisor outside the swarm
+closes the run into its outcome (`swarm_control close`), or the owner
+explicitly tears down everything it owns — delete-all, or a session
+transition (`/new`, `/resume`). When the swarm has ended, the final member's
+exit removes the container, its checkout and its board with the retained
+`kill`, exactly as for an ordinary container; nothing is kept.
 
-A crash, a lost coordinator, or an agent that failed or exited does NOT end
-the swarm. While the run has not ended — `running`, `paused`, or paused
-holding an outcome its owner has not closed yet — the final member's exit
-(and an `agent_cmd kill` of that one member) withholds the teardown: the
-record becomes `retained`, so the board, checkout and unpushed branches
-survive and the run can be resumed. A retained container is removed by an
-explicit `kill_container` (from the host master or a later session). A
-master that is killed without running its shutdown tears nothing down, so
-its swarms stay resumable. A store that exists but cannot be read is kept
-too: it is never proof that the run ended.
+Nothing else ends a swarm. While its run has not been closed — `running`,
+`paused`, paused holding an outcome nobody closed yet, or `cancelled` (the
+coordinator agent cancels its own run; an agent never ends a swarm) — the
+final member's exit withholds the teardown: the record becomes `retained`,
+so the board, checkout and unpushed branches survive and the run can be
+resumed. That holds for a crash, a lost coordinator, an `agent_cmd kill` of
+that one member, and the master's own shutdown, which can be a crash too (a
+termination signal, its last client gone, a lost parent). A retained
+container is removed by an explicit `kill_container` (from the host master
+or a later session). A store that exists but cannot be read is kept as well:
+it is never proof that the run ended.
 
 When the
 coordinator's socket closes after an orderly end (the run already paused

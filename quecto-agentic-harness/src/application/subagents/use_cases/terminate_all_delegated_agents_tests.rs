@@ -94,8 +94,8 @@ async fn every_direct_child_is_claimed_asked_concluded_and_compensated_then_tomb
     assert_eq!(
         rig.fleet.compensation.calls(),
         [
-            (identity("A", 1), TerminationCause::FleetTeardown),
-            (identity("D", 1), TerminationCause::FleetTeardown)
+            (identity("A", 1), TerminationCause::OwnerTeardown),
+            (identity("D", 1), TerminationCause::OwnerTeardown)
         ]
     );
     // Per child: claim before the edge, terminal claim before compensation.
@@ -238,7 +238,7 @@ async fn a_slow_child_bounds_the_run_without_blocking_its_siblings() {
     assert!(!run.is_finished(), "the run waits for A");
     assert_eq!(
         rig.fleet.registry.phase("A"),
-        Phase::Stopping(TerminationCause::FleetTeardown)
+        Phase::Stopping(TerminationCause::OwnerTeardown)
     );
     rig.fleet.termination.gate.notify_one();
     let outcome = bounded(run).await.unwrap().unwrap();
@@ -643,4 +643,29 @@ fn a_zero_bound_is_refused() {
         },
         0,
     );
+}
+
+#[test]
+fn only_an_explicit_owner_act_ends_the_owners_swarms() {
+    // #2070: delete-all and a session transition ask with `OperatorRequest`.
+    // Every other reason is the harness shutting down — a signal, its last
+    // client gone, a lost parent — which can be a crash: it must keep a swarm
+    // that has not ended.
+    assert_eq!(
+        fleet_cause(ShutdownReason::OperatorRequest),
+        TerminationCause::OwnerTeardown
+    );
+    for reason in [
+        ShutdownReason::ParentShutdown,
+        ShutdownReason::TerminationSignal,
+        ShutdownReason::ParentConnectionLost,
+        ShutdownReason::ParentNeverBound,
+        ShutdownReason::SelectedTermination,
+    ] {
+        assert_eq!(
+            fleet_cause(reason),
+            TerminationCause::FleetTeardown,
+            "{reason:?} may be a crash"
+        );
+    }
 }

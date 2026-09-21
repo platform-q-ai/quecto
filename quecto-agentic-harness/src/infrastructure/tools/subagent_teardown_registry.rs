@@ -298,6 +298,7 @@ fn intent_of(cause: TerminationCause) -> TeardownIntent {
         TerminationCause::Exit(_) => TeardownIntent::Exit,
         TerminationCause::SelectedTermination => TeardownIntent::SelectedTermination,
         TerminationCause::FleetTeardown => TeardownIntent::FleetTeardown,
+        TerminationCause::OwnerTeardown => TeardownIntent::OwnerTeardown,
         TerminationCause::EnvironmentKill => TeardownIntent::EnvironmentKill,
         TerminationCause::LaunchRollback { owns_environment } => {
             TeardownIntent::LaunchRollback { owns_environment }
@@ -317,6 +318,9 @@ fn effective_cause(entry: &SubagentEntry, cause: TerminationCause) -> Terminatio
         (TeardownPhase::Compensating(TeardownIntent::FleetTeardown), TerminationCause::Exit(_)) => {
             TerminationCause::FleetTeardown
         }
+        (TeardownPhase::Compensating(TeardownIntent::OwnerTeardown), TerminationCause::Exit(_)) => {
+            TerminationCause::OwnerTeardown
+        }
         (
             TeardownPhase::Compensating(TeardownIntent::EnvironmentKill),
             TerminationCause::Exit(_),
@@ -335,12 +339,15 @@ fn effective_cause(entry: &SubagentEntry, cause: TerminationCause) -> Terminatio
 fn finalize_mode(cause: TerminationCause) -> FinalizeMode {
     match cause {
         TerminationCause::Exit(_) => FinalizeMode::Exit,
-        TerminationCause::SelectedTermination | TerminationCause::EnvironmentKill => {
-            FinalizeMode::ParentKill
-        }
-        // #2070: an ordinary exit, delete-all or a session transition ends
-        // the swarms the owner holds; their containers are not kept.
-        TerminationCause::FleetTeardown => FinalizeMode::FleetTeardown,
+        // A harness shutdown can be a crash (a signal, its last client gone,
+        // a lost parent): like a kill of one member, it keeps a swarm that
+        // has not ended (#2070).
+        TerminationCause::SelectedTermination
+        | TerminationCause::FleetTeardown
+        | TerminationCause::EnvironmentKill => FinalizeMode::ParentKill,
+        // #2070: delete-all or a session transition is the owner ending the
+        // swarms it holds; their containers are not kept.
+        TerminationCause::OwnerTeardown => FinalizeMode::OwnerTeardown,
         TerminationCause::LaunchRollback {
             owns_environment: true,
         } => FinalizeMode::LaunchRollbackOwned,
@@ -359,6 +366,7 @@ fn exit_kind(cause: TerminationCause) -> ExitSignalKind {
         TerminationCause::Exit(ExitObservation::NeverReachable) => ExitSignalKind::NeverReachable,
         TerminationCause::SelectedTermination
         | TerminationCause::FleetTeardown
+        | TerminationCause::OwnerTeardown
         | TerminationCause::EnvironmentKill
         | TerminationCause::LaunchRollback { .. } => ExitSignalKind::Terminated,
     }

@@ -22,11 +22,11 @@ fn with_status(status: RunStatus, outcome: Option<RunStatus>) -> HostedSwarmRun 
     }
 }
 
-const ENDED: [RunStatus; 5] = [
+/// The outcomes only the supervisor outside the swarm can make terminal.
+const CLOSED_BY_OWNER: [RunStatus; 4] = [
     RunStatus::Succeeded,
     RunStatus::Blocked,
     RunStatus::Failed,
-    RunStatus::Cancelled,
     RunStatus::BudgetExhausted,
 ];
 
@@ -42,6 +42,9 @@ fn a_run_that_has_not_ended_keeps_its_environment() {
             with_status(RunStatus::Paused, None),
             with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
             with_status(RunStatus::Paused, Some(RunStatus::Failed)),
+            // The coordinator agent writes `cancelled` itself: an agent
+            // never ends a swarm, so its box is kept like any other.
+            with_status(RunStatus::Cancelled, None),
         ] {
             assert!(
                 retains_environment(mode, &SwarmRunObservation::Run(run.clone())),
@@ -57,11 +60,13 @@ fn a_run_that_has_not_ended_keeps_its_environment() {
 }
 
 #[test]
-fn a_run_its_owner_ended_gives_its_environment_up() {
-    // #2070: the container lives as long as the swarm and no longer. Closed
-    // into an outcome, or cancelled: the final member's end tears it down.
+fn a_run_its_owner_closed_gives_its_environment_up() {
+    // #2070: the container lives as long as the swarm and no longer. Only the
+    // supervisor can close a run into its outcome; then the final member's
+    // end tears the box down.
     for mode in [MemberFinalizeMode::Exit, MemberFinalizeMode::ParentKill] {
-        for status in ENDED {
+        for status in CLOSED_BY_OWNER {
+            assert!(with_status(status, None).closed_by_owner());
             assert!(
                 !retains_environment(mode, &SwarmRunObservation::Run(with_status(status, None))),
                 "{mode:?} on a {status:?} run must not retain"
@@ -71,10 +76,10 @@ fn a_run_its_owner_ended_gives_its_environment_up() {
 }
 
 #[test]
-fn an_owners_fleet_teardown_ends_every_swarm_it_owns() {
-    // #2070: an ordinary exit, delete-all or a session transition is the
-    // owner saying "done" — whatever the run's state, even an unreadable one.
-    let mode = MemberFinalizeMode::FleetTeardown;
+fn an_owners_explicit_teardown_ends_every_swarm_it_owns() {
+    // #2070: delete-all or a session transition is the owner saying "done" —
+    // whatever the run's state, even an unreadable one.
+    let mode = MemberFinalizeMode::OwnerTeardown;
     assert!(!mode.inspectable_end());
     assert!(
         !mode.launch_rollback(),
@@ -216,4 +221,24 @@ fn hosted_run_created_and_ended_follow_the_run_status() {
     assert!(!MemberFinalizeMode::LaunchRollback.inspectable_end());
     assert!(MemberFinalizeMode::LaunchRollbackOwned.launch_rollback());
     assert!(!MemberFinalizeMode::Exit.launch_rollback());
+}
+
+#[test]
+fn only_the_owners_close_counts_as_closed() {
+    assert!(!running_swarm().closed_by_owner());
+    assert!(!with_status(RunStatus::Paused, Some(RunStatus::Succeeded)).closed_by_owner());
+    assert!(
+        !with_status(RunStatus::Cancelled, None).closed_by_owner(),
+        "the coordinator cancels its own run"
+    );
+    assert!(with_status(RunStatus::Cancelled, None).keeps_environment());
+    assert!(!with_status(RunStatus::Succeeded, None).keeps_environment());
+    let placeholder = HostedSwarmRun {
+        deadline: 0.0,
+        ..running_swarm()
+    };
+    assert!(
+        !placeholder.keeps_environment(),
+        "no swarm was ever created"
+    );
 }
