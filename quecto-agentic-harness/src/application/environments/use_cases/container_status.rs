@@ -46,10 +46,13 @@ impl ContainerStatus {
         let assets_dir = project.join(STANDARD_CONTAINER_DIR);
         let catalogue = self.assets.catalogue();
         let mut asset_diagnostics = Vec::new();
+        let mut projects_own = Vec::new();
+        let mut drifted = Vec::new();
         let assets = catalogue
             .assets
             .iter()
             .map(|asset| {
+                let path = assets_dir.join(&asset.path);
                 let state = match self.assets.observe(project, &assets_dir, asset) {
                     Ok(state) => state,
                     // A destination that cannot be judged (a symbolic
@@ -60,7 +63,13 @@ impl ContainerStatus {
                         AssetState::Refused
                     }
                 };
-                (assets_dir.join(&asset.path), state)
+                if asset.is_projects_own(state) {
+                    projects_own.push(path.clone());
+                }
+                if asset.is_drift(state) {
+                    drifted.push(path.clone());
+                }
+                (path, state)
             })
             .collect();
         let (entry, overlay_withheld, mut diagnostics) = match self.roster.roster() {
@@ -105,6 +114,8 @@ impl ContainerStatus {
             assets_dir,
             version: catalogue.version,
             assets,
+            projects_own,
+            drifted,
             entry,
             standard_default,
             overlay_withheld,

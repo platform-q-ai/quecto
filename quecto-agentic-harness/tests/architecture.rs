@@ -461,6 +461,9 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     // The standard bundle (#2024 S4e): the embedded asset
                     // store answers in the capability's asset vocabulary.
                     | "AssetOutcome"
+                    // Whose file an asset is (#2073): a field of the
+                    // catalogue entries the store builds.
+                    | "AssetOwnership"
                     | "AssetState"
                     | "ContainerAsset"
                     | "ContainerAssetCatalogue"

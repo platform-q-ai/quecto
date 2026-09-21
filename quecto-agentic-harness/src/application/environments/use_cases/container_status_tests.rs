@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use super::ContainerStatus;
 use crate::application::environments::dto::{
-    AssetOutcome, AssetState, CheckStatus, ContainerAsset, ContainerAssetCatalogue,
+    AssetOutcome, AssetOwnership, AssetState, CheckStatus, ContainerAsset, ContainerAssetCatalogue,
     ContainerConfigEntry, ContainerConfigLayer, ContainerRuntimeTarget, DiagnosableContainerConfig,
     PreflightCheck, StandardDefault,
 };
@@ -12,6 +12,8 @@ use crate::application::environments::ports::{
     ContainerRuntimePreflight,
 };
 
+/// Asset `a{i}` is observed as the i-th state. `a0` stands for the
+/// Containerfile (the project's); the rest are the bundle's scripts.
 struct FixedAssets(Vec<AssetState>);
 
 impl ContainerAssetStore for FixedAssets {
@@ -27,6 +29,11 @@ impl ContainerAssetStore for FixedAssets {
                     path: format!("a{i}"),
                     contents: vec![],
                     executable: false,
+                    ownership: if i == 0 {
+                        AssetOwnership::Project
+                    } else {
+                        AssetOwnership::Bundle
+                    },
                 })
                 .collect(),
         }
@@ -157,6 +164,47 @@ fn a_complete_setup_is_healthy_and_the_image_check_comes_from_the_entrys_preflig
             name: Some("standard".into())
         }
     );
+}
+
+#[test]
+fn the_projects_own_containerfile_is_present_and_is_not_drift() {
+    let build = |states: Vec<AssetState>| {
+        ContainerStatus::new(
+            Arc::new(FixedAssets(states)),
+            Arc::new(FixedRoster(Ok(ContainerConfigRosterReport {
+                configs: vec![entry("standard", ContainerConfigLayer::Overlay)],
+                ..Default::default()
+            }))),
+            Arc::new(RecordingLookup {
+                answer: Ok(config()),
+                seen: Mutex::new(vec![]),
+            }),
+            Arc::new(FixedPreflight(Ok(vec![check(
+                "image",
+                CheckStatus::Passed,
+            )]))),
+        )
+        .execute(Path::new("/p"))
+    };
+    // a0 is the Containerfile: the project's version is not drift.
+    let own = build(vec![AssetState::Differs, AssetState::Identical]);
+    assert_eq!(own.assets_present(), 2);
+    assert_eq!(own.assets_differing(), 0);
+    assert_eq!(
+        own.projects_own,
+        [PathBuf::from("/p/.quecto/containers/standard/a0")]
+    );
+    assert!(own.healthy());
+    // a1 is a script: other bytes there are still drift.
+    let drift = build(vec![AssetState::Identical, AssetState::Differs]);
+    assert_eq!(drift.assets_differing(), 1);
+    assert_eq!(
+        drift.drifted,
+        [PathBuf::from("/p/.quecto/containers/standard/a1")]
+    );
+    assert!(own.drifted.is_empty());
+    assert!(drift.projects_own.is_empty());
+    assert!(!drift.healthy());
 }
 
 #[test]

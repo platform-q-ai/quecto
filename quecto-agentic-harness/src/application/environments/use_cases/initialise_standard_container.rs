@@ -20,8 +20,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::application::environments::dto::{
-    AssetOutcome, AssetState, ContainerAsset, ContainerConfigDocument, ContainerConfigLayer,
-    EntryValueChange, InitialiseStandardContainerError, RepositoryOrigin,
+    AssetOutcome, AssetOwnership, AssetState, ContainerAsset, ContainerConfigDocument,
+    ContainerConfigLayer, EntryValueChange, InitialiseStandardContainerError, RepositoryOrigin,
     STANDARD_CONTAINER_CONFIG, STANDARD_CONTAINER_DIR, STANDARD_CONTAINER_IMAGE,
     StandardContainerReport, StandardContainerRequest, StandardEntryOutcome,
 };
@@ -210,12 +210,14 @@ impl InitialiseStandardContainer {
         let mut kept = Vec::new();
         let mut differing = Vec::new();
         let mut refreshed = Vec::new();
+        let mut own = Vec::new();
         for (asset, state) in catalogue.assets.iter().zip(observed) {
             let path = assets_dir.join(&asset.path);
             let outcome = if request.dry_run {
                 match state {
                     AssetState::Missing => AssetOutcome::Written,
                     AssetState::Identical => AssetOutcome::KeptIdentical,
+                    AssetState::Differs if asset.is_projects_own(state) => AssetOutcome::KeptOwn,
                     AssetState::Differs if request.refresh => AssetOutcome::Refreshed,
                     AssetState::Differs => AssetOutcome::KeptDiffering,
                     AssetState::Refused => {
@@ -228,11 +230,27 @@ impl InitialiseStandardContainer {
                 }
             } else {
                 let store = &self.assets;
-                if request.refresh {
+                // Only the bundle's own files are ever replaced: a
+                // project-owned one is written when missing and otherwise
+                // left alone, whatever the run.
+                let replace = request.refresh && asset.ownership == AssetOwnership::Bundle;
+                if replace {
                     store.refresh(&request.project, &assets_dir, asset)
                 } else {
                     store.materialise(&request.project, &assets_dir, asset)
                 }
+                .map(|outcome| match (asset.ownership, outcome) {
+                    (AssetOwnership::Project, AssetOutcome::KeptDiffering) => AssetOutcome::KeptOwn,
+                    (AssetOwnership::Project | AssetOwnership::Bundle, outcome) => outcome,
+                })
+                .inspect(|outcome| {
+                    assert!(
+                        asset.ownership == AssetOwnership::Bundle
+                            || *outcome != AssetOutcome::Refreshed,
+                        "a project-owned asset was replaced: {}",
+                        asset.path
+                    );
+                })
                 .map_err(|reason| InitialiseStandardContainerError::Asset {
                     path: path.clone(),
                     reason,
@@ -244,6 +262,7 @@ impl InitialiseStandardContainer {
                 AssetOutcome::KeptIdentical => kept.push(path),
                 AssetOutcome::KeptDiffering => differing.push(path),
                 AssetOutcome::Refreshed => refreshed.push(path),
+                AssetOutcome::KeptOwn => own.push(path),
             }
         }
 
@@ -255,6 +274,7 @@ impl InitialiseStandardContainer {
             kept,
             differing,
             refreshed,
+            own,
             repository,
             repository_origin,
             repository_change,
@@ -373,6 +393,9 @@ impl std::fmt::Debug for InitialiseStandardContainer {
     }
 }
 
+#[cfg(test)]
+#[path = "initialise_standard_container_ownership_tests.rs"]
+mod ownership_tests;
 #[cfg(test)]
 #[path = "initialise_standard_container_review_tests.rs"]
 mod review_tests;

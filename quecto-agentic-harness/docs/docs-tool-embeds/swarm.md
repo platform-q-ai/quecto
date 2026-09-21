@@ -33,7 +33,7 @@ containers to evade its limit. See `docs {"name":"subagents"}` for launching.
   `QUECTO_SWARM_CONTAINER=isolated-pid-v1` and the checkout): follow
   `docs {"name": "container-runtime"}` until `quecto container doctor` exits 0
   and `quecto container status` reports the image present (its last line is
-  `ready:` unless you deliberately edited the Containerfile), then spawn the
+  `ready:`), then spawn the
   coordinator with `"container":{"mode":"new","container_config":"standard"}`.
   Verify: the spawn result names `container_config=standard`; the
   coordinator's `swarm op=create` succeeds; `agent_cmd get_containers` lists

@@ -379,15 +379,8 @@ pub const STANDARD_CONTAINER_IMAGE: &str = "quecto-dev:local";
 /// materialised here and the config entry's argv names them here.
 pub const STANDARD_CONTAINER_DIR: &str = ".quecto/containers/standard";
 
-/// One file of the embedded standard bundle.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContainerAsset {
-    /// Relative to the bundle directory (`Containerfile`,
-    /// `scripts/create.sh`).
-    pub path: String,
-    pub contents: Vec<u8>,
-    pub executable: bool,
-}
+mod assets;
+pub use assets::{AssetOutcome, AssetOwnership, AssetState, ContainerAsset};
 
 /// The embedded bundle this binary carries, with its version and the
 /// command that builds its image (a template over `{image}` and `{dir}`,
@@ -425,30 +418,6 @@ pub fn shell_word(value: &str) -> String {
     } else {
         format!("'{}'", value.replace('\'', "'\\''"))
     }
-}
-
-/// What an asset's destination holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AssetState {
-    Missing,
-    /// The file exists with exactly the embedded bytes.
-    Identical,
-    /// The file exists with other bytes (an edit, an older version).
-    Differs,
-    /// The destination cannot be judged or written through (a symbolic
-    /// link, a directory in a file's place); init refuses it.
-    Refused,
-}
-
-/// What materialising one asset did: an existing file is never replaced
-/// unless the run is a refresh.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AssetOutcome {
-    Written,
-    KeptIdentical,
-    KeptDiffering,
-    /// A differing file was replaced with the embedded bytes (`--refresh`).
-    Refreshed,
 }
 
 /// `quecto container init` as the use case receives it.
@@ -560,6 +529,9 @@ pub struct StandardContainerReport {
     pub differing: Vec<std::path::PathBuf>,
     /// Differing files replaced with the embedded bytes (`--refresh`).
     pub refreshed: Vec<std::path::PathBuf>,
+    /// Project-owned files holding the project's own version: kept, never
+    /// drift, never refreshed.
+    pub own: Vec<std::path::PathBuf>,
     pub repository: Option<String>,
     pub repository_origin: RepositoryOrigin,
     pub image: String,
@@ -695,6 +667,11 @@ pub struct StandardContainerStatus {
     pub assets_dir: std::path::PathBuf,
     pub version: u32,
     pub assets: Vec<(std::path::PathBuf, AssetState)>,
+    /// Of `assets`, the project-owned files holding the project's own
+    /// version: present, and never drift.
+    pub projects_own: Vec<std::path::PathBuf>,
+    /// Of `assets`, the bundle-owned files holding other bytes: drift.
+    pub drifted: Vec<std::path::PathBuf>,
     /// The `standard` entry of the effective set, when present.
     pub entry: Option<ContainerConfigEntry>,
     /// What that entry is to `container: true` here; `None` without one.
@@ -720,15 +697,18 @@ impl StandardContainerStatus {
             .count()
     }
 
+    /// Bundle-owned files with other bytes: drift. The project's own
+    /// Containerfile is not.
     pub fn assets_differing(&self) -> usize {
-        self.assets
-            .iter()
-            .filter(|(_, state)| *state == AssetState::Differs)
-            .count()
+        self.drifted.len()
     }
 
-    /// Everything a container spawn needs is in place: every asset as
-    /// embedded, the entry present, the overlay applied, the image
+    pub fn is_projects_own(&self, path: &std::path::Path) -> bool {
+        self.projects_own.iter().any(|own| own == path)
+    }
+
+    /// Everything a container spawn needs is in place: every asset present
+    /// and no script drifted, the entry present, the overlay applied, the image
     /// present and passing every image check.
     pub fn healthy(&self) -> bool {
         self.assets_present() == self.assets.len()

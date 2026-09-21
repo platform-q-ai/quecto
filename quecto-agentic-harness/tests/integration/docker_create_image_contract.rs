@@ -441,20 +441,14 @@ fn a_real_create_dies_with_the_checks_exit_code_before_allocating_anything() {
     }
 }
 
-/// The shipped Containerfile keeps the check this repository had before the
+/// This repository's own Containerfile keeps the check it had before the
 /// doctor went neutral: deleting the label, or mistyping a name in it, would
 /// otherwise leave the doctor green with "declares no required tools".
 #[test]
-fn the_shipped_containerfile_declares_its_eight_rust_tools() {
-    let containerfile = fs::read_to_string(
-        root().join("quecto-agentic-harness/assets/standard-container/Containerfile"),
-    )
-    .unwrap();
-    let declared: Vec<&str> = containerfile
-        .lines()
-        .filter_map(|line| line.strip_prefix("LABEL ai.quecto.required-tools=\""))
-        .map(|rest| rest.strip_suffix('"').expect("a one-line quoted label"))
-        .collect();
+fn quectos_own_containerfile_declares_its_eight_rust_tools() {
+    let containerfile =
+        fs::read_to_string(root().join(".quecto/containers/standard/Containerfile")).unwrap();
+    let declared = declared_tools(&containerfile);
     assert_eq!(
         declared,
         ["cargo rustc rustfmt cargo-clippy cargo-nextest cargo-llvm-cov cargo-deny cargo-machete"]
@@ -466,4 +460,52 @@ fn the_shipped_containerfile_declares_its_eight_rust_tools() {
         ..Image::default()
     });
     assert_eq!(run.status, 0, "{}", run.checks);
+}
+
+/// The starter `quecto container init` writes into any project is neutral:
+/// its whole instruction list is an allowlist — the pinned Debian base, one
+/// `RUN` installing exactly the general agent tooling #2073 lists, no
+/// promised tool, and the adapter's entrypoint contract. Anything else (a
+/// language base image, a second install step, a `COPY`) fails here.
+#[test]
+fn the_starter_containerfile_is_tooling_neutral() {
+    const INSTRUCTIONS: &[&str] = &[
+        "FROM docker.io/library/debian@sha256:abc9cb88a5587630d7f915f47b23b0668fe250fbfc6457aa4d52b534c1bbf73f",
+        "ARG DEBIAN_FRONTEND=noninteractive",
+        "LABEL org.opencontainers.image.title=\"Project development container\"",
+        "RUN apt-get update \
+         && apt-get install --no-install-recommends --yes \
+         bash build-essential ca-certificates coreutils curl fd-find findutils \
+         git gh grep jq less openssh-client procps python3 python3-venv ripgrep sed \
+         && rm -rf /var/lib/apt/lists/* \
+         && ln -sf /usr/bin/fdfind /usr/local/bin/fd",
+        "ENTRYPOINT []",
+        "CMD []",
+        "WORKDIR /workspace",
+    ];
+    let starter = fs::read_to_string(
+        root().join("quecto-agentic-harness/assets/standard-container/Containerfile"),
+    )
+    .unwrap();
+    // Instructions only, continuation lines joined, whitespace squeezed.
+    let instructions: Vec<String> = starter
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("\\\n", " ")
+        .lines()
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|line| !line.is_empty())
+        .collect();
+    assert_eq!(instructions, INSTRUCTIONS);
+}
+
+/// The values of every `LABEL ai.quecto.required-tools="…"` instruction.
+fn declared_tools(containerfile: &str) -> Vec<&str> {
+    containerfile
+        .lines()
+        .filter_map(|line| line.strip_prefix("LABEL ai.quecto.required-tools=\""))
+        .map(|rest| rest.strip_suffix('"').expect("a one-line quoted label"))
+        .collect()
 }
