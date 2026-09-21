@@ -889,10 +889,17 @@ is written, so a refused init leaves the project untouched):
    for exactly the bytes written. Every argv names the materialised
    scripts by absolute path; `create` carries `--state-dir
    <base dir>/container-environments`, `--repo <url>` when there is one and
-   `--image quecto-<folder>:local` — named after the project folder
-   (lowercased; anything but letters, digits and a single `.` or `_`
-   becomes `-`), so two repositories on one machine never share a tag; an
-   existing entry keeps the tag it has — (or `--image` as given); `kill`/`cleanup`
+   `--image quecto-<folder>:local` (or `--image` as given) — named after
+   the project folder so repositories in differently named folders build
+   their own images: lowercased, ASCII letters and digits kept, a single
+   `.` or `_` between them kept, any other run a `-`, leading and trailing
+   runs dropped, at most 100 characters; a folder name with nothing
+   admissible gets the adapter's `quecto-dev:local`. Folders that share a
+   name share a tag, and **a git worktree is a different folder** (a
+   different tag, so another build unless the layer cache is warm): pass
+   `--image` to tell same-named repos apart or to make a worktree share the
+   main checkout's image. An existing entry keeps the tag it has (one with
+   no `--image` keeps the adapter's default); `kill`/`cleanup`
    carry `--op kill`/`--op cleanup`; no argv ends with `--` (the launcher
    appends it before the child command).
 5. Materialises the missing files (the scripts byte-identical to

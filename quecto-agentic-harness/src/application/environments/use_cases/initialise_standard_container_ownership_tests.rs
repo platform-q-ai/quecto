@@ -124,6 +124,23 @@ fn a_directory_name_becomes_a_valid_image_name() {
     let long = format!("/w/{}", "x".repeat(300));
     let image = standard_image_for(Path::new(&long));
     assert_eq!(image, format!("quecto-{}:local", "x".repeat(100)));
+    // The cap counts the joiner too, and a name never ends in one.
+    for (folder, name) in [
+        ("x".repeat(100), "x".repeat(100)),
+        ("x".repeat(101), "x".repeat(100)),
+        (format!("{}-y", "x".repeat(99)), "x".repeat(99)),
+        (
+            format!("{}-y", "x".repeat(98)),
+            format!("{}-y", "x".repeat(98)),
+        ),
+        (format!("{}---", "x".repeat(100)), "x".repeat(100)),
+    ] {
+        assert_eq!(
+            standard_image_for(Path::new(&format!("/w/{folder}"))),
+            format!("quecto-{name}:local"),
+            "{folder}"
+        );
+    }
 }
 
 #[test]
@@ -135,4 +152,32 @@ fn an_existing_entry_keeps_the_tag_it_has() {
     rig.use_case.execute(&first).unwrap();
     let again = rig.use_case.execute(&request("/work/shop-api")).unwrap();
     assert_eq!(again.image, STANDARD_CONTAINER_IMAGE);
+}
+
+#[test]
+fn an_existing_entry_with_no_image_flag_keeps_the_adapters_default() {
+    use crate::application::environments::dto::{
+        ContainerConfigDocument, EntryValueChange, STANDARD_CONTAINER_IMAGE,
+    };
+    // A hand-written or older entry: no --image, so it launches the adapter's
+    // own default. A re-init spells that out; it does not retag the entry to
+    // an image nobody has built.
+    let rig = rig_at("/work/shop-api");
+    rig.persistence.written.lock().unwrap().push((
+        "standard".into(),
+        ContainerConfigDocument {
+            default: true,
+            create: vec!["/old/create.sh".into()],
+            exec: vec![],
+            inspect: vec![],
+            kill: vec![],
+            cleanup: vec![],
+        },
+    ));
+    let report = rig.use_case.execute(&request("/work/shop-api")).unwrap();
+    assert_eq!(report.image, STANDARD_CONTAINER_IMAGE);
+    assert_eq!(
+        report.image_change,
+        Some(EntryValueChange::Rewrote { previous: None })
+    );
 }
