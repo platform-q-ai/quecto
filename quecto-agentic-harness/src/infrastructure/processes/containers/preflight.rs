@@ -27,8 +27,12 @@ use super::script_stderr::{ScriptStdout, run_sync_capturing_stderr_tail};
 /// The flag a conforming create script answers with its check lines.
 pub const PREFLIGHT_ONLY_FLAG: &str = "--preflight-only";
 
-/// Bound on one preflight run: the script's own repository probe is
-/// bounded well under this, so a hang here is a stuck runtime CLI.
+/// Bound on one preflight run. The official adapter makes five bounded
+/// probes (image lookup, the image's shell and git, its label, its declared
+/// tools, the repository), each `QUECTO_REPO_CHECK_TIMEOUT` seconds (15 by
+/// default): 75 s at worst, so a hang here is a stuck runtime CLI. An
+/// operator who raises that variable to 18 or more can outlast this bound;
+/// the refusal then carries the script's last words.
 const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// The checks every shipped create script (the host-local reference set

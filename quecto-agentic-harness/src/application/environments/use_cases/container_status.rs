@@ -13,8 +13,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::environments::dto::{
-    AssetState, ContainerConfigLayer, ContainerRuntimeTarget, STANDARD_CONTAINER_CONFIG,
-    STANDARD_CONTAINER_DIR, StandardContainerStatus, StandardDefault,
+    AssetState, CheckStatus, ContainerConfigLayer, ContainerRuntimeTarget,
+    STANDARD_CONTAINER_CONFIG, STANDARD_CONTAINER_DIR, StandardContainerStatus, StandardDefault,
 };
 use crate::application::environments::ports::{
     ContainerAssetStore, ContainerConfigLookup, ContainerConfigRoster, ContainerRuntimePreflight,
@@ -114,17 +114,32 @@ impl ContainerStatus {
         }
     }
 
-    /// The entry's create preflight, reduced to its `image` check.
+    /// The entry's create preflight, reduced to what it says of the image:
+    /// the first failed image check (the lookup, a shell and git, the tools
+    /// the image declares), or else the lookup itself. A script that reports
+    /// only `image` is judged on that alone.
     fn image_check(
         &self,
     ) -> Result<Option<crate::application::environments::dto::PreflightCheck>, String> {
         let config = self.lookup.lookup(&ContainerRuntimeTarget {
             name: Some(STANDARD_CONTAINER_CONFIG.to_string()),
         })?;
-        let checks = self.preflight.preflight(&config)?;
-        Ok(checks.into_iter().find(|check| check.name == "image"))
+        let mut image_checks: Vec<_> = self
+            .preflight
+            .preflight(&config)?
+            .into_iter()
+            .filter(|check| IMAGE_CHECKS.contains(&check.name.as_str()))
+            .collect();
+        let reported = image_checks
+            .iter()
+            .position(|check| check.status == CheckStatus::Failed)
+            .or_else(|| image_checks.iter().position(|check| check.name == "image"));
+        Ok(reported.map(|index| image_checks.swap_remove(index)))
     }
 }
+
+/// The create preflight's checks that judge the image itself.
+const IMAGE_CHECKS: &[&str] = &["image", "image-base", "required-tools"];
 
 impl std::fmt::Debug for ContainerStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
