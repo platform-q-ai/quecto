@@ -198,7 +198,10 @@ capability. Only admission operations are exposed through the mount; the
 journal, the admin socket and the owner token stay outside it. The bundled
 adapter also identity-mounts `$HOME/.quecto`; when the authority directory
 lives under it (the default `<base_dir>/admission`), the adapter masks the
-authority root with an empty tmpfs and re-exposes only `client/`.
+authority root with an owner-only host directory bound read-only — holding
+nothing but the pre-created `client/` mountpoint, which rootless Podman with
+`runc` cannot create beneath a read-only parent (#2068) — and re-exposes only
+`client/` read-write.
 
 ## Failure safety and recovery
 

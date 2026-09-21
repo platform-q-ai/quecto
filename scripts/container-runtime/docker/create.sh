@@ -403,22 +403,39 @@ if [ -n "$config_path" ]; then
 fi
 # Every die-able check precedes the environment mktemp below so a failed
 # create never leaks an unreported environment directory.
+#
+# The admission dir keeps its configured spelling for the record exec.sh
+# compares; every mount uses its lexical normal form (`admission_mount`), so
+# the path that is classified is the path that is mounted. A spelling is
+# admitted only when it is absolute, printable, and names the same real
+# directory as its normal form ('..' through a symbolic link does not).
 admission_dir="${QUECTO_ADMISSION_DIR:-}"
+admission_mount=""
+admission_root=""
+admission_leaf=""
+admission_masked=0
 if [ -n "$admission_dir" ]; then
   [ -d "$admission_dir" ] || die "QUECTO_ADMISSION_DIR '$admission_dir' is not a directory"
-  # Mount destinations are intentionally kept in their configured spelling.
-  # Admit only normalized absolute paths: /./, /../ or a trailing slash would
-  # classify one path while the runtime mounts another spelling.
-  case "$admission_dir" in
-  /*/ | */./* | */../* | */. | */..)
-    die "QUECTO_ADMISSION_DIR '$admission_dir' must be a normalized absolute path without '.', '..', or a trailing slash"
-    ;;
-  /*) ;;
-  *) die "QUECTO_ADMISSION_DIR '$admission_dir' must be an absolute path" ;;
-  esac
-  admission_root="$(dirname "$admission_dir")"
-  real_root="$(realpath -m "$admission_root")"
-  real_quecto="$(realpath -m "$HOME/.quecto")"
+  [[ "$admission_dir" == /* ]] || die "QUECTO_ADMISSION_DIR '$admission_dir' must be an absolute path"
+  [[ "$admission_dir" =~ ^[^[:cntrl:]]+$ ]] || die "QUECTO_ADMISSION_DIR must contain printable characters only"
+  [[ "$HOME" == /* && "$HOME" =~ ^[^[:cntrl:]]+$ ]] || die "HOME must be an absolute, printable path when QUECTO_ADMISSION_DIR is set"
+  admission_mount="$(realpath -ms -- "$admission_dir")"
+  [ "$(realpath -m -- "$admission_mount")" = "$(realpath -m -- "$admission_dir")" ] \
+    || die "QUECTO_ADMISSION_DIR '$admission_dir' does not name the same directory once normalized to '$admission_mount' ('..' through a symbolic link); spell it without '..'"
+  admission_root="$(dirname -- "$admission_mount")"
+  admission_leaf="$(basename -- "$admission_mount")"
+  # Exactly one client component beneath a parent: this is what is
+  # pre-created inside the mask and mounted read-write.
+  [ "${admission_root%/}/$admission_leaf" = "$admission_mount" ] \
+    || die "QUECTO_ADMISSION_DIR '$admission_dir' has an unsupported client leaf"
+  real_root="$(realpath -m -- "$admission_root")"
+  # The client leaf is a real directory of its parent. A symbolic link there
+  # would make the read-write mount expose whatever it points at — the
+  # authority itself, for `client -> .`.
+  [ "$(realpath -m -- "$admission_mount")" = "${real_root%/}/$admission_leaf" ] \
+    || die "QUECTO_ADMISSION_DIR '$admission_dir' is a symbolic link; the client directory must be a real directory of its authority"
+  home_quecto="$(realpath -ms -- "$HOME/.quecto")"
+  real_quecto="$(realpath -m -- "$HOME/.quecto")"
   case "$real_root" in
   "$real_quecto")
     die "QUECTO_ADMISSION_DIR parent '$admission_root' is the identity-mounted ~/.quecto itself; use a subdirectory"
@@ -432,11 +449,12 @@ if [ -n "$admission_dir" ]; then
     # spelling under an aliased HOME, or a symlink inside ~/.quecto — because
     # the mask would then sit beside the authority instead of over it.
     case "$admission_root" in
-    "$HOME/.quecto"/*) ;;
-    *) die "QUECTO_ADMISSION_DIR '$admission_dir' resolves inside ~/.quecto but is not spelled under '$HOME/.quecto'; the read-only mask would miss the identity mount — spell it under \$HOME/.quecto" ;;
+    "$home_quecto"/*) ;;
+    *) die "QUECTO_ADMISSION_DIR '$admission_dir' resolves inside ~/.quecto but is not spelled under '$home_quecto'; the read-only mask would miss the identity mount — spell it under \$HOME/.quecto" ;;
     esac
-    [ "${admission_root#"$HOME/.quecto"}" = "${real_root#"$real_quecto"}" ] \
+    [ "${admission_root#"$home_quecto"}" = "${real_root#"$real_quecto"}" ] \
       || die "QUECTO_ADMISSION_DIR '$admission_dir' reaches its authority through a symbolic link inside ~/.quecto; the read-only mask would miss the real directory"
+    admission_masked=1
     ;;
   /*) ;;
   *) die "QUECTO_ADMISSION_DIR '$admission_dir' has an unsupported parent path" ;;
@@ -493,27 +511,21 @@ fi
 # re-exposed underneath it.
 admission_capability=""
 if [ -n "$admission_dir" ]; then
-  # Resolved classification and all rejecting checks ran before mktemp; the
-  # mask itself stays at the validated spelled destination the child uses.
-  case "$real_root" in
-  "$real_quecto"/*)
-    # An empty owner-only host directory bound read-only over the authority
-    # root hides journal/admin/token identically under Docker and Podman
-    # (a tmpfs would be copied up by Podman); client/ is re-bound beneath it.
+  # Classification and every rejecting check ran before mktemp (a `die`
+  # here would leak the environment directory); only the mounts remain.
+  if [ "$admission_masked" = 1 ]; then
+    # An owner-only host directory bound read-only over the authority root
+    # hides journal/admin/token identically under Docker and Podman (a tmpfs
+    # would be copied up by Podman); client/ is re-bound beneath it. The
+    # client mountpoint is created before the parent becomes read-only:
+    # rootless Podman with runc cannot manufacture a nested bind destination
+    # afterwards (#2068).
     mask_dir="$env_dir/admission-mask"
-    mkdir -m 700 "$mask_dir"
-    admission_leaf="${admission_dir##*/}"
-    # The normalization guard above proves this is exactly one nonempty path
-    # component. Create it before the parent becomes read-only: rootless
-    # Podman cannot manufacture a nested bind destination afterwards.
-    case "$admission_leaf" in
-    '' | . | .. | */*) die "QUECTO_ADMISSION_DIR '$admission_dir' has an unsupported client leaf" ;;
-    *) mkdir -m 700 -- "$mask_dir/$admission_leaf" ;;
-    esac
+    mkdir -m 700 -- "$mask_dir"
+    mkdir -m 700 -- "$mask_dir/$admission_leaf"
     mounts+=(-v "$mask_dir:$admission_root:ro")
-    ;;
-  esac
-  mounts+=(-v "$admission_dir:$admission_dir:rw")
+  fi
+  mounts+=(-v "$admission_mount:$admission_mount:rw")
   admission_capability="shared-directory-v1"
   printf '%s\n' "$admission_dir" >"$env_dir/admission-dir"
 fi

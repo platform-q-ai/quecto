@@ -1047,6 +1047,19 @@ is missing, so a script that cannot expose the directory simply omits the
 field and the launch fails before any inference. Nothing else in the contract
 changes for parents without admission.
 
+The bundled adapter mounts the directory at its lexical normal form (a doubled
+slash, a `/./` or a trailing slash are the same directory) and records the
+configured spelling for `exec` to compare. It refuses, before any environment
+state exists: a relative path or one with control characters; a spelling whose
+normal form names a different directory (`..` through a symbolic link); a
+client directory that is itself a symbolic link (the read-write mount would
+expose whatever it points at); an authority that is `~/.quecto` itself; and —
+when the authority lives inside the identity-mounted `~/.quecto` — a spelling
+that is not under `$HOME/.quecto` or reaches the authority through a symbolic
+link inside it, because the read-only mask would then miss the real directory.
+A symlinked `HOME`, or `~/.quecto` being a symbolic link, is fine: the harness
+derives the path from `HOME`, so mask and identity mount agree.
+
 
 The reference runtime is **host-local**: it needs no Docker and runs
 everywhere (including CI). Each script takes `--state-dir <dir>` — a trusted
