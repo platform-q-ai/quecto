@@ -215,6 +215,37 @@ fn a_failed_image_check_a_withheld_overlay_and_a_silent_preflight_are_reported_n
     assert!(!failed.healthy());
     assert_eq!(failed.image.unwrap().status, CheckStatus::Failed);
 
+    // A present image that cannot host an agent, or lacks a tool it
+    // declares, is not ready either: status reports the first image check
+    // that failed, not only the lookup (#2073).
+    for failing in ["image-base", "required-tools"] {
+        let mut checks = vec![
+            check("image", CheckStatus::Passed),
+            check("image-base", CheckStatus::Passed),
+            check("required-tools", CheckStatus::Passed),
+            check("repo", CheckStatus::Failed),
+        ];
+        checks
+            .iter_mut()
+            .find(|check| check.name == failing)
+            .unwrap()
+            .status = CheckStatus::Failed;
+        let unusable = build(Ok(with_entry.clone()), Ok(checks));
+        assert!(!unusable.healthy(), "{failing}");
+        assert_eq!(unusable.image.unwrap().name, failing);
+    }
+    let usable = build(
+        Ok(with_entry.clone()),
+        Ok(vec![
+            check("image", CheckStatus::Passed),
+            check("image-base", CheckStatus::Passed),
+            check("required-tools", CheckStatus::Passed),
+            check("repo", CheckStatus::Failed),
+        ]),
+    );
+    assert!(usable.healthy());
+    assert_eq!(usable.image.unwrap().name, "image");
+
     let withheld = build(
         Ok(ContainerConfigRosterReport {
             configs: vec![],

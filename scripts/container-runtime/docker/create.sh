@@ -231,71 +231,116 @@ fi
 # No label, no extra check: nothing here knows a language.
 required_tools_label="ai.quecto.required-tools"
 required_tools_max=64
-if [ -n "$cli" ] && [ "$image_rc" = 0 ]; then
-  base_rc=0
-  base_error="$(bounded "$cli" run --rm --pull=never "$image" sh -c '
+
+# Allowlist for one declared tool: a bare ASCII executable name, whatever the
+# host's locale makes of [A-Za-z]. A name is only ever passed to the probe as
+# an argument, never spliced into its script.
+is_tool_name() {
+  local LC_ALL=C
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$ ]]
+}
+
+# Runs the image and proves every argument is on its PATH. Sets probe_rc and
+# probe_error (stderr only: a runtime warning is not the probe's answer).
+probe_image_tools() {
+  probe_rc=0
+  probe_error="$(bounded "$cli" run --rm --pull=never "$image" sh -c '
     for tool in "$@"; do
       command -v "$tool" >/dev/null || { printf "missing %s\n" "$tool" >&2; exit 1; }
     done
-  ' sh git 2>&1)" || base_rc=$?
-  if [ "$base_rc" = 0 ]; then
+  ' sh "$@" 2>&1 >/dev/null)" || probe_rc=$?
+}
+
+# Reports a failed probe for what it was: the image's fault only when the
+# probe itself said so; a runtime that did not answer or could not run the
+# image is the runtime's.
+report_probe_failure() {
+  # $1=check  $2=what the image fails to be  $3=remedy for the image
+  local answer
+  answer="$(last_line "$probe_error")"
+  if [ "$probe_rc" = 1 ] && [[ "$answer" == "missing "* ]]; then
+    report fail "$1" "image $image $2: $answer" "$3" "$EXIT_NO_IMAGE"
+  elif [ "$probe_rc" = 124 ]; then
+    report fail "$1" "$cli did not answer within ${probe_timeout}s while running image $image" \
+      "check that the $cli daemon/service is running and reachable (${cli} info); QUECTO_REPO_CHECK_TIMEOUT raises the bound" "$EXIT_NO_RUNTIME"
+  elif [ "$probe_rc" = 126 ] || [ "$probe_rc" = 127 ]; then
+    report fail "$1" "image $image has no usable shell (exit $probe_rc): $answer" \
+      "install a POSIX shell (sh) in the image and rebuild it" "$EXIT_NO_IMAGE"
+  else
+    report fail "$1" "$cli could not run image $image (exit $probe_rc): $answer" \
+      "check that the $cli daemon/service is running and that this user may use it (${cli} info)" "$EXIT_NO_RUNTIME"
+  fi
+}
+
+base_ok=0
+if [ -n "$cli" ] && [ "$image_rc" = 0 ]; then
+  probe_image_tools git
+  if [ "$probe_rc" = 0 ]; then
+    base_ok=1
     report ok image-base "image $image provides a shell and git" ""
   else
-    report fail image-base "image $image cannot host an agent: $(last_line "$base_error")" \
-      "install a POSIX shell and git in the image and rebuild it" "$EXIT_NO_IMAGE"
+    report_probe_failure image-base "cannot host an agent" \
+      "install a POSIX shell and git in the image and rebuild it"
   fi
+elif [ -n "$cli" ]; then
+  report fail image-base "image $image could not be checked for a shell and git" \
+    "fix the image check first" "$EXIT_NO_IMAGE"
+else
+  report warn image-base "the image's shell and git were not checked: no container runtime" \
+    "fix the runtime-cli check first"
+fi
 
+if [ "$base_ok" = 1 ]; then
+  # stdout alone is the label: the runtimes print warnings on stderr while
+  # exiting 0, and a warning is not a list of tools. stderr is read only to
+  # explain a failure.
   label_rc=0
-  label_value="$(bounded "$cli" image inspect \
-    --format "{{ index .Config.Labels \"$required_tools_label\" }}" "$image" 2>&1)" || label_rc=$?
+  label_format="{{ index .Config.Labels \"$required_tools_label\" }}"
+  label_value="$(bounded "$cli" image inspect --format "$label_format" "$image" 2>/dev/null)" || label_rc=$?
+  label_value="${label_value//$'\r'/}"
   # An absent label prints an empty line (or Go's "<no value>").
-  [ "$label_value" = "<no value>" ] && label_value=""
+  if [ "$label_value" = "<no value>" ]; then label_value=""; fi
   required_tools=()
   bad_tool=""
   if [ "$label_rc" = 0 ]; then
     read -r -d '' -a required_tools <<<"$label_value" || true
-    for tool in "${required_tools[@]}"; do
-      # Allowlist: a tool is a bare executable name. It is only ever passed
-      # as an argument, never spliced into the probe's script.
-      if [[ ! "$tool" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$ ]]; then
-        bad_tool="$tool"
+    # (An empty array under `set -u` is an error before bash 4.4.)
+    if [ "${#required_tools[@]}" -gt 0 ]; then
+      for tool in "${required_tools[@]}"; do
+        if is_tool_name "$tool"; then continue; fi
+        bad_tool="${tool:0:64}"
         break
-      fi
-    done
+      done
+    fi
   fi
-  if [ "$label_rc" != 0 ]; then
-    report fail required-tools "$cli could not read the $required_tools_label label of image $image (exit $label_rc): $(last_line "$label_value")" \
+  if [ "$label_rc" = 124 ]; then
+    report fail required-tools "$cli did not answer within ${probe_timeout}s while reading the $required_tools_label label of image $image" \
+      "check that the $cli daemon/service is running and reachable (${cli} info); QUECTO_REPO_CHECK_TIMEOUT raises the bound" "$EXIT_NO_RUNTIME"
+  elif [ "$label_rc" != 0 ]; then
+    label_error="$(bounded "$cli" image inspect --format "$label_format" "$image" 2>&1 >/dev/null)" || true
+    report fail required-tools "$cli could not read the $required_tools_label label of image $image (exit $label_rc): $(last_line "$label_error")" \
       "check that the $cli daemon/service is running and that this user may use it (${cli} info)" "$EXIT_NO_RUNTIME"
   elif [ -n "$bad_tool" ]; then
     report fail required-tools "image $image declares '$bad_tool' in $required_tools_label, which is not a tool name" \
-      "list bare executable names separated by spaces (letters, digits, '.', '_', '+', '-') and rebuild the image" "$EXIT_NO_IMAGE"
+      "list bare executable names separated by spaces (ASCII letters, digits, '.', '_', '+', '-'; at most 64 characters each) and rebuild the image" "$EXIT_NO_IMAGE"
   elif [ "${#required_tools[@]}" -gt "$required_tools_max" ]; then
     report fail required-tools "image $image declares ${#required_tools[@]} tools in $required_tools_label; at most $required_tools_max are checked" \
       "shorten the label and rebuild the image" "$EXIT_NO_IMAGE"
   elif [ "${#required_tools[@]}" = 0 ]; then
     report ok required-tools "image $image declares no required tools ($required_tools_label is not set)" ""
   else
-    tools_rc=0
-    tools_error="$(bounded "$cli" run --rm --pull=never "$image" sh -c '
-      for tool in "$@"; do
-        command -v "$tool" >/dev/null || { printf "missing %s\n" "$tool" >&2; exit 1; }
-      done
-    ' sh "${required_tools[@]}" 2>&1)" || tools_rc=$?
-    if [ "$tools_rc" = 0 ]; then
+    probe_image_tools "${required_tools[@]}"
+    if [ "$probe_rc" = 0 ]; then
       report ok required-tools "image $image provides the tools it declares: ${required_tools[*]}" ""
     else
-      report fail required-tools "image $image does not provide a tool it declares in $required_tools_label: $(last_line "$tools_error")" \
-        "rebuild the image from its Containerfile, or correct the label" "$EXIT_NO_IMAGE"
+      report_probe_failure required-tools "does not provide a tool it declares in $required_tools_label" \
+        "rebuild the image from its Containerfile, or correct the label"
     fi
   fi
 elif [ -n "$cli" ]; then
-  report fail image-base "image $image could not be checked for a shell and git" \
-    "fix the image check first" "$EXIT_NO_IMAGE"
-  report fail required-tools "the tools image $image declares could not be checked" \
-    "fix the image check first" "$EXIT_NO_IMAGE"
+  report fail required-tools "the tools image $image declares were not checked" \
+    "fix the image-base check first" "$EXIT_NO_IMAGE"
 else
-  report warn image-base "the image's shell and git were not checked: no container runtime" \
-    "fix the runtime-cli check first"
   report warn required-tools "the image's declared tools were not checked: no container runtime" \
     "fix the runtime-cli check first"
 fi

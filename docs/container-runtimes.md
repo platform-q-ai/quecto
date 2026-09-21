@@ -993,13 +993,25 @@ knows no language. Two checks run the image (`run --rm --pull=never`):
   itself needs inside a container.
 - `required-tools` — the image's own promise. An image may declare
   `LABEL ai.quecto.required-tools="python3 uv pytest ruff"` (bare executable
-  names separated by spaces: letters, digits, `.`, `_`, `+`, `-`; at most 64);
-  the doctor then proves each one is on `PATH` and fails **naming the missing
-  tool**, so an image that lost a tool is refused before an agent edits code.
-  No label, no extra check. A label that is not a list of tool names is
-  refused without being run. The Containerfile above declares its eight Rust
-  tools this way; a `--image` of your own is asked only for what *it*
-  declares.
+  names separated by whitespace: ASCII letters, digits, `.`, `_`, `+`, `-`;
+  at most 64 names of at most 64 characters); the doctor then proves each one
+  is on `PATH` and fails **naming the missing tool**, so an image that lost a
+  tool is refused before an agent edits code. No label (or an empty one), no
+  extra check. A label that is not a list of tool names is refused without
+  being run. The Containerfile above declares its eight Rust tools this way;
+  a `--image` of your own is asked only for what *it* declares. A label is
+  inherited through `FROM`: an image derived from this one keeps the Rust
+  list unless it redeclares the label. An image built before the label
+  existed carries none and is asked only for a shell and git — rebuild it
+  (`quecto container init --refresh` prints the command) to get the check
+  back. It is skipped, and says so, while `image-base` fails.
+
+A probe the runtime could not run is reported as the runtime's failure, not
+the image's: no answer within `QUECTO_REPO_CHECK_TIMEOUT`, or a `run` that
+the runtime itself refused, exits 3 like any other runtime failure; an image
+with no usable `sh` exits 6. `quecto container status` reports its `image`
+line from the first of these three checks that failed, so it never says
+`ready` for an image the doctor refuses.
 
 `quecto container status` reports, one line each and exit 1 while anything
 is missing: the assets (`present (5 of 5, version 4)`, or which differ or
@@ -1306,9 +1318,13 @@ container config "quecto" (create: /…/docker/create.sh --state-dir /var/tmp/en
   ✓ gh           gh at /usr/bin/gh
   ✗ image        image quecto-dev:local is not present in the local podman store
     remedy: build it (podman build -t quecto-dev:local <dir with its Containerfile>) or pull it (podman pull quecto-dev:local); create never pulls implicitly
+  ✗ image-base   image quecto-dev:local could not be checked for a shell and git
+    remedy: fix the image check first
+  ✗ required-tools the tools image quecto-dev:local declares were not checked
+    remedy: fix the image-base check first
   ✓ repo         --repo https://github.com/you/project is reachable
   ✓ state-dir    state dir /var/tmp/envs is writable and owned by the current user
-1 check failed, 0 warnings
+3 checks failed, 0 warnings
 ```
 
 | Symptom (tool error / stderr) | Doctor line | Remedy |
@@ -1320,6 +1336,7 @@ container config "quecto" (create: /…/docker/create.sh --state-dir /var/tmp/en
 | `… status exit status: 6: … image quecto-dev:local is not present` | `✗ image` | Build the image (`podman build -t quecto-dev:local <dir>`) or pull it; the scripts never pull implicitly. Change `--image` / `QUECTO_DOCKER_IMAGE` if another image was meant. |
 | `… status exit status: 6: … image <img> cannot host an agent: missing git` | `✗ image-base` | The image needs a shell and `git`; add them to its Containerfile and rebuild. |
 | `… status exit status: 6: … image <img> does not provide a tool it declares in ai.quecto.required-tools: missing <tool>` | `✗ required-tools` | Rebuild the image from its Containerfile, or correct the `ai.quecto.required-tools` label. A label that is `not a tool name` must list bare executable names separated by spaces. |
+| `… status exit status: 3: … could not read the ai.quecto.required-tools label of image <img>` / `… could not run image <img>` / `… did not answer within 15s while running image <img>` | `✗ required-tools` / `✗ image-base` | The runtime failed, not the image: check the daemon/service (`podman info`); `QUECTO_REPO_CHECK_TIMEOUT` raises the bound. |
 | `… status exit status: 7: … --repo <url> is unreachable: fatal: …` | `✗ repo` | Check the URL and your credentials (`ssh` key or `gh auth login`); fix `--repo` in the config's create argv. |
 | `… status exit status: 8: … state dir <dir> is not owned by the current user` / `cannot be created` | `✗ state-dir` | Point `--state-dir` at a directory you own. |
 | `unknown container config '<name>' (available container configs: …)` | (doctor refuses too) | Pick a listed name, or bind the repository: `quecto config set --local container_configs.<name> '{…,"default":true}'`. |

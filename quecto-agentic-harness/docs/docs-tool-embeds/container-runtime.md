@@ -45,7 +45,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
    ```
    podman build -t quecto-dev:local -f /repo/.quecto/containers/standard/Containerfile /repo/.quecto/containers/standard
    ```
-   Expected: the last line is `Successfully tagged localhost/quecto-dev:local` (docker: `naming to docker.io/library/quecto-dev:local`). A docker-only host runs the same command with `docker`: the scripts drive whichever runtime the doctor's `runtime-cli` line names. A project that needs a toolchain derives `FROM quecto-dev:local` and passes `--image <tag>` to init. The doctor is tooling-neutral: it asks any image for a shell and `git` (`image-base`), plus exactly the tools the image itself declares in `LABEL ai.quecto.required-tools="python3 uv pytest"` (`required-tools`; bare names separated by spaces; no label, no extra check).
+   Expected: the last line is `Successfully tagged localhost/quecto-dev:local` (docker: `naming to docker.io/library/quecto-dev:local`). A docker-only host runs the same command with `docker`: the scripts drive whichever runtime the doctor's `runtime-cli` line names. A project that needs a toolchain derives `FROM quecto-dev:local` and passes `--image <tag>` to init. The doctor is tooling-neutral: it asks any image for a shell and `git` (`image-base`), plus exactly the tools the image itself declares in `LABEL ai.quecto.required-tools="python3 uv pytest"` (`required-tools`; bare ASCII names separated by whitespace; no label, no extra check; inherited through `FROM` unless redeclared).
 3. **Use** — from an agent started in this repository:
    `spawn {"agent_id":"probe","task":"run pwd and git log -1 --oneline, then exit","container":true}` → the result names `environment_ref=C1 container_config=standard`; `agent_cmd {"agent_id":"*","command":"get_containers"}` lists it `running` with the repository; `agent_cmd {"agent_id":"*","command":"kill_container","ref":"C1"}` ends it (its members are terminated, the config's kill runs once; from the shell, `quecto container kill C1`). When the last member of an ordinary environment exits it tears itself down; a swarm container whose run has not been closed is `retained` (resumable) until `kill_container` / `quecto container kill`.
 
@@ -80,6 +80,8 @@ container config "standard" (create: /repo/.quecto/containers/standard/scripts/c
   ✓ git          git at /usr/bin/git
   ✓ gh           gh at /usr/bin/gh
   ✓ image        image quecto-dev:local is present
+  ✓ image-base   image quecto-dev:local provides a shell and git
+  ✓ required-tools image quecto-dev:local declares no required tools (ai.quecto.required-tools is not set)   (or: provides the tools it declares: …)
   ✓ repo         --repo https://github.com/org/app.git is reachable
   ✓ state-dir    state dir /home/me/.quecto/container-environments is writable and owned by the current user   (or: will be created under writable /home/me/.quecto)
 0 checks failed, 0 warnings
