@@ -36,7 +36,7 @@ pub fn standard_image_for(project: &Path) -> String {
             };
             // The joiner and the character land together or not at all, so
             // the name never ends in a separator and never passes the cap.
-            if name.len() + joiner.len() + 1 <= MAX_NAME {
+            if name.len() + joiner.len() < MAX_NAME {
                 name.push_str(joiner);
                 name.push(character);
                 run.clear();
