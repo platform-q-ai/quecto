@@ -376,7 +376,7 @@ fn area_pages_share_the_runbook_shape() {
     let container = lookup_doc("container-runtime").expect("container-runtime embed");
     for needle in [
         "quecto container init",
-        "podman build -t quecto-dev:local",
+        "podman build -t quecto-repo:local",
         "quecto container status",
         "quecto container doctor",
         "\"container\":true",

@@ -548,7 +548,7 @@ fn then_build_command_quoted(world: &mut QuectoWorld) {
     // `{dir}` is one quoted word, so the shell reads
     // `'…/standard'/Containerfile` as one path.
     let expected = format!(
-        "podman build -t quecto-dev:local -f '{}'/Containerfile '{}'",
+        "podman build -t quecto-repo-one:local -f '{}'/Containerfile '{}'",
         dir.display(),
         dir.display()
     );
@@ -718,11 +718,12 @@ case "$1" in
     # runs continue below.
     if [ "${{1:-}}" = --rm ]; then exit 0; fi
     name=""
-    while [ "$#" -gt 0 ] && [ "$1" != quecto-dev:local ]; do
+    # The image is the project's own tag (`quecto-<directory>:local`).
+    while [ "$#" -gt 0 ] && [[ "$1" != quecto-*:local ]]; do
       [ "$1" = --name ] && name="$2"
       shift
     done
-    [ "$1" = quecto-dev:local ] || exit 125
+    [[ "${{1:-}}" == quecto-*:local ]] || exit 125
     shift
     setsid "$@" >/dev/null 2>&1 </dev/null &
     pid=$!

@@ -277,14 +277,14 @@ fn init_materialises_the_bundle_writes_the_trusted_entry_and_status_is_then_read
         out.contains("--repo https://example.test/org/repo.git (the checkout's origin remote)"),
         "{out}"
     );
-    assert!(out.contains("--image quecto-dev:local"), "{out}");
+    assert!(out.contains("--image quecto-checkout:local"), "{out}");
     assert!(
         !out.contains("kept:"),
         "no existing entry to keep from: {out}"
     );
     assert!(
         out.contains(&format!(
-            "podman build -t quecto-dev:local -f {0}/Containerfile {0}",
+            "podman build -t quecto-checkout:local -f {0}/Containerfile {0}",
             assets_dir.display()
         )),
         "{out}"

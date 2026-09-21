@@ -835,13 +835,13 @@ step is a command with its expected output):
 |---|---|---|
 | Preconditions | `git rev-parse --show-toplevel`; `podman --version` (or `docker`); `jq --version`; `git ls-remote --exit-code origin`; `quecto status` | the toplevel is `pwd`; the tools answer; `ls-remote` exits 0; `Overlay: none` or `(trusted)` |
 | 1. init | `quecto container init` (`--repo <url>`, `--image <tag>`, `--dry-run`) | `wrote …` × 5, `container config "standard" written as container_configs.standard in <repo>/.quecto/config.json (trusted for exactly these bytes)`, `default: true`, then `next:` with the build command |
-| 2. build | the printed `podman build -t quecto-dev:local -f <repo>/.quecto/containers/standard/Containerfile <repo>/.quecto/containers/standard` (skip when `status` already reports the image present) | `Successfully tagged localhost/quecto-dev:local` |
+| 2. build | the printed `podman build -t quecto-<folder>:local -f <repo>/.quecto/containers/standard/Containerfile <repo>/.quecto/containers/standard` (skip when `status` already reports the image present) | `Successfully tagged localhost/quecto-<folder>:local` |
 | 3. verify | `quecto container status` | a header, the `assets/config/trust/image` lines (plus a `this repo's default` continuation, or a `note:` when the label was removed by hand), then `ready: spawn {"container":true} from an agent in this project`, exit 0 (exit 1 `not ready` while a script differs or a file is missing; the project's own Containerfile never counts) |
 | 4. doctor | `quecto container doctor` | every check `✓` (`gh` may be `!`), `0 checks failed`, exit 0 |
 | 5. spawn | from an agent in the repo: `spawn {"agent_id":"probe","task":"run pwd","container":true}` | `environment_ref=C1 container_config=standard` |
 | 6. inventory | `agent_cmd {"agent_id":"*","command":"get_containers"}` | the environment `running`, its `repository` |
 | 7. kill | `agent_cmd {"agent_id":"*","command":"kill_container","ref":"C1"}` | the environment gone from `get_containers` |
-| Rollback | `quecto config unset --local container_configs.standard`; `rm -r .quecto/containers/standard`; optionally `podman rmi quecto-dev:local` | `unset container_configs.standard in <repo>/.quecto/config.json (trusted)` |
+| Rollback | `quecto config unset --local container_configs.standard`; `rm -r .quecto/containers/standard`; optionally `podman rmi quecto-<folder>:local` | `unset container_configs.standard in <repo>/.quecto/config.json (trusted)` |
 | Upgrade | `quecto container init --refresh`, `quecto container doctor` | each differing script `refreshed`; the Containerfile `kept … (this project's own; never replaced — review it before building)` |
 
 Failures and their fixes are in the [troubleshooting runbook](#troubleshooting-runbook)
@@ -889,7 +889,10 @@ is written, so a refused init leaves the project untouched):
    for exactly the bytes written. Every argv names the materialised
    scripts by absolute path; `create` carries `--state-dir
    <base dir>/container-environments`, `--repo <url>` when there is one and
-   `--image quecto-dev:local` (or `--image` as given); `kill`/`cleanup`
+   `--image quecto-<folder>:local` — named after the project folder
+   (lowercased; anything but letters, digits and a single `.` or `_`
+   becomes `-`), so two repositories on one machine never share a tag; an
+   existing entry keeps the tag it has — (or `--image` as given); `kill`/`cleanup`
    carry `--op kill`/`--op cleanup`; no argv ends with `--` (the launcher
    appends it before the child command).
 5. Materialises the missing files (the scripts byte-identical to
@@ -906,7 +909,7 @@ is written, so a refused init leaves the project untouched):
    (`quecto config unset --local container_configs.standard`).
 6. Prints the files, the entry and the one step left — the exact build
    command:
-   `podman build -t quecto-dev:local -f <project>/.quecto/containers/standard/Containerfile <project>/.quecto/containers/standard`
+   `podman build -t quecto-<folder>:local -f <project>/.quecto/containers/standard/Containerfile <project>/.quecto/containers/standard`
    (on a docker-only host, the same command with `docker`: the scripts
    drive whichever runtime the doctor's `runtime-cli` line names).
 
@@ -1204,8 +1207,8 @@ Design properties:
   OAuth providers. The scripts carry a comment warning against this.
 - **Image selection.** `--image <img>` on the create argv, or the
   `QUECTO_DOCKER_IMAGE` environment variable, with a sensible local default
-  (`quecto-dev:local`, whose Containerfile `quecto container init`
-  materialises). The `run` passes `--pull=never`: a tag that vanished
+  (`quecto-dev:local`; an entry written by `quecto container init` always
+  passes `--image`, named after the project folder). The `run` passes `--pull=never`: a tag that vanished
   between the preflight and the run fails instead of fetching whatever a
   registry serves under that name.
 - **Pid fence.** `create.sh` passes `--pids-limit` (default `16384`;

@@ -84,10 +84,18 @@ fn a_missing_containerfile_is_written_as_the_starter_even_on_a_refresh() {
 
 // ─── A default image tag per repository (#2073) ─────────────────────────────
 
+/// A rig whose checkout toplevel is `project` (init refuses a project below
+/// the toplevel git reports).
+fn rig_at(project: &str) -> Rig {
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    *rig.origin.toplevel.lock().unwrap() = Some(PathBuf::from(project));
+    rig
+}
+
 #[test]
 fn two_projects_get_two_default_image_tags_named_after_their_directories() {
     let tag = |project: &str| {
-        let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+        let rig = rig_at(project);
         let report = rig.use_case.execute(&request(project)).unwrap();
         let create = argv(&report.entry.entry, "create");
         assert_eq!(create[create.len() - 2], "--image");
@@ -121,7 +129,7 @@ fn a_directory_name_becomes_a_valid_image_name() {
 #[test]
 fn an_existing_entry_keeps_the_tag_it_has() {
     use crate::application::environments::dto::STANDARD_CONTAINER_IMAGE;
-    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    let rig = rig_at("/work/shop-api");
     let mut first = request("/work/shop-api");
     first.image = Some(STANDARD_CONTAINER_IMAGE.into());
     rig.use_case.execute(&first).unwrap();

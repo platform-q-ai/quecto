@@ -20,10 +20,10 @@ Feature: The standard container is landed on master
     And the standard container assets should be materialised under ".quecto/containers/standard" byte-identical to the official adapter
     And the output should list every materialised standard container asset
     And the checkout's overlay should be trusted
-    And the overlay entry "standard" should be the default and its create argv should be the materialised create script with "--state-dir" under the base directory, "--repo" the origin remote and "--image" "quecto-dev:local"
+    And the overlay entry "standard" should be the default and its create argv should be the materialised create script with "--state-dir" under the base directory, "--repo" the origin remote and "--image" "quecto-workspace:local"
     And the overlay entry "standard" should carry exec, inspect, kill and cleanup argv naming the materialised scripts
     And no argv of the overlay entry "standard" should end with "--"
-    And the output should contain "podman build -t quecto-dev:local -f"
+    And the output should contain "podman build -t quecto-workspace:local -f"
     And the output should contain "quecto container doctor"
 
   @done @issue-2024
@@ -36,7 +36,7 @@ Feature: The standard container is landed on master
     Then the exit code should be 0
     And the output should contain "no files changed"
     And the checkout's overlay bytes should be unchanged
-    And the overlay entry "standard" should be the default and its create argv should be the materialised create script with "--state-dir" under the base directory, "--repo" the origin remote and "--image" "quecto-dev:local"
+    And the overlay entry "standard" should be the default and its create argv should be the materialised create script with "--state-dir" under the base directory, "--repo" the origin remote and "--image" "quecto-workspace:local"
 
   @done @issue-2024
   Scenario: a re-init keeps the existing --repo and --image unless the flag is given, and says which
@@ -258,12 +258,12 @@ Feature: The standard container is landed on master
     And the output should contain "assets:  present (5 of 5, version 5)"
     And the output should contain "config:  standard (default, overlay) in"
     And the output should contain "trust:   trusted"
-    And the output should contain "image:   ✗ image quecto-dev:local is not present"
+    And the output should contain "image:   ✗ image quecto-workspace:local is not present"
     And the output should contain "podman build"
     When the fake podman is fixed to report every image as present
     And I run the real quecto binary under the controlled PATH with arguments "container status"
     Then the exit code should be 0
-    And the output should contain "image:   image quecto-dev:local is present"
+    And the output should contain "image:   image quecto-workspace:local is present"
 
   @done @issue-2024
   Scenario: the materialised create script honours the preflight contract and never pulls
@@ -278,7 +278,7 @@ Feature: The standard container is landed on master
     And the preflight should report check "git" as passed
     And the preflight should report check "repo" as passed
     And the preflight should report check "state-dir" as passed
-    And the preflight should report check "image" as failed naming "quecto-dev:local"
+    And the preflight should report check "image" as failed naming "quecto-workspace:local"
     And the fake podman should never have been asked to pull
     And the preflight should have created no state directory
 
@@ -308,7 +308,7 @@ Feature: The standard container is landed on master
     And the fake podman run argv should carry "-e QUECTO_SWARM_BOOTSTRAP=1"
     And the fake podman run argv should carry "-e QUECTO_SWARM_CHECKOUT="
     And the fake podman run argv should carry "-e QUECTO_SWARM_HOST_PID_NS="
-    And the fake podman run argv should carry "quecto-dev:local"
+    And the fake podman run argv should carry "quecto-workspace:local"
     And the fake podman should never have been asked to pull an image
 
   @done @issue-2073
