@@ -46,6 +46,8 @@ enum Layout {
     QuectoIsSymlink,
     /// The admission dir lives outside ~/.quecto altogether.
     OutsideQuecto,
+    /// The admission dir is handed over relative to the script's cwd (HOME).
+    RelativeSpelling,
 }
 
 /// One run of the create script: the temp dir lives as long as this does.
@@ -115,6 +117,7 @@ fn run_with_layout(admission_suffix: &str, layout: Layout) -> Run {
         | Layout::AliasedHome
         | Layout::TrailingSlashHome
         | Layout::UnnormalizedSpelling
+        | Layout::RelativeSpelling
         | Layout::QuectoIsSymlink => home.join(admission_suffix),
         Layout::OutsideQuecto => base.join("elsewhere").join(admission_suffix),
         Layout::SymlinkedLeaf => {
@@ -162,6 +165,7 @@ fn run_with_layout(admission_suffix: &str, layout: Layout) -> Run {
                 .into_owned();
             PathBuf::from(format!("{parent}//./{leaf}/"))
         }
+        Layout::RelativeSpelling => PathBuf::from(admission_suffix),
         _ => admission,
     };
     let mounted_root = Path::new(&mounted).parent().unwrap().to_path_buf();
@@ -220,6 +224,7 @@ exit 125
     };
     let mut command = Command::new(root().join("scripts/container-runtime/docker/create.sh"));
     command
+        .current_dir(&home)
         .args([
             "--state-dir",
             state.to_str().unwrap(),
@@ -394,6 +399,20 @@ fn rejects_a_spelling_whose_normal_form_names_another_directory() {
     assert_refused(
         &run_with_layout(".quecto/admission/client", Layout::DotDotThroughLink),
         "does not name the same directory once normalized",
+    );
+}
+
+#[test]
+fn rejects_a_relative_path_and_a_control_character() {
+    assert_refused(
+        &run_with_layout(".quecto/admission/client", Layout::RelativeSpelling),
+        "must be an absolute path",
+    );
+    // `dirname` in a command substitution would drop the trailing newline
+    // and classify `admission` while the runtime mounts `admission\n`.
+    assert_refused(
+        &run(".quecto/admission\n/client"),
+        "printable characters only",
     );
 }
 
