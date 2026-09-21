@@ -450,56 +450,47 @@ async fn exit_and_reason(
         .then(|| record.metadata["retained"].as_str().unwrap().to_string())
 }
 
-#[tokio::test]
-async fn coordinator_connection_closed_after_close_removes_the_container() {
+/// #2070: the owner ended the run, so the swarm is over — its container goes
+/// when the coordinator does (the retained kill runs; the store is left as
+/// it was).
+async fn an_ended_run_gives_up_its_container(end: impl FnOnce(&SwarmContext), status: &str) {
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
-    context.call("stop", json!(["blocked", "done"])).unwrap();
-    context.close().unwrap();
-    assert_eq!(context.summary().unwrap()["status"], "blocked");
+    end(&context);
+    assert_eq!(context.summary().unwrap()["status"], status);
     let log = dir.path().join("kill-log.txt");
     let kill = write_kill_script(dir.path(), &log);
     let (environments, env_ref) = environment(kill, &checkout);
     let registry = register_member(dir.path(), &environments, &env_ref);
 
-    // #2070: the owner closed the run, so the swarm is over — its container
-    // goes when the coordinator does. The store itself is left as it was.
     let retained = exit_and_reason(&environments, &env_ref, &registry).await;
-    assert_eq!(retained, None, "a closed run does not keep its container");
+    assert_eq!(retained, None, "a {status} run does not keep its container");
     assert!(log.exists(), "the retained kill ran");
     assert_eq!(
         environments.get(&env_ref).unwrap().status,
         EnvironmentStatus::Stopped
     );
-    assert_eq!(context.summary().unwrap()["status"], "blocked", "untouched");
+    assert_eq!(context.summary().unwrap()["status"], status, "untouched");
+}
+
+#[tokio::test]
+async fn coordinator_connection_closed_after_close_removes_the_container() {
+    let close = |context: &SwarmContext| {
+        context.call("stop", json!(["blocked", "done"])).unwrap();
+        context.close().unwrap();
+    };
+    an_ended_run_gives_up_its_container(close, "blocked").await;
 }
 
 #[tokio::test]
 async fn coordinator_connection_closed_after_cancel_removes_the_container() {
-    let dir = tempfile::tempdir().unwrap();
-    let checkout = dir.path().join("checkout");
-    let context = create_running_swarm(&checkout);
-    context
-        .call("stop", json!(["cancelled", "operator"]))
-        .unwrap();
-    assert_eq!(context.summary().unwrap()["status"], "cancelled");
-    let log = dir.path().join("kill-log.txt");
-    let kill = write_kill_script(dir.path(), &log);
-    let (environments, env_ref) = environment(kill, &checkout);
-    let registry = register_member(dir.path(), &environments, &env_ref);
-
-    // #2070: cancelled is the owner's word too.
-    let retained = exit_and_reason(&environments, &env_ref, &registry).await;
-    assert_eq!(
-        retained, None,
-        "a cancelled run does not keep its container"
-    );
-    assert!(log.exists(), "the retained kill ran");
-    assert_eq!(
-        environments.get(&env_ref).unwrap().status,
-        EnvironmentStatus::Stopped
-    );
+    let cancel = |context: &SwarmContext| {
+        context
+            .call("stop", json!(["cancelled", "operator"]))
+            .unwrap();
+    };
+    an_ended_run_gives_up_its_container(cancel, "cancelled").await;
 }
 
 #[tokio::test]
