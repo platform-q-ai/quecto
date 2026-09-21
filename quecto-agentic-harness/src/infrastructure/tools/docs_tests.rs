@@ -392,11 +392,25 @@ fn area_pages_share_the_runbook_shape() {
             "container-runtime embed misses {needle}"
         );
     }
+    // Init writes the starter, the Containerfile is made this repo's, and
+    // only then is the image built from it (#2073).
     assert_in_order(
         "container-runtime",
         container,
         "1. **Initialise**",
-        "2. **Build the image**",
+        "2. **Make the Containerfile this repo's**",
+    );
+    assert_in_order(
+        "container-runtime",
+        container,
+        "2. **Make the Containerfile this repo's**",
+        "3. **Build the image**",
+    );
+    assert_in_order(
+        "container-runtime",
+        container,
+        "3. **Build the image**",
+        "4. **Use**",
     );
     let admission = lookup_doc("admission-broker").expect("admission-broker embed");
     for needle in [
