@@ -603,6 +603,27 @@ fn given_spawn_from_checkout_no_global_configs(world: &mut QuectoWorld) {
     std::fs::write(&config, serde_json::to_string_pretty(&document).unwrap()).unwrap();
 }
 
+/// A Containerfile no bundle ever shipped: the project's own (#2073).
+const PROJECTS_CONTAINERFILE: &str =
+    "FROM docker.io/library/python:3.13-slim\nLABEL ai.quecto.required-tools=\"python3 uv\"\n";
+
+#[when("the project writes its own standard Containerfile")]
+fn when_project_writes_its_containerfile(world: &mut QuectoWorld) {
+    std::fs::write(
+        assets_dir(world).join("Containerfile"),
+        PROJECTS_CONTAINERFILE,
+    )
+    .unwrap();
+}
+
+#[then("the project's own standard Containerfile should be unchanged")]
+fn then_projects_containerfile_unchanged(world: &mut QuectoWorld) {
+    assert_eq!(
+        std::fs::read_to_string(assets_dir(world).join("Containerfile")).unwrap(),
+        PROJECTS_CONTAINERFILE
+    );
+}
+
 fn invocation_marker(world: &QuectoWorld) -> PathBuf {
     base_path(world).join("create-invoked")
 }

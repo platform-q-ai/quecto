@@ -463,28 +463,70 @@ fn quectos_own_containerfile_declares_its_eight_rust_tools() {
 }
 
 /// The starter `quecto container init` writes into any project is neutral:
-/// it promises no tool and installs no language toolchain, and it installs
-/// what the doctor's base check asks of every image.
+/// it installs exactly the general agent tooling #2073 lists — one `RUN`,
+/// whose package set is an allowlist — promises no tool, and keeps the
+/// adapter's entrypoint contract.
 #[test]
 fn the_starter_containerfile_is_tooling_neutral() {
+    const GENERAL_TOOLING: &[&str] = &[
+        "bash",
+        "build-essential",
+        "ca-certificates",
+        "coreutils",
+        "curl",
+        "fd-find",
+        "findutils",
+        "gh",
+        "git",
+        "grep",
+        "jq",
+        "less",
+        "openssh-client",
+        "procps",
+        "python3",
+        "python3-venv",
+        "ripgrep",
+        "sed",
+    ];
     let starter = fs::read_to_string(
         root().join("quecto-agentic-harness/assets/standard-container/Containerfile"),
     )
     .unwrap();
-    assert!(declared_tools(&starter).is_empty(), "{starter}");
-    let instructions: String = starter
+    // Instructions only, with continuation lines joined.
+    let instructions: Vec<String> = starter
         .lines()
         .filter(|line| !line.trim_start().starts_with('#'))
         .collect::<Vec<_>>()
-        .join("\n");
-    for toolchain in ["cargo", "rust", "node", "golang", "openjdk", "dotnet"] {
-        assert!(
-            !instructions.to_lowercase().contains(toolchain),
-            "the starter installs {toolchain}:\n{instructions}"
-        );
-    }
-    for needed in [" git ", " bash ", "ENTRYPOINT []"] {
-        assert!(instructions.contains(needed), "{needed}:\n{instructions}");
+        .join("\n")
+        .replace("\\\n", " ")
+        .lines()
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|line| !line.is_empty())
+        .collect();
+    let runs: Vec<&String> = instructions
+        .iter()
+        .filter(|line| line.starts_with("RUN "))
+        .collect();
+    assert_eq!(runs.len(), 1, "{instructions:#?}");
+    let install = runs[0]
+        .split(" && ")
+        .find(|step| step.starts_with("apt-get install "))
+        .expect("the one RUN installs packages");
+    let mut packages: Vec<&str> = install
+        .split(' ')
+        .skip(2)
+        .filter(|word| !word.starts_with("--"))
+        .collect();
+    packages.sort_unstable();
+    assert_eq!(packages, GENERAL_TOOLING);
+    assert!(
+        instructions
+            .iter()
+            .all(|line| !line.contains("ai.quecto.required-tools")),
+        "the starter promises no tool: {instructions:#?}"
+    );
+    for kept in ["ENTRYPOINT []", "CMD []", "WORKDIR /workspace"] {
+        assert!(instructions.iter().any(|line| line == kept), "{kept}");
     }
 }
 

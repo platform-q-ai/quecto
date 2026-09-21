@@ -311,6 +311,25 @@ Feature: The standard container is landed on master
     And the fake podman run argv should carry "quecto-dev:local"
     And the fake podman should never have been asked to pull an image
 
+  @done @issue-2073
+  Scenario: the project's own Containerfile is not drift and survives init --refresh
+    Given the current directory is a git checkout whose origin remote is a reachable local repository
+    And a controlled PATH whose fake podman reports every image as present
+    When I run quecto with arguments "container init"
+    Then the exit code should be 0
+    When the project writes its own standard Containerfile
+    And I run the real quecto binary under the controlled PATH with arguments "container status"
+    Then the exit code should be 0
+    And the output should contain "assets:  present (5 of 5, version 5)"
+    And the output should contain "Containerfile: this project's own"
+    And the output should contain "ready"
+    And the output should not contain "differ"
+    When I run the real quecto binary under the controlled PATH with arguments "container init --refresh"
+    Then the exit code should be 0
+    And the output should contain "(this project's own; never replaced — review it before building)"
+    And the output should not contain "refreshed"
+    And the project's own standard Containerfile should be unchanged
+
   @done @issue-2024 @container-spawn
   Scenario: an edited standard script refuses the launch before the host runs it, and init --refresh restores it
     Given the current directory is a git checkout whose origin remote is a reachable local repository

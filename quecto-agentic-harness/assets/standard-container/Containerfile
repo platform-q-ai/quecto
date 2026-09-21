@@ -4,7 +4,7 @@
 # it belongs to this repository: edit it, commit it, and the next agent in
 # this folder gets the same container. quecto never counts it as drift and
 # never replaces it (`init --refresh` restores only the runtime scripts
-# beside it). `/setup container` can write the toolchain section for you.
+# beside it).
 #
 # The runtime script, not this image, clones the configured repository and
 # mounts that checkout; source and credentials are never baked in. Build the

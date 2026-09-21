@@ -198,6 +198,11 @@ fn the_projects_own_containerfile_is_present_and_is_not_drift() {
     // a1 is a script: other bytes there are still drift.
     let drift = build(vec![AssetState::Identical, AssetState::Differs]);
     assert_eq!(drift.assets_differing(), 1);
+    assert_eq!(
+        drift.drifted,
+        [PathBuf::from("/p/.quecto/containers/standard/a1")]
+    );
+    assert!(own.drifted.is_empty());
     assert!(drift.projects_own.is_empty());
     assert!(!drift.healthy());
 }
