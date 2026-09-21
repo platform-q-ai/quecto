@@ -1036,10 +1036,13 @@ changes for parents without admission.
 The bundled adapter mounts the directory at its lexical normal form (a doubled
 slash, a `/./` or a trailing slash are the same directory) and records the
 configured spelling for `exec` to compare. It refuses, before any environment
-state exists: a relative path or one with control characters; a spelling whose
-normal form names a different directory (`..` through a symbolic link); a
-client directory that is itself a symbolic link (the read-write mount would
-expose whatever it points at); an authority that is `~/.quecto` itself; and —
+state exists: a relative path, or one with control characters or a `:` (it is
+mounted as `src:dst:mode`); a spelling with a `..` (the child opens the
+configured spelling, and only the normal form is mounted); a client directory
+that is itself a symbolic link (the read-write mount would expose whatever it
+points at); an authority that is `~/.quecto` itself, or that lives outside
+`~/.quecto` but inside the socket directory (mounted read-write whole, with
+nothing to mask it); and —
 when the authority lives inside the identity-mounted `~/.quecto` — a spelling
 that is not under `$HOME/.quecto` or reaches the authority through a symbolic
 link inside it, because the read-only mask would then miss the real directory.

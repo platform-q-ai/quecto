@@ -48,6 +48,17 @@ enum Layout {
     OutsideQuecto,
     /// The admission dir is handed over relative to the script's cwd (HOME).
     RelativeSpelling,
+    /// The spelling starts with `//` (POSIX lets that be a different root).
+    LeadingDoubleSlash,
+    /// A same-directory spelling with a `..` and no symlink: only the normal
+    /// form is mounted, so the child could not open the configured spelling.
+    PlainDotDot,
+    /// The authority lives inside the read-write, unmasked socket dir.
+    InsideSocketDir,
+    /// The admission dir is `/`: there is no client leaf beneath a parent.
+    FilesystemRoot,
+    /// HOME is not an absolute path.
+    RelativeHome,
 }
 
 /// One run of the create script: the temp dir lives as long as this does.
@@ -118,7 +129,12 @@ fn run_with_layout(admission_suffix: &str, layout: Layout) -> Run {
         | Layout::TrailingSlashHome
         | Layout::UnnormalizedSpelling
         | Layout::RelativeSpelling
+        | Layout::LeadingDoubleSlash
+        | Layout::PlainDotDot
+        | Layout::RelativeHome
         | Layout::QuectoIsSymlink => home.join(admission_suffix),
+        Layout::InsideSocketDir => socket_dir.join(admission_suffix),
+        Layout::FilesystemRoot => PathBuf::from("/"),
         Layout::OutsideQuecto => base.join("elsewhere").join(admission_suffix),
         Layout::SymlinkedLeaf => {
             let authority = home.join(admission_suffix).parent().unwrap().to_path_buf();
@@ -166,9 +182,20 @@ fn run_with_layout(admission_suffix: &str, layout: Layout) -> Run {
             PathBuf::from(format!("{parent}//./{leaf}/"))
         }
         Layout::RelativeSpelling => PathBuf::from(admission_suffix),
+        Layout::LeadingDoubleSlash => PathBuf::from(format!("/{}", admission.display())),
+        Layout::PlainDotDot => {
+            let parent = admission.parent().unwrap();
+            fs::create_dir_all(parent.join("sibling")).unwrap();
+            parent
+                .join("sibling/..")
+                .join(admission.file_name().unwrap())
+        }
         _ => admission,
     };
-    let mounted_root = Path::new(&mounted).parent().unwrap().to_path_buf();
+    let mounted_root = Path::new(&mounted)
+        .parent()
+        .unwrap_or(Path::new("/"))
+        .to_path_buf();
     let log = base.join("runtime.log");
     let podman = bin.join("podman");
     executable(
@@ -211,7 +238,10 @@ exit 125
             mounted = mounted,
             mounted_root = mounted_root,
             masked = u8::from(layout != Layout::OutsideQuecto),
-            leaf = Path::new(&mounted).file_name().unwrap().to_string_lossy()
+            leaf = Path::new(&mounted)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
         ),
     );
     // Nothing of the developer's reaches the run: a real create writes any
@@ -220,6 +250,7 @@ exit 125
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let home_env = match layout {
         Layout::TrailingSlashHome => format!("{}/", home.display()),
+        Layout::RelativeHome => "real-home".to_string(),
         _ => home.display().to_string(),
     };
     let mut command = Command::new(root().join("scripts/container-runtime/docker/create.sh"));
@@ -323,6 +354,7 @@ fn spellings_of_the_same_directory_are_mounted_at_their_normal_form() {
     for layout in [
         Layout::TrailingSlashHome,
         Layout::UnnormalizedSpelling,
+        Layout::LeadingDoubleSlash,
         Layout::QuectoIsSymlink,
     ] {
         let run = run_with_layout(".quecto/admission/client", layout);
@@ -395,10 +427,37 @@ fn rejects_a_client_leaf_that_is_a_symbolic_link() {
 }
 
 #[test]
-fn rejects_a_spelling_whose_normal_form_names_another_directory() {
+fn rejects_a_spelling_with_a_dot_dot_whether_or_not_it_crosses_a_link() {
+    // Through a link the normal form names another directory; without one
+    // the child still could not open the configured spelling, because only
+    // the normal form is mounted.
+    for layout in [Layout::DotDotThroughLink, Layout::PlainDotDot] {
+        assert_refused(
+            &run_with_layout(".quecto/admission/client", layout),
+            "is not its normal form",
+        );
+    }
+}
+
+#[test]
+fn rejects_an_authority_inside_the_unmasked_read_write_socket_dir() {
     assert_refused(
-        &run_with_layout(".quecto/admission/client", Layout::DotDotThroughLink),
-        "does not name the same directory once normalized",
+        &run_with_layout("admission/client", Layout::InsideSocketDir),
+        "is inside the socket dir",
+    );
+}
+
+#[test]
+fn rejects_a_path_with_no_client_leaf_a_colon_and_a_relative_home() {
+    assert_refused(
+        &run_with_layout("", Layout::FilesystemRoot),
+        "has an unsupported client leaf",
+    );
+    // `-v src:dst:mode` cannot carry a colon.
+    assert_refused(&run(".quecto/admission/cli:ent"), "without ':'");
+    assert_refused(
+        &run_with_layout(".quecto/admission/client", Layout::RelativeHome),
+        "HOME must be an absolute",
     );
 }
 
@@ -412,7 +471,7 @@ fn rejects_a_relative_path_and_a_control_character() {
     // and classify `admission` while the runtime mounts `admission\n`.
     assert_refused(
         &run(".quecto/admission\n/client"),
-        "printable characters only",
+        "printable in this locale",
     );
 }
 

@@ -353,10 +353,13 @@ fi
 # create never leaks an unreported environment directory.
 #
 # The admission dir keeps its configured spelling for the record exec.sh
-# compares; every mount uses its lexical normal form (`admission_mount`), so
-# the path that is classified is the path that is mounted. A spelling is
-# admitted only when it is absolute, printable, and names the same real
-# directory as its normal form ('..' through a symbolic link does not).
+# compares and for the child, which opens that spelling inside the container;
+# every mount uses its lexical normal form (`admission_mount`), so the path
+# that is classified is the path that is mounted. A spelling is admitted only
+# when it is absolute, made of characters a `-v src:dst:mode` spec can carry,
+# and differs from its normal form by nothing but doubled slashes, `/./` and
+# a trailing slash — those open the same directory wherever the normal form
+# is mounted; a `..` does not.
 admission_dir="${QUECTO_ADMISSION_DIR:-}"
 admission_mount=""
 admission_root=""
@@ -365,25 +368,41 @@ admission_masked=0
 if [ -n "$admission_dir" ]; then
   [ -d "$admission_dir" ] || die "QUECTO_ADMISSION_DIR '$admission_dir' is not a directory"
   [[ "$admission_dir" == /* ]] || die "QUECTO_ADMISSION_DIR '$admission_dir' must be an absolute path"
-  [[ "$admission_dir" =~ ^[^[:cntrl:]]+$ ]] || die "QUECTO_ADMISSION_DIR must contain printable characters only"
-  [[ "$HOME" == /* && "$HOME" =~ ^[^[:cntrl:]]+$ ]] || die "HOME must be an absolute, printable path when QUECTO_ADMISSION_DIR is set"
-  admission_mount="$(realpath -ms -- "$admission_dir")"
-  [ "$(realpath -m -- "$admission_mount")" = "$(realpath -m -- "$admission_dir")" ] \
-    || die "QUECTO_ADMISSION_DIR '$admission_dir' does not name the same directory once normalized to '$admission_mount' ('..' through a symbolic link); spell it without '..'"
+  [[ "$admission_dir" =~ ^[^[:cntrl:]:]+$ ]] \
+    || die "QUECTO_ADMISSION_DIR must be made of characters that are printable in this locale, without ':' (it is mounted as src:dst:mode)"
+  [[ "$HOME" == /* && "$HOME" =~ ^[^[:cntrl:]:]+$ ]] || die "HOME must be an absolute, printable path without ':' when QUECTO_ADMISSION_DIR is set"
+  admission_mount="$(realpath -ms -- "$admission_dir")" && [ -n "$admission_mount" ] \
+    || die "cannot normalize QUECTO_ADMISSION_DIR '$admission_dir': this adapter needs GNU realpath (-m, -s)"
+  # The spelling with only its doubled slashes, `/./` and trailing slash
+  # removed. Equal to the normal form exactly when there is no `..` in it.
+  admission_squeezed="$admission_dir"
+  while [[ "$admission_squeezed" == *//* ]]; do admission_squeezed="${admission_squeezed//\/\///}"; done
+  while [[ "$admission_squeezed" == */./* ]]; do admission_squeezed="${admission_squeezed//\/.\///}"; done
+  admission_squeezed="${admission_squeezed%/.}"
+  [ "$admission_squeezed" = / ] || admission_squeezed="${admission_squeezed%/}"
+  [ "${admission_squeezed:-/}" = "$admission_mount" ] \
+    || die "QUECTO_ADMISSION_DIR '$admission_dir' is not its normal form '$admission_mount' ('..' is not supported: the child opens the configured spelling, and only the normal form is mounted); spell it without '..'"
   admission_root="$(dirname -- "$admission_mount")"
   admission_leaf="$(basename -- "$admission_mount")"
   # Exactly one client component beneath a parent: this is what is
   # pre-created inside the mask and mounted read-write.
   [ "${admission_root%/}/$admission_leaf" = "$admission_mount" ] \
     || die "QUECTO_ADMISSION_DIR '$admission_dir' has an unsupported client leaf"
-  real_root="$(realpath -m -- "$admission_root")"
+  real_root="$(realpath -m -- "$admission_root")" && [ -n "$real_root" ] \
+    || die "cannot resolve QUECTO_ADMISSION_DIR parent '$admission_root'"
+  real_leaf="$(realpath -m -- "$admission_mount")" && [ -n "$real_leaf" ] \
+    || die "cannot resolve QUECTO_ADMISSION_DIR '$admission_dir'"
   # The client leaf is a real directory of its parent. A symbolic link there
   # would make the read-write mount expose whatever it points at — the
   # authority itself, for `client -> .`.
-  [ "$(realpath -m -- "$admission_mount")" = "${real_root%/}/$admission_leaf" ] \
+  [ "$real_leaf" = "${real_root%/}/$admission_leaf" ] \
     || die "QUECTO_ADMISSION_DIR '$admission_dir' is a symbolic link; the client directory must be a real directory of its authority"
-  home_quecto="$(realpath -ms -- "$HOME/.quecto")"
-  real_quecto="$(realpath -m -- "$HOME/.quecto")"
+  home_quecto="$(realpath -ms -- "$HOME/.quecto")" && [ -n "$home_quecto" ] \
+    || die "cannot normalize '$HOME/.quecto'"
+  real_quecto="$(realpath -m -- "$HOME/.quecto")" && [ -n "$real_quecto" ] \
+    || die "cannot resolve '$HOME/.quecto'"
+  real_socket_dir="$(realpath -m -- "$socket_dir")" && [ -n "$real_socket_dir" ] \
+    || die "cannot resolve socket dir '$socket_dir'"
   case "$real_root" in
   "$real_quecto")
     die "QUECTO_ADMISSION_DIR parent '$admission_root' is the identity-mounted ~/.quecto itself; use a subdirectory"
@@ -404,7 +423,17 @@ if [ -n "$admission_dir" ]; then
       || die "QUECTO_ADMISSION_DIR '$admission_dir' reaches its authority through a symbolic link inside ~/.quecto; the read-only mask would miss the real directory"
     admission_masked=1
     ;;
-  /*) ;;
+  /*)
+    # Outside ~/.quecto nothing is masked, so the authority must be outside
+    # every read-write mount too. The socket dir is mounted read-write whole:
+    # an authority inside it would hand the container its journal, admin
+    # socket and owner token.
+    case "${real_root%/}/" in
+    "${real_socket_dir%/}"/*)
+      die "QUECTO_ADMISSION_DIR parent '$admission_root' is inside the socket dir '$socket_dir', which the container gets read-write and unmasked; keep the admission authority under ~/.quecto or outside the socket dir"
+      ;;
+    esac
+    ;;
   *) die "QUECTO_ADMISSION_DIR '$admission_dir' has an unsupported parent path" ;;
   esac
 fi
@@ -455,8 +484,8 @@ fi
 # capability is reported only when the mount is actually present; an
 # admission-enabled parent refuses to launch without it. When the authority
 # lives under the identity-mounted $HOME/.quecto, its root (journal, admin
-# socket, owner token) is masked with an empty directory and only client/ is
-# re-exposed underneath it.
+# socket, owner token) is masked with a directory holding nothing but the
+# client mountpoint, and only client/ is re-exposed underneath it.
 admission_capability=""
 if [ -n "$admission_dir" ]; then
   # Classification and every rejecting check ran before mktemp (a `die`
