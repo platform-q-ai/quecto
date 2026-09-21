@@ -4,11 +4,15 @@
 .env
 # quecto's per-checkout state is local — except this repository's own
 # standard Containerfile, which is the project's and is committed (#2073).
-.quecto/*
-!.quecto/containers/
-.quecto/containers/*
-!.quecto/containers/standard/
-.quecto/containers/standard/*
-!.quecto/containers/standard/Containerfile
+# A `.quecto/` anywhere below the root (a crate run as a project, a test
+# leftover) is ignored whole, as it was before the root carve-out.
+**/.quecto/
+!/.quecto/
+/.quecto/*
+!/.quecto/containers/
+/.quecto/containers/*
+!/.quecto/containers/standard/
+/.quecto/containers/standard/*
+!/.quecto/containers/standard/Containerfile
 __pycache__/
 *.pyc

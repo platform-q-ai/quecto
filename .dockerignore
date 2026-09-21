@@ -13,7 +13,10 @@ target/
 .github/
 .claude/
 
-# Local env/secrets/session files
+# Local env/secrets/session files (a checkout's .quecto/ holds sessions and
+# the repo-local overlay; no image build reads it)
+.quecto/
+**/.quecto/
 .env
 .env.*
 *.pem
