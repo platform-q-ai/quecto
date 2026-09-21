@@ -345,8 +345,8 @@ fn finalize_mode(cause: TerminationCause) -> FinalizeMode {
         TerminationCause::SelectedTermination
         | TerminationCause::FleetTeardown
         | TerminationCause::EnvironmentKill => FinalizeMode::ParentKill,
-        // #2070: delete-all or a session transition is the owner ending the
-        // swarms it holds; their containers are not kept.
+        // #2070: delete-all, or a session transition whose target is proven,
+        // is the owner ending the swarms it holds; their containers go.
         TerminationCause::OwnerTeardown => FinalizeMode::OwnerTeardown,
         TerminationCause::LaunchRollback {
             owns_environment: true,

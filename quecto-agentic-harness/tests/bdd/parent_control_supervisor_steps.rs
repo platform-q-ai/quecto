@@ -446,6 +446,7 @@ fn when_production_paths(world: &mut QuectoWorld) {
             Duration::from_secs(30),
             fleet.execute(TerminateAllDelegatedAgentsRequest {
                 reason: ShutdownReason::OperatorRequest,
+                authority: quecto::application::subagents::dto::FleetTeardownAuthority::Harness,
             }),
         )
         .await

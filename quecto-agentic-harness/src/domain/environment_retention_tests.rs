@@ -129,8 +129,7 @@ fn what_is_no_swarm_never_retains() {
 fn retention_reasons_name_how_the_run_ended() {
     let exit = MemberFinalizeMode::Exit;
     let text = |run| retention_reason(exit, &SwarmRunObservation::Run(run));
-    assert!(text(with_status(RunStatus::Succeeded, None)).starts_with("run closed: succeeded;"));
-    assert!(text(with_status(RunStatus::Failed, None)).starts_with("run closed: failed;"));
+    // A run its owner closed is never retained, so it has no reason (#2070).
     assert!(text(with_status(RunStatus::Cancelled, None)).starts_with("run ended: cancelled;"));
     assert!(
         text(with_status(

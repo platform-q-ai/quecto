@@ -169,8 +169,10 @@ configuration on the host and fails without the fix.
 
 A swarm's container lives as long as its swarm, and no longer. A swarm ends
 only when its owner says so: the supervisor outside the swarm closes the run
-into its outcome (`swarm_control close`), or the owner explicitly tears down
-everything it owns — delete-all, or a session transition. Then the final
+into its outcome (`swarm_control close`), or the owner explicitly leaves
+everything it owns behind — delete-all, or a session transition that
+succeeds (a `/resume` proves its target before the fleet is settled, so a
+refused one ends nothing). Then the final
 member's exit runs the retained `kill` like any other container: the box,
 its checkout and its board go; nothing is kept.
 
@@ -739,7 +741,10 @@ parent's process group: the TUI's ordinary exit (Ctrl-D) terminates the
 harness by signal, and nothing but the harness running this script can reach
 the environment. The harness therefore tears down every subagent and
 environment on the signal before it exits, and the TUI's exit budget (two
-seconds) bounds how long the kill script may take.
+seconds) bounds how long the kill script may take. The exception is a swarm
+its owner has not closed (#1924, #2070): a signal can be a crash as easily as
+an exit, so that environment is `retained`, not killed — see "Swarm
+environments live as long as the swarm".
 
 ### `inspect`
 

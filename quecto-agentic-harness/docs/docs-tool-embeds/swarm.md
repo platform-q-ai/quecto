@@ -244,10 +244,11 @@ resume would refuse on right now (a passed deadline, a spent budget, or a lost
 coordinator).
 
 A swarm container lives as long as its swarm. The swarm ends when the
-supervisor `close`s it, or when its owner deletes all sub-agents or starts a
-new session: the container, board and checkout are then removed once its
-coordinator is gone. Nothing else ends it — a coordinator that exits,
-crashes, is `kill`ed or cancels its own run, and the master shutting down,
+supervisor `close`s it, or when its owner deletes all sub-agents or moves to
+another session (`/new`, a `/resume` that succeeds): the container, board and
+checkout are then removed once its coordinator is gone. Nothing else ends
+it — a coordinator that exits, crashes, is `kill`ed or cancels its own run,
+a refused `/resume`, and the master shutting down,
 leave the environment `retained` (`get_containers` lists it) so the run can
 be resumed; `kill_container` removes it. `metadata.retained` reads `run ended: <outcome>; ...`
 after an orderly end you have not closed yet (the run is untouched), or names the lost coordinator

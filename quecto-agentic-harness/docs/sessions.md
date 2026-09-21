@@ -101,9 +101,10 @@ Agent starts
   │     └── (same cycle, building on previous history)
   │
   ├── Client sends new_session / resume_session
-  │     └── Children settled → departing session saved → (resume: target
-  │         claimed and loaded) → roster reset → departing key released →
-  │         the loop stands for the new identity (see the protocol reference)
+  │     └── (resume: target claimed and loaded first, so a refused resume
+  │         ends nothing, #2070) → children settled → departing session
+  │         saved → roster reset → departing key released → the loop stands
+  │         for the new identity (see the protocol reference)
   │
   ├── Last client disconnects
   │     └── Children torn down, session saved once more (ordinary exit)
@@ -142,7 +143,7 @@ the architecture tests refuse a use case the docs do not name.
 | `RewindConversation` | #1865 | `rewind_to` | target resolution, truncation, retention residue removal, ledger reset, accounting reset, save |
 | `StartFreshConversation` | #1862 | `new_session` | settle children → save → reset roster → clear → fresh identity → release old key → propagate → switch → reset effort/workflow → clear retention |
 | `DepartingChildren` | #1862/#1863 | (collaborator of the two transitions) | fleet settlement outcome and roster replacement policy (#1937, #1938) |
-| `ResumeSavedSession` | #1863 | `resume_session`, and the startup open of the loop's own session | target admission, settle → save → claim → load → roster → release → propagate → effort → history/workflow restore → switch |
+| `ResumeSavedSession` | #1863 | `resume_session`, and the startup open of the loop's own session | target admission, claim → load (another session is proven before the fleet goes, #2070; the loop's own key loads after its save) → settle → save → roster → release → propagate → effort → history/workflow restore → switch |
 | `RecallContext` | #1866 | the `recall` tool; the run-end ephemeral scrub | recall/list/clear over the retention namespace of an identity |
 | `RetainContext` | #1866 | the context-pruning policy | append with receipt, the `[:{k}]` deduplication rule |
 | `ListRetainedContext` | #1866 | the context-pruning policy | the retention index and presence, never content |

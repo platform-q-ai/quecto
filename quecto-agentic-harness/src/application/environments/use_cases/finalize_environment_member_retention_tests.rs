@@ -1,8 +1,8 @@
-//! #1924, #2070: a swarm's environment lives as long as the swarm. A run
-//! that has not ended — running, paused, its coordinator lost — keeps its
-//! box when the final member goes, so it can be resumed. A run its owner
-//! ended (closed into an outcome, cancelled), or an owner tearing down
-//! everything it owns, gives the box up: the retained kill runs.
+//! #1924, #2070: a swarm's environment lives as long as the swarm. A run its
+//! owner has not closed — running, paused, its coordinator lost, cancelled
+//! by the coordinator itself — keeps its box when the final member goes. A
+//! run the supervisor closed into its outcome, or the owner's explicit
+//! teardown, gives the box up: the retained kill runs.
 
 use std::sync::{Arc, Mutex};
 

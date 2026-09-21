@@ -122,6 +122,7 @@ async fn fleet_teardown_finalizes_a_script_managed_member_and_clears_its_row() {
         fleet.execute(
             crate::application::subagents::dto::TerminateAllDelegatedAgentsRequest {
                 reason: crate::domain::subagent_teardown::ShutdownReason::OperatorRequest,
+                authority: crate::application::subagents::dto::FleetTeardownAuthority::Harness,
             },
         ),
     )

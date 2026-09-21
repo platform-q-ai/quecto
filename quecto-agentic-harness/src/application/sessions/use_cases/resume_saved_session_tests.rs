@@ -108,10 +108,12 @@ async fn success_runs_every_baseline_step_in_order_and_restores_history_and_work
     assert_eq!(
         rig.journal(),
         [
-            "fleet.settle",
-            "store.save_clean_delta",
+            // #2070: the target is claimed and loaded BEFORE the fleet goes,
+            // so a resume that cannot succeed tears nothing down.
             "store.claim(cli:saved)",
             "store.load(cli:saved)",
+            "fleet.settle",
+            "store.save_clean_delta",
             "roster.clear",
             "store.release(cli:departing)@active=cli:departing",
             "key.propagate(cli:saved)@active=cli:departing",
@@ -229,7 +231,7 @@ async fn an_invalid_name_refuses_before_the_fleet_runs() {
 }
 
 #[tokio::test]
-async fn an_unsettled_child_refuses_before_the_save_and_the_claim() {
+async fn an_unsettled_child_refuses_before_the_save_and_gives_the_target_back() {
     let rig = rig_with_target(FreshOptions {
         roster: Some((1, 1)),
         ..FreshOptions::default()
@@ -255,14 +257,23 @@ async fn an_unsettled_child_refuses_before_the_save_and_the_claim() {
         err,
         ResumeSavedSessionError::Refused(SessionTransitionRefused::Unsettled(_))
     ));
-    assert_eq!(rig.journal(), ["fleet.settle"]);
-    assert!(rig.store.claimed.lock().unwrap().is_empty());
+    // The target was proven first (#2070); the refusal hands its claim back.
+    assert_eq!(
+        rig.journal(),
+        [
+            "store.claim(cli:saved)",
+            "store.load(cli:saved)",
+            "fleet.settle",
+            "store.release(cli:saved)@active=cli:departing",
+        ]
+    );
+    assert_eq!(rig.store.released.lock().unwrap().as_slice(), [TARGET]);
     assert_eq!(rig.identity(), OLD_KEY);
     assert!(rig.resolves(&messages[0]));
 }
 
 #[tokio::test]
-async fn a_failed_save_refuses_before_the_claim_with_the_fleet_already_run() {
+async fn a_failed_save_refuses_with_the_fleet_already_run_and_gives_the_target_back() {
     let rig = rig_with_target(FreshOptions {
         save_fails: true,
         ..FreshOptions::default()
@@ -284,9 +295,19 @@ async fn a_failed_save_refuses_before_the_claim_with_the_fleet_already_run() {
         err.to_string(),
         "failed to save current session: session error: disk full"
     );
-    assert_eq!(rig.journal(), ["fleet.settle", "store.save_clean_delta"]);
-    assert!(rig.store.claimed.lock().unwrap().is_empty());
-    assert!(rig.store.released.lock().unwrap().is_empty());
+    // The one refusal left AFTER the fleet went: the departing session's own
+    // save failing (a full disk). Rare, and the target's claim is handed back.
+    assert_eq!(
+        rig.journal(),
+        [
+            "store.claim(cli:saved)",
+            "store.load(cli:saved)",
+            "fleet.settle",
+            "store.save_clean_delta",
+            "store.release(cli:saved)@active=cli:departing",
+        ]
+    );
+    assert_eq!(rig.store.released.lock().unwrap().as_slice(), [TARGET]);
     assert_eq!(rig.identity(), OLD_KEY);
 }
 
@@ -301,7 +322,7 @@ async fn a_target_owned_elsewhere_is_refused_at_the_claim_and_nothing_is_release
         .execute(
             &ResumeRequest::restore("saved"),
             &mut messages,
-            None,
+            Some(&rig.settled_fleet()),
             &mut runtime,
         )
         .await
@@ -311,10 +332,9 @@ async fn a_target_owned_elsewhere_is_refused_at_the_claim_and_nothing_is_release
         err.to_string(),
         "session error: session cli:saved is owned by another live process"
     );
-    assert_eq!(
-        rig.journal(),
-        ["store.save_clean_delta", "store.claim(cli:saved)"]
-    );
+    // #2070: refused before the fleet was touched and before any save — a
+    // resume that cannot happen must not end the owner's children or swarms.
+    assert_eq!(rig.journal(), ["store.claim(cli:saved)"]);
     assert!(
         rig.store.released.lock().unwrap().is_empty(),
         "a refused claim leaves the other owner's claim and ours alone"
@@ -361,7 +381,7 @@ async fn a_load_error_releases_the_claim_just_taken_and_keeps_the_session() {
         .execute(
             &ResumeRequest::restore("saved"),
             &mut messages,
-            None,
+            Some(&rig.settled_fleet()),
             &mut runtime,
         )
         .await
@@ -374,6 +394,11 @@ async fn a_load_error_releases_the_claim_just_taken_and_keeps_the_session() {
     assert_eq!(rig.store.released.lock().unwrap().as_slice(), [TARGET]);
     assert_eq!(rig.identity(), OLD_KEY);
     assert_eq!(messages.len(), 2);
+    assert!(
+        !rig.journal().iter().any(|step| step == "fleet.settle"),
+        "a target that cannot be loaded never costs the fleet (#2070): {:?}",
+        rig.journal()
+    );
 }
 
 #[tokio::test]
@@ -404,10 +429,10 @@ async fn live_rows_after_settlement_release_the_claim_and_keep_the_roster() {
     assert_eq!(
         rig.journal(),
         [
-            "fleet.settle",
-            "store.save_clean_delta",
             "store.claim(cli:saved)",
             "store.load(cli:saved)",
+            "fleet.settle",
+            "store.save_clean_delta",
             "store.release(cli:saved)@active=cli:departing",
         ]
     );
@@ -417,7 +442,7 @@ async fn live_rows_after_settlement_release_the_claim_and_keep_the_roster() {
 }
 
 #[tokio::test]
-async fn a_live_row_without_a_fleet_refuses_before_anything() {
+async fn a_live_row_without_a_fleet_refuses_and_gives_the_target_back() {
     let rig = rig_with_target(FreshOptions {
         roster: Some((2, 2)),
         ..FreshOptions::default()
@@ -438,7 +463,15 @@ async fn a_live_row_without_a_fleet_refuses_before_anything() {
         err.to_string(),
         "2 live subagent(s) but no fleet teardown is available; the current session was kept"
     );
-    assert!(rig.journal().is_empty());
+    assert_eq!(
+        rig.journal(),
+        [
+            "store.claim(cli:saved)",
+            "store.load(cli:saved)",
+            "store.release(cli:saved)@active=cli:departing",
+        ],
+        "nothing of the departing session was touched; the target is handed back"
+    );
 }
 
 #[tokio::test]
@@ -534,8 +567,8 @@ async fn a_missing_file_for_the_current_key_keeps_the_loops_own_claim() {
     assert_eq!(
         journal,
         [
-            "store.save_clean_delta",
             "store.claim(cli:departing)",
+            "store.save_clean_delta",
             "store.load(cli:departing)",
         ]
     );

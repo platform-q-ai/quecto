@@ -20,11 +20,11 @@ pub enum MemberFinalizeMode {
     /// Parent-initiated termination of ONE member (`kill_container`, an
     /// operator kill): death by our own hand is not a post-mortem.
     ParentKill,
-    /// The owner explicitly ended everything it owns (#2070): delete-all, a
-    /// session transition. Its swarms end with it, so nothing is kept —
-    /// whatever state their runs are in. A harness that is merely shutting
-    /// down (a signal, its last client gone, its parent lost) is NOT this:
-    /// that can be a crash, and stays a `ParentKill`.
+    /// The owner explicitly ended everything it owns (#2070): delete-all, or
+    /// a session transition that is going to succeed. Its swarms end with it,
+    /// so nothing is kept — whatever state their runs are in. A harness that
+    /// is shutting down is NOT this and stays a `ParentKill`: that can be a
+    /// crash (a signal, its last client gone, its parent lost).
     OwnerTeardown,
     /// Rollback of a failed join into an environment someone else created.
     LaunchRollback,
@@ -80,6 +80,9 @@ impl HostedSwarmRun {
     /// The run's owner closed it (#2070): the supervisor outside the swarm
     /// made a held outcome terminal. `cancelled` is NOT this — the
     /// coordinator agent writes it itself, and an agent never ends a swarm.
+    /// This trusts the store's own rule that only the supervisor closes a
+    /// run; an agent with a shell inside the box can already destroy its
+    /// checkout, so that rule is a convention, not a security boundary.
     pub fn closed_by_owner(&self) -> bool {
         self.status.proposable()
     }
@@ -165,9 +168,6 @@ pub fn retention_reason(mode: MemberFinalizeMode, observed: &SwarmRunObservation
         ),
         SwarmRunObservation::Run(run) => match (run.status, run.outcome) {
             (RunStatus::Cancelled, _) => format!("run ended: cancelled; {KEPT}"),
-            (status, _) if status.terminal() => {
-                format!("run closed: {}; {KEPT}", status_name(status))
-            }
             (RunStatus::Paused, Some(outcome)) => {
                 format!("run ended: {}; {KEPT}", status_name(outcome))
             }
