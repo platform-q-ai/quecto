@@ -370,9 +370,9 @@ impl ContainerConfigInventory {
 /// The name of the container config `quecto container init` writes.
 pub const STANDARD_CONTAINER_CONFIG: &str = "standard";
 
-/// The image the standard config launches when `init` is not told
-/// another: the tag the official adapter set already defaults to, so the
-/// Containerfile init materialises is its missing build input.
+/// The tag the official adapter set defaults to. `init` names a project's
+/// image after its directory ([`standard_image_for`]); this is the fallback
+/// for a directory name with nothing an image name admits.
 pub const STANDARD_CONTAINER_IMAGE: &str = "quecto-dev:local";
 
 /// Where the standard bundle lives below a project: the assets are
@@ -380,7 +380,9 @@ pub const STANDARD_CONTAINER_IMAGE: &str = "quecto-dev:local";
 pub const STANDARD_CONTAINER_DIR: &str = ".quecto/containers/standard";
 
 mod assets;
+mod standard_image;
 pub use assets::{AssetOutcome, AssetOwnership, AssetState, ContainerAsset};
+pub use standard_image::standard_image_for;
 
 /// The embedded bundle this binary carries, with its version and the
 /// command that builds its image (a template over `{image}` and `{dir}`,
@@ -427,7 +429,8 @@ pub struct StandardContainerRequest {
     pub project: std::path::PathBuf,
     /// `--repo <url>`; `None` derives the checkout's `origin` remote.
     pub repository: Option<String>,
-    /// `--image <tag>`; `None` is [`STANDARD_CONTAINER_IMAGE`].
+    /// `--image <tag>`; `None` keeps an existing entry's tag, else names
+    /// the image after the project ([`standard_image_for`]).
     pub image: Option<String>,
     /// Report what would be written; write nothing.
     pub dry_run: bool,

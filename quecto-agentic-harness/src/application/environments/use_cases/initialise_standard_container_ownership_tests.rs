@@ -62,3 +62,50 @@ fn a_missing_containerfile_is_written_as_the_starter_even_on_a_refresh() {
         b"FROM x".to_vec()
     );
 }
+
+// ─── A default image tag per repository (#2073) ─────────────────────────────
+
+#[test]
+fn two_projects_get_two_default_image_tags_named_after_their_directories() {
+    let tag = |project: &str| {
+        let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+        let report = rig.use_case.execute(&request(project)).unwrap();
+        let create = argv(&report.entry.entry, "create");
+        assert_eq!(create[create.len() - 2], "--image");
+        assert_eq!(create[create.len() - 1], report.image);
+        report.image
+    };
+    assert_eq!(tag("/work/shop-api"), "quecto-shop-api:local");
+    assert_eq!(tag("/work/quecto"), "quecto-quecto:local");
+    assert_ne!(tag("/work/a"), tag("/work/b"));
+}
+
+#[test]
+fn a_directory_name_becomes_a_valid_image_name() {
+    use crate::application::environments::dto::standard_image_for;
+    for (project, image) in [
+        ("/w/My Project", "quecto-my-project:local"),
+        ("/w/API_v2.1", "quecto-api_v2.1:local"),
+        ("/w/--weird--", "quecto-weird:local"),
+        ("/w/a__b..c", "quecto-a-b-c:local"),
+        ("/w/caf\u{e9}", "quecto-caf:local"),
+        ("/w/\u{65e5}\u{672c}", "quecto-dev:local"),
+        ("/", "quecto-dev:local"),
+    ] {
+        assert_eq!(standard_image_for(Path::new(project)), image, "{project}");
+    }
+    let long = format!("/w/{}", "x".repeat(300));
+    let image = standard_image_for(Path::new(&long));
+    assert_eq!(image, format!("quecto-{}:local", "x".repeat(100)));
+}
+
+#[test]
+fn an_existing_entry_keeps_the_tag_it_has() {
+    use crate::application::environments::dto::STANDARD_CONTAINER_IMAGE;
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    let mut first = request("/work/shop-api");
+    first.image = Some(STANDARD_CONTAINER_IMAGE.into());
+    rig.use_case.execute(&first).unwrap();
+    let again = rig.use_case.execute(&request("/work/shop-api")).unwrap();
+    assert_eq!(again.image, STANDARD_CONTAINER_IMAGE);
+}
