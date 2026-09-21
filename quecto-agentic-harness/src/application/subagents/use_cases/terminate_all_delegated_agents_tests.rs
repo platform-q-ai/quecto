@@ -11,8 +11,14 @@ use crate::application::subagents::use_cases::lifecycle_fakes::Phase;
 use crate::application::subagents::use_cases::teardown_fakes::*;
 use crate::domain::subagent_teardown::LineageSnapshot;
 
+/// A request shaped like its production caller: delete-all asks with
+/// `OperatorRequest` on the owner's word; every other reason is the harness.
 fn request(reason: ShutdownReason) -> TerminateAllDelegatedAgentsRequest {
-    TerminateAllDelegatedAgentsRequest { reason }
+    let authority = match reason {
+        ShutdownReason::OperatorRequest => FleetTeardownAuthority::Owner,
+        _ => FleetTeardownAuthority::Harness,
+    };
+    TerminateAllDelegatedAgentsRequest { reason, authority }
 }
 
 struct Rig {
@@ -94,8 +100,8 @@ async fn every_direct_child_is_claimed_asked_concluded_and_compensated_then_tomb
     assert_eq!(
         rig.fleet.compensation.calls(),
         [
-            (identity("A", 1), TerminationCause::FleetTeardown),
-            (identity("D", 1), TerminationCause::FleetTeardown)
+            (identity("A", 1), TerminationCause::OwnerTeardown),
+            (identity("D", 1), TerminationCause::OwnerTeardown)
         ]
     );
     // Per child: claim before the edge, terminal claim before compensation.
@@ -238,7 +244,7 @@ async fn a_slow_child_bounds_the_run_without_blocking_its_siblings() {
     assert!(!run.is_finished(), "the run waits for A");
     assert_eq!(
         rig.fleet.registry.phase("A"),
-        Phase::Stopping(TerminationCause::FleetTeardown)
+        Phase::Stopping(TerminationCause::OwnerTeardown)
     );
     rig.fleet.termination.gate.notify_one();
     let outcome = bounded(run).await.unwrap().unwrap();
@@ -642,5 +648,44 @@ fn a_zero_bound_is_refused() {
             spawner: FakeSpawner::new(),
         },
         0,
+    );
+}
+
+#[test]
+fn only_the_owners_word_ends_the_owners_swarms() {
+    // #2070: the caller states the authority; nothing is inferred from the
+    // reason the children are told.
+    assert_eq!(
+        fleet_cause(FleetTeardownAuthority::Owner),
+        TerminationCause::OwnerTeardown
+    );
+    assert_eq!(
+        fleet_cause(FleetTeardownAuthority::Harness),
+        TerminationCause::FleetTeardown
+    );
+}
+
+#[tokio::test]
+async fn a_harness_settlement_asking_with_the_operators_reason_is_still_not_the_owner() {
+    // The authority is what the caller states, never the reason the children
+    // are told: a harness settlement that says `OperatorRequest` on the wire
+    // still compensates as a fleet teardown, never as the owner's.
+    let rig = rig();
+    let outcome = bounded(rig.fleet.fleet.execute(TerminateAllDelegatedAgentsRequest {
+        reason: ShutdownReason::OperatorRequest,
+        authority: FleetTeardownAuthority::Harness,
+    }))
+    .await
+    .unwrap();
+    assert!(outcome.is_settled());
+    assert!(!rig.fleet.compensation.calls().is_empty());
+    assert!(
+        rig.fleet
+            .compensation
+            .calls()
+            .iter()
+            .all(|(_, cause)| *cause == TerminationCause::FleetTeardown),
+        "{:?}",
+        rig.fleet.compensation.calls()
     );
 }

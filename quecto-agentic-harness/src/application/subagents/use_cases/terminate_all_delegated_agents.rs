@@ -31,7 +31,8 @@ use crate::domain::ids::AgentUuid;
 use crate::domain::subagent_teardown::{DelegatedAgentIdentity, ShutdownReason};
 
 use super::super::dto::{
-    FleetTeardownError, FleetTeardownOutcome, SettledChild, TerminateAllDelegatedAgentsRequest,
+    FleetTeardownAuthority, FleetTeardownError, FleetTeardownOutcome, SettledChild,
+    TerminateAllDelegatedAgentsRequest,
 };
 use super::super::ports::{
     DelegatedAgentRegistry, DirectChildRouting, OwnedChildTermination, ShutdownRunSpawner,
@@ -167,7 +168,7 @@ impl TerminateAllDelegatedAgents {
             self.inner
                 .ports
                 .spawner
-                .spawn_shutdown_run(Box::pin(drive(guard, request.reason)));
+                .spawn_shutdown_run(Box::pin(drive(guard, request)));
         }
         let outcome = JoinRun { run: &run }.await;
         outcome.map(|mut outcome| {
@@ -179,7 +180,8 @@ impl TerminateAllDelegatedAgents {
 
 /// The detached run: settle every direct child in bounded concurrent
 /// batches, pass again for late registrations, then prune the tombstones.
-async fn drive(guard: RunGuard, reason: ShutdownReason) {
+async fn drive(guard: RunGuard, request: TerminateAllDelegatedAgentsRequest) {
+    let TerminateAllDelegatedAgentsRequest { reason, authority } = request;
     let inner = guard.inner.clone();
     let mut settled: Vec<SettledChild> = Vec::new();
     let mut unsettled: Vec<(AgentUuid, String)> = Vec::new();
@@ -204,7 +206,7 @@ async fn drive(guard: RunGuard, reason: ShutdownReason) {
             .into_iter()
             .map(|child| {
                 let inner = inner.clone();
-                Box::pin(async move { inner.settle_child(child, reason).await })
+                Box::pin(async move { inner.settle_child(child, reason, authority).await })
                     as Settlement<ChildSettlement>
             })
             .collect();
@@ -228,14 +230,24 @@ async fn drive(guard: RunGuard, reason: ShutdownReason) {
     }));
 }
 
+/// The cause each child is compensated under (#2070): only the owner's
+/// explicit word ends the swarms the fleet hosts.
+fn fleet_cause(authority: FleetTeardownAuthority) -> TerminationCause {
+    match authority {
+        FleetTeardownAuthority::Owner => TerminationCause::OwnerTeardown,
+        FleetTeardownAuthority::Harness => TerminationCause::FleetTeardown,
+    }
+}
+
 impl Inner {
     async fn settle_child(
         &self,
         child: DelegatedAgentIdentity,
         reason: ShutdownReason,
+        authority: FleetTeardownAuthority,
     ) -> ChildSettlement {
         self.settle
-            .settle(child, reason, TerminationCause::FleetTeardown)
+            .settle(child, reason, fleet_cause(authority))
             .await
     }
 }

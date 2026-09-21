@@ -30,6 +30,8 @@ async fn a_shutdown_that_joins_an_operator_fleet_run_sweeps_children_registered_
                 .execute(
                     crate::application::subagents::dto::TerminateAllDelegatedAgentsRequest {
                         reason: ShutdownReason::OperatorRequest,
+                        authority:
+                            crate::application::subagents::dto::FleetTeardownAuthority::Harness,
                     },
                 )
                 .await

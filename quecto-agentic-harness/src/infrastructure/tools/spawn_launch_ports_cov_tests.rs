@@ -353,6 +353,7 @@ async fn register_and_monitor_records_the_owned_handle_and_fleet_teardown_termin
         fleet.execute(
             crate::application::subagents::dto::TerminateAllDelegatedAgentsRequest {
                 reason: crate::domain::subagent_teardown::ShutdownReason::OperatorRequest,
+                authority: crate::application::subagents::dto::FleetTeardownAuthority::Harness,
             },
         ),
     )

@@ -1,6 +1,8 @@
-//! #1924: a swarm's environment is retained after every end of its run —
-//! orderly, closed, cancelled or by loss of its coordinator — instead of
-//! being killed with the final member; only an explicit kill closes it.
+//! #1924, #2070: a swarm's environment lives as long as the swarm. A run its
+//! owner has not closed — running, paused, its coordinator lost, cancelled
+//! by the coordinator itself — keeps its box when the final member goes. A
+//! run the supervisor closed into its outcome, or the owner's explicit
+//! teardown, gives the box up: the retained kill runs.
 
 use std::sync::{Arc, Mutex};
 
@@ -33,6 +35,7 @@ fn use_case<P: HostedSwarmRunObservation + EnvironmentProcessCommands + 'static>
 struct HostedRunPort {
     observed: SwarmRunObservation,
     loss_error: Option<String>,
+    observations: Mutex<usize>,
     losses: Mutex<Vec<String>>,
     kills: Mutex<Vec<ScriptCall>>,
     cleanups: Mutex<Vec<ScriptCall>>,
@@ -47,6 +50,7 @@ impl HostedRunPort {
         Self {
             observed,
             loss_error: None,
+            observations: Mutex::new(0),
             losses: Mutex::new(Vec::new()),
             kills: Mutex::new(Vec::new()),
             cleanups: Mutex::new(Vec::new()),
@@ -59,6 +63,7 @@ impl HostedSwarmRunObservation for HostedRunPort {
         &'a self,
         _record: &'a EnvironmentRecord,
     ) -> PortFuture<'a, SwarmRunObservation> {
+        *self.observations.lock().unwrap() += 1;
         Box::pin(async move { self.observed.clone() })
     }
 
@@ -208,9 +213,9 @@ fn coordinator_exit_from_a_plain_pause_is_a_loss() {
 }
 
 #[test]
-fn coordinator_exit_after_an_orderly_end_retains_without_quarantine() {
-    // The user's decision: every swarm end keeps its container. A run
-    // already paused holding an outcome, closed, or cancelled is not a loss.
+fn coordinator_exit_from_a_run_holding_an_outcome_retains_without_quarantine() {
+    // Paused holding an outcome is an orderly end the owner has not closed
+    // yet: not a loss, and not over — the box stays (#2070).
     let cases = [
         (
             with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
@@ -227,15 +232,6 @@ fn coordinator_exit_after_an_orderly_end_retains_without_quarantine() {
         (
             with_status(RunStatus::Paused, Some(RunStatus::BudgetExhausted)),
             "run ended: budget-exhausted",
-        ),
-        (
-            with_status(RunStatus::Succeeded, None),
-            "run closed: succeeded",
-        ),
-        (with_status(RunStatus::Blocked, None), "run closed: blocked"),
-        (
-            with_status(RunStatus::Cancelled, None),
-            "run ended: cancelled",
         ),
     ];
     for (hosted, expected) in cases {
@@ -258,11 +254,104 @@ fn coordinator_exit_after_an_orderly_end_retains_without_quarantine() {
 }
 
 #[test]
-fn a_run_that_ends_between_observation_and_the_loss_record_is_reported_orderly() {
+fn a_run_its_owner_closed_gives_up_its_container() {
+    // #2070: the container lives as long as the swarm and no longer. Only
+    // the supervisor outside the swarm can close a run into its outcome.
+    for status in [
+        RunStatus::Succeeded,
+        RunStatus::Blocked,
+        RunStatus::Failed,
+        RunStatus::BudgetExhausted,
+    ] {
+        for mode in [MemberFinalizeMode::Exit, MemberFinalizeMode::ParentKill] {
+            let port = Arc::new(HostedRunPort::hosting(Some(with_status(status, None))));
+            let (registry, env_ref) = finalize(port.clone(), mode);
+            assert_eq!(
+                port.kills.lock().unwrap().len(),
+                1,
+                "{status:?}/{mode:?}: the retained kill runs exactly once"
+            );
+            assert!(
+                port.losses.lock().unwrap().is_empty(),
+                "{status:?}/{mode:?}: an ended run is no loss"
+            );
+            let record = registry.get(&env_ref).expect("record kept until collected");
+            assert_eq!(
+                record.status,
+                EnvironmentStatus::Stopped,
+                "{status:?}/{mode:?}"
+            );
+            assert!(
+                record.metadata.get("retained").is_none(),
+                "{status:?}/{mode:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_run_its_coordinator_cancelled_keeps_its_container() {
+    // `cancelled` is written by the coordinator agent itself, never by the
+    // owner: an agent must not be able to destroy its own box (#2070).
+    for mode in [MemberFinalizeMode::Exit, MemberFinalizeMode::ParentKill] {
+        let port = Arc::new(HostedRunPort::hosting(Some(with_status(
+            RunStatus::Cancelled,
+            None,
+        ))));
+        let (registry, env_ref) = finalize(port.clone(), mode);
+        assert!(port.kills.lock().unwrap().is_empty(), "{mode:?}");
+        assert!(port.losses.lock().unwrap().is_empty(), "{mode:?}: no loss");
+        assert_eq!(
+            registry.get(&env_ref).unwrap().status,
+            EnvironmentStatus::Retained,
+            "{mode:?}"
+        );
+    }
+    let port = Arc::new(HostedRunPort::hosting(Some(with_status(
+        RunStatus::Cancelled,
+        None,
+    ))));
+    let (registry, env_ref) = finalize(port, MemberFinalizeMode::Exit);
+    let reason = reason(&registry, &env_ref);
+    assert!(reason.starts_with("run ended: cancelled"), "{reason}");
+}
+
+#[test]
+fn the_owners_explicit_teardown_ends_a_swarm_whatever_its_state() {
+    // #2070: delete-all or a session transition is the owner saying "done" —
+    // a running run, a paused one, even a store that cannot be read: nothing
+    // is kept, nothing is recorded as lost, and the store is not even read.
+    for observed in [
+        SwarmRunObservation::Run(running_swarm()),
+        SwarmRunObservation::Run(with_status(RunStatus::Paused, Some(RunStatus::Failed))),
+        SwarmRunObservation::Unreadable("database is locked".to_string()),
+    ] {
+        let port = Arc::new(HostedRunPort::observing(observed.clone()));
+        let (registry, env_ref) = finalize(port.clone(), MemberFinalizeMode::OwnerTeardown);
+        assert_eq!(
+            *port.observations.lock().unwrap(),
+            0,
+            "the owner's word needs no look at the run ({observed:?})"
+        );
+        assert_eq!(port.kills.lock().unwrap().len(), 1, "{observed:?}");
+        assert!(port.cleanups.lock().unwrap().is_empty(), "{observed:?}");
+        assert!(port.losses.lock().unwrap().is_empty(), "{observed:?}");
+        assert_eq!(
+            registry.get(&env_ref).unwrap().status,
+            EnvironmentStatus::Stopped,
+            "{observed:?}"
+        );
+    }
+}
+
+#[test]
+fn a_run_that_ends_between_observation_and_the_loss_record_follows_how_it_ended() {
     // The port answers from ONE store operation: the run the observer saw as
-    // running had expired (budget-exhausted) by the time the loss was
-    // recorded, so nothing is quarantined and the reason says so.
-    struct ExpiringPort(HostedRunPort);
+    // running had changed by the time the loss was recorded. Expired
+    // (paused holding budget-exhausted): nothing is quarantined, the box is
+    // kept and the reason says so. Closed by its owner in between (#2070):
+    // the swarm is over, so the kill runs after all.
+    struct ExpiringPort(HostedRunPort, HostedSwarmRun);
     impl HostedSwarmRunObservation for ExpiringPort {
         fn observe_hosted_swarm_run<'a>(
             &'a self,
@@ -278,7 +367,7 @@ fn a_run_that_ends_between_observation_and_the_loss_record_is_reported_orderly()
             assert_eq!(hosted.status, RunStatus::Running, "observed as running");
             Box::pin(async move {
                 Ok(CoordinatorLoss {
-                    run: with_status(RunStatus::Paused, Some(RunStatus::BudgetExhausted)),
+                    run: self.1.clone(),
                     lost: false,
                 })
             })
@@ -308,21 +397,37 @@ fn a_run_that_ends_between_observation_and_the_loss_record_is_reported_orderly()
             self.0.run_retained_cleanup(environment_id, argv)
         }
     }
-    let port = Arc::new(ExpiringPort(HostedRunPort::hosting(Some(running_swarm()))));
-    let registry = EnvironmentRegistry::new();
-    let env_ref = committed_env(&registry, vec!["coordinator-uuid"]);
-    let use_case = use_case(&registry, port.clone());
-    block_on(use_case.finalize_member(
-        &env_ref,
-        "coordinator-uuid",
-        None,
-        MemberFinalizeMode::Exit,
-    ));
+    let finalize_after = |after: HostedSwarmRun| {
+        let port = Arc::new(ExpiringPort(
+            HostedRunPort::hosting(Some(running_swarm())),
+            after,
+        ));
+        let registry = EnvironmentRegistry::new();
+        let env_ref = committed_env(&registry, vec!["coordinator-uuid"]);
+        let use_case = use_case(&registry, port.clone());
+        block_on(use_case.finalize_member(
+            &env_ref,
+            "coordinator-uuid",
+            None,
+            MemberFinalizeMode::Exit,
+        ));
+        (port, registry, env_ref)
+    };
+
+    let expired = with_status(RunStatus::Paused, Some(RunStatus::BudgetExhausted));
+    let (port, registry, env_ref) = finalize_after(expired);
     assert!(port.0.kills.lock().unwrap().is_empty());
     let reason = reason(&registry, &env_ref);
     assert!(
         reason.starts_with("run ended: budget-exhausted"),
         "{reason}"
+    );
+
+    let (port, registry, env_ref) = finalize_after(with_status(RunStatus::Blocked, None));
+    assert_eq!(port.0.kills.lock().unwrap().len(), 1, "closed in between");
+    assert_eq!(
+        registry.get(&env_ref).unwrap().status,
+        EnvironmentStatus::Stopped
     );
 }
 
@@ -342,13 +447,12 @@ fn coordinator_exit_still_retains_when_the_store_refuses_the_loss_record() {
 
 #[test]
 fn supervisor_kill_of_the_coordinator_retains_without_a_loss_record() {
-    // agent_cmd kill of the member, or the master's own shutdown: the box
-    // the master was told it could inspect must survive, and a deliberate
-    // kill is not a lost harness.
+    // agent_cmd kill of that ONE member: the run has not ended, so the box
+    // survives for a resume, and a deliberate kill is not a lost harness.
+    // (A closed run and the owner's fleet teardown are pinned above, #2070.)
     for hosted in [
         running_swarm(),
         with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
-        with_status(RunStatus::Succeeded, None),
     ] {
         let port = Arc::new(HostedRunPort::hosting(Some(hosted.clone())));
         let (registry, env_ref) = finalize(port.clone(), MemberFinalizeMode::ParentKill);

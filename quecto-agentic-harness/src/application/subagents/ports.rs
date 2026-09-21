@@ -380,10 +380,17 @@ pub enum TerminationCause {
     Exit(ExitObservation),
     /// An operator selected the agent for termination.
     SelectedTermination,
-    /// The whole fleet of direct children is being torn down (#1938):
-    /// delete-all, a session transition, or the harness's own shutdown.
-    /// Death by the parent's hand: no post-mortem, environment kill runs.
+    /// The whole fleet of direct children is being torn down by the harness's
+    /// own shutdown (#1938), whatever triggered it: a termination signal, the
+    /// last client leaving, a lost parent. Death by the parent's hand: no
+    /// post-mortem — but possibly a crash, so a swarm its owner has not closed
+    /// keeps its environment (#2070).
     FleetTeardown,
+    /// The whole fleet is being torn down by an explicit act of its owner
+    /// (#2070): delete-all, or a session transition whose target is already
+    /// proven. The owner's swarms end with it and their environments are
+    /// removed.
+    OwnerTeardown,
     /// The environment the child is a member of is being killed by an
     /// explicit `kill_container` (#1939). Death by the parent's hand: no
     /// post-mortem; the environment's own kill belongs to the caller's

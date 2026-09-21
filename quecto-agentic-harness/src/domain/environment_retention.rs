@@ -17,9 +17,15 @@ use crate::domain::swarm::RunStatus;
 pub enum MemberFinalizeMode {
     /// The member ended on its own: a post-mortem (inspect runs).
     Exit,
-    /// Parent-initiated termination (`kill_container`, an operator kill, a
-    /// fleet teardown): death by our own hand is not a post-mortem.
+    /// Parent-initiated termination of ONE member (`kill_container`, an
+    /// operator kill): death by our own hand is not a post-mortem.
     ParentKill,
+    /// The owner explicitly ended everything it owns (#2070): delete-all, or
+    /// a session transition that is going to succeed. Its swarms end with it,
+    /// so nothing is kept — whatever state their runs are in. A harness that
+    /// is shutting down is NOT this and stays a `ParentKill`: that can be a
+    /// crash (a signal, its last client gone, its parent lost).
+    OwnerTeardown,
     /// Rollback of a failed join into an environment someone else created.
     LaunchRollback,
     /// Rollback of the launch that created the environment: the environment
@@ -71,6 +77,22 @@ impl HostedSwarmRun {
             || (self.status == RunStatus::Paused && self.outcome.is_some_and(RunStatus::proposable))
     }
 
+    /// The run's owner closed it (#2070): the supervisor outside the swarm
+    /// made a held outcome terminal. `cancelled` is NOT this — the
+    /// coordinator agent writes it itself, and an agent never ends a swarm.
+    /// This trusts the store's own rule that only the supervisor closes a
+    /// run; an agent with a shell inside the box can already destroy its
+    /// checkout, so that rule is a convention, not a security boundary.
+    pub fn closed_by_owner(&self) -> bool {
+        self.status.proposable()
+    }
+
+    /// Whether an emptied environment hosting this run is kept: a created
+    /// run its owner has not closed can still be resumed.
+    pub fn keeps_environment(&self) -> bool {
+        self.created() && !self.closed_by_owner()
+    }
+
     /// Operator-facing description of the run's state.
     pub fn describe(&self) -> String {
         match (self.status, self.outcome) {
@@ -107,23 +129,26 @@ pub struct CoordinatorLoss {
 }
 
 /// Whether the final-member teardown of an environment must be withheld
-/// (#1924): a member whose exit empties the environment while it hosts a
-/// created swarm run is its coordinator (workers are the coordinator's
-/// in-container descendants, never members of the supervising session's
-/// environment record). The box is kept after EVERY swarm end — orderly,
-/// closed, cancelled, or by loss of the coordinator — because the full end
-/// state of a swarm (board, checkout, unpushed work, logs) is worth
-/// inspecting; only an explicit `kill_container` tears it down. That holds
-/// for the member's own exit and for a supervisor's `kill` of the member or
-/// shutdown of the master alike; only a launch rollback (nothing to inspect)
-/// keeps its cleanup. A store that exists but cannot be read is retained too:
-/// an explicit kill can always close it later, while a destroyed box cannot
-/// be recovered.
+/// (#1924, #2070): a member whose exit empties the environment while it
+/// hosts a created swarm run is its coordinator (workers are the
+/// coordinator's in-container descendants, never members of the supervising
+/// session's environment record). A swarm's container lives as long as the
+/// swarm and no longer. A swarm ends only when its owner says so — the
+/// supervisor closing the run into its outcome, or the owner explicitly
+/// tearing down everything it owns — and then the box, its checkout and its
+/// board go with it. A crash, a lost coordinator, an agent that exited or a
+/// coordinator that cancelled its own run does NOT end the swarm: the box is
+/// kept so the run can be resumed, for the member's own exit, for a
+/// supervisor's `kill` of that one member and for a harness shutdown (which
+/// may be a crash) alike. A launch rollback
+/// (nothing to keep) keeps its cleanup. A store that exists but cannot be
+/// read is kept too: it is never proof the run ended, and an explicit kill
+/// can always remove it later, while a destroyed box cannot be recovered.
 pub fn retains_environment(mode: MemberFinalizeMode, observed: &SwarmRunObservation) -> bool {
     mode.inspectable_end()
         && match observed {
             SwarmRunObservation::NoStore => false,
-            SwarmRunObservation::Run(hosted) => hosted.created(),
+            SwarmRunObservation::Run(hosted) => hosted.keeps_environment(),
             SwarmRunObservation::Unreadable(_) => true,
         }
 }
@@ -143,9 +168,6 @@ pub fn retention_reason(mode: MemberFinalizeMode, observed: &SwarmRunObservation
         ),
         SwarmRunObservation::Run(run) => match (run.status, run.outcome) {
             (RunStatus::Cancelled, _) => format!("run ended: cancelled; {KEPT}"),
-            (status, _) if status.terminal() => {
-                format!("run closed: {}; {KEPT}", status_name(status))
-            }
             (RunStatus::Paused, Some(outcome)) => {
                 format!("run ended: {}; {KEPT}", status_name(outcome))
             }

@@ -32,6 +32,8 @@ pub(super) async fn respond(
     match fleet
         .execute(TerminateAllDelegatedAgentsRequest {
             reason: ShutdownReason::OperatorRequest,
+            // delete-all is the owner's explicit word (#2070).
+            authority: crate::application::subagents::dto::FleetTeardownAuthority::Owner,
         })
         .await
     {

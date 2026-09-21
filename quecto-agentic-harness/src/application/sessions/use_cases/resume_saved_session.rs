@@ -97,6 +97,18 @@ impl ResumeSavedSession {
         let own = old_identity == target.identity;
         (checks.preflight(store, &target, expected, own)).await?;
         let transition = SessionTransition::Resume;
+        self.store
+            .claim(&target.identity)
+            .map_err(ResumeSavedSessionError::Claim)?;
+        let mut claim = PendingClaim::new(self.store.clone(), target.identity.clone());
+        claim.release = !own;
+        // #2070: another session is proven — claimed and loaded — BEFORE the
+        // fleet goes, so a resume that cannot happen ends no child or swarm.
+        // The loop's own key is reloaded after its save, as before.
+        let proven = match own {
+            true => None,
+            false => Some(checks.load_claimed(store, &target, expected).await?),
+        };
         self.children
             .settle(fleet, transition)
             .await
@@ -105,12 +117,10 @@ impl ResumeSavedSession {
             .save(messages, SaveTrigger::Routine)
             .await
             .map_err(ResumeSavedSessionError::Save)?;
-        self.store
-            .claim(&target.identity)
-            .map_err(ResumeSavedSessionError::Claim)?;
-        let mut claim = PendingClaim::new(self.store.clone(), target.identity.clone());
-        claim.release = !own;
-        let loaded = checks.load_claimed(store, &target, expected).await?;
+        let loaded = match proven {
+            Some(loaded) => loaded,
+            None => checks.load_claimed(store, &target, expected).await?,
+        };
         self.children
             .note_persisted_rows_are_history(loaded.subagent_roster.len());
         if let Err(refused) = self.children.reset_roster(transition) {

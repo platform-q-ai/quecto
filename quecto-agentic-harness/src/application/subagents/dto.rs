@@ -337,6 +337,23 @@ pub struct FailedLaunchCompensated {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminateAllDelegatedAgentsRequest {
     pub reason: ShutdownReason,
+    /// On whose word the fleet goes (#2070). Stated by the caller, never
+    /// inferred from `reason`, which is only what the children are told.
+    pub authority: FleetTeardownAuthority,
+}
+
+/// On whose word a fleet teardown runs (#2070). It decides one thing: whether
+/// a swarm the fleet hosts ends with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FleetTeardownAuthority {
+    /// The owner explicitly asked for everything it owns to go — delete-all,
+    /// or a session transition whose target is already proven: its swarms
+    /// end and their environments are removed.
+    Owner,
+    /// The harness is shutting down, which may be a crash (a signal, its last
+    /// client gone, a lost parent): a swarm its owner has not closed keeps
+    /// its environment.
+    Harness,
 }
 
 /// How one direct child settled under the fleet teardown.

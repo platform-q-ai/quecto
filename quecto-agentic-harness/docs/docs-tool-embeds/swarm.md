@@ -38,7 +38,8 @@ containers to evade its limit. See `docs {"name":"subagents"}` for launching.
   Verify: the spawn result names `container_config=standard`; the
   coordinator's `swarm op=create` succeeds; `agent_cmd get_containers` lists
   the environment `running`. Rollback: `kill_container` or `quecto container kill <ref|name>`
-  (the container is `retained` after a run ends and needs one of them;
+  (until the supervisor closes the run its container is `retained` when the
+  coordinator goes, and needs one of them;
   `quecto container gc` sweeps exited leftovers), then the container-runtime
   rollback if the repo should lose its config.
 
@@ -242,12 +243,15 @@ immediate terminal transition. `status` also reports `resume_blockers`: what a
 resume would refuse on right now (a passed deadline, a spent budget, or a lost
 coordinator).
 
-A swarm container is retained after every swarm end: when its final member
-exits (or you `kill` it, or the master shuts down), `get_containers` lists
-the environment as `retained` and the container, board and checkout stay on
-disk for inspection. `close` and `cancel_run` make the outcome terminal but
-do not remove the container; only an explicit `kill_container` does. `metadata.retained` reads `run ended: <outcome>; ...`
-after an orderly end (the run is untouched), or names the lost coordinator
+A swarm container lives as long as its swarm. The swarm ends when the
+supervisor `close`s it, or when its owner deletes all sub-agents or moves to
+another session (`/new`, a `/resume` that succeeds): the container, board and
+checkout are then removed once its coordinator is gone. Nothing else ends
+it — a coordinator that exits, crashes, is `kill`ed or cancels its own run,
+a refused `/resume`, and the master shutting down,
+leave the environment `retained` (`get_containers` lists it) so the run can
+be resumed; `kill_container` removes it. `metadata.retained` reads `run ended: <outcome>; ...`
+after an orderly end you have not closed yet (the run is untouched), or names the lost coordinator
 when the socket closed on a running (or outcome-less paused) run: that run
 is paused holding `failed` and `resume_blockers` names the coordinator to
 relaunch. Read the members' harness logs with
