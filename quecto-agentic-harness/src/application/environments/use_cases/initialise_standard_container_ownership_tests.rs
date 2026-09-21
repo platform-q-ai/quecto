@@ -186,3 +186,22 @@ fn an_existing_entry_with_no_image_flag_keeps_the_adapters_default() {
         Some(EntryValueChange::Rewrote { previous: None })
     );
 }
+
+#[test]
+fn the_report_names_a_containerfile_that_is_still_the_starter() {
+    let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
+    // Written by this run, then kept identical by the next: a starter both times.
+    for _ in 0..2 {
+        let report = rig.use_case.execute(&request("/p")).unwrap();
+        assert_eq!(report.starters, [PathBuf::from(CONTAINERFILE)]);
+    }
+    // The project's own version is not a starter; nor is an identical script.
+    rig.assets
+        .disk
+        .lock()
+        .unwrap()
+        .insert(PathBuf::from(CONTAINERFILE), b"FROM python".to_vec());
+    let report = rig.use_case.execute(&request("/p")).unwrap();
+    assert!(report.starters.is_empty(), "{:?}", report.starters);
+    assert!(report.kept.contains(&PathBuf::from(CREATE)));
+}

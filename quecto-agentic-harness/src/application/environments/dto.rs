@@ -535,6 +535,9 @@ pub struct StandardContainerReport {
     /// Project-owned files holding the project's own version: kept, never
     /// drift, never refreshed.
     pub own: Vec<std::path::PathBuf>,
+    /// Project-owned files still holding the bundle's starter bytes (just
+    /// written, or kept identical): not yet made the project's.
+    pub starters: Vec<std::path::PathBuf>,
     pub repository: Option<String>,
     pub repository_origin: RepositoryOrigin,
     pub image: String,

@@ -142,14 +142,33 @@ and report it in one line; then propose the exact commands from the runbook — 
 before writing or installing anything. Never print secrets. Finish with a summary of what changed, \
 which sessions must restart to be bounded, and how to roll it back."
             .to_string(),
-        SetupArea::Container => "Set up the standard container for this repo. First read the \
+        SetupArea::Container => "Set up the standard container for this repo: THIS repo's own \
+default container, built for what this repo needs. First read the \
 docs page `container-runtime` (`docs {\"name\":\"container-runtime\"}`) and the container row of the \
 docs page `setup` (`docs {\"name\":\"setup\"}`). Check the current \
-state (`quecto container status`, `quecto container doctor`) and report it in one line; then propose \
-the exact commands from the runbook — `quecto container init` (`--dry-run` first), then the \
-image-build line it prints — and ASK before writing or installing anything. Never print secrets. Finish \
-with a summary of what changed, how to verify it with one `spawn {\"container\":true}` probe, and how \
-to roll it back."
+state (`quecto container status`, `quecto container doctor`) and report it in one line. Then find out \
+what this repo builds and tests with: read its manifests (`Cargo.toml`, `pyproject.toml`, \
+`package.json`, `go.mod`, … whichever exist) and its CI configuration, and report what you found in \
+one line — languages, the tools CI runs, the versions the repo pins. If there are several toolchains \
+or you cannot tell, say so and ask me which to include rather than guessing. Then follow the runbook \
+step by step. \
+(1) `quecto container init` (`--dry-run` first): it writes a neutral starter at \
+`.quecto/containers/standard/Containerfile` only when the repo has none. \
+(2) Read that Containerfile. If it is still the untouched starter — its toolchain section is only \
+comments and it declares no `ai.quecto.required-tools` label — write this repo's toolchain into that \
+section, versions pinned where the repo pins them, and declare the tools an agent must find on PATH in \
+`LABEL ai.quecto.required-tools=\"…\"`; install tools only — never copy the repo's source into the \
+image and never put a token, key or private index address in the file; SHOW me the Containerfile and \
+ASK before writing it. Otherwise the repo already has its own: tell me what it installs and whether \
+that covers what you found in the repo, before anything is built from it, and change it only if I ask. \
+(3) Run the image-build line `quecto container init` printed — always after the Containerfile \
+changed: an image built before the change is stale; skip it only when the image is present and you \
+know the Containerfile is unchanged since it was built, and if unsure, rebuild. \
+(4) `quecto container doctor` again: it now checks the image's own label. \
+Never print secrets. Finish \
+with a summary of what changed, how to verify it with one `spawn {\"container\":true}` probe, a \
+reminder to commit `.quecto/containers/standard/Containerfile` so the next agent in this folder gets \
+the same container, and how to roll it back."
             .to_string(),
         SetupArea::Auth => "Set up the credential quecto needs on this machine. First read the docs \
 page `models` (`docs {\"name\":\"models\"}`) and the \"First install\" row of the docs page `setup` \

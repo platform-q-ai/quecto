@@ -214,6 +214,7 @@ impl InitialiseStandardContainer {
         let mut differing = Vec::new();
         let mut refreshed = Vec::new();
         let mut own = Vec::new();
+        let mut starters = Vec::new();
         for (asset, state) in catalogue.assets.iter().zip(observed) {
             let path = assets_dir.join(&asset.path);
             let outcome = if request.dry_run {
@@ -260,6 +261,11 @@ impl InitialiseStandardContainer {
                     entry_written: true,
                 })?
             };
+            let is_starter = asset.ownership == AssetOwnership::Project
+                && matches!(outcome, AssetOutcome::Written | AssetOutcome::KeptIdentical);
+            if is_starter {
+                starters.push(path.clone());
+            }
             match outcome {
                 AssetOutcome::Written => written.push(path),
                 AssetOutcome::KeptIdentical => kept.push(path),
@@ -278,6 +284,7 @@ impl InitialiseStandardContainer {
             differing,
             refreshed,
             own,
+            starters,
             repository,
             repository_origin,
             repository_change,

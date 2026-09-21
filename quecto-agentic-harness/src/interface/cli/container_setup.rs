@@ -304,6 +304,14 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
         }
     }
     out.push_str("next:\n");
+    // A starter is tooling-neutral: building it as it is gives a container
+    // without the project's toolchain — whichever run wrote it.
+    for starter in &report.starters {
+        out.push_str(&format!(
+            "  first: {} is still the neutral starter — add this project's toolchain and its ai.quecto.required-tools label before building (`/setup container` does it with you)\n",
+            starter.display()
+        ));
+    }
     out.push_str(&format!(
         "  1. build the image (a create never builds or pulls; the scripts drive whichever runtime `quecto container doctor` names on its runtime-cli line — run the same command with that runtime's CLI):\n     {}\n",
         report.build_command
