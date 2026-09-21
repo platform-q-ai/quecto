@@ -367,6 +367,16 @@ if [ -n "$admission_dir" ]; then
   esac
   [ "$(realpath -m "$admission_dir")" = "$admission_dir" ] \
     || die "QUECTO_ADMISSION_DIR '$admission_dir' must not contain symbolic-link aliases"
+  admission_root="$(dirname "$admission_dir")"
+  real_root="$(realpath -m "$admission_root")"
+  real_quecto="$(realpath -m "$HOME/.quecto")"
+  case "$real_root" in
+  "$real_quecto")
+    die "QUECTO_ADMISSION_DIR parent '$admission_root' is the identity-mounted ~/.quecto itself; use a subdirectory"
+    ;;
+  "$real_quecto"/* | /*) ;;
+  *) die "QUECTO_ADMISSION_DIR '$admission_dir' has an unsupported parent path" ;;
+  esac
 fi
 
 env_dir="$(mktemp -d "$state_dir/env-XXXXXXXXXX")" || die "failed to create environment dir under $state_dir"
@@ -419,16 +429,9 @@ fi
 # re-exposed underneath it.
 admission_capability=""
 if [ -n "$admission_dir" ]; then
-  admission_root="$(dirname "$admission_dir")"
-  # Compare resolved paths so a symlinked HOME or an aliased base dir cannot
-  # dodge the mask; the mask itself is mounted at the spelled path the child
-  # will use.
-  real_root="$(realpath -m "$admission_root")"
-  real_quecto="$(realpath -m "$HOME/.quecto")"
+  # Resolved classification and all rejecting checks ran before mktemp; the
+  # mask itself stays at the validated spelled destination the child uses.
   case "$real_root" in
-  "$real_quecto")
-    die "QUECTO_ADMISSION_DIR parent '$admission_root' is the identity-mounted ~/.quecto itself; use a subdirectory"
-    ;;
   "$real_quecto"/*)
     # An empty owner-only host directory bound read-only over the authority
     # root hides journal/admin/token identically under Docker and Podman
