@@ -335,9 +335,12 @@ fn effective_cause(entry: &SubagentEntry, cause: TerminationCause) -> Terminatio
 fn finalize_mode(cause: TerminationCause) -> FinalizeMode {
     match cause {
         TerminationCause::Exit(_) => FinalizeMode::Exit,
-        TerminationCause::SelectedTermination
-        | TerminationCause::FleetTeardown
-        | TerminationCause::EnvironmentKill => FinalizeMode::ParentKill,
+        TerminationCause::SelectedTermination | TerminationCause::EnvironmentKill => {
+            FinalizeMode::ParentKill
+        }
+        // #2070: an ordinary exit, delete-all or a session transition ends
+        // the swarms the owner holds; their containers are not kept.
+        TerminationCause::FleetTeardown => FinalizeMode::FleetTeardown,
         TerminationCause::LaunchRollback {
             owns_environment: true,
         } => FinalizeMode::LaunchRollbackOwned,

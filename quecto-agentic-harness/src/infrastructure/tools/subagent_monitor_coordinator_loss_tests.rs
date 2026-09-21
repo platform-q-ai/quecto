@@ -451,7 +451,7 @@ async fn exit_and_reason(
 }
 
 #[tokio::test]
-async fn coordinator_connection_closed_after_close_retains_the_closed_run() {
+async fn coordinator_connection_closed_after_close_removes_the_container() {
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
@@ -463,16 +463,20 @@ async fn coordinator_connection_closed_after_close_retains_the_closed_run() {
     let (environments, env_ref) = environment(kill, &checkout);
     let registry = register_member(dir.path(), &environments, &env_ref);
 
-    let reason = exit_and_reason(&environments, &env_ref, &registry)
-        .await
-        .expect("a closed run keeps its container");
-    assert!(!log.exists(), "no kill after close");
-    assert!(reason.starts_with("run closed: blocked"), "{reason}");
+    // #2070: the owner closed the run, so the swarm is over — its container
+    // goes when the coordinator does. The store itself is left as it was.
+    let retained = exit_and_reason(&environments, &env_ref, &registry).await;
+    assert_eq!(retained, None, "a closed run does not keep its container");
+    assert!(log.exists(), "the retained kill ran");
+    assert_eq!(
+        environments.get(&env_ref).unwrap().status,
+        EnvironmentStatus::Stopped
+    );
     assert_eq!(context.summary().unwrap()["status"], "blocked", "untouched");
 }
 
 #[tokio::test]
-async fn coordinator_connection_closed_after_cancel_retains_the_cancelled_run() {
+async fn coordinator_connection_closed_after_cancel_removes_the_container() {
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
@@ -485,11 +489,17 @@ async fn coordinator_connection_closed_after_cancel_retains_the_cancelled_run() 
     let (environments, env_ref) = environment(kill, &checkout);
     let registry = register_member(dir.path(), &environments, &env_ref);
 
-    let reason = exit_and_reason(&environments, &env_ref, &registry)
-        .await
-        .expect("a cancelled run keeps its container");
-    assert!(!log.exists(), "no kill after cancel");
-    assert!(reason.starts_with("run ended: cancelled"), "{reason}");
+    // #2070: cancelled is the owner's word too.
+    let retained = exit_and_reason(&environments, &env_ref, &registry).await;
+    assert_eq!(
+        retained, None,
+        "a cancelled run does not keep its container"
+    );
+    assert!(log.exists(), "the retained kill ran");
+    assert_eq!(
+        environments.get(&env_ref).unwrap().status,
+        EnvironmentStatus::Stopped
+    );
 }
 
 #[tokio::test]
@@ -541,8 +551,9 @@ async fn expired_deadline_is_observed_before_the_loss_is_recorded() {
 
 #[tokio::test]
 async fn supervisor_kill_of_the_coordinator_retains_the_environment() {
-    // agent_cmd kill of the member: ParentKill through the shared cascade
-    // teardown, exactly as agent_cmd.rs and the master's shutdown call it.
+    // agent_cmd kill of that ONE member: ParentKill through the shared
+    // cascade teardown, as agent_cmd.rs calls it. The run has not ended
+    // (paused holding an outcome nobody closed), so the box is kept.
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
@@ -587,7 +598,7 @@ async fn supervisor_kill_of_the_coordinator_retains_the_environment() {
 }
 
 #[tokio::test]
-async fn master_shutdown_teardown_retains_a_swarm_environment() {
+async fn master_shutdown_teardown_removes_a_swarm_environment() {
     // The synchronous process-shutdown path (uds_shutdown run_teardown ->
     // teardown_all -> cleanup_removed_entries_sync).
     let dir = tempfile::tempdir().unwrap();
@@ -608,16 +619,17 @@ async fn master_shutdown_teardown_retains_a_swarm_environment() {
     .await
     .unwrap();
 
-    assert!(!log.exists(), "master shutdown keeps a swarm's box");
-    let record = environments.get(&env_ref).unwrap();
-    assert_eq!(record.status, EnvironmentStatus::Retained);
-    assert!(
-        record.metadata["retained"]
-            .as_str()
-            .unwrap()
-            .starts_with("coordinator killed by supervisor; run running"),
-        "{record:?}"
+    // #2070: the master's own orderly shutdown ends the swarms it owns —
+    // even a run that is still running. Only a master that dies without
+    // running its teardown leaves a resumable box behind.
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap_or_default().trim(),
+        "kill env-coordinator",
+        "the retained kill ran exactly once"
     );
+    let record = environments.get(&env_ref).unwrap();
+    assert_eq!(record.status, EnvironmentStatus::Stopped);
+    assert!(record.metadata.get("retained").is_none(), "{record:?}");
 }
 
 #[tokio::test]

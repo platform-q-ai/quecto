@@ -65,9 +65,10 @@ Two session-level `agent_cmd` commands expose it (use `agent_id: "*"`):
   status `running`, `empty` (live, no members — every restored environment
   starts so: another session's members are not reachable here),
   `killing`, `stopped`, `cleanup-failed` (with its `last_error`), or
-  `retained` (a swarm container kept alive after its run ended or lost
-  its coordinator, with `metadata.retained` explaining which; see "Swarm
-  environments are retained"), plus workspace and members.
+  `retained` (a swarm container kept because its run has not ended — its
+  coordinator was lost, or it holds an outcome nobody closed — with
+  `metadata.retained` explaining which; see "Swarm environments live as
+  long as the swarm"), plus workspace and members.
 - `kill_container` with `ref` or `name` — takes the environment's
   exclusive kill claim, asks every member agent to shut down over its own
   control edge (the `shutdown` protocol; a container coordinator's harness
@@ -164,28 +165,33 @@ and the subscriber's internal-error reporting is off; the
 `subagent_delegated_subtree.feature` SIGKILL scenario reproduces the
 configuration on the host and fails without the fix.
 
-### Swarm environments are retained (#1924)
+### Swarm environments live as long as the swarm (#1924, #2070)
 
-The one exception to final-member teardown is a swarm container: it is kept
-after **every** swarm end — ended, closed, cancelled, or lost — including a
-fully successful run, because the full end state of a swarm (board,
-checkout, unpushed branches, member logs) is worth inspecting. Whenever the
-member whose exit empties the environment was the coordinator of a created
-run (any status), the cascade still marks the member (and its descendants)
-exited, but the environment record moves to `retained` instead of running
-the retained `kill`; the container and its state directory stay, and only
-an explicit `kill_container` from the host master tears them down
-(`swarm_control close` only makes the held outcome terminal; it never
-removes the container). That holds for the coordinator's own socket closing,
-for an explicit `agent_cmd kill` of the coordinator agent and for the
-master's own process shutdown alike. `metadata.retained` says which case
+A swarm's container lives as long as its swarm, and no longer. A swarm ends
+only when its owner says so: the run is closed into its outcome
+(`swarm_control close`) or cancelled, or the owner tears down everything it
+owns — the master's ordinary exit, delete-all, or a session transition. Then
+the final member's exit runs the retained `kill` like any other container:
+the box, its checkout and its board go; nothing is kept.
+
+The one exception to final-member teardown is a swarm whose run has NOT
+ended. A crash, a lost coordinator, or an agent that failed or exited does
+not end a swarm. Whenever the member whose exit empties the environment was
+the coordinator of a created run that is `running`, `paused`, or paused
+holding an outcome nobody closed yet, the cascade still marks the member
+(and its descendants) exited, but the environment record moves to `retained`
+instead of running the retained `kill`; the container and its state
+directory stay so the run can be resumed, and an explicit `kill_container`
+removes them. That holds for the coordinator's own socket closing and for an
+`agent_cmd kill` of that one coordinator agent. A master that dies without
+running its shutdown tears nothing down. `metadata.retained` says which case
 applies:
 
-- **Orderly end** — the run was already paused holding an outcome, closed
-  into it, or cancelled when the member went away: `run ended: <outcome>;
-  environment retained for inspection, kill_container to remove`, `run
-  closed: <outcome>; ...` or `run ended: cancelled; ...`. The run is
-  untouched: no quarantine and no `resume_blockers` entry.
+- **Orderly end, not yet closed** — the run was already paused holding an
+  outcome when the member went away: `run ended: <outcome>; environment
+  retained for inspection, kill_container to remove`. The run is untouched:
+  no quarantine and no `resume_blockers` entry. (A run already closed into
+  its outcome, or cancelled, is not retained at all.)
 - **Loss** — the run was `running`, or paused with no outcome, when the
   coordinator's socket closed: the coordinator is quarantined exactly as an
   in-swarm reconcile treats a lost harness, the run is paused holding
@@ -195,9 +201,11 @@ applies:
   run paused holding failed; ...`. Observation and quarantine are one store
   operation, so a run that ends first (for instance the store's own expiry
   check ending it as `budget-exhausted`) is reported as an orderly end.
-- **Supervisor kill** — `agent_cmd kill` of the coordinator, or the master's
-  shutdown: `coordinator killed by supervisor; run <status>; ...`. Nothing is
-  quarantined; the run is left as it was.
+- **Supervisor kill** — `agent_cmd kill` of the coordinator while its run
+  has not ended: `coordinator killed by supervisor; run <status>; ...`.
+  Nothing is quarantined; the run is left as it was. (The master's own
+  orderly shutdown is not this case: it ends the swarm and removes the
+  container.)
 
 The decision is made from the session that launched the container by
 reading the coordination store at `metadata.checkout` (see the `create`

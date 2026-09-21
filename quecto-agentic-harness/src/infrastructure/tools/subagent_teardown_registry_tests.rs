@@ -339,6 +339,15 @@ fn causes_map_to_the_cleanup_contract_and_exit_kind() {
         FinalizeMode::ParentKill
     );
     assert_eq!(
+        finalize_mode(TerminationCause::EnvironmentKill),
+        FinalizeMode::ParentKill
+    );
+    // #2070: the owner ending everything it owns ends its swarms too.
+    assert_eq!(
+        finalize_mode(TerminationCause::FleetTeardown),
+        FinalizeMode::FleetTeardown
+    );
+    assert_eq!(
         finalize_mode(TerminationCause::LaunchRollback {
             owns_environment: true
         }),

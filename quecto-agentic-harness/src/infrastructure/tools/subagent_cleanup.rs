@@ -141,9 +141,11 @@ pub(super) fn cleanup_removed_entries_sync(
     removed: &mut [(String, super::subagent_registry::SubagentEntry)],
     finalizer: MemberFinalizer,
 ) {
-    // Process shutdown is parent-initiated, not a post-mortem: skip inspect.
+    // Process shutdown is the owner ending everything it owns (#2070): the
+    // mode production's fleet teardown maps to. Not a post-mortem, and a
+    // swarm's container is not kept.
     run_cleanup_jobs_sync(
-        drain_cleanup_jobs(removed, MemberFinalizeMode::ParentKill),
+        drain_cleanup_jobs(removed, MemberFinalizeMode::FleetTeardown),
         finalizer,
     );
 }

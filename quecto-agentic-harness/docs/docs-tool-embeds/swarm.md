@@ -242,12 +242,14 @@ immediate terminal transition. `status` also reports `resume_blockers`: what a
 resume would refuse on right now (a passed deadline, a spent budget, or a lost
 coordinator).
 
-A swarm container is retained after every swarm end: when its final member
-exits (or you `kill` it, or the master shuts down), `get_containers` lists
-the environment as `retained` and the container, board and checkout stay on
-disk for inspection. `close` and `cancel_run` make the outcome terminal but
-do not remove the container; only an explicit `kill_container` does. `metadata.retained` reads `run ended: <outcome>; ...`
-after an orderly end (the run is untouched), or names the lost coordinator
+A swarm container lives as long as its swarm. The swarm ends when you
+`close` or `cancel_run` it, or when the master exits normally (or you
+delete all sub-agents, or start a new session): the container, board and
+checkout are then removed once its coordinator is gone. Until then a
+coordinator that exits, crashes or is `kill`ed leaves the environment
+`retained` (`get_containers` lists it) so the run can be resumed;
+`kill_container` removes it. `metadata.retained` reads `run ended: <outcome>; ...`
+after an orderly end you have not closed yet (the run is untouched), or names the lost coordinator
 when the socket closed on a running (or outcome-less paused) run: that run
 is paused holding `failed` and `resume_blockers` names the coordinator to
 relaunch. Read the members' harness logs with

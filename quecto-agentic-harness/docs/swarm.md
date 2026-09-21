@@ -321,15 +321,26 @@ children outlive the invocation. This does not add containment for intentional
 process-group/session escapes.
 Reconciliation preserves readable partial progress and retains uncertain ownership. Keep the coordinator available to report to the parent.
 
-A swarm container is retained after every swarm end (#1924): the final
-member's exit never tears it down — nor does an `agent_cmd kill` of the
-coordinator or the master's own shutdown — so the full end state (board,
-checkout, unpushed branches, member logs) can be inspected, and only an
-explicit `kill_container` from the host master (or a later session, or
-manual removal) takes it down — `swarm_control close` makes the held outcome
-terminal but never removes the container. A closed or cancelled run keeps
-its box just the same (`metadata.retained` reads `run closed: <outcome>` or
-`run ended: cancelled`). When the
+A swarm container lives as long as its swarm, and no longer (#1924, #2070).
+A swarm ends only when its owner says so: the run is closed into its outcome
+(`swarm_control close`), cancelled (`cancel_run`), or the owner tears down
+everything it owns — an ordinary exit of the master (`/exit`, Ctrl+D),
+delete-all, or a session transition. When the swarm has ended, the final
+member's exit removes the container, its checkout and its board with the
+retained `kill`, exactly as for an ordinary container; nothing is kept.
+
+A crash, a lost coordinator, or an agent that failed or exited does NOT end
+the swarm. While the run has not ended — `running`, `paused`, or paused
+holding an outcome its owner has not closed yet — the final member's exit
+(and an `agent_cmd kill` of that one member) withholds the teardown: the
+record becomes `retained`, so the board, checkout and unpushed branches
+survive and the run can be resumed. A retained container is removed by an
+explicit `kill_container` (from the host master or a later session). A
+master that is killed without running its shutdown tears nothing down, so
+its swarms stay resumable. A store that exists but cannot be read is kept
+too: it is never proof that the run ended.
+
+When the
 coordinator's socket closes after an orderly end (the run already paused
 holding an outcome), the record becomes `retained` with `metadata.retained`
 reading `run ended: <outcome>; ...` and the run is untouched. When it closes

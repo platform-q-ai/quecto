@@ -22,46 +22,98 @@ fn with_status(status: RunStatus, outcome: Option<RunStatus>) -> HostedSwarmRun 
     }
 }
 
+const ENDED: [RunStatus; 5] = [
+    RunStatus::Succeeded,
+    RunStatus::Blocked,
+    RunStatus::Failed,
+    RunStatus::Cancelled,
+    RunStatus::BudgetExhausted,
+];
+
 #[test]
-fn retention_policy_holds_for_every_created_run_on_exit_and_parent_kill() {
-    let run = SwarmRunObservation::Run;
+fn a_run_that_has_not_ended_keeps_its_environment() {
+    // #2070: a crash, a lost coordinator or an exited agent never ends a
+    // swarm — the box stays so the run can be resumed. A run paused holding
+    // an outcome has not been closed by its owner yet: still not ended.
     let unreadable = SwarmRunObservation::Unreadable("locked".to_string());
+    for mode in [MemberFinalizeMode::Exit, MemberFinalizeMode::ParentKill] {
+        for run in [
+            with_status(RunStatus::Running, None),
+            with_status(RunStatus::Paused, None),
+            with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
+            with_status(RunStatus::Paused, Some(RunStatus::Failed)),
+        ] {
+            assert!(
+                retains_environment(mode, &SwarmRunObservation::Run(run.clone())),
+                "{mode:?} on a created run that is {} retains",
+                run.describe()
+            );
+        }
+        assert!(
+            retains_environment(mode, &unreadable),
+            "{mode:?}: a store that exists but cannot be read is never proof the run ended"
+        );
+    }
+}
+
+#[test]
+fn a_run_its_owner_ended_gives_its_environment_up() {
+    // #2070: the container lives as long as the swarm and no longer. Closed
+    // into an outcome, or cancelled: the final member's end tears it down.
+    for mode in [MemberFinalizeMode::Exit, MemberFinalizeMode::ParentKill] {
+        for status in ENDED {
+            assert!(
+                !retains_environment(mode, &SwarmRunObservation::Run(with_status(status, None))),
+                "{mode:?} on a {status:?} run must not retain"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_owners_fleet_teardown_ends_every_swarm_it_owns() {
+    // #2070: an ordinary exit, delete-all or a session transition is the
+    // owner saying "done" — whatever the run's state, even an unreadable one.
+    let mode = MemberFinalizeMode::FleetTeardown;
+    assert!(!mode.inspectable_end());
+    assert!(
+        !mode.launch_rollback(),
+        "it runs the retained kill, not cleanup"
+    );
+    for run in [
+        with_status(RunStatus::Running, None),
+        with_status(RunStatus::Paused, Some(RunStatus::Failed)),
+        with_status(RunStatus::Succeeded, None),
+    ] {
+        assert!(!retains_environment(mode, &SwarmRunObservation::Run(run)));
+    }
+    assert!(!retains_environment(
+        mode,
+        &SwarmRunObservation::Unreadable("locked".to_string())
+    ));
+}
+
+#[test]
+fn what_is_no_swarm_never_retains() {
     let placeholder = HostedSwarmRun {
         status: RunStatus::Setup,
         deadline: 0.0,
         ..running_swarm()
     };
+    let unreadable = SwarmRunObservation::Unreadable("locked".to_string());
     for mode in [MemberFinalizeMode::Exit, MemberFinalizeMode::ParentKill] {
-        for status in [
-            RunStatus::Running,
-            RunStatus::Paused,
-            RunStatus::Succeeded,
-            RunStatus::Blocked,
-            RunStatus::Failed,
-            RunStatus::Cancelled,
-            RunStatus::BudgetExhausted,
-        ] {
-            assert!(
-                retains_environment(mode, &run(with_status(status, None))),
-                "{mode:?} on a created {status:?} run retains"
-            );
-        }
         assert!(
-            !retains_environment(mode, &run(placeholder.clone())),
+            !retains_environment(mode, &SwarmRunObservation::Run(placeholder.clone())),
             "{mode:?}: the bootstrap placeholder is no swarm"
         );
         assert!(!retains_environment(mode, &SwarmRunObservation::NoStore));
-        assert!(
-            retains_environment(mode, &unreadable),
-            "{mode:?}: a store that exists but cannot be read is never proof of no run"
-        );
     }
     for mode in [
         MemberFinalizeMode::LaunchRollback,
         MemberFinalizeMode::LaunchRollbackOwned,
     ] {
         assert!(
-            !retains_environment(mode, &run(running_swarm())),
+            !retains_environment(mode, &SwarmRunObservation::Run(running_swarm())),
             "{mode:?} has nothing to inspect and keeps its cleanup"
         );
         assert!(!retains_environment(mode, &unreadable));
