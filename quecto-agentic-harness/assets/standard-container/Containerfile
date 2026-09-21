@@ -1,64 +1,44 @@
-# Quecto's repository standard development image.
+# This project's standard development container — a STARTER, and yours.
 #
-# `quecto container init` materialises this file and the trusted runtime
-# scripts below `.quecto/containers/standard`. The runtime script, not this
-# image, clones the configured repository and mounts that checkout. Build the
-# image once with the command printed by init; create never pulls or builds it.
+# `quecto container init` wrote this file because none existed. From here on
+# it belongs to this repository: edit it, commit it, and the next agent in
+# this folder gets the same container. quecto never counts it as drift and
+# never replaces it (`init --refresh` restores only the runtime scripts
+# beside it). `/setup container` can write the toolchain section for you.
 #
-# Keep these versions aligned deliberately with `.github/workflows/ci.yml`.
-# CI follows stable Rust; this image pins the stable release current at the
-# time of the image revision so a rebuild cannot silently change compilers.
+# The runtime script, not this image, clones the configured repository and
+# mounts that checkout; source and credentials are never baked in. Build the
+# image with the command `quecto container init` prints; create never pulls
+# or builds it.
 FROM docker.io/library/debian@sha256:abc9cb88a5587630d7f915f47b23b0668fe250fbfc6457aa4d52b534c1bbf73f
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG RUST_TOOLCHAIN=1.97.1
-ARG CARGO_NEXTEST_VERSION=0.9.144
-ARG CARGO_LLVM_COV_VERSION=0.8.4
-ARG CARGO_DENY_VERSION=0.19.0
-ARG CARGO_MACHETE_VERSION=0.9.1
-ARG STANDARD_IMAGE_VERSION=3
 
-LABEL org.opencontainers.image.title="Quecto development container" \
-      org.opencontainers.image.version="${STANDARD_IMAGE_VERSION}" \
-      org.opencontainers.image.description="Pinned Rust and CI tooling for developing platform-q-ai/quecto"
+LABEL org.opencontainers.image.title="Project development container"
 
+# What every agent needs whatever the project is: a shell, git and GitHub,
+# search, JSON, Python for scripts, a C toolchain for native dependencies.
 RUN apt-get update \
  && apt-get install --no-install-recommends --yes \
       bash build-essential ca-certificates coreutils curl fd-find findutils \
-      git gh grep jq less libssl-dev openssh-client pkg-config procps \
-      python3 python3-venv ripgrep sed \
+      git gh grep jq less openssh-client procps python3 python3-venv \
+      ripgrep sed \
  && rm -rf /var/lib/apt/lists/* \
  && ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
-ENV CARGO_HOME=/opt/cargo \
-    RUSTUP_HOME=/opt/rustup \
-    CARGO_BUILD_JOBS=2 \
-    PATH=/opt/cargo/bin:${PATH}
-
-RUN curl --proto '=https' --tlsv1.2 --fail --show-error --silent \
-      https://sh.rustup.rs \
-      | sh -s -- -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
- && rustup component add --toolchain "${RUST_TOOLCHAIN}" \
-      clippy llvm-tools-preview rustfmt \
- && cargo install --locked cargo-nextest --version "${CARGO_NEXTEST_VERSION}" \
- && cargo install --locked cargo-llvm-cov --version "${CARGO_LLVM_COV_VERSION}" \
- && cargo install --locked cargo-deny --version "${CARGO_DENY_VERSION}" \
- && cargo install --locked cargo-machete --version "${CARGO_MACHETE_VERSION}" \
- && rustc --version \
- && cargo --version \
- && cargo fmt --version \
- && cargo clippy --version \
- && cargo nextest --version \
- && cargo llvm-cov --version \
- && cargo deny --version \
- && cargo machete --version
-
-# What this image promises its agents. `quecto container doctor` runs the
-# image and fails, naming the tool, if any of these is not on PATH. The check
-# is the image's own: an image without this label is asked for nothing beyond
-# a shell and git. Declared after the installs so an edit rebuilds no layer;
-# an image derived `FROM` this one inherits the list unless it redeclares it.
-LABEL ai.quecto.required-tools="cargo rustc rustfmt cargo-clippy cargo-nextest cargo-llvm-cov cargo-deny cargo-machete"
+# --- This project's toolchain -------------------------------------------
+# Install what the project builds and tests with, pinned where the project
+# pins it (its CI configuration is the best guide), for example:
+#
+#   RUN apt-get update && apt-get install --yes --no-install-recommends \
+#         nodejs npm && rm -rf /var/lib/apt/lists/*
+#
+# Then declare the tools an agent must find on PATH. `quecto container
+# doctor` runs the image and fails, naming the tool, if one is missing. Bare
+# executable names separated by spaces; without the label nothing beyond a
+# shell and git is asked of the image.
+#
+#   LABEL ai.quecto.required-tools="node npm"
 
 # The host-side adapter supplies the child command and mounts its checkout.
 ENTRYPOINT []

@@ -441,20 +441,14 @@ fn a_real_create_dies_with_the_checks_exit_code_before_allocating_anything() {
     }
 }
 
-/// The shipped Containerfile keeps the check this repository had before the
+/// This repository's own Containerfile keeps the check it had before the
 /// doctor went neutral: deleting the label, or mistyping a name in it, would
 /// otherwise leave the doctor green with "declares no required tools".
 #[test]
-fn the_shipped_containerfile_declares_its_eight_rust_tools() {
-    let containerfile = fs::read_to_string(
-        root().join("quecto-agentic-harness/assets/standard-container/Containerfile"),
-    )
-    .unwrap();
-    let declared: Vec<&str> = containerfile
-        .lines()
-        .filter_map(|line| line.strip_prefix("LABEL ai.quecto.required-tools=\""))
-        .map(|rest| rest.strip_suffix('"').expect("a one-line quoted label"))
-        .collect();
+fn quectos_own_containerfile_declares_its_eight_rust_tools() {
+    let containerfile =
+        fs::read_to_string(root().join(".quecto/containers/standard/Containerfile")).unwrap();
+    let declared = declared_tools(&containerfile);
     assert_eq!(
         declared,
         ["cargo rustc rustfmt cargo-clippy cargo-nextest cargo-llvm-cov cargo-deny cargo-machete"]
@@ -466,4 +460,39 @@ fn the_shipped_containerfile_declares_its_eight_rust_tools() {
         ..Image::default()
     });
     assert_eq!(run.status, 0, "{}", run.checks);
+}
+
+/// The starter `quecto container init` writes into any project is neutral:
+/// it promises no tool and installs no language toolchain, and it installs
+/// what the doctor's base check asks of every image.
+#[test]
+fn the_starter_containerfile_is_tooling_neutral() {
+    let starter = fs::read_to_string(
+        root().join("quecto-agentic-harness/assets/standard-container/Containerfile"),
+    )
+    .unwrap();
+    assert!(declared_tools(&starter).is_empty(), "{starter}");
+    let instructions: String = starter
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for toolchain in ["cargo", "rust", "node", "golang", "openjdk", "dotnet"] {
+        assert!(
+            !instructions.to_lowercase().contains(toolchain),
+            "the starter installs {toolchain}:\n{instructions}"
+        );
+    }
+    for needed in [" git ", " bash ", "ENTRYPOINT []"] {
+        assert!(instructions.contains(needed), "{needed}:\n{instructions}");
+    }
+}
+
+/// The values of every `LABEL ai.quecto.required-tools="…"` instruction.
+fn declared_tools(containerfile: &str) -> Vec<&str> {
+    containerfile
+        .lines()
+        .filter_map(|line| line.strip_prefix("LABEL ai.quecto.required-tools=\""))
+        .map(|rest| rest.strip_suffix('"').expect("a one-line quoted label"))
+        .collect()
 }

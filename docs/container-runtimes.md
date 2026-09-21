@@ -1019,7 +1019,7 @@ line from the first of these three checks that failed, so it never says
 `ready` for an image the doctor refuses.
 
 `quecto container status` reports, one line each and exit 1 while anything
-is missing: the assets (`present (5 of 5, version 4)`, or which differ or
+is missing: the assets (`present (5 of 5, version 5)`, or which differ or
 are missing), the `standard` entry of the effective set (`default` with a
 `this repo's default` line when the overlay declares it labelled; `default
 by rule` plus a `note:` with the remedy — `quecto container init --refresh`
