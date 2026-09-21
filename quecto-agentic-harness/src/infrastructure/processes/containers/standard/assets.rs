@@ -24,7 +24,7 @@ use crate::application::environments::ports::ContainerAssetStore;
 
 /// Bumped when an embedded asset changes, so `status` can say which
 /// bundle a project carries.
-pub const STANDARD_ASSET_VERSION: u32 = 2;
+pub const STANDARD_ASSET_VERSION: u32 = 3;
 
 // The scripts are symbolic links to `scripts/container-runtime/` in the
 // workspace, resolved by `include_str!` at compile time: one source for

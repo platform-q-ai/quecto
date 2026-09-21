@@ -988,7 +988,7 @@ The repository is still cloned by the trusted host adapter and mounted at
 runtime; source and credentials are never baked into the image.
 
 `quecto container status` reports, one line each and exit 1 while anything
-is missing: the assets (`present (5 of 5, version 2)`, or which differ or
+is missing: the assets (`present (5 of 5, version 3)`, or which differ or
 are missing), the `standard` entry of the effective set (`default` with a
 `this repo's default` line when the overlay declares it labelled; `default
 by rule` plus a `note:` with the remedy — `quecto container init --refresh`
@@ -1032,6 +1032,22 @@ directory). An admission-enabled parent refuses to launch when the capability
 is missing, so a script that cannot expose the directory simply omits the
 field and the launch fails before any inference. Nothing else in the contract
 changes for parents without admission.
+
+The bundled adapter mounts the directory at its lexical normal form (a doubled
+slash, a `/./` or a trailing slash are the same directory) and records the
+configured spelling for `exec` to compare. It refuses, before any environment
+state exists: a relative path, or one with control characters or a `:` (it is
+mounted as `src:dst:mode`); a spelling with a `..` (the child opens the
+configured spelling, and only the normal form is mounted); a client directory
+that is itself a symbolic link (the read-write mount would expose whatever it
+points at); an authority that is `~/.quecto` itself, or that lives outside
+`~/.quecto` but inside the socket directory (mounted read-write whole, with
+nothing to mask it); and —
+when the authority lives inside the identity-mounted `~/.quecto` — a spelling
+that is not under `$HOME/.quecto` or reaches the authority through a symbolic
+link inside it, because the read-only mask would then miss the real directory.
+A symlinked `HOME`, or `~/.quecto` being a symbolic link, is fine: the harness
+derives the path from `HOME`, so mask and identity mount agree.
 
 
 The reference runtime is **host-local**: it needs no Docker and runs
