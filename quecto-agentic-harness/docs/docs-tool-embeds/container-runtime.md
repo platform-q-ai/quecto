@@ -55,7 +55,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
 quecto container status
 ```
 
-Expected (exit 0; exit 1 — last line `not ready: …` — while any line is not in place, *including* a deliberately edited Containerfile, see Trust boundary):
+Expected (exit 0; exit 1 — last line `not ready: …` — while a script differs or anything is missing; the project's own Containerfile never counts, see Trust boundary):
 
 ```
 standard container at /repo/.quecto/containers/standard
