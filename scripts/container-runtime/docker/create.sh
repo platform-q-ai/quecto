@@ -354,6 +354,19 @@ fi
 admission_dir="${QUECTO_ADMISSION_DIR:-}"
 if [ -n "$admission_dir" ]; then
   [ -d "$admission_dir" ] || die "QUECTO_ADMISSION_DIR '$admission_dir' is not a directory"
+  # Mount destinations are intentionally kept in their configured spelling.
+  # Admit only normalized absolute paths: accepting aliases such as /./, /../,
+  # a trailing slash, or a symlink would classify one resolved path while the
+  # runtime mounts another spelling beneath the read-only authority mask.
+  case "$admission_dir" in
+  /*/ | */./* | */../* | */. | */..)
+    die "QUECTO_ADMISSION_DIR '$admission_dir' must be a normalized absolute path without '.', '..', or a trailing slash"
+    ;;
+  /*) ;;
+  *) die "QUECTO_ADMISSION_DIR '$admission_dir' must be an absolute path" ;;
+  esac
+  [ "$(realpath -m "$admission_dir")" = "$admission_dir" ] \
+    || die "QUECTO_ADMISSION_DIR '$admission_dir' must not contain symbolic-link aliases"
 fi
 
 env_dir="$(mktemp -d "$state_dir/env-XXXXXXXXXX")" || die "failed to create environment dir under $state_dir"
@@ -422,6 +435,14 @@ if [ -n "$admission_dir" ]; then
     # (a tmpfs would be copied up by Podman); client/ is re-bound beneath it.
     mask_dir="$env_dir/admission-mask"
     mkdir -m 700 "$mask_dir"
+    admission_leaf="${admission_dir##*/}"
+    # The normalization guard above proves this is exactly one nonempty path
+    # component. Create it before the parent becomes read-only: rootless
+    # Podman cannot manufacture a nested bind destination afterwards.
+    case "$admission_leaf" in
+    '' | . | .. | */*) die "QUECTO_ADMISSION_DIR '$admission_dir' has an unsupported client leaf" ;;
+    *) mkdir -m 700 -- "$mask_dir/$admission_leaf" ;;
+    esac
     mounts+=(-v "$mask_dir:$admission_root:ro")
     ;;
   esac
