@@ -834,9 +834,9 @@ step is a command with its expected output):
 | Step | Command (from the repository root) | Expected |
 |---|---|---|
 | Preconditions | `git rev-parse --show-toplevel`; `podman --version` (or `docker`); `jq --version`; `git ls-remote --exit-code origin`; `quecto status` | the toplevel is `pwd`; the tools answer; `ls-remote` exits 0; `Overlay: none` or `(trusted)` |
-| 1. init | `quecto container init` (`--repo <url>`, `--image <tag>`, `--dry-run`) | `wrote …` per missing file (× 5 in a bare repo; a committed Containerfile is `kept … (this project's own; …)`), `container config "standard" written as container_configs.standard in <repo>/.quecto/config.json (trusted for exactly these bytes)`, `default: true`, then `next:` with the build command |
+| 1. init | `quecto container init` (`--repo <url>`, `--image <tag>`, `--dry-run`) | `wrote …` per missing file (× 5 in a bare repo; a committed Containerfile is `kept … (this project's own; …)`), `container config "standard" written as container_configs.standard in <repo>/.quecto/config.json (trusted for exactly these bytes)`, `default: true`, then `next:` — a `first:` line while the Containerfile is still the neutral starter, then the build command |
 | 2. Containerfile | make `.quecto/containers/standard/Containerfile` this repo's: the project's toolchain (pinned where the repo pins it) and `LABEL ai.quecto.required-tools="…"`; tools only, never source or credentials; skip only when it already carries them | the file shown and approved; commit it |
-| 3. build | the printed `podman build -t quecto-<folder>:local -f <repo>/.quecto/containers/standard/Containerfile <repo>/.quecto/containers/standard` (skip when `status` already reports the image present) | `Successfully tagged localhost/quecto-<folder>:local` |
+| 3. build | the printed `podman build -t quecto-<folder>:local -f <repo>/.quecto/containers/standard/Containerfile <repo>/.quecto/containers/standard` (skip only when `status` reports the image present and the Containerfile has not changed since that build; after row 2, always rebuild) | `Successfully tagged localhost/quecto-<folder>:local` |
 | 4. verify | `quecto container status` | a header, the `assets/config/trust/image` lines (plus a `this repo's default` continuation, or a `note:` when the label was removed by hand), then `ready: spawn {"container":true} from an agent in this project`, exit 0 (exit 1 `not ready` while a script differs or a file is missing; the project's own Containerfile never counts) |
 | 5. doctor | `quecto container doctor` | every check `✓` (`gh` may be `!`), `0 checks failed`, exit 0 |
 | 6. spawn | from an agent in the repo: `spawn {"agent_id":"probe","task":"run pwd","container":true}` | `environment_ref=C1 container_config=standard` |
@@ -915,8 +915,10 @@ is written, so a refused init leaves the project untouched):
    filesystem race after step 3), the error says the entry was already
    written and how to finish (run init again) or roll back
    (`quecto config unset --local container_configs.standard`).
-6. Prints the files, the entry and the one step left — the exact build
-   command:
+6. Prints the files, the entry and what is left: while the Containerfile
+   is still byte-for-byte the neutral starter, a `first:` line saying to
+   add the project's toolchain and its `ai.quecto.required-tools` label;
+   then the exact build command:
    `podman build -t quecto-<folder>:local -f <project>/.quecto/containers/standard/Containerfile <project>/.quecto/containers/standard`
    (on a docker-only host, the same command with `docker`: the scripts
    drive whichever runtime the doctor's `runtime-cli` line names).

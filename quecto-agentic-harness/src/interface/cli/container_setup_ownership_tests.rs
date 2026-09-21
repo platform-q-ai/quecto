@@ -137,28 +137,34 @@ fn a_flag_the_entry_never_had_is_reported_as_added_not_rewritten() {
 }
 
 #[test]
-fn init_says_to_make_a_starter_it_wrote_this_projects_before_building() {
+fn init_says_to_make_the_starter_this_projects_before_building_until_it_is() {
     let rig = Rig::new();
     let ctx = rig.ctx(status_image_present);
     let containerfile = rig.assets_dir().join("Containerfile");
+    let hint = format!(
+        "  first: {} is still the neutral starter — add this project's toolchain",
+        containerfile.display()
+    );
+    // Whichever run wrote it: a dry run, the first init, and a later init
+    // that finds the starter untouched.
     for args in [
         &["container", "init", "--dry-run"][..],
         &["container", "init"][..],
+        &["container", "init"][..],
+        &["container", "init", "--refresh"][..],
     ] {
-        let first = rig.run(&ctx, args);
-        assert_eq!(first.exit_code, 0, "{}", first.stderr);
-        let hint = format!(
-            "  first: {} is a neutral starter — add this project's toolchain",
-            containerfile.display()
-        );
-        let out = &first.stdout;
+        let run = rig.run(&ctx, args);
+        assert_eq!(run.exit_code, 0, "{}", run.stderr);
+        let out = &run.stdout;
         assert!(out.contains(&hint), "{args:?}: {out}");
         assert!(
             out.find(&hint).unwrap() < out.find("  1. build the image").unwrap(),
             "{out}"
         );
     }
-    // A Containerfile that was already there is not a starter this run wrote.
-    let again = rig.run(&ctx, &["container", "init"]);
-    assert!(!again.stdout.contains("  first: "), "{}", again.stdout);
+    // Once the project has made the file its own, the hint is gone.
+    std::fs::write(&containerfile, OWN).unwrap();
+    let own = rig.run(&ctx, &["container", "init"]);
+    assert_eq!(own.exit_code, 0, "{}", own.stderr);
+    assert!(!own.stdout.contains("  first: "), "{}", own.stdout);
 }

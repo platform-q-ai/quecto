@@ -128,7 +128,7 @@ fn each_area_prompt_names_its_runbook_page_and_goal() {
             &[
                 "quecto container init",
                 "quecto container doctor",
-                "image-build line it prints",
+                "image-build line `quecto container init` printed",
                 // #2073: the container is THIS repo's — the agent reads the
                 // repo, proposes its Containerfile and asks before writing.
                 "what this repo builds and tests with",
@@ -141,6 +141,8 @@ fn each_area_prompt_names_its_runbook_page_and_goal() {
                 "SHOW me the Containerfile and ASK before writing it",
                 "change it only if I ask",
                 "an image built before the change is stale",
+                "whether that covers what you found in the repo",
+                "if unsure, rebuild",
                 "commit `.quecto/containers/standard/Containerfile`",
             ],
         ),
@@ -187,7 +189,7 @@ fn the_container_prompt_orders_init_containerfile_build_and_doctor() {
         at("(1) `quecto container init`"),
         at("(2) Read that Containerfile"),
         at("SHOW me the Containerfile"),
-        at("(3) Run the image-build line it prints"),
+        at("(3) Run the image-build line `quecto container init` printed"),
         at("(4) `quecto container doctor` again"),
         at("commit `.quecto/containers/standard/Containerfile`"),
     ];

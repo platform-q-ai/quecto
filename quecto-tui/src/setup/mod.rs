@@ -159,10 +159,11 @@ comments and it declares no `ai.quecto.required-tools` label — write this repo
 section, versions pinned where the repo pins them, and declare the tools an agent must find on PATH in \
 `LABEL ai.quecto.required-tools=\"…\"`; install tools only — never copy the repo's source into the \
 image and never put a token, key or private index address in the file; SHOW me the Containerfile and \
-ASK before writing it. Otherwise the repo already has its own: tell me what it installs before \
-anything is built from it, and change it only if I ask. \
-(3) Run the image-build line it prints — always after the Containerfile changed: an image built \
-before the change is stale. \
+ASK before writing it. Otherwise the repo already has its own: tell me what it installs and whether \
+that covers what you found in the repo, before anything is built from it, and change it only if I ask. \
+(3) Run the image-build line `quecto container init` printed — always after the Containerfile \
+changed: an image built before the change is stale; skip it only when the image is present and you \
+know the Containerfile is unchanged since it was built, and if unsure, rebuild. \
 (4) `quecto container doctor` again: it now checks the image's own label. \
 Never print secrets. Finish \
 with a summary of what changed, how to verify it with one `spawn {\"container\":true}` probe, a \

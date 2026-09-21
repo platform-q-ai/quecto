@@ -304,15 +304,11 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
         }
     }
     out.push_str("next:\n");
-    // A starter this run wrote is tooling-neutral: building it as it is
-    // gives a container without the project's toolchain.
-    if let Some(starter) = report
-        .written
-        .iter()
-        .find(|path| path.file_name().is_some_and(|name| name == "Containerfile"))
-    {
+    // A starter is tooling-neutral: building it as it is gives a container
+    // without the project's toolchain — whichever run wrote it.
+    for starter in &report.starters {
         out.push_str(&format!(
-            "  first: {} is a neutral starter — add this project's toolchain and its ai.quecto.required-tools label before building (`/setup container` does it with you)\n",
+            "  first: {} is still the neutral starter — add this project's toolchain and its ai.quecto.required-tools label before building (`/setup container` does it with you)\n",
             starter.display()
         ));
     }
