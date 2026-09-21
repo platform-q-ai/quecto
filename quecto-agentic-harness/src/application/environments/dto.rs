@@ -379,6 +379,18 @@ pub const STANDARD_CONTAINER_IMAGE: &str = "quecto-dev:local";
 /// materialised here and the config entry's argv names them here.
 pub const STANDARD_CONTAINER_DIR: &str = ".quecto/containers/standard";
 
+/// Whose file an asset is once it exists in a project (#2073).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetOwnership {
+    /// The bundle's: a trusted runtime script. Other bytes are drift, a
+    /// launch refuses them and `--refresh` restores them.
+    Bundle,
+    /// The project's: the Containerfile. The bundle only supplies a starter
+    /// when none exists; the project's version is never drift and is never
+    /// replaced.
+    Project,
+}
+
 /// One file of the embedded standard bundle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerAsset {
@@ -387,6 +399,18 @@ pub struct ContainerAsset {
     pub path: String,
     pub contents: Vec<u8>,
     pub executable: bool,
+    pub ownership: AssetOwnership,
+}
+
+impl ContainerAsset {
+    /// What a store's observation means for this asset: other bytes in a
+    /// project-owned file are the project's own version, not drift.
+    pub fn judge(&self, observed: AssetState) -> AssetState {
+        match (self.ownership, observed) {
+            (AssetOwnership::Project, AssetState::Differs) => AssetState::ProjectOwned,
+            (AssetOwnership::Project | AssetOwnership::Bundle, state) => state,
+        }
+    }
 }
 
 /// The embedded bundle this binary carries, with its version and the
@@ -435,6 +459,9 @@ pub enum AssetState {
     Identical,
     /// The file exists with other bytes (an edit, an older version).
     Differs,
+    /// A project-owned file holding the project's own bytes. Never a
+    /// store's answer: [`ContainerAsset::judge`] derives it.
+    ProjectOwned,
     /// The destination cannot be judged or written through (a symbolic
     /// link, a directory in a file's place); init refuses it.
     Refused,
@@ -447,6 +474,8 @@ pub enum AssetOutcome {
     Written,
     KeptIdentical,
     KeptDiffering,
+    /// The project's own version of a project-owned file was left alone.
+    KeptOwn,
     /// A differing file was replaced with the embedded bytes (`--refresh`).
     Refreshed,
 }
@@ -560,6 +589,9 @@ pub struct StandardContainerReport {
     pub differing: Vec<std::path::PathBuf>,
     /// Differing files replaced with the embedded bytes (`--refresh`).
     pub refreshed: Vec<std::path::PathBuf>,
+    /// Project-owned files holding the project's own version: kept, never
+    /// drift, never refreshed.
+    pub own: Vec<std::path::PathBuf>,
     pub repository: Option<String>,
     pub repository_origin: RepositoryOrigin,
     pub image: String,
@@ -715,7 +747,12 @@ impl StandardContainerStatus {
     pub fn assets_present(&self) -> usize {
         self.assets
             .iter()
-            .filter(|(_, state)| matches!(state, AssetState::Identical | AssetState::Differs))
+            .filter(|(_, state)| {
+                matches!(
+                    state,
+                    AssetState::Identical | AssetState::Differs | AssetState::ProjectOwned
+                )
+            })
             .count()
     }
 

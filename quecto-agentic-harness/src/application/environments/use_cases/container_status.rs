@@ -51,7 +51,7 @@ impl ContainerStatus {
             .iter()
             .map(|asset| {
                 let state = match self.assets.observe(project, &assets_dir, asset) {
-                    Ok(state) => state,
+                    Ok(state) => asset.judge(state),
                     // A destination that cannot be judged (a symbolic
                     // link, a directory in a file's place) is not
                     // "missing": init would refuse it, so say why.
