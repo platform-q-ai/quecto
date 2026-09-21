@@ -24,19 +24,37 @@ fn executable(path: &Path, body: &str) {
     fs::set_permissions(path, p).unwrap();
 }
 
-/// What the fake runtime's image holds.
+/// What the fake runtime's image holds, and how the runtime misbehaves.
+#[derive(Clone, Copy)]
 struct Image<'a> {
     /// `None`: the image carries no `ai.quecto.required-tools` label.
     label: Option<&'a str>,
     /// Executables on the image's PATH.
     tools: &'a [&'a str],
-    /// Exit code of `image inspect` (a runtime that cannot answer).
+    /// Exit code of `image inspect --format` (a runtime that cannot answer).
     inspect_rc: i32,
+    /// Exit code every `run --rm` probe is forced to; 0 really runs it.
+    run_rc: i32,
+    /// `podman` or `docker`: the two look an image up differently.
+    cli: &'a str,
+}
+
+impl Default for Image<'_> {
+    fn default() -> Self {
+        Self {
+            label: None,
+            tools: &["git"],
+            inspect_rc: 0,
+            run_rc: 0,
+            cli: "podman",
+        }
+    }
 }
 
 struct Preflight {
     status: i32,
     checks: String,
+    stderr: String,
     runtime_log: String,
 }
 
@@ -48,11 +66,24 @@ impl Preflight {
             .find(|line| line.split('\t').nth(1) == Some(check))
             .unwrap_or_else(|| panic!("no `{check}` check in:\n{}", self.checks))
     }
+
+    fn probes(&self) -> usize {
+        self.runtime_log
+            .lines()
+            .filter(|call| call.starts_with("run "))
+            .count()
+    }
 }
 
-/// Runs `create.sh --preflight-only` against a fake podman whose `run`
-/// really executes the probe, with PATH narrowed to the image's tools.
 fn preflight(image: &Image<'_>) -> Preflight {
+    invoke(image, true)
+}
+
+/// Runs `create.sh` against a fake runtime whose `run` really executes the
+/// probe, with PATH narrowed to the image's tools. Every answer of the fake
+/// comes with a warning on stderr, as the real runtimes' do. `preflight_only`
+/// false is a real create, which dies at the first failed check.
+fn invoke(image: &Image<'_>, preflight_only: bool) -> Preflight {
     let base = tempfile::tempdir().unwrap();
     let base = base.path();
     let (bin, image_bin, state) = (base.join("bin"), base.join("image-bin"), base.join("state"));
@@ -66,69 +97,93 @@ fn preflight(image: &Image<'_>) -> Preflight {
     let label = base.join("label");
     fs::write(&label, image.label.unwrap_or("")).unwrap();
     executable(
-        &bin.join("podman"),
+        &bin.join(image.cli),
         &format!(
             r#"#!/usr/bin/env bash
 printf '%q ' "$@" >> {log:?}; printf '\n' >> {log:?}
+echo 'WARN[0000] "/" is not a shared mount, this could cause issues' >&2
 if [ "$1" = image ] && [ "$2" = exists ]; then exit 0; fi
-if [ "$1" = image ] && [ "$2" = inspect ]; then
+if [ "$1" = image ] && [ "$2" = inspect ] && [ "$3" = --format ]; then
   [ {inspect_rc} = 0 ] || {{ echo "Error: inspect refused" >&2; exit {inspect_rc}; }}
-  cat {label:?}; printf '\n'; exit 0
+  cat {label:?}; printf '\r\n'; exit 0
 fi
+if [ "$1" = image ] && [ "$2" = inspect ]; then exit 0; fi
 if [ "$1" = run ] && [ "$2" = --rm ] && [ "$3" = --pull=never ] && [ "$5" = sh ]; then
+  [ {run_rc} = 0 ] || {{ echo "Error: the runtime said no" >&2; exit {run_rc}; }}
   shift 5
   PATH={image_bin:?} exec /bin/sh "$@"
 fi
 exit 125
 "#,
             inspect_rc = image.inspect_rc,
+            run_rc = image.run_rc,
         ),
     );
+    executable(&bin.join("gh"), "#!/bin/sh\nexit 1\n");
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    let output = Command::new(root().join("scripts/container-runtime/docker/create.sh"))
-        .args(["--state-dir", state.to_str().unwrap(), "--preflight-only"])
+    let mut command = Command::new(root().join("scripts/container-runtime/docker/create.sh"));
+    command.args(["--state-dir", state.to_str().unwrap()]);
+    if preflight_only {
+        command.arg("--preflight-only");
+    } else {
+        command.args(["--", "/bin/true", "--socket"]);
+        command.arg(base.join("child.sock"));
+    }
+    let output = command
         .env("PATH", path)
         .env("HOME", base)
-        .env("QUECTO_CONTAINER_CLI", "podman")
+        .env("QUECTO_CONTAINER_CLI", image.cli)
+        .env_remove("QUECTO_DOCKER_IMAGE")
+        .env_remove("QUECTO_REPO_CHECK_TIMEOUT")
+        .env_remove("QUECTO_ADMISSION_DIR")
         .output()
         .unwrap();
     Preflight {
         status: output.status.code().unwrap(),
         checks: String::from_utf8(output.stdout).unwrap(),
+        stderr: String::from_utf8(output.stderr).unwrap(),
         runtime_log: fs::read_to_string(&log).unwrap_or_default(),
     }
 }
 
 #[test]
 fn an_image_with_no_rust_and_no_label_passes() {
-    let run = preflight(&Image {
-        label: None,
-        tools: &["git"],
-        inspect_rc: 0,
-    });
-    assert_eq!(run.status, 0, "{}", run.checks);
-    assert!(run.line("image-base").starts_with("ok\t"), "{}", run.checks);
-    let tools = run.line("required-tools");
-    assert!(tools.starts_with("ok\t"), "{tools}");
-    assert!(tools.contains("declares no required tools"), "{tools}");
-    assert!(
-        !run.checks.contains("cargo") && !run.checks.contains("dev-tools"),
-        "no check may name a language toolchain:\n{}",
-        run.checks
-    );
+    for cli in ["podman", "docker"] {
+        for label in [None, Some("<no value>"), Some("   ")] {
+            let run = preflight(&Image {
+                label,
+                cli,
+                ..Image::default()
+            });
+            assert_eq!(run.status, 0, "{cli} {label:?}: {}", run.checks);
+            assert!(run.line("image-base").starts_with("ok\t"), "{}", run.checks);
+            let tools = run.line("required-tools");
+            assert!(tools.starts_with("ok\t"), "{tools}");
+            assert!(tools.contains("declares no required tools"), "{tools}");
+            assert!(
+                !run.checks.contains("cargo") && !run.checks.contains("dev-tools"),
+                "no check may name a language toolchain:\n{}",
+                run.checks
+            );
+        }
+    }
 }
 
 #[test]
-fn an_image_without_git_fails_the_base_check() {
+fn an_image_without_git_fails_the_base_check_and_its_tools_are_not_probed() {
     let run = preflight(&Image {
-        label: None,
-        tools: &[],
-        inspect_rc: 0,
+        label: Some("python3"),
+        tools: &["python3"],
+        ..Image::default()
     });
     assert_eq!(run.status, 1, "{}", run.checks);
     let base = run.line("image-base");
     assert!(base.starts_with("fail\t"), "{base}");
-    assert!(base.contains("missing git"), "{base}");
+    assert!(base.contains("cannot host an agent: missing git"), "{base}");
+    let tools = run.line("required-tools");
+    assert!(tools.starts_with("fail\t"), "{tools}");
+    assert!(tools.contains("fix the image-base check first"), "{tools}");
+    assert_eq!(run.probes(), 1, "{}", run.runtime_log);
 }
 
 #[test]
@@ -136,7 +191,7 @@ fn a_label_naming_a_tool_the_image_lacks_fails_naming_that_tool() {
     let run = preflight(&Image {
         label: Some("python3 ruff"),
         tools: &["git", "python3"],
-        inspect_rc: 0,
+        ..Image::default()
     });
     assert_eq!(run.status, 1, "{}", run.checks);
     assert!(run.line("image-base").starts_with("ok\t"), "{}", run.checks);
@@ -147,15 +202,40 @@ fn a_label_naming_a_tool_the_image_lacks_fails_naming_that_tool() {
 
 #[test]
 fn a_label_whose_tools_are_all_present_passes_and_lists_them() {
+    // Any whitespace separates names — and the fake, like the real runtimes,
+    // warns on stderr and ends its answer with CR LF: neither is a tool.
     let run = preflight(&Image {
-        label: Some("  python3\truff  cargo-nextest "),
+        label: Some("  python3\truff \n cargo-nextest "),
         tools: &["git", "python3", "ruff", "cargo-nextest"],
-        inspect_rc: 0,
+        ..Image::default()
     });
     assert_eq!(run.status, 0, "{}", run.checks);
     let tools = run.line("required-tools");
     assert!(tools.starts_with("ok\t"), "{tools}");
     assert!(tools.contains("python3 ruff cargo-nextest"), "{tools}");
+}
+
+#[test]
+fn the_limits_are_inclusive() {
+    let name = "t".repeat(64);
+    let names: Vec<String> = (0..64).map(|i| format!("tool{i}")).collect();
+    let mut present: Vec<&str> = names.iter().map(String::as_str).collect();
+    present.extend(["git", name.as_str()]);
+    for label in [names.join(" "), name.clone()] {
+        let run = preflight(&Image {
+            label: Some(&label),
+            tools: &present,
+            ..Image::default()
+        });
+        assert_eq!(run.status, 0, "{}", run.checks);
+    }
+    let too_long = "t".repeat(65);
+    let run = preflight(&Image {
+        label: Some(&too_long),
+        tools: &["git", too_long.as_str()],
+        ..Image::default()
+    });
+    assert!(run.line("required-tools").contains("not a tool name"));
 }
 
 #[test]
@@ -167,27 +247,45 @@ fn a_label_that_is_not_a_list_of_tool_names_is_refused_and_never_run() {
         "a/b",
         "ok `id`",
         "*",
+        "caf\u{e9}",
+        "\u{ff21}bc",
     ] {
         let run = preflight(&Image {
             label: Some(label),
-            tools: &["git"],
-            inspect_rc: 0,
+            ..Image::default()
         });
         assert_eq!(run.status, 1, "{label}: {}", run.checks);
         let tools = run.line("required-tools");
         assert!(tools.starts_with("fail\t"), "{label}: {tools}");
         assert!(tools.contains("not a tool name"), "{label}: {tools}");
-        let probes = run
-            .runtime_log
-            .lines()
-            .filter(|call| call.starts_with("run "))
-            .count();
         assert_eq!(
-            probes, 1,
+            run.probes(),
+            1,
             "{label}: only the base probe may run:\n{}",
             run.runtime_log
         );
+        let refused = label.split_whitespace().last().unwrap();
+        assert!(
+            run.runtime_log
+                .lines()
+                .filter(|call| call.starts_with("run "))
+                .all(|call| !call.contains(refused)),
+            "{label} reached the runtime:\n{}",
+            run.runtime_log
+        );
     }
+}
+
+#[test]
+fn a_refused_name_is_quoted_at_a_bounded_length() {
+    let huge = "$".repeat(5000);
+    let run = preflight(&Image {
+        label: Some(&huge),
+        ..Image::default()
+    });
+    let tools = run.line("required-tools");
+    assert!(tools.contains(&format!("'{}'", "$".repeat(64))), "{tools}");
+    assert!(tools.len() < 600, "{}", tools.len());
 }
 
 #[test]
@@ -196,7 +294,7 @@ fn an_oversized_label_is_refused() {
     let run = preflight(&Image {
         label: Some(&label),
         tools: &["git", "tool"],
-        inspect_rc: 0,
+        ..Image::default()
     });
     assert_eq!(run.status, 1, "{}", run.checks);
     let tools = run.line("required-tools");
@@ -206,13 +304,122 @@ fn an_oversized_label_is_refused() {
 
 #[test]
 fn a_runtime_that_cannot_read_the_label_is_a_failure_not_a_pass() {
+    for (inspect_rc, words) in [(125, "inspect refused"), (124, "did not answer within")] {
+        let run = preflight(&Image {
+            label: Some("python3"),
+            tools: &["git", "python3"],
+            inspect_rc,
+            ..Image::default()
+        });
+        assert_eq!(run.status, 1, "{}", run.checks);
+        let tools = run.line("required-tools");
+        assert!(tools.starts_with("fail\t"), "{tools}");
+        assert!(tools.contains(words), "{tools}");
+    }
+}
+
+#[test]
+fn a_probe_the_runtime_could_not_run_is_the_runtimes_failure_not_the_images() {
+    for (run_rc, words) in [
+        (124, "did not answer within"),
+        (
+            125,
+            "could not run image quecto-dev:local (exit 125): Error: the runtime said no",
+        ),
+        (127, "has no usable shell (exit 127)"),
+    ] {
+        let run = preflight(&Image {
+            run_rc,
+            ..Image::default()
+        });
+        assert_eq!(run.status, 1, "{}", run.checks);
+        let base = run.line("image-base");
+        assert!(base.starts_with("fail\t"), "{base}");
+        assert!(base.contains(words), "{run_rc}: {base}");
+        assert!(!base.contains("install a POSIX shell and git"), "{base}");
+    }
+}
+
+#[test]
+fn a_real_create_dies_with_the_checks_exit_code_before_allocating_anything() {
+    const EXIT_NO_RUNTIME: i32 = 3;
+    const EXIT_NO_IMAGE: i32 = 6;
+    for (image, code, words) in [
+        (
+            Image {
+                tools: &[],
+                ..Image::default()
+            },
+            EXIT_NO_IMAGE,
+            "missing git",
+        ),
+        (
+            Image {
+                label: Some("ruff"),
+                ..Image::default()
+            },
+            EXIT_NO_IMAGE,
+            "missing ruff",
+        ),
+        (
+            Image {
+                label: Some("a/b"),
+                ..Image::default()
+            },
+            EXIT_NO_IMAGE,
+            "not a tool name",
+        ),
+        (
+            Image {
+                inspect_rc: 125,
+                ..Image::default()
+            },
+            EXIT_NO_RUNTIME,
+            "could not read the ai.quecto.required-tools label",
+        ),
+        (
+            Image {
+                run_rc: 125,
+                ..Image::default()
+            },
+            EXIT_NO_RUNTIME,
+            "could not run image",
+        ),
+    ] {
+        let run = invoke(&image, false);
+        assert_eq!(run.status, code, "{}", run.stderr);
+        assert!(run.stderr.contains(words), "{}", run.stderr);
+        assert!(
+            !run.runtime_log.contains("--name"),
+            "a container was launched:\n{}",
+            run.runtime_log
+        );
+    }
+}
+
+/// The shipped Containerfile keeps the check this repository had before the
+/// doctor went neutral: deleting the label, or mistyping a name in it, would
+/// otherwise leave the doctor green with "declares no required tools".
+#[test]
+fn the_shipped_containerfile_declares_its_eight_rust_tools() {
+    let containerfile = fs::read_to_string(
+        root().join("quecto-agentic-harness/assets/standard-container/Containerfile"),
+    )
+    .unwrap();
+    let declared: Vec<&str> = containerfile
+        .lines()
+        .filter_map(|line| line.strip_prefix("LABEL ai.quecto.required-tools=\""))
+        .map(|rest| rest.strip_suffix('"').expect("a one-line quoted label"))
+        .collect();
+    assert_eq!(
+        declared,
+        ["cargo rustc rustfmt cargo-clippy cargo-nextest cargo-llvm-cov cargo-deny cargo-machete"]
+    );
+    let tools: Vec<&str> = declared[0].split(' ').collect();
     let run = preflight(&Image {
-        label: Some("python3"),
-        tools: &["git", "python3"],
-        inspect_rc: 125,
+        label: Some(declared[0]),
+        tools: &[&["git"][..], &tools[..]].concat(),
+        ..Image::default()
     });
-    assert_eq!(run.status, 1, "{}", run.checks);
-    let tools = run.line("required-tools");
-    assert!(tools.starts_with("fail\t"), "{tools}");
-    assert!(tools.contains("inspect refused"), "{tools}");
+    assert_eq!(run.status, 0, "{}", run.checks);
 }
