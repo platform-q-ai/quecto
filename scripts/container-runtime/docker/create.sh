@@ -185,7 +185,8 @@ case "$probe_timeout" in
 esac
 bounded() {
   if command -v timeout >/dev/null 2>&1; then
-    timeout "$probe_timeout" "$@"
+    # -k: a probed process that ignores SIGTERM is killed, not waited for.
+    timeout -k 2 "$probe_timeout" "$@"
   else
     "$@"
   fi
@@ -256,10 +257,15 @@ probe_image_tools() {
 # image is the runtime's.
 report_probe_failure() {
   # $1=check  $2=what the image fails to be  $3=remedy for the image
-  local answer
+  local answer line missing=""
   answer="$(last_line "$probe_error")"
-  if [ "$probe_rc" = 1 ] && [[ "$answer" == "missing "* ]]; then
-    report fail "$1" "image $image $2: $answer" "$3" "$EXIT_NO_IMAGE"
+  # The probe's own answer is a `missing <tool>` line; a runtime may warn
+  # before it or after it, so every line is read, not only the last.
+  while IFS= read -r line; do
+    if [[ "$line" == "missing "* ]] && is_tool_name "${line#missing }"; then missing="$line"; fi
+  done <<<"${probe_error//$'\r'/}"
+  if [ "$probe_rc" = 1 ] && [ -n "$missing" ]; then
+    report fail "$1" "image $image $2: $missing" "$3" "$EXIT_NO_IMAGE"
   elif [ "$probe_rc" = 124 ]; then
     report fail "$1" "$cli did not answer within ${probe_timeout}s while running image $image" \
       "check that the $cli daemon/service is running and reachable (${cli} info); QUECTO_REPO_CHECK_TIMEOUT raises the bound" "$EXIT_NO_RUNTIME"
