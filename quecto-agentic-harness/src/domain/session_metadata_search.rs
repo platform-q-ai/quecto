@@ -148,6 +148,10 @@ impl MetadataQuery {
             }
         }
         debug_assert!(matched.is_sorted());
+        debug_assert!(
+            !(matched.contains(&MatchedField::Key) && matched.contains(&MatchedField::TitleFuzzy)),
+            "a typed key is never demoted"
+        );
         (!matched.is_empty()).then_some(matched)
     }
 }

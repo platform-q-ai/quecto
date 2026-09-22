@@ -473,3 +473,19 @@ fn subsequence_matching_is_as_literal_as_the_fold() {
     assert!(MetadataQuery::parse(&"x".repeat(300)).is_err());
     assert_eq!(plain("", "fix bug"), Some(vec![]), "everything, no tier");
 }
+
+/// #2043 round 1: a typed whole key that also reads as a subsequence of the
+/// title stays `[Key]` — never demoted to the fuzzy tier; the same text on a
+/// row that is not the key is fuzzy.
+#[test]
+fn a_typed_whole_key_is_never_demoted_by_the_title_subsequence_tier() {
+    let home = SessionHomeScope::LegacyUnscoped;
+    assert_eq!(
+        matched("cli:work", "cli:work", "cli: work items", &home),
+        Some(vec![MatchedField::Key])
+    );
+    assert_eq!(
+        matched("cli:work", "other-key", "cli: work items", &home),
+        Some(vec![MatchedField::TitleFuzzy])
+    );
+}

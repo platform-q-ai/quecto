@@ -80,7 +80,7 @@ impl SearchSessionMetadata {
 
 type Match = (Vec<MatchedField>, SessionMetadataRecord);
 
-/// Best first — the best matched field, then newest (undated last), then
+/// Best first — the row's rank (the fuzzy tier if any term needed it, else the best matched field), then newest (undated last), then
 /// key: a total order, so equal inputs give one answer — cut to `limit`.
 /// Eligibility is decided for the rows that are shown only.
 fn matched_rows(

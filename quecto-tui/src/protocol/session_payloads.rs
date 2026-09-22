@@ -404,7 +404,7 @@ impl<T> Lenient<T> {
     }
 }
 
-/// The matched-field names of a search row: only the four the protocol
+/// The matched-field names of a search row: only the five the protocol
 /// defines, in the order given; anything else is dropped, never shown.
 fn matched_fields(names: Vec<Lenient<String>>) -> Vec<String> {
     const FIELDS: [&str; 5] = ["key", "title", "repository", "path", "title_fuzzy"];
