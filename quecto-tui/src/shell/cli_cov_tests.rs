@@ -1,14 +1,14 @@
-//! Region-coverage tests for `cli` flag parsing, stderr redaction, and
-//! socket-path validation. No TTY is involved; the spawn-path wiring test
-//! drives the real `spawn_agent` flow with a stand-in shell script.
+//! Region-coverage tests for `cli` flag parsing, stderr redaction and socket-path
+//! validation; no TTY, the spawn-path test drives `spawn_agent` with a stand-in script.
 
+use super::termination_tests::spawn_agent_program;
 use super::*;
 use crate::shell::process::{LeaderBudget, LeaderIdentity as Id, terminate_leader};
+
 async fn terminate_test_child(child: &mut tokio::process::Child) {
     terminate_leader(child, LeaderBudget::WORST_CASE, Id::capture(child.id())).await;
 }
-
-fn args(s: &str) -> Vec<String> {
+pub(super) fn args(s: &str) -> Vec<String> {
     let mut v = vec!["quecto-tui".to_string()];
     if !s.is_empty() {
         v.extend(s.split_whitespace().map(String::from));
@@ -19,7 +19,7 @@ fn args(s: &str) -> Vec<String> {
 const ETXTBSY_SPAWN_RETRIES: usize = 10;
 const ETXTBSY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(10);
 
-async fn spawn_agent_program_retry_etxtbsy(
+pub(super) async fn spawn_agent_program_retry_etxtbsy(
     program: &str,
     flags: &CliFlags,
 ) -> Result<
@@ -45,7 +45,7 @@ async fn spawn_agent_program_retry_etxtbsy(
     unreachable!("bounded retry loop always returns on its final attempt")
 }
 
-fn tmp_dir(tag: &str) -> PathBuf {
+pub(super) fn tmp_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "quecto-tui-clicov-{tag}-{}-{}",
         std::process::id(),

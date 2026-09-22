@@ -19,6 +19,8 @@ pub(crate) struct OrdinaryExitPolicy {
     /// Test override of the leader budget (production derives it from
     /// the roster, see [`LeaderBudget::for_children`]).
     pub(crate) leader_budget_override: Option<LeaderBudget>,
+    /// The termination signal this exit answers, if it was one (#2053).
+    pub(crate) termination_signal: Option<crate::shell::signals::TerminationSignal>,
     /// Every settling notice shown, in order (test seam).
     #[cfg(any(test, feature = "test-harness"))]
     pub(crate) settling_notices_shown: Vec<String>,
@@ -35,6 +37,7 @@ impl Default for OrdinaryExitPolicy {
         Self {
             kill_owned: true,
             leader_budget_override: None,
+            termination_signal: None,
             #[cfg(any(test, feature = "test-harness"))]
             settling_notices_shown: Vec::new(),
             #[cfg(test)]
@@ -46,6 +49,31 @@ impl Default for OrdinaryExitPolicy {
 impl App {
     pub(crate) fn request_ordinary_exit(&mut self) {
         self.should_exit = true;
+    }
+
+    /// Hand the loop the termination signals (#2053): each is Ctrl+D's exit.
+    pub(crate) fn set_termination_stream(
+        &mut self,
+        rx: tokio::sync::mpsc::Receiver<crate::shell::signals::TerminationSignal>,
+    ) {
+        self.termination_rx = Some(rx);
+    }
+
+    /// The loop's arm for a termination signal (#2053): the same ordinary
+    /// exit as Ctrl+D — persist, then end the owned harness within its
+    /// budget — whatever overlay or turn is active. The terminal may already
+    /// be gone, which the exit path tolerates (every write is best effort).
+    pub(crate) fn exit_on_termination_signal(
+        &mut self,
+        signal: crate::shell::signals::TerminationSignal,
+    ) {
+        self.exit_policy.termination_signal = Some(signal);
+        self.request_ordinary_exit();
+    }
+
+    /// The signal an ordinary exit was requested by, if any (#2053).
+    pub(crate) fn termination_signal(&self) -> Option<crate::shell::signals::TerminationSignal> {
+        self.exit_policy.termination_signal
     }
 
     pub(crate) fn set_ordinary_exit_kill_owned(&mut self, kill_owned: bool) {

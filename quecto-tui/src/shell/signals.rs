@@ -1,4 +1,6 @@
-//! Signal handling — SIGTSTP (Ctrl+Z suspend), SIGWINCH (resize).
+//! Signal handling — SIGTSTP (Ctrl+Z suspend), SIGWINCH (resize), and the
+//! termination signals (SIGHUP, SIGTERM, SIGINT), which take the ordinary
+//! exit path (#2053) instead of their default disposition.
 //!
 //! SIGTSTP requires special handling: the terminal must be restored to
 //! cooked mode before suspending, and re-entered into raw mode on resume.
@@ -65,6 +67,62 @@ pub async fn sigwinch_stream() -> tokio::sync::mpsc::Receiver<()> {
         }
     });
 
+    rx
+}
+
+/// A signal asking the TUI to leave: the terminal went away (SIGHUP), or
+/// someone asked from outside (SIGTERM, an external SIGINT — Ctrl+C in raw
+/// mode is a key, never a signal). Each takes the same path as Ctrl+D
+/// (#2053): persist, then end the owned harness within the leader budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminationSignal {
+    Hangup,
+    Terminate,
+    Interrupt,
+}
+
+impl TerminationSignal {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Hangup => "SIGHUP",
+            Self::Terminate => "SIGTERM",
+            Self::Interrupt => "SIGINT",
+        }
+    }
+}
+
+/// Register for SIGHUP, SIGTERM and SIGINT; the receiver fires once per
+/// signal (extra ones while one is pending are folded — they ask for the
+/// same thing). Registered from the moment this is called, so a signal in
+/// the startup window is kept for the caller, never lost to the default
+/// disposition. A kind that cannot be registered is left at its default.
+pub fn termination_stream() -> tokio::sync::mpsc::Receiver<TerminationSignal> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    for (kind, which) in [
+        (SignalKind::hangup(), TerminationSignal::Hangup),
+        (SignalKind::terminate(), TerminationSignal::Terminate),
+        (SignalKind::interrupt(), TerminationSignal::Interrupt),
+    ] {
+        let mut sig = match signal(kind) {
+            Ok(sig) => sig,
+            Err(e) => {
+                eprintln!(
+                    "quecto-tui: {} keeps its default disposition (registration failed: {e})",
+                    which.name()
+                );
+                continue;
+            }
+        };
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            while sig.recv().await.is_some() {
+                if tx.try_send(which).is_err() && tx.is_closed() {
+                    break;
+                }
+            }
+        });
+    }
     rx
 }
 

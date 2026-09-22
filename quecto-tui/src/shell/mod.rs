@@ -11,6 +11,7 @@ pub mod child_watch;
 pub mod cli;
 pub(crate) mod connection;
 pub mod keys;
+pub mod parent_death_signal;
 pub mod process;
 pub mod render;
 pub mod signals;

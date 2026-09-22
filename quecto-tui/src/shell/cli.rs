@@ -155,19 +155,40 @@ fn apply_workflow_defaults(flags: &mut CliFlags) {
 }
 
 async fn run_tui(flags: CliFlags) -> i32 {
+    // From here on SIGHUP/SIGTERM/SIGINT are ours (#2053): a signal during
+    // the startup window is kept and answered once there is something to
+    // end; one in the loop takes the ordinary exit.
+    let mut termination_rx = crate::shell::signals::termination_stream();
     let (socket, child_watch, announced_protocol) = match flags.socket_path {
         Some(path) => (path, None, None),
-        None => match spawn_agent(&flags).await {
+        None => match spawn_agent(&flags, &mut termination_rx).await {
             Ok((path, child, stderr_tail, announced_protocol)) => {
                 let watch = crate::shell::child_watch::watch_child(child, stderr_tail);
                 (path, Some(watch), announced_protocol)
             }
-            Err(e) => {
+            Err(SpawnAbort::Interrupted(signal)) => {
+                eprintln!(
+                    "{}",
+                    startup_interrupted_message(signal, flags.kill_on_exit)
+                );
+                return 1;
+            }
+            Err(SpawnAbort::Failed(e)) => {
                 eprintln!("Failed to start quecto agent: {e}");
                 return 1;
             }
         },
     };
+    if let Some(signal) = interrupted_during_startup(&mut termination_rx) {
+        eprintln!(
+            "{}",
+            startup_interrupted_message(signal, flags.kill_on_exit)
+        );
+        if let (Some(watch), true) = (&child_watch, flags.kill_on_exit) {
+            terminate_watched_at_startup(watch).await;
+        }
+        return 1;
+    }
 
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -200,6 +221,8 @@ async fn run_tui(flags: CliFlags) -> i32 {
             crate::protocol::client::Client::connect_legacy(&socket).await
         }
     };
+    // A signal during the connect itself is read after it: a UDS connect to
+    // a listening socket returns at once, so the gap is milliseconds.
     let client = match connect.await {
         Ok(c) => c,
         Err(e) => {
@@ -210,6 +233,16 @@ async fn run_tui(flags: CliFlags) -> i32 {
             return 1;
         }
     };
+    if let Some(signal) = interrupted_during_startup(&mut termination_rx) {
+        eprintln!(
+            "{}",
+            startup_interrupted_message(signal, flags.kill_on_exit)
+        );
+        if let (Some(watch), true) = (&child_watch, flags.kill_on_exit) {
+            terminate_watched_at_startup(watch).await;
+        }
+        return 1;
+    }
 
     let terminal = crate::shell::terminal::Terminal::new();
     let mut app = crate::shell::app::App::new(terminal, client);
@@ -217,7 +250,17 @@ async fn run_tui(flags: CliFlags) -> i32 {
         app.set_child_exit_watch(watch.clone());
     }
     app.set_ordinary_exit_kill_owned(flags.kill_on_exit);
+    app.set_termination_stream(termination_rx);
     let exit_code = app.run().await;
+    if let Some(signal) = app.termination_signal() {
+        // The terminal is usually gone by now; stderr may still be a log.
+        let owned = match (child_watch.is_some(), flags.kill_on_exit) {
+            (false, _) => OwnedAgentAtExit::NoneOwned,
+            (true, true) => OwnedAgentAtExit::AskedToEnd,
+            (true, false) => OwnedAgentAtExit::LeftRunning,
+        };
+        eprintln!("{}", termination_exit_message(signal, owned));
+    }
 
     drop(child_watch);
 
@@ -256,6 +299,7 @@ pub fn agent_socket_timeout_message() -> String {
 /// creates an orphan. See the security review for PR #442.
 pub(crate) async fn spawn_agent(
     flags: &CliFlags,
+    interrupt: &mut tokio::sync::mpsc::Receiver<crate::shell::signals::TerminationSignal>,
 ) -> Result<
     (
         PathBuf,
@@ -263,9 +307,9 @@ pub(crate) async fn spawn_agent(
         crate::shell::child_watch::StderrTail,
         Option<u8>,
     ),
-    String,
+    SpawnAbort,
 > {
-    spawn_agent_program("quecto", flags).await
+    spawn_agent_program_until("quecto", flags, interrupt).await
 }
 
 /// [`spawn_agent`] with the agent binary injectable, so tests can drive the
@@ -280,9 +324,10 @@ fn should_speak_frames(announced: Option<u8>) -> bool {
     announced.is_some_and(|v| v >= quecto_line_io::PROTOCOL_VERSION)
 }
 
-async fn spawn_agent_program(
+async fn spawn_agent_program_until(
     program: &str,
     flags: &CliFlags,
+    interrupt: &mut tokio::sync::mpsc::Receiver<crate::shell::signals::TerminationSignal>,
 ) -> Result<
     (
         PathBuf,
@@ -292,12 +337,13 @@ async fn spawn_agent_program(
         // line, `None` for pre-#1059 agents (legacy NDJSON framing).
         Option<u8>,
     ),
-    String,
+    SpawnAbort,
 > {
     use tokio::io::AsyncBufReadExt;
     let args = build_agent_args(flags);
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let mut child = tokio::process::Command::new(program)
+    let mut command = tokio::process::Command::new(program);
+    command
         .args(&args_ref)
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
@@ -305,14 +351,23 @@ async fn spawn_agent_program(
         // Own process group: terminal signals never reach the harness, and
         // the post-exit canary (#1956) can recognise a stray by pgid. The
         // group itself is never signalled — only the leader pid is.
-        .process_group(0)
+        .process_group(0);
+    if flags.kill_on_exit {
+        // A TUI that dies outright takes the harness it owns with it (#2053);
+        // a detached harness is left alone. The signal fires on the death of
+        // the thread that forks: this runs inside `block_on`, on the main
+        // thread, which lives until the process exits — never move the spawn
+        // onto the blocking pool, whose threads retire.
+        crate::shell::parent_death_signal::arm(command.as_std_mut(), std::process::id());
+    }
+    let mut child = command
         .spawn()
-        .map_err(|e| format!("failed to spawn {program}: {e}"))?;
+        .map_err(|e| SpawnAbort::Failed(format!("failed to spawn {program}: {e}")))?;
 
     let stderr = child
         .stderr
         .take()
-        .ok_or_else(|| "failed to capture agent stderr".to_string())?;
+        .ok_or_else(|| SpawnAbort::Failed("failed to capture agent stderr".to_string()))?;
 
     let mut reader = tokio::io::BufReader::new(stderr);
     let mut line = String::new();
@@ -330,18 +385,47 @@ async fn spawn_agent_program(
     // Surface a brief status so the readiness wait is not a silent pause (#808).
     eprintln!("{}", agent_starting_status());
 
+    // The termination signals are watched alongside the announcement
+    // (#2053): a TUI told to leave while its agent is still starting ends
+    // that agent now, never after the deadline. With --detach-on-exit the
+    // agent is to outlive the TUI, so the TUI stays for the announcement —
+    // leaving now would close the agent's stderr under its announcing
+    // write — and only then leaves it running.
+    let mut interrupt_open = true;
+    let mut leave_after_announcement = None;
     loop {
         line.clear();
-        let read_future = reader.read_line(&mut line);
-        let result = tokio::time::timeout_at(deadline, read_future).await;
+        let result = tokio::select! {
+            biased;
+            signal = interrupt.recv(), if interrupt_open => match signal {
+                Some(signal) if flags.kill_on_exit => {
+                    terminate_spawned_agent(&mut child).await;
+                    return Err(SpawnAbort::Interrupted(signal));
+                }
+                Some(signal) => {
+                    eprintln!(
+                        "{}: waiting for the agent's socket announcement before leaving it running (--detach-on-exit)",
+                        signal.name()
+                    );
+                    leave_after_announcement = Some(signal);
+                    interrupt_open = false;
+                    continue;
+                }
+                None => {
+                    interrupt_open = false;
+                    continue;
+                }
+            },
+            read = tokio::time::timeout_at(deadline, reader.read_line(&mut line)) => read,
+        };
 
         match result {
             Ok(Ok(0)) => {
                 terminate_spawned_agent(&mut child).await;
-                return Err(format_agent_startup_failure(
+                return Err(SpawnAbort::Failed(format_agent_startup_failure(
                     "agent exited before announcing socket",
                     &stderr_context.lines(),
-                ));
+                )));
             }
             Ok(Ok(_)) => {
                 let trimmed = line.trim();
@@ -356,29 +440,34 @@ async fn spawn_agent_program(
                     // Validate the socket path is under a safe directory.
                     if let Err(e) = validate_socket_path(&path) {
                         terminate_spawned_agent(&mut child).await;
-                        return Err(e);
+                        return Err(SpawnAbort::Failed(e));
                     }
                     // Keep draining stderr AFTER startup (#1047): under the
                     // workspace `panic = "abort"` a mid-session agent panic
                     // writes its message here and then kills the process, so
                     // dropping the reader would make the abort undiagnosable.
                     spawn_stderr_drain(reader, stderr_context.clone());
+                    if let Some(signal) = leave_after_announcement {
+                        // Announced and left running: the drain is the
+                        // TUI's, gone with it; the agent writes nothing more.
+                        return Err(SpawnAbort::Interrupted(signal));
+                    }
                     return Ok((path, child, stderr_context, announced_protocol));
                 }
             }
             Ok(Err(e)) => {
                 terminate_spawned_agent(&mut child).await;
-                return Err(format_agent_startup_failure(
+                return Err(SpawnAbort::Failed(format_agent_startup_failure(
                     &format!("error reading agent stderr: {e}"),
                     &stderr_context.lines(),
-                ));
+                )));
             }
             Err(_) => {
                 terminate_spawned_agent(&mut child).await;
-                return Err(format_agent_startup_failure(
+                return Err(SpawnAbort::Failed(format_agent_startup_failure(
                     &agent_socket_timeout_message(),
                     &stderr_context.lines(),
-                ));
+                )));
             }
         }
     }
@@ -612,6 +701,17 @@ fn format_agent_startup_failure(reason: &str, stderr_lines: &[String]) -> String
 #[cfg(test)]
 #[path = "cli_cov_tests.rs"]
 mod cli_cov_tests;
+
+#[path = "cli_termination.rs"]
+mod termination;
+use termination::{
+    OwnedAgentAtExit, SpawnAbort, interrupted_during_startup, startup_interrupted_message,
+    termination_exit_message,
+};
+
+#[cfg(test)]
+#[path = "cli_termination_tests.rs"]
+mod termination_tests;
 
 #[cfg(test)]
 #[path = "cli_tests.rs"]
