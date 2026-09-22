@@ -122,6 +122,8 @@ const CANONICAL_FILES: &[&str] = &[
     "src/infrastructure/persistence/session_home_catalogue_skipped.rs",
     "src/infrastructure/persistence/session_home_catalogue_seed.rs",
     "src/infrastructure/persistence/session_record_read.rs",
+    // #2042: the one pass both halves of discovery share.
+    "src/infrastructure/persistence/session_home_catalogue_joined.rs",
     "src/domain/session_path_text.rs",
     // #2045: the shell command that opens quecto in a session's folder.
     "src/domain/session_open_command.rs",
@@ -765,7 +767,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     (
         "src/infrastructure/persistence/session_store_list_index.rs",
-        48,
+        36,
     ),
     // PR #2018 perf: the derived index is stamp-based and persisted; its
     // on-disk shape is its own module, both pinned at delivered size.
@@ -774,9 +776,15 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // (R2-H1/H2): rejections are in memory only and never seeded, so every
     // owner shrank (468 → 446, 139 → 110, 83 → 44); the one record read both
     // halves share is its own seam (`session_record_read.rs`).
+    // #2042: the per-record pass moved to its own owner (446 → 422); the
+    // walk's cache lost `summary_at`, the pass reads its entries (48 → 36).
     (
         "src/infrastructure/persistence/session_home_catalogue.rs",
-        446,
+        422,
+    ),
+    (
+        "src/infrastructure/persistence/session_home_catalogue_joined.rs",
+        256,
     ),
     // Round 3: naming the walk's skips is its own owner (R3-H1), and the
     // legacy `rejected` key's presence rule lives here (R3-H6): 110 as before.
@@ -800,7 +808,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/infrastructure/persistence/session_store_list_record.rs",
         95,
     ),
-    ("src/infrastructure/persistence/session_record_read.rs", 48),
+    // #2042: the read seam's test hooks (failing reads, a rewrite under the
+    // read) live in their own test-only owner; the seam itself stays small.
+    ("src/infrastructure/persistence/session_record_read.rs", 37),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),
     ("src/interface/cli/agent/run_session.rs", 130),

@@ -1,7 +1,7 @@
 //! Contract of the rejection cache (R1-H1) over the REAL store and catalogue:
-//! a record that cannot be summarised is read once per version — by the
-//! store's walk and by the strict catalogue alike — named in exactly one
-//! diagnostic per query, and re-read the moment it changes. Only a verdict on
+//! a record that cannot be summarised is read once per version — one read
+//! serving the store's walk and the strict catalogue alike (#2042) — named
+//! in exactly one diagnostic per query, and re-read the moment it changes. Only a verdict on
 //! bytes that were read is remembered, never an I/O failure (R2-H1); and only
 //! in memory (R2-H2): the index carries no rejection and none is taken from
 //! it, so each process reads a corrupt record once for itself.
@@ -82,7 +82,11 @@ async fn a_rejected_record_is_read_once_per_version_and_again_when_it_changes() 
         (vec!["chat-good"], 1)
     );
     let reads = process.reads();
-    assert_eq!(reads, (2, 2), "each half reads each record once");
+    assert_eq!(
+        reads,
+        (2, 0),
+        "one read per record serves both halves; the store's own walk never ran"
+    );
     for _ in 0..3 {
         let warm = process.query().await;
         assert_eq!(named(&warm, "chat-rot.json"), 1, "{:?}", warm.diagnostics);
@@ -92,7 +96,7 @@ async fn a_rejected_record_is_read_once_per_version_and_again_when_it_changes() 
         reads,
         "an unchanged failure is never re-read"
     );
-    // Repaired in place: a new stamp, so both halves read it again, once.
+    // Repaired in place: a new stamp, so it is read again — once for both.
     let mut repaired = ROT.to_vec();
     repaired.extend_from_slice(b"\"}]}");
     std::fs::write(&rot, repaired).unwrap();
@@ -104,7 +108,7 @@ async fn a_rejected_record_is_read_once_per_version_and_again_when_it_changes() 
         "{:?}",
         healed.diagnostics
     );
-    assert_eq!(process.reads(), (3, 3));
+    assert_eq!(process.reads(), (3, 0));
     let index = std::fs::read_to_string(layout.home_catalogue_file()).unwrap();
     assert!(
         !index.contains("rejected"),
@@ -118,7 +122,7 @@ async fn a_rejected_record_is_read_once_per_version_and_again_when_it_changes() 
         (keys(&again), named(&again, "chat-rot.json")),
         (vec!["chat-good"], 1)
     );
-    assert_eq!(process.reads(), (4, 4));
+    assert_eq!(process.reads(), (4, 0));
 }
 
 #[tokio::test]
@@ -135,7 +139,7 @@ async fn a_new_process_reads_a_rejected_record_once_for_itself_and_persists_no_v
     let cold = Process::over(&layout);
     for _ in 0..3 {
         let seen = cold.query().await;
-        assert_eq!((named(&seen, "chat-rot.json"), cold.reads()), (1, (1, 1)));
+        assert_eq!((named(&seen, "chat-rot.json"), cold.reads()), (1, (1, 0)));
     }
     // Deleting the index is a complete recovery and costs no re-read of a
     // verdict this process reached itself on the bytes still on disk.
@@ -147,7 +151,7 @@ async fn a_new_process_reads_a_rejected_record_once_for_itself_and_persists_no_v
     );
     assert_eq!(
         cold.reads(),
-        (2, 1),
+        (2, 0),
         "only the good record is validated again"
     );
 }
@@ -203,8 +207,8 @@ async fn a_transient_read_failure_is_reported_once_and_never_remembered() {
     save(&process, "chat-good", "a good title").await;
     save(&process, "chat-flaky", "a flaky read").await;
     let flaky = layout.session_file(&identity("chat-flaky"));
-    // One failed read by the walk, one by the strict catalogue.
-    fail_next_reads(&flaky, 2);
+    // The one read both halves share fails: neither has a verdict.
+    fail_next_reads(&flaky, 1);
     let starved = process.query().await;
     assert_eq!(
         (keys(&starved), named(&starved, "chat-flaky.json")),
@@ -217,8 +221,8 @@ async fn a_transient_read_failure_is_reported_once_and_never_remembered() {
     let healed = process.query().await;
     assert_eq!(keys(&healed), ["chat-flaky", "chat-good"]);
     assert!(healed.diagnostics.is_empty(), "{:?}", healed.diagnostics);
-    // Only the walk fails: the strict catalogue lists the record, the answer
-    // cannot carry the row — and says so, by file name, for that answer only.
+    // A cold process rebuilding without an index: the same one failure,
+    // named by file for that answer only, read again on the next.
     let cold = Process::over(&layout);
     fail_next_reads(&flaky, 1);
     std::fs::remove_file(layout.home_catalogue_file()).unwrap();
@@ -266,4 +270,106 @@ async fn a_persisted_rejection_at_the_correct_stamp_of_a_valid_record_hides_noth
     assert_eq!(listing.entries.len(), 2, "{listing:?}");
     let index = std::fs::read_to_string(&path).unwrap();
     assert!(!index.contains("rejected"), "{index}");
+}
+
+/// #2042: the metadata query is ONE pass. Warm, the pass stamps each record
+/// exactly once and reads nothing (publication re-stamps published rows
+/// until slice B); a rebuild (cold process, index deleted) reads each record
+/// exactly once — the walk's summary and the catalogue's strict identity come
+/// from the same bytes — and the store's own walk is not run by the query.
+#[tokio::test]
+async fn the_pass_stamps_each_record_once_warm_and_a_rebuild_reads_each_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path().join("base"));
+    let process = Process::over(&layout);
+    for n in 0..5 {
+        save(&process, &format!("chat-{n}"), &format!("title {n}")).await;
+    }
+    std::fs::write(
+        layout.session_file(&identity("chat-rot")),
+        br#"{"key":"chat-rot","messages":[{"role":"user","content":"AAAA"#,
+    )
+    .unwrap();
+    let records = 6;
+    let seen = process.query().await;
+    assert_eq!(
+        keys(&seen),
+        ["chat-0", "chat-1", "chat-2", "chat-3", "chat-4"]
+    );
+    assert_eq!(named(&seen, "chat-rot.json"), 1, "{:?}", seen.diagnostics);
+    assert_eq!(
+        process.reads(),
+        (records, 0),
+        "one read per record, none by the store's own walk"
+    );
+    assert_eq!(
+        process.catalogue.record_stamps(),
+        records * 2,
+        "cold: a record is stamped before and after its one read"
+    );
+    let warm = process.query().await;
+    assert_eq!(keys(&warm), keys(&seen));
+    assert_eq!(process.reads(), (records, 0), "warm: nothing read");
+    assert_eq!(
+        process.catalogue.record_stamps(),
+        records * 3,
+        "warm: the pass stamped each record exactly once more"
+    );
+    // The store's own listing after the query answers from the same cache.
+    let listed = process
+        .store
+        .list(&quecto::application::sessions::dto::SessionListQuery::All)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 5);
+    assert_eq!(
+        process.reads(),
+        (records, 0),
+        "the walk reuses the pass's verdicts"
+    );
+    // A rebuild: a new process with the index gone reads each record once.
+    std::fs::remove_file(layout.home_catalogue_file()).unwrap();
+    let rebuilt = Process::over(&layout);
+    let seen = rebuilt.query().await;
+    // A missing index is "never existed": built, not recovered — no report.
+    assert!(!seen.rebuilt, "{seen:?}");
+    assert_eq!(
+        keys(&seen),
+        ["chat-0", "chat-1", "chat-2", "chat-3", "chat-4"]
+    );
+    assert_eq!(
+        rebuilt.reads(),
+        (records, 0),
+        "rebuild: each record read once"
+    );
+}
+
+/// #2042: a record rewritten under the one read is a verdict for nobody —
+/// named for that answer, remembered by neither half, read again next time.
+#[tokio::test]
+async fn a_record_rewritten_under_its_read_is_remembered_by_neither_half() {
+    use quecto::infrastructure::persistence::session_record_read::rewrite_after_next_read;
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path().join("base"));
+    let process = Process::over(&layout);
+    save(&process, "chat-good", "a good title").await;
+    save(&process, "chat-racy", "the old title").await;
+    let racy = layout.session_file(&identity("chat-racy"));
+    let mut newer = std::fs::read(&racy).unwrap();
+    newer.extend_from_slice(b" ");
+    rewrite_after_next_read(&racy, newer);
+    let torn = process.query().await;
+    assert_eq!(keys(&torn), ["chat-good"], "{:?}", torn.diagnostics);
+    assert_eq!(named(&torn, "chat-racy.json"), 1, "{:?}", torn.diagnostics);
+    assert_eq!(process.reads(), (2, 0));
+    let settled = process.query().await;
+    assert_eq!(keys(&settled), ["chat-good", "chat-racy"]);
+    assert!(settled.diagnostics.is_empty(), "{:?}", settled.diagnostics);
+    assert_eq!(
+        process.reads(),
+        (3, 0),
+        "the torn read was no verdict: read again"
+    );
+    let _ = process.query().await;
+    assert_eq!(process.reads(), (3, 0), "and remembered once stable");
 }

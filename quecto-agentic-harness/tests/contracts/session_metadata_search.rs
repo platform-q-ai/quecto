@@ -375,8 +375,8 @@ async fn two_thousand_records_are_searched_without_reading_a_transcript() {
     );
     assert_eq!(
         reads,
-        (count + 2, count + 2),
-        "a fresh index validates each record once, the two bad ones included"
+        (count + 2, 0),
+        "a fresh index reads each record once, the two bad ones included; the store's own walk never runs"
     );
     let started = std::time::Instant::now();
     // `expected` literal rows come first; a term found nowhere literally may
@@ -434,7 +434,71 @@ async fn two_thousand_records_are_searched_without_reading_a_transcript() {
             cold_catalogue.transcript_reads(),
             cold_store.summary_transcript_reads()
         ),
-        (2, 2),
-        "cold: the two rejected records once per half (R2-H2), nothing else, and not again"
+        (2, 0),
+        "cold: the two rejected records once (R2-H2), nothing else, and not again"
+    );
+}
+
+/// Opt-in timing (#2042): `QUECTO_META_BENCH=<records>` builds that many
+/// records, warms once, and reports the median of nine warm global searches
+/// on stderr. Not an assertion — release numbers belong in `docs/sessions.md`.
+#[tokio::test]
+async fn warm_metadata_query_timing() {
+    let Some(count) = std::env::var("QUECTO_META_BENCH")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let here = dir.path().join("here");
+    std::fs::create_dir_all(&here).unwrap();
+    let here = here.canonicalize().unwrap();
+    let layout = FlatSessionLayout::new(dir.path().join("base"));
+    let store = Arc::new(FileSessionStore::new(layout.clone()));
+    for n in 0..count {
+        let id = identity(&format!("chat-bench-{n:05}"));
+        let mut session = Session::new(id.clone());
+        session
+            .messages
+            .push(Message::user(format!("bench title number-{n:05}")));
+        session.messages.push(Message::assistant(
+            format!("CONTENT-{n:05} ").repeat(40),
+            Vec::new(),
+        ));
+        store.save(&session).await.unwrap();
+        store.release(&id);
+    }
+    let catalogue = Arc::new(FileSessionHomeCatalogue::with_store(store.clone()));
+    let mut home = session_home_in(store.clone(), Ok(here));
+    home.catalogue = catalogue.clone();
+    let warm = SearchSessionMetadata::new(home);
+    let ask = |query: &str| SearchSessionMetadataRequest {
+        query: query.into(),
+        scope: SessionListScope::Global,
+        ..Default::default()
+    };
+    assert_eq!(
+        warm.search(&ask("number-00042")).await.unwrap().rows.len(),
+        1
+    );
+    let mut times = Vec::new();
+    for i in 0..9 {
+        let started = std::time::Instant::now();
+        let found = warm
+            .search(&ask(&format!("number-{:05}", 100 + i)))
+            .await
+            .unwrap();
+        times.push(started.elapsed());
+        assert_eq!(found.rows.len(), 1);
+    }
+    times.sort();
+    eprintln!(
+        "META-BENCH records={count} warm median={:?} min={:?} max={:?} reads=({}, {})",
+        times[4],
+        times[0],
+        times[8],
+        catalogue.transcript_reads(),
+        store.summary_transcript_reads()
     );
 }

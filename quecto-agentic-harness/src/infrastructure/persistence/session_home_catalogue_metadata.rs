@@ -1,8 +1,8 @@
 //! The metadata query of the home catalogue (#2010): the store's summary walk
-//! joined with the validated home listing. Both halves stamp-check authority
-//! on every query, so a record version a half has read — or, within this
-//! process, rejected — costs `stat`s, never a second read. Nothing is ever
-//! read to MATCH: matching sees listing titles only.
+//! joined with the validated home listing — from ONE pass over the directory
+//! (#2042): each record is stamped once per query and read at most once, the
+//! walk's summary and the strict identity drawn from the same bytes. Nothing
+//! is ever read to MATCH: matching sees listing titles only.
 use super::FileSessionHomeCatalogue;
 use crate::application::sessions::ports::session_home::{
     SessionHomeCatalogue, SessionMetadataRecord, SessionMetadataSnapshot,
@@ -13,9 +13,9 @@ use std::collections::HashMap;
 pub(super) async fn query(
     catalogue: FileSessionHomeCatalogue,
 ) -> Result<SessionMetadataSnapshot, DomainError> {
-    // The walk first: the listing then records each summary it validated.
-    let (summaries, skipped) = catalogue.store.summaries().await?;
-    let listing = catalogue.list_async().await?;
+    // One pass (#2042): listing, walk summaries and skips from the same stamps and bytes.
+    let (listing, summaries, skipped) =
+        super::session_home_catalogue_joined::pass(catalogue.clone()).await?;
     let mut diagnostics = listing.diagnostics;
     super::session_home_catalogue_rejections::name_skipped(&mut diagnostics, skipped);
     let mut homes: HashMap<String, SessionHomeScope> = listing

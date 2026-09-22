@@ -9,11 +9,11 @@ use crate::domain::error::DomainError;
 use super::super::session_layout::FlatSessionLayout;
 
 #[path = "session_store_list_scan.rs"]
-mod session_store_list_scan;
+pub(in crate::infrastructure::persistence) mod session_store_list_scan;
 
 #[path = "session_store_list_index.rs"]
 mod session_store_list_index;
-pub(super) use session_store_list_index::SummaryCache;
+pub(in crate::infrastructure::persistence) use session_store_list_index::SummaryCache;
 pub(super) use session_store_list_scan::Walk;
 
 pub(super) async fn walk(

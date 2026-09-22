@@ -41,8 +41,8 @@ pub(super) fn summary_of(
     verdict
 }
 
-/// The verdict on a record's bytes, read in full.
-fn summary_in(
+/// The verdict on a record's bytes, read in full — here or by the one pass (#2042).
+pub(in crate::infrastructure::persistence) fn summary_in(
     layout: &FlatSessionLayout,
     path: &std::path::Path,
     bytes: &[u8],
