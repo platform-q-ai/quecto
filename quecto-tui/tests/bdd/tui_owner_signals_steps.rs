@@ -123,7 +123,13 @@ fn serve(sock: &std::path::Path, loop_started: Arc<AtomicBool>) {
     });
 }
 
-fn start(world: &mut TuiWorld, tui_args: &[&str], announce_delay_secs: u32, with_stand_in: bool) {
+fn start(
+    world: &mut TuiWorld,
+    tui_args: &[&str],
+    announce_delay_secs: u32,
+    with_stand_in: bool,
+    served: Option<&std::path::Path>,
+) {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().expect("fixture dir");
     let bin = dir.path().join("bin");
@@ -135,7 +141,12 @@ fn start(world: &mut TuiWorld, tui_args: &[&str], announce_delay_secs: u32, with
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     let loop_started = Arc::new(AtomicBool::new(false));
+    // Every socket the TUI may connect to is served BEFORE it starts: an
+    // attached TUI connects at once, and a refused connect would end it.
     serve(&dir.path().join("agent.sock"), Arc::clone(&loop_started));
+    if let Some(sock) = served {
+        serve(sock, Arc::clone(&loop_started));
+    }
     let path = format!(
         "{}:{}",
         bin.display(),
@@ -196,14 +207,14 @@ fn wait_for_harness_pid(world: &mut TuiWorld) {
 
 #[given("a real TUI process owns a stand-in harness")]
 fn owns_stand_in(world: &mut TuiWorld) {
-    start(world, &[], 0, true);
+    start(world, &[], 0, true, None);
     wait_for_harness_pid(world);
     wait_for_loop(world);
 }
 
 #[given("a real TUI process owns a stand-in harness started with --detach-on-exit")]
 fn owns_stand_in_detached(world: &mut TuiWorld) {
-    start(world, &["--detach-on-exit"], 0, true);
+    start(world, &["--detach-on-exit"], 0, true, None);
     wait_for_harness_pid(world);
     wait_for_loop(world);
 }
@@ -217,7 +228,7 @@ fn starting_stand_in(world: &mut TuiWorld, detach: String, delay: u32) {
     } else {
         &["--detach-on-exit"]
     };
-    start(world, args, delay, true);
+    start(world, args, delay, true, None);
     wait_for_harness_pid(world);
     // The announcement is still pending: the TUI is in its startup window.
     assert!(!fixture(world).loop_started.load(Ordering::SeqCst));
@@ -228,11 +239,8 @@ fn attached(world: &mut TuiWorld) {
     let dir = tempfile::tempdir().expect("socket dir");
     let sock = dir.path().join("agent.sock");
     world._extra_temp_dirs.push(dir);
-    let sock = sock.to_str().unwrap().to_string();
-    start(world, &["--socket", &sock], 0, false);
-    // The scenario serves the announced-by-flag socket too.
-    let f = fixture(world);
-    serve(std::path::Path::new(&sock), Arc::clone(&f.loop_started));
+    let sock_text = sock.to_str().unwrap().to_string();
+    start(world, &["--socket", &sock_text], 0, false, Some(&sock));
     wait_for_loop(world);
 }
 
