@@ -23,6 +23,18 @@ fn stubborn_sleeper() -> tokio::process::Command {
     cmd
 }
 
+/// A child that exits (code 0) only when its stdin closes (or a line
+/// arrives, which nothing sends), so a test
+/// decides the moment of its exit instead of racing a fast one.
+fn told() -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new("sh");
+    cmd.arg("-c").arg("read _; exit 0");
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+    cmd
+}
+
 /// Spawn through the supervisor and return the handle and display pid.
 async fn adopt(
     supervisor: &Arc<OwnedChildSupervisor>,
@@ -393,13 +405,8 @@ async fn retired_slots_do_not_accumulate() {
     for _ in 0..12 {
         // A child that exits only when told, so the unreaped case is not a
         // race against a fast exit.
-        let mut told = tokio::process::Command::new("sh");
-        told.arg("-c").arg("read _; exit 0");
-        told.stdin(std::process::Stdio::piped());
-        told.stdout(std::process::Stdio::null());
-        told.stderr(std::process::Stdio::null());
         let spawned = supervisor
-            .spawn(told, ProcessGroup::Inherited)
+            .spawn(told(), ProcessGroup::Inherited)
             .await
             .expect("spawn");
         let id = spawned.handle;
@@ -407,7 +414,7 @@ async fn retired_slots_do_not_accumulate() {
             !supervisor.retire(id),
             "an unreaped handle is never retired"
         );
-        drop(spawned.stdin);
+        drop(spawned.stdin.expect("told() pipes stdin"));
         supervisor.wait_exit(id).await;
         assert!(supervisor.retire(id));
         assert!(!supervisor.retire(id), "retiring twice is inert");
@@ -442,7 +449,9 @@ async fn retired_slots_do_not_accumulate() {
 /// Reviewer's throwaway (#1946 round two): the slot is retired by its
 /// owner while a termination is parked in its protocol phase. The outcome
 /// must reflect the recorded exit — never a fabricated "still running" —
-/// and no signal is sent.
+/// and no signal is sent. The child exits only once the protocol future
+/// tells it to (#2051): a `sleep 0` could be reaped before `terminate`
+/// looked at the slot, which is the already-exited path, not this one.
 #[tokio::test]
 async fn a_slot_retired_during_the_protocol_phase_reports_its_recorded_exit() {
     for (acknowledged, expected) in [
@@ -453,11 +462,18 @@ async fn a_slot_retired_during_the_protocol_phase_reports_its_recorded_exit() {
         (false, TerminationOutcome::AlreadyExited(ChildExit::Code(0))),
     ] {
         let supervisor = Arc::new(OwnedChildSupervisor::new());
-        let (id, _) = adopt(&supervisor, sleeper("0"), ProcessGroup::Inherited).await;
+        let spawned = supervisor
+            .spawn(told(), ProcessGroup::Inherited)
+            .await
+            .expect("spawn");
+        let id = spawned.handle;
+        let stdin = spawned.stdin.expect("told() pipes stdin");
         let protocol = {
             let supervisor = supervisor.clone();
             async move {
-                // The reaper's path: exit observed, then the slot retired.
+                // The protocol phase is where the child exits: told now,
+                // then the reaper's path — exit observed, slot retired.
+                drop(stdin);
                 supervisor.wait_exit(id).await;
                 assert!(supervisor.retire(id));
                 if acknowledged {
