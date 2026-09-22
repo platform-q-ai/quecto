@@ -311,9 +311,12 @@ pure matching rules in `domain/session_metadata_search.rs`.
   again, whether it was summarised or — in this process — **rejected** (a
   corrupt or cut-short record is remembered by stamp with its diagnostic, in
   memory only: a new process reads it once; a failed READ is never remembered).
-  The query is **one pass** over the directory (#2042): the pass stamps each
-  record once and reads it at most once (publication re-stamps the rows it
-  publishes until slice B), and the store walk's crash-tolerant summary and
+  The query is **one pass** over the directory (#2042): each record is stamped
+  once and read at most once — publication takes no second stamp (a record
+  rewritten since is one autosave stale, never partial, and the next query
+  re-stamps it) and the catalogue's two caches (projection, rejections) keep exactly what the scan saw (each entry
+  carries the generation of the scan that last touched it), with no
+  `exists` sweep — and the store walk's crash-tolerant summary and
   the catalogue's strict identity are both drawn from those bytes — the two
   halves keep their own rules (the walk lists a cut-short append the strict
   catalogue rejects) without stamping or reading twice; the store's own walk
@@ -321,8 +324,13 @@ pure matching rules in `domain/session_metadata_search.rs`.
   session_metadata_search.rs` counts zero transcript reads over 2,000 valid
   records plus an unparseable one and a 2 MiB cut-short one, warm, and from a
   new process exactly those two rejected records once;
-  `session_rejection_cache.rs` counts one pass stamp per record per warm query
-  and one read per record on a rebuild, pins re-reading on change, that a transient read
+  `session_rejection_cache.rs` counts one stamp per record per warm query and
+  one read per record on a rebuild, that a deleted record leaves both caches
+  on the next query, that a record above the size cap (64 MiB,
+  `session_record_read::MAX_RECORD_BYTES` — decided from the stamp, so it is
+  never read and is remembered like any content verdict — discovery only:
+  the exact read of a resume is uncapped) is named once and read once it is
+  small again, pins re-reading on change, that a transient read
   failure is retried and leaves no trace, and that a persisted rejection — even
   at the correct stamp of a valid record — hides nothing.
 - **How.** Literal text, never a pattern: regex, glob, SQL and shell
@@ -394,11 +402,12 @@ pure matching rules in `domain/session_metadata_search.rs`.
   directory-mtime short-circuit — transcripts are appended in place, which
   does not touch the directory), in one pass (#2042). On a generated
   5,201-record store (release build, unloaded) a warm global search went from
-  ~79 ms with two passes to ~55 ms against the 50 ms target (~1.1×, the
-  measured floor of this slice); what remains is the scan itself — a record
-  stamp, a sidecar stamp and a few lock round trips per record — of which the
-  third re-stamp before publication and the `exists` sweeps are the next cut
-  (#2042 slice B). The number is reproducible: `QUECTO_META_BENCH=5201 cargo
+  ~79 ms with two passes to ~55 ms with one, and to ~46 ms once publication
+  stopped re-stamping and the `exists` sweeps went — the caches keep the
+  entries the latest scan touched, marked by a scan generation, no set of
+  paths built (#2042; the 50 ms target met on that store). What remains is the scan itself — a record stamp, a
+  sidecar stamp and a few lock round trips per record. The number is
+  reproducible: `QUECTO_META_BENCH=5201 cargo
   test --release -p quecto-agentic-harness --features test-support --test
   contracts -- warm_metadata_query_timing --nocapture`. Commands are dispatched FIFO, as
   `list_sessions` is: a client that queues searches back-to-back delays its own

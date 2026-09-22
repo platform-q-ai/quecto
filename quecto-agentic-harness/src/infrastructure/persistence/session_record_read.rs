@@ -6,12 +6,46 @@
 //! again on the next query. Only bytes this returned can earn a cached verdict.
 use std::path::Path;
 
-pub(in crate::infrastructure::persistence) fn read_record(path: &Path) -> std::io::Result<Vec<u8>> {
+/// Records above this are never read (#2042): a sparse or runaway file must
+/// not be pulled into memory once per process by each half. A verdict on the
+/// STAMP — the size is in it — so it is remembered like any content verdict.
+pub const MAX_RECORD_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Why a record was not read: an I/O failure (no verdict, retried next
+/// time) or a size above the cap (a verdict on this version).
+#[derive(Debug)]
+pub enum ReadRefusal {
+    Io(std::io::Error),
+    TooLarge { len: u64, cap: u64 },
+}
+
+impl std::fmt::Display for ReadRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "{e}"),
+            Self::TooLarge { len, cap } => write!(f, "record too large: {len} bytes, cap {cap}"),
+        }
+    }
+}
+
+/// The one read; `stamp` is the record's, its third field the size.
+pub(in crate::infrastructure::persistence) fn read_record(
+    path: &Path,
+    stamp: &[u64],
+) -> Result<Vec<u8>, ReadRefusal> {
+    if let Some(&len) = stamp.get(2).filter(|len| **len > MAX_RECORD_BYTES) {
+        return Err(ReadRefusal::TooLarge {
+            len,
+            cap: MAX_RECORD_BYTES,
+        });
+    }
     #[cfg(any(test, feature = "test-support"))]
     if faults::take(path) {
-        return Err(std::io::Error::other("injected read failure"));
+        return Err(ReadRefusal::Io(std::io::Error::other(
+            "injected read failure",
+        )));
     }
-    let bytes = std::fs::read(path);
+    let bytes = std::fs::read(path).map_err(ReadRefusal::Io);
     #[cfg(any(test, feature = "test-support"))]
     faults::rewrite_after(path);
     bytes
