@@ -14,6 +14,7 @@ pub mod extensions;
 pub mod line_cap;
 pub mod logging;
 pub mod model_registry;
+pub mod parent_playbook;
 pub mod persistence;
 pub mod processes;
 pub mod provider_runtime;

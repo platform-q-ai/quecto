@@ -171,3 +171,22 @@ fn parent_handoff_requires_persisted_accessible_artifacts_and_successor_referenc
         assert!(!child.contains("### Handoff and evidence"));
     }
 }
+
+#[test]
+fn parent_playbook_is_an_external_document_loaded_only_for_parent() {
+    let document = include_str!("../../../PARENT_PLAYBOOK.md").trim_end();
+    assert_eq!(parent_coordination_policy(), document);
+    assert!(build_system_prompt(&None, false).contains(document));
+    assert!(!build_system_prompt(&None, true).contains(document));
+}
+
+#[test]
+fn selected_playbook_replaces_default_only_for_parent() {
+    let marker = "CUSTOM_PARENT_PLAYBOOK_ONLY";
+    let parent = build_agent_system_prompt_with_playbook(None, None, false, "", marker);
+    assert!(parent.contains(marker));
+    assert!(!parent.contains("### Optional pre-planning spike"));
+    let child = build_agent_system_prompt_with_playbook(None, None, true, "", marker);
+    assert!(!child.contains(marker));
+    assert!(!child.contains("### Optional pre-planning spike"));
+}

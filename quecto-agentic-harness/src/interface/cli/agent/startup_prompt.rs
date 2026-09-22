@@ -33,16 +33,42 @@ pub(super) fn load_agents_instructions(
     }
 }
 
+pub(super) fn load_parent_playbook(
+    ctx: &CliContext,
+    spawned: bool,
+    stderr: &mut String,
+) -> Option<String> {
+    if spawned {
+        return Some(String::new());
+    }
+    let directory = match initialization_directory(ctx) {
+        Ok(directory) => directory,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return None;
+        }
+    };
+    match crate::infrastructure::parent_playbook::load(&directory) {
+        Ok(playbook) => Some(playbook),
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            None
+        }
+    }
+}
+
 pub(super) fn compose(
     agents_instructions: Option<&str>,
     explicit_system_prompt: Option<&str>,
     spawned: bool,
     extension_prompt_snippets: &str,
+    parent_playbook: &str,
 ) -> String {
-    crate::interface::shared::build_agent_system_prompt(
+    crate::interface::shared::build_agent_system_prompt_with_playbook(
         agents_instructions,
         explicit_system_prompt,
         spawned,
         extension_prompt_snippets,
+        parent_playbook,
     )
 }
