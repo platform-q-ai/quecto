@@ -140,8 +140,8 @@ impl RestoreRegistry {
                 );
                 Ok(seeded)
             }),
-            allocate_ref: Arc::new(move || {
-                allocate.allocate_ref().map_err(|error| {
+            allocate_ref: Arc::new(move |floor| {
+                allocate.allocate_ref(floor).map_err(|error| {
                     tracing::warn!(%error, "durable environment ref could not be allocated; the create is refused");
                     error
                 })

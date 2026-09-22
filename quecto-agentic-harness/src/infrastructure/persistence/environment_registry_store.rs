@@ -123,12 +123,13 @@ impl FileEnvironmentRegistryStore {
 
 impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
     /// The next ref is one above every number that still exists (#2070): a
-    /// recorded environment, whatever its status, or a mint younger than a
-    /// create can take that nobody has recorded yet — never the old
-    /// monotonic counter, so once everything is collected the next
-    /// container is `C1` again, and a concurrent session's in-flight create
-    /// keeps its number until it records or gives up.
-    fn allocate_ref(&self) -> Result<u64, String> {
+    /// recorded environment, whatever its status, a mint younger than a
+    /// create can take that nobody has recorded yet, and whatever the
+    /// caller still holds below `floor` — never the old monotonic counter,
+    /// so once everything is collected the next container is `C1` again,
+    /// and a concurrent session's in-flight create keeps its number until
+    /// it records or gives up.
+    fn allocate_ref(&self, floor: u64) -> Result<u64, String> {
         let now = (self.now)();
         self.update(|document| {
             document
@@ -139,7 +140,12 @@ impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
                 .keys()
                 .filter_map(|key| ref_number(key));
             let in_flight = document.pending_refs.keys().copied();
-            let next = recorded.chain(in_flight).max().unwrap_or(0) + 1;
+            let next = recorded
+                .chain(in_flight)
+                .max()
+                .unwrap_or(0)
+                .max(floor.saturating_sub(1))
+                + 1;
             document.pending_refs.insert(next, now);
             // Kept for older readers of the document; no longer the rule.
             document.next_ref = next;
@@ -205,6 +211,17 @@ impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
         let Some(current) = document.environments.get(&record.environment_ref) else {
             return Ok(CorrectionOutcome::Forgotten);
         };
+        // The ref names another environment now (#2070: reused after this
+        // session's record was forgotten): nothing of this record lands.
+        if current.environment_uuid != record.environment_uuid {
+            return Err(format!(
+                "ref {} now records environment {} ({}); this session's {} is no longer on file",
+                record.environment_ref,
+                current.environment_uuid,
+                current.environment_id,
+                record.environment_id
+            ));
+        }
         if EnvironmentStatus::from(current.status) != *expected {
             let current = document
                 .environments

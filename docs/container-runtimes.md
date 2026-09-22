@@ -254,12 +254,16 @@ included, until `gc` forgets them — and every mint younger than an hour
 that nobody has recorded yet (a create in flight, or one that failed after
 minting; the file's `pending_refs`), so once everything is collected the
 next container is `C1` again, and a concurrent session's in-flight create
-keeps its number. A session that still holds a record the file has
-forgotten (another process's `gc`) gives that number back and asks again;
-a file that keeps answering held numbers gets the create refused rather
-than a number minted from memory. A create that outlives even the hour and
-finds its ref taken is not written over the other environment: the write
-is refused and logged, the box runs on under this session's own view.
+keeps its number. A session tells the file the floor — one above every
+record it still holds — so a record the file has forgotten (another
+process's `gc`) is never reissued to that session; a file answering below
+the floor gets the create refused rather than a number minted from memory.
+A create that fails after minting gives its number back. A create that
+outlives even the hour and finds its ref taken is not written over the
+other environment: the write is refused and logged, the box runs on under
+this session's own view, and the same guard refuses a stale session's
+later write for a ref that now names another environment. One build per
+base directory: an older build's write drops the in-flight mints.
 
 At startup a top-level session **restores** the file: each record is
 checked against the runtime through its retained `inspect` — a

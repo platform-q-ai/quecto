@@ -127,7 +127,7 @@ fn test_journal() -> (EnvironmentJournal, Seen, Seen) {
     let journal = EnvironmentJournal {
         allocate_ref: Arc::new({
             let counter = counter.clone();
-            move || {
+            move |_floor| {
                 let mut counter = counter.lock().unwrap();
                 *counter += 1;
                 Ok(*counter)
@@ -206,7 +206,7 @@ fn expected_label(status: &EnvironmentStatus) -> &'static str {
 #[test]
 fn a_journal_that_cannot_allocate_refuses_the_mint() {
     let (mut journal, _, _) = test_journal();
-    journal.allocate_ref = Arc::new(|| Err("registry unreadable".into()));
+    journal.allocate_ref = Arc::new(|_| Err("registry unreadable".into()));
     let registry = EnvironmentRegistry::with_journal(journal, "s");
     registry.restore(vec![record("C7", "env-seven")]);
     let refused = registry.mint_ref().unwrap_err();
@@ -218,65 +218,44 @@ fn a_journal_that_cannot_allocate_refuses_the_mint() {
     // A journal-less registry still counts in memory.
     let registry = EnvironmentRegistry::new();
     assert_eq!(registry.mint_ref().unwrap(), "C1");
-    // The file's free number is the ref, however low, unless a record here
-    // holds it (#2070) ...
+    // A journal that answers below the floor — a number a record here still
+    // holds could be under it — is not counting: the mint is refused.
     let (mut journal, _, _) = test_journal();
-    journal.allocate_ref = Arc::new(|| Ok(1));
-    let registry = EnvironmentRegistry::with_journal(journal, "s");
-    registry.commit(record("C3", "env-three"));
-    assert_eq!(registry.mint_ref().unwrap(), "C1");
-    // ... and a journal that keeps answering a held number is not counting:
-    // the mint is refused rather than counted from memory.
-    let (mut journal, _, _) = test_journal();
-    journal.allocate_ref = Arc::new(|| Ok(3));
+    journal.allocate_ref = Arc::new(|_| Ok(1));
     let registry = EnvironmentRegistry::with_journal(journal, "s");
     registry.commit(record("C3", "env-three"));
     let refused = registry.mint_ref().unwrap_err();
     assert!(
-        matches!(&refused, RefAllocationError::JournalUnavailable(why) if why.contains("not counting")),
+        matches!(&refused, RefAllocationError::JournalUnavailable(why) if why.contains("below this session's floor 4")),
         "{refused:?}"
     );
 }
 
-/// #2070: the journal's number is the ref once nothing held here collides
-/// with it — so after everything is collected the next container is `C1`,
-/// however far the count once ran — and a stale record another process's
-/// gc forgot on file makes the mint ask again rather than reuse its number.
+/// #2070: the journal's number is the ref — so after everything is
+/// collected the next container is `C1`, however far the count once ran —
+/// and the journal is told the floor above every record still held here,
+/// so a stale record another process's gc forgot on file is never reissued.
 #[test]
-fn the_next_ref_is_the_journals_lowest_free_number_unless_a_record_here_still_holds_it() {
+fn the_next_ref_is_the_journals_number_above_everything_still_held_here() {
     let (mut journal, _, _) = test_journal();
-    let asked = Arc::new(Mutex::new(0u64));
+    let floors = Arc::new(Mutex::new(Vec::new()));
     journal.allocate_ref = Arc::new({
-        let asked = asked.clone();
-        move || {
-            let mut asked = asked.lock().unwrap();
-            *asked += 1;
-            Ok(*asked)
+        let floors = floors.clone();
+        move |floor| {
+            floors.lock().unwrap().push(floor);
+            Ok(floor)
         }
-    });
-    let released = Arc::new(Mutex::new(Vec::new()));
-    journal.release_ref = Arc::new({
-        let released = released.clone();
-        move |number| released.lock().unwrap().push(number)
     });
     let registry = EnvironmentRegistry::with_journal(journal, "s");
     registry.commit(record("C7", "env-seven"));
     registry.remove("C7");
-    // Nothing held here, the file hands 1: C1, not C8.
+    // Nothing held here: the file's own lowest (C1), not C8.
     assert_eq!(registry.mint_ref().unwrap(), "C1");
     registry.commit(record("C1", "env-one"));
-    // A stale C3 this session still holds (forgotten on file elsewhere):
-    // 2 is free, 3 is refused and the journal asked on until it clears 3.
+    // A stale C3 this session still holds: the floor is above it.
     registry.commit(record("C3", "env-three"));
-    assert_eq!(registry.mint_ref().unwrap(), "C2");
-    registry.commit(record("C2", "env-two"));
     assert_eq!(registry.mint_ref().unwrap(), "C4");
-    assert_eq!(*asked.lock().unwrap(), 4, "asked for 3, refused, then 4");
-    assert_eq!(
-        *released.lock().unwrap(),
-        [3],
-        "the refused number went back"
-    );
+    assert_eq!(*floors.lock().unwrap(), [1, 4]);
 }
 
 #[test]

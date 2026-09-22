@@ -46,12 +46,12 @@ fn record(reference: &str, status: EnvironmentStatus) -> EnvironmentRecord {
 fn refs_are_monotonic_never_reused_and_survive_a_restart() {
     let dir = tempfile::TempDir::new().unwrap();
     let first = port(dir.path());
-    assert_eq!(first.allocate_ref().unwrap(), 1);
-    assert_eq!(first.allocate_ref().unwrap(), 2);
+    assert_eq!(first.allocate_ref(0).unwrap(), 1);
+    assert_eq!(first.allocate_ref(0).unwrap(), 2);
     first.forget("C2").unwrap();
     let restarted = port(dir.path());
     assert_eq!(
-        restarted.allocate_ref().unwrap(),
+        restarted.allocate_ref(0).unwrap(),
         3,
         "a forgotten ref is never re-minted"
     );
@@ -59,7 +59,7 @@ fn refs_are_monotonic_never_reused_and_survive_a_restart() {
         .record(&record("C40", EnvironmentStatus::Running))
         .unwrap();
     assert_eq!(
-        port(dir.path()).allocate_ref().unwrap(),
+        port(dir.path()).allocate_ref(0).unwrap(),
         41,
         "never below a recorded ref"
     );
@@ -75,7 +75,7 @@ fn concurrent_allocators_never_share_a_ref() {
             std::thread::spawn(move || {
                 let store = port(&base);
                 (0..8)
-                    .map(|_| store.allocate_ref().unwrap())
+                    .map(|_| store.allocate_ref(0).unwrap())
                     .collect::<Vec<_>>()
             })
         })
@@ -143,7 +143,7 @@ fn an_empty_base_dir_loads_nothing_and_a_broken_document_is_an_error_left_in_pla
     let path = dir.path().join("environments.json");
     std::fs::write(&path, b"garbage").unwrap();
     assert!(store.load().is_err());
-    assert!(store.allocate_ref().is_err());
+    assert!(store.allocate_ref(0).is_err());
     assert!(
         store
             .record(&record("C1", EnvironmentStatus::Running))

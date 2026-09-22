@@ -117,12 +117,6 @@ impl EnvironmentRecord {
     }
 }
 
-/// How many numbers a mint refuses (each a record still held here that the
-/// file no longer knows) before it gives up: a journal that keeps handing
-/// out held numbers is not counting, and a number minted from memory could
-/// collide with one another session holds — so the mint is refused.
-const REMINT_ASKS: usize = 64;
-
 /// Mint the hidden environment UUID committed with each new environment.
 /// Distinct from the `CN` ref, the runtime id, and agent UUIDs by
 /// construction (fresh v4 UUID per environment).
@@ -286,51 +280,53 @@ impl EnvironmentRegistry {
     /// — a record here, whatever its status, a record on file, or a mint in
     /// flight; a journal-less registry counts on in memory. A durable
     /// registry allocates through its journal, so the ref is unique across
-    /// every session of the base
-    /// directory; when the journal cannot allocate, minting is refused
-    /// (review F9, #2033) — never a counter that could collide with a ref
-    /// another session holds. A registry without a journal counts in
-    /// memory.
+    /// every session of the base directory; when the journal cannot
+    /// allocate, minting is refused (review F9, #2033) — never a counter
+    /// that could collide with a ref another session holds.
     ///
-    /// The journal hands out the lowest number nothing on file still holds
-    /// (#2070: once everything is collected the next container is `C1`
-    /// again). A number a record still held here holds — one another
-    /// process's gc forgot on file while this session kept it — is refused
-    /// and the journal asked again: each ask leaves that number minted on
-    /// file, so no concurrent session is handed it meanwhile. A journal
-    /// that keeps answering held numbers is not counting, and the mint is
-    /// refused rather than counted from memory.
+    /// The journal hands out the lowest number nothing holds (#2070: once
+    /// everything is collected the next container is `C1` again), and is
+    /// told the floor — one above every ref still held here — so a record
+    /// the file has forgotten (another process's gc) is never reissued to
+    /// this session; the number comes back reserved on file.
     pub fn mint_ref(&self) -> Result<String, RefAllocationError> {
         let Some(journal) = &self.journal else {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             state.next_ref += 1;
             return Ok(format!("C{}", state.next_ref));
         };
-        let mut number = None;
-        for _ in 0..REMINT_ASKS {
-            let asked = (journal.allocate_ref)().map_err(RefAllocationError::JournalUnavailable)?;
-            if !self.holds(asked) {
-                number = Some(asked);
-                break;
-            }
-            // Given back at once: a number this session refused must not
-            // stay in flight for the next session to count past.
-            (journal.release_ref)(asked);
-        }
-        let Some(number) = number else {
+        let floor = self.highest_held() + 1;
+        let number =
+            (journal.allocate_ref)(floor).map_err(RefAllocationError::JournalUnavailable)?;
+        // A store that ignores the floor is not one this session can trust
+        // with a number: refused, never counted from memory.
+        if number < floor {
             return Err(RefAllocationError::JournalUnavailable(format!(
-                "the registry handed out {REMINT_ASKS} numbers this session still holds; it is not counting"
+                "the registry minted {number} below this session's floor {floor}; it is not counting"
             )));
-        };
+        }
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.next_ref = number;
         Ok(format!("C{number}"))
     }
 
-    /// Whether a record here still holds `number`'s ref.
-    fn holds(&self, number: u64) -> bool {
+    /// Give a minted ref back (#2070): the create it was minted for failed
+    /// before anything was committed under it.
+    pub fn release_ref(&self, environment_ref: &str) {
+        if let (Some(journal), Some(number)) = (&self.journal, ref_number(environment_ref)) {
+            (journal.release_ref)(number);
+        }
+    }
+
+    /// The highest numbered ref a record still holds here, `0` for none.
+    fn highest_held(&self) -> u64 {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.entries.contains_key(&format!("C{number}"))
+        state
+            .entries
+            .keys()
+            .filter_map(|key| ref_number(key))
+            .max()
+            .unwrap_or(0)
     }
 
     /// Commit a created environment under its minted ref. A ref numbered

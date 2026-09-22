@@ -403,7 +403,14 @@ async fn spawn_script_managed_child(
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", &environment_ref);
     apply_common_child_env(&mut cmd, child.base_dir);
     apply_admission_env(&mut cmd, child.admission_dir);
-    let output = run_script(cmd, "create").await?;
+    let output = match run_script(cmd, "create").await {
+        Ok(output) => output,
+        Err(e) => {
+            // Nothing was created under the ref: its number goes back.
+            environments.release_ref(&environment_ref);
+            return Err(e);
+        }
+    };
     let result = match parse_create_result(&output.stdout, child.admission_dir) {
         Ok(result) => result,
         Err(e) => {
@@ -411,6 +418,7 @@ async fn spawn_script_managed_child(
             if let Some(env_id) = salvage_environment_id(&output.stdout) {
                 run_cleanup_once(Some(env_id), &mut cleanup_argv).await;
             }
+            environments.release_ref(&environment_ref);
             return Err(e);
         }
     };
