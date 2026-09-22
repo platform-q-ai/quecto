@@ -403,6 +403,10 @@ async fn spawn_agent_program_until(
                     return Err(SpawnAbort::Interrupted(signal));
                 }
                 Some(signal) => {
+                    eprintln!(
+                        "{}: waiting for the agent's socket announcement before leaving it running (--detach-on-exit)",
+                        signal.name()
+                    );
                     leave_after_announcement = Some(signal);
                     interrupt_open = false;
                     continue;
