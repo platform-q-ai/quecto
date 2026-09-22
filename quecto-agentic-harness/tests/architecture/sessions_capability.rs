@@ -776,21 +776,21 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // (R2-H1/H2): rejections are in memory only and never seeded, so every
     // owner shrank (468 → 446, 139 → 110, 83 → 44); the one record read both
     // halves share is its own seam (`session_record_read.rs`).
-    // #2042: the per-record pass moved to its own owner (446 → 420); the
+    // #2042: the per-record pass moved to its own owner (446 → 428); the
     // walk's cache lost `summary_at`, the pass reads its entries (48 → 36).
     (
         "src/infrastructure/persistence/session_home_catalogue.rs",
-        420,
+        428,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_joined.rs",
-        273,
+        285,
     ),
     // Round 3: naming the walk's skips is its own owner (R3-H1), and the
     // legacy `rejected` key's presence rule lives here (R3-H6).
     (
         "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
-        114,
+        121,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_skipped.rs",
@@ -810,9 +810,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     // #2042: the read seam's test hooks live in their own test-only owner;
     // slice B gives the seam the size cap decided from the stamp (37 → 71),
-    // the pass its too-large verdict for both halves (256 → 273), the walk
+    // the pass its too-large verdict for both halves (256 → 285), the walk
     // its cached too-large skip (95 → 110), and the rejections `retain_seen`
-    // in place of the `exists` sweep (110 → 114) — each a reviewed raise.
+    // by scan generation in place of the `exists` sweep (110 → 121) — each a reviewed raise.
     ("src/infrastructure/persistence/session_record_read.rs", 71),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),

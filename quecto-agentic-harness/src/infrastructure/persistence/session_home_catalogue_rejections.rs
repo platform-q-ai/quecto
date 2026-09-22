@@ -21,24 +21,31 @@ mod session_home_catalogue_skipped;
 pub(super) use session_home_catalogue_skipped::name_skipped;
 
 #[derive(Default)]
-pub(super) struct Rejections(BTreeMap<PathBuf, (Vec<u64>, String)>);
+pub(super) struct Rejections(BTreeMap<PathBuf, (Vec<u64>, String, u64)>);
 
 impl Rejections {
     /// The rejection of `path` at exactly `stamp`, as the error it was.
-    pub(super) fn at(&self, path: &Path, stamp: &[u64]) -> Option<DomainError> {
-        let (rejected_at, reason) = self.0.get(path)?;
+    pub(super) fn at(&mut self, path: &Path, stamp: &[u64], seen_by: u64) -> Option<DomainError> {
+        let (rejected_at, reason, seen) = self.0.get_mut(path)?;
+        *seen = seen_by;
         (rejected_at == stamp).then(|| DomainError::Session(reason.clone()))
     }
-    pub(super) fn record(&mut self, path: &Path, stamp: Vec<u64>, error: &DomainError) {
+    pub(super) fn record(
+        &mut self,
+        path: &Path,
+        stamp: Vec<u64>,
+        error: &DomainError,
+        seen_by: u64,
+    ) {
         let reason = match error {
             DomainError::Session(reason) => reason.clone(),
             other => other.to_string(),
         };
-        self.0.insert(path.to_path_buf(), (stamp, reason));
+        self.0.insert(path.to_path_buf(), (stamp, reason, seen_by));
     }
     /// Memory only: an entry the scan did not see could never be looked up.
-    pub(super) fn retain_seen(&mut self, seen: &std::collections::BTreeSet<PathBuf>) {
-        self.0.retain(|path, _| seen.contains(path));
+    pub(super) fn retain_seen(&mut self, generation: u64) {
+        self.0.retain(|_, (_, _, seen)| *seen == generation);
     }
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn len(&self) -> usize {

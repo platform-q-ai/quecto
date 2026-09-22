@@ -51,6 +51,8 @@ pub struct FileSessionHomeCatalogue {
     rejections: std::sync::Arc<std::sync::Mutex<Rejections>>,
     transcript_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     record_stamps: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// The generation of the scan in progress or last run.
+    scan: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 /// One validated record, keyed in the projection by the identity's own
 /// layout path: a projection can never yield another file's identity.
@@ -58,6 +60,9 @@ pub struct FileSessionHomeCatalogue {
 struct Projection {
     identity: SessionIdentity,
     entry: IndexEntry,
+    /// The scan that last saw this record (#2042): the caches keep exactly
+    /// the entries the latest scan touched, with no set of paths built.
+    seen: u64,
 }
 type Records = BTreeMap<String, IndexEntry>;
 /// Our last publication: its bytes, and the index they encode.
@@ -107,6 +112,7 @@ impl FileSessionHomeCatalogue {
             rejections: Default::default(),
             transcript_reads: Default::default(),
             record_stamps: Default::default(),
+            scan: Default::default(),
         }
     }
     /// What the caches hold, projected plus rejected (test-support).
@@ -133,8 +139,7 @@ impl FileSessionHomeCatalogue {
             rebuilt: false,
         };
         let mut records = BTreeMap::new();
-        // What this scan saw: the caches keep exactly these paths.
-        let mut seen = std::collections::BTreeSet::new();
+        let generation = self.scan.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         let entries = match std::fs::read_dir(self.layout.sessions_dir()) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -145,9 +150,7 @@ impl FileSessionHomeCatalogue {
         for entry in entries {
             match entry {
                 Ok(entry) if FlatSessionLayout::is_session_record(&entry.path()) => {
-                    let path = entry.path();
-                    self.scan_record(&path, &mut records, &mut result, &mut cache, walk);
-                    seen.insert(path);
+                    self.scan_record(&entry.path(), &mut records, &mut result, &mut cache, walk);
                 }
                 Ok(_) => (),
                 Err(e) => result
@@ -156,7 +159,7 @@ impl FileSessionHomeCatalogue {
             }
         }
         drop(cache);
-        self.publish_stable_rows(&mut records, &mut result, &seen)?;
+        self.publish_stable_rows(&mut records, &mut result, generation)?;
         result.entries.sort_by(|a, b| a.0.cmp(&b.0));
         walk.sort();
         Ok((Catalogue::new(records), result))
@@ -165,7 +168,7 @@ impl FileSessionHomeCatalogue {
         &self,
         records: &mut Records,
         result: &mut HomeCatalogueSnapshot,
-        seen: &std::collections::BTreeSet<PathBuf>,
+        generation: u64,
     ) -> Result<(), DomainError> {
         // Every row was stamped by the pass that read or remembered it; a
         // record rewritten since is one autosave stale, never partial, and
@@ -179,9 +182,12 @@ impl FileSessionHomeCatalogue {
                 "published home observation must match its index entry"
             );
         }
-        projection.retain(|path, _| seen.contains(path));
+        projection.retain(|_, cached| cached.seen == generation);
         drop(projection);
-        self.rejections.lock().map_err(error)?.retain_seen(seen);
+        self.rejections
+            .lock()
+            .map_err(error)?
+            .retain_seen(generation);
         Ok(())
     }
     fn scan_record(
@@ -252,6 +258,7 @@ impl FileSessionHomeCatalogue {
             // Unreachable by construction (just projected): observe exactly.
             return exact();
         };
+        cached.seen = self.scan.load(std::sync::atomic::Ordering::Relaxed);
         let reusable = cached
             .entry
             .home
@@ -303,6 +310,7 @@ impl FileSessionHomeCatalogue {
                     Projection {
                         identity,
                         entry: entry.clone(),
+                        seen: 0,
                     },
                 );
             }

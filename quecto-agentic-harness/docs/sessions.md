@@ -314,7 +314,8 @@ pure matching rules in `domain/session_metadata_search.rs`.
   The query is **one pass** over the directory (#2042): each record is stamped
   once and read at most once — publication takes no second stamp (a record
   rewritten since is one autosave stale, never partial, and the next query
-  re-stamps it) and the caches keep exactly what the scan saw, with no
+  re-stamps it) and the caches keep exactly what the scan saw (each entry
+  carries the generation of the scan that last touched it), with no
   `exists` sweep — and the store walk's crash-tolerant summary and
   the catalogue's strict identity are both drawn from those bytes — the two
   halves keep their own rules (the walk lists a cut-short append the strict
@@ -401,10 +402,10 @@ pure matching rules in `domain/session_metadata_search.rs`.
   directory-mtime short-circuit — transcripts are appended in place, which
   does not touch the directory), in one pass (#2042). On a generated
   5,201-record store (release build, unloaded) a warm global search went from
-  ~79 ms with two passes to ~55 ms with one, and to ~52 ms once publication
-  stopped re-stamping and the `exists` sweeps went (#2042 — the measured
-  floor against the 50 ms target on that store; the spike without the
-  bookkeeping measured ~44 ms). What remains is the scan itself — a record stamp, a
+  ~79 ms with two passes to ~55 ms with one, and to ~46 ms once publication
+  stopped re-stamping and the `exists` sweeps went — the caches keep the
+  entries the latest scan touched, marked by a scan generation, no set of
+  paths built (#2042; the 50 ms target met on that store). What remains is the scan itself — a record stamp, a
   sidecar stamp and a few lock round trips per record. The number is
   reproducible: `QUECTO_META_BENCH=5201 cargo
   test --release -p quecto-agentic-harness --features test-support --test

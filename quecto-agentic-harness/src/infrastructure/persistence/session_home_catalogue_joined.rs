@@ -155,8 +155,9 @@ impl FileSessionHomeCatalogue {
         if let Some(identity) = projected {
             return Ok(Some(Ok(identity)));
         }
-        let rejections = self.rejections.lock().map_err(super::error)?;
-        Ok(rejections.at(path, stamp).map(Err))
+        let mut rejections = self.rejections.lock().map_err(super::error)?;
+        let generation = self.scan.load(std::sync::atomic::Ordering::Relaxed);
+        Ok(rejections.at(path, stamp, generation).map(Err))
     }
 
     /// One read serving whichever half has no verdict at `before`. `Err`
@@ -186,7 +187,12 @@ impl FileSessionHomeCatalogue {
                         format!("rejections unavailable: {e}"),
                     )
                 })?;
-                rejections.record(path, before.to_vec(), &too_large);
+                rejections.record(
+                    path,
+                    before.to_vec(),
+                    &too_large,
+                    self.scan.load(std::sync::atomic::Ordering::Relaxed),
+                );
                 return Ok((Err(too_large), summary));
             }
             Err(ReadRefusal::Io(e)) => {
@@ -240,6 +246,7 @@ impl FileSessionHomeCatalogue {
                     Projection {
                         identity: identity.clone(),
                         entry,
+                        seen: self.scan.load(std::sync::atomic::Ordering::Relaxed),
                     },
                 );
             }
@@ -250,7 +257,12 @@ impl FileSessionHomeCatalogue {
                         format!("rejections unavailable: {e}"),
                     )
                 })?;
-                rejections.record(path, after, rejection);
+                rejections.record(
+                    path,
+                    after,
+                    rejection,
+                    self.scan.load(std::sync::atomic::Ordering::Relaxed),
+                );
             }
         }
         Ok((identity, summary))
