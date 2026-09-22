@@ -196,9 +196,16 @@ pub trait ContainerRuntimePreflight: Send + Sync {
 /// them. Every operation is synchronous — a record write is small and must
 /// have landed before the launch that committed it returns.
 pub trait EnvironmentRegistryStore: Send + Sync {
-    /// The next never-reused ref number, allocated under an exclusive hold
-    /// so two sessions never receive the same one.
-    fn allocate_ref(&self) -> Result<u64, String>;
+    /// The next ref number nothing holds — no record on file, no mint still
+    /// in flight, nothing below `floor` (the caller's own records the file
+    /// may have forgotten) — allocated under an exclusive hold so two
+    /// sessions never receive the same one (#2070). The number is held as
+    /// in flight until it is recorded, released, or older than a create can
+    /// take.
+    fn allocate_ref(&self, floor: u64) -> Result<u64, String>;
+    /// Give back an allocated number the caller will not record (#2070): a
+    /// create that failed after minting. Unknown numbers are ignored.
+    fn release_ref(&self, number: u64) -> Result<(), String>;
     /// Every record on file, in ref order.
     fn load(&self) -> Result<Vec<EnvironmentRecord>, String>;
     /// Write `record` under its ref, replacing what was there.
@@ -211,8 +218,10 @@ pub trait EnvironmentRegistryStore: Send + Sync {
         record: &EnvironmentRecord,
         expected: &EnvironmentStatus,
     ) -> Result<CorrectionOutcome, String>;
-    /// Remove the record under `environment_ref` (a rolled-back create).
-    fn forget(&self, environment_ref: &str) -> Result<(), String>;
+    /// Remove `record` from the file (a rolled-back create) — only while
+    /// its ref still names this environment (#2070): a ref another session
+    /// has since taken is left as that session recorded it.
+    fn forget(&self, record: &EnvironmentRecord) -> Result<(), String>;
 }
 
 /// The runtime reality behind a record: its container's liveness through

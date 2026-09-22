@@ -1188,6 +1188,8 @@ fn uncompiled_test_files(files: &[(String, String)]) -> Vec<String> {
             let (dir, file) = path.rsplit_once('/').unwrap_or(("", path.as_str()));
             let own = file.trim_end_matches(".rs");
             let mut names = HashSet::new();
+            // A `mod m;` right under `#[path = "p"]` compiles `p`, never `m.rs`.
+            let mut under_path = false;
             for line in content.lines().map(str::trim) {
                 if line.starts_with("//") {
                     continue;
@@ -1196,6 +1198,7 @@ fn uncompiled_test_files(files: &[(String, String)]) -> Vec<String> {
                     if let Some(quoted) = line.split('"').nth(1) {
                         names.insert(normalized(&format!("{dir}/{quoted}")));
                     }
+                    under_path = true;
                     continue;
                 }
                 let declaration = line.strip_suffix(';').unwrap_or("");
@@ -1204,6 +1207,9 @@ fn uncompiled_test_files(files: &[(String, String)]) -> Vec<String> {
                     .filter(|(before, _)| before.is_empty() || before.starts_with("pub"))
                     .map(|(_, module)| module);
                 if let Some(module) = module {
+                    if std::mem::take(&mut under_path) {
+                        continue;
+                    }
                     for candidate in [
                         format!("{dir}/{module}.rs"),
                         format!("{dir}/{module}/mod.rs"),
@@ -1280,6 +1286,10 @@ fn uncompiled_test_files_are_found_by_name_not_by_mention() {
         // Declared only by a test file that is itself not compiled (#2056).
         file("src/g_tests.rs", "#[path = \"g_more_tests.rs\"]\nmod more;"),
         file("src/g_more_tests.rs", ""),
+        // A `mod` under a `#[path]` compiles the path, not a file of its name.
+        file("src/i.rs", "#[path = \"i_tests/mod.rs\"]\nmod i_tests;"),
+        file("src/i_tests/mod.rs", ""),
+        file("src/i_tests.rs", ""),
     ];
     assert_eq!(
         uncompiled_test_files(&files),
@@ -1289,7 +1299,8 @@ fn uncompiled_test_files_are_found_by_name_not_by_mention() {
             "src/domain/h_tests.rs",
             "src/f_tests.rs",
             "src/g_more_tests.rs",
-            "src/g_tests.rs"
+            "src/g_tests.rs",
+            "src/i_tests.rs"
         ]
     );
 }
@@ -1335,29 +1346,17 @@ fn tui_test_files_are_all_compiled() {
     );
 }
 
-/// The same for the harness and the API. The files listed were already
-/// uncompiled on master when the ratchet arrived (#2056): the list only
-/// shrinks — declare a file (and make it pass) or delete it, then remove it
-/// here. Nothing may be added.
+/// The same for the harness and the API. The five files that were already
+/// uncompiled when the ratchet arrived (#2056) were declared or deleted in
+/// #2057; nothing is exempt.
 #[test]
 fn harness_and_api_test_files_are_all_compiled() {
-    for (root, known) in [("src", &[][..]), ("../quecto-api/src", &[][..])] {
+    for root in ["src", "../quecto-api/src"] {
         let missing = uncompiled_test_files_under(root);
-        let new: Vec<_> = missing
-            .iter()
-            .filter(|path| !known.contains(&path.as_str()))
-            .collect();
         assert!(
-            new.is_empty(),
-            "{root}: test files no module compiles (declare them, or delete them with the code they tested): {new:?}"
-        );
-        let stale: Vec<_> = known
-            .iter()
-            .filter(|path| !missing.iter().any(|m| m == *path))
-            .collect();
-        assert!(
-            stale.is_empty(),
-            "{root}: now compiled or gone — remove from the known list: {stale:?}"
+            missing.is_empty(),
+            "{root}: test files no module compiles (declare them, or delete them with the code they tested):\n{}",
+            missing.join("\n")
         );
     }
 }

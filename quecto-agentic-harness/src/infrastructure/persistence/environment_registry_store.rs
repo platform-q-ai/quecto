@@ -17,6 +17,7 @@
 //! losing what it held.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::application::environments::dto::CorrectionOutcome;
 use crate::application::environments::ports::EnvironmentRegistryStore;
@@ -32,17 +33,46 @@ pub const REGISTRY_FILE_NAME: &str = "environments.json";
 const DOCUMENT_VERSION: u32 = 1;
 const FILE_MODE: u32 = 0o600;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FileEnvironmentRegistryStore {
     path: PathBuf,
     lock_dir: PathBuf,
+    /// Seconds since the Unix epoch, for the age of an in-flight mint.
+    now: Arc<dyn Fn() -> u64 + Send + Sync>,
+}
+
+/// How long a minted ref nobody recorded keeps its number (#2070): a
+/// create that failed after minting, or a harness that died mid-create,
+/// leaves a mint nobody settles; past this it no longer blocks reuse. A
+/// create is unbounded (its clone can be slow), so this is generous — an
+/// hour — and `record` refuses to overwrite another environment under the
+/// same ref should a create outlive even that.
+pub const PENDING_REF_GRACE_SECS: u64 = 60 * 60;
+
+impl std::fmt::Debug for FileEnvironmentRegistryStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileEnvironmentRegistryStore")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
 }
 
 impl FileEnvironmentRegistryStore {
     pub fn for_base_dir(base_dir: &Path) -> Self {
+        Self::for_base_dir_at(base_dir, || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_secs())
+                .unwrap_or(0)
+        })
+    }
+
+    /// The store with its own clock (tests age an in-flight mint).
+    pub fn for_base_dir_at(base_dir: &Path, now: impl Fn() -> u64 + Send + Sync + 'static) -> Self {
         Self {
             path: base_dir.join(REGISTRY_FILE_NAME),
             lock_dir: lock_dir_for(base_dir),
+            now: Arc::new(now),
         }
     }
 
@@ -92,18 +122,41 @@ impl FileEnvironmentRegistryStore {
 }
 
 impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
-    fn allocate_ref(&self) -> Result<u64, String> {
+    /// The next ref is one above every number that still exists (#2070): a
+    /// recorded environment, whatever its status, a mint younger than a
+    /// create can take that nobody has recorded yet, and whatever the
+    /// caller still holds below `floor` — never the old monotonic counter,
+    /// so once everything is collected the next container is `C1` again,
+    /// and a concurrent session's in-flight create keeps its number until
+    /// it records or gives up.
+    fn allocate_ref(&self, floor: u64) -> Result<u64, String> {
+        let now = (self.now)();
         self.update(|document| {
-            // Never below a ref already on file, whatever the counter says
-            // (a hand-edited or older document).
-            let highest = document
+            document
+                .pending_refs
+                .retain(|_, minted_at| now.saturating_sub(*minted_at) <= PENDING_REF_GRACE_SECS);
+            let recorded = document
                 .environments
                 .keys()
-                .filter_map(|key| ref_number(key))
+                .filter_map(|key| ref_number(key));
+            let in_flight = document.pending_refs.keys().copied();
+            let next = recorded
+                .chain(in_flight)
                 .max()
-                .unwrap_or(0);
-            document.next_ref = document.next_ref.max(highest) + 1;
-            document.next_ref
+                .unwrap_or(0)
+                .max(floor.saturating_sub(1))
+                .checked_add(1)
+                .ok_or_else(|| "the ref space is exhausted".to_string())?;
+            document.pending_refs.insert(next, now);
+            // Kept for older readers of the document; no longer the rule.
+            document.next_ref = next;
+            Ok(next)
+        })?
+    }
+
+    fn release_ref(&self, number: u64) -> Result<(), String> {
+        self.update(|document| {
+            document.pending_refs.remove(&number);
         })
     }
 
@@ -119,15 +172,34 @@ impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
         Ok(records)
     }
 
+    /// A ref names one environment: a record already on file under it for
+    /// a different environment is never replaced (#2070 — a create that
+    /// outlived its mint's grace while another session took the number).
     fn record(&self, record: &EnvironmentRecord) -> Result<(), String> {
         self.update(|document| {
+            if let Some(other) = document
+                .environments
+                .get(&record.environment_ref)
+                .filter(|on_file| on_file.environment_uuid != record.environment_uuid)
+            {
+                return Err(format!(
+                    "ref {} already records environment {} ({}); refusing to overwrite it with {}",
+                    record.environment_ref,
+                    other.environment_uuid,
+                    other.environment_id,
+                    record.environment_id
+                ));
+            }
             if let Some(number) = ref_number(&record.environment_ref) {
                 document.next_ref = document.next_ref.max(number);
+                // The mint is settled: the record keeps the number now.
+                document.pending_refs.remove(&number);
             }
             document
                 .environments
                 .insert(record.environment_ref.clone(), RecordWire::from(record));
-        })
+            Ok(())
+        })?
     }
 
     fn correct(
@@ -140,6 +212,17 @@ impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
         let Some(current) = document.environments.get(&record.environment_ref) else {
             return Ok(CorrectionOutcome::Forgotten);
         };
+        // The ref names another environment now (#2070: reused after this
+        // session's record was forgotten): nothing of this record lands.
+        if current.environment_uuid != record.environment_uuid {
+            return Err(format!(
+                "ref {} now records environment {} ({}); this session's {} is no longer on file",
+                record.environment_ref,
+                current.environment_uuid,
+                current.environment_id,
+                record.environment_id
+            ));
+        }
         if EnvironmentStatus::from(current.status) != *expected {
             let current = document
                 .environments
@@ -162,9 +245,15 @@ impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
         Ok(CorrectionOutcome::Applied)
     }
 
-    fn forget(&self, environment_ref: &str) -> Result<(), String> {
+    fn forget(&self, record: &EnvironmentRecord) -> Result<(), String> {
         self.update(|document| {
-            document.environments.remove(environment_ref);
+            let is_this_environment = document
+                .environments
+                .get(&record.environment_ref)
+                .is_some_and(|on_file| on_file.environment_uuid == record.environment_uuid);
+            if is_this_environment {
+                document.environments.remove(&record.environment_ref);
+            }
         })
     }
 }
@@ -175,6 +264,10 @@ struct Document {
     version: u32,
     #[serde(default)]
     next_ref: u64,
+    /// Minted refs not yet recorded, by number, with the second they were
+    /// minted (#2070). Absent in older documents.
+    #[serde(default)]
+    pending_refs: BTreeMap<u64, u64>,
     #[serde(default)]
     environments: BTreeMap<String, RecordWire>,
 }
@@ -188,6 +281,7 @@ impl Default for Document {
         Self {
             version: DOCUMENT_VERSION,
             next_ref: 0,
+            pending_refs: BTreeMap::new(),
             environments: BTreeMap::new(),
         }
     }
