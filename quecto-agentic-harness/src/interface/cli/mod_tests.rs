@@ -97,20 +97,33 @@ fn public_run_accepts_required_web_fetch_factory_when_fetch_is_enabled() {
     );
 }
 
-/// The blocking pool keeps a resident thread: two sequential blocking tasks
-/// run on the same OS thread instead of each creating (and retiring) one.
+/// The blocking pool keeps its threads resident: a run of sequential
+/// blocking tasks with pauses between them is served by the same one or
+/// two threads throughout. A pool that retired its idle thread would start
+/// a fresh one — a fresh id — after every pause. Thread identity across
+/// two tasks is not the property (#2072): on a loaded runner the pool may
+/// start a second worker when the first has not parked yet, and both then
+/// stay.
 #[test]
 fn harness_runtime_keeps_a_resident_blocking_thread() {
     let runtime = super::build_tokio_runtime().unwrap();
-    let blocking_thread = || async {
-        tokio::task::spawn_blocking(|| std::thread::current().id())
-            .await
-            .unwrap()
+    let run_blocking = || {
+        runtime.block_on(async {
+            tokio::task::spawn_blocking(|| std::thread::current().id())
+                .await
+                .unwrap()
+        })
     };
-    let first = runtime.block_on(blocking_thread());
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    let second = runtime.block_on(blocking_thread());
-    assert_eq!(first, second, "the warm thread is reused, never retired");
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..9 {
+        seen.insert(run_blocking());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        seen.len() <= 2,
+        "nine sequential tasks were served by {} threads: the pool retires or never reuses",
+        seen.len()
+    );
 }
 
 /// The test-support execution-state and ledger-hint probes are part of the
