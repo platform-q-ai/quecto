@@ -417,9 +417,10 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/connection_state.rs` | `shell` state of the one owned connection behind the `active_conn()` seam (#1463, #2044) |
 | `shell/keys.rs` | `shell` input mapping primitive (relocated, #1257 Phase 1) |
 | `shell/mod.rs` | `shell` module root |
+| `shell/parent_death_signal.rs` | `shell` PR_SET_PDEATHSIG on the owned harness when kill-on-exit, so a TUI that dies outright cannot orphan it (#2053) |
 | `shell/process.rs` | `shell` leader-only harness termination + post-exit canary, budget derived from the harness teardown (#1956) |
 | `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
-| `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
+| `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1); SIGHUP/SIGTERM/SIGINT stream for the ordinary exit (#2053) |
 | `shell/socket_path.rs` | `shell` shared socket-path validation policy for every connect (#1460) |
 | `shell/session_resume_selector.rs` | `shell` session-only `/resume` selector open and selection dispatch (#2044) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |
