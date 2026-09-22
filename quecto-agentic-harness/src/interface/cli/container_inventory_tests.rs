@@ -533,7 +533,10 @@ fn gc_parses_the_abandoned_policy_and_refuses_a_bad_duration() {
             parse_gc(&["--abandoned-after".into(), spelled.into()])
                 .unwrap()
                 .abandoned,
-            AbandonedRuns::OlderThan { secs },
+            AbandonedRuns::OlderThan {
+                secs,
+                spelled: spelled.to_string()
+            },
             "{spelled}"
         );
     }
@@ -545,16 +548,26 @@ fn gc_parses_the_abandoned_policy_and_refuses_a_bad_duration() {
         "1.5h",
         "-3d",
         "3 d",
+        "0s",
+        "0d",
+        "3\u{e9}",
+        "\u{ff13}d",
         "99999999999999999999d",
     ] {
         let error = parse_gc(&["--abandoned-after".into(), bad.into()]).unwrap_err();
-        assert!(error.contains("--abandoned-after"), "{bad:?}: {error}");
+        let expected = if bad.is_empty() {
+            "--abandoned-after requires a duration"
+        } else {
+            "is not a duration above zero"
+        };
+        assert!(error.contains(expected), "{bad:?}: {error}");
     }
-    let twice = parse_gc(&[
-        "--abandoned".into(),
-        "--abandoned-after".into(),
-        "1d".into(),
-    ])
-    .unwrap_err();
-    assert!(twice.contains("may be given once"), "{twice}");
+    for order in [
+        ["--abandoned", "--abandoned-after", "1d"],
+        ["--abandoned-after", "1d", "--abandoned"],
+    ] {
+        let args: Vec<String> = order.iter().map(|a| a.to_string()).collect();
+        let twice = parse_gc(&args).unwrap_err();
+        assert!(twice.contains("may be given once"), "{order:?}: {twice}");
+    }
 }

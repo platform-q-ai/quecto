@@ -44,9 +44,9 @@ pub struct FileEnvironmentRegistryStore {
 /// How long a minted ref nobody recorded keeps its number (#2070): a
 /// create that failed after minting, or a harness that died mid-create,
 /// leaves a mint nobody settles; past this it no longer blocks reuse. As
-/// long as a create may take (`CREATE_GRACE_SECS`).
-pub const PENDING_REF_GRACE_SECS: u64 =
-    crate::application::environments::use_cases::CREATE_GRACE_SECS;
+/// long as a create may take — the collector's own grace for a directory
+/// without a container (`CREATE_GRACE_SECS`, fifteen minutes).
+pub const PENDING_REF_GRACE_SECS: u64 = 15 * 60;
 
 impl std::fmt::Debug for FileEnvironmentRegistryStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
