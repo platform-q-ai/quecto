@@ -120,7 +120,8 @@ async fn a_new_process_answers_the_same_and_a_repair_clears_the_rejection() {
 }
 
 /// R2-H1: a failed READ is no verdict. Reported for that answer, by file
-/// name, by whichever half missed the record; read again on the next query.
+/// name — the one read serves both halves (#2042), so the strict catalogue's
+/// own line names it; read again on the next query.
 #[tokio::test]
 async fn a_transient_read_failure_is_named_for_that_answer_and_retried() {
     use super::session_record_read::fail_next_reads;
@@ -129,28 +130,26 @@ async fn a_transient_read_failure_is_named_for_that_answer_and_retried() {
     let (store, catalogue) = process(&layout);
     save(&store, "chat-good", "a good title").await;
     let good = layout.session_file(&identity("chat-good"));
-    for (failures, why) in [(2, "session record unavailable"), (1, "not listed")] {
-        let (_, cold) = process(&layout);
-        let _ = std::fs::remove_file(layout.home_catalogue_file());
-        fail_next_reads(&good, failures);
-        let starved = cold.metadata().await.unwrap();
-        assert!(titles(&starved).is_empty(), "{failures}");
-        assert_eq!(
-            named(&starved, "chat-good.json: "),
-            1,
-            "{:?}",
-            starved.diagnostics
-        );
-        assert!(
-            starved.diagnostics[0].contains(why),
-            "{:?}",
-            starved.diagnostics
-        );
-        assert!(starved.diagnostics[0].contains("injected read failure"));
-        let healed = cold.metadata().await.unwrap();
-        assert_eq!(titles(&healed), ["a good title"], "{failures}");
-        assert!(healed.diagnostics.is_empty(), "{:?}", healed.diagnostics);
-    }
+    let (_, cold) = process(&layout);
+    let _ = std::fs::remove_file(layout.home_catalogue_file());
+    fail_next_reads(&good, 1);
+    let starved = cold.metadata().await.unwrap();
+    assert!(titles(&starved).is_empty());
+    assert_eq!(
+        named(&starved, "chat-good.json: "),
+        1,
+        "{:?}",
+        starved.diagnostics
+    );
+    assert!(
+        starved.diagnostics[0].contains("session record unavailable"),
+        "{:?}",
+        starved.diagnostics
+    );
+    assert!(starved.diagnostics[0].contains("injected read failure"));
+    let healed = cold.metadata().await.unwrap();
+    assert_eq!(titles(&healed), ["a good title"]);
+    assert!(healed.diagnostics.is_empty(), "{:?}", healed.diagnostics);
     drop(catalogue);
 }
 

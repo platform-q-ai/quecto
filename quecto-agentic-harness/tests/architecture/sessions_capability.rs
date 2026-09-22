@@ -112,6 +112,9 @@ const CANONICAL_FILES: &[&str] = &[
     // #2010 review round 1: the text fold, the request's numbers (typed and
     // on the wire), the rejection cache and the walk's seeding.
     "src/domain/session_metadata_text.rs",
+    // #2043: the title subsequence tier, and the home texts moved out of the matcher.
+    "src/domain/session_title_subsequence.rs",
+    "src/domain/session_home_text.rs",
     "src/application/sessions/dto/search_limits.rs",
     "src/interface/cli/uds_search_numbers.rs",
     "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
@@ -119,6 +122,8 @@ const CANONICAL_FILES: &[&str] = &[
     "src/infrastructure/persistence/session_home_catalogue_skipped.rs",
     "src/infrastructure/persistence/session_home_catalogue_seed.rs",
     "src/infrastructure/persistence/session_record_read.rs",
+    // #2042: the one pass both halves of discovery share.
+    "src/infrastructure/persistence/session_home_catalogue_joined.rs",
     "src/domain/session_path_text.rs",
     // #2045: the shell command that opens quecto in a session's folder.
     "src/domain/session_open_command.rs",
@@ -762,7 +767,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     (
         "src/infrastructure/persistence/session_store_list_index.rs",
-        48,
+        36,
     ),
     // PR #2018 perf: the derived index is stamp-based and persisted; its
     // on-disk shape is its own module, both pinned at delivered size.
@@ -771,9 +776,15 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // (R2-H1/H2): rejections are in memory only and never seeded, so every
     // owner shrank (468 → 446, 139 → 110, 83 → 44); the one record read both
     // halves share is its own seam (`session_record_read.rs`).
+    // #2042: the per-record pass moved to its own owner (446 → 422); the
+    // walk's cache lost `summary_at`, the pass reads its entries (48 → 36).
     (
         "src/infrastructure/persistence/session_home_catalogue.rs",
-        446,
+        422,
+    ),
+    (
+        "src/infrastructure/persistence/session_home_catalogue_joined.rs",
+        256,
     ),
     // Round 3: naming the walk's skips is its own owner (R3-H1), and the
     // legacy `rejected` key's presence rule lives here (R3-H6): 110 as before.
@@ -797,7 +808,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/infrastructure/persistence/session_store_list_record.rs",
         95,
     ),
-    ("src/infrastructure/persistence/session_record_read.rs", 48),
+    // #2042: the read seam's test hooks (failing reads, a rewrite under the
+    // read) live in their own test-only owner; the seam itself stays small.
+    ("src/infrastructure/persistence/session_record_read.rs", 37),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),
     ("src/interface/cli/agent/run_session.rs", 130),
@@ -824,7 +837,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/dto/search_limits.rs", 33),
     ("src/domain/session_metadata_text.rs", 51),
     ("src/interface/cli/uds_search_numbers.rs", 62),
-    ("src/domain/session_metadata_search.rs", 168),
+    ("src/domain/session_metadata_search.rs", 161),
+    // #2043: the subsequence tier and the home texts are their own owners.
+    ("src/domain/session_title_subsequence.rs", 33),
+    ("src/domain/session_home_text.rs", 47),
     (
         "src/infrastructure/persistence/session_home_catalogue_metadata.rs",
         45,

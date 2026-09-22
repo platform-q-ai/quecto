@@ -1,3 +1,6 @@
+//! Literal only: the harness's title subsequence tier (#2043) is not
+//! repeated here — this fallback runs only against a harness that lacks the
+//! search command, and no matching rule is kept in step by hand twice.
 //! The search box against a harness that cannot search (R1-T5): a literal
 //! filter over the rows the picker already listed, by the harness's own rule
 //! as far as a listing's rows allow — every word of the visible, case-folded

@@ -24,7 +24,7 @@ pub(super) mod session_store_catalogue;
 #[path = "session_store_home.rs"]
 pub(super) mod session_store_home;
 #[path = "session_store_list.rs"]
-mod session_store_list;
+pub(in crate::infrastructure::persistence) mod session_store_list;
 #[path = "session_store_ordinals.rs"]
 mod session_store_ordinals;
 #[path = "session_store_records.rs"]

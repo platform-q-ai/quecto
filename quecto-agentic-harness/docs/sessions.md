@@ -230,7 +230,7 @@ listed: …` when only the walk missed it) and read again on the next query.
 index carries none — so the derived index can never hide a session, mixed
 harness versions cannot hand each other a verdict, and deleting
 `home.catalogue` is always a complete recovery. The price is that each process
-reads a corrupt record once (per validating half). An index that still carries
+reads a corrupt record once. An index that still carries
 the `rejected` map one pre-release build wrote is read without it and
 republished without it, silently. A summary seeds only beside its own file; a
 doctored entry can at most misreport a home or title in the listing — it can
@@ -299,22 +299,30 @@ pure matching rules in `domain/session_metadata_search.rs`.
 
 - **What is matched.** The listing title (the first user message, as the index
   holds it), the **exact opaque key**, the **repository label** and the
-  **execution path**. Nothing else exists in the query's input, so transcript
+  **execution path** — literally; a term of at least three characters as typed
+  that occurs nowhere literally may match the **title as an in-order
+  subsequence** (`fxbg` ⊂ "fix bug"), the lowest tier, never the key, label or
+  path, and never demoting a row whose whole key was typed (#2043,
+  `domain/session_title_subsequence.rs`). Nothing else exists in the query's input, so transcript
   content can never match: no transcript is ever read to MATCH. What is read
   is decided by freshness alone — the adapter joins the store's summary walk
   with the validated home listing, both stamp-checked and index-seeded, so a
-  record version that was already read costs one `stat` per half and is not
-  opened again, whether it was summarised or — in this process — **rejected**
-  (a corrupt or cut-short record is remembered by stamp with its diagnostic, in
+  record version that was already read costs one `stat` and is not opened
+  again, whether it was summarised or — in this process — **rejected** (a
+  corrupt or cut-short record is remembered by stamp with its diagnostic, in
   memory only: a new process reads it once; a failed READ is never remembered).
-  A new or changed record is read once by each half, and with the
-  index absent, unreadable or version-incompatible every record is — once per
-  half, i.e. twice in all (the two halves validate differently; sharing the
-  read is follow-up work, #2042; see *Performance*). `tests/contracts/
+  The query is **one pass** over the directory (#2042): the pass stamps each
+  record once and reads it at most once (publication re-stamps the rows it
+  publishes until slice B), and the store walk's crash-tolerant summary and
+  the catalogue's strict identity are both drawn from those bytes — the two
+  halves keep their own rules (the walk lists a cut-short append the strict
+  catalogue rejects) without stamping or reading twice; the store's own walk
+  (`SessionStore::list`) answers later from the same cache. `tests/contracts/
   session_metadata_search.rs` counts zero transcript reads over 2,000 valid
   records plus an unparseable one and a 2 MiB cut-short one, warm, and from a
-  new process exactly those two rejected records once per half;
-  `session_rejection_cache.rs` pins re-reading on change, that a transient read
+  new process exactly those two rejected records once;
+  `session_rejection_cache.rs` counts one pass stamp per record per warm query
+  and one read per record on a rebuild, pins re-reading on change, that a transient read
   failure is retried and leaves no trace, and that a persisted rejection — even
   at the correct stamp of a valid record — hides nothing.
 - **How.** Literal text, never a pattern: regex, glob, SQL and shell
@@ -384,10 +392,15 @@ pure matching rules in `domain/session_metadata_search.rs`.
   slower costs one per key.
 - **Performance.** Every query stamps every record (no time-limited cache, no
   directory-mtime short-circuit — transcripts are appended in place, which
-  does not touch the directory). On a 5,201-record store a warm search takes
-  ~90 ms against a 50 ms target: **missed, ~1.8×**. The cost is the two `stat`
-  passes (store walk + catalogue scan); sharing one pass, or stamping in
-  parallel, is tracked as follow-up work (#2042). Commands are dispatched FIFO, as
+  does not touch the directory), in one pass (#2042). On a generated
+  5,201-record store (release build, unloaded) a warm global search went from
+  ~79 ms with two passes to ~55 ms against the 50 ms target (~1.1×, the
+  measured floor of this slice); what remains is the scan itself — a record
+  stamp, a sidecar stamp and a few lock round trips per record — of which the
+  third re-stamp before publication and the `exists` sweeps are the next cut
+  (#2042 slice B). The number is reproducible: `QUECTO_META_BENCH=5201 cargo
+  test --release -p quecto-agentic-harness --features test-support --test
+  contracts -- warm_metadata_query_timing --nocapture`. Commands are dispatched FIFO, as
   `list_sessions` is: a client that queues searches back-to-back delays its own
   `get_state`/`abort` by the sum — the TUI's single flight bounds that to two
   scans; a raw client gets no such bound.

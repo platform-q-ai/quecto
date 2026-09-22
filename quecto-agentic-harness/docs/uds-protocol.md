@@ -311,16 +311,16 @@ never matched — no transcript is read to MATCH. Freshness alone decides what i
 read: a record version already indexed — or already rejected by this process
 (a verdict on its bytes; a failed read is never remembered, and no rejection
 is persisted) — costs a `stat`;
-a new or changed record is read once per validating half, and an absent,
-unreadable or version-incompatible index is rebuilt by reading every record
-(twice in all) on the first search. An answer is not authorization to restore
+a new or changed record is read once (one pass serves the walk and the
+strict catalogue, #2042), and an absent, unreadable or version-incompatible
+index is rebuilt by reading every record once on the first search. An answer is not authorization to restore
 a row.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"search_session_metadata"` | yes | |
 | `id` | string | no | Correlation ID |
-| `query` | string | yes | Literal text, never a pattern. Compared as visible text (controls and invisible format characters dropped, whitespace collapsed, then case folded — Unicode lower-casing plus final sigma = sigma, `ß` = `ss`, dotted/dotless `i` = `i`; no normalization, no ligature expansion); whitespace separates terms and every term must occur in the title, repository label or path (in `local` scope: the title, or the path **below the workspace group's root** — the root and the label are every local row's, so they are not matched); the whole trimmed query must equal a key byte for byte to match it. Nothing visible names every session in scope. More than 256 visible characters is refused whole — counted as typed, before the fold: `ß` is one character though it is searched as `ss`. A missing or non-string `query` is an uncorrelated `parse_error` |
+| `query` | string | yes | Literal text, never a pattern. Compared as visible text (controls and invisible format characters dropped, whitespace collapsed, then case folded — Unicode lower-casing plus final sigma = sigma, `ß` = `ss`, dotted/dotless `i` = `i`; no normalization, no ligature expansion); whitespace separates terms and every term must occur in the title, repository label or path (in `local` scope: the title, or the path **below the workspace group's root** — the root and the label are every local row's, so they are not matched); a term of at least three characters as typed that occurs nowhere literally may instead match the **title as an in-order subsequence** (`fxbg` ⊂ "fix bug"; never the key, label or path), the lowest tier (#2043; never when the whole key was typed — an exact key stays first); the whole trimmed query must equal a key byte for byte to match it. Nothing visible names every session in scope. More than 256 visible characters is refused whole — counted as typed, before the fold: `ß` is one character though it is searched as `ss`. A missing or non-string `query` is an uncorrelated `parse_error` |
 | `scope` | `"local"` or `"global"` | no | Defaults to local; unsupported values are rejected |
 | `generation` | integer | no | The client's own counter, echoed so a client can discard an answer it no longer wants. Defaults to 0. It must be a JSON **integer from 0 to 18446744073709551615** (2^64−1) and is echoed exactly — never rounded, so an echo equal to what was sent is the answer to that request. Anything else — a fraction (`7.9`, `7.0`), a negative number, `-0`, an integer ≥ 2^64, a number no `f64` holds (`1e400`), a string, an array — is a **correlated** refusal (`refused: "generation must be an integer from 0 to 18446744073709551615"`, `generation` echoed as 0), never an uncorrelated `parse_error`. Send one ≤ 2^53 if your own JSON reader cannot round-trip larger integers |
 | `limit` | number | no | Rows returned at most: 1–500, default 200. Any JSON number is accepted and clamped into range (negative or 0 → 1, a fraction truncated, anything larger → 500 — a literal no `f64` holds, `1e400`, included) and the effective value echoed. Anything that is not a number is a **correlated** refusal (`refused: "limit must be a number"`, the readable `generation` still echoed) |
@@ -353,12 +353,12 @@ identity-bound `homeVersion`, to be echoed as `resume_session.expectedHomeVersio
 | Row field | Type | Description |
 |---|---|---|
 | `repositoryLabel` | string \| null | Safely rendered name of the repository (the directory holding the Git common dir; shared by linked worktrees) or folder; `null` for a legacy unscoped or unavailable home |
-| `matched` | string[] | Which metadata matched, in rank order: `key`, `title`, `repository`, `path`; empty when the query named every session |
+| `matched` | string[] | Which metadata matched, in rank order: `key`, `title`, `repository`, `path`, then `title_fuzzy` when any term matched the title only as a subsequence (#2043); empty when the query named every session |
 
 | Answer field | Type | Description |
 |---|---|---|
 | `query` | string | The visible text of the query — exactly what was searched, before the case fold (invisible and control characters dropped, whitespace collapsed) — safely rendered; of a refused over-long query, its first 256 characters |
-| `sessions` | row[] | Best first: best matched field (key, title, repository, path), then newest, then key |
+| `sessions` | row[] | Best first: best matched field (key, title, repository, path) — a row that needed a subsequence match ranks below them all (`title_fuzzy`) — then newest, then key |
 | `totalMatches` | integer | Matches in scope before `limit` |
 | `searched` | integer | Sessions in scope the query was matched against |
 | `truncated` | boolean | `totalMatches` exceeds the rows returned |

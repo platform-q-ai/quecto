@@ -11,7 +11,18 @@ pub(in crate::infrastructure::persistence) fn read_record(path: &Path) -> std::i
     if faults::take(path) {
         return Err(std::io::Error::other("injected read failure"));
     }
-    std::fs::read(path)
+    let bytes = std::fs::read(path);
+    #[cfg(any(test, feature = "test-support"))]
+    faults::rewrite_after(path);
+    bytes
+}
+
+/// Test seam: right after the next read of exactly `path`, the file is
+/// rewritten with `bytes` — a save racing the read, which must leave both
+/// halves without a remembered verdict (#2042).
+#[cfg(any(test, feature = "test-support"))]
+pub fn rewrite_after_next_read(path: &Path, bytes: Vec<u8>) {
+    faults::arm_rewrite(path, bytes);
 }
 
 /// Test seam: the next `count` reads of exactly `path` fail, as a transient
@@ -22,27 +33,5 @@ pub fn fail_next_reads(path: &Path, count: usize) {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-mod faults {
-    use std::collections::HashMap;
-    use std::path::{Path, PathBuf};
-    use std::sync::Mutex;
-
-    static ARMED: Mutex<Option<HashMap<PathBuf, usize>>> = Mutex::new(None);
-
-    pub(super) fn arm(path: &Path, count: usize) {
-        let mut armed = ARMED.lock().expect("fault table lock");
-        armed
-            .get_or_insert_with(HashMap::new)
-            .insert(path.to_path_buf(), count);
-    }
-
-    pub(super) fn take(path: &Path) -> bool {
-        let mut armed = ARMED.lock().expect("fault table lock");
-        let Some(left) = armed.as_mut().and_then(|table| table.get_mut(path)) else {
-            return false;
-        };
-        let failing = *left > 0;
-        *left = left.saturating_sub(1);
-        failing
-    }
-}
+#[path = "session_record_read_faults.rs"]
+mod faults;
