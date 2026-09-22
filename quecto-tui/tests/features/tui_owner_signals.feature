@@ -41,11 +41,17 @@ Feature: Termination signals to the TUI end its owned harness
     Then the stand-in harness should still be running 2 seconds later
     And the TUI process should have been killed by signal 9
 
-  Scenario: A signal during the startup window ends the harness being started
-    Given a real TUI process is starting a stand-in harness that announces its socket after 2 seconds
+  Scenario: A signal during the startup window ends the harness being started at once
+    Given a real TUI process is starting a stand-in harness that announces its socket after 8 seconds
     When the TUI process receives SIGHUP
-    Then the stand-in harness should have exited on one SIGTERM within 10 seconds
+    Then the stand-in harness should have received its SIGTERM within 2 seconds of the signal
     And the TUI process should have exited with code 1
+
+  Scenario: A signal during the startup window leaves a detach-on-exit harness running
+    Given a real TUI process is starting a stand-in harness with --detach-on-exit that announces its socket after 8 seconds
+    When the TUI process receives SIGTERM
+    Then the TUI process should have exited with code 1
+    And the stand-in harness should still be running 2 seconds later
 
   Scenario: An attached TUI leaving on SIGHUP starts and ends no harness
     Given a real TUI process is attached to a socket served by the scenario

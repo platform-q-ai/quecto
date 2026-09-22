@@ -20,6 +20,8 @@ pub struct OwnerSignalsFixture {
     /// Bytes arrived on the served socket: the TUI's loop is running.
     loop_started: Arc<AtomicBool>,
     signalled_at: Option<Instant>,
+    /// The same moment on the wall clock, for the stand-in's own log.
+    signalled_at_unix: Option<f64>,
     tui_status: Option<std::process::ExitStatus>,
 }
 
@@ -61,6 +63,22 @@ fn process_alive(pid: i32) -> bool {
     probed && state.is_some_and(|st| st != 'Z' && st != 'X')
 }
 
+fn unix_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after the epoch")
+        .as_secs_f64()
+}
+
+/// The stand-in's own log: the wall-clock second of each SIGTERM it took.
+fn term_times(f: &OwnerSignalsFixture) -> Vec<f64> {
+    f.read("harness.signals")
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.strip_prefix("TERM ")?.trim().parse().ok())
+        .collect()
+}
+
 fn wait_until(deadline: Instant, what: &str, mut done: impl FnMut() -> bool) {
     while !done() {
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
@@ -73,7 +91,7 @@ import os, signal, sys, time
 d = os.environ["QUECTO_BDD_DIR"]
 open(d + "/harness.pid", "w").write(str(os.getpid()))
 def on_term(*_):
-    open(d + "/harness.signals", "a").write("TERM\n")
+    open(d + "/harness.signals", "a").write("TERM %.3f\n" % time.time())
     sys.exit(0)
 signal.signal(signal.SIGTERM, on_term)
 time.sleep(float(os.environ.get("QUECTO_BDD_ANNOUNCE_DELAY", "0")))
@@ -142,6 +160,7 @@ fn start(world: &mut TuiWorld, tui_args: &[&str], announce_delay_secs: u32, with
         tui,
         loop_started,
         signalled_at: None,
+        signalled_at_unix: None,
         tui_status: None,
     });
 }
@@ -190,10 +209,15 @@ fn owns_stand_in_detached(world: &mut TuiWorld) {
 }
 
 #[given(
-    regex = r"^a real TUI process is starting a stand-in harness that announces its socket after (\d+) seconds$"
+    regex = r"^a real TUI process is starting a stand-in harness( with --detach-on-exit)? that announces its socket after (\d+) seconds$"
 )]
-fn starting_stand_in(world: &mut TuiWorld, delay: u32) {
-    start(world, &[], delay, true);
+fn starting_stand_in(world: &mut TuiWorld, detach: String, delay: u32) {
+    let args: &[&str] = if detach.is_empty() {
+        &[]
+    } else {
+        &["--detach-on-exit"]
+    };
+    start(world, args, delay, true);
     wait_for_harness_pid(world);
     // The announcement is still pending: the TUI is in its startup window.
     assert!(!fixture(world).loop_started.load(Ordering::SeqCst));
@@ -225,6 +249,7 @@ fn receives(world: &mut TuiWorld, signal: String) {
     };
     let pid = i32::try_from(f.tui.id()).unwrap();
     f.signalled_at = Some(Instant::now());
+    f.signalled_at_unix = Some(unix_now());
     // SAFETY: the TUI process this scenario spawned.
     unsafe {
         libc::kill(pid, sig);
@@ -263,9 +288,34 @@ fn harness_exited_on_term(world: &mut TuiWorld, within: u64) {
         !process_alive(pid)
     });
     assert_eq!(
-        f.read("harness.signals").as_deref(),
-        Some("TERM"),
-        "exactly one SIGTERM reached the stand-in"
+        term_times(f).len(),
+        1,
+        "exactly one SIGTERM reached the stand-in: {:?}",
+        f.read("harness.signals")
+    );
+}
+
+/// Promptness, judged by the stand-in's own clock (the scenario runner may
+/// schedule this step late): its SIGTERM came within `within` seconds of
+/// the TUI being signalled.
+#[then(
+    regex = r"^the stand-in harness should have received its SIGTERM within (\d+) seconds of the signal$"
+)]
+fn harness_term_prompt(world: &mut TuiWorld, within: f64) {
+    let f = fixture(world);
+    let pid = f.harness_pid().expect("the stand-in wrote its pid");
+    wait_until(
+        Instant::now() + Duration::from_secs(20),
+        "the stand-in harness to exit",
+        || !process_alive(pid),
+    );
+    let sent = f.signalled_at_unix.expect("signalled");
+    let times = term_times(f);
+    assert_eq!(times.len(), 1, "exactly one SIGTERM: {times:?}");
+    let after = times[0] - sent;
+    assert!(
+        (-0.5..=within).contains(&after),
+        "the stand-in took its SIGTERM {after:.3} s after the TUI was signalled"
     );
 }
 

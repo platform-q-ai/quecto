@@ -104,8 +104,15 @@ pub fn termination_stream() -> tokio::sync::mpsc::Receiver<TerminationSignal> {
         (SignalKind::terminate(), TerminationSignal::Terminate),
         (SignalKind::interrupt(), TerminationSignal::Interrupt),
     ] {
-        let Ok(mut sig) = signal(kind) else {
-            continue;
+        let mut sig = match signal(kind) {
+            Ok(sig) => sig,
+            Err(e) => {
+                eprintln!(
+                    "quecto-tui: {} keeps its default disposition (registration failed: {e})",
+                    which.name()
+                );
+                continue;
+            }
         };
         let tx = tx.clone();
         tokio::spawn(async move {

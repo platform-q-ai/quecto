@@ -1,6 +1,29 @@
 //! Termination signals and parent death on the CLI path (#2053).
 use super::cli_cov_tests::{args, spawn_agent_program_retry_etxtbsy, tmp_dir};
 use super::*;
+
+/// [`spawn_agent_program_until`] with no signal to interrupt it.
+pub(super) async fn spawn_agent_program(
+    program: &str,
+    flags: &CliFlags,
+) -> Result<
+    (
+        PathBuf,
+        tokio::process::Child,
+        crate::shell::child_watch::StderrTail,
+        Option<u8>,
+    ),
+    String,
+> {
+    let (_never, mut interrupt) = tokio::sync::mpsc::channel(1);
+    spawn_agent_program_until(program, flags, &mut interrupt)
+        .await
+        .map_err(|abort| match abort {
+            SpawnAbort::Failed(why) => why,
+            SpawnAbort::Interrupted(signal) => format!("{} during startup", signal.name()),
+        })
+}
+
 use std::path::PathBuf;
 // ── termination signals and parent death (#2053) ───────────────────────
 
@@ -17,17 +40,114 @@ async fn a_signal_during_startup_is_taken_once_and_named() {
     );
     assert_eq!(interrupted_during_startup(&mut rx), None);
     assert_eq!(
-        startup_interrupted_message(TerminationSignal::Terminate),
+        startup_interrupted_message(TerminationSignal::Terminate, true),
         "SIGTERM during startup: the agent being started is terminated, nothing to persist"
     );
     assert_eq!(
-        termination_exit_message(TerminationSignal::Hangup, true),
-        "SIGHUP: session persisted, the owned agent was asked to end"
+        startup_interrupted_message(TerminationSignal::Terminate, false),
+        "SIGTERM during startup: the agent being started is left running (--detach-on-exit), nothing to persist"
     );
     assert_eq!(
-        termination_exit_message(TerminationSignal::Interrupt, false),
-        "SIGINT: session persisted, the owned agent was left running (--detach-on-exit)"
+        termination_exit_message(TerminationSignal::Hangup, OwnedAgentAtExit::AskedToEnd),
+        "SIGHUP: the session was asked to persist, the owned agent was asked to end"
     );
+    assert_eq!(
+        termination_exit_message(TerminationSignal::Interrupt, OwnedAgentAtExit::LeftRunning),
+        "SIGINT: the session was asked to persist, the owned agent was left running (--detach-on-exit)"
+    );
+    assert_eq!(
+        termination_exit_message(TerminationSignal::Terminate, OwnedAgentAtExit::NoneOwned),
+        "SIGTERM: the session was asked to persist, no agent is owned (attached)"
+    );
+}
+
+/// A stand-in that announces its socket only after `delay` seconds and
+/// exits 0 on SIGTERM.
+fn slow_agent(tag: &str, delay_secs: u32) -> (PathBuf, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tmp_dir(tag);
+    let sock = dir.join("agent.sock");
+    let script = dir.join("slow-agent.py");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/usr/bin/env python3\n\
+             import signal, sys, time\n\
+             signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n\
+             time.sleep({delay_secs})\n\
+             print('quecto-agent-socket: {}', file=sys.stderr, flush=True)\n\
+             signal.pause()\n",
+            sock.display()
+        ),
+    )
+    .expect("write slow agent");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (dir, script)
+}
+
+fn alive(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|s| s.get(s.rfind(')')? + 2..)?.chars().next())
+        .is_some_and(|st| st != 'Z' && st != 'X')
+}
+
+/// A signal while the announcement is still pending interrupts the spawn
+/// at once — not after the announcement, not after the deadline — and ends
+/// the agent being started.
+#[tokio::test]
+async fn a_signal_while_waiting_for_the_announcement_interrupts_the_spawn_at_once() {
+    use crate::shell::signals::TerminationSignal;
+    let (_dir, script) = slow_agent("slow-owned", 30);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let flags = parse_flags(&args(""));
+    let started = std::time::Instant::now();
+    let spawn = spawn_agent_program_until(script.to_str().unwrap(), &flags, &mut rx);
+    let (aborted, _) = tokio::join!(spawn, async {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        tx.send(TerminationSignal::Hangup).await.unwrap();
+    });
+    let abort = aborted.expect_err("interrupted");
+    assert!(
+        matches!(abort, SpawnAbort::Interrupted(TerminationSignal::Hangup)),
+        "{abort:?}"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "answered at once, not after the 30 s announcement"
+    );
+}
+
+/// The same signal with --detach-on-exit leaves the starting agent alone.
+#[tokio::test]
+async fn a_signal_while_waiting_leaves_a_detached_agent_running() {
+    use crate::shell::signals::TerminationSignal;
+    let (dir, script) = slow_agent("slow-detached", 30);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let flags = parse_flags(&args("--detach-on-exit"));
+    tx.send(TerminationSignal::Terminate).await.unwrap();
+    let abort = spawn_agent_program_until(script.to_str().unwrap(), &flags, &mut rx)
+        .await
+        .expect_err("interrupted");
+    assert!(matches!(abort, SpawnAbort::Interrupted(_)), "{abort:?}");
+    // The stand-in is still there: find it by its script path, end it.
+    let mine: Vec<u32> = std::fs::read_dir("/proc")
+        .unwrap()
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|pid| {
+            std::fs::read(format!("/proc/{pid}/cmdline"))
+                .is_ok_and(|c| String::from_utf8_lossy(&c).contains(dir.to_str().unwrap()))
+        })
+        .collect();
+    assert!(!mine.is_empty(), "the detached agent kept running");
+    for pid in mine {
+        assert!(alive(pid));
+        // SAFETY: a pid whose command line names this test's private dir.
+        unsafe {
+            libc::kill(pid as i32, libc::SIGKILL);
+        }
+    }
 }
 
 /// A stand-in that reports its own parent-death signal before announcing.

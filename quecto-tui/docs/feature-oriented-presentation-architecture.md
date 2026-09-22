@@ -412,6 +412,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
 | `shell/agent_args.rs` | `shell` `quecto agent` argument line built from the TUI flags (split from `cli.rs` for the 750-line cap; `--model`/`--effort` pass-through, #2024 S2) |
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
+| `shell/cli_termination.rs` | `shell` why a spawn stopped on a termination signal and what an exit on one did (#2053) |
 | `shell/cli_startup_exit.rs` | `shell` startup-failure leader-only agent termination with a stderr notice (#1956) |
 | `shell/connection.rs` | `shell` master-connection feed task and `SourcedEvent` channel seam (#1462; one connection since #2044) |
 | `shell/connection_state.rs` | `shell` state of the one owned connection behind the `active_conn()` seam (#1463, #2044) |

@@ -1,9 +1,10 @@
-//! Region-coverage tests for `cli` flag parsing, stderr redaction, and
-//! socket-path validation. No TTY is involved; the spawn-path wiring test
-//! drives the real `spawn_agent` flow with a stand-in shell script.
+//! Region-coverage tests for `cli` flag parsing, stderr redaction and socket-path
+//! validation; no TTY, the spawn-path test drives `spawn_agent` with a stand-in script.
 
+use super::termination_tests::spawn_agent_program;
 use super::*;
 use crate::shell::process::{LeaderBudget, LeaderIdentity as Id, terminate_leader};
+
 async fn terminate_test_child(child: &mut tokio::process::Child) {
     terminate_leader(child, LeaderBudget::WORST_CASE, Id::capture(child.id())).await;
 }
