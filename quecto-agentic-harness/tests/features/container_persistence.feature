@@ -32,6 +32,39 @@ Feature: Environments outlive sessions
     And the durable environment registry should record "C1" with status "running" created by "session-one"
     And the durable environment registry should record "C2" with status "running" created by "session-two"
 
+  @done @issue-2070 @container-env
+  Scenario: Refs restart at C1 once everything is collected, and a stopped record still keeps its number
+    Given script-managed child "impl-ref-c1" is running in a shared environment with task "IMPL_REF_C1_MARKER"
+    When I kill container "C1"
+    Then the container command result should not be an error
+    And the durable environment registry should record "C1" with status "stopped" created by "session-one"
+    # Stopped but still on file: its number stays taken.
+    When I spawn script-managed subagent "impl-ref-c2" into a new shared environment with task "IMPL_REF_C2_MARKER"
+    Then the spawn result should not be an error
+    And the spawn result should include environment reference "C2"
+    When I kill container "C2"
+    Then the container command result should not be an error
+    When the harness is restarted as session "session-two"
+    And I run quecto with arguments "container gc"
+    Then the exit code should be 0
+    And the durable environment registry should record nothing
+    # This session restored C1 and C2 before the gc forgot them: it still
+    # holds those numbers, so its next mint is C3 — never a reused C1.
+    When I spawn script-managed subagent "impl-ref-held" into a new shared environment with task "IMPL_REF_HELD_MARKER"
+    Then the spawn result should not be an error
+    And the spawn result should include environment reference "C3"
+    When I kill container "C3"
+    Then the container command result should not be an error
+    When I run quecto with arguments "container gc"
+    Then the exit code should be 0
+    And the durable environment registry should record nothing
+    # A session started after the collection holds nothing: C1 again.
+    When the harness is restarted as session "session-three"
+    And I spawn script-managed subagent "impl-ref-again" into a new shared environment with task "IMPL_REF_AGAIN_MARKER"
+    Then the spawn result should not be an error
+    And the spawn result should include environment reference "C1"
+    And the durable environment registry should record "C1" with status "running" created by "session-three"
+
   @done @issue-2024 @container-env
   Scenario: A restored environment whose container is gone is marked stopped, never dropped
     Given script-managed child "impl-gone" is running in a shared environment with task "IMPL_GONE_MARKER"
