@@ -128,11 +128,13 @@ fn harness_runtime_keeps_a_resident_blocking_thread() {
     );
 }
 
-/// The pauses above prove only that a thread outlives them; the keep-alive
-/// the harness sets is for the process lifetime (every blocking thread
-/// holds its pid until exit — the accepted price, see the builder).
+/// The pauses above prove only that a thread outlives them. This pins the
+/// constant the builder sets as its keep-alive to the process lifetime
+/// (every blocking thread holds its pid until exit — the accepted price,
+/// see `build_tokio_runtime`); that the builder passes it is unguarded:
+/// Tokio exposes no stable observable for the pool's keep-alive (#2072).
 #[test]
-fn harness_blocking_threads_are_kept_for_the_process_lifetime() {
+fn blocking_thread_keep_alive_spans_the_process_lifetime() {
     assert!(
         super::BLOCKING_THREAD_KEEP_ALIVE >= std::time::Duration::from_secs(60 * 60 * 24 * 365)
     );

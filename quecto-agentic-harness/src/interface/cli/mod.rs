@@ -615,6 +615,11 @@ pub(crate) fn is_valid_session_name(name: &str) -> bool {
     crate::domain::session_identity::SessionIdentity::is_valid_cli_name(name)
 }
 
+/// Pool-wide keep-alive, in effect the process lifetime: why, see
+/// [`build_tokio_runtime`].
+const BLOCKING_THREAD_KEEP_ALIVE: std::time::Duration =
+    std::time::Duration::from_secs(60 * 60 * 24 * 365);
+
 /// The harness runs a current-thread runtime whose blocking pool keeps a
 /// resident thread on purpose: Tokio's `spawn_blocking` panics (and with
 /// `panic = "abort"` kills the process) when it must create a thread and the
@@ -629,9 +634,6 @@ pub(crate) fn is_valid_session_name(name: &str) -> bool {
 ///
 /// A thread is probed with `std` first so that a process starting inside an
 /// already exhausted cgroup gets an ordinary error, not an abort.
-pub(crate) const BLOCKING_THREAD_KEEP_ALIVE: std::time::Duration =
-    std::time::Duration::from_secs(60 * 60 * 24 * 365);
-
 pub(crate) fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::Error> {
     std::thread::Builder::new()
         .name("quecto-thread-probe".into())
