@@ -610,6 +610,20 @@ pub fn model_pricing(model: &str) -> Option<ModelPricing> {
             cache_read_micro_usd_per_million: 1_000_000,
             cache_write_micro_usd_per_million: 12_500_000,
         })
+    } else if starts_with_ci(model, "gpt-6-sol") {
+        Some(ModelPricing {
+            input_micro_usd_per_million: 2_000_000,
+            output_micro_usd_per_million: 10_000_000,
+            cache_read_micro_usd_per_million: 200_000,
+            cache_write_micro_usd_per_million: 2_500_000,
+        })
+    } else if starts_with_ci(model, "gpt-6-luna") {
+        Some(ModelPricing {
+            input_micro_usd_per_million: 100_000,
+            output_micro_usd_per_million: 500_000,
+            cache_read_micro_usd_per_million: 10_000,
+            cache_write_micro_usd_per_million: 125_000,
+        })
     } else if starts_with_ci(model, "gpt-5.6-sol") {
         Some(ModelPricing {
             input_micro_usd_per_million: 5_000_000,

@@ -11,6 +11,8 @@ use super::ModelCost;
 pub(super) fn gpt_5_6_cost(id: &str) -> Option<ModelCost> {
     let (input, output) = match id {
         "gpt-6-astra" => (10.0, 50.0),
+        "gpt-6-sol" => (2.0, 10.0),
+        "gpt-6-luna" => (0.1, 0.5),
         "gpt-5.6-sol" => (5.0, 30.0),
         "gpt-5.6-terra" => (2.5, 15.0),
         "gpt-5.6-luna" => (1.0, 6.0),
