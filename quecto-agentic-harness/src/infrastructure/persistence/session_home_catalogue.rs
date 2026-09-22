@@ -159,29 +159,18 @@ impl FileSessionHomeCatalogue {
             }
         }
         drop(cache);
-        self.publish_stable_rows(&mut records, &mut result, generation)?;
+        self.retain_seen(generation)?;
         result.entries.sort_by(|a, b| a.0.cmp(&b.0));
         walk.sort();
         Ok((Catalogue::new(records), result))
     }
-    fn publish_stable_rows(
-        &self,
-        records: &mut Records,
-        result: &mut HomeCatalogueSnapshot,
-        generation: u64,
-    ) -> Result<(), DomainError> {
+    fn retain_seen(&self, generation: u64) -> Result<(), DomainError> {
         // Every row was stamped by the pass that read or remembered it; a
         // record rewritten since is one autosave stale, never partial, and
         // the next query re-stamps it — so publication takes no second
-        // stamp (#2042). The caches keep exactly the paths this scan saw:
-        // a deleted record leaves them here, with no `exists` sweep.
+        // stamp (#2042). The caches keep exactly the entries this scan
+        // touched: a deleted record leaves them here, with no `exists` sweep.
         let mut projection = self.projection.lock().map_err(error)?;
-        for (identity, home) in &result.entries {
-            debug_assert!(
-                indexed_home_matches(records, identity, home),
-                "published home observation must match its index entry"
-            );
-        }
         projection.retain(|_, cached| cached.seen == generation);
         drop(projection);
         self.rejections

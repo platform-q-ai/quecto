@@ -314,7 +314,7 @@ pure matching rules in `domain/session_metadata_search.rs`.
   The query is **one pass** over the directory (#2042): each record is stamped
   once and read at most once — publication takes no second stamp (a record
   rewritten since is one autosave stale, never partial, and the next query
-  re-stamps it) and the caches keep exactly what the scan saw (each entry
+  re-stamps it) and the catalogue's two caches (projection, rejections) keep exactly what the scan saw (each entry
   carries the generation of the scan that last touched it), with no
   `exists` sweep — and the store walk's crash-tolerant summary and
   the catalogue's strict identity are both drawn from those bytes — the two

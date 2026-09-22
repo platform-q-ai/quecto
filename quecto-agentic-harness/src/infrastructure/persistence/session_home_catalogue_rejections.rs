@@ -27,8 +27,11 @@ impl Rejections {
     /// The rejection of `path` at exactly `stamp`, as the error it was.
     pub(super) fn at(&mut self, path: &Path, stamp: &[u64], seen_by: u64) -> Option<DomainError> {
         let (rejected_at, reason, seen) = self.0.get_mut(path)?;
+        if rejected_at != stamp {
+            return None;
+        }
         *seen = seen_by;
-        (rejected_at == stamp).then(|| DomainError::Session(reason.clone()))
+        Some(DomainError::Session(reason.clone()))
     }
     pub(super) fn record(
         &mut self,
