@@ -407,7 +407,7 @@ impl<T> Lenient<T> {
 /// The matched-field names of a search row: only the four the protocol
 /// defines, in the order given; anything else is dropped, never shown.
 fn matched_fields(names: Vec<Lenient<String>>) -> Vec<String> {
-    const FIELDS: [&str; 4] = ["key", "title", "repository", "path"];
+    const FIELDS: [&str; 5] = ["key", "title", "repository", "path", "title_fuzzy"];
     let known = |name: &String| FIELDS.contains(&name.as_str());
     let names = names.into_iter().filter_map(Lenient::known);
     names.filter(known).collect()

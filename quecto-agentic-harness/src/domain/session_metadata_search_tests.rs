@@ -1,5 +1,6 @@
 use super::*;
-use crate::domain::session_home::{AssociationProvenance, SessionHome};
+use crate::domain::session_home::{AssociationProvenance, SessionHome, WorkspaceGroup};
+use crate::domain::session_title_subsequence::rank_of;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 
@@ -363,4 +364,113 @@ fn the_group_root_is_the_work_tree_the_bare_repository_or_the_folder() {
         Some("/srv/bare.git".into())
     );
     assert_eq!(root(&folder_home("/w/plain")), Some("/w/plain".into()));
+}
+
+// ── the title subsequence tier (#2043) ─────────────────────────────────────
+
+fn plain(query: &str, title: &str) -> Option<Vec<MatchedField>> {
+    matched(query, "chat-key", title, &SessionHomeScope::LegacyUnscoped)
+}
+
+/// A term found nowhere literally may match a TITLE as an in-order
+/// subsequence; such a row carries `TitleFuzzy` after its literal fields and
+/// ranks by that worst tier. Order matters; a literal term stays literal.
+#[test]
+fn a_term_found_nowhere_literally_matches_a_title_as_a_subsequence_at_the_lowest_tier() {
+    assert_eq!(
+        plain("fxbg", "fix bug"),
+        Some(vec![MatchedField::TitleFuzzy])
+    );
+    assert_eq!(plain("fxbg", "bug fix"), None, "in order, or not at all");
+    assert_eq!(
+        plain("fix fxbg", "fix bug"),
+        Some(vec![MatchedField::Title, MatchedField::TitleFuzzy])
+    );
+    let home = folder_home("/work/otter/p");
+    assert_eq!(
+        matched("otter fxbg", "chat-key", "fix bug", &home),
+        Some(vec![MatchedField::Path, MatchedField::TitleFuzzy])
+    );
+    assert_eq!(
+        rank_of(&[MatchedField::Path, MatchedField::TitleFuzzy]),
+        Some(MatchedField::TitleFuzzy),
+        "a row that needed a fuzzy term ranks by it"
+    );
+    assert_eq!(
+        rank_of(&[MatchedField::Key, MatchedField::Title]),
+        Some(MatchedField::Key)
+    );
+    assert_eq!(rank_of(&[]), None);
+    assert_eq!(MatchedField::TitleFuzzy.name(), "title_fuzzy");
+    assert!(
+        MatchedField::Path < MatchedField::TitleFuzzy,
+        "the lowest tier"
+    );
+}
+
+/// The tier needs three SHOWN characters (counted as typed, like the length
+/// bound: `ß` is one) and is never tried on the key, the repository label or
+/// the path.
+#[test]
+fn subsequence_matching_needs_three_shown_characters_and_touches_titles_only() {
+    assert_eq!(plain("fb", "fix bug"), None);
+    assert_eq!(
+        plain("ßb", "s s b"),
+        None,
+        "two shown characters, three folded"
+    );
+    assert_eq!(
+        plain("ßb", "ssb"),
+        Some(vec![MatchedField::Title]),
+        "literal, as ever"
+    );
+    assert_eq!(
+        plain("ßbx", "s s b x"),
+        Some(vec![MatchedField::TitleFuzzy])
+    );
+    // The key holds c, a, b in order; the label o, t, r; the path w, r, k.
+    assert_eq!(
+        matched(
+            "cab",
+            "chat-abc",
+            "nothing",
+            &SessionHomeScope::LegacyUnscoped
+        ),
+        None
+    );
+    let home = git_home("/work/otter/p", "/work/otter/.git");
+    assert_eq!(matched("otr", "chat-key", "nothing", &home), None);
+    assert_eq!(matched("wrk", "chat-key", "nothing", &home), None);
+    assert_eq!(
+        matched("otr", "chat-key", "other", &home),
+        Some(vec![MatchedField::TitleFuzzy]),
+        "the title, and only the title"
+    );
+}
+
+/// Hostile input follows the literal rules: invisible characters are dropped
+/// on both sides, code points compare as stored (no normalization), and an
+/// over-long query is refused before any tier runs.
+#[test]
+fn subsequence_matching_is_as_literal_as_the_fold() {
+    assert_eq!(
+        plain("f\u{200b}xbg", "fix bug"),
+        Some(vec![MatchedField::TitleFuzzy])
+    );
+    assert_eq!(
+        plain("cf\u{e9}", "caf\u{e9}"),
+        Some(vec![MatchedField::TitleFuzzy])
+    );
+    assert_eq!(plain("cf\u{e9}", "cafe\u{301}"), None, "no normalization");
+    assert_eq!(
+        plain("CFE", "cafe"),
+        Some(vec![MatchedField::TitleFuzzy]),
+        "case folded"
+    );
+    assert_eq!(
+        plain("fxbg fxbg", "fix bug"),
+        Some(vec![MatchedField::TitleFuzzy])
+    );
+    assert!(MetadataQuery::parse(&"x".repeat(300)).is_err());
+    assert_eq!(plain("", "fix bug"), Some(vec![]), "everything, no tier");
 }

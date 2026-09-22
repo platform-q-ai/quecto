@@ -379,6 +379,9 @@ async fn two_thousand_records_are_searched_without_reading_a_transcript() {
         "a fresh index validates each record once, the two bad ones included"
     );
     let started = std::time::Instant::now();
+    // `expected` literal rows come first; a term found nowhere literally may
+    // still match a title as a subsequence (#2043: `number-19` ⊂
+    // "number-0192"), ranked below every literal row and counted.
     for (query, expected) in [
         ("number-19", 100),
         ("chat-scale-0007", 1),
@@ -386,7 +389,13 @@ async fn two_thousand_records_are_searched_without_reading_a_transcript() {
         ("scaled", count),
     ] {
         let found = warm.search(&ask(query)).await.unwrap();
-        assert_eq!(found.total_matches, expected, "{query}");
+        let literal = found
+            .rows
+            .iter()
+            .take_while(|row| !row.matched.contains(&MatchedField::TitleFuzzy))
+            .count();
+        assert_eq!(literal, expected.min(found.rows.len()), "{query}");
+        assert!(found.total_matches >= expected, "{query}");
         named_once(&found, query);
     }
     let elapsed = started.elapsed();
