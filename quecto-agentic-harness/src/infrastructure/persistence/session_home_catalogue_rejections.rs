@@ -36,9 +36,12 @@ impl Rejections {
         };
         self.0.insert(path.to_path_buf(), (stamp, reason));
     }
-    /// Memory only: an entry of a deleted file could never be looked up.
-    pub(super) fn retain_existing(&mut self) {
-        self.0.retain(|path, _| path.exists());
+    /// Memory only: an entry the scan did not see could never be looked up.
+    pub(super) fn retain_seen(&mut self, seen: &std::collections::BTreeSet<PathBuf>) {
+        self.0.retain(|path, _| seen.contains(path));
+    }
+    pub(super) fn len(&self) -> usize {
+        self.0.len()
     }
 }
 

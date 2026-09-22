@@ -109,6 +109,13 @@ impl FileSessionHomeCatalogue {
             record_stamps: Default::default(),
         }
     }
+    /// What the caches hold, projected plus rejected (test-support).
+    #[cfg(feature = "test-support")]
+    pub fn remembered_records(&self) -> usize {
+        let projected = self.projection.lock().map(|p| p.len()).unwrap_or(0);
+        let rejected = self.rejections.lock().map(|r| r.len()).unwrap_or(0);
+        projected + rejected
+    }
     #[cfg(feature = "test-support")]
     pub fn transcript_reads(&self) -> usize {
         self.transcript_reads
@@ -126,6 +133,8 @@ impl FileSessionHomeCatalogue {
             rebuilt: false,
         };
         let mut records = BTreeMap::new();
+        // What this scan saw: the caches keep exactly these paths.
+        let mut seen = std::collections::BTreeSet::new();
         let entries = match std::fs::read_dir(self.layout.sessions_dir()) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -136,7 +145,9 @@ impl FileSessionHomeCatalogue {
         for entry in entries {
             match entry {
                 Ok(entry) if FlatSessionLayout::is_session_record(&entry.path()) => {
-                    self.scan_record(&entry.path(), &mut records, &mut result, &mut cache, walk);
+                    let path = entry.path();
+                    self.scan_record(&path, &mut records, &mut result, &mut cache, walk);
+                    seen.insert(path);
                 }
                 Ok(_) => (),
                 Err(e) => result
@@ -145,7 +156,7 @@ impl FileSessionHomeCatalogue {
             }
         }
         drop(cache);
-        self.publish_stable_rows(&mut records, &mut result)?;
+        self.publish_stable_rows(&mut records, &mut result, &seen)?;
         result.entries.sort_by(|a, b| a.0.cmp(&b.0));
         walk.sort();
         Ok((Catalogue::new(records), result))
@@ -154,36 +165,23 @@ impl FileSessionHomeCatalogue {
         &self,
         records: &mut Records,
         result: &mut HomeCatalogueSnapshot,
+        seen: &std::collections::BTreeSet<PathBuf>,
     ) -> Result<(), DomainError> {
-        // A save/delete may have raced an earlier row while later rows were read.
-        // Admit only rows whose validated authority still has the same signature.
+        // Every row was stamped by the pass that read or remembered it; a
+        // record rewritten since is one autosave stale, never partial, and
+        // the next query re-stamps it — so publication takes no second
+        // stamp (#2042). The caches keep exactly the paths this scan saw:
+        // a deleted record leaves them here, with no `exists` sweep.
         let mut projection = self.projection.lock().map_err(error)?;
-        result.entries.retain(|(identity, home)| {
-            let path = self.layout.session_file(identity);
-            let valid = projection.get(&path).is_some_and(|cached| {
-                stamp(&path).is_ok_and(|current| current == cached.entry.stamp)
-            });
-            // A published row and its index entry are written from one
-            // observation; a mismatch is a programming error, never a
-            // user-visible panic from inside `spawn_blocking`.
+        for (identity, home) in &result.entries {
             debug_assert!(
                 indexed_home_matches(records, identity, home),
                 "published home observation must match its index entry"
             );
-            if valid {
-                true
-            } else {
-                records.remove(identity.runtime_key());
-                projection.remove(&path);
-                result
-                    .diagnostics
-                    .push("session changed before catalogue publication".into());
-                false
-            }
-        });
-        projection.retain(|path, _| path.exists());
+        }
+        projection.retain(|path, _| seen.contains(path));
         drop(projection);
-        self.rejections.lock().map_err(error)?.retain_existing();
+        self.rejections.lock().map_err(error)?.retain_seen(seen);
         Ok(())
     }
     fn scan_record(

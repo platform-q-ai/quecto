@@ -373,3 +373,80 @@ async fn a_record_rewritten_under_its_read_is_remembered_by_neither_half() {
     let _ = process.query().await;
     assert_eq!(process.reads(), (3, 0), "and remembered once stable");
 }
+
+/// #2042 slice B: what the caches remember is what the scan saw — a deleted
+/// record leaves the projection and the rejections on the next query without
+/// any `exists` sweep, and nothing is stamped twice: a warm query is exactly
+/// one stamp per record, publication included.
+#[tokio::test]
+async fn a_deleted_record_leaves_both_caches_and_a_warm_query_stamps_each_record_exactly_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path().join("base"));
+    let process = Process::over(&layout);
+    save(&process, "chat-good", "a good title").await;
+    save(&process, "chat-gone", "soon gone").await;
+    let rot = layout.session_file(&identity("chat-rot"));
+    std::fs::write(&rot, ROT).unwrap();
+    let seen = process.query().await;
+    assert_eq!(keys(&seen), ["chat-gone", "chat-good"]);
+    assert_eq!(
+        process.catalogue.remembered_records(),
+        3,
+        "two projected, one rejected"
+    );
+    std::fs::remove_file(layout.session_file(&identity("chat-gone"))).unwrap();
+    std::fs::remove_file(&rot).unwrap();
+    let after = process.query().await;
+    assert_eq!(keys(&after), ["chat-good"]);
+    assert!(after.diagnostics.is_empty(), "{:?}", after.diagnostics);
+    assert_eq!(
+        process.catalogue.remembered_records(),
+        1,
+        "only what the scan saw"
+    );
+    let stamps = process.catalogue.record_stamps();
+    let _ = process.query().await;
+    assert_eq!(
+        process.catalogue.record_stamps() - stamps,
+        1,
+        "one record, one stamp — publication takes none"
+    );
+}
+
+/// #2042 slice B: a record larger than the cap is refused from its stamp —
+/// never read — named once per answer, remembered by stamp like any
+/// content verdict, and read once it is small again.
+#[tokio::test]
+async fn an_oversized_record_is_refused_from_its_stamp_and_never_read() {
+    use quecto::infrastructure::persistence::session_record_read::MAX_RECORD_BYTES;
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path().join("base"));
+    let process = Process::over(&layout);
+    save(&process, "chat-good", "a good title").await;
+    let huge = layout.session_file(&identity("chat-huge"));
+    // Sparse: the size says everything, nothing is on disk.
+    std::fs::File::create(&huge)
+        .unwrap()
+        .set_len(MAX_RECORD_BYTES + 1)
+        .unwrap();
+    let seen = process.query().await;
+    assert_eq!(keys(&seen), ["chat-good"]);
+    assert_eq!(named(&seen, "chat-huge.json"), 1, "{:?}", seen.diagnostics);
+    assert!(
+        seen.diagnostics
+            .iter()
+            .any(|d| d.contains("record too large")),
+        "{:?}",
+        seen.diagnostics
+    );
+    assert_eq!(process.reads(), (1, 0), "the huge record was never read");
+    let again = process.query().await;
+    assert_eq!(named(&again, "chat-huge.json"), 1);
+    assert_eq!(process.reads(), (1, 0), "remembered by stamp");
+    // Repaired: a small valid record under the same name.
+    save(&process, "chat-huge", "no longer huge").await;
+    let healed = process.query().await;
+    assert_eq!(keys(&healed), ["chat-good", "chat-huge"]);
+    assert!(healed.diagnostics.is_empty(), "{:?}", healed.diagnostics);
+    assert_eq!(process.reads(), (2, 0));
+}

@@ -9,6 +9,7 @@
 //! Locks: the walk's cache is held for the whole scan (as its own walk holds
 //! it); the projection and the rejections are taken per record, never the
 //! other way round — nothing takes the walk's cache while holding either.
+use super::super::session_record_read::{ReadRefusal, read_record};
 use super::super::session_store::session_store_list::SummaryCache;
 use super::super::session_store::session_store_list::session_store_list_scan::session_store_list_record::summary_in;
 use super::{FileSessionHomeCatalogue, IndexEntry, Projection, session_home_catalogue_rejections};
@@ -169,12 +170,28 @@ impl FileSessionHomeCatalogue {
         identity: Option<Result<SessionIdentity, DomainError>>,
         summary: Option<Result<SessionSummary, String>>,
     ) -> Result<Verdicts, Skip> {
-        let unreadable = |e: &std::io::Error| format!("unreadable session file: {e}");
-        let bytes = match super::super::session_record_read::read_record(path) {
+        let bytes = match read_record(path, before) {
             Ok(bytes) => bytes,
-            Err(e) => {
+            Err(ReadRefusal::TooLarge { len, cap }) => {
+                // A verdict on this stamp for both halves, nothing read.
+                tracing::warn!(path = %path.display(), detail = %format!("{len} bytes, cap {cap}"), "skipping record too large while listing sessions");
+                let too_large = super::error(format!("record too large: {len} bytes, cap {cap}"));
+                let summary = Err(format!("record too large: {len} bytes, cap {cap}"));
+                cache
+                    .entries
+                    .insert(path.to_path_buf(), (before.to_vec(), summary.clone()));
+                let mut rejections = self.rejections.lock().map_err(|e| {
+                    (
+                        Err(super::error(&e)),
+                        format!("rejections unavailable: {e}"),
+                    )
+                })?;
+                rejections.record(path, before.to_vec(), &too_large);
+                return Ok((Err(too_large), summary));
+            }
+            Err(ReadRefusal::Io(e)) => {
                 tracing::warn!(path = %path.display(), detail = %e, "skipping unreadable session file while listing sessions");
-                let why = unreadable(&e);
+                let why = format!("unreadable session file: {e}");
                 return Err((identity.unwrap_or_else(|| Err(super::error(e))), why));
             }
         };

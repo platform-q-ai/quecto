@@ -9,7 +9,7 @@ use crate::domain::session_identity::SessionIdentity;
 
 use super::super::super::super::session_home_catalogue::stamp;
 use super::super::super::super::session_layout::FlatSessionLayout;
-use super::super::super::super::session_record_read::read_record;
+use super::super::super::super::session_record_read::{ReadRefusal, read_record};
 use super::super::super::session_store_records::SessionHeader;
 use super::super::super::{first_user_message, parse_session_header, str_to_role};
 use super::super::SummaryCache;
@@ -25,9 +25,24 @@ pub(super) fn summary_of(
         // named in every answer it is missing from (R2-H1).
         return known.clone();
     }
+    // An I/O failure is no verdict on the content: never cached (R2-H1); a
+    // size above the cap is one, on this stamp, and nothing was read.
+    let bytes = match read_record(path, &before) {
+        Ok(bytes) => bytes,
+        Err(ReadRefusal::TooLarge { len, cap }) => {
+            let verdict = Err(skipped(
+                path,
+                "record too large",
+                &format!("{len} bytes, cap {cap}"),
+            ));
+            cache
+                .entries
+                .insert(path.to_path_buf(), (before, verdict.clone()));
+            return verdict;
+        }
+        Err(e) => return Err(skipped(path, "unreadable session file", &e)),
+    };
     cache.reads += 1;
-    // An I/O failure is no verdict on the content: never cached (R2-H1).
-    let bytes = read_record(path).map_err(|e| skipped(path, "unreadable session file", &e))?;
     let verdict = summary_in(layout, path, &bytes, &before);
     if !stamp(path).is_ok_and(|after| before == after) {
         return Err(skipped(

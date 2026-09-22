@@ -776,21 +776,21 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // (R2-H1/H2): rejections are in memory only and never seeded, so every
     // owner shrank (468 → 446, 139 → 110, 83 → 44); the one record read both
     // halves share is its own seam (`session_record_read.rs`).
-    // #2042: the per-record pass moved to its own owner (446 → 422); the
+    // #2042: the per-record pass moved to its own owner (446 → 420); the
     // walk's cache lost `summary_at`, the pass reads its entries (48 → 36).
     (
         "src/infrastructure/persistence/session_home_catalogue.rs",
-        422,
+        420,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_joined.rs",
-        256,
+        273,
     ),
     // Round 3: naming the walk's skips is its own owner (R3-H1), and the
     // legacy `rejected` key's presence rule lives here (R3-H6): 110 as before.
     (
         "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
-        110,
+        113,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_skipped.rs",
@@ -806,11 +806,14 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     (
         "src/infrastructure/persistence/session_store_list_record.rs",
-        95,
+        110,
     ),
-    // #2042: the read seam's test hooks (failing reads, a rewrite under the
-    // read) live in their own test-only owner; the seam itself stays small.
-    ("src/infrastructure/persistence/session_record_read.rs", 37),
+    // #2042: the read seam's test hooks live in their own test-only owner;
+    // slice B gives the seam the size cap decided from the stamp (37 → 71),
+    // the pass its too-large verdict for both halves (256 → 273), the walk
+    // its cached too-large skip (95 → 110), and the rejections `retain_seen`
+    // in place of the `exists` sweep (110 → 113) — each a reviewed raise.
+    ("src/infrastructure/persistence/session_record_read.rs", 71),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),
     ("src/interface/cli/agent/run_session.rs", 130),
@@ -1566,6 +1569,42 @@ fn sync_is_answered_through_the_composed_controller_on_both_transports() {
             presenters,
             set(&["src/interface/cli/uds_sync.rs"]),
             "{field} is presented by the sync wire module alone"
+        );
+    }
+}
+
+/// #2042 slice B: the catalogue stamps a record only through the pass's
+/// counted seam — publication takes no second stamp, and no `exists` sweep
+/// stats what the scan already saw.
+#[test]
+fn the_catalogue_stamps_a_record_only_through_the_counted_pass() {
+    let catalogue =
+        std::fs::read_to_string("src/infrastructure/persistence/session_home_catalogue.rs")
+            .expect("read the catalogue");
+    let joined =
+        std::fs::read_to_string("src/infrastructure/persistence/session_home_catalogue_joined.rs")
+            .expect("read the pass");
+    let rejections = std::fs::read_to_string(
+        "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
+    )
+    .expect("read the rejections");
+    let record_stamps = catalogue
+        .lines()
+        .filter(|line| line.contains("stamp(&") && !line.contains("sidecar_stamp("))
+        .count();
+    assert_eq!(
+        record_stamps, 0,
+        "the catalogue itself takes no record stamp: the pass does"
+    );
+    assert_eq!(
+        joined.matches("super::stamp(").count(),
+        1,
+        "one counted seam (`record_stamp`); the after-read check goes through `stable`"
+    );
+    for (file, text) in [("catalogue", &catalogue), ("rejections", &rejections)] {
+        assert!(
+            !text.contains(".exists()"),
+            "{file}: no `exists` sweep — the caches keep what the scan saw"
         );
     }
 }
