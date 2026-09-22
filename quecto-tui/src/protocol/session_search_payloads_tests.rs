@@ -106,3 +106,14 @@ fn an_answer_carries_truncation_the_echoed_scope_and_why_each_row_matched() {
         parse_session_search(&json!({"sessions": [{"key": "k", "title": "t"}], "totalMatches": 9}));
     assert!(counted.truncated);
 }
+
+/// #2043: the title subsequence tier arrives as `title_fuzzy` and is kept,
+/// after the literal fields, as the harness ranks it.
+#[test]
+fn the_fuzzy_title_field_is_a_known_matched_field() {
+    let answer = parse_session_search(&json!({
+        "generation": 1, "scope": "global", "totalMatches": 1, "truncated": false,
+        "sessions": [{"key": "chat-1", "title": "fix bug", "matched": ["path", "title_fuzzy", "bogus"]}],
+    }));
+    assert_eq!(answer.sessions[0].matched, ["path", "title_fuzzy"]);
+}

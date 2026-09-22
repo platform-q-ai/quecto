@@ -299,7 +299,11 @@ pure matching rules in `domain/session_metadata_search.rs`.
 
 - **What is matched.** The listing title (the first user message, as the index
   holds it), the **exact opaque key**, the **repository label** and the
-  **execution path**. Nothing else exists in the query's input, so transcript
+  **execution path** — literally; a term of at least three characters as typed
+  that occurs nowhere literally may match the **title as an in-order
+  subsequence** (`fxbg` ⊂ "fix bug"), the lowest tier, never the key, label or
+  path, and never demoting a row whose whole key was typed (#2043,
+  `domain/session_title_subsequence.rs`). Nothing else exists in the query's input, so transcript
   content can never match: no transcript is ever read to MATCH. What is read
   is decided by freshness alone — the adapter joins the store's summary walk
   with the validated home listing, both stamp-checked and index-seeded, so a

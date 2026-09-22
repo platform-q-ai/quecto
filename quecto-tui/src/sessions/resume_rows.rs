@@ -43,9 +43,19 @@ fn found(session: &ResumeSessionSummary) -> String {
         found.push_str(&format!(" · repo {}", sanitize_untrusted_label(label, 64)));
     }
     if !session.matched.is_empty() {
-        found.push_str(&format!(" · matched: {}", session.matched.join(", ")));
+        let names: Vec<&str> = session.matched.iter().map(|f| matched_name(f)).collect();
+        found.push_str(&format!(" · matched: {}", names.join(", ")));
     }
     found
+}
+
+/// The picker's word for a matched field: the wire's, except the title
+/// subsequence tier (#2043), which reads as what it is.
+fn matched_name(field: &str) -> &str {
+    match field {
+        "title_fuzzy" => "title (fuzzy)",
+        other => other,
+    }
 }
 
 impl ResumeRows {
