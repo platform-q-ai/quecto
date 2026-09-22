@@ -39,7 +39,7 @@ fn invocations(world: &QuectoWorld, kind: &str) -> usize {
 }
 
 /// The durable registry document, as the store keeps it.
-fn registry_document(world: &QuectoWorld) -> serde_json::Value {
+pub(crate) fn registry_document(world: &QuectoWorld) -> serde_json::Value {
     let path = base_path(world).join("environments.json");
     serde_json::from_str(
         &std::fs::read_to_string(&path)

@@ -414,7 +414,7 @@ async fn retired_slots_do_not_accumulate() {
             !supervisor.retire(id),
             "an unreaped handle is never retired"
         );
-        drop(spawned.stdin);
+        drop(spawned.stdin.expect("told() pipes stdin"));
         supervisor.wait_exit(id).await;
         assert!(supervisor.retire(id));
         assert!(!supervisor.retire(id), "retiring twice is inert");
@@ -467,7 +467,7 @@ async fn a_slot_retired_during_the_protocol_phase_reports_its_recorded_exit() {
             .await
             .expect("spawn");
         let id = spawned.handle;
-        let stdin = spawned.stdin;
+        let stdin = spawned.stdin.expect("told() pipes stdin");
         let protocol = {
             let supervisor = supervisor.clone();
             async move {

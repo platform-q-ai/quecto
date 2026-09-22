@@ -103,6 +103,15 @@ pub fn build_environment_registry_store(base_dir: &Path) -> Arc<dyn EnvironmentR
     Arc::new(FileEnvironmentRegistryStore::for_base_dir(base_dir))
 }
 
+/// The same store reading the clock from `now` (seconds since the epoch):
+/// for contracts that drive a mint past its grace (#2070).
+pub fn build_environment_registry_store_at(
+    base_dir: &Path,
+    now: impl Fn() -> u64 + Send + Sync + 'static,
+) -> Arc<dyn EnvironmentRegistryStore> {
+    Arc::new(FileEnvironmentRegistryStore::for_base_dir_at(base_dir, now))
+}
+
 /// The liveness/cleanup adapter over a record's retained scripts.
 pub fn build_environment_process() -> Arc<dyn EnvironmentProcess> {
     Arc::new(ScriptEnvironmentProcess)

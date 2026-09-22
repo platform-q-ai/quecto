@@ -248,7 +248,28 @@ ref the runtime id, name, container config, retained `exec`/`kill`/
 error, the creating session's key and the creation time. **Members are not
 stored** — they belong to the session that launched them. Refs are
 allocated in the file, so two sessions on one base directory never mint
-the same `C7`, and a ref is never reused after a restart.
+the same `C7`. A ref is reused only once nothing holds it (#2070): the
+next ref is one above every record still on file — `stopped` ones
+included, until `gc` forgets them — and every mint younger than an hour
+that nobody has recorded yet (a create in flight, or one that failed after
+minting; the file's `pending_refs`), so once everything is collected the
+next container is `C1` again, and a concurrent session's in-flight create
+keeps its number. A session tells the file the floor — one above every
+record it still holds — so a record the file has forgotten (another
+process's `gc`) is never reissued to that session; a file answering below
+the floor gets the create refused rather than a number minted from memory.
+A create that fails after minting gives its number back. A create that
+outlives even the hour and finds its ref taken is not written over the
+other environment: the write is refused and logged, the box runs on under
+this session's own view, and the same guard refuses a stale session's
+later write — a correction, or the forget of a rolled-back launch — for a
+ref that now names another environment. The hour is the mint's grace, not
+the create's bound: `gc` collects a directory without a container after
+fifteen minutes, and the number then stays reserved for the rest of the
+hour. A release is by number, not by minter: a create that fails after its
+hour has passed frees whatever mint now holds the number (a hole accepted
+for now — the record guard still catches the resulting clash). One build
+per base directory: an older build's write drops the in-flight mints.
 
 At startup a top-level session **restores** the file: each record is
 checked against the runtime through its retained `inspect` — a
