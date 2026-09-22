@@ -409,7 +409,7 @@ async fn a_deleted_record_leaves_both_caches_and_a_warm_query_stamps_each_record
     assert_eq!(
         process.catalogue.record_stamps() - stamps,
         1,
-        "one record, one stamp — publication takes none"
+        "one counted stamp per warm record (that publication takes none is pinned by the source ratchet)"
     );
 }
 

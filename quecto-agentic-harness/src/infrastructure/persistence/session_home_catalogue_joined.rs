@@ -172,11 +172,11 @@ impl FileSessionHomeCatalogue {
     ) -> Result<Verdicts, Skip> {
         let bytes = match read_record(path, before) {
             Ok(bytes) => bytes,
-            Err(ReadRefusal::TooLarge { len, cap }) => {
+            Err(refusal @ ReadRefusal::TooLarge { .. }) => {
                 // A verdict on this stamp for both halves, nothing read.
-                tracing::warn!(path = %path.display(), detail = %format!("{len} bytes, cap {cap}"), "skipping record too large while listing sessions");
-                let too_large = super::error(format!("record too large: {len} bytes, cap {cap}"));
-                let summary = Err(format!("record too large: {len} bytes, cap {cap}"));
+                tracing::warn!(path = %path.display(), detail = %refusal, "skipping record too large while listing sessions");
+                let too_large = super::error(&refusal);
+                let summary = Err(refusal.to_string());
                 cache
                     .entries
                     .insert(path.to_path_buf(), (before.to_vec(), summary.clone()));
@@ -257,7 +257,7 @@ impl FileSessionHomeCatalogue {
     }
 
     /// A record's stamp, counted (test seam: the pass takes one per record
-    /// per warm query; publication re-stamps published rows until slice B).
+    /// per warm query; publication takes none, #2042 slice B).
     fn record_stamp(&self, path: &Path) -> Result<Vec<u64>, DomainError> {
         self.record_stamps
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

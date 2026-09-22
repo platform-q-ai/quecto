@@ -787,10 +787,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         273,
     ),
     // Round 3: naming the walk's skips is its own owner (R3-H1), and the
-    // legacy `rejected` key's presence rule lives here (R3-H6): 110 as before.
+    // legacy `rejected` key's presence rule lives here (R3-H6).
     (
         "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
-        113,
+        114,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_skipped.rs",
@@ -806,13 +806,13 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     (
         "src/infrastructure/persistence/session_store_list_record.rs",
-        110,
+        106,
     ),
     // #2042: the read seam's test hooks live in their own test-only owner;
     // slice B gives the seam the size cap decided from the stamp (37 → 71),
     // the pass its too-large verdict for both halves (256 → 273), the walk
     // its cached too-large skip (95 → 110), and the rejections `retain_seen`
-    // in place of the `exists` sweep (110 → 113) — each a reviewed raise.
+    // in place of the `exists` sweep (110 → 114) — each a reviewed raise.
     ("src/infrastructure/persistence/session_record_read.rs", 71),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),
@@ -1590,7 +1590,12 @@ fn the_catalogue_stamps_a_record_only_through_the_counted_pass() {
     .expect("read the rejections");
     let record_stamps = catalogue
         .lines()
-        .filter(|line| line.contains("stamp(&") && !line.contains("sidecar_stamp("))
+        .filter(|line| {
+            line.contains("stamp(")
+                && !line.contains("sidecar_stamp(")
+                && !line.contains("fn stamp(")
+                && !line.contains("stamp_of(")
+        })
         .count();
     assert_eq!(
         record_stamps, 0,

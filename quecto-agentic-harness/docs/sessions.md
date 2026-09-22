@@ -327,8 +327,9 @@ pure matching rules in `domain/session_metadata_search.rs`.
   one read per record on a rebuild, that a deleted record leaves both caches
   on the next query, that a record above the size cap (64 MiB,
   `session_record_read::MAX_RECORD_BYTES` — decided from the stamp, so it is
-  never read and is remembered like any content verdict) is named once and
-  read once it is small again, pins re-reading on change, that a transient read
+  never read and is remembered like any content verdict — discovery only:
+  the exact read of a resume is uncapped) is named once and read once it is
+  small again, pins re-reading on change, that a transient read
   failure is retried and leaves no trace, and that a persisted rejection — even
   at the correct stamp of a valid record — hides nothing.
 - **How.** Literal text, never a pattern: regex, glob, SQL and shell
@@ -400,9 +401,10 @@ pure matching rules in `domain/session_metadata_search.rs`.
   directory-mtime short-circuit — transcripts are appended in place, which
   does not touch the directory), in one pass (#2042). On a generated
   5,201-record store (release build, unloaded) a warm global search went from
-  ~79 ms with two passes to ~55 ms with one, and to ~44 ms once publication
-  stopped re-stamping and the `exists` sweeps went (#2042; the 50 ms target
-  met on that store). What remains is the scan itself — a record stamp, a
+  ~79 ms with two passes to ~55 ms with one, and to ~52 ms once publication
+  stopped re-stamping and the `exists` sweeps went (#2042 — the measured
+  floor against the 50 ms target on that store; the spike without the
+  bookkeeping measured ~44 ms). What remains is the scan itself — a record stamp, a
   sidecar stamp and a few lock round trips per record. The number is
   reproducible: `QUECTO_META_BENCH=5201 cargo
   test --release -p quecto-agentic-harness --features test-support --test

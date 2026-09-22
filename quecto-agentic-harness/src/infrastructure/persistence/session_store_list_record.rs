@@ -29,18 +29,14 @@ pub(super) fn summary_of(
     // size above the cap is one, on this stamp, and nothing was read.
     let bytes = match read_record(path, &before) {
         Ok(bytes) => bytes,
-        Err(ReadRefusal::TooLarge { len, cap }) => {
-            let verdict = Err(skipped(
-                path,
-                "record too large",
-                &format!("{len} bytes, cap {cap}"),
-            ));
+        Err(refusal @ ReadRefusal::TooLarge { .. }) => {
+            let verdict = Err(skipped(path, "record refused", &refusal));
             cache
                 .entries
                 .insert(path.to_path_buf(), (before, verdict.clone()));
             return verdict;
         }
-        Err(e) => return Err(skipped(path, "unreadable session file", &e)),
+        Err(ReadRefusal::Io(e)) => return Err(skipped(path, "unreadable session file", &e)),
     };
     cache.reads += 1;
     let verdict = summary_in(layout, path, &bytes, &before);

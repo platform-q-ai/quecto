@@ -40,6 +40,7 @@ impl Rejections {
     pub(super) fn retain_seen(&mut self, seen: &std::collections::BTreeSet<PathBuf>) {
         self.0.retain(|path, _| seen.contains(path));
     }
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn len(&self) -> usize {
         self.0.len()
     }
