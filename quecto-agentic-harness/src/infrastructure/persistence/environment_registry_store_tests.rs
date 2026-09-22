@@ -339,3 +339,19 @@ fn recording_settles_the_mint_and_an_older_document_without_mints_still_reads() 
             .unwrap();
     assert!(on_file["pending_refs"]["2"].is_u64(), "{on_file}");
 }
+
+/// A released number is free again at once: a session that refused it
+/// (a record it still holds has it) does not leave it in flight.
+#[test]
+fn a_released_mint_is_free_again_at_once() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = FileEnvironmentRegistryStore::for_base_dir(dir.path());
+    assert_eq!(store.allocate_ref().unwrap(), 1);
+    assert_eq!(store.allocate_ref().unwrap(), 2);
+    store.release_ref(1).unwrap();
+    assert_eq!(store.allocate_ref().unwrap(), 3, "2 is still in flight");
+    store.release_ref(2).unwrap();
+    store.release_ref(3).unwrap();
+    store.release_ref(99).unwrap();
+    assert_eq!(store.allocate_ref().unwrap(), 1);
+}
