@@ -257,6 +257,8 @@ impl ModelRegistry {
             None,
             &[
                 ("gpt-6-astra", "GPT 6 Astra (API key)"),
+                ("gpt-6-sol", "GPT 6 Sol (API key)"),
+                ("gpt-6-luna", "GPT 6 Luna (API key)"),
                 ("gpt-5.6-sol", "GPT 5.6 Sol (API key)"),
                 ("gpt-5.6-terra", "GPT 5.6 Terra (API key)"),
                 ("gpt-5.6-luna", "GPT 5.6 Luna (API key)"),
@@ -275,6 +277,8 @@ impl ModelRegistry {
             Some("openai"),
             &[
                 ("gpt-6-astra", "GPT 6 Astra (OAuth)"),
+                ("gpt-6-sol", "GPT 6 Sol (OAuth)"),
+                ("gpt-6-luna", "GPT 6 Luna (OAuth)"),
                 ("gpt-5.6-sol", "GPT 5.6 Sol (OAuth)"),
                 ("gpt-5.6-terra", "GPT 5.6 Terra (OAuth)"),
                 ("gpt-5.6-luna", "GPT 5.6 Luna (OAuth)"),
