@@ -114,10 +114,11 @@ impl EnvironmentRegistryStore for FakeStore {
         Ok(CorrectionOutcome::Applied)
     }
 
-    fn forget(&self, environment_ref: &str) -> Result<(), String> {
+    fn forget(&self, record: &EnvironmentRecord) -> Result<(), String> {
         if self.fail_writes {
             return Err("disk full".into());
         }
+        let environment_ref = record.environment_ref.as_str();
         self.forgotten.lock().unwrap().push(environment_ref.into());
         self.records
             .lock()
@@ -374,7 +375,9 @@ fn a_correction_another_session_overtook_is_not_written_and_their_state_is_seede
             let mut c1 = record("C1", EnvironmentStatus::Stopped);
             c1.last_error = Some("killed elsewhere".into());
             self.inner.record(&c1).unwrap();
-            self.inner.forget("C2").unwrap();
+            self.inner
+                .forget(&record("C2", EnvironmentStatus::Running))
+                .unwrap();
             Ok(loaded)
         }
         fn record(&self, record: &EnvironmentRecord) -> Result<(), String> {
@@ -387,8 +390,8 @@ fn a_correction_another_session_overtook_is_not_written_and_their_state_is_seede
         ) -> Result<CorrectionOutcome, String> {
             self.inner.correct(record, expected)
         }
-        fn forget(&self, environment_ref: &str) -> Result<(), String> {
-            self.inner.forget(environment_ref)
+        fn forget(&self, record: &EnvironmentRecord) -> Result<(), String> {
+            self.inner.forget(record)
         }
     }
     let inner = store_with(vec![

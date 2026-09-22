@@ -5,7 +5,7 @@
 //! directory's store holds, each checked against the runtime before it is
 //! believed: a `running` or `cleanup-failed` record whose container is
 //! gone is marked `stopped` with the reason as its last error (never
-//! silently dropped — the ref stays listed and is never reused), a record
+//! silently dropped — the ref stays listed and is not reused while it is), a record
 //! the runtime cannot be asked about is kept as recorded and reported
 //! unverified, and a kill that was in flight when this session started is
 //! reported as such — never relabelled, since its session may still be
@@ -180,9 +180,9 @@ impl RestoreRegistry {
                     })
                 },
             ),
-            forgotten: Arc::new(move |environment_ref: &str| {
-                if let Err(error) = forget.forget(environment_ref) {
-                    tracing::warn!(environment_ref, %error, "environment record could not be removed from the durable registry");
+            forgotten: Arc::new(move |record: &EnvironmentRecord| {
+                if let Err(error) = forget.forget(record) {
+                    tracing::warn!(environment_ref = %record.environment_ref, %error, "environment record could not be removed from the durable registry");
                 }
             }),
         }

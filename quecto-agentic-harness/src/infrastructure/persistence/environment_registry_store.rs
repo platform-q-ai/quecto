@@ -145,12 +145,13 @@ impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
                 .max()
                 .unwrap_or(0)
                 .max(floor.saturating_sub(1))
-                + 1;
+                .checked_add(1)
+                .ok_or_else(|| "the ref space is exhausted".to_string())?;
             document.pending_refs.insert(next, now);
             // Kept for older readers of the document; no longer the rule.
             document.next_ref = next;
-            next
-        })
+            Ok(next)
+        })?
     }
 
     fn release_ref(&self, number: u64) -> Result<(), String> {
@@ -244,9 +245,15 @@ impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
         Ok(CorrectionOutcome::Applied)
     }
 
-    fn forget(&self, environment_ref: &str) -> Result<(), String> {
+    fn forget(&self, record: &EnvironmentRecord) -> Result<(), String> {
         self.update(|document| {
-            document.environments.remove(environment_ref);
+            let is_this_environment = document
+                .environments
+                .get(&record.environment_ref)
+                .is_some_and(|on_file| on_file.environment_uuid == record.environment_uuid);
+            if is_this_environment {
+                document.environments.remove(&record.environment_ref);
+            }
         })
     }
 }

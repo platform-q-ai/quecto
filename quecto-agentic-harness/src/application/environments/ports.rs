@@ -218,8 +218,10 @@ pub trait EnvironmentRegistryStore: Send + Sync {
         record: &EnvironmentRecord,
         expected: &EnvironmentStatus,
     ) -> Result<CorrectionOutcome, String>;
-    /// Remove the record under `environment_ref` (a rolled-back create).
-    fn forget(&self, environment_ref: &str) -> Result<(), String>;
+    /// Remove `record` from the file (a rolled-back create) — only while
+    /// its ref still names this environment (#2070): a ref another session
+    /// has since taken is left as that session recorded it.
+    fn forget(&self, record: &EnvironmentRecord) -> Result<(), String>;
 }
 
 /// The runtime reality behind a record: its container's liveness through

@@ -1,16 +1,22 @@
 //! Contract for the `EnvironmentRegistryStore` port (#2024 S4d), proven on
-//! the production file store: refs are allocated monotonically and never
-//! reused, across store instances (a restart) and across concurrent
-//! allocators (two sessions on one base directory); a record is written
-//! whole under its ref and replaced by a later write; members are never
-//! stored and every loaded record arrives restored, in ref order; a
-//! forget removes exactly its record; a broken document is an error and
-//! is never silently replaced.
+//! the production file store: a ref is one above everything that still
+//! exists — a record, a mint younger than a create can take, the caller's
+//! floor — and is reserved on file from the moment it is minted, across
+//! store instances (a restart) and across concurrent allocators (two
+//! sessions on one base directory), so that once everything is collected
+//! the next ref is `1` again (#2070); a ref names one environment: a
+//! record, correction or forget for another environment under it lands
+//! nothing; a record is written whole under its ref and replaced by a
+//! later write of the same environment; members are never stored and
+//! every loaded record arrives restored, in ref order; a broken document
+//! is an error and is never silently replaced.
 use std::path::Path;
 use std::sync::Arc;
 
 use quecto::application::environments::ports::EnvironmentRegistryStore;
-use quecto::composition::environments::build_environment_registry_store;
+use quecto::composition::environments::{
+    build_environment_registry_store, build_environment_registry_store_at,
+};
 use quecto::domain::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };
@@ -43,17 +49,16 @@ fn record(reference: &str, status: EnvironmentStatus) -> EnvironmentRecord {
 }
 
 #[test]
-fn refs_are_monotonic_never_reused_and_survive_a_restart() {
+fn a_minted_ref_stays_reserved_across_a_restart_and_never_falls_below_a_record() {
     let dir = tempfile::TempDir::new().unwrap();
     let first = port(dir.path());
     assert_eq!(first.allocate_ref(0).unwrap(), 1);
     assert_eq!(first.allocate_ref(0).unwrap(), 2);
-    first.forget("C2").unwrap();
     let restarted = port(dir.path());
     assert_eq!(
         restarted.allocate_ref(0).unwrap(),
         3,
-        "a forgotten ref is never re-minted"
+        "both mints are still in flight: neither is re-minted"
     );
     restarted
         .record(&record("C40", EnvironmentStatus::Running))
@@ -128,11 +133,15 @@ fn a_later_record_replaces_the_earlier_and_forget_removes_only_its_ref() {
     let loaded = store.load().unwrap();
     assert_eq!(loaded[0].status, EnvironmentStatus::Stopped);
     assert_eq!(loaded[0].last_error, None);
-    store.forget("C1").unwrap();
+    store
+        .forget(&record("C1", EnvironmentStatus::Stopped))
+        .unwrap();
     let loaded = store.load().unwrap();
     assert_eq!(loaded.len(), 1);
     assert_eq!(loaded[0].environment_ref, "C2");
-    store.forget("C9").unwrap();
+    store
+        .forget(&record("C9", EnvironmentStatus::Stopped))
+        .unwrap();
 }
 
 #[test]
@@ -149,7 +158,11 @@ fn an_empty_base_dir_loads_nothing_and_a_broken_document_is_an_error_left_in_pla
             .record(&record("C1", EnvironmentStatus::Running))
             .is_err()
     );
-    assert!(store.forget("C1").is_err());
+    assert!(
+        store
+            .forget(&record("C1", EnvironmentStatus::Stopped))
+            .is_err()
+    );
     assert_eq!(std::fs::read(&path).unwrap(), b"garbage");
 }
 
@@ -184,7 +197,9 @@ fn a_correction_is_written_only_while_the_record_still_has_the_expected_status()
         }
         other => panic!("{other:?}"),
     }
-    store.forget("C1").unwrap();
+    store
+        .forget(&record("C1", EnvironmentStatus::Stopped))
+        .unwrap();
     assert_eq!(
         store
             .correct(&retained, &EnvironmentStatus::Running)
@@ -192,4 +207,98 @@ fn a_correction_is_written_only_while_the_record_still_has_the_expected_status()
         CorrectionOutcome::Forgotten
     );
     assert!(store.load().unwrap().is_empty());
+}
+
+/// The clock the store reads, so a test can age a mint past its grace.
+fn clocked(
+    base_dir: &Path,
+    now: &Arc<std::sync::atomic::AtomicU64>,
+) -> Arc<dyn EnvironmentRegistryStore> {
+    let now = Arc::clone(now);
+    build_environment_registry_store_at(base_dir, move || {
+        now.load(std::sync::atomic::Ordering::SeqCst)
+    })
+}
+
+/// #2070: the number is one above everything that still exists — so once
+/// every record is forgotten and every mint recorded, released or older
+/// than a create can take, the next ref is `1` again.
+#[test]
+fn refs_restart_at_one_once_nothing_recorded_or_in_flight_remains() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let now = Arc::new(std::sync::atomic::AtomicU64::new(1_700_000_000));
+    let store = clocked(dir.path(), &now);
+    assert_eq!(store.allocate_ref(0).unwrap(), 1);
+    store
+        .record(&record("C1", EnvironmentStatus::Running))
+        .unwrap();
+    assert_eq!(store.allocate_ref(0).unwrap(), 2);
+    store
+        .record(&record("C2", EnvironmentStatus::Stopped))
+        .unwrap();
+    store
+        .forget(&record("C1", EnvironmentStatus::Running))
+        .unwrap();
+    assert_eq!(store.allocate_ref(0).unwrap(), 3, "C2 still exists");
+    store.release_ref(3).unwrap();
+    store
+        .forget(&record("C2", EnvironmentStatus::Stopped))
+        .unwrap();
+    assert_eq!(store.allocate_ref(0).unwrap(), 1, "everything collected");
+    // That mint is in flight: a concurrent session (a second instance) is
+    // handed the number above it ...
+    assert_eq!(clocked(dir.path(), &now).allocate_ref(0).unwrap(), 2);
+    // ... until both are older than a create can take.
+    now.fetch_add(60 * 60 + 1, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(clocked(dir.path(), &now).allocate_ref(0).unwrap(), 1);
+}
+
+/// #2070: the floor is what the caller still holds that the file may have
+/// forgotten; the answer is above it and reserved on file like any mint.
+#[test]
+fn the_floor_lifts_the_answer_and_the_answer_is_reserved_for_a_second_instance() {
+    let dir = tempfile::TempDir::new().unwrap();
+    assert_eq!(port(dir.path()).allocate_ref(4).unwrap(), 4);
+    assert_eq!(
+        port(dir.path()).allocate_ref(0).unwrap(),
+        5,
+        "4 is in flight"
+    );
+    assert_eq!(
+        port(dir.path()).allocate_ref(2).unwrap(),
+        6,
+        "a floor below the file's own next changes nothing"
+    );
+}
+
+/// #2070: a ref names one environment. Once another environment is on
+/// file under it, this environment's record, correction and forget land
+/// nothing — the other session's record stands as it wrote it.
+#[test]
+fn a_ref_taken_by_another_environment_refuses_a_record_and_a_correction_and_survives_a_forget() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = port(dir.path());
+    store
+        .record(&record("C1", EnvironmentStatus::Running))
+        .unwrap();
+    let mut stale = record("C1", EnvironmentStatus::Stopped);
+    stale.environment_uuid = "uuid-stale".into();
+    stale.environment_id = "env-stale".into();
+    let refused = store.record(&stale).unwrap_err();
+    assert!(
+        refused.contains("already records environment uuid-C1"),
+        "{refused}"
+    );
+    let refused = store
+        .correct(&stale, &EnvironmentStatus::Running)
+        .unwrap_err();
+    assert!(
+        refused.contains("now records environment uuid-C1"),
+        "{refused}"
+    );
+    store.forget(&stale).unwrap();
+    let on_file = port(dir.path()).load().unwrap();
+    assert_eq!(on_file.len(), 1);
+    assert_eq!(on_file[0].environment_uuid, "uuid-C1");
+    assert_eq!(on_file[0].status, EnvironmentStatus::Running);
 }

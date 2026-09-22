@@ -67,8 +67,10 @@ pub struct EnvironmentJournal {
     /// another session created is written conditionally, never replaced
     /// whole, so a joiner's inspect cannot revert its creator's `retained`).
     pub recorded: Arc<RecordedFn>,
-    /// A record was removed (a rolled-back create).
-    pub forgotten: Arc<dyn Fn(&str) + Send + Sync>,
+    /// A record was removed (a rolled-back create). The whole record goes
+    /// so the file removes it only while the ref still names this
+    /// environment (#2070).
+    pub forgotten: Arc<dyn Fn(&EnvironmentRecord) + Send + Sync>,
     /// Retry a startup read that failed (round 3 L2, #2033): the store's
     /// records as a restore would seed them, or the store's account of
     /// why it still cannot be read. Called by a registry that carries a

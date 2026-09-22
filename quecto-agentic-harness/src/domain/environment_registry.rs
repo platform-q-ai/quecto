@@ -295,12 +295,15 @@ impl EnvironmentRegistry {
             state.next_ref += 1;
             return Ok(format!("C{}", state.next_ref));
         };
-        let floor = self.highest_held() + 1;
+        let floor = self.highest_held().checked_add(1).ok_or_else(|| {
+            RefAllocationError::JournalUnavailable("this session's ref space is exhausted".into())
+        })?;
         let number =
             (journal.allocate_ref)(floor).map_err(RefAllocationError::JournalUnavailable)?;
         // A store that ignores the floor is not one this session can trust
-        // with a number: refused, never counted from memory.
+        // with a number: refused (and given back), never counted from memory.
         if number < floor {
+            (journal.release_ref)(number);
             return Err(RefAllocationError::JournalUnavailable(format!(
                 "the registry minted {number} below this session's floor {floor}; it is not counting"
             )));
@@ -435,8 +438,9 @@ impl EnvironmentRegistry {
     /// is.
     pub fn remove(&self, environment_ref: &str) -> Option<EnvironmentRecord> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        // Prune the removed environment's inspect bookkeeping with it; refs
-        // are never reused, so nothing can resurrect these keys.
+        // Prune the removed environment's inspect bookkeeping with it: the
+        // ref may be minted again (#2070), and a new environment under it
+        // starts with no claims or failures.
         state
             .inspect_claims
             .retain(|(env_ref, _)| env_ref != environment_ref);
@@ -444,11 +448,11 @@ impl EnvironmentRegistry {
         state.kill_claims.remove(environment_ref);
         let removed = state.entries.remove(environment_ref);
         drop(state);
-        if removed.is_some()
+        if let Some(record) = &removed
             && let Some(journal) = &self.journal
         {
             let _order = self.journal_order.lock().unwrap_or_else(|e| e.into_inner());
-            (journal.forgotten)(environment_ref);
+            (journal.forgotten)(record);
         }
         removed
     }

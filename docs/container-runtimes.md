@@ -262,8 +262,14 @@ A create that fails after minting gives its number back. A create that
 outlives even the hour and finds its ref taken is not written over the
 other environment: the write is refused and logged, the box runs on under
 this session's own view, and the same guard refuses a stale session's
-later write for a ref that now names another environment. One build per
-base directory: an older build's write drops the in-flight mints.
+later write — a correction, or the forget of a rolled-back launch — for a
+ref that now names another environment. The hour is the mint's grace, not
+the create's bound: `gc` collects a directory without a container after
+fifteen minutes, and the number then stays reserved for the rest of the
+hour. A release is by number, not by minter: a create that fails after its
+hour has passed frees whatever mint now holds the number (a hole accepted
+for now — the record guard still catches the resulting clash). One build
+per base directory: an older build's write drops the in-flight mints.
 
 At startup a top-level session **restores** the file: each record is
 checked against the runtime through its retained `inspect` — a

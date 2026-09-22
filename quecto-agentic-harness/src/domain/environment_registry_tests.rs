@@ -151,7 +151,12 @@ fn test_journal() -> (EnvironmentJournal, Seen, Seen) {
         }),
         forgotten: Arc::new({
             let forgotten = forgotten.clone();
-            move |env_ref: &str| forgotten.lock().unwrap().push(env_ref.to_string())
+            move |record: &EnvironmentRecord| {
+                forgotten
+                    .lock()
+                    .unwrap()
+                    .push(record.environment_ref.clone())
+            }
         }),
         reload: Arc::new(|| Err("environments.json: permission denied".into())),
     };
@@ -222,6 +227,11 @@ fn a_journal_that_cannot_allocate_refuses_the_mint() {
     // holds could be under it — is not counting: the mint is refused.
     let (mut journal, _, _) = test_journal();
     journal.allocate_ref = Arc::new(|_| Ok(1));
+    let released = Arc::new(Mutex::new(Vec::new()));
+    journal.release_ref = Arc::new({
+        let released = released.clone();
+        move |number| released.lock().unwrap().push(number)
+    });
     let registry = EnvironmentRegistry::with_journal(journal, "s");
     registry.commit(record("C3", "env-three"));
     let refused = registry.mint_ref().unwrap_err();
@@ -229,6 +239,8 @@ fn a_journal_that_cannot_allocate_refuses_the_mint() {
         matches!(&refused, RefAllocationError::JournalUnavailable(why) if why.contains("below this session's floor 4")),
         "{refused:?}"
     );
+    // ... and the refused number is given back, not left in flight.
+    assert_eq!(released.lock().unwrap().as_slice(), [1]);
 }
 
 /// #2070: the journal's number is the ref — so after everything is

@@ -26,12 +26,12 @@ fn record(reference: &str, status: EnvironmentStatus) -> EnvironmentRecord {
 }
 
 #[test]
-fn allocates_monotonic_refs_across_store_instances_and_never_below_a_recorded_ref() {
+fn a_minted_ref_is_reserved_across_store_instances_and_never_falls_below_a_recorded_ref() {
     let dir = tempfile::TempDir::new().unwrap();
     let store = FileEnvironmentRegistryStore::for_base_dir(dir.path());
     assert_eq!(store.allocate_ref(0).unwrap(), 1);
     assert_eq!(store.allocate_ref(0).unwrap(), 2);
-    // A record beyond the counter (an older document) pulls it up.
+    // A record above every mint (an older document) is what counts.
     store
         .record(&record("C9", EnvironmentStatus::Running))
         .unwrap();
@@ -88,10 +88,14 @@ fn a_record_replaces_its_predecessor_and_forget_removes_it() {
     assert_eq!(loaded.len(), 1);
     assert_eq!(loaded[0].status, EnvironmentStatus::Stopped);
     assert_eq!(loaded[0].last_error.as_deref(), Some("gone"));
-    store.forget("C1").unwrap();
+    store
+        .forget(&record("C1", EnvironmentStatus::Stopped))
+        .unwrap();
     assert!(store.load().unwrap().is_empty());
     // Forgetting again is idempotent.
-    store.forget("C1").unwrap();
+    store
+        .forget(&record("C1", EnvironmentStatus::Stopped))
+        .unwrap();
 }
 
 #[test]
@@ -289,13 +293,19 @@ fn refs_restart_at_one_once_nothing_recorded_or_in_flight_remains() {
         .record(&record("C2", EnvironmentStatus::Stopped))
         .unwrap();
     // Both recorded refs exist: the numbers stay taken.
-    store.forget("C1").unwrap();
+    store
+        .forget(&record("C1", EnvironmentStatus::Stopped))
+        .unwrap();
     assert_eq!(store.allocate_ref(0).unwrap(), 3, "C2 still exists");
     store
         .record(&record("C3", EnvironmentStatus::Stopped))
         .unwrap();
-    store.forget("C2").unwrap();
-    store.forget("C3").unwrap();
+    store
+        .forget(&record("C2", EnvironmentStatus::Stopped))
+        .unwrap();
+    store
+        .forget(&record("C3", EnvironmentStatus::Stopped))
+        .unwrap();
     // Everything collected: the next container is C1.
     assert_eq!(store.allocate_ref(0).unwrap(), 1);
     let again = FileEnvironmentRegistryStore::for_base_dir_at(dir.path(), {
@@ -432,4 +442,27 @@ fn a_correction_for_a_ref_now_naming_another_environment_is_refused() {
         "{refused}"
     );
     assert_eq!(store.load().unwrap()[0].environment_uuid, "uuid-C1");
+}
+
+/// A rolled-back create forgets only its own record: a ref that another
+/// session has since taken (this session's mint outlived its grace) is
+/// left as that session recorded it (#2070 round 2).
+#[test]
+fn forgetting_a_ref_now_naming_another_environment_removes_nothing() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = FileEnvironmentRegistryStore::for_base_dir(dir.path());
+    store
+        .record(&record("C1", EnvironmentStatus::Running))
+        .unwrap();
+    let mut stale = record("C1", EnvironmentStatus::Running);
+    stale.environment_uuid = "uuid-stale".into();
+    store.forget(&stale).unwrap();
+    let on_file = store.load().unwrap();
+    assert_eq!(on_file.len(), 1, "the other session's record stands");
+    assert_eq!(on_file[0].environment_uuid, "uuid-C1");
+    // Its own record goes.
+    store
+        .forget(&record("C1", EnvironmentStatus::Running))
+        .unwrap();
+    assert!(store.load().unwrap().is_empty());
 }
