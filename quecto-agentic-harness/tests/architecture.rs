@@ -1341,21 +1341,7 @@ fn tui_test_files_are_all_compiled() {
 /// here. Nothing may be added.
 #[test]
 fn harness_and_api_test_files_are_all_compiled() {
-    for (root, known) in [
-        (
-            "src",
-            &[
-                "application/agent_loop_context_gauge_tests.rs",
-                "domain/workflow/engine/templates_cov_tests.rs",
-                "infrastructure/tools/tests/spawn_validation_tests.rs",
-                "interface/cli/protocol_type_name_tests.rs",
-            ][..],
-        ),
-        (
-            "../quecto-api/src",
-            &["infrastructure/http/router_handler_tests.rs"][..],
-        ),
-    ] {
+    for (root, known) in [("src", &[][..]), ("../quecto-api/src", &[][..])] {
         let missing = uncompiled_test_files_under(root);
         let new: Vec<_> = missing
             .iter()

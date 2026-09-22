@@ -652,4 +652,8 @@ mod leading_config_dispatch_tests;
 #[cfg(test)]
 mod mod_tests;
 
+#[cfg(test)]
+#[path = "protocol_type_name_tests.rs"]
+mod protocol_type_name_tests;
+
 mod swarm_composition;
