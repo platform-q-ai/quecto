@@ -1206,6 +1206,12 @@ fn uncompiled_test_files(files: &[(String, String)]) -> Vec<String> {
                     .rsplit_once("mod ")
                     .filter(|(before, _)| before.is_empty() || before.starts_with("pub"))
                     .map(|(_, module)| module);
+                // The path applies to the next declaration only; any other
+                // item in between (an inline module, a one-line form) ends it.
+                if module.is_none() && !line.starts_with("#[") {
+                    under_path = false;
+                    continue;
+                }
                 if let Some(module) = module {
                     if std::mem::take(&mut under_path) {
                         continue;
@@ -1290,6 +1296,13 @@ fn uncompiled_test_files_are_found_by_name_not_by_mention() {
         file("src/i.rs", "#[path = \"i_tests/mod.rs\"]\nmod i_tests;"),
         file("src/i_tests/mod.rs", ""),
         file("src/i_tests.rs", ""),
+        // ... and an item between a `#[path]` and a later `mod` ends the
+        // path's reach: `j_tests.rs` is credited.
+        file(
+            "src/j.rs",
+            "#[path = \"j_inline.rs\"]\nmod inline { }\n#[cfg(test)]\nmod j_tests;",
+        ),
+        file("src/j_tests.rs", ""),
     ];
     assert_eq!(
         uncompiled_test_files(&files),
