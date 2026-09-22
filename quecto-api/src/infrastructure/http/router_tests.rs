@@ -445,4 +445,5 @@ async fn message_handler_forwards_range_query_to_gateway() {
     }
 }
 
-include!("router_handler_tests.rs");
+#[path = "router_handler_tests.rs"]
+mod handler_tests;

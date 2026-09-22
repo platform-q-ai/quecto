@@ -178,3 +178,6 @@ fn context_manager_is_the_agent_loop_context_boundary() {
         .block_on(manager.spill_conversation_message(&mut msg));
     assert!(msg.spill_id.is_some());
 }
+
+#[path = "context_gauge_tests.rs"]
+mod gauge_tests;
