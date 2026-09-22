@@ -19,36 +19,7 @@ pub fn agent_role_preamble() -> &'static str {
 
 /// Parent-only routing policy, kept out of the shared manual.
 fn parent_coordination_policy() -> &'static str {
-    r#"## Parent Software Development Orchestration Playbook:
-
-### Route and isolate
-Prefer swarms for nearly all software development and team based work. Work directly only when ALL conditions hold: small, localized, low-risk work; clear requirements and files; no substantial investigation, planning, or independent review; and a brief edit and focused verification. Otherwise create a scoped swarm, rather than an ordinary child for convenience, unless it is a task for a single agent alone.
-
-Use separate fresh swarms for planning (epics, issues, acceptance criteria, and dependencies), delivery (features, refactors, bugfixes, and chores), independent investigation, independent verification, and PR review. Planning must not roll into delivery in the same swarm. Shared-board checks are collaboration, not independent review. Independent tasks require fresh boards and separate containers/checkouts. Always configure `member_limit` to 25, including the coordinator, as the capacity ceiling. Instruct the coordinator to select a task-appropriate fixed pool up front and shape its size and composition to the work rather than filling capacity. Never nest containers to evade caps. Swarms cannot use workflow; do not enable workflow mode for swarm participants.
-
-### Handoff and evidence
-Unless an assigned Epic or Issue contains full instructions, handoffs must include requirements, approved scope, issue/PR links when available, architecture, acceptance criteria, exact branch and SHA, environment, and commands. Persist handoffs and evidence as durable, accessible artifacts; pass their references to successor swarms and confirm those swarms can access them. Independent workers establish their own conclusions from source, tests, and primary evidence before consulting delivery reasoning. Results are revision-bound: recheck affected changes after the revision changes.
-
-### PR-first review and remediation
-Push the implementation branch and open a PR before starting any independent review. Preliminary local checks and delivery-team checks may run before the PR is opened; they do not count as independent review.
-
-Run each independent review in a fresh swarm with its own container/checkout, bound to the PR's exact head SHA. Reviewers independently validate findings against source and tests. Publish only validated, actionable issues as inline PR review threads, including the affected location, impact, and expected correction. Treat every such thread as requiring explicit resolution before merge. Escalate findings that cannot be attached inline rather than dropping them.
-
-Run each remediation pass in a separate, fresh fix swarm, distinct from the review swarm. Give it the PR, current head SHA, and unresolved threads. Fix agents validate each finding, add appropriate regression coverage, implement and verify corrections, and push fixes to the PR branch. Only after pushing verified fixes may they reply with the fix commit and verification evidence and resolve the addressed threads. Escalate disputed findings to the parent for an explicit decision.
-
-After fixes are pushed, use a fresh independent review swarm to verify the changed revision and affected findings. Repeat review and remediation as needed. Earlier approvals and evidence cover only the revisions they evaluated. Merge only when required threads are resolved, independent verification covers the current head SHA, required CI passes, and applicable approval requirements are met. Enable the repository's conversation-resolution requirement where supported to enforce thread resolution before merge.
-
-### Clean PRs
-Include only code, tests, and intentional project documentation or configuration within the approved scope in the PR diff. Keep working notes, handoffs, review reports, logs, evidence dumps, and other process artifacts in durable external artifact storage, linked from the PR or relevant review thread as needed. Include non-code artifacts in the repository only when they are explicit deliverables within the approved scope.
-
-### Read-only swarm inspection
-When coordinator reports are incomplete, inconsistent, stalled, or require operational verification, the parent may inspect the host-mounted `.quecto/swarm.sqlite` with Python's `sqlite3` URI `mode=ro`. Query only the necessary tables and use keyset pagination, such as `WHERE id > ? ORDER BY id LIMIT ?`, rather than dumping the database. Useful tables include `run`, `members`, `tasks`, `events`, `messages`, `evidence`, `files`, `request_usage`, and `requests`; discover their current columns with `PRAGMA table_info(...)` instead of assuming a fixed schema. Correlate member PIDs with the configured container runtime's host-side process inspection and validate repository state through the host-mounted checkout when needed. Do not execute commands inside the container, signal processes, write beneath the environment, inspect provider or admission credentials, or read member transcripts. Treat database state as operational evidence while still obtaining the coordinator's final report through supported APIs.
-
-### Swarm completion and cleanup
-Give every swarm one bounded role: planning, delivery, investigation, review, remediation, or verification. Use a fresh swarm for the next role. Before closing a swarm, collect its final report and export durable handoff artifacts, revision-bound evidence, and PR/comment links. Once its results are received and necessary artifacts are confirmed accessible, terminate its agents and remove its containers. Preserve any unpushed work before cleanup. Keep swarms running only while they have active responsibilities; blocked swarms awaiting an explicit decision remain incomplete.
-
-### Repository CI: platform-q-ai/quecto only
-Ensure swarms understand that the `merge-requested` label is required to start/restart relevant CI and resets on failure."#
+    include_str!("../../../PARENT_PLAYBOOK.md").trim_ascii_end()
 }
 
 /// Child ownership boundary permits useful decomposition without coordinator chains.
@@ -56,7 +27,7 @@ fn child_role_preamble() -> &'static str {
     "You are a subagent responsible for the assigned task. Solve it directly by default. You may delegate a bounded, independently useful subtask when doing so materially improves the result. Do not delegate your entire assignment, create another coordinator for the same task, or spawn agents merely to reduce your own context. Remain responsible for integrating and verifying delegated results."
 }
 
-fn core_system_prompt(spawned: bool) -> String {
+fn core_system_prompt_with_playbook(spawned: bool, playbook: &str) -> String {
     let role = if spawned {
         child_role_preamble()
     } else {
@@ -64,9 +35,13 @@ fn core_system_prompt(spawned: bool) -> String {
     };
     let mut sections = vec![role];
     if !spawned {
-        sections.push(parent_coordination_policy());
+        sections.push(playbook);
     }
     sections.join("\n\n")
+}
+
+fn core_system_prompt(spawned: bool) -> String {
+    core_system_prompt_with_playbook(spawned, parent_coordination_policy())
 }
 
 fn append_prompt_section(prompt: &mut String, heading: &str, content: &str) {
@@ -96,7 +71,24 @@ pub fn build_agent_system_prompt(
     spawned: bool,
     extension_snippets: &str,
 ) -> String {
-    let mut prompt = core_system_prompt(spawned);
+    build_agent_system_prompt_with_playbook(
+        agents_instructions,
+        user_prompt,
+        spawned,
+        extension_snippets,
+        parent_coordination_policy(),
+    )
+}
+
+/// Compose startup sources with a parent-only playbook selected at initialization.
+pub fn build_agent_system_prompt_with_playbook(
+    agents_instructions: Option<&str>,
+    user_prompt: Option<&str>,
+    spawned: bool,
+    extension_snippets: &str,
+    playbook: &str,
+) -> String {
+    let mut prompt = core_system_prompt_with_playbook(spawned, playbook);
     prompt.push_str("\n\n## End Core Instructions");
     if let Some(instructions) = agents_instructions {
         append_prompt_section(&mut prompt, "agents-md-instructions", instructions);

@@ -41,12 +41,14 @@ fn one_shot_and_uds_share_the_same_startup_prompt_composer() {
         explicit.as_deref(),
         false,
         "Extension marker",
+        "Parent playbook marker",
     );
     let uds = startup_prompt::compose(
         instructions.as_deref(),
         explicit.as_deref(),
         false,
         "Extension marker",
+        "Parent playbook marker",
     );
 
     assert_eq!(one_shot, uds);
@@ -157,4 +159,101 @@ fn one_shot_startup_stops_on_agents_md_read_error() {
     assert_eq!(output.exit_code, 1);
     assert!(output.stderr.contains("failed to read AGENTS.md"));
     assert!(output.stderr.contains(&path.display().to_string()));
+}
+
+#[test]
+fn override_is_composed_only_for_parent_and_keeps_other_prompt_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("PARENT_PLAYBOOK.md"),
+        "Unique project playbook",
+    )
+    .unwrap();
+    let context = CliContext {
+        cwd: Some(directory.path().to_path_buf()),
+        ..CliContext::default()
+    };
+    let mut errors = String::new();
+    let playbook = startup_prompt::load_parent_playbook(&context, false, &mut errors).unwrap();
+    assert!(errors.is_empty());
+    let parent = startup_prompt::compose(
+        Some("Project AGENTS"),
+        Some("Explicit instructions"),
+        false,
+        "Extension instructions",
+        &playbook,
+    );
+    assert!(parent.contains("Unique project playbook"));
+    assert!(!parent.contains("### Route and isolate"));
+    assert!(
+        parent.find("Unique project playbook").unwrap() < parent.find("Project AGENTS").unwrap()
+    );
+    assert!(parent.find("Project AGENTS").unwrap() < parent.find("Explicit instructions").unwrap());
+    assert!(
+        parent.find("Explicit instructions").unwrap()
+            < parent.find("Extension instructions").unwrap()
+    );
+    let child_playbook = startup_prompt::load_parent_playbook(&context, true, &mut errors).unwrap();
+    let child = startup_prompt::compose(
+        None,
+        Some("Explicit child instructions"),
+        true,
+        "",
+        &child_playbook,
+    );
+    assert!(!child.contains("Unique project playbook"));
+    assert!(child.contains("Explicit child instructions"));
+}
+
+#[tokio::test]
+async fn custom_playbook_prompt_path_uses_initialization_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("project");
+    let other = directory.path().join("other");
+    std::fs::create_dir_all(project.join("docs")).unwrap();
+    std::fs::create_dir(&other).unwrap();
+    std::fs::write(project.join("docs/spike.md"), "project spike brief").unwrap();
+    std::fs::write(
+        project.join("PARENT_PLAYBOOK.md"),
+        "Read docs/spike.md relative to the initialization directory",
+    )
+    .unwrap();
+    let context = CliContext {
+        cwd: Some(project.clone()),
+        ..CliContext::default()
+    };
+    let playbook =
+        startup_prompt::load_parent_playbook(&context, false, &mut String::new()).unwrap();
+    assert!(playbook.contains("docs/spike.md"));
+    let workspace = context.cwd.as_ref().unwrap();
+    let tool = crate::infrastructure::tools::filesystem::ReadTool::new(
+        std::sync::Arc::new(workspace.clone()),
+        std::sync::Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
+            Some(workspace.clone()),
+        )),
+    );
+    let result =
+        crate::application::tools::ports::Tool::execute(&tool, r#"{"path":"docs/spike.md"}"#)
+            .await
+            .unwrap();
+    assert!(result.content.contains("project spike brief"));
+    assert!(!other.join("docs/spike.md").exists());
+    assert_eq!(
+        crate::infrastructure::parent_playbook::load(&other).unwrap(),
+        include_str!("../../../../PARENT_PLAYBOOK.md")
+    );
+}
+
+#[test]
+fn present_invalid_override_fails_parent_startup_but_does_not_affect_child() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("PARENT_PLAYBOOK.md"), [0xff]).unwrap();
+    let context = CliContext {
+        cwd: Some(directory.path().to_path_buf()),
+        ..CliContext::default()
+    };
+    let mut errors = String::new();
+    assert!(startup_prompt::load_parent_playbook(&context, false, &mut errors).is_none());
+    assert!(errors.contains("not valid UTF-8"));
+    assert!(startup_prompt::load_parent_playbook(&context, true, &mut String::new()).is_some());
 }

@@ -250,6 +250,10 @@ pub(crate) fn cmd_agent(
         Some(instructions) => instructions,
         None => return 1,
     };
+    let parent_playbook = match startup_prompt::load_parent_playbook(ctx, flags.spawned, stderr) {
+        Some(playbook) => playbook,
+        None => return 1,
+    };
 
     let base_dir = ctx.base_dir();
     let selection = match ctx.config_selection() {
@@ -269,6 +273,7 @@ pub(crate) fn cmd_agent(
         flags.system_prompt.as_deref(),
         flags.spawned,
         &build.extension_prompt_snippets,
+        &parent_playbook,
     ));
     let mut out = AgentOutput { stdout, stderr };
     // The interface never constructs a session store (#1970): without
@@ -578,6 +583,10 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         Some(instructions) => instructions,
         None => return 1,
     };
+    let parent_playbook = match startup_prompt::load_parent_playbook(ctx, flags.spawned, stderr) {
+        Some(playbook) => playbook,
+        None => return 1,
+    };
 
     let base_dir = ctx.base_dir();
     let selection = match ctx.config_selection() {
@@ -644,6 +653,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         flags.system_prompt.as_deref(),
         flags.spawned,
         &build.extension_prompt_snippets,
+        &parent_playbook,
     );
 
     // Use --socket path if provided; otherwise auto-generate in $XDG_RUNTIME_DIR or temp.
