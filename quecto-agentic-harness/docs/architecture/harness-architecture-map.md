@@ -12,7 +12,7 @@ For the related decisions, see the [ADR index](../architecture-design-records/RE
 
 **Primary code:** `src/application/agent_loop.rs` and sibling modules such as
 `agent_loop_pruning.rs`, `agent_loop_spill.rs`, `agent_loop_tools.rs`,
-`agent_loop_model_limits.rs`, and `agent_loop_context_gauge.rs`.
+`agent_loop_model_limits.rs`, and the context gauge (`ContextGaugeCalibration` in `context.rs`).
 
 `AgentLoopImpl` is the application coordinator for a user turn. It receives the
 conversation request through the `AgentLoop` port, prepares provider messages,
@@ -33,7 +33,7 @@ Important invariants before Phase 2:
 
 **Primary code:** `src/application/context_pruning.rs`,
 `context_pruning_messages.rs`, `agent_loop_pruning.rs`, `agent_loop_spill.rs`,
-`agent_loop_context_gauge.rs`, and related context/spill tests.
+the context gauge in `context.rs`, and related context/spill tests.
 
 Context management already exists as a conceptual subsystem. It plans what can
 be sent to a provider within the model budget, protects pinned recent turns,

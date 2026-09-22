@@ -726,6 +726,10 @@ mod roster_tests;
 mod tests;
 
 #[cfg(test)]
+#[path = "tests/spawn_validation_tests.rs"]
+mod validation_tests;
+
+#[cfg(test)]
 #[path = "spawn_cov_tests.rs"]
 mod cov_tests;
 
