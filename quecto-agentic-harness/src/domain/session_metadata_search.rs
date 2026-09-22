@@ -4,19 +4,26 @@
 //! hide a record from a query nor smuggle one into a result. Nothing here
 //! reads a file, a transcript, Git or a clock; a query is literal text, never
 //! a pattern.
-use super::session_home::{SessionHome, SessionHomeScope, WorkspaceGroup};
+use super::session_home::SessionHomeScope;
+use super::session_home_text::path_below;
+pub use super::session_home_text::{execution_path, group_root, repository_label};
 pub use super::session_metadata_text::{display_path, shown_text, visible_text};
 pub use super::session_query_refusal::{MAX_QUERY_CHARS, QueryRefusal};
-use std::path::{Path, PathBuf};
+pub use super::session_title_subsequence::rank_of;
+use super::session_title_subsequence::{MIN_SUBSEQUENCE_TERM_CHARS, title_holds_subsequence};
+use std::path::Path;
 
 /// The metadata a query can match, in rank order: an exact key outranks a
-/// title, a title a repository label, a label a path.
+/// title, a title a repository label, a label a path, a path the subsequence tier on the title (#2043).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MatchedField {
     Key,
     Title,
     Repository,
     Path,
+    /// A term found nowhere literally, matched as an in-order subsequence of
+    /// the title (#2043): the lowest tier.
+    TitleFuzzy,
 }
 
 impl MatchedField {
@@ -27,6 +34,7 @@ impl MatchedField {
             Self::Title => "title",
             Self::Repository => "repository",
             Self::Path => "path",
+            Self::TitleFuzzy => "title_fuzzy",
         }
     }
 }
@@ -49,6 +57,8 @@ pub struct SessionMetadataFields<'a> {
 pub struct MetadataQuery {
     exact: String,
     terms: Vec<String>,
+    /// The terms long enough, as typed, for the title subsequence tier.
+    fuzzy: Vec<String>,
 }
 
 impl MetadataQuery {
@@ -56,13 +66,24 @@ impl MetadataQuery {
         let visible = visible_text(raw);
         let chars = shown_text(raw).chars().count();
         if chars <= MAX_QUERY_CHARS {
+            let terms: Vec<String> = visible
+                .split(' ')
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+                .collect();
+            // The fold never adds or removes a space, so the shown terms
+            // align with the folded ones; the bound counts shown characters.
+            let fuzzy = shown_text(raw)
+                .split(' ')
+                .filter(|t| !t.is_empty())
+                .zip(&terms)
+                .filter(|(shown, _)| shown.chars().count() >= MIN_SUBSEQUENCE_TERM_CHARS)
+                .map(|(_, term)| term.clone())
+                .collect();
             Ok(Self {
                 exact: raw.trim().to_string(),
-                terms: visible
-                    .split(' ')
-                    .filter(|t| !t.is_empty())
-                    .map(str::to_string)
-                    .collect(),
+                terms,
+                fuzzy,
             })
         } else {
             Err(QueryRefusal::TooLong { chars })
@@ -104,63 +125,35 @@ impl MetadataQuery {
         ];
         let holds =
             |text: &Option<String>, term: &str| text.as_deref().is_some_and(|t| t.contains(term));
-        let every_term_found = self
-            .terms
-            .iter()
-            .all(|term| texts.iter().any(|(_, text)| holds(text, term)));
+        let literal = |term: &str| texts.iter().any(|(_, text)| holds(text, term));
+        let fuzzy = |term: &String| {
+            self.fuzzy.contains(term)
+                && texts[0]
+                    .1
+                    .as_deref()
+                    .is_some_and(|title| title_holds_subsequence(term, title))
+        };
+        let every_term_found = self.terms.iter().all(|term| literal(term) || fuzzy(term));
         if every_term_found {
             for (field, text) in &texts {
                 if self.terms.iter().any(|term| holds(text, term)) && !matched.contains(field) {
                     matched.push(*field);
                 }
             }
+            // The whole key typed already says everything: it is never
+            // demoted to the fuzzy tier because it also reads in the title.
+            let key_typed = matched.contains(&MatchedField::Key);
+            if !key_typed && self.terms.iter().any(|term| !literal(term)) {
+                matched.push(MatchedField::TitleFuzzy);
+            }
         }
-        // Pushed in rank order already: the key, then `texts` in field order.
         debug_assert!(matched.is_sorted());
+        debug_assert!(
+            !(matched.contains(&MatchedField::Key) && matched.contains(&MatchedField::TitleFuzzy)),
+            "a typed key is never demoted"
+        );
         (!matched.is_empty()).then_some(matched)
     }
-}
-
-/// The label of the repository or folder a home belongs to: the name of its
-/// group's root ([`group_root`]), a bare repository's without `.git`. Related
-/// worktrees share one label. `None` for a home without a directory.
-pub fn repository_label(home: &SessionHomeScope) -> Option<String> {
-    let SessionHomeScope::Scoped(home) = home else {
-        return None;
-    };
-    let name = display_path(Path::new(group_root(home)?.file_name()?));
-    Some(name.strip_suffix(".git").unwrap_or(&name).to_string())
-}
-
-/// The directory a workspace group is rooted at: the directory holding a
-/// `.git` common dir, a bare repository itself, or the folder.
-pub fn group_root(home: &SessionHome) -> Option<&Path> {
-    match &home.group {
-        WorkspaceGroup::Git { common_dir } if common_dir.ends_with(".git") => common_dir.parent(),
-        WorkspaceGroup::Git { common_dir } => Some(common_dir.as_path()),
-        WorkspaceGroup::Folder { directory } => Some(directory.as_path()),
-    }
-}
-
-/// The execution directory a home records, spelled by [`display_path`].
-pub fn execution_path(home: &SessionHomeScope) -> Option<String> {
-    match home {
-        SessionHomeScope::Scoped(home) => Some(display_path(&home.execution_dir)),
-        SessionHomeScope::LegacyUnscoped | SessionHomeScope::Unavailable(_) => None,
-    }
-}
-
-/// What `home`'s execution directory does not share with `root`: the path
-/// below it, or — for a linked worktree outside it — below their common
-/// ancestor. `None` when nothing is left (the root itself) or no directory.
-fn path_below(home: &SessionHomeScope, root: &Path) -> Option<String> {
-    let SessionHomeScope::Scoped(home) = home else {
-        return None;
-    };
-    let shared = home.execution_dir.components().zip(root.components());
-    let shared = shared.take_while(|(a, b)| a == b).count();
-    let below: PathBuf = home.execution_dir.components().skip(shared).collect();
-    (!below.as_os_str().is_empty()).then(|| display_path(&below))
 }
 
 #[cfg(test)]

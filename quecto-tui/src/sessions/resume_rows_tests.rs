@@ -209,3 +209,16 @@ fn a_session_without_a_folder_is_worded_for_a_user() {
         Some("No folder recorded (older session) · t9 (3 msgs) · Can't be resumed")
     );
 }
+
+/// #2043: the title subsequence tier is named for what it is.
+#[test]
+fn a_fuzzy_title_match_is_named_as_such() {
+    let mut fuzzy = summary("cli:fz", Some(1), false, Some("/work/fz"));
+    fuzzy.matched = vec!["title_fuzzy".into(), "path".into()];
+    let rows = ResumeRows::project_searched(vec![fuzzy], |secs| format!("t{secs}"));
+    let description = rows.items[0].description.clone().unwrap_or_default();
+    assert!(
+        description.contains("matched: title (fuzzy), path"),
+        "{description}"
+    );
+}

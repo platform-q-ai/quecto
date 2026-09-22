@@ -16,7 +16,7 @@ use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::error::DomainError;
 use crate::domain::session_home::{HomeAdmission, SessionHome, SessionHomeScope};
 use crate::domain::session_metadata_search::{
-    MatchedField, MetadataQuery, SessionMetadataFields, group_root, repository_label,
+    MatchedField, MetadataQuery, SessionMetadataFields, group_root, rank_of, repository_label,
 };
 
 /// The metadata search over the home catalogue and workspace discovery.
@@ -80,7 +80,7 @@ impl SearchSessionMetadata {
 
 type Match = (Vec<MatchedField>, SessionMetadataRecord);
 
-/// Best first — the best matched field, then newest (undated last), then
+/// Best first — the row's rank (the fuzzy tier if any term needed it, else the best matched field), then newest (undated last), then
 /// key: a total order, so equal inputs give one answer — cut to `limit`.
 /// Eligibility is decided for the rows that are shown only.
 fn matched_rows(
@@ -90,12 +90,12 @@ fn matched_rows(
 ) -> Vec<SessionMetadataRow> {
     matches.sort_by(|(a_fields, a), (b_fields, b)| {
         (
-            a_fields.first(),
+            rank_of(a_fields),
             std::cmp::Reverse(a.summary.updated_unix_secs),
             &a.summary.key,
         )
             .cmp(&(
-                b_fields.first(),
+                rank_of(b_fields),
                 std::cmp::Reverse(b.summary.updated_unix_secs),
                 &b.summary.key,
             ))
