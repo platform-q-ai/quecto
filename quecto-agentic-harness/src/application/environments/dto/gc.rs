@@ -22,15 +22,16 @@ pub struct GcRequest {
 /// is not over — the master exited before its coordinator and nobody
 /// retained the box. Kept by default; collected only when the operator
 /// asks, outright or once the directory is old enough.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum AbandonedRuns {
     #[default]
     Keep,
     /// `--abandoned`: collect every such directory.
     Collect,
     /// `--abandoned-after <duration>`: collect those at least this old; a
-    /// directory whose age cannot be read is never old enough.
-    OlderThan { secs: u64 },
+    /// directory whose age cannot be read is never old enough. `spelled` is
+    /// the operator's own spelling, for the reasons.
+    OlderThan { secs: u64, spelled: String },
 }
 
 /// How an orphan would be (or was) removed.

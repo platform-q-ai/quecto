@@ -533,7 +533,10 @@ fn gc_parses_the_abandoned_policy_and_refuses_a_bad_duration() {
             parse_gc(&["--abandoned-after".into(), spelled.into()])
                 .unwrap()
                 .abandoned,
-            AbandonedRuns::OlderThan { secs },
+            AbandonedRuns::OlderThan {
+                secs,
+                spelled: spelled.to_string()
+            },
             "{spelled}"
         );
     }
@@ -545,6 +548,10 @@ fn gc_parses_the_abandoned_policy_and_refuses_a_bad_duration() {
         "1.5h",
         "-3d",
         "3 d",
+        "0s",
+        "0d",
+        "3\u{e9}",
+        "\u{ff13}d",
         "99999999999999999999d",
     ] {
         let error = parse_gc(&["--abandoned-after".into(), bad.into()]).unwrap_err();

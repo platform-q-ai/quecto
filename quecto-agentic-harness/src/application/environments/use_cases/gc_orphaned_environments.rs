@@ -73,7 +73,7 @@ enum Abandoned {
 }
 
 impl Hosting {
-    fn abandoned_after(&self, policy: AbandonedRuns, age_secs: Option<u64>) -> Abandoned {
+    fn abandoned_after(&self, policy: &AbandonedRuns, age_secs: Option<u64>) -> Abandoned {
         let Some(run) = &self.run else {
             return Abandoned::Keep(
                 "an unreadable store is never an abandoned run; remove the directory by hand"
@@ -86,15 +86,15 @@ impl Hosting {
                     .to_string(),
             ),
             AbandonedRuns::Collect => Abandoned::Collect(format!("{run}, collected on --abandoned")),
-            AbandonedRuns::OlderThan { secs } => match age_secs {
-                Some(age) if age >= secs => Abandoned::Collect(format!(
-                    "{run}, {age}s old, collected on --abandoned-after {secs}s"
+            AbandonedRuns::OlderThan { secs, spelled } => match age_secs {
+                Some(age) if age >= *secs => Abandoned::Collect(format!(
+                    "{run}, {age}s old, collected on --abandoned-after {spelled}"
                 )),
                 Some(age) => Abandoned::Keep(format!(
-                    "the directory is {age}s old, younger than the {secs}s --abandoned-after"
+                    "the directory is {age}s old, younger than the {spelled} --abandoned-after"
                 )),
                 None => Abandoned::Keep(format!(
-                    "the directory's age could not be read, so it is never older than the {secs}s --abandoned-after"
+                    "the directory's age could not be read, so it is never older than the {spelled} --abandoned-after"
                 )),
             },
         }
@@ -232,7 +232,7 @@ impl GcOrphanedEnvironments {
             .map(|record| (record.environment_id.as_str(), record))
             .collect();
 
-        let scope = self.scope(&config, &records, request.abandoned);
+        let scope = self.scope(&config, &records, request.abandoned.clone());
         let mut roots: BTreeSet<PathBuf> = scope.config_root.clone().into_iter().collect();
         roots.extend(scope.records.values().filter_map(|s| match s {
             RecordScope::OwnRoot(root) => Some(root.clone()),
@@ -598,7 +598,7 @@ impl GcOrphanedEnvironments {
         // records it and the operator asked for abandoned runs (#2070).
         let mut reason = reason;
         if let Some(hosting) = self.hosted_run_keeps(record, state_dir) {
-            match (record, hosting.abandoned_after(scope.abandoned, age_secs)) {
+            match (record, hosting.abandoned_after(&scope.abandoned, age_secs)) {
                 (None, Abandoned::Collect(why)) => {
                     reason = format!("{reason}; its checkout hosts abandoned swarm run {why}");
                 }

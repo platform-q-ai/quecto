@@ -273,6 +273,29 @@ Feature: Environments outlive sessions
     And the state dir should no longer contain the environment of "C1"
     And scenario teardown should leave no fixture processes running
 
+  @done @issue-2070 @container-env
+  Scenario: quecto container gc --abandoned collects an unrecorded directory hosting a run nobody will resume, and leaves a recorded one to the registry
+    Given script-managed child "impl-gc-abandoned" is running in a shared environment with task "IMPL_GC_ABANDONED_MARKER"
+    And the durable environment registry also records a stopped environment "C5" named "old-swarm" whose state dir hosts an unfinished swarm run and whose fake container has exited
+    And an orphaned environment state dir "env-orphan09" with an exited fake container is planted in the state dir
+    And the state dir of "env-orphan09" hosts an unfinished swarm run
+    When I run quecto with arguments "container gc --dry-run --abandoned-after 1d"
+    Then the exit code should be 0
+    And the gc report should keep "env-orphan09" as younger than the "1d" abandoned-after
+    And the gc report should keep the environment of "C5" because it hosts an unfinished swarm run
+    When I run quecto with arguments "container gc --dry-run --abandoned"
+    Then the exit code should be 0
+    And the gc report should list "env-orphan09" as an abandoned swarm run
+    And the state dir should still contain "env-orphan09"
+    When I run quecto with arguments "container gc --abandoned"
+    Then the exit code should be 0
+    And the state dir should no longer contain "env-orphan09"
+    And the gc report should keep the environment of "C5" because it hosts an unfinished swarm run
+    And the state dir should still contain the environment of "C5"
+    When I run quecto with arguments "container gc --abandoned-after 3w"
+    Then the exit code should be 1
+    And stderr should contain "--abandoned-after: '3w' is not a duration above zero"
+
   @done @issue-2024 @container-env
   Scenario: quecto container gc keeps a stopped record's directory and an unrecorded directory whose checkout hosts an unfinished swarm run
     Given script-managed child "impl-gc-swarm" is running in a shared environment with task "IMPL_GC_SWARM_MARKER"

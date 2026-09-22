@@ -143,17 +143,26 @@ fn an_unrecorded_directory_hosting_a_run_is_collected_only_when_asked() {
     *rig.hosted.by_dir.lock().unwrap() = hosted();
     let report = rig
         .use_case()
-        .execute(&request(AbandonedRuns::OlderThan { secs: 86_400 }))
+        .execute(&request(AbandonedRuns::OlderThan {
+            secs: 86_400,
+            spelled: "1d".into(),
+        }))
         .unwrap();
+    let days = report
+        .removable
+        .iter()
+        .find(|c| c.environment_id == "env-days")
+        .unwrap_or_else(|| panic!("{report:?}"));
     assert!(
-        matches!(
-            removable(&report, "env-days"),
-            GcRemoval::ConfiguredCleanup { .. }
-        ),
+        matches!(days.removal, GcRemoval::ConfiguredCleanup { .. }),
         "{report:?}"
     );
+    assert_eq!(
+        days.reason,
+        "container quecto-env-days gone or exited; no registry record; its checkout hosts abandoned swarm run run-2 (paused), 259200s old, collected on --abandoned-after 1d"
+    );
     assert!(
-        kept_reason(&report, "env-hour").contains("younger than the 86400s --abandoned-after"),
+        kept_reason(&report, "env-hour").contains("younger than the 1d --abandoned-after"),
         "{report:?}"
     );
     assert!(

@@ -271,12 +271,17 @@ fn parse_gc(args: &[String]) -> Result<GcRequest, String> {
                     .ok_or_else(|| {
                         format!("--abandoned-after requires a duration such as 2h or 3d\n{USAGE}")
                     })?;
-                let secs = parse_duration_secs(value).ok_or_else(|| {
-                    format!(
-                        "--abandoned-after: '{value}' is not a duration (a whole number of s, m, h or d, e.g. 30m, 12h, 3d)\n{USAGE}"
-                    )
-                })?;
-                request.abandoned = AbandonedRuns::OlderThan { secs };
+                let secs = parse_duration_secs(value)
+                    .filter(|secs| *secs > 0)
+                    .ok_or_else(|| {
+                        format!(
+                            "--abandoned-after: '{value}' is not a duration above zero (a whole number of s, m, h or d, e.g. 30m, 12h, 3d; for any age pass --abandoned)\n{USAGE}"
+                        )
+                    })?;
+                request.abandoned = AbandonedRuns::OlderThan {
+                    secs,
+                    spelled: value.clone(),
+                };
             }
             "--name" => {
                 let value = rest
@@ -294,20 +299,18 @@ fn parse_gc(args: &[String]) -> Result<GcRequest, String> {
 }
 
 /// `<digits><unit>` with a unit of `s`, `m`, `h` or `d`, as seconds; nothing
-/// else (no bare number, no fractions, no compound spellings).
+/// else (no bare number, no fractions, no compound spellings). Admitted by
+/// shape: one or more ASCII digits, then one of the four units.
 fn parse_duration_secs(value: &str) -> Option<u64> {
-    let (digits, unit) = value.split_at(value.len().checked_sub(1)?);
-    let per_unit: u64 = match unit {
-        "s" => 1,
-        "m" => 60,
-        "h" => 3_600,
-        "d" => 86_400,
-        _ => return None,
-    };
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+    let (digits, per_unit) = [("s", 1u64), ("m", 60), ("h", 3_600), ("d", 86_400)]
+        .into_iter()
+        .find_map(|(unit, per_unit)| value.strip_suffix(unit).map(|digits| (digits, per_unit)))?;
+    let admitted = !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
+    if admitted {
+        digits.parse::<u64>().ok()?.checked_mul(per_unit)
+    } else {
+        None
     }
-    digits.parse::<u64>().ok()?.checked_mul(per_unit)
 }
 
 pub(crate) fn cmd_gc(
