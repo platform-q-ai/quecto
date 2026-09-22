@@ -272,13 +272,13 @@ async fn a_persisted_rejection_at_the_correct_stamp_of_a_valid_record_hides_noth
     assert!(!index.contains("rejected"), "{index}");
 }
 
-/// #2042: the metadata query is ONE pass. A warm query stamps each record
-/// exactly once and reads nothing; a rebuild (cold process, index deleted)
-/// reads each record exactly once — the walk's summary and the catalogue's
-/// strict identity come from the same bytes — and the store's own walk is
-/// not run at all by the query.
+/// #2042: the metadata query is ONE pass. Warm, the pass stamps each record
+/// exactly once and reads nothing (publication re-stamps published rows
+/// until slice B); a rebuild (cold process, index deleted) reads each record
+/// exactly once — the walk's summary and the catalogue's strict identity come
+/// from the same bytes — and the store's own walk is not run by the query.
 #[tokio::test]
-async fn a_warm_query_stamps_each_record_once_and_a_rebuild_reads_each_once() {
+async fn the_pass_stamps_each_record_once_warm_and_a_rebuild_reads_each_once() {
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path().join("base"));
     let process = Process::over(&layout);
@@ -313,7 +313,7 @@ async fn a_warm_query_stamps_each_record_once_and_a_rebuild_reads_each_once() {
     assert_eq!(
         process.catalogue.record_stamps(),
         records * 3,
-        "warm: each record stamped exactly once more"
+        "warm: the pass stamped each record exactly once more"
     );
     // The store's own listing after the query answers from the same cache.
     let listed = process
@@ -331,7 +331,8 @@ async fn a_warm_query_stamps_each_record_once_and_a_rebuild_reads_each_once() {
     std::fs::remove_file(layout.home_catalogue_file()).unwrap();
     let rebuilt = Process::over(&layout);
     let seen = rebuilt.query().await;
-    assert!(seen.rebuilt || seen.diagnostics.is_empty() || !seen.diagnostics.is_empty());
+    // A missing index is "never existed": built, not recovered — no report.
+    assert!(!seen.rebuilt, "{seen:?}");
     assert_eq!(
         keys(&seen),
         ["chat-0", "chat-1", "chat-2", "chat-3", "chat-4"]
@@ -369,7 +370,6 @@ async fn a_record_rewritten_under_its_read_is_remembered_by_neither_half() {
         (3, 0),
         "the torn read was no verdict: read again"
     );
-    assert_eq!(process.reads(), (3, 0));
     let _ = process.query().await;
     assert_eq!(process.reads(), (3, 0), "and remembered once stable");
 }

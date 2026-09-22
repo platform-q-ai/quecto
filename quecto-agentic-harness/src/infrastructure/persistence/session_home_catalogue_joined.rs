@@ -63,11 +63,15 @@ type Verdicts = (
 );
 /// A skip: the identity the listing reports, and the walk's wording.
 type Skip = (Result<SessionIdentity, DomainError>, String);
+/// What a half remembers at a stamp: nothing, an identity, or a rejection.
+type Remembered = Option<Result<SessionIdentity, DomainError>>;
 
-/// One record's verdicts from one pass.
+/// One record's verdicts from one pass: the strict identity for the listing,
+/// and whether the walk listed it (its summary is then `walk.summaries`'
+/// last, borrowed by the caller — no clone per record).
 pub(super) struct RecordVerdicts {
     pub(super) identity: Result<SessionIdentity, DomainError>,
-    pub(super) summary: Option<SessionSummary>,
+    pub(super) listed: bool,
 }
 
 impl FileSessionHomeCatalogue {
@@ -92,11 +96,19 @@ impl FileSessionHomeCatalogue {
                     .push((name(), format!("not a regular session record: {e}")));
                 return RecordVerdicts {
                     identity: Err(e),
-                    summary: None,
+                    listed: false,
                 };
             }
         };
-        let identity = self.remembered_identity(path, &before);
+        let identity = match self.remembered_identity(path, &before) {
+            Ok(identity) => identity,
+            Err(e) => {
+                return RecordVerdicts {
+                    identity: Err(e),
+                    listed: false,
+                };
+            }
+        };
         let summary = cache
             .entries
             .get(path)
@@ -110,41 +122,39 @@ impl FileSessionHomeCatalogue {
                     walk.skipped.push((name(), why));
                     return RecordVerdicts {
                         identity,
-                        summary: None,
+                        listed: false,
                     };
                 }
             },
         };
-        let summary = match summary {
+        let listed = match summary {
             Ok(summary) => {
-                walk.summaries.push(summary.clone());
-                Some(summary)
+                walk.summaries.push(summary);
+                true
             }
             Err(why) => {
                 walk.skipped.push((name(), why));
-                None
+                false
             }
         };
-        RecordVerdicts { identity, summary }
+        RecordVerdicts { identity, listed }
     }
 
-    /// The projection's identity, or the rejection, remembered at `stamp`.
-    fn remembered_identity(
-        &self,
-        path: &Path,
-        stamp: &[u64],
-    ) -> Option<Result<SessionIdentity, DomainError>> {
+    /// The projection's identity, or the rejection, remembered at `stamp`;
+    /// a poisoned lock is an error, as everywhere in the catalogue.
+    fn remembered_identity(&self, path: &Path, stamp: &[u64]) -> Result<Remembered, DomainError> {
         let projected = self
             .projection
             .lock()
-            .ok()?
+            .map_err(super::error)?
             .get(path)
             .filter(|cached| cached.entry.stamp == stamp)
             .map(|cached| cached.identity.clone());
         if let Some(identity) = projected {
-            return Some(Ok(identity));
+            return Ok(Some(Ok(identity)));
         }
-        self.rejections.lock().ok()?.at(path, stamp).map(Err)
+        let rejections = self.rejections.lock().map_err(super::error)?;
+        Ok(rejections.at(path, stamp).map(Err))
     }
 
     /// One read serving whichever half has no verdict at `before`. `Err`
@@ -169,6 +179,9 @@ impl FileSessionHomeCatalogue {
         };
         self.transcript_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // A projected identity stays projected (its home cache with it);
+        // only a verdict reached now is written.
+        let validated_now = identity.is_none();
         let identity = identity.unwrap_or_else(|| {
             session_home_catalogue_rejections::validated(&bytes, path, &self.layout)
         });
@@ -180,7 +193,7 @@ impl FileSessionHomeCatalogue {
         let after = match session_home_catalogue_rejections::stable(path, before) {
             Ok(after) => after,
             Err(changed) => {
-                tracing::warn!(path = %path.display(), "skipping session file changed while listing sessions");
+                tracing::warn!(path = %path.display(), detail = "retry", "skipping session file changed while listing sessions");
                 return Err((
                     Err(changed),
                     "session file changed while listing: retry".into(),
@@ -191,32 +204,42 @@ impl FileSessionHomeCatalogue {
             .entries
             .insert(path.to_path_buf(), (after.clone(), summary.clone()));
         match &identity {
+            Ok(_) if !validated_now => {}
             Ok(identity) => {
                 let entry = IndexEntry {
                     stamp: after,
                     home: None,
                     summary: None,
                 };
-                if let Ok(mut projection) = self.projection.lock() {
-                    projection.insert(
-                        path.to_path_buf(),
-                        Projection {
-                            identity: identity.clone(),
-                            entry,
-                        },
-                    );
-                }
+                let mut projection = self.projection.lock().map_err(|e| {
+                    (
+                        Err(super::error(&e)),
+                        format!("projection unavailable: {e}"),
+                    )
+                })?;
+                projection.insert(
+                    path.to_path_buf(),
+                    Projection {
+                        identity: identity.clone(),
+                        entry,
+                    },
+                );
             }
             Err(rejection) => {
-                if let Ok(mut rejections) = self.rejections.lock() {
-                    rejections.record(path, after, rejection);
-                }
+                let mut rejections = self.rejections.lock().map_err(|e| {
+                    (
+                        Err(super::error(&e)),
+                        format!("rejections unavailable: {e}"),
+                    )
+                })?;
+                rejections.record(path, after, rejection);
             }
         }
         Ok((identity, summary))
     }
 
-    /// A record's stamp, counted (test seam: one per record per warm query).
+    /// A record's stamp, counted (test seam: the pass takes one per record
+    /// per warm query; publication re-stamps published rows until slice B).
     fn record_stamp(&self, path: &Path) -> Result<Vec<u64>, DomainError> {
         self.record_stamps
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

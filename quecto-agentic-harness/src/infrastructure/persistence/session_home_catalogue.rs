@@ -195,9 +195,10 @@ impl FileSessionHomeCatalogue {
         walk: &mut JoinedWalk,
     ) {
         let verdicts = self.verdicts(path, cache, walk);
+        let summary = verdicts.listed.then(|| walk.summaries.last()).flatten();
         match verdicts.identity {
             Ok(identity) => {
-                let home = self.observe_home(path, &identity, records, verdicts.summary);
+                let home = self.observe_home(path, &identity, records, summary);
                 debug_assert!(
                     indexed_home_matches(records, &identity, &home),
                     "published home observation must match its index entry"
@@ -235,7 +236,7 @@ impl FileSessionHomeCatalogue {
         path: &std::path::Path,
         identity: &SessionIdentity,
         records: &mut Records,
-        summary: Option<crate::domain::session::SessionSummary>,
+        summary: Option<&crate::domain::session::SessionSummary>,
     ) -> SessionHomeScope {
         let sidecar = self.layout.home_file(identity);
         let before = sidecar_stamp(&sidecar);
@@ -271,7 +272,7 @@ impl FileSessionHomeCatalogue {
         // entry keeps the one it was seeded with (same stamp, same record).
         if let Some(summary) = summary {
             cached.entry.summary = Some(SummaryEntry {
-                title: summary.title,
+                title: summary.title.clone(),
                 message_count: summary.message_count,
             });
         }

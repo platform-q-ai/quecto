@@ -311,9 +311,9 @@ never matched — no transcript is read to MATCH. Freshness alone decides what i
 read: a record version already indexed — or already rejected by this process
 (a verdict on its bytes; a failed read is never remembered, and no rejection
 is persisted) — costs a `stat`;
-a new or changed record is read once per validating half, and an absent,
-unreadable or version-incompatible index is rebuilt by reading every record
-(twice in all) on the first search. An answer is not authorization to restore
+a new or changed record is read once (one pass serves the walk and the
+strict catalogue, #2042), and an absent, unreadable or version-incompatible
+index is rebuilt by reading every record once on the first search. An answer is not authorization to restore
 a row.
 
 | Field | Type | Required | Description |

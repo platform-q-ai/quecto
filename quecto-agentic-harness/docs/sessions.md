@@ -307,8 +307,9 @@ pure matching rules in `domain/session_metadata_search.rs`.
   again, whether it was summarised or — in this process — **rejected** (a
   corrupt or cut-short record is remembered by stamp with its diagnostic, in
   memory only: a new process reads it once; a failed READ is never remembered).
-  The query is **one pass** over the directory (#2042): each record is stamped
-  once and read at most once, and the store walk's crash-tolerant summary and
+  The query is **one pass** over the directory (#2042): the pass stamps each
+  record once and reads it at most once (publication re-stamps the rows it
+  publishes until slice B), and the store walk's crash-tolerant summary and
   the catalogue's strict identity are both drawn from those bytes — the two
   halves keep their own rules (the walk lists a cut-short append the strict
   catalogue rejects) without stamping or reading twice; the store's own walk
@@ -316,9 +317,8 @@ pure matching rules in `domain/session_metadata_search.rs`.
   session_metadata_search.rs` counts zero transcript reads over 2,000 valid
   records plus an unparseable one and a 2 MiB cut-short one, warm, and from a
   new process exactly those two rejected records once;
-  `session_rejection_cache.rs` counts one stamp per record per warm query and
-  one read per record on a rebuild;
-  `session_rejection_cache.rs` pins re-reading on change, that a transient read
+  `session_rejection_cache.rs` counts one pass stamp per record per warm query
+  and one read per record on a rebuild, pins re-reading on change, that a transient read
   failure is retried and leaves no trace, and that a persisted rejection — even
   at the correct stamp of a valid record — hides nothing.
 - **How.** Literal text, never a pattern: regex, glob, SQL and shell
@@ -390,7 +390,8 @@ pure matching rules in `domain/session_metadata_search.rs`.
   directory-mtime short-circuit — transcripts are appended in place, which
   does not touch the directory), in one pass (#2042). On a generated
   5,201-record store (release build, unloaded) a warm global search went from
-  ~79 ms with two passes to ~55 ms; what remains is the scan itself — a record
+  ~79 ms with two passes to ~55 ms against the 50 ms target (~1.1×, the
+  measured floor of this slice); what remains is the scan itself — a record
   stamp, a sidecar stamp and a few lock round trips per record — of which the
   third re-stamp before publication and the `exists` sweeps are the next cut
   (#2042 slice B). The number is reproducible: `QUECTO_META_BENCH=5201 cargo
