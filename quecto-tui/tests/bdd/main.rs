@@ -174,6 +174,8 @@ pub struct TuiWorld {
     pub tui_last_master_backfill: Option<(String, String)>,
     // ── TUI ordinary-exit leader termination BDD (#1956) ───────────────
     pub tui_exit: Option<tui_ctrl_d_exit_steps::ExitFixture>,
+    // ── TUI termination signals, real process (#2053) ──────────────────
+    pub tui_owner_signals: Option<tui_owner_signals_steps::OwnerSignalsFixture>,
     // ── TUI PID-safety BDD (`tui_pid_safety.feature`) ──────────────────
     pub tui_pid_input: Option<u32>,
     pub tui_pid_result: Option<Result<i32, String>>,
@@ -367,6 +369,7 @@ mod tui_idle_efficiency_steps;
 mod tui_list_render_state_steps;
 mod tui_master_connection_feed_steps;
 mod tui_new_reset_context_steps;
+mod tui_owner_signals_steps;
 mod tui_paged_history_1094_steps;
 mod tui_paged_history_steps;
 mod tui_per_connection_state_steps;

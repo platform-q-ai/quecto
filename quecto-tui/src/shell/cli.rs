@@ -155,6 +155,10 @@ fn apply_workflow_defaults(flags: &mut CliFlags) {
 }
 
 async fn run_tui(flags: CliFlags) -> i32 {
+    // From here on SIGHUP/SIGTERM/SIGINT are ours (#2053): a signal during
+    // the startup window is kept and answered once there is something to
+    // end; one in the loop takes the ordinary exit.
+    let mut termination_rx = crate::shell::signals::termination_stream();
     let (socket, child_watch, announced_protocol) = match flags.socket_path {
         Some(path) => (path, None, None),
         None => match spawn_agent(&flags).await {
@@ -168,6 +172,13 @@ async fn run_tui(flags: CliFlags) -> i32 {
             }
         },
     };
+    if let Some(signal) = interrupted_during_startup(&mut termination_rx) {
+        eprintln!("{}", startup_interrupted_message(signal));
+        if let Some(watch) = &child_watch {
+            terminate_watched_at_startup(watch).await;
+        }
+        return 1;
+    }
 
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -210,6 +221,13 @@ async fn run_tui(flags: CliFlags) -> i32 {
             return 1;
         }
     };
+    if let Some(signal) = interrupted_during_startup(&mut termination_rx) {
+        eprintln!("{}", startup_interrupted_message(signal));
+        if let Some(watch) = &child_watch {
+            terminate_watched_at_startup(watch).await;
+        }
+        return 1;
+    }
 
     let terminal = crate::shell::terminal::Terminal::new();
     let mut app = crate::shell::app::App::new(terminal, client);
@@ -217,7 +235,12 @@ async fn run_tui(flags: CliFlags) -> i32 {
         app.set_child_exit_watch(watch.clone());
     }
     app.set_ordinary_exit_kill_owned(flags.kill_on_exit);
+    app.set_termination_stream(termination_rx);
     let exit_code = app.run().await;
+    if let Some(signal) = app.termination_signal() {
+        // The terminal is usually gone by now; stderr may still be a log.
+        eprintln!("{}", termination_exit_message(signal, flags.kill_on_exit));
+    }
 
     drop(child_watch);
 
@@ -297,7 +320,8 @@ async fn spawn_agent_program(
     use tokio::io::AsyncBufReadExt;
     let args = build_agent_args(flags);
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let mut child = tokio::process::Command::new(program)
+    let mut command = tokio::process::Command::new(program);
+    command
         .args(&args_ref)
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
@@ -305,7 +329,13 @@ async fn spawn_agent_program(
         // Own process group: terminal signals never reach the harness, and
         // the post-exit canary (#1956) can recognise a stray by pgid. The
         // group itself is never signalled — only the leader pid is.
-        .process_group(0)
+        .process_group(0);
+    if flags.kill_on_exit {
+        // A TUI that dies outright takes the harness it owns with it (#2053);
+        // a detached harness is left alone.
+        crate::shell::parent_death_signal::arm(command.as_std_mut(), std::process::id());
+    }
+    let mut child = command
         .spawn()
         .map_err(|e| format!("failed to spawn {program}: {e}"))?;
 
@@ -389,6 +419,34 @@ mod startup_exit;
 use startup_exit::{terminate_spawned_agent, terminate_watched_at_startup};
 
 const MAX_STARTUP_STDERR_LINE_CHARS: usize = 1_000;
+
+/// A termination signal that arrived while the TUI was still starting
+/// (#2053): spawning or connecting, nothing to persist yet.
+fn interrupted_during_startup(
+    rx: &mut tokio::sync::mpsc::Receiver<crate::shell::signals::TerminationSignal>,
+) -> Option<crate::shell::signals::TerminationSignal> {
+    rx.try_recv().ok()
+}
+
+/// What the exit on a termination signal did (#2053).
+fn termination_exit_message(
+    signal: crate::shell::signals::TerminationSignal,
+    kill_owned: bool,
+) -> String {
+    let owned = if kill_owned {
+        "the owned agent was asked to end"
+    } else {
+        "the owned agent was left running (--detach-on-exit)"
+    };
+    format!("{}: session persisted, {owned}", signal.name())
+}
+
+fn startup_interrupted_message(signal: crate::shell::signals::TerminationSignal) -> String {
+    format!(
+        "{} during startup: the agent being started is terminated, nothing to persist",
+        signal.name()
+    )
+}
 
 /// Byte cap on a single drained stderr line (#1051 review pattern: no uncapped
 /// reads) — a child spewing an endless newline-free stream must not grow the
@@ -612,6 +670,10 @@ fn format_agent_startup_failure(reason: &str, stderr_lines: &[String]) -> String
 #[cfg(test)]
 #[path = "cli_cov_tests.rs"]
 mod cli_cov_tests;
+
+#[cfg(test)]
+#[path = "cli_termination_tests.rs"]
+mod termination_tests;
 
 #[cfg(test)]
 #[path = "cli_tests.rs"]

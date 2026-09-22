@@ -40,7 +40,11 @@ connection and presents one session at a time.
 - Ctrl-D, `/exit`, and `/quit` retain the common ordinary-exit path established
   by ADR-0025's later lifecycle corrections: persist the current state, ask the
   one owned harness leader to shut down, and use its bounded settlement
-  protocol. Externally attached agents remain unowned and are not terminated.
+  protocol. SIGHUP, SIGTERM and an external SIGINT to the TUI take that same
+  path (#2053); a TUI killed outright cannot, so the owned harness is armed to
+  receive SIGTERM on its parent's death (Linux), its own shutdown — unless the
+  exit policy is detach-on-exit, which arms nothing. Externally attached agents
+  remain unowned and are not terminated.
 - Subagent focus and roster presentation remain views over the connected
   harness. They do not create additional top-level TUI connections.
 

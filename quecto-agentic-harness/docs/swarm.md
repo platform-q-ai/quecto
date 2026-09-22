@@ -349,8 +349,10 @@ and left its box behind; one a previous process created is `restored` and
 stays explicit-kill-only). Those kills run concurrently, and every retained
 kill script is bounded (20 s, `KILL_SCRIPT_BOUND`): past it the script is
 killed and the record is `cleanup-failed` with the reason, retryable by an
-explicit `kill_container`, and the exit goes on. A TUI that is killed or
-crashes sends no announcement, so that shutdown keeps every swarm resumable;
+explicit `kill_container`, and the exit goes on. A TUI that is killed
+outright or crashes sends no announcement (its owned harness then shuts down
+on the kernel's SIGTERM, #2053), so that shutdown keeps every swarm resumable;
+a TUI ending on SIGHUP, SIGTERM or SIGINT runs the ordinary exit and announces;
 `--detach-on-exit` announces nothing either, because the harness lives on.
 The announcement is held by the connection that made it and withdrawn when
 that connection closes — a TUI that dies in its exit window leaves nothing

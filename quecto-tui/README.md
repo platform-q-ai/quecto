@@ -227,7 +227,14 @@ returning to the tail restores following.
 ### Exit, detach, and resume
 
 Ordinary Ctrl-D, `/exit`, and `/quit` persist the conversation before terminating
-TUI-owned agents. Resuming restores transcript history; it does **not** recreate
+TUI-owned agents. SIGHUP (the terminal closed), SIGTERM and an external SIGINT
+take the same path (#2053) — the terminal is usually gone by then, so the exit
+window runs unseen, within the same budget, and a line on stderr says what it
+did; a signal during startup ends the agent being started, with nothing to
+persist. A TUI that dies outright — SIGKILL, a crash — runs no exit at all: on
+Linux the agent it launched is armed to receive SIGTERM from the kernel on its
+parent's death, which is the agent's own shutdown, and ends the same way. With
+`--detach-on-exit` neither happens: the agent outlives the TUI whatever ends it. Resuming restores transcript history; it does **not** recreate
 old children as operational agent-panel rows. Old spawn and tool messages remain
 history, not evidence that their processes are alive: a harness-launched
 subagent is lifetime-bound to the harness that launched it and ends by itself

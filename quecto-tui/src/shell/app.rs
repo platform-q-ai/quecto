@@ -52,6 +52,9 @@ pub struct App {
     notifications: NotificationStack,
     kitty: KittyProtocol,
     should_exit: bool,
+    /// Termination signals (#2053), installed by the CLI before the harness
+    /// spawn so none is lost in the startup window; `None` in harnesses.
+    termination_rx: Option<tokio::sync::mpsc::Receiver<crate::shell::signals::TerminationSignal>>,
     exit_policy: app_ordinary_exit::OrdinaryExitPolicy,
     stdin_buffer: crate::shell::stdin_buffer::StdinBuffer,
     /// Global selector-overlay half of the inference flow; the agent's
@@ -140,6 +143,7 @@ impl App {
             notifications: NotificationStack::new(),
             kitty: KittyProtocol::new(),
             should_exit: false,
+            termination_rx: None,
             exit_policy: app_ordinary_exit::OrdinaryExitPolicy::default(),
             stdin_buffer: crate::shell::stdin_buffer::StdinBuffer::new(),
             inference: InferenceFlow::default(),
