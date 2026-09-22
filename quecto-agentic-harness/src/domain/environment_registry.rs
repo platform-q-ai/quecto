@@ -2,7 +2,8 @@
 //!
 //! Per ADR-0021 composition builds exactly one registry per session and
 //! injects it into the launch services. It is the authority for minting
-//! never-reused `C1`-style environment refs and for recording which
+//! `C1`-style environment refs — unique among everything still held, on
+//! file or here (#2070) — and for recording which
 //! environments this session has committed: hidden environment UUID, optional
 //! name, script/runtime identity, retained script argv, member agent UUIDs,
 //! status, metadata, and last error (#1369 slice 2).
@@ -20,66 +21,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-/// Lifecycle status of one committed environment.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EnvironmentStatus {
-    /// Live and joinable.
-    Running,
-    /// A kill claim is outstanding; not joinable, not yet stopped.
-    Killing,
-    /// Kill succeeded; terminal. The record stays listed, the ref is never reused.
-    Stopped,
-    /// Kill failed; retryable via another kill, with `last_error` retained.
-    CleanupFailed,
-    /// Emptied while its owner had not ended the swarm it hosts (#1924,
-    /// #2070) — a lost coordinator, a crash, a run nobody closed: the
-    /// final-member kill was deliberately withheld so the board, checkout and
-    /// unpushed work survive and the run can be resumed. Killable only by an explicit
-    /// `kill_container`; a join is admitted for inspection but never revives
-    /// it (no automatic teardown can follow), so a rolled-back or exited
-    /// joiner leaves it retained.
-    Retained,
-}
-
-/// How a caller addresses an existing environment.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EnvironmentTarget {
-    /// Session-scoped `CN` ref minted by this registry.
-    Ref(String),
-    /// Optional user-facing environment name; must resolve unambiguously.
-    Name(String),
-}
-
-/// Resolution failures. Never guesses: unknown, ambiguous, stopped, and stale
-/// targets each fail with their own actionable error.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EnvironmentLookupError {
-    Unknown(String),
-    Ambiguous(String),
-    Stopped(String),
-    Stale(String),
-    /// The durable registry could not be read at startup (round 2 F-B,
-    /// #2033): a target this session did not create is not unknown, it is
-    /// unknowable, and the store's own account says why.
-    Unreadable(String),
-}
-
-impl std::fmt::Display for EnvironmentLookupError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unknown(t) => write!(f, "environment '{t}' is unknown in this session"),
-            Self::Ambiguous(t) => write!(f, "environment name '{t}' is ambiguous in this session"),
-            Self::Stopped(t) => write!(f, "environment '{t}' is stopped"),
-            Self::Stale(t) => write!(
-                f,
-                "environment '{t}' is stale: cleanup is pending or failed; retry kill_container"
-            ),
-            Self::Unreadable(error) => write!(f, "registry unreadable: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for EnvironmentLookupError {}
+mod record_lookup;
+pub use record_lookup::{EnvironmentLookupError, EnvironmentStatus, EnvironmentTarget};
 
 /// One committed script-managed environment known to this session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -333,27 +276,60 @@ impl EnvironmentRegistry {
         self.journal.is_some()
     }
 
-    /// Mint the next `CN` ref. Refs are monotonic and never reused within a
-    /// session, even when the launch they were minted for later fails or the
-    /// environment is stopped. A durable registry allocates through its
-    /// journal, so the ref is unique across every session of the base
-    /// directory; when the journal cannot allocate, minting is refused
-    /// (review F9, #2033) — never a counter that could collide with a ref
-    /// another session holds. A registry without a journal counts in
-    /// memory.
+    /// Mint the next `CN` ref. A ref is never reused while anything holds it
+    /// — a record here, whatever its status, a record on file, or a mint in
+    /// flight; a journal-less registry counts on in memory. A durable
+    /// registry allocates through its journal, so the ref is unique across
+    /// every session of the base directory; when the journal cannot
+    /// allocate, minting is refused (review F9, #2033) — never a counter
+    /// that could collide with a ref another session holds.
+    ///
+    /// The journal hands out the lowest number nothing holds (#2070: once
+    /// everything is collected the next container is `C1` again), and is
+    /// told the floor — one above every ref still held here — so a record
+    /// the file has forgotten (another process's gc) is never reissued to
+    /// this session; the number comes back reserved on file.
     pub fn mint_ref(&self) -> Result<String, RefAllocationError> {
-        let allocated = match &self.journal {
-            Some(journal) => {
-                Some((journal.allocate_ref)().map_err(RefAllocationError::JournalUnavailable)?)
-            }
-            None => None,
+        let Some(journal) = &self.journal else {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.next_ref += 1;
+            return Ok(format!("C{}", state.next_ref));
         };
+        let floor = self.highest_held().checked_add(1).ok_or_else(|| {
+            RefAllocationError::JournalUnavailable("this session's ref space is exhausted".into())
+        })?;
+        let number =
+            (journal.allocate_ref)(floor).map_err(RefAllocationError::JournalUnavailable)?;
+        // A store that ignores the floor is not one this session can trust
+        // with a number: refused (and given back), never counted from memory.
+        if number < floor {
+            (journal.release_ref)(number);
+            return Err(RefAllocationError::JournalUnavailable(format!(
+                "the registry minted {number} below this session's floor {floor}; it is not counting"
+            )));
+        }
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.next_ref = match allocated {
-            Some(number) if number > state.next_ref => number,
-            _ => state.next_ref + 1,
-        };
-        Ok(format!("C{}", state.next_ref))
+        state.next_ref = number;
+        Ok(format!("C{number}"))
+    }
+
+    /// Give a minted ref back (#2070): the create it was minted for failed
+    /// before anything was committed under it.
+    pub fn release_ref(&self, environment_ref: &str) {
+        if let (Some(journal), Some(number)) = (&self.journal, ref_number(environment_ref)) {
+            (journal.release_ref)(number);
+        }
+    }
+
+    /// The highest numbered ref a record still holds here, `0` for none.
+    fn highest_held(&self) -> u64 {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state
+            .entries
+            .keys()
+            .filter_map(|key| ref_number(key))
+            .max()
+            .unwrap_or(0)
     }
 
     /// Commit a created environment under its minted ref. A ref numbered
@@ -458,11 +434,13 @@ impl EnvironmentRegistry {
     /// Remove a committed environment. Used only when the launch that
     /// CREATED the environment rolls back (before or after registration):
     /// the environment never became usable, so no stopped record is listed.
-    /// A stopped environment stays listed and its ref is never reused.
+    /// A stopped environment stays listed and its ref is not reused while it
+    /// is.
     pub fn remove(&self, environment_ref: &str) -> Option<EnvironmentRecord> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        // Prune the removed environment's inspect bookkeeping with it; refs
-        // are never reused, so nothing can resurrect these keys.
+        // Prune the removed environment's inspect bookkeeping with it: the
+        // ref may be minted again (#2070), and a new environment under it
+        // starts with no claims or failures.
         state
             .inspect_claims
             .retain(|(env_ref, _)| env_ref != environment_ref);
@@ -470,11 +448,11 @@ impl EnvironmentRegistry {
         state.kill_claims.remove(environment_ref);
         let removed = state.entries.remove(environment_ref);
         drop(state);
-        if removed.is_some()
+        if let Some(record) = &removed
             && let Some(journal) = &self.journal
         {
             let _order = self.journal_order.lock().unwrap_or_else(|e| e.into_inner());
-            (journal.forgotten)(environment_ref);
+            (journal.forgotten)(record);
         }
         removed
     }

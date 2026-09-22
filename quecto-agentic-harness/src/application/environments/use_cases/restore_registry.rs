@@ -5,7 +5,7 @@
 //! directory's store holds, each checked against the runtime before it is
 //! believed: a `running` or `cleanup-failed` record whose container is
 //! gone is marked `stopped` with the reason as its last error (never
-//! silently dropped — the ref stays listed and is never reused), a record
+//! silently dropped — the ref stays listed and is not reused while it is), a record
 //! the runtime cannot be asked about is kept as recorded and reported
 //! unverified, and a kill that was in flight when this session started is
 //! reported as such — never relabelled, since its session may still be
@@ -114,6 +114,7 @@ impl RestoreRegistry {
         let allocate = Arc::clone(&self.store);
         let record = Arc::clone(&self.store);
         let forget = Arc::clone(&self.store);
+        let release = Arc::clone(&self.store);
         let reload = self.clone();
         EnvironmentJournal {
             reload: Arc::new(move || {
@@ -139,11 +140,16 @@ impl RestoreRegistry {
                 );
                 Ok(seeded)
             }),
-            allocate_ref: Arc::new(move || {
-                allocate.allocate_ref().map_err(|error| {
+            allocate_ref: Arc::new(move |floor| {
+                allocate.allocate_ref(floor).map_err(|error| {
                     tracing::warn!(%error, "durable environment ref could not be allocated; the create is refused");
                     error
                 })
+            }),
+            release_ref: Arc::new(move |number| {
+                if let Err(error) = release.release_ref(number) {
+                    tracing::warn!(%error, number, "a refused environment ref could not be released; it expires on its own");
+                }
             }),
             recorded: Arc::new(
                 move |entry: &EnvironmentRecord, expected: Option<&EnvironmentStatus>| {
@@ -174,9 +180,9 @@ impl RestoreRegistry {
                     })
                 },
             ),
-            forgotten: Arc::new(move |environment_ref: &str| {
-                if let Err(error) = forget.forget(environment_ref) {
-                    tracing::warn!(environment_ref, %error, "environment record could not be removed from the durable registry");
+            forgotten: Arc::new(move |record: &EnvironmentRecord| {
+                if let Err(error) = forget.forget(record) {
+                    tracing::warn!(environment_ref = %record.environment_ref, %error, "environment record could not be removed from the durable registry");
                 }
             }),
         }

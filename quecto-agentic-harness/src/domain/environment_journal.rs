@@ -53,15 +53,24 @@ pub struct EnvironmentJournal {
     /// base directory. `Err` means the journal could not allocate; the
     /// registry then refuses to mint (review F9, #2033) — a counter minted
     /// from memory could collide with a ref a live session holds.
-    pub allocate_ref: Arc<dyn Fn() -> Result<u64, String> + Send + Sync>,
+    /// The floor is one above every ref this registry still holds, so a
+    /// record the file has forgotten (another process's gc) is never
+    /// reissued under this session (#2070).
+    pub allocate_ref: Arc<dyn Fn(u64) -> Result<u64, String> + Send + Sync>,
+    /// Give an allocated number back unrecorded (#2070): the create it was
+    /// minted for failed. Best effort; a failure is logged by the adapter
+    /// and the number expires on its own.
+    pub release_ref: Arc<dyn Fn(u64) + Send + Sync>,
     /// A record was committed or one of its persisted fields changed. With
     /// `expected` the write is compare-and-set: applied only while the
     /// record on file still has that status (review F5, #2033 — a record
     /// another session created is written conditionally, never replaced
     /// whole, so a joiner's inspect cannot revert its creator's `retained`).
     pub recorded: Arc<RecordedFn>,
-    /// A record was removed (a rolled-back create).
-    pub forgotten: Arc<dyn Fn(&str) + Send + Sync>,
+    /// A record was removed (a rolled-back create). The whole record goes
+    /// so the file removes it only while the ref still names this
+    /// environment (#2070).
+    pub forgotten: Arc<dyn Fn(&EnvironmentRecord) + Send + Sync>,
     /// Retry a startup read that failed (round 3 L2, #2033): the store's
     /// records as a restore would seed them, or the store's account of
     /// why it still cannot be read. Called by a registry that carries a
