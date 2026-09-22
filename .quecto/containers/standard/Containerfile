@@ -54,6 +54,10 @@ RUN curl --proto '=https' --tlsv1.2 --fail --show-error --silent \
  && cargo deny --version \
  && cargo machete --version
 
+# Keep the installed toolchain in /opt, but give each container's non-root
+# agent a writable Cargo registry for dependencies absent from the image.
+ENV CARGO_HOME=/tmp/quecto-cargo
+
 # What this image promises its agents. `quecto container doctor` runs the
 # image and fails, naming the tool, if any of these is not on PATH. The check
 # is the image's own: an image without this label is asked for nothing beyond
