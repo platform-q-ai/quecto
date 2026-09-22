@@ -15,6 +15,8 @@ use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControl;
 struct Commands {
     killed: Mutex<Vec<String>>,
     refuse: Option<String>,
+    /// A kill that never returns (a hung runtime).
+    hang: Option<String>,
 }
 
 impl EnvironmentProcessCommands for Commands {
@@ -37,6 +39,11 @@ impl EnvironmentProcessCommands for Commands {
     ) -> PortFuture<'a, Result<(), String>> {
         Box::pin(async move {
             self.killed.lock().unwrap().push(environment_id.to_string());
+            if let Some(hung) = &self.hang
+                && environment_id.ends_with(hung)
+            {
+                std::future::pending::<()>().await;
+            }
             match &self.refuse {
                 Some(detail) if environment_id.ends_with(detail) => Err("kill refused".into()),
                 _ => Ok(()),
@@ -111,6 +118,7 @@ async fn only_this_sessions_emptied_retained_environments_are_ended() {
     let commands = Arc::new(Commands {
         killed: Mutex::new(vec![]),
         refuse: Some(refused.clone()),
+        hang: None,
     });
     let slot = EnvironmentControlSlot::default();
     assert!(slot.install(control(&reg, commands.clone())));
@@ -167,4 +175,37 @@ fn the_rule_is_created_retained_and_empty() {
             "{label}"
         );
     }
+}
+
+#[tokio::test]
+async fn a_kill_that_hangs_is_reported_and_the_next_one_still_runs() {
+    use EnvironmentOrigin::Created;
+    use EnvironmentStatus::Retained;
+    let reg = EnvironmentRegistry::new();
+    let hung = record(&reg, Retained, Created, &[]);
+    let next = record(&reg, Retained, Created, &[]);
+    let commands = Arc::new(Commands {
+        killed: Mutex::new(vec![]),
+        refuse: None,
+        hang: Some(hung.clone()),
+    });
+    let slot = EnvironmentControlSlot::default();
+    assert!(slot.install(control(&reg, commands.clone())));
+    let ended = SlotRetainedEnvironmentTeardown::with_kill_bound(slot, Duration::from_millis(50))
+        .end_emptied_retained()
+        .await;
+    assert_eq!(ended.len(), 2);
+    assert_eq!(ended[0].0, hung);
+    assert!(
+        ended[0]
+            .1
+            .as_ref()
+            .unwrap_err()
+            .contains("did not finish within 0s"),
+        "{:?}",
+        ended[0]
+    );
+    assert_eq!(ended[1], (next.clone(), Ok(())));
+    assert_eq!(reg.get(&hung).unwrap().status, EnvironmentStatus::Killing);
+    assert_eq!(reg.get(&next).unwrap().status, EnvironmentStatus::Stopped);
 }

@@ -205,7 +205,6 @@ impl Fx {
                 self._tmp.path(),
             ),
             fleet_teardown: None,
-            owner_exit: None,
             discovery: list_handle(self._tmp.path()),
         }
     }

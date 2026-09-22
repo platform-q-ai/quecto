@@ -69,6 +69,9 @@ pub struct ConnectionTeardown {
     /// The fleet teardown (#1938) a busy-path `delete_all_subagents` invokes.
     pub fleet: Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>,
     pub busy: BusyFlag,
+    /// The owner's exit announcement (#2070) the reader task raises on the
+    /// owning TUI's exit persist and withdraws when that connection closes.
+    pub owner_exit: Arc<dyn crate::application::subagents::ports::OwnerExitAnnouncement>,
 }
 
 impl ConnectionTeardown {

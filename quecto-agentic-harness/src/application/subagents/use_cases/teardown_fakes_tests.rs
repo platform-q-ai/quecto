@@ -245,9 +245,9 @@ impl ShutdownSessionPersistence for FakePersistence {
     }
 }
 
-/// The owner's exit announcement (#2070): a flag the test sets directly.
+/// The owner's exit announcement (#2070): the test raises and withdraws it.
 #[derive(Default)]
-pub struct FakeOwnerExit(pub AtomicBool);
+pub struct FakeOwnerExit(pub Mutex<Option<u64>>);
 
 impl FakeOwnerExit {
     pub fn new() -> Arc<Self> {
@@ -256,12 +256,19 @@ impl FakeOwnerExit {
 }
 
 impl OwnerExitAnnouncement for FakeOwnerExit {
-    fn announce(&self) {
-        self.0.store(true, Ordering::SeqCst);
+    fn announce(&self, client: u64) {
+        *self.0.lock().unwrap() = Some(client);
+    }
+
+    fn withdraw(&self, client: u64) {
+        let mut held = self.0.lock().unwrap();
+        if *held == Some(client) {
+            *held = None;
+        }
     }
 
     fn announced(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.0.lock().unwrap().is_some()
     }
 }
 

@@ -7,8 +7,6 @@ use super::uds_dispatch_forwarding::try_forward_subagent_targeted_command;
 pub(super) use super::uds_dispatch_get_message_forward::{
     ForwardGetMessage, forward_subagent_get_message,
 };
-#[path = "uds_owner_exit.rs"]
-pub(super) mod uds_owner_exit;
 use super::uds_dispatch_runtime::{SetModelArgs, handle_set_effort, handle_set_model};
 #[cfg(test)]
 pub(super) use super::uds_dispatch_session::{
@@ -175,7 +173,6 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
                 }
                 _ => SubagentRestoreReason::LegacyUnspecified,
             };
-            uds_owner_exit::announce_owner_exit(ctx, reason);
             let saved = ctx
                 .save_session
                 .save(

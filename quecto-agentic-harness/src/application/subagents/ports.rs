@@ -154,14 +154,24 @@ pub trait TurnCancellation: Send + Sync {
 /// the shutdown that follows is then the owner's word: its fleet teardown
 /// gives every swarm's environment up. An unannounced shutdown (a crashed or
 /// killed client, a logout, an operator's signal) is not, and keeps them.
+///
+/// The announcement is held by the client that made it and withdrawn when
+/// that client's connection closes without the shutdown having been
+/// admitted: an owner that dies in its exit window (or a client that
+/// detaches after an old-style announcement) leaves nothing raised for a
+/// later, unannounced shutdown to mistake for its word. The client is an
+/// opaque connection number.
 pub trait OwnerExitAnnouncement: Send + Sync {
-    fn announce(&self);
+    fn announce(&self, client: u64);
+    fn withdraw(&self, client: u64);
     fn announced(&self) -> bool;
 }
 
-/// Ends the environments this session emptied and kept `retained` — a
-/// coordinator that crashed earlier left its box behind — once the owner
-/// exits (#2070). Each answer names the environment and how its end went.
+/// Ends the environments this harness process created, emptied and kept
+/// `retained` — a coordinator that crashed earlier left its box behind —
+/// once the owner exits (#2070). Boxes an earlier process created are
+/// `restored`, not this process's, and stay explicit-kill-only. Each answer
+/// names the environment and how its end went.
 pub trait RetainedEnvironmentTeardown: Send + Sync {
     fn end_emptied_retained(&self) -> PortFuture<'_, Vec<(String, Result<(), String>)>>;
 }

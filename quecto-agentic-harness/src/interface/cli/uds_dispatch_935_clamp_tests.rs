@@ -108,7 +108,6 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
                 tmp.path(),
             ),
             fleet_teardown: None,
-            owner_exit: None,
             discovery: list_handle(tmp.path()),
         };
         assert!(!dispatch_command(cmd, &mut ctx).await);

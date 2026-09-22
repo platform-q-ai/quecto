@@ -63,6 +63,7 @@ fn rig_with(binding: ParentControlBinding, cancellation: Arc<FakeCancellation>) 
             controller,
             fleet: fleet.fleet,
             busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            owner_exit: FakeOwnerExit::new(),
         }),
         cancellation,
         routing,

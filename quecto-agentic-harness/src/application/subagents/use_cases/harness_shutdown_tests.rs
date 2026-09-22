@@ -149,9 +149,9 @@ async fn execute_detaches_the_run_and_records_the_common_teardown_in_order() {
             RoutingCall::Shutdown(identity("D", 1), ShutdownReason::ParentShutdown),
         ]
     );
-    // #2070: a shutdown is never the owner's word, whatever reason admitted
-    // it (here `OperatorRequest`, which a vanished last client also uses): a
-    // swarm among the children keeps its environment.
+    // #2070: an unannounced shutdown is never the owner's word, whatever
+    // reason admitted it (here `OperatorRequest`, which a vanished last
+    // client also uses): a swarm among the children keeps its environment.
     let causes = rig.fleet.compensation.calls();
     assert_eq!(causes.len(), 2);
     assert!(

@@ -334,7 +334,6 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
             dir.path(),
         ),
         fleet_teardown: None,
-        owner_exit: None,
         discovery: list_handle(dir.path()),
     };
 

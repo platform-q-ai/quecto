@@ -23,7 +23,7 @@ async fn an_announced_exit_tears_the_fleet_down_on_the_owners_authority_and_ends
         ("C3".to_string(), Ok(())),
         ("C7".to_string(), Err("kill refused".to_string())),
     ];
-    rig.owner_exit.announce();
+    rig.owner_exit.announce(1);
     // The TUI's ordinary exit reaches the harness as a bare signal.
     let outcome = shut_down(&rig, ShutdownReason::TerminationSignal).await;
     assert!(outcome.owner_exit);
@@ -74,7 +74,7 @@ async fn the_retained_environments_are_ended_after_the_fleet_and_only_once() {
     // A re-driven admission must not ask twice: the step is recorded like
     // every other.
     let rig = rig();
-    rig.owner_exit.announce();
+    rig.owner_exit.announce(1);
     shut_down(&rig, ShutdownReason::TerminationSignal).await;
     let token = rig
         .prepare
@@ -110,7 +110,7 @@ async fn the_authority_is_decided_once_an_announcement_after_the_fleet_ran_chang
     }
     rig.spawner.abort_latest().await;
     assert!(joiner.await.unwrap().is_err());
-    rig.owner_exit.announce();
+    rig.owner_exit.announce(1);
     rig.exit.hold.store(false, Ordering::SeqCst);
     let outcome = rig.execute.execute(&token).await.unwrap();
     assert!(!outcome.owner_exit);

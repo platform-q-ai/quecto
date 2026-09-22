@@ -217,7 +217,6 @@ impl Fixture {
             switch: handles.switch.clone(),
             catalogue: catalogue_handles(self._tmp.path()),
             fleet_teardown: None,
-            owner_exit: None,
             discovery: handles.discovery.clone(),
         }
     }

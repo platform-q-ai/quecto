@@ -487,17 +487,24 @@ impl TeardownCompensation for Rows {
 
 /// A fully wired two-phase transaction over the fakes above, with the
 /// fleet teardown as its children step.
-/// The owner's exit announcement (#2070): raised by the test.
+/// The owner's exit announcement (#2070): raised and withdrawn by the test.
 #[derive(Default)]
-pub struct OwnerExit(pub AtomicBool);
+pub struct OwnerExit(pub Mutex<Option<u64>>);
 
 impl OwnerExitAnnouncement for OwnerExit {
-    fn announce(&self) {
-        self.0.store(true, Ordering::SeqCst);
+    fn announce(&self, client: u64) {
+        *self.0.lock().unwrap() = Some(client);
+    }
+
+    fn withdraw(&self, client: u64) {
+        let mut held = self.0.lock().unwrap();
+        if *held == Some(client) {
+            *held = None;
+        }
     }
 
     fn announced(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.0.lock().unwrap().is_some()
     }
 }
 

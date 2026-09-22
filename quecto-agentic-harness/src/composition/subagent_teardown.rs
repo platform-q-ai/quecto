@@ -128,7 +128,7 @@ pub fn build_teardown_graph(inputs: TeardownLoopInputs) -> TeardownHandles {
             persistence: persistence.clone(),
             exit: exit.clone(),
             spawner: Arc::new(TokioShutdownRunSpawner),
-            owner_exit: inputs.owner_exit,
+            owner_exit: inputs.owner_exit.clone(),
             retained: SlotRetainedEnvironmentTeardown::new(
                 inputs.environment_control.unwrap_or_default(),
             ),
@@ -161,6 +161,7 @@ pub fn build_teardown_graph(inputs: TeardownLoopInputs) -> TeardownHandles {
             controller: controller.clone(),
             fleet: fleet.clone(),
             busy: inputs.busy,
+            owner_exit: inputs.owner_exit,
         }),
         controller,
         fleet,

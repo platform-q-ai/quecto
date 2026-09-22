@@ -23,7 +23,8 @@ pub enum MemberFinalizeMode {
     /// The owner explicitly ended everything it owns (#2070): delete-all, or
     /// a session transition that is going to succeed. Its swarms end with it,
     /// so nothing is kept — whatever state their runs are in. A harness that
-    /// is shutting down is NOT this and stays a `ParentKill`: that can be a
+    /// is shutting down is this only when its owner announced the exit
+    /// first; unannounced it stays a `ParentKill`, because that can be a
     /// crash (a signal, its last client gone, its parent lost).
     OwnerTeardown,
     /// Rollback of a failed join into an environment someone else created.

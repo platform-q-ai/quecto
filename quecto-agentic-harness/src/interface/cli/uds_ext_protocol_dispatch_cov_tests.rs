@@ -85,7 +85,6 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
             tmp.path(),
         ),
         fleet_teardown: None,
-        owner_exit: None,
         discovery: list_handle(tmp.path()),
     };
 
@@ -155,7 +154,6 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
             tmp.path(),
         ),
         fleet_teardown: None,
-        owner_exit: None,
         discovery: list_handle(tmp.path()),
     };
 
@@ -226,7 +224,6 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
             tmp.path(),
         ),
         fleet_teardown: None,
-        owner_exit: None,
         discovery: list_handle(tmp.path()),
     };
 

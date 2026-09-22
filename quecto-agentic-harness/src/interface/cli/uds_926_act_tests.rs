@@ -112,7 +112,6 @@ impl ActEnv {
                 self.tmp.path(),
             ),
             fleet_teardown: None,
-            owner_exit: None,
             discovery: list_handle(self.tmp.path()),
         }
     }

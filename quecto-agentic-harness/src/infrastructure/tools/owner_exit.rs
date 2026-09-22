@@ -1,15 +1,14 @@
-//! The owner's exit announcement (#2070) as one shared flag: the dispatch
-//! loop raises it when the owning TUI's exit persist arrives, the harness
-//! shutdown reads it. Never lowered — a harness the owner has said goodbye
-//! to does not go on to serve another owner.
+//! The owner's exit announcement (#2070) as one shared cell: the reader task
+//! of the announcing connection raises it, the harness shutdown reads it,
+//! and the same connection's close withdraws it — so a raised announcement
+//! never outlives the client that made it.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::application::subagents::ports::OwnerExitAnnouncement;
 
 #[derive(Debug, Default)]
-pub struct OwnerExitFlag(AtomicBool);
+pub struct OwnerExitFlag(Mutex<Option<u64>>);
 
 impl OwnerExitFlag {
     pub fn new() -> Arc<Self> {
@@ -18,12 +17,19 @@ impl OwnerExitFlag {
 }
 
 impl OwnerExitAnnouncement for OwnerExitFlag {
-    fn announce(&self) {
-        self.0.store(true, Ordering::SeqCst);
+    fn announce(&self, client: u64) {
+        *self.0.lock().unwrap() = Some(client);
+    }
+
+    fn withdraw(&self, client: u64) {
+        let mut held = self.0.lock().unwrap();
+        if *held == Some(client) {
+            *held = None;
+        }
     }
 
     fn announced(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.0.lock().unwrap().is_some()
     }
 }
 

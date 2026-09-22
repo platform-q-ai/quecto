@@ -29,7 +29,7 @@ async fn port_is_object_safe_and_answers_per_environment() {
 async fn an_announced_exit_asks_once_after_the_fleet_and_reports_the_answers() {
     let harness = Harness::new(root_tree());
     *harness.retained.answer.lock().unwrap() = vec![("C2".into(), Ok(()))];
-    harness.owner_exit.announce();
+    harness.owner_exit.announce(1);
     let prepared = harness.prepared(ShutdownReason::TerminationSignal);
     let outcome = harness.execute.execute(&prepared.token).await.unwrap();
     assert_eq!(outcome.retained_environments, [("C2".to_string(), Ok(()))]);
