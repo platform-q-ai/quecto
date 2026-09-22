@@ -495,6 +495,8 @@ const NO_PID_FILES: &[&str] = &[
     "src/infrastructure/tools/subagent_teardown_registry.rs",
     "src/infrastructure/tools/subagent_teardown_wiring.rs",
     "src/infrastructure/tools/environment_member_shutdown.rs",
+    "src/infrastructure/tools/owner_exit.rs",
+    "src/infrastructure/tools/retained_environment_teardown.rs",
     "src/infrastructure/tools/swarm_member_termination.rs",
     "src/infrastructure/tools/subagent_cleanup.rs",
     "src/infrastructure/tools/subagent_monitor_exit.rs",

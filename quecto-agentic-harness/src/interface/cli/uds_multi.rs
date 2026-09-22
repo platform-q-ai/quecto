@@ -9,6 +9,8 @@
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::message::Message;
+use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot;
+use crate::infrastructure::tools::owner_exit::OwnerExitFlag;
 
 use super::protocol::AgentEvent;
 use super::uds::{
@@ -106,10 +108,8 @@ pub(super) struct MultiClientArgs<'a> {
     /// Composition's teardown handles builder; without it the loop runs with
     /// no teardown edge (unit rigs only).
     pub teardown_graph: Option<super::TeardownHandlesBuilder>,
-    /// The environment control slot the agent-control tools read (#2070):
-    /// an owner exit ends the emptied `retained` environments through it.
-    pub environment_control:
-        Option<crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot>,
+    /// The environment control slot (#2070): an owner exit ends retained boxes through it.
+    pub environment_control: Option<EnvironmentControlSlot>,
 }
 
 /// A command line from a client.
@@ -279,7 +279,6 @@ pub(super) async fn multi_client_loop(
     let bind_deadline = parent_control
         .as_ref()
         .map(|launch| launch.bind_deadline.clone());
-    let owner_exit = crate::infrastructure::tools::owner_exit::OwnerExitFlag::new();
     let teardown = teardown_graph.map(|build| {
         build(super::uds_teardown_handles::TeardownLoopInputs {
             owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
@@ -298,7 +297,7 @@ pub(super) async fn multi_client_loop(
             binding: parent_control
                 .map(|launch| launch.binding)
                 .unwrap_or_else(crate::domain::parent_control::ParentControlBinding::unlaunched),
-            owner_exit: owner_exit.clone(),
+            owner_exit: OwnerExitFlag::new(),
             environment_control,
         })
     });

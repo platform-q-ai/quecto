@@ -23,11 +23,23 @@ use crate::infrastructure::processes::containers::standard::integrity::refuse_al
 #[derive(Debug, Clone, Copy)]
 pub struct ScriptEnvironmentCommands {
     offload: bool,
+    /// Bound on one retained kill script (#2070): past it the script is
+    /// killed and the kill reported failed, so the record is `cleanup-failed`
+    /// with the reason and retryable — never a harness parked behind a
+    /// runtime that hangs on its remove. A kill takes seconds; an owner's
+    /// exit waits on this at most once.
+    kill_bound: std::time::Duration,
 }
+
+/// The default bound on one retained kill script.
+pub const KILL_SCRIPT_BOUND: std::time::Duration = std::time::Duration::from_secs(20);
 
 impl Default for ScriptEnvironmentCommands {
     fn default() -> Self {
-        Self { offload: true }
+        Self {
+            offload: true,
+            kill_bound: KILL_SCRIPT_BOUND,
+        }
     }
 }
 
@@ -35,7 +47,16 @@ impl ScriptEnvironmentCommands {
     /// Scripts run on the calling thread, which must not be an async
     /// runtime worker.
     pub const fn inline() -> Self {
-        Self { offload: false }
+        Self {
+            offload: false,
+            kill_bound: KILL_SCRIPT_BOUND,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_kill_bound(mut self, kill_bound: std::time::Duration) -> Self {
+        self.kill_bound = kill_bound;
+        self
     }
 
     /// Run `job` off the async runtime when one is present and offloading
@@ -84,8 +105,9 @@ impl EnvironmentProcessCommands for ScriptEnvironmentCommands {
     ) -> PortFuture<'a, Result<(), String>> {
         let environment_id = environment_id.to_owned();
         let argv = argv.to_vec();
+        let bound = self.kill_bound;
         Box::pin(async move {
-            self.blocking(move || run_kill_sync(&environment_id, &argv))
+            self.blocking(move || run_kill_sync(&environment_id, &argv, bound))
                 .await?
         })
     }
@@ -139,7 +161,11 @@ fn run_script_sync(environment_id: &str, argv: &[String]) {
 /// stderr kept as a bounded tail. The environment is stopped only on success.
 /// An altered standard script is refused before it runs (the use case
 /// leaves the retryable `cleanup-failed` state with the reason).
-pub(super) fn run_kill_sync(environment_id: &str, argv: &[String]) -> Result<(), String> {
+pub(super) fn run_kill_sync(
+    environment_id: &str,
+    argv: &[String],
+    bound: std::time::Duration,
+) -> Result<(), String> {
     let Some((program, args)) = argv.split_first() else {
         return Err("no retained kill argv".to_string());
     };
@@ -147,7 +173,7 @@ pub(super) fn run_kill_sync(environment_id: &str, argv: &[String]) -> Result<(),
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
-    match run_sync_capturing_stderr_tail(cmd, ScriptStdout::Discard, std::time::Duration::MAX) {
+    match run_sync_capturing_stderr_tail(cmd, ScriptStdout::Discard, bound) {
         Ok(output) if output.status.success() => Ok(()),
         Ok(output) => Err(format!(
             "retained kill exited with {}: {}",

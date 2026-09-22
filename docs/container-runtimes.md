@@ -742,9 +742,10 @@ parent's process group: the TUI's ordinary exit (Ctrl-D) terminates the
 harness by signal, and nothing but the harness running this script can reach
 the environment. The harness therefore tears down every subagent and
 environment on the signal before it exits, and the TUI's exit budget (derived
-from the fleet it last saw) bounds how long the harness may take; on an
-announced TUI exit each already-emptied `retained` box gets its own 10 s
-kill bound on top. The exception is a swarm
+from the fleet it last saw) bounds how long the harness may take; every
+retained kill script is itself bounded (20 s, then killed and reported), and
+on an announced TUI exit the already-emptied `retained` boxes are killed
+concurrently under that same bound. The exception is a swarm
 its owner has not closed (#1924, #2070): a signal can be a crash as easily as
 an exit, so that environment is `retained`, not killed — unless the TUI
 announced its exit first (the `persist_session` with

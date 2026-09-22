@@ -6,7 +6,6 @@
 //! tools) has nothing to end.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::application::subagents::ports::{PortFuture, RetainedEnvironmentTeardown};
 use crate::domain::environment_registry::{
@@ -15,29 +14,13 @@ use crate::domain::environment_registry::{
 
 use super::agent_cmd_containers::EnvironmentControlSlot;
 
-/// Bound on one environment's kill. The owner is waiting for the harness
-/// to exit on a budget derived from the fleet, not from these boxes: a
-/// runtime that hangs on `rm` is reported and left, not waited for. The
-/// kill job runs on; its record stays `killing` and an explicit
-/// `kill_container` retries it.
-pub const KILL_BOUND: Duration = Duration::from_secs(10);
-
 pub struct SlotRetainedEnvironmentTeardown {
     slot: EnvironmentControlSlot,
-    kill_bound: Duration,
 }
 
 impl SlotRetainedEnvironmentTeardown {
     pub fn new(slot: EnvironmentControlSlot) -> Arc<Self> {
-        Arc::new(Self {
-            slot,
-            kill_bound: KILL_BOUND,
-        })
-    }
-
-    #[cfg(test)]
-    pub fn with_kill_bound(slot: EnvironmentControlSlot, kill_bound: Duration) -> Arc<Self> {
-        Arc::new(Self { slot, kill_bound })
+        Arc::new(Self { slot })
     }
 }
 
@@ -50,32 +33,33 @@ pub fn ends_on_owner_exit(record: &EnvironmentRecord) -> bool {
 }
 
 impl RetainedEnvironmentTeardown for SlotRetainedEnvironmentTeardown {
+    /// The kills run concurrently: the owner's exit waits for the longest
+    /// one, not the sum, and each kill script is bounded by the command
+    /// adapter (a hung runtime leaves a `cleanup-failed` record, retryable
+    /// by an explicit `kill_container`).
     fn end_emptied_retained(&self) -> PortFuture<'_, Vec<(String, Result<(), String>)>> {
         Box::pin(async move {
             let Some(control) = self.slot.get() else {
                 return Vec::new();
             };
-            let mut ended = Vec::new();
-            for record in control.list.execute() {
-                if !ends_on_owner_exit(&record) {
-                    continue;
-                }
-                let target = EnvironmentTarget::Ref(record.environment_ref.clone());
-                let outcome = match tokio::time::timeout(
-                    self.kill_bound,
-                    control.kill.kill_container(&target),
-                )
-                .await
-                {
-                    Ok(killed) => killed.map(|_| ()).map_err(|error| error.to_string()),
-                    Err(_) => Err(format!(
-                        "kill did not finish within {}s; the record stays killing, retry kill_container",
-                        self.kill_bound.as_secs()
-                    )),
-                };
-                ended.push((record.environment_ref, outcome));
-            }
-            ended
+            let kills = control
+                .list
+                .execute()
+                .into_iter()
+                .filter(ends_on_owner_exit)
+                .map(|record| {
+                    let kill = control.kill.clone();
+                    async move {
+                        let target = EnvironmentTarget::Ref(record.environment_ref.clone());
+                        let outcome = kill
+                            .kill_container(&target)
+                            .await
+                            .map(|_| ())
+                            .map_err(|error| error.to_string());
+                        (record.environment_ref, outcome)
+                    }
+                });
+            futures::future::join_all(kills).await
         })
     }
 }

@@ -346,16 +346,17 @@ then the owner's word: its fleet teardown gives every swarm's container up,
 and the harness also ends the environments this harness process had
 created, emptied and kept `retained` earlier (a coordinator that crashed
 and left its box behind; one a previous process created is `restored` and
-stays explicit-kill-only). Each of those kills is bounded (10 s): a runtime
-that hangs is reported, its record left `killing` for a later
-`kill_container`, and the exit goes on. A TUI that is killed or crashes
-sends no announcement, so that shutdown keeps every swarm resumable;
+stays explicit-kill-only). Those kills run concurrently, and every retained
+kill script is bounded (20 s, `KILL_SCRIPT_BOUND`): past it the script is
+killed and the record is `cleanup-failed` with the reason, retryable by an
+explicit `kill_container`, and the exit goes on. A TUI that is killed or
+crashes sends no announcement, so that shutdown keeps every swarm resumable;
 `--detach-on-exit` announces nothing either, because the harness lives on.
-The announcement is held by the connection that made it and withdrawn if
-that connection closes before the shutdown was admitted — a TUI that dies
-in its exit window leaves nothing raised for a later crash to mistake for
-the owner's word — and it is read on the connection's reader task, so an
-exit while a turn is running still counts.
+The announcement is held by the connection that made it and withdrawn when
+that connection closes — a TUI that dies in its exit window leaves nothing
+raised for a later crash to mistake for the owner's word; a shutdown that
+already read it decided once and is unaffected — and it is read on the
+connection's reader task, so an exit while a turn is running still counts.
 
 Nothing else ends a swarm. While its run has not been closed — `running`,
 `paused`, paused holding an outcome nobody closed yet, or `cancelled` (the

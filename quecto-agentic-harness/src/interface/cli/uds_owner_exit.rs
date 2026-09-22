@@ -12,6 +12,11 @@ pub(super) fn announce_if_exit_persist(
     client_id: u64,
     line: &str,
 ) -> bool {
+    // Gate on the wire value before parsing: every inbound line passes
+    // here, on the reader task.
+    if !line.contains(SubagentRestoreReason::ORDINARY_TUI_EXIT_STOPPED_WIRE) {
+        return false;
+    }
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return false;
     };

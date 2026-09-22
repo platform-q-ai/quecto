@@ -3,6 +3,7 @@
 //! that still has a member — and nothing at all while the slot is empty.
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use super::*;
 use crate::application::environments::ports::{
@@ -15,7 +16,7 @@ use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControl;
 struct Commands {
     killed: Mutex<Vec<String>>,
     refuse: Option<String>,
-    /// A kill that never returns (a hung runtime).
+    /// A kill that takes 300 ms (a slow runtime).
     hang: Option<String>,
 }
 
@@ -39,10 +40,10 @@ impl EnvironmentProcessCommands for Commands {
     ) -> PortFuture<'a, Result<(), String>> {
         Box::pin(async move {
             self.killed.lock().unwrap().push(environment_id.to_string());
-            if let Some(hung) = &self.hang
-                && environment_id.ends_with(hung)
+            if let Some(slow) = &self.hang
+                && environment_id.ends_with(slow)
             {
-                std::future::pending::<()>().await;
+                tokio::time::sleep(Duration::from_millis(300)).await;
             }
             match &self.refuse {
                 Some(detail) if environment_id.ends_with(detail) => Err("kill refused".into()),
@@ -178,34 +179,32 @@ fn the_rule_is_created_retained_and_empty() {
 }
 
 #[tokio::test]
-async fn a_kill_that_hangs_is_reported_and_the_next_one_still_runs() {
+async fn the_kills_run_concurrently_and_a_failed_one_leaves_a_truthful_record() {
     use EnvironmentOrigin::Created;
     use EnvironmentStatus::Retained;
     let reg = EnvironmentRegistry::new();
-    let hung = record(&reg, Retained, Created, &[]);
-    let next = record(&reg, Retained, Created, &[]);
+    let slow = record(&reg, Retained, Created, &[]);
+    let refused = record(&reg, Retained, Created, &[]);
     let commands = Arc::new(Commands {
         killed: Mutex::new(vec![]),
-        refuse: None,
-        hang: Some(hung.clone()),
+        refuse: Some(refused.clone()),
+        hang: Some(slow.clone()),
     });
     let slot = EnvironmentControlSlot::default();
     assert!(slot.install(control(&reg, commands.clone())));
-    let ended = SlotRetainedEnvironmentTeardown::with_kill_bound(slot, Duration::from_millis(50))
-        .end_emptied_retained()
-        .await;
+    let ended = tokio::time::timeout(
+        Duration::from_secs(5),
+        SlotRetainedEnvironmentTeardown::new(slot).end_emptied_retained(),
+    )
+    .await
+    .expect("a slow kill does not serialise the others");
     assert_eq!(ended.len(), 2);
-    assert_eq!(ended[0].0, hung);
-    assert!(
-        ended[0]
-            .1
-            .as_ref()
-            .unwrap_err()
-            .contains("did not finish within 0s"),
-        "{:?}",
-        ended[0]
+    assert_eq!(ended[0].0, slow);
+    assert!(ended[0].1.is_ok(), "{:?}", ended[0]);
+    assert!(ended[1].1.is_err(), "{:?}", ended[1]);
+    assert_eq!(reg.get(&slow).unwrap().status, EnvironmentStatus::Stopped);
+    assert_eq!(
+        reg.get(&refused).unwrap().status,
+        EnvironmentStatus::CleanupFailed
     );
-    assert_eq!(ended[1], (next.clone(), Ok(())));
-    assert_eq!(reg.get(&hung).unwrap().status, EnvironmentStatus::Killing);
-    assert_eq!(reg.get(&next).unwrap().status, EnvironmentStatus::Stopped);
 }

@@ -792,8 +792,9 @@ snapshot, restored from a session or read from a coordination store.
   transition that succeeds, and an ordinary TUI exit the TUI announced
   beforehand (its exit persist's `ordinary_tui_exit_stopped`), remove the
   container; that announced exit also ends this harness process's
-  already-emptied `retained` environments (each kill bounded; a hung one
-  is left `killing` for an explicit `kill_container`).
+  already-emptied `retained` environments (concurrently; every retained
+  kill script is bounded at 20 s, past which it is killed and the record is
+  `cleanup-failed`, retryable by an explicit `kill_container`).
   `kill_container` asks every member to shut down first and runs the
   retained `kill` argv exactly once, only once all members settled.
 

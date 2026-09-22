@@ -7,6 +7,7 @@ pub(crate) use crate::domain::conversation_view::inject_system_prompt;
 pub(crate) use crate::domain::conversation_view::remove_injected_system_prompt;
 #[cfg(test)]
 use crate::domain::message::Role;
+use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot;
 
 #[cfg(test)]
 #[path = "uds_lifecycle_cov2_tests.rs"]
@@ -52,8 +53,7 @@ pub struct UdsLoopArgs<'a> {
     pub harness_lifecycle:
         Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
     /// The environment control slot (#2070) the loop hands its teardown.
-    pub environment_control:
-        Option<crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot>,
+    pub environment_control: Option<EnvironmentControlSlot>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     /// Pre-created broadcast channel for workflow event emission (#598).
@@ -73,7 +73,10 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
             return 1;
         }
     };
-    rt.block_on(uds_loop_async(args))
+    let code = rt.block_on(uds_loop_async(args));
+    // Persisted and exit signalled: a blocking job still running gets 5 s.
+    rt.shutdown_timeout(std::time::Duration::from_secs(5));
+    code
 }
 use super::uds_socket::{SocketGuard, bind_secure_socket};
 

@@ -485,8 +485,6 @@ impl TeardownCompensation for Rows {
     }
 }
 
-/// A fully wired two-phase transaction over the fakes above, with the
-/// fleet teardown as its children step.
 /// The owner's exit announcement (#2070): raised and withdrawn by the test.
 #[derive(Default)]
 pub struct OwnerExit(pub Mutex<Option<u64>>);
@@ -524,6 +522,8 @@ impl RetainedEnvironmentTeardown for RetainedEnvironments {
     }
 }
 
+/// A fully wired two-phase transaction over the fakes above, with the
+/// fleet teardown as its children step.
 pub struct Harness {
     pub lifecycle: Arc<Lifecycle>,
     pub routing: Arc<Routing>,

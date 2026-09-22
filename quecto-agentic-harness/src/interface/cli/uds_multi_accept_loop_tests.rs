@@ -21,7 +21,7 @@ use crate::interface::cli::uds_cancel::CancelSlot;
 /// Build `AcceptLoopArgs` wired to a listener at `socket_path`, with the given
 /// busy flag and subagent registry. Returns the args plus the broadcast/cmd
 /// senders so the caller keeps them alive for the duration of the test.
-fn make_args(
+pub(super) fn make_args(
     socket_path: &std::path::Path,
     busy: bool,
     subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
@@ -86,7 +86,7 @@ fn make_args(
 
 /// Read whatever bytes a freshly connected client receives within `timeout`,
 /// stopping once the read either blocks past the deadline or the peer is idle.
-async fn read_available(
+pub(super) async fn read_available(
     stream: &mut tokio::net::UnixStream,
     timeout: std::time::Duration,
 ) -> String {
@@ -425,3 +425,6 @@ async fn busy_inspection_accepts_production_projection_without_dispatch() {
     assert_eq!(response["data"]["automaticTurnsSuspended"], false);
     assert_eq!(response["data"]["repeatedFailureNotifications"], 0);
 }
+
+#[path = "uds_multi_owner_exit_tests.rs"]
+mod owner_exit_tests;
