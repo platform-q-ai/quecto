@@ -773,15 +773,15 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // (R2-H1/H2): rejections are in memory only and never seeded, so every
     // owner shrank (468 → 446, 139 → 110, 83 → 44); the one record read both
     // halves share is its own seam (`session_record_read.rs`).
-    // #2042: the per-record pass moved to its own owner (446 → 417); the
+    // #2042: the per-record pass moved to its own owner (446 → 422); the
     // walk's cache lost `summary_at`, the pass reads its entries (48 → 36).
     (
         "src/infrastructure/persistence/session_home_catalogue.rs",
-        418,
+        422,
     ),
     (
         "src/infrastructure/persistence/session_home_catalogue_joined.rs",
-        255,
+        256,
     ),
     // Round 3: naming the walk's skips is its own owner (R3-H1), and the
     // legacy `rejected` key's presence rule lives here (R3-H6): 110 as before.

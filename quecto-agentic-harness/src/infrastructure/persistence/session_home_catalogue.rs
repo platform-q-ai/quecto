@@ -195,7 +195,11 @@ impl FileSessionHomeCatalogue {
         walk: &mut JoinedWalk,
     ) {
         let verdicts = self.verdicts(path, cache, walk);
-        let summary = verdicts.listed.then(|| walk.summaries.last()).flatten();
+        let summary = if verdicts.listed {
+            walk.summaries.last()
+        } else {
+            None
+        };
         match verdicts.identity {
             Ok(identity) => {
                 let home = self.observe_home(path, &identity, records, summary);

@@ -92,6 +92,7 @@ impl FileSessionHomeCatalogue {
         let before = match self.record_stamp(path) {
             Ok(before) => before,
             Err(e) => {
+                tracing::warn!(path = %path.display(), detail = %e, "skipping not a regular session record while listing sessions");
                 walk.skipped
                     .push((name(), format!("not a regular session record: {e}")));
                 return RecordVerdicts {
