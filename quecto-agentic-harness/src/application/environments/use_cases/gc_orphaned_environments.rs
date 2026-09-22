@@ -44,8 +44,9 @@ use crate::domain::environment_registry::{
 use crate::domain::environment_retention::SwarmRunObservation;
 
 use super::super::dto::{
-    ContainerRuntimeTarget, DiagnosableContainerConfig, EnvironmentLiveness, GcCandidate, GcKept,
-    GcRefused, GcRemoval, GcReport, GcRequest, RuntimeContainer, state_dir_argument,
+    AbandonedRuns, ContainerRuntimeTarget, DiagnosableContainerConfig, EnvironmentLiveness,
+    GcCandidate, GcKept, GcRefused, GcRemoval, GcReport, GcRequest, RuntimeContainer,
+    state_dir_argument,
 };
 use super::super::ports::{
     ContainerConfigLookup, ContainerRuntimeInventory, EnvironmentProcess, HostedSwarmRunInspection,
@@ -55,6 +56,50 @@ use super::restore_registry::GONE_AT_RESTORE;
 /// A directory without a container younger than this is a create that may
 /// still be running its clone: kept, never collected.
 pub const CREATE_GRACE_SECS: u64 = 15 * 60;
+
+/// What the swarm store below a directory says keeps it.
+struct Hosting {
+    description: String,
+    /// The unfinished run, `id (state)`; `None` for an unreadable store,
+    /// which is never an abandoned run.
+    run: Option<String>,
+}
+
+/// Whether the operator's `--abandoned` policy collects a hosting
+/// directory nothing records, and why.
+enum Abandoned {
+    Collect(String),
+    Keep(String),
+}
+
+impl Hosting {
+    fn abandoned_after(&self, policy: &AbandonedRuns, age_secs: Option<u64>) -> Abandoned {
+        let Some(run) = &self.run else {
+            return Abandoned::Keep(
+                "an unreadable store is never an abandoned run; remove the directory by hand"
+                    .to_string(),
+            );
+        };
+        match policy {
+            AbandonedRuns::Keep => Abandoned::Keep(
+                "end the run, or remove the directory by hand, before it can be collected (or pass --abandoned)"
+                    .to_string(),
+            ),
+            AbandonedRuns::Collect => Abandoned::Collect(format!("{run}, collected on --abandoned")),
+            AbandonedRuns::OlderThan { secs, spelled } => match age_secs {
+                Some(age) if age >= *secs => Abandoned::Collect(format!(
+                    "{run}, {age}s old, collected on --abandoned-after {spelled}"
+                )),
+                Some(age) => Abandoned::Keep(format!(
+                    "the directory is {age}s old, younger than the {spelled} --abandoned-after"
+                )),
+                None => Abandoned::Keep(format!(
+                    "the directory's age could not be read, so it is never older than the {spelled} --abandoned-after"
+                )),
+            },
+        }
+    }
+}
 
 pub struct GcOrphanedEnvironments {
     registry: EnvironmentRegistry,
@@ -113,6 +158,8 @@ enum RecordScope {
 struct Scope<'a> {
     config: &'a DiagnosableContainerConfig,
     config_root: Option<PathBuf>,
+    /// The operator's policy for abandoned runs (#2070).
+    abandoned: AbandonedRuns,
     /// By environment ref, for every record of this config.
     records: BTreeMap<&'a str, RecordScope>,
 }
@@ -185,7 +232,7 @@ impl GcOrphanedEnvironments {
             .map(|record| (record.environment_id.as_str(), record))
             .collect();
 
-        let scope = self.scope(&config, &records);
+        let scope = self.scope(&config, &records, request.abandoned.clone());
         let mut roots: BTreeSet<PathBuf> = scope.config_root.clone().into_iter().collect();
         roots.extend(scope.records.values().filter_map(|s| match s {
             RecordScope::OwnRoot(root) => Some(root.clone()),
@@ -353,6 +400,7 @@ impl GcOrphanedEnvironments {
         &self,
         config: &'a DiagnosableContainerConfig,
         records: &'a [EnvironmentRecord],
+        abandoned: AbandonedRuns,
     ) -> Scope<'a> {
         let config_root = config.state_root();
         let canonical = config_root
@@ -381,6 +429,7 @@ impl GcOrphanedEnvironments {
                 .map(|record| (record.environment_ref.as_str(), scope_of(record)))
                 .collect(),
             config_root,
+            abandoned,
         }
     }
 
@@ -545,21 +594,35 @@ impl GcOrphanedEnvironments {
         // board and checkout (round 4 M1): the master exited before its
         // coordinator, nobody retained the box, and the store under the
         // directory says the run is not over. Read last — only for what
-        // would otherwise go — and kept with the run named.
+        // would otherwise go — and kept with the run named, unless nothing
+        // records it and the operator asked for abandoned runs (#2070).
+        let mut reason = reason;
         if let Some(hosting) = self.hosted_run_keeps(record, state_dir) {
-            let how = match record {
-                Some(_) => {
-                    "end the run (or remove the directory by hand if its board is unreadable) before it can be collected"
+            match (record, hosting.abandoned_after(&scope.abandoned, age_secs)) {
+                (None, Abandoned::Collect(why)) => {
+                    reason = format!("{reason}; its checkout hosts abandoned swarm run {why}");
                 }
-                None => {
-                    "nothing records it: end the run, or remove the directory by hand, before it can be collected"
+                (None, Abandoned::Keep(why)) => {
+                    keep(
+                        report,
+                        format!(
+                            "{reason}, but its checkout {}; nothing records it: {why}",
+                            hosting.description
+                        ),
+                    );
+                    return;
                 }
-            };
-            keep(
-                report,
-                format!("{reason}, but its checkout {hosting}; {how}"),
-            );
-            return;
+                (Some(_), _) => {
+                    keep(
+                        report,
+                        format!(
+                            "{reason}, but its checkout {}; end the run (or remove the directory by hand if its board is unreadable) before it can be collected",
+                            hosting.description
+                        ),
+                    );
+                    return;
+                }
+            }
         }
         report.removable.push(GcCandidate {
             environment_id: environment_id.to_string(),
@@ -571,28 +634,31 @@ impl GcOrphanedEnvironments {
     }
 
     /// Why the swarm store below a directory keeps it, when it does: it
-    /// hosts a created run that has not ended, or a store that cannot be
-    /// read (kept, as the finalizer keeps it: a destroyed box cannot be
+    /// hosts a created run its owner has not closed — the same rule the
+    /// finalizer keeps a box by (#2070), whatever the run's status — or a
+    /// store that cannot be read (kept likewise: a destroyed box cannot be
     /// recovered). Read through the record when there is one (its
     /// advertised checkout), else below the bare state dir.
     fn hosted_run_keeps(
         &self,
         record: Option<&EnvironmentRecord>,
         state_dir: Option<&Path>,
-    ) -> Option<String> {
+    ) -> Option<Hosting> {
         let observed = match (record, state_dir) {
             (Some(record), _) => self.hosted.inspect_hosted_run(record),
             (None, Some(dir)) => self.hosted.inspect_hosted_run_at(dir),
             (None, None) => return None,
         };
         match observed {
-            SwarmRunObservation::Run(run) if run.created() && !run.ended() => {
-                Some(format!("hosts swarm run {} ({})", run.id, run.describe()))
-            }
+            SwarmRunObservation::Run(run) if run.keeps_environment() => Some(Hosting {
+                description: format!("hosts swarm run {} ({})", run.id, run.describe()),
+                run: Some(format!("{} ({})", run.id, run.describe())),
+            }),
             SwarmRunObservation::Run(_) | SwarmRunObservation::NoStore => None,
-            SwarmRunObservation::Unreadable(error) => Some(format!(
-                "hosts a coordination store that could not be read ({error})"
-            )),
+            SwarmRunObservation::Unreadable(error) => Some(Hosting {
+                description: format!("hosts a coordination store that could not be read ({error})"),
+                run: None,
+            }),
         }
     }
 

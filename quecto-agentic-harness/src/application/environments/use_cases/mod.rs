@@ -30,6 +30,8 @@ mod finalize_environment_member_retention_tests;
 #[cfg(test)]
 mod finalize_environment_member_tests;
 #[cfg(test)]
+mod gc_orphaned_environments_abandoned_tests;
+#[cfg(test)]
 mod gc_orphaned_environments_hosted_tests;
 #[cfg(test)]
 mod gc_orphaned_environments_scope_tests;

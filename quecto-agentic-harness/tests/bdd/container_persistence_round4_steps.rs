@@ -202,3 +202,40 @@ fn then_gc_keeps_dir_hosting_run(world: &mut QuectoWorld, id: String) {
         world.stdout
     );
 }
+
+// ─── Abandoned runs (#2070) ──────────────────────────────────────────────────
+
+#[then(expr = "the gc report should keep {string} as younger than the {string} abandoned-after")]
+fn then_gc_keeps_dir_as_too_young(world: &mut QuectoWorld, id: String, spelled: String) {
+    let run_id = hosted_run_id(&state_dir(world).join(&id).join("workspace"));
+    let kept = world
+        .stdout
+        .lines()
+        .skip_while(|line| !line.starts_with("kept"))
+        .any(|line| {
+            line.starts_with(&format!("  {id}  "))
+                && line.contains(&format!("hosts swarm run {run_id} (running)"))
+                && line.contains(&format!("younger than the {spelled} --abandoned-after"))
+        });
+    assert!(kept, "{id} should be kept as too young:\n{}", world.stdout);
+}
+
+#[then(expr = "the gc report should list {string} as an abandoned swarm run")]
+fn then_gc_lists_dir_as_abandoned(world: &mut QuectoWorld, id: String) {
+    let run_id = hosted_run_id(&state_dir(world).join(&id).join("workspace"));
+    let listed = world
+        .stdout
+        .lines()
+        .take_while(|line| !line.starts_with("kept"))
+        .any(|line| {
+            line.starts_with(&format!("  {id}  "))
+                && line.contains("no registry record")
+                && line.contains(&format!("abandoned swarm run {run_id} (running)"))
+                && line.contains("collected on --abandoned")
+        });
+    assert!(
+        listed,
+        "{id} should be removable as abandoned:\n{}",
+        world.stdout
+    );
+}

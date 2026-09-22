@@ -162,6 +162,7 @@ quecto container ls [--all]        # live environments (--all: stopped too)
 quecto container kill <ref|name>   # retained kill, record → stopped
 quecto container gc --dry-run      # orphans of this config: container gone/exited AND no record or a stopped one
 quecto container gc [--name <config>]   # remove them (the config's inspect / inspect --list / cleanup)
+quecto container gc --abandoned-after 3d   # also collect unrecorded directories whose board still says a run is on, once 3 days old (--abandoned: regardless of age)
 ```
 
 `gc` keeps a `running`/`cleanup-failed` record, a `retained` one
@@ -169,9 +170,12 @@ whatever its container's state (a retained swarm box has exited by
 design; only `container kill` ends it), a state dir whose container runs
 or cannot be checked, a directory younger than 15 minutes without a
 container (a create in flight), and any stopped or unrecorded directory
-whose checkout still hosts a swarm run that has not ended (`hosts swarm
-run <id> (<status>)`; the board is the run's — kill explicitly, or end
-the run, to collect); it judges the config's `--state-dir` only (a
+whose checkout still hosts a swarm run its owner has not closed — running,
+paused, paused holding an outcome, cancelled (`hosts swarm run <id>
+(<status>)`; the board is the run's — kill explicitly, or end the run, to
+collect). An unrecorded such directory is an *abandoned run*: `--abandoned`
+collects them all, `--abandoned-after <Ns|Nm|Nh|Nd>` those at least that
+old, each with the reason naming the run and the flag; it judges the config's `--state-dir` only (a
 record's own retained cleanup may name one more root, for that record
 alone), and `--dry-run` writes nothing — not even to `environments.json`.
 It reports what it removed, kept and why. A `running` record whose box

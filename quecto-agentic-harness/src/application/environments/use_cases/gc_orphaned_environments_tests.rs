@@ -229,6 +229,7 @@ impl Rig {
             .execute(&GcRequest {
                 dry_run: true,
                 config: None,
+                abandoned: Default::default(),
             })
             .unwrap()
     }
@@ -548,6 +549,7 @@ fn the_collector_refuses_without_a_usable_config() {
         .execute(&GcRequest {
             dry_run: true,
             config: Some("other".into()),
+            abandoned: Default::default(),
         })
         .unwrap_err();
     assert!(refused.0.contains("unknown container config 'other'"));
@@ -619,6 +621,7 @@ fn a_dir_without_a_container_file_takes_its_liveness_from_the_listing() {
         .execute(&GcRequest {
             dry_run: false,
             config: None,
+            abandoned: Default::default(),
         })
         .unwrap();
     assert_eq!(
