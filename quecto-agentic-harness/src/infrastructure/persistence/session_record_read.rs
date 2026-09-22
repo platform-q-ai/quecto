@@ -11,7 +11,18 @@ pub(in crate::infrastructure::persistence) fn read_record(path: &Path) -> std::i
     if faults::take(path) {
         return Err(std::io::Error::other("injected read failure"));
     }
-    std::fs::read(path)
+    let bytes = std::fs::read(path);
+    #[cfg(any(test, feature = "test-support"))]
+    faults::rewrite_after(path);
+    bytes
+}
+
+/// Test seam: right after the next read of exactly `path`, the file is
+/// rewritten with `bytes` — a save racing the read, which must leave both
+/// halves without a remembered verdict (#2042).
+#[cfg(any(test, feature = "test-support"))]
+pub fn rewrite_after_next_read(path: &Path, bytes: Vec<u8>) {
+    faults::arm_rewrite(path, bytes);
 }
 
 /// Test seam: the next `count` reads of exactly `path` fail, as a transient
@@ -28,6 +39,19 @@ mod faults {
     use std::sync::Mutex;
 
     static ARMED: Mutex<Option<HashMap<PathBuf, usize>>> = Mutex::new(None);
+    static REWRITES: Mutex<Option<HashMap<PathBuf, Vec<u8>>>> = Mutex::new(None);
+    pub(super) fn arm_rewrite(path: &Path, bytes: Vec<u8>) {
+        let mut armed = REWRITES.lock().expect("rewrite table lock");
+        armed
+            .get_or_insert_with(HashMap::new)
+            .insert(path.to_path_buf(), bytes);
+    }
+    pub(super) fn rewrite_after(path: &Path) {
+        let mut armed = REWRITES.lock().expect("rewrite table lock");
+        if let Some(bytes) = armed.as_mut().and_then(|table| table.remove(path)) {
+            std::fs::write(path, bytes).expect("rewrite under the read");
+        }
+    }
 
     pub(super) fn arm(path: &Path, count: usize) {
         let mut armed = ARMED.lock().expect("fault table lock");

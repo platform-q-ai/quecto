@@ -805,7 +805,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/infrastructure/persistence/session_store_list_record.rs",
         95,
     ),
-    ("src/infrastructure/persistence/session_record_read.rs", 48),
+    // #2042: the read seam gains the rewrite-under-read test hook (48 → 72),
+    // which pins that an unstable file's verdicts are remembered by neither half.
+    ("src/infrastructure/persistence/session_record_read.rs", 72),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),
     ("src/interface/cli/agent/run_session.rs", 130),

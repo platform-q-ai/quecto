@@ -342,3 +342,34 @@ async fn a_warm_query_stamps_each_record_once_and_a_rebuild_reads_each_once() {
         "rebuild: each record read once"
     );
 }
+
+/// #2042: a record rewritten under the one read is a verdict for nobody —
+/// named for that answer, remembered by neither half, read again next time.
+#[tokio::test]
+async fn a_record_rewritten_under_its_read_is_remembered_by_neither_half() {
+    use quecto::infrastructure::persistence::session_record_read::rewrite_after_next_read;
+    let dir = tempfile::tempdir().unwrap();
+    let layout = FlatSessionLayout::new(dir.path().join("base"));
+    let process = Process::over(&layout);
+    save(&process, "chat-good", "a good title").await;
+    save(&process, "chat-racy", "the old title").await;
+    let racy = layout.session_file(&identity("chat-racy"));
+    let mut newer = std::fs::read(&racy).unwrap();
+    newer.extend_from_slice(b" ");
+    rewrite_after_next_read(&racy, newer);
+    let torn = process.query().await;
+    assert_eq!(keys(&torn), ["chat-good"], "{:?}", torn.diagnostics);
+    assert_eq!(named(&torn, "chat-racy.json"), 1, "{:?}", torn.diagnostics);
+    assert_eq!(process.reads(), (2, 0));
+    let settled = process.query().await;
+    assert_eq!(keys(&settled), ["chat-good", "chat-racy"]);
+    assert!(settled.diagnostics.is_empty(), "{:?}", settled.diagnostics);
+    assert_eq!(
+        process.reads(),
+        (3, 0),
+        "the torn read was no verdict: read again"
+    );
+    assert_eq!(process.reads(), (3, 0));
+    let _ = process.query().await;
+    assert_eq!(process.reads(), (3, 0), "and remembered once stable");
+}
