@@ -629,6 +629,9 @@ pub(crate) fn is_valid_session_name(name: &str) -> bool {
 ///
 /// A thread is probed with `std` first so that a process starting inside an
 /// already exhausted cgroup gets an ordinary error, not an abort.
+pub(crate) const BLOCKING_THREAD_KEEP_ALIVE: std::time::Duration =
+    std::time::Duration::from_secs(60 * 60 * 24 * 365);
+
 pub(crate) fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::Error> {
     std::thread::Builder::new()
         .name("quecto-thread-probe".into())
@@ -637,7 +640,7 @@ pub(crate) fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::
         .map_err(|_| std::io::Error::other("thread probe panicked"))?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
-        .thread_keep_alive(std::time::Duration::from_secs(60 * 60 * 24 * 365))
+        .thread_keep_alive(BLOCKING_THREAD_KEEP_ALIVE)
         .build()?;
     runtime.block_on(async {
         let _ = tokio::task::spawn_blocking(|| {}).await;
