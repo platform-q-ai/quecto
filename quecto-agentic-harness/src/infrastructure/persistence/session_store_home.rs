@@ -139,23 +139,12 @@ impl FileSessionStore {
     ) -> Result<super::session_store_list::Walk, DomainError> {
         super::session_store_list::walk(&self.layout, query, self.summaries.clone()).await
     }
-    /// The walk over every record, as an inherent method (R1-H9): the
-    /// catalogue's metadata query joins it with the home listing without
-    /// naming the store port.
-    pub(in crate::infrastructure::persistence) async fn summaries(
+    /// The walk's cache, for the joined pass (#2042) — held for a scan as
+    /// the walk holds it for its own.
+    pub(in crate::infrastructure::persistence) fn summary_cache(
         &self,
-    ) -> Result<super::session_store_list::Walk, DomainError> {
-        self.walk(&SessionListQuery::All).await
-    }
-    /// The listing summary this store's walk validated for `path` at exactly
-    /// `stamp`, for the derived index to carry; `None` when the walk has not
-    /// summarised that version.
-    pub(in crate::infrastructure::persistence) fn summary_at(
-        &self,
-        path: &Path,
-        stamp: &[u64],
-    ) -> Option<crate::domain::session::SessionSummary> {
-        self.summaries.lock().ok()?.summary_at(path, stamp).cloned()
+    ) -> &std::sync::Arc<std::sync::Mutex<super::session_store_list::SummaryCache>> {
+        &self.summaries
     }
     pub fn read_home(&self, identity: &SessionIdentity) -> Result<SessionHomeScope, DomainError> {
         match std::fs::read(self.layout.home_file(identity)) {

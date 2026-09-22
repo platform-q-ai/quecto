@@ -7,7 +7,7 @@ use super::super::super::session_layout::FlatSessionLayout;
 use super::SummaryCache;
 
 #[path = "session_store_list_record.rs"]
-mod session_store_list_record;
+pub(in crate::infrastructure::persistence) mod session_store_list_record;
 use session_store_list_record::summary_of;
 
 /// One walk's answer: the summaries, newest first, and every admitted record

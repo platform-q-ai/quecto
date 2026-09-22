@@ -4,7 +4,6 @@
 //! process seeds the summaries once from the derived index, so an unchanged
 //! directory costs one `stat` per file; an entry is reused only at its stamp.
 use crate::domain::error::DomainError;
-use crate::domain::session::SessionSummary;
 
 use super::super::super::session_home_catalogue::persisted_walk;
 use super::super::super::session_layout::FlatSessionLayout;
@@ -12,14 +11,15 @@ use super::super::super::session_layout::FlatSessionLayout;
 #[derive(Debug, Default)]
 pub(in crate::infrastructure::persistence) struct SummaryCache {
     pub(in crate::infrastructure::persistence) reads: usize,
-    pub(super) entries: super::super::super::session_home_catalogue::WalkEntries,
+    pub(in crate::infrastructure::persistence) entries:
+        super::super::super::session_home_catalogue::WalkEntries,
     seeded: bool,
 }
 
 impl SummaryCache {
     /// The locked cache, seeded from the persisted index on its first use in
     /// this process. Seeding trusts nothing: the walk re-stamps every file.
-    pub(super) fn seeded<'a>(
+    pub(in crate::infrastructure::persistence) fn seeded<'a>(
         cache: &'a std::sync::Mutex<Self>,
         layout: &FlatSessionLayout,
     ) -> Result<std::sync::MutexGuard<'a, Self>, DomainError> {
@@ -32,17 +32,5 @@ impl SummaryCache {
             cache.entries = persisted_walk(layout);
         }
         Ok(cache)
-    }
-
-    /// The summary the walk validated for `path` at exactly `stamp`.
-    pub(in crate::infrastructure::persistence) fn summary_at(
-        &self,
-        path: &std::path::Path,
-        stamp: &[u64],
-    ) -> Option<&SessionSummary> {
-        let (validated, summary) = self.entries.get(path)?;
-        (validated == stamp)
-            .then_some(summary.as_ref().ok())
-            .flatten()
     }
 }

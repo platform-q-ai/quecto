@@ -120,7 +120,8 @@ async fn a_new_process_answers_the_same_and_a_repair_clears_the_rejection() {
 }
 
 /// R2-H1: a failed READ is no verdict. Reported for that answer, by file
-/// name, by whichever half missed the record; read again on the next query.
+/// name — the one read serves both halves (#2042), so the strict catalogue's
+/// own line names it; read again on the next query.
 #[tokio::test]
 async fn a_transient_read_failure_is_named_for_that_answer_and_retried() {
     use super::session_record_read::fail_next_reads;
@@ -129,7 +130,7 @@ async fn a_transient_read_failure_is_named_for_that_answer_and_retried() {
     let (store, catalogue) = process(&layout);
     save(&store, "chat-good", "a good title").await;
     let good = layout.session_file(&identity("chat-good"));
-    for (failures, why) in [(2, "session record unavailable"), (1, "not listed")] {
+    for (failures, why) in [(1, "session record unavailable")] {
         let (_, cold) = process(&layout);
         let _ = std::fs::remove_file(layout.home_catalogue_file());
         fail_next_reads(&good, failures);
