@@ -1,8 +1,8 @@
 //! The collector against the hosted swarm store (round 4 M1b/L2/L3/info,
 //! #2033): a `stopped` record's directory, or an unrecorded one, whose
-//! checkout hosts an unfinished run is kept whatever the registry says —
-//! the board and checkout are the run's; an ended run, the placeholder or
-//! no store is collected as before. An own-root directory is judged by
+//! checkout hosts a run its owner has not closed is kept whatever the
+//! registry says — the board and checkout are the run's; a closed run, the
+//! placeholder or no store is collected as before. An own-root directory is judged by
 //! the record's own retained inspect; a record an older build relabelled
 //! `stopped` while retained is kept; a record seen nowhere is reported.
 use std::path::{Path, PathBuf};
@@ -55,7 +55,7 @@ impl HostedSwarmRunInspection for FakeHosted {
     }
 }
 
-fn run(id: &str, status: RunStatus, outcome: Option<RunStatus>) -> SwarmRunObservation {
+pub(super) fn run(id: &str, status: RunStatus, outcome: Option<RunStatus>) -> SwarmRunObservation {
     SwarmRunObservation::Run(HostedSwarmRun {
         id: id.into(),
         status,
@@ -65,7 +65,7 @@ fn run(id: &str, status: RunStatus, outcome: Option<RunStatus>) -> SwarmRunObser
     })
 }
 
-fn kept_reason<'a>(report: &'a super::super::dto::GcReport, id: &str) -> &'a str {
+pub(super) fn kept_reason<'a>(report: &'a super::super::dto::GcReport, id: &str) -> &'a str {
     report
         .kept
         .iter()
@@ -74,7 +74,7 @@ fn kept_reason<'a>(report: &'a super::super::dto::GcReport, id: &str) -> &'a str
         .unwrap_or_else(|| panic!("{id} should be kept: {report:?}"))
 }
 
-fn removable<'a>(report: &'a super::super::dto::GcReport, id: &str) -> &'a GcRemoval {
+pub(super) fn removable<'a>(report: &'a super::super::dto::GcReport, id: &str) -> &'a GcRemoval {
     report
         .removable
         .iter()
@@ -148,7 +148,7 @@ fn a_directory_hosting_an_unfinished_run_is_kept_and_one_whose_run_ended_is_coll
     );
     assert_eq!(
         kept_reason(&report, "env-orphan-live"),
-        "container quecto-env-orphan-live gone or exited; no registry record, but its checkout hosts swarm run run-o (running); nothing records it: end the run, or remove the directory by hand, before it can be collected"
+        "container quecto-env-orphan-live gone or exited; no registry record, but its checkout hosts swarm run run-o (running); nothing records it: end the run, or remove the directory by hand, before it can be collected (or pass --abandoned)"
     );
     assert!(
         kept_reason(&report, "env-orphan-paused").contains("hosts swarm run run-p (paused)"),
@@ -159,11 +159,12 @@ fn a_directory_hosting_an_unfinished_run_is_kept_and_one_whose_run_ended_is_coll
             .contains("hosts a coordination store that could not be read (database is locked); nothing records it"),
         "{report:?}"
     );
-    assert_eq!(
-        removable(&report, "env-stopped-done"),
-        &GcRemoval::RetainedCleanup {
-            environment_ref: "C4".into()
-        }
+    // Paused holding an outcome nobody closed: the finalizer keeps that box
+    // (#2070), so the collector does too.
+    assert!(
+        kept_reason(&report, "env-stopped-done")
+            .contains("hosts swarm run run-d (paused holding failed)"),
+        "{report:?}"
     );
     for id in [
         "env-orphan-done",
@@ -184,10 +185,11 @@ fn a_directory_hosting_an_unfinished_run_is_kept_and_one_whose_run_ended_is_coll
             "env-orphan-placeholder"
         ]
     );
-    assert_eq!(rig.process.cleaned.lock().unwrap().as_slice(), ["C4"]);
+    assert!(rig.process.cleaned.lock().unwrap().is_empty());
     let dirs = rig.host.dirs.lock().unwrap();
     for id in [
         "env-stopped-live",
+        "env-stopped-done",
         "env-orphan-live",
         "env-orphan-paused",
         "env-orphan-unreadable",

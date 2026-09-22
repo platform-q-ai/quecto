@@ -275,9 +275,11 @@ checkout and unpushed work inside — is relabelled **`retained`**, not
 (<status>); container exited; environment retained for inspection,
 kill_container to remove` (what the finalizer would have recorded had
 the master seen the coordinator go; `ls` prints the note `<ref> retained
-at restore: …`); a store that exists but cannot be read retains too. An
-ended run, the bootstrap placeholder or no store leaves it `stopped` as
-before. A record an **older build's restore relabelled `stopped` while
+at restore: …`); a store that exists but cannot be read retains too. It
+is the finalizer's own rule (#2070): a run its owner has not closed —
+paused holding an outcome, or cancelled by its coordinator, included — is
+retained; a closed run, the bootstrap placeholder or no store leaves it
+`stopped` as before. A record an **older build's restore relabelled `stopped` while
 it was retained** (recognisable by its own `metadata.retained` under
 `stopped` with the restore's `container not found at restore …` last
 error — an explicit kill clears that error) is restored to `retained`,
@@ -342,8 +344,8 @@ What a new session can do with a restored environment:
   through. The creating session, if still alive, sees its member die and
   runs its own final-member kill after yours — the shipped scripts are
   idempotent.
-- **collect** — `quecto container gc [--dry-run] [--name <config>]`
-  removes **orphans**: environments whose container is exited or unknown
+- **collect** — `quecto container gc [--dry-run] [--name <config>]
+  [--abandoned | --abandoned-after <duration>]` removes **orphans**: environments whose container is exited or unknown
   to the runtime **and** that the registry either does not record or
   records `stopped`. Its scope is the config's `--state-dir` (from its
   create argv, compared canonically — a symlinked spelling is the same
@@ -373,11 +375,23 @@ What a new session can do with a restored environment:
   age cannot be read counts as young). What would otherwise be collected
   — a `stopped` record's directory, or an unrecorded one — is read last
   for the coordination store its checkout may host (`workspace/repo`,
-  then `workspace`): one hosting a **swarm run that has not ended**, or a
-  store that cannot be read, is **kept** whatever the registry says —
+  then `workspace`): one hosting a **swarm run its owner has not closed**
+  — the finalizer's own rule (#2070): `running`, `paused`, paused holding
+  an outcome, or `cancelled` by its coordinator — or a store that cannot be
+  read, is **kept** whatever the registry says —
   `… hosts swarm run <id> (<status>); end the run … before it can be collected` — the
-  board and checkout are the run's; an ended run, the placeholder or no
-  store is collected as before. A record an older build relabelled
+  board and checkout are the run's; a closed run, the placeholder or no
+  store is collected as before. The exception is an **abandoned run**: a
+  directory *nothing records* (the master exited before its coordinator
+  and nobody retained the box) whose board still says the run is not
+  over. It is kept by default and collected only when asked — `--abandoned`
+  collects every such directory, `--abandoned-after <duration>` (a whole
+  number of `s`, `m`, `h` or `d`, e.g. `3d`) those at least that old by the
+  directory's age, one whose age cannot be read never being old enough —
+  with the reason naming the run and the flag:
+  `… no registry record; its checkout hosts abandoned swarm run <id> (<status>), 3d old, collected on --abandoned-after 1d`.
+  A `stopped` record's directory is the registry's business and is never
+  collected as abandoned; an unreadable store is never an abandoned run. A record an older build relabelled
   `stopped` while retained is kept likewise (`was retained; relabelled
   by an older build`; the next `ls`/`gc` restores it to `retained`, after
   which `container kill` ends it). `--dry-run` prints the same judgement with

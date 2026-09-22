@@ -514,3 +514,47 @@ fn gc_dry_run_leaves_the_registry_document_untouched_and_a_real_gc_corrects_it()
         output.stdout
     );
 }
+
+#[test]
+fn gc_parses_the_abandoned_policy_and_refuses_a_bad_duration() {
+    use crate::application::environments::dto::AbandonedRuns;
+    assert_eq!(parse_gc(&[]).unwrap().abandoned, AbandonedRuns::Keep);
+    assert_eq!(
+        parse_gc(&["--abandoned".into()]).unwrap().abandoned,
+        AbandonedRuns::Collect
+    );
+    for (spelled, secs) in [
+        ("45s", 45),
+        ("30m", 1_800),
+        ("12h", 43_200),
+        ("3d", 259_200),
+    ] {
+        assert_eq!(
+            parse_gc(&["--abandoned-after".into(), spelled.into()])
+                .unwrap()
+                .abandoned,
+            AbandonedRuns::OlderThan { secs },
+            "{spelled}"
+        );
+    }
+    for bad in [
+        "",
+        "3",
+        "3w",
+        "h",
+        "1.5h",
+        "-3d",
+        "3 d",
+        "99999999999999999999d",
+    ] {
+        let error = parse_gc(&["--abandoned-after".into(), bad.into()]).unwrap_err();
+        assert!(error.contains("--abandoned-after"), "{bad:?}: {error}");
+    }
+    let twice = parse_gc(&[
+        "--abandoned".into(),
+        "--abandoned-after".into(),
+        "1d".into(),
+    ])
+    .unwrap_err();
+    assert!(twice.contains("may be given once"), "{twice}");
+}

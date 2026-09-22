@@ -10,7 +10,7 @@ use super::CliContext;
 use super::container::TOP_USAGE as USAGE;
 use super::container_handles::ContainerInventoryHandles;
 use crate::application::environments::dto::{
-    GcCandidate, GcRemoval, GcReport, GcRequest, RestoreMode,
+    AbandonedRuns, GcCandidate, GcRemoval, GcReport, GcRequest, RestoreMode,
 };
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentStatus, EnvironmentTarget, ref_number,
@@ -251,6 +251,33 @@ fn parse_gc(args: &[String]) -> Result<GcRequest, String> {
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--dry-run" | "-n" => request.dry_run = true,
+            "--abandoned" => {
+                if request.abandoned != AbandonedRuns::Keep {
+                    return Err(format!(
+                        "--abandoned and --abandoned-after may be given once\n{USAGE}"
+                    ));
+                }
+                request.abandoned = AbandonedRuns::Collect;
+            }
+            "--abandoned-after" => {
+                if request.abandoned != AbandonedRuns::Keep {
+                    return Err(format!(
+                        "--abandoned and --abandoned-after may be given once\n{USAGE}"
+                    ));
+                }
+                let value = rest
+                    .next()
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        format!("--abandoned-after requires a duration such as 2h or 3d\n{USAGE}")
+                    })?;
+                let secs = parse_duration_secs(value).ok_or_else(|| {
+                    format!(
+                        "--abandoned-after: '{value}' is not a duration (a whole number of s, m, h or d, e.g. 30m, 12h, 3d)\n{USAGE}"
+                    )
+                })?;
+                request.abandoned = AbandonedRuns::OlderThan { secs };
+            }
             "--name" => {
                 let value = rest
                     .next()
@@ -264,6 +291,23 @@ fn parse_gc(args: &[String]) -> Result<GcRequest, String> {
         }
     }
     Ok(request)
+}
+
+/// `<digits><unit>` with a unit of `s`, `m`, `h` or `d`, as seconds; nothing
+/// else (no bare number, no fractions, no compound spellings).
+fn parse_duration_secs(value: &str) -> Option<u64> {
+    let (digits, unit) = value.split_at(value.len().checked_sub(1)?);
+    let per_unit: u64 = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3_600,
+        "d" => 86_400,
+        _ => return None,
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<u64>().ok()?.checked_mul(per_unit)
 }
 
 pub(crate) fn cmd_gc(

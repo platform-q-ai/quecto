@@ -382,13 +382,14 @@ impl RestoreRegistry {
     }
 
     /// Why a `running` record whose container is gone is retained rather
-    /// than stopped, when it is: its checkout hosts a created run that has
-    /// not ended, or a store that cannot be read (retained, as the
-    /// finalizer retains it: a destroyed box cannot be recovered). An
-    /// ended run, the bootstrap placeholder or no store: `None`.
+    /// than stopped, when it is: its checkout hosts a created run its owner
+    /// has not closed — the finalizer's own rule (#2070), whatever the run's
+    /// status — or a store that cannot be read (retained likewise: a
+    /// destroyed box cannot be recovered). A closed run, the bootstrap
+    /// placeholder or no store: `None`.
     fn retention_of_gone(&self, record: &EnvironmentRecord) -> Option<String> {
         match self.hosted.inspect_hosted_run(record) {
-            SwarmRunObservation::Run(run) if run.created() && !run.ended() => {
+            SwarmRunObservation::Run(run) if run.keeps_environment() => {
                 Some(unfinished_run_reason(&run))
             }
             SwarmRunObservation::Run(_) | SwarmRunObservation::NoStore => None,

@@ -96,13 +96,17 @@ fn a_running_record_gone_whose_checkout_hosts_an_unfinished_run_is_retained_not_
     assert_eq!(hosted.asked.lock().unwrap().as_slice(), ["C1", "C2"]);
 }
 
+/// A run paused holding an outcome, or cancelled by its coordinator, is not
+/// closed by its owner: the finalizer keeps that box (#2070), so restore
+/// retains it too. Only a closed run, the placeholder or no store is stopped.
 #[test]
-fn a_running_record_gone_with_an_ended_run_a_placeholder_or_no_store_is_stopped() {
+fn a_running_record_gone_with_a_closed_run_a_placeholder_or_no_store_is_stopped() {
     let store = store_with(vec![
         record("C1", EnvironmentStatus::Running),
         record("C2", EnvironmentStatus::Running),
         record("C3", EnvironmentStatus::Running),
         record("C4", EnvironmentStatus::Running),
+        record("C5", EnvironmentStatus::Running),
     ]);
     let placeholder = HostedSwarmRun {
         deadline: 0.0,
@@ -119,12 +123,34 @@ fn a_running_record_gone_with_an_ended_run_a_placeholder_or_no_store_is_stopped(
         ),
         ("C3", SwarmRunObservation::Run(placeholder)),
         ("C4", SwarmRunObservation::NoStore),
+        (
+            "C5",
+            SwarmRunObservation::Run(run("run-5", RunStatus::Cancelled, None)),
+        ),
     ]);
     let process = process(|_| EnvironmentLiveness::Gone);
     let (registry, report) = RestoreRegistry::new(store.clone(), process, hosted).execute("s");
-    assert_eq!(report.stopped, ["C1", "C2", "C3", "C4"]);
-    assert!(report.retained.is_empty(), "{report:?}");
-    for reference in ["C1", "C2", "C3", "C4"] {
+    assert_eq!(report.stopped, ["C2", "C3", "C4"]);
+    assert_eq!(
+        report.retained,
+        [
+            (
+                "C1".to_string(),
+                unfinished_run_reason(&run("run-1", RunStatus::Paused, Some(RunStatus::Failed)))
+            ),
+            (
+                "C5".to_string(),
+                unfinished_run_reason(&run("run-5", RunStatus::Cancelled, None))
+            )
+        ]
+    );
+    for reference in ["C1", "C5"] {
+        assert_eq!(
+            registry.get(reference).unwrap().status,
+            EnvironmentStatus::Retained
+        );
+    }
+    for reference in ["C2", "C3", "C4"] {
         let seeded = registry.get(reference).unwrap();
         assert_eq!(seeded.status, EnvironmentStatus::Stopped, "{seeded:?}");
         assert_eq!(seeded.last_error.as_deref(), Some(GONE_AT_RESTORE));
