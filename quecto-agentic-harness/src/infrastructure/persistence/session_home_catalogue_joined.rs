@@ -9,6 +9,7 @@
 //! Locks: the walk's cache is held for the whole scan (as its own walk holds
 //! it); the projection and the rejections are taken per record, never the
 //! other way round — nothing takes the walk's cache while holding either.
+use super::super::session_record_read::{ReadRefusal, read_record};
 use super::super::session_store::session_store_list::SummaryCache;
 use super::super::session_store::session_store_list::session_store_list_scan::session_store_list_record::summary_in;
 use super::{FileSessionHomeCatalogue, IndexEntry, Projection, session_home_catalogue_rejections};
@@ -154,8 +155,9 @@ impl FileSessionHomeCatalogue {
         if let Some(identity) = projected {
             return Ok(Some(Ok(identity)));
         }
-        let rejections = self.rejections.lock().map_err(super::error)?;
-        Ok(rejections.at(path, stamp).map(Err))
+        let mut rejections = self.rejections.lock().map_err(super::error)?;
+        let generation = self.scan.load(std::sync::atomic::Ordering::Relaxed);
+        Ok(rejections.at(path, stamp, generation).map(Err))
     }
 
     /// One read serving whichever half has no verdict at `before`. `Err`
@@ -169,12 +171,33 @@ impl FileSessionHomeCatalogue {
         identity: Option<Result<SessionIdentity, DomainError>>,
         summary: Option<Result<SessionSummary, String>>,
     ) -> Result<Verdicts, Skip> {
-        let unreadable = |e: &std::io::Error| format!("unreadable session file: {e}");
-        let bytes = match super::super::session_record_read::read_record(path) {
+        let bytes = match read_record(path, before) {
             Ok(bytes) => bytes,
-            Err(e) => {
+            Err(refusal @ ReadRefusal::TooLarge { .. }) => {
+                // A verdict on this stamp for both halves, nothing read.
+                tracing::warn!(path = %path.display(), detail = %refusal, "skipping record too large while listing sessions");
+                let too_large = super::error(&refusal);
+                let summary = Err(refusal.to_string());
+                cache
+                    .entries
+                    .insert(path.to_path_buf(), (before.to_vec(), summary.clone()));
+                let mut rejections = self.rejections.lock().map_err(|e| {
+                    (
+                        Err(super::error(&e)),
+                        format!("rejections unavailable: {e}"),
+                    )
+                })?;
+                rejections.record(
+                    path,
+                    before.to_vec(),
+                    &too_large,
+                    self.scan.load(std::sync::atomic::Ordering::Relaxed),
+                );
+                return Ok((Err(too_large), summary));
+            }
+            Err(ReadRefusal::Io(e)) => {
                 tracing::warn!(path = %path.display(), detail = %e, "skipping unreadable session file while listing sessions");
-                let why = unreadable(&e);
+                let why = format!("unreadable session file: {e}");
                 return Err((identity.unwrap_or_else(|| Err(super::error(e))), why));
             }
         };
@@ -223,6 +246,7 @@ impl FileSessionHomeCatalogue {
                     Projection {
                         identity: identity.clone(),
                         entry,
+                        seen: self.scan.load(std::sync::atomic::Ordering::Relaxed),
                     },
                 );
             }
@@ -233,14 +257,19 @@ impl FileSessionHomeCatalogue {
                         format!("rejections unavailable: {e}"),
                     )
                 })?;
-                rejections.record(path, after, rejection);
+                rejections.record(
+                    path,
+                    after,
+                    rejection,
+                    self.scan.load(std::sync::atomic::Ordering::Relaxed),
+                );
             }
         }
         Ok((identity, summary))
     }
 
     /// A record's stamp, counted (test seam: the pass takes one per record
-    /// per warm query; publication re-stamps published rows until slice B).
+    /// per warm query; publication takes none, #2042 slice B).
     fn record_stamp(&self, path: &Path) -> Result<Vec<u64>, DomainError> {
         self.record_stamps
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

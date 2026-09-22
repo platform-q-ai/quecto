@@ -51,6 +51,8 @@ pub struct FileSessionHomeCatalogue {
     rejections: std::sync::Arc<std::sync::Mutex<Rejections>>,
     transcript_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     record_stamps: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// The generation of the scan in progress or last run.
+    scan: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 /// One validated record, keyed in the projection by the identity's own
 /// layout path: a projection can never yield another file's identity.
@@ -58,6 +60,9 @@ pub struct FileSessionHomeCatalogue {
 struct Projection {
     identity: SessionIdentity,
     entry: IndexEntry,
+    /// The scan that last saw this record (#2042): the caches keep exactly
+    /// the entries the latest scan touched, with no set of paths built.
+    seen: u64,
 }
 type Records = BTreeMap<String, IndexEntry>;
 /// Our last publication: its bytes, and the index they encode.
@@ -107,7 +112,15 @@ impl FileSessionHomeCatalogue {
             rejections: Default::default(),
             transcript_reads: Default::default(),
             record_stamps: Default::default(),
+            scan: Default::default(),
         }
+    }
+    /// What the caches hold, projected plus rejected (test-support).
+    #[cfg(feature = "test-support")]
+    pub fn remembered_records(&self) -> usize {
+        let projected = self.projection.lock().map(|p| p.len()).unwrap_or(0);
+        let rejected = self.rejections.lock().map(|r| r.len()).unwrap_or(0);
+        projected + rejected
     }
     #[cfg(feature = "test-support")]
     pub fn transcript_reads(&self) -> usize {
@@ -126,6 +139,7 @@ impl FileSessionHomeCatalogue {
             rebuilt: false,
         };
         let mut records = BTreeMap::new();
+        let generation = self.scan.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         let entries = match std::fs::read_dir(self.layout.sessions_dir()) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -145,45 +159,24 @@ impl FileSessionHomeCatalogue {
             }
         }
         drop(cache);
-        self.publish_stable_rows(&mut records, &mut result)?;
+        self.retain_seen(generation)?;
         result.entries.sort_by(|a, b| a.0.cmp(&b.0));
         walk.sort();
         Ok((Catalogue::new(records), result))
     }
-    fn publish_stable_rows(
-        &self,
-        records: &mut Records,
-        result: &mut HomeCatalogueSnapshot,
-    ) -> Result<(), DomainError> {
-        // A save/delete may have raced an earlier row while later rows were read.
-        // Admit only rows whose validated authority still has the same signature.
+    fn retain_seen(&self, generation: u64) -> Result<(), DomainError> {
+        // Every row was stamped by the pass that read or remembered it; a
+        // record rewritten since is one autosave stale, never partial, and
+        // the next query re-stamps it — so publication takes no second
+        // stamp (#2042). The caches keep exactly the entries this scan
+        // touched: a deleted record leaves them here, with no `exists` sweep.
         let mut projection = self.projection.lock().map_err(error)?;
-        result.entries.retain(|(identity, home)| {
-            let path = self.layout.session_file(identity);
-            let valid = projection.get(&path).is_some_and(|cached| {
-                stamp(&path).is_ok_and(|current| current == cached.entry.stamp)
-            });
-            // A published row and its index entry are written from one
-            // observation; a mismatch is a programming error, never a
-            // user-visible panic from inside `spawn_blocking`.
-            debug_assert!(
-                indexed_home_matches(records, identity, home),
-                "published home observation must match its index entry"
-            );
-            if valid {
-                true
-            } else {
-                records.remove(identity.runtime_key());
-                projection.remove(&path);
-                result
-                    .diagnostics
-                    .push("session changed before catalogue publication".into());
-                false
-            }
-        });
-        projection.retain(|path, _| path.exists());
+        projection.retain(|_, cached| cached.seen == generation);
         drop(projection);
-        self.rejections.lock().map_err(error)?.retain_existing();
+        self.rejections
+            .lock()
+            .map_err(error)?
+            .retain_seen(generation);
         Ok(())
     }
     fn scan_record(
@@ -254,6 +247,7 @@ impl FileSessionHomeCatalogue {
             // Unreachable by construction (just projected): observe exactly.
             return exact();
         };
+        cached.seen = self.scan.load(std::sync::atomic::Ordering::Relaxed);
         let reusable = cached
             .entry
             .home
@@ -305,6 +299,7 @@ impl FileSessionHomeCatalogue {
                     Projection {
                         identity,
                         entry: entry.clone(),
+                        seen: 0,
                     },
                 );
             }
