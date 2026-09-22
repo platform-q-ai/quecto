@@ -47,6 +47,8 @@ fn graph(registry: Option<SubagentRegistry>, busy: bool) -> Graph {
         busy: Arc::new(std::sync::atomic::AtomicBool::new(busy)),
         exit_notify: notify.clone(),
         binding: ParentControlBinding::launched(credential()),
+        owner_exit: quecto::infrastructure::tools::owner_exit::OwnerExitFlag::new(),
+        environment_control: None,
     });
     Graph {
         graph,

@@ -11,8 +11,9 @@ use crate::domain::subagent_teardown::{
 use crate::application::subagents::dto::TerminationResult;
 use crate::application::subagents::ports::{
     ChildRoutingError, CompositionExitReadiness, DirectChildRouting, DownstreamRejection,
-    ExitReadiness, PortFuture, ShutdownClock, ShutdownInstant, ShutdownRun, ShutdownRunSpawner,
-    ShutdownSessionPersistence, SubagentLifecycleRepository, TurnCancellation,
+    ExitReadiness, OwnerExitAnnouncement, PortFuture, RetainedEnvironmentTeardown, ShutdownClock,
+    ShutdownInstant, ShutdownRun, ShutdownRunSpawner, ShutdownSessionPersistence,
+    SubagentLifecycleRepository, TurnCancellation,
 };
 
 pub fn identity(uuid: &str, generation: u64) -> DelegatedAgentIdentity {
@@ -241,6 +242,55 @@ impl ShutdownSessionPersistence for FakePersistence {
             None => Ok(()),
         };
         Box::pin(async move { outcome })
+    }
+}
+
+/// The owner's exit announcement (#2070): the test raises and withdraws it.
+#[derive(Default)]
+pub struct FakeOwnerExit(pub Mutex<Option<u64>>);
+
+impl FakeOwnerExit {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+}
+
+impl OwnerExitAnnouncement for FakeOwnerExit {
+    fn announce(&self, client: u64) {
+        *self.0.lock().unwrap() = Some(client);
+    }
+
+    fn withdraw(&self, client: u64) {
+        let mut held = self.0.lock().unwrap();
+        if *held == Some(client) {
+            *held = None;
+        }
+    }
+
+    fn announced(&self) -> bool {
+        self.0.lock().unwrap().is_some()
+    }
+}
+
+/// Emptied retained environments the owner's exit ends (#2070): records
+/// how many times it was asked and answers a fixed list.
+#[derive(Default)]
+pub struct FakeRetainedEnvironments {
+    pub asked: AtomicU64,
+    pub answer: Mutex<Vec<(String, Result<(), String>)>>,
+}
+
+impl FakeRetainedEnvironments {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+}
+
+impl RetainedEnvironmentTeardown for FakeRetainedEnvironments {
+    fn end_emptied_retained(&self) -> PortFuture<'_, Vec<(String, Result<(), String>)>> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        let answer = self.answer.lock().unwrap().clone();
+        Box::pin(async move { answer })
     }
 }
 

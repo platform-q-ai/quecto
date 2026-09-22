@@ -80,6 +80,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         broadcast_tx: None,
         parent_control: None,
         teardown_graph: None,
+        environment_control: None,
     }
 }
 

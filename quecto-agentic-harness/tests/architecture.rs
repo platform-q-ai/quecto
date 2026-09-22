@@ -3230,6 +3230,10 @@ const TEARDOWN_PORTS: &[&str] = &[
     "ShutdownClock",
     "CompositionExitReadiness",
     "ShutdownRunSpawner",
+    // The owner's exit (#2070): the announcement the shutdown reads, and
+    // the emptied retained environments it then ends.
+    "OwnerExitAnnouncement",
+    "RetainedEnvironmentTeardown",
     // Selected termination and lifecycle compensation (#1936).
     "OwnedChildTermination",
     "DelegatedAgentRegistry",
@@ -4083,6 +4087,7 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
         "src/application/subagents/use_cases/settle_delegated_child.rs",
         "src/infrastructure/tools/environment_member_shutdown.rs",
         "src/infrastructure/tools/environment_commands.rs",
+        "src/infrastructure/tools/retained_environment_teardown.rs",
         "src/infrastructure/tools/subagent_cleanup.rs",
         "src/infrastructure/tools/swarm_member_termination.rs",
         "src/infrastructure/tools/swarm_lifecycle.rs",

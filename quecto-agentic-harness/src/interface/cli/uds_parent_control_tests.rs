@@ -48,6 +48,8 @@ fn rig_with(binding: ParentControlBinding, cancellation: Arc<FakeCancellation>) 
             persistence: FakePersistence::new(),
             exit: exit.clone(),
             spawner: spawner.clone(),
+            owner_exit: FakeOwnerExit::new(),
+            retained: FakeRetainedEnvironments::new(),
         },
     ));
     let terminate = Arc::new(TerminateDelegatedAgent::new(
@@ -61,6 +63,7 @@ fn rig_with(binding: ParentControlBinding, cancellation: Arc<FakeCancellation>) 
             controller,
             fleet: fleet.fleet,
             busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            owner_exit: FakeOwnerExit::new(),
         }),
         cancellation,
         routing,

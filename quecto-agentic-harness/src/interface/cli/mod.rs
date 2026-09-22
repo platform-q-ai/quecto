@@ -65,6 +65,7 @@ mod uds_lifecycle;
 pub mod uds_models;
 pub(crate) mod uds_multi;
 mod uds_multi_accept;
+mod uds_owner_exit;
 pub mod uds_parent_control;
 mod uds_query;
 mod uds_reader;

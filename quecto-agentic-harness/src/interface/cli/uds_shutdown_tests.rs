@@ -107,6 +107,8 @@ fn rig(dir: &std::path::Path) -> Rig {
         busy: busy.clone(),
         exit_notify: notify.clone(),
         binding: crate::domain::parent_control::ParentControlBinding::unlaunched(),
+        owner_exit: crate::infrastructure::tools::owner_exit::OwnerExitFlag::new(),
+        environment_control: None,
     });
     Rig {
         subagents,

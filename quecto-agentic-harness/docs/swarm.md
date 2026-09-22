@@ -324,16 +324,39 @@ Reconciliation preserves readable partial progress and retains uncertain ownersh
 A swarm container lives as long as its swarm, and no longer (#1924, #2070).
 A swarm ends only when its owner says so: the supervisor outside the swarm
 closes the run into its outcome (`swarm_control close`), or the owner
-explicitly leaves everything it owns behind — delete-all, or a session
-transition (`/new`, `/resume`) that succeeds. A `/resume` claims and loads
+explicitly leaves everything it owns behind — delete-all, a session
+transition (`/new`, `/resume`) that succeeds, or **an ordinary exit of the
+TUI that owns the harness** (Ctrl-D, `/exit`, `/quit` with the default
+kill-on-exit). A `/resume` claims and loads
 its target BEFORE the fleet is settled, so one that is refused — the session
 is held by another process, missing or unreadable — ends nothing. When the
 swarm has ended, the final member's exit removes the container, its checkout
 and its board with the retained `kill`, exactly as for an ordinary
 container; nothing is kept. (These reach the swarms whose coordinator is a
-live direct child of the harness that acts: one owned a level further down,
-and a container already emptied and `retained`, still need
-`kill_container`.)
+live direct child of the harness that acts: one owned a level further down
+still needs `kill_container`, and so does a container already emptied and
+`retained` — except on the announced TUI exit below, which ends those too.)
+
+The TUI's ordinary exit reaches the harness as a bare termination signal —
+the same signal a logout, a reboot or an operator's `kill` sends — so the
+TUI **announces** the exit first: the `persist_session` it sends before
+signalling carries `restoreReason: "ordinary_tui_exit_stopped"`, and the
+harness records that the owner is exiting. The shutdown that follows is
+then the owner's word: its fleet teardown gives every swarm's container up,
+and the harness also ends the environments this harness process had
+created, emptied and kept `retained` earlier (a coordinator that crashed
+and left its box behind; one a previous process created is `restored` and
+stays explicit-kill-only). Those kills run concurrently, and every retained
+kill script is bounded (20 s, `KILL_SCRIPT_BOUND`): past it the script is
+killed and the record is `cleanup-failed` with the reason, retryable by an
+explicit `kill_container`, and the exit goes on. A TUI that is killed or
+crashes sends no announcement, so that shutdown keeps every swarm resumable;
+`--detach-on-exit` announces nothing either, because the harness lives on.
+The announcement is held by the connection that made it and withdrawn when
+that connection closes — a TUI that dies in its exit window leaves nothing
+raised for a later crash to mistake for the owner's word; a shutdown that
+already read it decided once and is unaffected — and it is read on the
+connection's reader task, so an exit while a turn is running still counts.
 
 Nothing else ends a swarm. While its run has not been closed — `running`,
 `paused`, paused holding an outcome nobody closed yet, or `cancelled` (the

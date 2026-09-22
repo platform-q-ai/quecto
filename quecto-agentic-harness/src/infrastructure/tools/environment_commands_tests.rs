@@ -4,21 +4,25 @@ use crate::application::environments::ports::EnvironmentProcessCommands;
 #[test]
 fn run_kill_sync_reports_missing_argv_and_failures_truthfully() {
     assert!(
-        super::run_kill_sync("env-x", &[])
+        super::run_kill_sync("env-x", &[], super::KILL_SCRIPT_BOUND)
             .unwrap_err()
             .contains("no retained kill argv")
     );
     assert!(
-        super::run_kill_sync("env-x", &["false".to_string()])
+        super::run_kill_sync("env-x", &["false".to_string()], super::KILL_SCRIPT_BOUND)
             .unwrap_err()
             .contains("retained kill exited")
     );
     assert!(
-        super::run_kill_sync("env-x", &["/definitely/not/a/kill".to_string()])
-            .unwrap_err()
-            .contains("failed to invoke"),
+        super::run_kill_sync(
+            "env-x",
+            &["/definitely/not/a/kill".to_string()],
+            super::KILL_SCRIPT_BOUND
+        )
+        .unwrap_err()
+        .contains("failed to invoke"),
     );
-    assert!(super::run_kill_sync("env-x", &["true".to_string()]).is_ok());
+    assert!(super::run_kill_sync("env-x", &["true".to_string()], super::KILL_SCRIPT_BOUND).is_ok());
 }
 
 /// #1391 review: the inspect subprocess is bounded — a hung script is killed
@@ -150,4 +154,22 @@ async fn retained_argv_of_an_altered_standard_script_is_refused_before_it_runs()
             assert!(!marker.exists(), "the altered {name} ran as cleanup");
         }
     }
+}
+
+/// A kill script that hangs is killed at the bound and reported (#2070):
+/// the record ends `cleanup-failed` with the reason, never a parked harness.
+#[tokio::test]
+async fn a_hung_kill_script_is_killed_at_the_bound_and_reported() {
+    use crate::application::environments::ports::EnvironmentProcessCommands;
+    let started = std::time::Instant::now();
+    let error = super::ScriptEnvironmentCommands::default()
+        .with_kill_bound(std::time::Duration::from_millis(200))
+        .run_retained_kill("env-x", &["sleep".to_string(), "30".to_string()])
+        .await
+        .unwrap_err();
+    assert!(
+        error.contains("timed out") && error.contains("was killed"),
+        "{error}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }

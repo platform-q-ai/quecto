@@ -9,6 +9,8 @@
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::message::Message;
+use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot;
+use crate::infrastructure::tools::owner_exit::OwnerExitFlag;
 
 use super::protocol::AgentEvent;
 use super::uds::{
@@ -106,6 +108,8 @@ pub(super) struct MultiClientArgs<'a> {
     /// Composition's teardown handles builder; without it the loop runs with
     /// no teardown edge (unit rigs only).
     pub teardown_graph: Option<super::TeardownHandlesBuilder>,
+    /// The environment control slot (#2070): an owner exit ends retained boxes through it.
+    pub environment_control: Option<EnvironmentControlSlot>,
 }
 
 /// A command line from a client.
@@ -181,6 +185,7 @@ pub(super) async fn multi_client_loop(
         broadcast_tx: pre_broadcast_tx,
         parent_control,
         teardown_graph,
+        environment_control,
     } = args;
 
     inject_system_prompt(&mut messages, &system_prompt);
@@ -292,6 +297,8 @@ pub(super) async fn multi_client_loop(
             binding: parent_control
                 .map(|launch| launch.binding)
                 .unwrap_or_else(crate::domain::parent_control::ParentControlBinding::unlaunched),
+            owner_exit: OwnerExitFlag::new(),
+            environment_control,
         })
     });
     // SIGTERM/SIGINT and the last client's disconnect are delivered to the

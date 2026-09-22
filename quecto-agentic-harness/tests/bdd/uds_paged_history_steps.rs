@@ -992,6 +992,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
             broadcast_tx: None,
             parent_control: None,
             teardown_graph: None,
+            environment_control: None,
         })
     });
     world._mc_live_socket = Some(socket_path);

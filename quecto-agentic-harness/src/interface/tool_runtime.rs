@@ -176,6 +176,10 @@ pub(crate) struct ToolRuntimeBuild {
     /// The harness lifecycle cell the spawn tool admits against (#1938).
     pub harness_lifecycle:
         Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
+    /// The environment control slot (#2070) the dispatch loop hands the
+    /// teardown, for the emptied `retained` environments an owner exit ends.
+    pub environment_control:
+        Option<crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     pub policy_state: ToolRuntimePolicyState,
     pub catalogue_entries: Vec<crate::domain::tool_descriptor::ToolCatalogueEntry>,
@@ -326,6 +330,7 @@ pub(crate) fn build_tool_runtime(
     // environment control — are composed over the tools' own registry,
     // channels, lifecycle cell, environment registry and slots (#1936,
     // #1939).
+    let environment_control = agent_control.termination_slots.environments.clone();
     if let Some(install_termination_owners) = kill_tool {
         let installed = install_termination_owners(crate::interface::cli::KillToolWiring {
             owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
@@ -433,6 +438,7 @@ pub(crate) fn build_tool_runtime(
         notification_rx: Some(notify_rx),
         subagent_registry: Some(subagent_registry_for_protocol),
         harness_lifecycle: Some(harness_lifecycle),
+        environment_control: Some(environment_control),
         workflow_state: wf_state,
         policy_state,
         catalogue_entries,

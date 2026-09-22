@@ -21,7 +21,7 @@ use crate::interface::cli::uds_cancel::CancelSlot;
 /// Build `AcceptLoopArgs` wired to a listener at `socket_path`, with the given
 /// busy flag and subagent registry. Returns the args plus the broadcast/cmd
 /// senders so the caller keeps them alive for the duration of the test.
-fn make_args(
+pub(super) fn make_args(
     socket_path: &std::path::Path,
     busy: bool,
     subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
@@ -86,7 +86,7 @@ fn make_args(
 
 /// Read whatever bytes a freshly connected client receives within `timeout`,
 /// stopping once the read either blocks past the deadline or the peer is idle.
-async fn read_available(
+pub(super) async fn read_available(
     stream: &mut tokio::net::UnixStream,
     timeout: std::time::Duration,
 ) -> String {
@@ -337,6 +337,8 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
             busy: args.busy.clone(),
             exit_notify: Arc::new(tokio::sync::Notify::new()),
             binding: crate::domain::parent_control::ParentControlBinding::unlaunched(),
+            owner_exit: crate::infrastructure::tools::owner_exit::OwnerExitFlag::new(),
+            environment_control: None,
         },
     );
     args.teardown = Some(graph.connections.clone());
@@ -423,3 +425,6 @@ async fn busy_inspection_accepts_production_projection_without_dispatch() {
     assert_eq!(response["data"]["automaticTurnsSuspended"], false);
     assert_eq!(response["data"]["repeatedFailureNotifications"], 0);
 }
+
+#[path = "uds_multi_owner_exit_tests.rs"]
+mod owner_exit_tests;

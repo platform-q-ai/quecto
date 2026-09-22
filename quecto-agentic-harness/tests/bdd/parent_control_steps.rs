@@ -442,6 +442,7 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
                 bind_deadline,
             }),
             teardown_graph: Some(build_teardown_graph),
+            environment_control: None,
         })
     });
     let deadline = Instant::now() + Duration::from_secs(10);

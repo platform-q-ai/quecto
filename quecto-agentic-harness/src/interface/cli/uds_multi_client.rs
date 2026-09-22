@@ -154,6 +154,11 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
                 Intercept::Handled => continue,
                 Intercept::Close => break,
             }
+            super::super::uds_owner_exit::announce_if_exit_persist(
+                &*teardown.owner_exit,
+                client_id,
+                &line,
+            );
         }
         if !super::super::uds_reader_dispatch::dispatch(
             super::super::uds_reader_dispatch::ReaderDispatchCtx {
@@ -177,8 +182,11 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
     writer_task.abort();
     // Only the bound parent's loss runs the common shutdown; every other
     // disconnect — including the last client's — is nothing to the
-    // harness's lifetime (#1935).
+    // harness's lifetime (#1935). An owner that announced its exit and then
+    // lost its connection (it died in its exit window) takes the
+    // announcement with it (#2070): a shutdown already admitted has read it.
     if let Some(teardown) = teardown.as_deref() {
+        teardown.owner_exit.withdraw(client_id);
         if let Some(outcome) =
             super::super::uds_parent_control::connection_closed(teardown, &role, client_id).await
         {

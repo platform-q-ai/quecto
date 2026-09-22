@@ -788,8 +788,13 @@ snapshot, restored from a session or read from a coordination store.
   an outcome nobody closed, a run its coordinator cancelled — the
   environment is *retained* (`metadata.retained` says why) rather than
   destroyed, so the run can be resumed; an explicit `kill_container` removes
-  it. A run the supervisor closed, the owner's delete-all, and a session
-  transition that succeeds, remove the container.
+  it. A run the supervisor closed, the owner's delete-all, a session
+  transition that succeeds, and an ordinary TUI exit the TUI announced
+  beforehand (its exit persist's `ordinary_tui_exit_stopped`), remove the
+  container; that announced exit also ends this harness process's
+  already-emptied `retained` environments (concurrently; every retained
+  kill script is bounded at 20 s, past which it is killed and the record is
+  `cleanup-failed`, retryable by an explicit `kill_container`).
   `kill_container` asks every member to shut down first and runs the
   retained `kill` argv exactly once, only once all members settled.
 

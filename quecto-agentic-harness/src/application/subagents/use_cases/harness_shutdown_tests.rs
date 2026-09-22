@@ -22,6 +22,8 @@ pub(super) struct Rig {
     /// Spawner of the harness run; the fleet run has its own so aborting
     /// "the latest" run is unambiguous.
     pub(super) spawner: Arc<FakeSpawner>,
+    pub(super) owner_exit: Arc<FakeOwnerExit>,
+    pub(super) retained: Arc<FakeRetainedEnvironments>,
     pub(super) prepare: PrepareHarnessShutdown,
     pub(super) execute: Arc<ExecuteHarnessShutdown>,
 }
@@ -32,6 +34,8 @@ fn rig_with(cancellation: Arc<FakeCancellation>) -> Rig {
     let persistence = FakePersistence::new();
     let exit = FakeExit::new();
     let spawner = FakeSpawner::new();
+    let owner_exit = FakeOwnerExit::new();
+    let retained = FakeRetainedEnvironments::new();
     let fleet = fake_fleet(lifecycle.clone(), routing.clone(), FakeSpawner::new());
     let transaction = HarnessShutdownTransaction::new(lifecycle.clone(), FakeClock::at(1_000));
     let prepare = PrepareHarnessShutdown::new(transaction.clone());
@@ -43,6 +47,8 @@ fn rig_with(cancellation: Arc<FakeCancellation>) -> Rig {
             persistence: persistence.clone(),
             exit: exit.clone(),
             spawner: spawner.clone(),
+            owner_exit: owner_exit.clone(),
+            retained: retained.clone(),
         },
     ));
     Rig {
@@ -53,6 +59,8 @@ fn rig_with(cancellation: Arc<FakeCancellation>) -> Rig {
         persistence,
         exit,
         spawner,
+        owner_exit,
+        retained,
         prepare,
         execute,
     }
@@ -70,7 +78,7 @@ fn foreign_token() -> ShutdownToken {
         .token
 }
 
-fn protocol(reason: ShutdownReason) -> PrepareShutdownRequest {
+pub(super) fn protocol(reason: ShutdownReason) -> PrepareShutdownRequest {
     PrepareShutdownRequest {
         reason,
         trigger: ShutdownTrigger::ProtocolCommand,
@@ -141,9 +149,9 @@ async fn execute_detaches_the_run_and_records_the_common_teardown_in_order() {
             RoutingCall::Shutdown(identity("D", 1), ShutdownReason::ParentShutdown),
         ]
     );
-    // #2070: a shutdown is never the owner's word, whatever reason admitted
-    // it (here `OperatorRequest`, which a vanished last client also uses): a
-    // swarm among the children keeps its environment.
+    // #2070: an unannounced shutdown is never the owner's word, whatever
+    // reason admitted it (here `OperatorRequest`, which a vanished last
+    // client also uses): a swarm among the children keeps its environment.
     let causes = rig.fleet.compensation.calls();
     assert_eq!(causes.len(), 2);
     assert!(
