@@ -114,6 +114,7 @@ impl RestoreRegistry {
         let allocate = Arc::clone(&self.store);
         let record = Arc::clone(&self.store);
         let forget = Arc::clone(&self.store);
+        let release = Arc::clone(&self.store);
         let reload = self.clone();
         EnvironmentJournal {
             reload: Arc::new(move || {
@@ -144,6 +145,11 @@ impl RestoreRegistry {
                     tracing::warn!(%error, "durable environment ref could not be allocated; the create is refused");
                     error
                 })
+            }),
+            release_ref: Arc::new(move |number| {
+                if let Err(error) = release.release_ref(number) {
+                    tracing::warn!(%error, number, "a refused environment ref could not be released; it expires on its own");
+                }
             }),
             recorded: Arc::new(
                 move |entry: &EnvironmentRecord, expected: Option<&EnvironmentStatus>| {

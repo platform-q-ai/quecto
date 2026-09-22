@@ -53,6 +53,10 @@ pub(super) struct FakeStore {
 }
 
 impl EnvironmentRegistryStore for FakeStore {
+    fn release_ref(&self, _: u64) -> Result<(), String> {
+        Ok(())
+    }
+
     fn allocate_ref(&self) -> Result<u64, String> {
         if self.fail_writes {
             return Err("disk full".into());
@@ -360,6 +364,9 @@ fn a_correction_another_session_overtook_is_not_written_and_their_state_is_seede
     impl EnvironmentRegistryStore for MovingStore {
         fn allocate_ref(&self) -> Result<u64, String> {
             self.inner.allocate_ref()
+        }
+        fn release_ref(&self, number: u64) -> Result<(), String> {
+            self.inner.release_ref(number)
         }
         fn load(&self) -> Result<Vec<EnvironmentRecord>, String> {
             let loaded = self.inner.load()?;

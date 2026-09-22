@@ -266,3 +266,76 @@ fn a_correction_merges_its_metadata_over_the_files_and_a_record_replaces_it() {
         serde_json::json!({"container": "quecto-1"})
     );
 }
+
+// ─── Refs restart at C1 (#2070) ───────────────────────────────────────────────
+
+/// A ref can only collide with one that still exists: with nothing on file
+/// and no create in flight, the next ref is `C1` again — however high the
+/// counter once ran.
+#[test]
+fn refs_restart_at_one_once_nothing_recorded_or_in_flight_remains() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_700_000_000));
+    let store = FileEnvironmentRegistryStore::for_base_dir_at(dir.path(), {
+        let now = now.clone();
+        move || now.load(std::sync::atomic::Ordering::SeqCst)
+    });
+    assert_eq!(store.allocate_ref().unwrap(), 1);
+    store
+        .record(&record("C1", EnvironmentStatus::Running))
+        .unwrap();
+    assert_eq!(store.allocate_ref().unwrap(), 2);
+    store
+        .record(&record("C2", EnvironmentStatus::Stopped))
+        .unwrap();
+    // Both recorded refs exist: the numbers stay taken.
+    store.forget("C1").unwrap();
+    assert_eq!(store.allocate_ref().unwrap(), 3, "C2 still exists");
+    store
+        .record(&record("C3", EnvironmentStatus::Stopped))
+        .unwrap();
+    store.forget("C2").unwrap();
+    store.forget("C3").unwrap();
+    // Everything collected: the next container is C1.
+    assert_eq!(store.allocate_ref().unwrap(), 1);
+    let again = FileEnvironmentRegistryStore::for_base_dir_at(dir.path(), {
+        let now = now.clone();
+        move || now.load(std::sync::atomic::Ordering::SeqCst)
+    });
+    // ... and that mint is in flight, so a concurrent session is handed C2.
+    assert_eq!(again.allocate_ref().unwrap(), 2);
+    // A mint nobody recorded (a create that failed) frees its number once
+    // it is older than a create can take.
+    now.fetch_add(
+        PENDING_REF_GRACE_SECS + 1,
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    assert_eq!(store.allocate_ref().unwrap(), 1);
+}
+
+/// Recording the created environment settles its mint: only the record
+/// keeps the number afterwards.
+#[test]
+fn recording_settles_the_mint_and_an_older_document_without_mints_still_reads() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join(REGISTRY_FILE_NAME),
+        format!(r#"{{"version":{DOCUMENT_VERSION},"next_ref":7,"environments":{{}}}}"#),
+    )
+    .unwrap();
+    let store = FileEnvironmentRegistryStore::for_base_dir(dir.path());
+    // The old monotonic counter no longer keeps numbers by itself.
+    assert_eq!(store.allocate_ref().unwrap(), 1);
+    store
+        .record(&record("C1", EnvironmentStatus::Running))
+        .unwrap();
+    let on_file: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join(REGISTRY_FILE_NAME)).unwrap())
+            .unwrap();
+    assert_eq!(on_file["pending_refs"], serde_json::json!({}), "{on_file}");
+    assert_eq!(store.allocate_ref().unwrap(), 2);
+    let on_file: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join(REGISTRY_FILE_NAME)).unwrap())
+            .unwrap();
+    assert!(on_file["pending_refs"]["2"].is_u64(), "{on_file}");
+}

@@ -54,6 +54,10 @@ pub struct EnvironmentJournal {
     /// registry then refuses to mint (review F9, #2033) — a counter minted
     /// from memory could collide with a ref a live session holds.
     pub allocate_ref: Arc<dyn Fn() -> Result<u64, String> + Send + Sync>,
+    /// Give an allocated number back unrecorded (#2070): the registry still
+    /// holds that ref and refused it. Best effort; a failure is logged by
+    /// the adapter and the number expires on its own.
+    pub release_ref: Arc<dyn Fn(u64) + Send + Sync>,
     /// A record was committed or one of its persisted fields changed. With
     /// `expected` the write is compare-and-set: applied only while the
     /// record on file still has that status (review F5, #2033 — a record

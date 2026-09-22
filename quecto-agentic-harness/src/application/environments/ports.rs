@@ -196,9 +196,15 @@ pub trait ContainerRuntimePreflight: Send + Sync {
 /// them. Every operation is synchronous — a record write is small and must
 /// have landed before the launch that committed it returns.
 pub trait EnvironmentRegistryStore: Send + Sync {
-    /// The next never-reused ref number, allocated under an exclusive hold
-    /// so two sessions never receive the same one.
+    /// The next ref number nothing on file holds — no record, no mint still
+    /// in flight — allocated under an exclusive hold so two sessions never
+    /// receive the same one (#2070). The number is held as in flight until
+    /// it is recorded, released, or older than a create can take.
     fn allocate_ref(&self) -> Result<u64, String>;
+    /// Give back an allocated number the caller will not record (#2070): a
+    /// session that still holds that ref refused it. Unknown numbers are
+    /// ignored.
+    fn release_ref(&self, number: u64) -> Result<(), String>;
     /// Every record on file, in ref order.
     fn load(&self) -> Result<Vec<EnvironmentRecord>, String>;
     /// Write `record` under its ref, replacing what was there.

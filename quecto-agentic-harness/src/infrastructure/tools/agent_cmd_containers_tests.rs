@@ -351,6 +351,7 @@ fn get_containers_carries_the_registry_read_error_as_a_diagnostic() {
     use crate::domain::environment_registry::EnvironmentJournal;
     let journal = EnvironmentJournal {
         allocate_ref: Arc::new(|| Ok(1)),
+        release_ref: Arc::new(|_| {}),
         recorded: Arc::new(|_, _| crate::domain::environment_registry::JournalWrite::Written),
         forgotten: Arc::new(|_| {}),
         reload: Arc::new(|| Err("environments.json: corrupt".into())),

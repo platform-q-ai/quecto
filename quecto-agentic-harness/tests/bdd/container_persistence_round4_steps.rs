@@ -202,3 +202,17 @@ fn then_gc_keeps_dir_hosting_run(world: &mut QuectoWorld, id: String) {
         world.stdout
     );
 }
+
+// ─── Refs restart at C1 (#2070) ──────────────────────────────────────────────
+
+#[then("the durable environment registry should record nothing")]
+fn then_registry_records_nothing(world: &mut QuectoWorld) {
+    let document = super::container_persistence_steps::registry_document(world);
+    let environments = document["environments"]
+        .as_object()
+        .unwrap_or_else(|| panic!("registry document has no environments object: {document}"));
+    assert!(
+        environments.is_empty(),
+        "every record should have been collected: {document}"
+    );
+}

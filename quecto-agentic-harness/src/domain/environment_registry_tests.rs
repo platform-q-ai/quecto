@@ -133,6 +133,7 @@ fn test_journal() -> (EnvironmentJournal, Seen, Seen) {
                 Ok(*counter)
             }
         }),
+        release_ref: Arc::new(|_| {}),
         recorded: Arc::new({
             let recorded = recorded.clone();
             move |record: &EnvironmentRecord, expected: Option<&EnvironmentStatus>| {
@@ -217,12 +218,61 @@ fn a_journal_that_cannot_allocate_refuses_the_mint() {
     // A journal-less registry still counts in memory.
     let registry = EnvironmentRegistry::new();
     assert_eq!(registry.mint_ref().unwrap(), "C1");
-    // A journal answering below the counter never moves it backwards.
+    // The file's free number is the ref, however low, unless a record here
+    // holds it (#2070) ...
     let (mut journal, _, _) = test_journal();
     journal.allocate_ref = Arc::new(|| Ok(1));
     let registry = EnvironmentRegistry::with_journal(journal, "s");
     registry.commit(record("C3", "env-three"));
+    assert_eq!(registry.mint_ref().unwrap(), "C1");
+    // ... and a journal that keeps answering a held number is not counting:
+    // the count goes on above everything held.
+    let (mut journal, _, _) = test_journal();
+    journal.allocate_ref = Arc::new(|| Ok(3));
+    let registry = EnvironmentRegistry::with_journal(journal, "s");
+    registry.commit(record("C3", "env-three"));
     assert_eq!(registry.mint_ref().unwrap(), "C4");
+}
+
+/// #2070: the journal's number is the ref once nothing held here collides
+/// with it — so after everything is collected the next container is `C1`,
+/// however far the count once ran — and a stale record another process's
+/// gc forgot on file makes the mint ask again rather than reuse its number.
+#[test]
+fn the_next_ref_is_the_journals_lowest_free_number_unless_a_record_here_still_holds_it() {
+    let (mut journal, _, _) = test_journal();
+    let asked = Arc::new(Mutex::new(0u64));
+    journal.allocate_ref = Arc::new({
+        let asked = asked.clone();
+        move || {
+            let mut asked = asked.lock().unwrap();
+            *asked += 1;
+            Ok(*asked)
+        }
+    });
+    let released = Arc::new(Mutex::new(Vec::new()));
+    journal.release_ref = Arc::new({
+        let released = released.clone();
+        move |number| released.lock().unwrap().push(number)
+    });
+    let registry = EnvironmentRegistry::with_journal(journal, "s");
+    registry.commit(record("C7", "env-seven"));
+    registry.remove("C7");
+    // Nothing held here, the file hands 1: C1, not C8.
+    assert_eq!(registry.mint_ref().unwrap(), "C1");
+    registry.commit(record("C1", "env-one"));
+    // A stale C3 this session still holds (forgotten on file elsewhere):
+    // 2 is free, 3 is refused and the journal asked on until it clears 3.
+    registry.commit(record("C3", "env-three"));
+    assert_eq!(registry.mint_ref().unwrap(), "C2");
+    registry.commit(record("C2", "env-two"));
+    assert_eq!(registry.mint_ref().unwrap(), "C4");
+    assert_eq!(*asked.lock().unwrap(), 4, "asked for 3, refused, then 4");
+    assert_eq!(
+        *released.lock().unwrap(),
+        [3],
+        "the refused number went back"
+    );
 }
 
 #[test]

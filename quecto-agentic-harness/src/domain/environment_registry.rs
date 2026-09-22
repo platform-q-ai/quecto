@@ -2,7 +2,8 @@
 //!
 //! Per ADR-0021 composition builds exactly one registry per session and
 //! injects it into the launch services. It is the authority for minting
-//! never-reused `C1`-style environment refs and for recording which
+//! `C1`-style environment refs — unique among everything still held, on
+//! file or here (#2070) — and for recording which
 //! environments this session has committed: hidden environment UUID, optional
 //! name, script/runtime identity, retained script argv, member agent UUIDs,
 //! status, metadata, and last error (#1369 slice 2).
@@ -27,7 +28,8 @@ pub enum EnvironmentStatus {
     Running,
     /// A kill claim is outstanding; not joinable, not yet stopped.
     Killing,
-    /// Kill succeeded; terminal. The record stays listed, the ref is never reused.
+    /// Kill succeeded; terminal. The record stays listed; its ref is not
+    /// reused while it is (#2070).
     Stopped,
     /// Kill failed; retryable via another kill, with `last_error` retained.
     CleanupFailed,
@@ -173,6 +175,10 @@ impl EnvironmentRecord {
         }
     }
 }
+
+/// How many times a mint asks the journal for a number above what this
+/// registry still holds before counting on above it.
+const REMINT_ASKS: usize = 8;
 
 /// Mint the hidden environment UUID committed with each new environment.
 /// Distinct from the `CN` ref, the runtime id, and agent UUIDs by
@@ -333,27 +339,61 @@ impl EnvironmentRegistry {
         self.journal.is_some()
     }
 
-    /// Mint the next `CN` ref. Refs are monotonic and never reused within a
-    /// session, even when the launch they were minted for later fails or the
-    /// environment is stopped. A durable registry allocates through its
-    /// journal, so the ref is unique across every session of the base
+    /// Mint the next `CN` ref. A ref is never reused while anything holds it
+    /// — a record here, whatever its status, a record on file, or a mint in
+    /// flight; a journal-less registry counts on in memory. A durable
+    /// registry allocates through its journal, so the ref is unique across
+    /// every session of the base
     /// directory; when the journal cannot allocate, minting is refused
     /// (review F9, #2033) — never a counter that could collide with a ref
     /// another session holds. A registry without a journal counts in
     /// memory.
+    ///
+    /// The journal hands out the lowest number nothing on file still holds
+    /// (#2070: once everything is collected the next container is `C1`
+    /// again). A number a record still held here holds — one another
+    /// process's gc forgot on file while this session kept it — is refused
+    /// and the journal asked again: each ask leaves that number minted on
+    /// file, so no concurrent session is handed it meanwhile. A journal
+    /// that keeps answering held numbers is not counting; then the count
+    /// goes on above everything held, as before.
     pub fn mint_ref(&self) -> Result<String, RefAllocationError> {
-        let allocated = match &self.journal {
-            Some(journal) => {
-                Some((journal.allocate_ref)().map_err(RefAllocationError::JournalUnavailable)?)
-            }
-            None => None,
+        let Some(journal) = &self.journal else {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.next_ref += 1;
+            return Ok(format!("C{}", state.next_ref));
         };
+        let mut number = None;
+        for _ in 0..REMINT_ASKS {
+            let asked = (journal.allocate_ref)().map_err(RefAllocationError::JournalUnavailable)?;
+            if !self.holds(asked) {
+                number = Some(asked);
+                break;
+            }
+            // Given back at once: a number this session refused must not
+            // stay in flight for the next session to count past.
+            (journal.release_ref)(asked);
+        }
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.next_ref = match allocated {
-            Some(number) if number > state.next_ref => number,
-            _ => state.next_ref + 1,
+        state.next_ref = match number {
+            Some(number) => number,
+            None => {
+                state
+                    .entries
+                    .keys()
+                    .filter_map(|key| ref_number(key))
+                    .max()
+                    .unwrap_or(0)
+                    + 1
+            }
         };
         Ok(format!("C{}", state.next_ref))
+    }
+
+    /// Whether a record here still holds `number`'s ref.
+    fn holds(&self, number: u64) -> bool {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.entries.contains_key(&format!("C{number}"))
     }
 
     /// Commit a created environment under its minted ref. A ref numbered
@@ -458,7 +498,8 @@ impl EnvironmentRegistry {
     /// Remove a committed environment. Used only when the launch that
     /// CREATED the environment rolls back (before or after registration):
     /// the environment never became usable, so no stopped record is listed.
-    /// A stopped environment stays listed and its ref is never reused.
+    /// A stopped environment stays listed and its ref is not reused while it
+    /// is.
     pub fn remove(&self, environment_ref: &str) -> Option<EnvironmentRecord> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         // Prune the removed environment's inspect bookkeeping with it; refs

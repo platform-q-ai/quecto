@@ -17,6 +17,7 @@
 //! losing what it held.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::application::environments::dto::CorrectionOutcome;
 use crate::application::environments::ports::EnvironmentRegistryStore;
@@ -32,17 +33,45 @@ pub const REGISTRY_FILE_NAME: &str = "environments.json";
 const DOCUMENT_VERSION: u32 = 1;
 const FILE_MODE: u32 = 0o600;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FileEnvironmentRegistryStore {
     path: PathBuf,
     lock_dir: PathBuf,
+    /// Seconds since the Unix epoch, for the age of an in-flight mint.
+    now: Arc<dyn Fn() -> u64 + Send + Sync>,
+}
+
+/// How long a minted ref nobody recorded keeps its number (#2070): a
+/// create that failed after minting, or a harness that died mid-create,
+/// leaves a mint nobody settles; past this it no longer blocks reuse. As
+/// long as a create may take (`CREATE_GRACE_SECS`).
+pub const PENDING_REF_GRACE_SECS: u64 =
+    crate::application::environments::use_cases::CREATE_GRACE_SECS;
+
+impl std::fmt::Debug for FileEnvironmentRegistryStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileEnvironmentRegistryStore")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
 }
 
 impl FileEnvironmentRegistryStore {
     pub fn for_base_dir(base_dir: &Path) -> Self {
+        Self::for_base_dir_at(base_dir, || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_secs())
+                .unwrap_or(0)
+        })
+    }
+
+    /// The store with its own clock (tests age an in-flight mint).
+    pub fn for_base_dir_at(base_dir: &Path, now: impl Fn() -> u64 + Send + Sync + 'static) -> Self {
         Self {
             path: base_dir.join(REGISTRY_FILE_NAME),
             lock_dir: lock_dir_for(base_dir),
+            now: Arc::new(now),
         }
     }
 
@@ -92,18 +121,34 @@ impl FileEnvironmentRegistryStore {
 }
 
 impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
+    /// The next ref is one above every number that still exists (#2070): a
+    /// recorded environment, whatever its status, or a mint younger than a
+    /// create can take that nobody has recorded yet — never the old
+    /// monotonic counter, so once everything is collected the next
+    /// container is `C1` again, and a concurrent session's in-flight create
+    /// keeps its number until it records or gives up.
     fn allocate_ref(&self) -> Result<u64, String> {
+        let now = (self.now)();
         self.update(|document| {
-            // Never below a ref already on file, whatever the counter says
-            // (a hand-edited or older document).
-            let highest = document
+            document
+                .pending_refs
+                .retain(|_, minted_at| now.saturating_sub(*minted_at) <= PENDING_REF_GRACE_SECS);
+            let recorded = document
                 .environments
                 .keys()
-                .filter_map(|key| ref_number(key))
-                .max()
-                .unwrap_or(0);
-            document.next_ref = document.next_ref.max(highest) + 1;
-            document.next_ref
+                .filter_map(|key| ref_number(key));
+            let in_flight = document.pending_refs.keys().copied();
+            let next = recorded.chain(in_flight).max().unwrap_or(0) + 1;
+            document.pending_refs.insert(next, now);
+            // Kept for older readers of the document; no longer the rule.
+            document.next_ref = next;
+            next
+        })
+    }
+
+    fn release_ref(&self, number: u64) -> Result<(), String> {
+        self.update(|document| {
+            document.pending_refs.remove(&number);
         })
     }
 
@@ -123,6 +168,8 @@ impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
         self.update(|document| {
             if let Some(number) = ref_number(&record.environment_ref) {
                 document.next_ref = document.next_ref.max(number);
+                // The mint is settled: the record keeps the number now.
+                document.pending_refs.remove(&number);
             }
             document
                 .environments
@@ -175,6 +222,10 @@ struct Document {
     version: u32,
     #[serde(default)]
     next_ref: u64,
+    /// Minted refs not yet recorded, by number, with the second they were
+    /// minted (#2070). Absent in older documents.
+    #[serde(default)]
+    pending_refs: BTreeMap<u64, u64>,
     #[serde(default)]
     environments: BTreeMap<String, RecordWire>,
 }
@@ -188,6 +239,7 @@ impl Default for Document {
         Self {
             version: DOCUMENT_VERSION,
             next_ref: 0,
+            pending_refs: BTreeMap::new(),
             environments: BTreeMap::new(),
         }
     }
