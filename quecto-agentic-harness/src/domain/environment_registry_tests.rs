@@ -226,12 +226,16 @@ fn a_journal_that_cannot_allocate_refuses_the_mint() {
     registry.commit(record("C3", "env-three"));
     assert_eq!(registry.mint_ref().unwrap(), "C1");
     // ... and a journal that keeps answering a held number is not counting:
-    // the count goes on above everything held.
+    // the mint is refused rather than counted from memory.
     let (mut journal, _, _) = test_journal();
     journal.allocate_ref = Arc::new(|| Ok(3));
     let registry = EnvironmentRegistry::with_journal(journal, "s");
     registry.commit(record("C3", "env-three"));
-    assert_eq!(registry.mint_ref().unwrap(), "C4");
+    let refused = registry.mint_ref().unwrap_err();
+    assert!(
+        matches!(&refused, RefAllocationError::JournalUnavailable(why) if why.contains("not counting")),
+        "{refused:?}"
+    );
 }
 
 /// #2070: the journal's number is the ref once nothing held here collides

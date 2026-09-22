@@ -355,3 +355,35 @@ fn a_released_mint_is_free_again_at_once() {
     store.release_ref(99).unwrap();
     assert_eq!(store.allocate_ref().unwrap(), 1);
 }
+
+/// A ref names one environment. A create that outlived its mint's grace
+/// while another session took the number must not overwrite that
+/// session's record; its own re-records (same environment) still land.
+#[test]
+fn a_record_never_overwrites_another_environment_under_the_same_ref() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = FileEnvironmentRegistryStore::for_base_dir(dir.path());
+    store
+        .record(&record("C1", EnvironmentStatus::Running))
+        .unwrap();
+    let mut other = record("C1", EnvironmentStatus::Running);
+    other.environment_uuid = "uuid-late-creator".into();
+    other.environment_id = "env-late".into();
+    let refused = store.record(&other).unwrap_err();
+    assert!(
+        refused.contains("already records environment uuid-C1"),
+        "{refused}"
+    );
+    assert!(
+        refused.contains("refusing to overwrite it with env-late"),
+        "{refused}"
+    );
+    // The first record stands, and its own update lands.
+    store
+        .record(&record("C1", EnvironmentStatus::Stopped))
+        .unwrap();
+    let on_file = store.load().unwrap();
+    assert_eq!(on_file.len(), 1);
+    assert_eq!(on_file[0].environment_uuid, "uuid-C1");
+    assert_eq!(on_file[0].status, EnvironmentStatus::Stopped);
+}

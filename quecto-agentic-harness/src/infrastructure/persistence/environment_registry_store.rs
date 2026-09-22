@@ -43,10 +43,11 @@ pub struct FileEnvironmentRegistryStore {
 
 /// How long a minted ref nobody recorded keeps its number (#2070): a
 /// create that failed after minting, or a harness that died mid-create,
-/// leaves a mint nobody settles; past this it no longer blocks reuse. As
-/// long as a create may take — the collector's own grace for a directory
-/// without a container (`CREATE_GRACE_SECS`, fifteen minutes).
-pub const PENDING_REF_GRACE_SECS: u64 = 15 * 60;
+/// leaves a mint nobody settles; past this it no longer blocks reuse. A
+/// create is unbounded (its clone can be slow), so this is generous — an
+/// hour — and `record` refuses to overwrite another environment under the
+/// same ref should a create outlive even that.
+pub const PENDING_REF_GRACE_SECS: u64 = 60 * 60;
 
 impl std::fmt::Debug for FileEnvironmentRegistryStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -164,8 +165,24 @@ impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
         Ok(records)
     }
 
+    /// A ref names one environment: a record already on file under it for
+    /// a different environment is never replaced (#2070 — a create that
+    /// outlived its mint's grace while another session took the number).
     fn record(&self, record: &EnvironmentRecord) -> Result<(), String> {
         self.update(|document| {
+            if let Some(other) = document
+                .environments
+                .get(&record.environment_ref)
+                .filter(|on_file| on_file.environment_uuid != record.environment_uuid)
+            {
+                return Err(format!(
+                    "ref {} already records environment {} ({}); refusing to overwrite it with {}",
+                    record.environment_ref,
+                    other.environment_uuid,
+                    other.environment_id,
+                    record.environment_id
+                ));
+            }
             if let Some(number) = ref_number(&record.environment_ref) {
                 document.next_ref = document.next_ref.max(number);
                 // The mint is settled: the record keeps the number now.
@@ -174,7 +191,8 @@ impl EnvironmentRegistryStore for FileEnvironmentRegistryStore {
             document
                 .environments
                 .insert(record.environment_ref.clone(), RecordWire::from(record));
-        })
+            Ok(())
+        })?
     }
 
     fn correct(

@@ -117,9 +117,11 @@ impl EnvironmentRecord {
     }
 }
 
-/// How many times a mint asks the journal for a number above what this
-/// registry still holds before counting on above it.
-const REMINT_ASKS: usize = 8;
+/// How many numbers a mint refuses (each a record still held here that the
+/// file no longer knows) before it gives up: a journal that keeps handing
+/// out held numbers is not counting, and a number minted from memory could
+/// collide with one another session holds — so the mint is refused.
+const REMINT_ASKS: usize = 64;
 
 /// Mint the hidden environment UUID committed with each new environment.
 /// Distinct from the `CN` ref, the runtime id, and agent UUIDs by
@@ -296,8 +298,8 @@ impl EnvironmentRegistry {
     /// process's gc forgot on file while this session kept it — is refused
     /// and the journal asked again: each ask leaves that number minted on
     /// file, so no concurrent session is handed it meanwhile. A journal
-    /// that keeps answering held numbers is not counting; then the count
-    /// goes on above everything held, as before.
+    /// that keeps answering held numbers is not counting, and the mint is
+    /// refused rather than counted from memory.
     pub fn mint_ref(&self) -> Result<String, RefAllocationError> {
         let Some(journal) = &self.journal else {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -315,20 +317,14 @@ impl EnvironmentRegistry {
             // stay in flight for the next session to count past.
             (journal.release_ref)(asked);
         }
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.next_ref = match number {
-            Some(number) => number,
-            None => {
-                state
-                    .entries
-                    .keys()
-                    .filter_map(|key| ref_number(key))
-                    .max()
-                    .unwrap_or(0)
-                    + 1
-            }
+        let Some(number) = number else {
+            return Err(RefAllocationError::JournalUnavailable(format!(
+                "the registry handed out {REMINT_ASKS} numbers this session still holds; it is not counting"
+            )));
         };
-        Ok(format!("C{}", state.next_ref))
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.next_ref = number;
+        Ok(format!("C{number}"))
     }
 
     /// Whether a record here still holds `number`'s ref.

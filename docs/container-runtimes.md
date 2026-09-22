@@ -250,13 +250,16 @@ stored** — they belong to the session that launched them. Refs are
 allocated in the file, so two sessions on one base directory never mint
 the same `C7`. A ref is reused only once nothing holds it (#2070): the
 next ref is one above every record still on file — `stopped` ones
-included, until `gc` forgets them — and every mint younger than fifteen
-minutes that nobody has recorded yet (a create in flight, or one that
-failed after minting; the file's `pending_refs`), so once everything is
-collected the next container is `C1` again, and a concurrent session's
-in-flight create keeps its number. A session that still holds a record the
-file has forgotten (another process's `gc`) refuses that number and asks
-again.
+included, until `gc` forgets them — and every mint younger than an hour
+that nobody has recorded yet (a create in flight, or one that failed after
+minting; the file's `pending_refs`), so once everything is collected the
+next container is `C1` again, and a concurrent session's in-flight create
+keeps its number. A session that still holds a record the file has
+forgotten (another process's `gc`) gives that number back and asks again;
+a file that keeps answering held numbers gets the create refused rather
+than a number minted from memory. A create that outlives even the hour and
+finds its ref taken is not written over the other environment: the write
+is refused and logged, the box runs on under this session's own view.
 
 At startup a top-level session **restores** the file: each record is
 checked against the runtime through its retained `inspect` — a
