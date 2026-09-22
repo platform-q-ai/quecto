@@ -8,7 +8,6 @@ use crate::shell::process::{LeaderBudget, LeaderIdentity as Id, terminate_leader
 async fn terminate_test_child(child: &mut tokio::process::Child) {
     terminate_leader(child, LeaderBudget::WORST_CASE, Id::capture(child.id())).await;
 }
-
 pub(super) fn args(s: &str) -> Vec<String> {
     let mut v = vec!["quecto-tui".to_string()];
     if !s.is_empty() {
