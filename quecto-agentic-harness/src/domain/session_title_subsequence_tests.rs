@@ -15,7 +15,7 @@ fn the_rank_is_the_fuzzy_tier_when_any_term_needed_it_else_the_best_field() {
     assert_eq!(rank_of(&[]), None);
     assert_eq!(rank_of(&[MatchedField::Title]), Some(MatchedField::Title));
     assert_eq!(
-        rank_of(&[MatchedField::Key, MatchedField::TitleFuzzy]),
+        rank_of(&[MatchedField::Path, MatchedField::TitleFuzzy]),
         Some(MatchedField::TitleFuzzy)
     );
     assert_eq!(MIN_SUBSEQUENCE_TERM_CHARS, 3);

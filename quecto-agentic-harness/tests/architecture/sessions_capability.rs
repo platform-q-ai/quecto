@@ -827,7 +827,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/dto/search_limits.rs", 33),
     ("src/domain/session_metadata_text.rs", 51),
     ("src/interface/cli/uds_search_numbers.rs", 62),
-    ("src/domain/session_metadata_search.rs", 154),
+    ("src/domain/session_metadata_search.rs", 157),
     // #2043: the subsequence tier and the home texts are their own owners.
     ("src/domain/session_title_subsequence.rs", 33),
     ("src/domain/session_home_text.rs", 47),

@@ -36,7 +36,7 @@ pub fn execution_path(home: &SessionHomeScope) -> Option<String> {
 /// What `home`'s execution directory does not share with `root`: the path
 /// below it, or — for a linked worktree outside it — below their common
 /// ancestor. `None` when nothing is left (the root itself) or no directory.
-pub fn path_below(home: &SessionHomeScope, root: &Path) -> Option<String> {
+pub(crate) fn path_below(home: &SessionHomeScope, root: &Path) -> Option<String> {
     let SessionHomeScope::Scoped(home) = home else {
         return None;
     };

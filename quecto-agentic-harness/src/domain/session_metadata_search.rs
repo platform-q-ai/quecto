@@ -14,7 +14,7 @@ use super::session_title_subsequence::{MIN_SUBSEQUENCE_TERM_CHARS, title_holds_s
 use std::path::Path;
 
 /// The metadata a query can match, in rank order: an exact key outranks a
-/// title, a title a repository label, a label a path.
+/// title, a title a repository label, a label a path, a path the subsequence tier on the title (#2043).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MatchedField {
     Key,
@@ -140,7 +140,10 @@ impl MetadataQuery {
                     matched.push(*field);
                 }
             }
-            if self.terms.iter().any(|term| !literal(term)) {
+            // The whole key typed already says everything: it is never
+            // demoted to the fuzzy tier because it also reads in the title.
+            let key_typed = matched.contains(&MatchedField::Key);
+            if !key_typed && self.terms.iter().any(|term| !literal(term)) {
                 matched.push(MatchedField::TitleFuzzy);
             }
         }

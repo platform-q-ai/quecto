@@ -1,6 +1,5 @@
 use super::*;
 use crate::domain::session_home::{AssociationProvenance, SessionHome, WorkspaceGroup};
-use crate::domain::session_title_subsequence::rank_of;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 
