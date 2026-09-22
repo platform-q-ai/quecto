@@ -186,6 +186,8 @@ fn builtin_openai_reasoning_tiers_resolve_for_api_key_and_oauth_with_published_l
     // (id, input $/1M, output $/1M)
     let tiers = [
         ("gpt-6-astra", 10.0, 50.0),
+        ("gpt-6-sol", 2.0, 10.0),
+        ("gpt-6-luna", 0.1, 0.5),
         ("gpt-5.6-sol", 5.0, 30.0),
         ("gpt-5.6-terra", 2.5, 15.0),
         ("gpt-5.6-luna", 1.0, 6.0),
