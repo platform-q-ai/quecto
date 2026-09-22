@@ -236,8 +236,10 @@ exit is already under way — while SIGQUIT and SIGKILL still abandon it. A TUI
 that dies outright — SIGKILL, a crash — runs no exit at all: on Linux the agent
 it launched is armed to receive SIGTERM from the kernel on its parent's death,
 which is the agent's own shutdown, and ends the same way. With
-`--detach-on-exit` none of this touches the agent, the startup window included:
-it outlives the TUI whatever ends it. Resuming restores transcript history; it does **not** recreate
+`--detach-on-exit` none of this touches the agent: it outlives the TUI whatever
+ends it — a signal during startup only makes the TUI wait for the agent's
+socket announcement (leaving earlier would close the agent's stderr under that
+very write) and then leave it running. Resuming restores transcript history; it does **not** recreate
 old children as operational agent-panel rows. Old spawn and tool messages remain
 history, not evidence that their processes are alive: a harness-launched
 subagent is lifetime-bound to the harness that launched it and ends by itself

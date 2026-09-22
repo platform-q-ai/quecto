@@ -221,6 +221,8 @@ async fn run_tui(flags: CliFlags) -> i32 {
             crate::protocol::client::Client::connect_legacy(&socket).await
         }
     };
+    // A signal during the connect itself is read after it: a UDS connect to
+    // a listening socket returns at once, so the gap is milliseconds.
     let client = match connect.await {
         Ok(c) => c,
         Err(e) => {
@@ -385,20 +387,25 @@ async fn spawn_agent_program_until(
 
     // The termination signals are watched alongside the announcement
     // (#2053): a TUI told to leave while its agent is still starting ends
-    // that agent now (or leaves it, detached), never after the deadline.
+    // that agent now, never after the deadline. With --detach-on-exit the
+    // agent is to outlive the TUI, so the TUI stays for the announcement —
+    // leaving now would close the agent's stderr under its announcing
+    // write — and only then leaves it running.
     let mut interrupt_open = true;
+    let mut leave_after_announcement = None;
     loop {
         line.clear();
         let result = tokio::select! {
             biased;
             signal = interrupt.recv(), if interrupt_open => match signal {
-                Some(signal) => {
-                    if flags.kill_on_exit {
-                        terminate_spawned_agent(&mut child).await;
-                    } else {
-                        spawn_stderr_drain(reader, stderr_context.clone());
-                    }
+                Some(signal) if flags.kill_on_exit => {
+                    terminate_spawned_agent(&mut child).await;
                     return Err(SpawnAbort::Interrupted(signal));
+                }
+                Some(signal) => {
+                    leave_after_announcement = Some(signal);
+                    interrupt_open = false;
+                    continue;
                 }
                 None => {
                     interrupt_open = false;
@@ -436,6 +443,11 @@ async fn spawn_agent_program_until(
                     // writes its message here and then kills the process, so
                     // dropping the reader would make the abort undiagnosable.
                     spawn_stderr_drain(reader, stderr_context.clone());
+                    if let Some(signal) = leave_after_announcement {
+                        // Announced and left running: the drain is the
+                        // TUI's, gone with it; the agent writes nothing more.
+                        return Err(SpawnAbort::Interrupted(signal));
+                    }
                     return Ok((path, child, stderr_context, announced_protocol));
                 }
             }

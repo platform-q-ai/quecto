@@ -47,7 +47,7 @@ pub(super) fn startup_interrupted_message(
     kill_owned: bool,
 ) -> String {
     let agent = if kill_owned {
-        "is terminated"
+        "is being terminated"
     } else {
         "is left running (--detach-on-exit)"
     };

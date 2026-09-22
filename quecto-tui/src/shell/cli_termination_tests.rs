@@ -41,7 +41,7 @@ async fn a_signal_during_startup_is_taken_once_and_named() {
     assert_eq!(interrupted_during_startup(&mut rx), None);
     assert_eq!(
         startup_interrupted_message(TerminationSignal::Terminate, true),
-        "SIGTERM during startup: the agent being started is terminated, nothing to persist"
+        "SIGTERM during startup: the agent being started is being terminated, nothing to persist"
     );
     assert_eq!(
         startup_interrupted_message(TerminationSignal::Terminate, false),
@@ -85,6 +85,7 @@ fn slow_agent(tag: &str, delay_secs: u32) -> (PathBuf, PathBuf) {
     (dir, script)
 }
 
+#[cfg(target_os = "linux")]
 fn alive(pid: u32) -> bool {
     std::fs::read_to_string(format!("/proc/{pid}/stat"))
         .ok()
@@ -118,18 +119,27 @@ async fn a_signal_while_waiting_for_the_announcement_interrupts_the_spawn_at_onc
     );
 }
 
-/// The same signal with --detach-on-exit leaves the starting agent alone.
+/// The same signal with --detach-on-exit waits for the announcement (so the
+/// agent's announcing write never meets a closed pipe), then leaves the
+/// agent running.
+#[cfg(target_os = "linux")]
 #[tokio::test]
-async fn a_signal_while_waiting_leaves_a_detached_agent_running() {
+async fn a_signal_while_waiting_leaves_a_detached_agent_running_once_announced() {
     use crate::shell::signals::TerminationSignal;
-    let (dir, script) = slow_agent("slow-detached", 30);
+    let (dir, script) = slow_agent("slow-detached", 1);
+    let _listener = std::os::unix::net::UnixListener::bind(dir.join("agent.sock")).unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     let flags = parse_flags(&args("--detach-on-exit"));
     tx.send(TerminationSignal::Terminate).await.unwrap();
+    let started = std::time::Instant::now();
     let abort = spawn_agent_program_until(script.to_str().unwrap(), &flags, &mut rx)
         .await
         .expect_err("interrupted");
     assert!(matches!(abort, SpawnAbort::Interrupted(_)), "{abort:?}");
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(900),
+        "left only after the announcement (1 s away)"
+    );
     // The stand-in is still there: find it by its script path, end it.
     let mine: Vec<u32> = std::fs::read_dir("/proc")
         .unwrap()
