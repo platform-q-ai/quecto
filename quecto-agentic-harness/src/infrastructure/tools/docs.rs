@@ -36,6 +36,10 @@ const EMBEDDED_DOCS: &[(&str, &str)] = &[
         include_str!("../../../docs/docs-tool-embeds/swarm.md"),
     ),
     (
+        "spike-prompt",
+        include_str!("../../../docs/spike-prompt.md"),
+    ),
+    (
         "subagents",
         include_str!("../../../docs/docs-tool-embeds/subagents.md"),
     ),

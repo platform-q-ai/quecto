@@ -24,7 +24,7 @@ fn parent_prompt_contains_only_role_and_routing_guidance() {
         "task-appropriate fixed pool up front",
         "rather than filling capacity",
         "### Optional pre-planning spike",
-        "quecto-agentic-harness/docs/spike-prompt.md",
+        "docs {\"name\":\"spike-prompt\"}",
         "The template governs disposable spike work only",
         "obtain approval before starting one otherwise",
         "separate from the planning and delivery swarms",

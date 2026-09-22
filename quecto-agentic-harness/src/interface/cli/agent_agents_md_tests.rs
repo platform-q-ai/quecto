@@ -205,6 +205,45 @@ fn override_is_composed_only_for_parent_and_keeps_other_prompt_sources() {
     assert!(child.contains("Explicit child instructions"));
 }
 
+#[tokio::test]
+async fn custom_playbook_prompt_path_uses_initialization_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("project");
+    let other = directory.path().join("other");
+    std::fs::create_dir_all(project.join("docs")).unwrap();
+    std::fs::create_dir(&other).unwrap();
+    std::fs::write(project.join("docs/spike.md"), "project spike brief").unwrap();
+    std::fs::write(
+        project.join("PARENT_PLAYBOOK.md"),
+        "Read docs/spike.md relative to the initialization directory",
+    )
+    .unwrap();
+    let context = CliContext {
+        cwd: Some(project.clone()),
+        ..CliContext::default()
+    };
+    let playbook =
+        startup_prompt::load_parent_playbook(&context, false, &mut String::new()).unwrap();
+    assert!(playbook.contains("docs/spike.md"));
+    let workspace = context.cwd.as_ref().unwrap();
+    let tool = crate::infrastructure::tools::filesystem::ReadTool::new(
+        std::sync::Arc::new(workspace.clone()),
+        std::sync::Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
+            Some(workspace.clone()),
+        )),
+    );
+    let result =
+        crate::application::tools::ports::Tool::execute(&tool, r#"{"path":"docs/spike.md"}"#)
+            .await
+            .unwrap();
+    assert!(result.content.contains("project spike brief"));
+    assert!(!other.join("docs/spike.md").exists());
+    assert_eq!(
+        crate::infrastructure::parent_playbook::load(&other).unwrap(),
+        include_str!("../../../../PARENT_PLAYBOOK.md")
+    );
+}
+
 #[test]
 fn present_invalid_override_fails_parent_startup_but_does_not_affect_child() {
     let directory = tempfile::tempdir().unwrap();
