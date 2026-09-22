@@ -23,7 +23,8 @@ fn stubborn_sleeper() -> tokio::process::Command {
     cmd
 }
 
-/// A child that exits (code 0) only when its stdin closes, so a test
+/// A child that exits (code 0) only when its stdin closes (or a line
+/// arrives, which nothing sends), so a test
 /// decides the moment of its exit instead of racing a fast one.
 fn told() -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new("sh");
