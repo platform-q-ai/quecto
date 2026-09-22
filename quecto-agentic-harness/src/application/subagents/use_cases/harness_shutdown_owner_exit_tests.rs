@@ -86,3 +86,34 @@ async fn the_retained_environments_are_ended_after_the_fleet_and_only_once() {
     assert_eq!(rig.retained.asked.load(Ordering::SeqCst), 1);
     assert_eq!(rig.fleet.compensation.calls().len(), 2);
 }
+
+#[tokio::test]
+async fn the_authority_is_decided_once_an_announcement_after_the_fleet_ran_changes_nothing() {
+    // The run is dropped while exit readiness is held — after the fleet
+    // settled on the harness's authority. An announcement arriving now, and
+    // the re-drive that follows, must not turn the shutdown into the
+    // owner's: the fleet was already asked, and the retained boxes stay.
+    let rig = rig();
+    rig.exit.hold.store(true, Ordering::SeqCst);
+    let token = rig
+        .prepare
+        .execute(protocol(ShutdownReason::TerminationSignal))
+        .unwrap()
+        .token;
+    let joiner = tokio::spawn({
+        let execute = rig.execute.clone();
+        let token = token.clone();
+        async move { execute.execute(&token).await }
+    });
+    while rig.exit.attempts.load(Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+    rig.spawner.abort_latest().await;
+    assert!(joiner.await.unwrap().is_err());
+    rig.owner_exit.announce();
+    rig.exit.hold.store(false, Ordering::SeqCst);
+    let outcome = rig.execute.execute(&token).await.unwrap();
+    assert!(!outcome.owner_exit);
+    assert!(outcome.retained_environments.is_empty());
+    assert_eq!(rig.retained.asked.load(Ordering::SeqCst), 0);
+}
