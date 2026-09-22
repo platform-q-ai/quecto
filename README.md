@@ -85,11 +85,14 @@ If `quecto` is on `PATH`, the TUI can spawn the kernel automatically:
 quecto-tui
 ```
 
-`Ctrl+D`, `/exit` or `/quit` persists the session, then sends SIGTERM to each
-TUI-owned agent (that one process only) and waits for it to settle its
+`Ctrl+D`, `/exit` or `/quit` — and SIGHUP, SIGTERM or an external SIGINT to
+the TUI, such as a closed terminal — persists the session, then sends SIGTERM
+to each TUI-owned agent (that one process only) and waits for it to settle its
 subagents and exit — a budget derived from the agent's own fleet teardown, a
-repeated SIGTERM to arm its 45 s force-exit, and only then SIGKILL; see
-[quecto-tui/README.md](quecto-tui/README.md).
+repeated SIGTERM to arm its 45 s force-exit, and only then SIGKILL. A TUI that
+dies outright (SIGKILL, a crash) cannot do that: on Linux its owned agent then
+receives SIGTERM from the kernel instead. `--detach-on-exit` opts out of both;
+see [quecto-tui/README.md](quecto-tui/README.md).
 
 Workflow-driven launch:
 

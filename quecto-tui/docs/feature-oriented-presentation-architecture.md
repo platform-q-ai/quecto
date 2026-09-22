@@ -412,14 +412,16 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
 | `shell/agent_args.rs` | `shell` `quecto agent` argument line built from the TUI flags (split from `cli.rs` for the 750-line cap; `--model`/`--effort` pass-through, #2024 S2) |
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
+| `shell/cli_termination.rs` | `shell` why a spawn stopped on a termination signal and what an exit on one did (#2053) |
 | `shell/cli_startup_exit.rs` | `shell` startup-failure leader-only agent termination with a stderr notice (#1956) |
 | `shell/connection.rs` | `shell` master-connection feed task and `SourcedEvent` channel seam (#1462; one connection since #2044) |
 | `shell/connection_state.rs` | `shell` state of the one owned connection behind the `active_conn()` seam (#1463, #2044) |
 | `shell/keys.rs` | `shell` input mapping primitive (relocated, #1257 Phase 1) |
 | `shell/mod.rs` | `shell` module root |
+| `shell/parent_death_signal.rs` | `shell` PR_SET_PDEATHSIG on the owned harness when kill-on-exit, so a TUI that dies outright cannot orphan it (#2053) |
 | `shell/process.rs` | `shell` leader-only harness termination + post-exit canary, budget derived from the harness teardown (#1956) |
 | `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
-| `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
+| `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1); SIGHUP/SIGTERM/SIGINT stream for the ordinary exit (#2053) |
 | `shell/socket_path.rs` | `shell` shared socket-path validation policy for every connect (#1460) |
 | `shell/session_resume_selector.rs` | `shell` session-only `/resume` selector open and selection dispatch (#2044) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |

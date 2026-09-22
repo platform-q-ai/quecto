@@ -57,3 +57,41 @@ fn suspend_does_not_panic_when_not_a_tty() {
     // This is a compile-time + type check.
     let _ = suspend; // function pointer — verifies it exists and is callable
 }
+
+// ── termination_stream ───────────────────────────────────────────
+
+/// #2053: SIGHUP and SIGTERM reach the receiver, named, and a burst while
+/// one is pending folds into it. One test, because every registered stream
+/// in this process sees every raised signal. (Registering first is what
+/// keeps the test process alive.)
+#[tokio::test]
+async fn termination_stream_names_each_signal_and_folds_a_burst() {
+    let mut rx = termination_stream();
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    for (raise, expected) in [
+        (libc::SIGHUP, TerminationSignal::Hangup),
+        (libc::SIGTERM, TerminationSignal::Terminate),
+    ] {
+        // SAFETY: raising a signal to self for which a handler is registered.
+        unsafe {
+            libc::raise(raise);
+        }
+        let got = tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv())
+            .await
+            .expect("the stream fires after the signal")
+            .expect("the stream is open");
+        assert_eq!(got, expected);
+    }
+    for _ in 0..3 {
+        // SAFETY: as above.
+        unsafe {
+            libc::raise(libc::SIGHUP);
+        }
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(rx.recv().await, Some(TerminationSignal::Hangup));
+    assert!(rx.try_recv().is_err(), "the burst folded into one");
+    assert_eq!(TerminationSignal::Interrupt.name(), "SIGINT");
+    assert_eq!(TerminationSignal::Hangup.name(), "SIGHUP");
+    assert_eq!(TerminationSignal::Terminate.name(), "SIGTERM");
+}

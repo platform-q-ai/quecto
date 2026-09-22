@@ -702,3 +702,37 @@ async fn handle_key_at_files_flow_replaces_token_on_tab() {
     a.handle_key(Key::Tab);
     assert_eq!(a.editor.text(), "see @first.rs ");
 }
+
+// ── termination signals (#2053) ──────────────────────────────────────
+
+/// A termination signal delivered to the loop ends it through the ordinary
+/// exit: the run returns 0 and the exit remembers which signal asked.
+#[tokio::test]
+async fn a_termination_signal_ends_the_run_through_the_ordinary_exit() {
+    let mut h = harness().await;
+    let app = h.app_mut();
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    app.set_termination_stream(rx);
+    tx.send(crate::shell::signals::TerminationSignal::Hangup)
+        .await
+        .unwrap();
+    let code = tokio::time::timeout(std::time::Duration::from_secs(10), app.run())
+        .await
+        .expect("the loop leaves on the signal");
+    assert_eq!(code, 0);
+    assert_eq!(
+        h.app_mut().termination_signal(),
+        Some(crate::shell::signals::TerminationSignal::Hangup)
+    );
+}
+
+/// Without a stream (harnesses, tests) the loop still runs and still leaves
+/// on the exit flag: the missing arm is inert, not a hang.
+#[tokio::test]
+async fn a_loop_without_a_termination_stream_still_exits_on_the_flag() {
+    let mut h = harness().await;
+    let app = h.app_mut();
+    assert_eq!(app.termination_signal(), None);
+    app.should_exit = true;
+    assert_eq!(app.run().await, 0);
+}

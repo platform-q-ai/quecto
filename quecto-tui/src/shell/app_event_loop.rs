@@ -189,6 +189,12 @@ impl App {
 
         // Set up SIGWINCH handler.
         let mut resize_rx = crate::shell::signals::sigwinch_stream().await;
+        // Termination signals (#2053); a harness without them holds a closed
+        // channel, whose arm disables itself on the first poll.
+        let mut termination_rx = self
+            .termination_rx
+            .take()
+            .unwrap_or_else(|| tokio::sync::mpsc::channel(1).1);
 
         // Set up stdin reader (async, byte-level).
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(64);
@@ -251,6 +257,10 @@ impl App {
             let next_idle_service_tick = self.next_idle_service_deadline();
 
             tokio::select! {
+                // SIGHUP / SIGTERM / SIGINT: the ordinary exit (#2053).
+                Some(signal) = termination_rx.recv() => {
+                    self.exit_on_termination_signal(signal);
+                }
                 _ = subagent_refresh.tick(), if !self.conn.roster.feeds.is_empty() => {
                     self.refresh_subagent_transcripts();
                 }
