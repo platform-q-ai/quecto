@@ -499,3 +499,50 @@ fn the_admission_rule_alone_refuses_a_home_saved_in_another_directory_of_the_gro
     assert!(!eligible(&SessionHomeScope::LegacyUnscoped, Some(&here)));
     assert!(!eligible(&SessionHomeScope::Scoped(here), None));
 }
+
+/// #2043: a row that needed a subsequence match on its title ranks below
+/// every literal match, whatever its date, so the limit cuts fuzzy rows
+/// first — and `total_matches` still counts them.
+#[tokio::test]
+async fn fuzzy_title_rows_rank_below_every_literal_match_and_are_cut_first() {
+    let records = vec![
+        record(
+            "k-fuzzy-new",
+            "fix bug",
+            Some(99),
+            SessionHomeScope::LegacyUnscoped,
+        ),
+        record("k-path-old", "x", Some(1), git("/work/fxbg/p", "r1")),
+        record(
+            "k-fuzzy-old",
+            "fox bag",
+            Some(1),
+            SessionHomeScope::LegacyUnscoped,
+        ),
+    ];
+    let rig = rig_at(HERE, Metadata::of(records.clone()));
+    assert_eq!(
+        keys(&rig, "fxbg", SessionListScope::Global).await,
+        ["k-path-old", "k-fuzzy-new", "k-fuzzy-old"]
+    );
+    let rig = rig_at(HERE, Metadata::of(records));
+    let request = SearchSessionMetadataRequest {
+        query: "fxbg".into(),
+        scope: SessionListScope::Global,
+        limit: SearchLimit::clamped(Some(1)),
+        ..Default::default()
+    };
+    let result = rig.search.search(&request).await.unwrap();
+    let shown: Vec<_> = result
+        .rows
+        .iter()
+        .map(|r| r.session.summary.key.as_str())
+        .collect();
+    assert_eq!(shown, ["k-path-old"]);
+    assert_eq!((result.total_matches, result.truncated()), (3, true));
+    assert_eq!(
+        result.rows[0].matched,
+        [crate::domain::session_metadata_search::MatchedField::Path],
+        "the literal row says why"
+    );
+}
