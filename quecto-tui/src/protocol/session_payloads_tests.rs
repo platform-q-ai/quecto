@@ -1,9 +1,14 @@
 use serde_json::json;
 
 use super::{
-    ResumeMessagesError, ResumedChatMessage, parse_resume_sessions, parse_resumed_messages,
+    ResumeMessagesError, ResumeSessionSummary, ResumedChatMessage, parse_resumed_messages,
     parse_session_stats,
 };
+
+/// The shell passes the terminal sanitizer; the tests pass the same one.
+fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSummary> {
+    super::parse_resume_sessions(data, &crate::components::ansi::sanitize_control)
+}
 
 #[test]
 fn parse_session_stats_extracts_typed_values() {

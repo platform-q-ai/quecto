@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.107.99"
+version = "0.107.100"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
@@ -65,7 +65,12 @@ default = []
 test-support = []
 
 [dev-dependencies]
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "2", features = ["full", "visit", "visit-mut"] }
+# The architecture scanners render production tokens after stripping
+# `#[cfg(test)]` items (#1637).
+# `span-locations`: line numbers for the test-only item ranges.
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
 cucumber = "0.21"
 futures = "0.3"
 # `test-util` enables the paused-clock tests (`#[tokio::test(start_paused = true)]`).

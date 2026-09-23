@@ -88,7 +88,10 @@ impl App {
         data: Option<serde_json::Value>,
         error: Option<String>,
     ) {
-        let answer = data.as_ref().map(parse_session_search).filter(|_| success);
+        let answer = data
+            .as_ref()
+            .map(|data| parse_session_search(data, &crate::components::ansi::sanitize_control))
+            .filter(|_| success);
         let flight = &mut self.ac_mut().sessions.search;
         // A failure echoes nothing: it stands for the generation it was sent with.
         let generation = match &answer {
@@ -261,7 +264,10 @@ impl App {
         if let Some(line) = data.and_then(|data| {
             crate::sessions::discovery_diagnostics::unseen_diagnostics_toast(
                 &mut self.ac_mut().sessions.shown_diagnostics,
-                &crate::protocol::session_payloads::session_discovery_diagnostics(data),
+                &crate::protocol::session_payloads::session_discovery_diagnostics(
+                    data,
+                    &crate::components::ansi::sanitize_control,
+                ),
             )
         }) {
             self.notify(&line, NotifyLevel::Warning);

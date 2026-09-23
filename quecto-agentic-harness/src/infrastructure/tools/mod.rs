@@ -47,6 +47,7 @@ pub mod subagent_cascade;
 mod subagent_cleanup;
 #[cfg(test)]
 mod subagent_cleanup_tests;
+pub mod subagent_compact_roster;
 pub mod subagent_environment_wire;
 pub mod subagent_identity;
 mod subagent_lifecycle;

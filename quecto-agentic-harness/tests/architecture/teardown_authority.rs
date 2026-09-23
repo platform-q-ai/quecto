@@ -9,12 +9,11 @@ use std::fs;
 use std::path::Path;
 
 /// Production lines of a source file, numbered: every `#[cfg(test)]`-gated
-/// ITEM is removed — the attribute, any attributes that follow it, and the
-/// one item they gate (a `;`-terminated `use`/`mod x;`, or a braced item
-/// such as `mod tests { … }` / `fn`, to its matching close brace) — and
-/// comment-only lines are dropped so a doc comment naming `kill(2)` is not
-/// an effect. Nothing else is cut: an early `#[cfg(test)] use …` no longer
-/// hides the rest of the file (review of #1940).
+/// ITEM is removed wherever it sits — parsed, with its attributes, blanked by
+/// column ([`strip_test_items`]) — and comment-only lines are dropped so a
+/// doc comment naming `kill(2)` is not an effect. Nothing else is cut: an
+/// early `#[cfg(test)] use …` does not hide the rest of the file (review of
+/// #1940, #1637).
 pub(super) fn production_code(path: &str) -> Vec<(usize, String)> {
     stripped(path)
         .iter()
@@ -59,71 +58,13 @@ fn stripped(path: &str) -> StrippedLines {
         .clone()
 }
 
-/// Brace delta of one line with string and char literals blanked, so a
-/// `"{"` inside a format string does not open an item.
-fn brace_delta(line: &str) -> i64 {
-    let mut delta = 0i64;
-    let mut chars = line.chars().peekable();
-    let mut in_string = false;
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' if in_string => {
-                chars.next();
-            }
-            '"' => in_string = !in_string,
-            '\'' if !in_string => {
-                // A char literal (`'{'`) or a lifetime (`'a`): skip a quoted
-                // single char, leave lifetimes alone.
-                let mut ahead = chars.clone();
-                if let (Some(_), Some('\'')) = (ahead.next(), ahead.next()) {
-                    chars.next();
-                    chars.next();
-                }
-            }
-            '{' if !in_string => delta += 1,
-            '}' if !in_string => delta -= 1,
-            _ => {}
-        }
-    }
-    delta
-}
-
 /// Remove every `#[cfg(test)]`-gated item; keeps the original line numbers.
+/// Parsed, not brace-counted (#1637): raw strings and byte chars cannot
+/// desynchronise it, test items are blanked by column so production code on
+/// the same line survives, and a file that does not parse is refused.
 pub(super) fn strip_test_items(source: &str) -> Vec<(usize, String)> {
-    let lines: Vec<&str> = source.lines().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        if lines[i].trim() != "#[cfg(test)]" {
-            out.push((i + 1, lines[i].to_string()));
-            i += 1;
-            continue;
-        }
-        // Skip the attribute run, then the one item it gates.
-        let mut j = i + 1;
-        while j < lines.len() && lines[j].trim_start().starts_with("#[") {
-            j += 1;
-        }
-        let mut depth = 0i64;
-        let mut opened = false;
-        while j < lines.len() {
-            let line = lines[j];
-            let delta = brace_delta(line);
-            if delta != 0 || line.contains('{') {
-                opened = true;
-            }
-            depth += delta;
-            j += 1;
-            if opened && depth <= 0 {
-                break;
-            }
-            if !opened && line.trim_end().ends_with(';') {
-                break;
-            }
-        }
-        i = j;
-    }
-    out
+    super::dependency_scan::production_lines(source)
+        .unwrap_or_else(|| panic!("strip_test_items: source does not parse"))
 }
 
 #[test]
@@ -142,6 +83,25 @@ mod inline {
 }
 fn last() {}
 ";
+    // Raw strings and byte chars cannot desynchronise the strip (#1637).
+    let raw = "fn raw() { let _ = r\"}\"; let _ = b'{'; }\n#[cfg(test)]\nmod t {}\nfn after() {}\nstruct S;\nimpl S {\n    #[cfg(test)]\n    fn t() {}\n    fn kept() {}\n}\n";
+    let kept: Vec<usize> = strip_test_items(raw).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(kept, vec![1, 4, 5, 6, 9, 10]);
+    // A production call sharing a line with a test item survives.
+    let shared =
+        "fn f() { #[cfg(test)] let _x = 1; libc::kill(1, 9); }\n#[cfg(test)] mod t {} fn g() {}\n";
+    let lines: Vec<String> = strip_test_items(shared)
+        .into_iter()
+        .map(|(_, l)| l)
+        .collect();
+    assert!(
+        lines[0].contains("libc::kill(1, 9)") && !lines[0].contains("_x"),
+        "{lines:?}"
+    );
+    assert!(
+        lines[1].contains("fn g()") && !lines[1].contains("mod t"),
+        "{lines:?}"
+    );
     let kept: Vec<String> = strip_test_items(source)
         .into_iter()
         .map(|(_, line)| line)

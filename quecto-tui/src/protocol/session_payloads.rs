@@ -151,7 +151,15 @@ pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
 /// Parse a `list_sessions` response payload into selector summaries. Entries
 /// without a human-readable title/name are skipped because they cannot be shown
 /// or selected meaningfully.
-pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSummary> {
+///
+/// `sanitize` is injected by the caller, as in `model_payloads`: control
+/// stripping is a presentation concern the protocol layer must not import
+/// (#1637); bounding each shown value stays here.
+pub fn parse_resume_sessions(
+    data: &serde_json::Value,
+    sanitize: &dyn Fn(&str) -> String,
+) -> Vec<ResumeSessionSummary> {
+    let display = |value: &str| safe_session_display(value, sanitize);
     session_values(data)
         .iter()
         .filter_map(|value| {
@@ -159,14 +167,14 @@ pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSumma
             let title = row.title.or(row.name)?;
             Some(ResumeSessionSummary {
                 key: row.key.unwrap_or_else(|| title.clone()),
-                title: safe_session_display(&title),
-                execution_dir: row.execution_path.as_deref().map(safe_session_display),
+                title: display(&title),
+                execution_dir: row.execution_path.as_deref().map(display),
                 resume_eligible: row.resume_eligible,
-                home_version: row.home_version.as_deref().map(safe_session_display),
+                home_version: row.home_version.as_deref().map(display),
                 unscoped: row.home_state.as_deref() == Some("legacy_unscoped"),
                 message_count: row.message_count,
                 updated_unix_secs: row.updated_unix_secs.or(row.updated_at),
-                repository_label: row.repository_label.as_deref().map(safe_session_display),
+                repository_label: row.repository_label.as_deref().map(display),
                 matched: matched_fields(row.matched),
             })
         })
@@ -338,11 +346,8 @@ fn message_values(data: &serde_json::Value) -> Result<&[serde_json::Value], Resu
 #[path = "session_payloads_tests.rs"]
 mod tests;
 
-fn safe_session_display(value: &str) -> String {
-    crate::components::ansi::sanitize_control(value)
-        .chars()
-        .take(512)
-        .collect()
+fn safe_session_display(value: &str, sanitize: &dyn Fn(&str) -> String) -> String {
+    sanitize(value).chars().take(512).collect()
 }
 
 /// Discovery scope, independent of opaque session identity.
@@ -354,15 +359,19 @@ pub enum SessionListScope {
     Global,
 }
 
-/// User-observable discovery diagnostics, bounded and safe for terminal display.
-pub fn session_discovery_diagnostics(data: &serde_json::Value) -> Vec<String> {
+/// User-observable discovery diagnostics, bounded and safe for terminal display
+/// once `sanitize` (the caller's, see [`parse_resume_sessions`]) has run.
+pub fn session_discovery_diagnostics(
+    data: &serde_json::Value,
+    sanitize: &dyn Fn(&str) -> String,
+) -> Vec<String> {
     data.get("diagnostics")
         .and_then(|v| v.as_array())
         .into_iter()
         .flatten()
         .filter_map(|v| v.as_str())
         .take(16)
-        .map(safe_session_display)
+        .map(|value| safe_session_display(value, sanitize))
         .collect()
 }
 

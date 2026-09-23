@@ -44,11 +44,15 @@ struct SearchEnvelope {
 }
 
 /// An envelope that does not decode (a generation that is no number) yields
-/// no generation, so the answer can never be taken for the latest.
-pub fn parse_session_search(data: &serde_json::Value) -> SessionSearchAnswer {
+/// no generation, so the answer can never be taken for the latest. `sanitize`
+/// is the caller's, as for [`parse_resume_sessions`].
+pub fn parse_session_search(
+    data: &serde_json::Value,
+    sanitize: &dyn Fn(&str) -> String,
+) -> SessionSearchAnswer {
     use serde::Deserialize;
     let envelope = SearchEnvelope::deserialize(data).unwrap_or_default();
-    let sessions = parse_resume_sessions(data);
+    let sessions = parse_resume_sessions(data, sanitize);
     let total_matches = envelope.total_matches.unwrap_or(sessions.len() as u64);
     SessionSearchAnswer {
         generation: envelope.generation,

@@ -1579,7 +1579,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-agentic-harness"
-version = "0.107.99"
+version = "0.107.100"
 dependencies = [
  "base64",
  "cucumber",
@@ -1589,8 +1589,10 @@ dependencies = [
  "httpdate",
  "humantime",
  "libc",
+ "proc-macro2",
  "quecto-line-io",
  "quecto-tui",
+ "quote",
  "rand 0.8.6",
  "rcgen",
  "regex",
@@ -1683,7 +1685,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-tui"
-version = "0.77.33"
+version = "0.77.34"
 dependencies = [
  "cucumber",
  "futures",

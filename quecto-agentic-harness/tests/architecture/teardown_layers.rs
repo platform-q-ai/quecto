@@ -123,13 +123,6 @@ fn whole_crate_dependency_direction_holds() {
             "src/interface/shared.rs",
             "crate::composition::find::build_find_tool",
         ),
-        // Pre-#1929 legacy: the agent_cmd roster presenter lives in the
-        // interface protocol module (tracked by the #1666 clean-architecture
-        // epic, not a teardown seam).
-        (
-            "src/infrastructure/tools/agent_cmd.rs",
-            "crate::interface::cli::protocol::build_compact_subagent_roster",
-        ),
     ];
     let mut seen_baseline = BTreeSet::new();
     let mut violations = Vec::new();

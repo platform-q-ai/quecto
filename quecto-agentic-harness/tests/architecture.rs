@@ -15,8 +15,13 @@
 
 #[path = "architecture/bdd_lanes.rs"]
 mod bdd_lanes;
+/// Production-token and relative-path scanning shared by the layer rules
+/// (#1637).
+#[path = "architecture/dependency_scan.rs"]
+mod dependency_scan;
 
-use std::collections::BTreeSet;
+use quote::ToTokens;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -67,45 +72,144 @@ fn collect_rs_files(dir: &Path, files: &mut Vec<String>) {
     }
 }
 
-/// Check that no file in `dir` contains any of the `forbidden` import patterns.
-/// Only checks production code — everything after `#[cfg(test)]` is skipped.
+/// Check that no file in `dir` contains any of the `forbidden` patterns in its
+/// production code: every `#[cfg(test)]` item is removed wherever it sits, and
+/// comments and string literals never match (#1637).
 fn assert_no_imports(layer: &str, dir: &Path, forbidden: &[&str]) {
     let mut files = Vec::new();
     collect_rs_files(dir, &mut files);
 
     for file_content in &files {
-        let (file_path, _) = file_content.split_once(":\n").unwrap();
+        let (file_path, source) = file_content.split_once(":\n").unwrap();
+        if dependency_scan::test_only_file(file_path) {
+            continue;
+        }
+        assert_file_free_of(
+            &format!("Architecture violation in {layer}: {file_path}"),
+            file_path,
+            source,
+            forbidden,
+        );
+    }
+}
 
-        for line in file_content.lines().skip(1) {
-            let trimmed = line.trim();
+/// `forbidden` appears neither in the file's production tokens nor in any
+/// dependency path it names — as written or resolved against its module —
+/// so grouped (`use crate::{shell::X}`) and relative imports are caught
+/// alongside the flat spelling; a module alias is refused outright (#1637).
+fn assert_file_free_of(what: &str, file: &str, source: &str, forbidden: &[&str]) {
+    if let Some(offence) = file_offence(file, source, forbidden) {
+        panic!("{what}: {offence}");
+    }
+}
 
-            // Stop scanning this file once we hit a test module.
-            // Convention: #[cfg(test)] appears at the end of the file.
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-
-            // Skip comments
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            for pattern in forbidden {
-                if trimmed.contains(pattern) {
-                    panic!(
-                        "Architecture violation in {layer}: {file_path}\n\
-                         Line: {trimmed}\n\
-                         Forbidden import: {pattern}\n\
-                         Rule: {layer}/ must not import from {}",
-                        pattern
-                            .trim_start_matches("crate::")
-                            .split("::")
-                            .nth(1)
-                            .unwrap_or(pattern)
-                    );
-                }
-            }
+fn file_offence(file: &str, source: &str, forbidden: &[&str]) -> Option<String> {
+    if let Err(hit) = dependency_scan::forbidden_hit(source, forbidden) {
+        return Some(hit);
+    }
+    let written = dependency_paths(source)?;
+    let resolved = dependency_paths_at(file, source)?;
+    for path in written.iter().chain(&resolved) {
+        if path == dependency_scan::UNRESOLVABLE {
+            return Some("module alias".to_string());
+        }
+        // `use std::fs;` names `std::fs::`; a lone `dirs` is a local name.
+        let path = if path.contains("::") {
+            format!("{path}::")
+        } else {
+            path.clone()
+        };
+        if let Some(pattern) = forbidden
+            .iter()
+            .find(|pattern| names_segment_pattern(&path, pattern))
+        {
+            return Some(format!("names {path} ({pattern})"));
         }
     }
+    None
+}
+
+/// `pattern` occurs in `path` starting at a segment (`dirs::` in
+/// `dirs::home_dir::`, not in `crate::domain::environment_dirs::`).
+fn names_segment_pattern(path: &str, pattern: &str) -> bool {
+    path.match_indices(pattern)
+        .any(|(at, _)| at == 0 || path[..at].ends_with(':'))
+}
+
+#[test]
+fn file_rules_catch_grouped_relative_and_aliased_imports() {
+    let file = "../quecto-tui/src/protocol/session_payloads.rs";
+    let forbidden = ["crate::components", "super::components"];
+    for source in [
+        "use crate as c; fn f() { c::components::ansi::x(); }",
+        "#[cfg(test)]\nmod tests;\nuse crate::components::ansi;",
+    ] {
+        assert!(file_offence(file, source, &forbidden).is_some(), "{source}");
+    }
+    // Only the written path spells the pattern (the text does not).
+    for source in [
+        "use crate::{components::ansi::sanitize_control};",
+        "use super::{components::ansi};",
+    ] {
+        assert!(file_offence(file, source, &forbidden).is_some(), "{source}");
+    }
+    // Only the resolved path spells the pattern.
+    for source in [
+        "use super::super::components::ansi;",
+        "fn f() { super::super::components::ansi::sanitize_control(\"\"); }",
+        "use super::super::{components::ansi};",
+    ] {
+        assert!(
+            file_offence(file, source, &["crate::components"]).is_some(),
+            "{source}"
+        );
+    }
+    for source in [
+        "use crate::protocol::client::Client;",
+        "// crate::components::ansi\nfn f() { let _ = \"crate::components\"; }",
+        "#[cfg(test)]\nmod tests { use crate::components::ansi; }",
+    ] {
+        assert_eq!(file_offence(file, source, &forbidden), None, "{source}");
+    }
+    // `use std::fs;` names `std::fs::`; a local `dirs` names nothing.
+    let domain = "src/domain/mod.rs";
+    for source in [
+        "use dirs as d; fn f() { d::home_dir(); }",
+        "use std as s; fn f() { s::fs::read(\"x\"); }",
+        "extern crate std as s;",
+    ] {
+        assert!(
+            file_offence(domain, source, &["dirs::", "std::fs::"]).is_some(),
+            "{source}"
+        );
+    }
+    for source in [
+        "use crate::domain::environment_dirs;",
+        "use crate::protocol::HttpClient;",
+        "use std::fs as filesystem_is_fine_elsewhere;",
+        "fn f() { use ResumeDecisionKind as Kind; }",
+    ] {
+        assert_eq!(
+            file_offence(domain, source, &["dirs::", "Client::", "std::env::"]),
+            None,
+            "{source}"
+        );
+    }
+    assert!(file_offence(domain, "use std::fs as f;", &["std::fs::"]).is_some());
+    // An import hidden in macro tokens is read like a real one.
+    assert!(
+        file_offence(
+            domain,
+            "id! { use std::fs; fn f() { let _ = fs::read(\"x\"); } }",
+            &["std::fs::"]
+        )
+        .is_some()
+    );
+    assert!(file_offence(domain, "use std::fs;", &["std::fs::"]).is_some());
+    assert_eq!(
+        file_offence(domain, "fn f(dirs: u8) { dirs; }", &["dirs::"]),
+        None
+    );
 }
 
 fn assert_no_inline_test_modules(crate_src: &Path) {
@@ -163,6 +267,210 @@ fn domain_has_no_application_imports() {
     assert_no_imports("domain", Path::new("src/domain"), &["crate::application"]);
 }
 
+/// Relative paths and root aliases cannot route around the substring rules
+/// (#1637): every crate path a domain file names stays in the domain, and
+/// every one an application file names stays in application or domain.
+#[test]
+fn domain_and_application_crate_paths_stay_inward() {
+    for (dir, roots) in [
+        ("src/domain", &["domain"][..]),
+        ("src/application", &["application", "domain"][..]),
+    ] {
+        let mut files = Vec::new();
+        collect_rs_files(Path::new(dir), &mut files);
+        assert!(!files.is_empty(), "{dir} has sources");
+        for file_content in &files {
+            let (file, source) = file_content.split_once(":\n").unwrap();
+            if dependency_scan::test_only_file(file) {
+                continue;
+            }
+            let paths = dependency_paths_at(file, source)
+                .unwrap_or_else(|| panic!("{file} does not parse"));
+            for path in paths {
+                assert!(
+                    crate_path_within(&path, roots),
+                    "{file} names {path}; {dir} may only name crate::{roots:?}"
+                );
+            }
+        }
+    }
+}
+
+/// Macros hide their bodies' paths from the invoking file, so an inner layer
+/// may not invoke a `macro_rules!` an outer layer defines (#1637 review): a
+/// domain file cannot reach application through an application macro.
+#[test]
+fn inner_layers_invoke_no_outer_layer_macros() {
+    let defined_outside = |inner: &[&str]| -> BTreeSet<String> {
+        let mut files = Vec::new();
+        collect_rs_files(Path::new("src"), &mut files);
+        files
+            .iter()
+            .filter(|file_content| {
+                let (file, _) = file_content.split_once(":\n").unwrap();
+                !inner
+                    .iter()
+                    .any(|layer| file.starts_with(&format!("src/{layer}/")))
+            })
+            .flat_map(|file_content| {
+                let (_, source) = file_content.split_once(":\n").unwrap();
+                macro_definitions(source)
+            })
+            .collect()
+    };
+    for (dir, inner) in [
+        ("src/domain", &["domain"][..]),
+        ("src/application", &["domain", "application"][..]),
+    ] {
+        let outer = defined_outside(inner);
+        let mut files = Vec::new();
+        collect_rs_files(Path::new(dir), &mut files);
+        for file_content in &files {
+            let (file, source) = file_content.split_once(":\n").unwrap();
+            if dependency_scan::test_only_file(file) {
+                continue;
+            }
+            let invoked = outer_macro_invocations(source, &outer);
+            assert!(
+                invoked.is_empty(),
+                "{file} invokes outer-layer macros {invoked:?}"
+            );
+        }
+    }
+    assert_eq!(
+        macro_definitions("macro_rules! outer { () => {} }"),
+        ["outer"]
+    );
+    let outer: BTreeSet<String> = ["outer".to_string()].into_iter().collect();
+    assert_eq!(
+        outer_macro_invocations("fn f() { vec![outer!()]; }", &outer),
+        ["outer"]
+    );
+    assert!(outer_macro_invocations("fn f() { inner!(); }", &outer).is_empty());
+    assert_eq!(
+        macro_invocations("fn f() { outer!(); let _ = vec![inner!()]; }"),
+        ["outer", "vec", "inner"]
+    );
+}
+
+/// The macros in `outer` that `source` invokes.
+fn outer_macro_invocations(source: &str, outer: &BTreeSet<String>) -> Vec<String> {
+    macro_invocations(source)
+        .into_iter()
+        .filter(|name| outer.contains(name))
+        .collect()
+}
+
+/// `macro_rules!` names a file defines (test-only ones excluded).
+fn macro_definitions(source: &str) -> Vec<String> {
+    use syn::visit::Visit;
+    struct Definitions(Vec<String>);
+    impl<'ast> Visit<'ast> for Definitions {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            if dependency_scan::item_test_only(item) {
+                return;
+            }
+            if let syn::Item::Macro(definition) = item
+                && definition.mac.path.is_ident("macro_rules")
+                && let Some(name) = &definition.ident
+            {
+                self.0.push(name.to_string());
+            }
+            syn::visit::visit_item(self, item);
+        }
+    }
+    let file = syn::parse_file(source).expect("source parses");
+    let mut definitions = Definitions(Vec::new());
+    definitions.visit_file(&file);
+    definitions.0
+}
+
+/// The last path segment of every macro a file invokes, including inside
+/// other macros' tokens (test-only items excluded).
+fn macro_invocations(source: &str) -> Vec<String> {
+    use syn::visit::Visit;
+    struct Invocations(Vec<String>);
+    fn in_tokens(stream: proc_macro2::TokenStream, out: &mut Vec<String>) {
+        let tokens: Vec<_> = stream.into_iter().collect();
+        for (at, token) in tokens.iter().enumerate() {
+            match token {
+                proc_macro2::TokenTree::Group(group) => in_tokens(group.stream(), out),
+                proc_macro2::TokenTree::Ident(ident)
+                    if matches!(tokens.get(at + 1),
+                        Some(proc_macro2::TokenTree::Punct(bang)) if bang.as_char() == '!')
+                        && matches!(tokens.get(at + 2), Some(proc_macro2::TokenTree::Group(_))) =>
+                {
+                    out.push(ident.to_string())
+                }
+                _ => {}
+            }
+        }
+    }
+    impl<'ast> Visit<'ast> for Invocations {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            if dependency_scan::item_test_only(item) {
+                return;
+            }
+            syn::visit::visit_item(self, item);
+        }
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            if let Some(last) = mac.path.segments.last() {
+                self.0.push(last.ident.to_string());
+            }
+            in_tokens(mac.tokens.clone(), &mut self.0);
+        }
+    }
+    let file = syn::parse_file(source).expect("source parses");
+    let mut invocations = Invocations(Vec::new());
+    invocations.visit_file(&file);
+    invocations.0
+}
+
+/// True for non-crate paths and for crate paths under one of `roots`.
+fn crate_path_within(path: &str, roots: &[&str]) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", root, ..] => roots.contains(root),
+        _ => true,
+    }
+}
+
+#[test]
+fn crate_path_roots_fail_closed() {
+    let file = "src/domain/mod.rs";
+    for source in [
+        "use super::application::secret::Bad;",
+        "use crate::subagent_launch_app::X;",
+        "#[cfg(test)]\nmod tests;\npub use crate::application::X;",
+        "use crate as root;",
+        "fn f() { let _ = vec![super::application::X::new()]; }",
+        "id! { use crate::{application::secret::Bad}; }",
+        "id! { use crate as c; }",
+        "#[serde(bound(serialize = \"T: super::application::Tr\"))]\nstruct S<T>(T);",
+        "extern crate self as q;",
+        "struct S { #[serde(default = \"super::application::d\")] f: u8 }",
+    ] {
+        let paths = dependency_paths_at(file, source).expect("parses");
+        assert!(
+            !paths
+                .iter()
+                .all(|path| crate_path_within(path, &["domain"])),
+            "{source}: {paths:?}"
+        );
+    }
+    let paths = dependency_paths_at(
+        file,
+        "use self::tool::Tool; #[cfg(test)] const X: crate::application::Y = 0;",
+    )
+    .expect("parses");
+    assert!(
+        paths
+            .iter()
+            .all(|path| crate_path_within(path, &["domain"])),
+        "{paths:?}"
+    );
+}
+
 #[test]
 fn domain_has_no_infrastructure_imports() {
     assert_no_imports(
@@ -204,6 +512,495 @@ fn infrastructure_has_no_application_imports() {
     assert_application_imports_are_ports_only(Path::new("src/infrastructure"));
 }
 
+/// The ports surface is an allowlist (#1637 review): whatever a ports
+/// module (`ports.rs`, `ports/**`, or an inline `mod ports`) exposes — a
+/// re-export of any visibility but private, or a type alias — names only the
+/// domain, another `ports`/`dto` module, or a contract the root
+/// `application::ports` has always listed. A use case, a `use_cases` path or
+/// a whole capability module cannot be reached through `…::ports`.
+#[test]
+fn ports_modules_expose_only_contracts() {
+    let mut application = Vec::new();
+    collect_rs_files(Path::new("src/application"), &mut application);
+    let mut checked = 0;
+    for file_content in &application {
+        let (file, source) = file_content.split_once(":\n").unwrap();
+        if dependency_scan::test_only_file(file) {
+            continue;
+        }
+        let (exposed, refused) = port_exposures(file, source);
+        checked += exposed;
+        assert!(
+            refused.is_empty(),
+            "{file} exposes {refused:?} through a ports module"
+        );
+    }
+    assert!(checked > 40, "ports exposures were read ({checked})");
+}
+
+/// Contracts (port traits and the value types their signatures carry) that
+/// live beside their capability's use cases rather than in a `ports`/`dto`
+/// module, keyed by module path under `application`.
+const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
+    ("sessions::conversation_ledger", &["LedgerAdvance"]),
+    ("subagents::standard_script", &["StandardScriptVerdict"]),
+    (
+        "catalogue",
+        &[
+            "CatalogueSnapshotStore",
+            "CatalogueSource",
+            "CatalogueSourceError",
+            "CredentialStatusPort",
+            "ResolvedCatalogue",
+            "SkippedRecord",
+            "SourceEntries",
+        ],
+    ),
+    (
+        "inference_admission",
+        &[
+            "AdmissionClient",
+            "AdmissionDispatcher",
+            "AdmissionRecovery",
+            "AdmissionRegistry",
+        ],
+    ),
+    (
+        "inference_attempt",
+        &["AttemptAcquisition", "AttemptAdmission", "AttemptPermit"],
+    ),
+    (
+        "inference_authority",
+        &[
+            "AdmissionAuthority",
+            "AuthorityError",
+            "AuthorityStatus",
+            "Credential",
+        ],
+    ),
+    (
+        "inference_authority_ports",
+        &["AdmissionJournal", "AdmissionSecretSource", "JournalError"],
+    ),
+    ("inference_observation", &["AdmissionObservation"]),
+    (
+        "provider_runtime",
+        &[
+            "CatalogueRuntimeSnapshot",
+            "ProviderRuntimeFactory",
+            "RuntimeSnapshotStore",
+        ],
+    ),
+    ("subagent_launch", &["LaunchFuture", "SubagentLaunchPorts"]),
+];
+
+fn port_target_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "domain", ..] => true,
+        ["crate", rest @ ..]
+            if !rest.contains(&"use_cases")
+                && (rest.contains(&"ports") || rest.contains(&"dto")) =>
+        {
+            true
+        }
+        ["crate", "application", owner @ .., name] => {
+            let owner = owner.join("::");
+            CONTRACTS_OUTSIDE_PORTS
+                .iter()
+                .any(|(module, names)| *module == owner && names.contains(name))
+        }
+        // A crate path in no allowed place, or one that escaped resolution.
+        ["crate", ..] => false,
+        // External crates and primitives (`Pin`, `std::…`).
+        _ => true,
+    }
+}
+
+/// True when a `cfg` on the item makes it exist only in test or
+/// `test-support` builds (`cfg(test)`, `cfg(any(test, feature =
+/// "test-support"))`); `not(…)` and other features are production.
+fn cfg_test_gated(attrs: &[syn::Attribute]) -> bool {
+    fn requires(meta: &syn::Meta) -> bool {
+        use syn::punctuated::Punctuated;
+        match meta {
+            syn::Meta::Path(path) => path.is_ident("test"),
+            syn::Meta::NameValue(value) => {
+                value.path.is_ident("feature")
+                    && matches!(&value.value, syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(name), ..
+                    }) if name.value() == "test-support")
+            }
+            syn::Meta::List(list) => {
+                let Ok(children) =
+                    list.parse_args_with(Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+                else {
+                    return false;
+                };
+                if list.path.is_ident("all") {
+                    children.iter().any(requires)
+                } else if list.path.is_ident("any") {
+                    !children.is_empty() && children.iter().all(requires)
+                } else {
+                    false
+                }
+            }
+        }
+    }
+    attrs.iter().any(|attr| {
+        attr.path().is_ident("cfg") && attr.parse_args::<syn::Meta>().is_ok_and(|m| requires(&m))
+    })
+}
+
+/// Crates a `ports`/`dto` path may start at besides `crate`: the standard
+/// library and the package's own (non-dev) dependencies. Any other bare
+/// first segment is a local name the guard could not follow.
+fn external_crates() -> &'static BTreeSet<String> {
+    static CRATES: std::sync::OnceLock<BTreeSet<String>> = std::sync::OnceLock::new();
+    CRATES.get_or_init(|| {
+        let manifest = fs::read_to_string("Cargo.toml").expect("read Cargo.toml");
+        let mut crates: BTreeSet<String> = ["std", "core", "alloc"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let mut in_dependencies = false;
+        for line in manifest.lines().map(str::trim) {
+            if line.starts_with('[') {
+                in_dependencies = line.ends_with("dependencies]") && !line.contains("dev-");
+                continue;
+            }
+            if in_dependencies && let Some((name, _)) = line.split_once('=') {
+                crates.insert(name.trim().replace('-', "_"));
+            }
+        }
+        assert!(
+            crates.contains("serde") && crates.contains("tokio"),
+            "{crates:?}"
+        );
+        crates
+    })
+}
+
+/// (number of exposures read, the refused ones) for one application file.
+/// The exposure surface is every module whose path has a `ports` or `dto`
+/// segment — by module path, so a `#[path]` or `include!` file counts.
+fn port_exposures(file: &str, source: &str) -> (usize, Vec<String>) {
+    let module = dependency_scan::module_path(file);
+    let surface = module.iter().any(|s| s == "ports" || s == "dto");
+    let parsed = syn::parse_file(source).unwrap_or_else(|e| panic!("{file}: {e}"));
+    let mut out = (0, Vec::new());
+    port_items(&parsed.items, &module, surface, &mut out);
+    out
+}
+
+fn port_items(
+    items: &[syn::Item],
+    module: &[String],
+    surface: bool,
+    out: &mut (usize, Vec<String>),
+) {
+    use syn::visit::Visit;
+    struct TypePaths(Vec<String>);
+    impl<'ast> Visit<'ast> for TypePaths {
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            self.0.push(
+                path.segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::"),
+            );
+            syn::visit::visit_path(self, path);
+        }
+        // Signatures only: a body is not exposed.
+        fn visit_block(&mut self, _: &'ast syn::Block) {}
+        // Tokens the guard cannot read (a type-position, impl-item or
+        // trait-item macro): refused.
+        fn visit_macro(&mut self, _: &'ast syn::Macro) {
+            self.0.push(dependency_scan::UNRESOLVABLE.to_string());
+        }
+    }
+    /// (bound name, full path) for each leaf; a glob binds `*`.
+    fn use_bindings(tree: &syn::UseTree, prefix: &str, found: &mut Vec<(String, String)>) {
+        match tree {
+            syn::UseTree::Path(path) => {
+                use_bindings(&path.tree, &format!("{prefix}{}::", path.ident), found)
+            }
+            syn::UseTree::Name(name) => {
+                found.push((name.ident.to_string(), format!("{prefix}{}", name.ident)))
+            }
+            syn::UseTree::Rename(name) => {
+                found.push((name.rename.to_string(), format!("{prefix}{}", name.ident)))
+            }
+            syn::UseTree::Glob(_) => found.push(("*".to_string(), format!("{prefix}*"))),
+            syn::UseTree::Group(group) => {
+                for item in &group.items {
+                    use_bindings(item, prefix, found);
+                }
+            }
+        }
+    }
+    let here = |name: &str| format!("crate::{}::{name}", module.join("::"));
+    // Names in scope: items defined or declared here and every `use`
+    // binding, private ones included (`use super::x; pub use x::Y;`).
+    let mut local: BTreeMap<String, String> = BTreeMap::new();
+    let mut globs = Vec::new();
+    for item in items {
+        let defined = match item {
+            syn::Item::Mod(i) => Some(&i.ident),
+            syn::Item::Struct(i) => Some(&i.ident),
+            syn::Item::Enum(i) => Some(&i.ident),
+            syn::Item::Trait(i) => Some(&i.ident),
+            syn::Item::Type(i) => Some(&i.ident),
+            syn::Item::Fn(i) => Some(&i.sig.ident),
+            syn::Item::Const(i) => Some(&i.ident),
+            syn::Item::Static(i) => Some(&i.ident),
+            syn::Item::Union(i) => Some(&i.ident),
+            _ => None,
+        };
+        if let Some(ident) = defined {
+            local.insert(ident.to_string(), here(&ident.to_string()));
+        }
+        if let syn::Item::Use(binding) = item {
+            let mut bound = Vec::new();
+            use_bindings(&binding.tree, "", &mut bound);
+            for (name, path) in bound {
+                if name == "*" {
+                    globs.push(path);
+                } else {
+                    local.insert(name, path);
+                }
+            }
+        }
+    }
+    // Follow bindings to a crate path, a single (prelude/generic) name or a
+    // known external crate; anything else is unresolvable.
+    let resolve = |path: &str| {
+        let mut path = path.to_string();
+        for _ in 0..16 {
+            let (first, rest) = path.split_once("::").unwrap_or((path.as_str(), ""));
+            if matches!(first, "crate" | "super" | "self") {
+                return dependency_scan::resolve_relative(module, &path);
+            }
+            match local.get(first) {
+                Some(base) if *base != path => {
+                    path = if rest.is_empty() {
+                        base.clone()
+                    } else {
+                        format!("{base}::{rest}")
+                    };
+                }
+                // A single name (prelude, primitive), a known crate, or a
+                // type-led path no binding names — `Self::E`, a generic
+                // `T::Item`, `<I as Iterator>::Item` — which can only be a
+                // generic, `Self` or a prelude trait (globs are refused).
+                _ if !path.contains("::")
+                    || external_crates().contains(first)
+                    || first.starts_with(|c: char| c.is_ascii_uppercase()) =>
+                {
+                    return path;
+                }
+                _ => return dependency_scan::UNRESOLVABLE.to_string(),
+            }
+        }
+        dependency_scan::UNRESOLVABLE.to_string()
+    };
+    let check = |targets: Vec<String>, out: &mut (usize, Vec<String>)| {
+        for target in targets {
+            out.0 += 1;
+            let resolved = resolve(&target);
+            if !port_target_allowed(&resolved) {
+                out.1.push(resolved);
+            }
+        }
+    };
+    if surface {
+        // A glob of anything but an external crate makes every bare name
+        // ambiguous.
+        for glob in &globs {
+            let resolved = resolve(glob.trim_end_matches("::*"));
+            out.0 += 1;
+            if resolved.starts_with("crate") {
+                out.1.push(format!("glob {resolved}::*"));
+            }
+        }
+    }
+    for item in items {
+        let attrs: &[syn::Attribute] = match item {
+            syn::Item::Const(i) => &i.attrs,
+            syn::Item::Enum(i) => &i.attrs,
+            syn::Item::Fn(i) => &i.attrs,
+            syn::Item::Impl(i) => &i.attrs,
+            syn::Item::Macro(i) => &i.attrs,
+            syn::Item::Mod(i) => &i.attrs,
+            syn::Item::Static(i) => &i.attrs,
+            syn::Item::Struct(i) => &i.attrs,
+            syn::Item::Trait(i) => &i.attrs,
+            syn::Item::Type(i) => &i.attrs,
+            syn::Item::Union(i) => &i.attrs,
+            syn::Item::Use(i) => &i.attrs,
+            _ => &[],
+        };
+        if cfg_test_gated(attrs) {
+            continue;
+        }
+        if let syn::Item::Mod(declared) = item {
+            if let Some((_, inner)) = &declared.content {
+                let mut child = module.to_vec();
+                child.push(declared.ident.to_string());
+                let nested = surface || declared.ident == "ports" || declared.ident == "dto";
+                port_items(inner, &child, nested, out);
+            }
+            continue;
+        }
+        if !surface {
+            continue;
+        }
+        let public = |vis: &syn::Visibility| !matches!(vis, syn::Visibility::Inherited);
+        let mut paths = TypePaths(Vec::new());
+        match item {
+            // Tokens the guard cannot read: no macro in a contract module.
+            syn::Item::Macro(invocation) => {
+                out.0 += 1;
+                out.1
+                    .push(format!("macro {}", invocation.mac.path.to_token_stream()));
+                continue;
+            }
+            syn::Item::Use(i) if public(&i.vis) => {
+                let mut bound = Vec::new();
+                use_bindings(&i.tree, "", &mut bound);
+                check(
+                    bound
+                        .into_iter()
+                        .filter(|(name, _)| name != "*")
+                        .map(|(_, path)| path)
+                        .collect(),
+                    out,
+                );
+                continue;
+            }
+            syn::Item::Type(i) if public(&i.vis) => paths.visit_item_type(i),
+            syn::Item::Fn(i) if public(&i.vis) => paths.visit_signature(&i.sig),
+            syn::Item::Struct(i) if public(&i.vis) => paths.visit_item_struct(i),
+            syn::Item::Enum(i) if public(&i.vis) => paths.visit_item_enum(i),
+            syn::Item::Union(i) if public(&i.vis) => paths.visit_item_union(i),
+            syn::Item::Const(i) if public(&i.vis) => paths.visit_type(&i.ty),
+            syn::Item::Static(i) if public(&i.vis) => paths.visit_type(&i.ty),
+            syn::Item::Trait(i) if public(&i.vis) => paths.visit_item_trait(i),
+            syn::Item::Impl(block) => {
+                // A trait impl is public through the trait: its header,
+                // associated types and every signature are exposed.
+                let through_trait = block.trait_.is_some();
+                if through_trait {
+                    paths.visit_generics(&block.generics);
+                    paths.visit_type(&block.self_ty);
+                    if let Some((_, trait_path, _)) = &block.trait_ {
+                        paths.visit_path(trait_path);
+                    }
+                }
+                for member in &block.items {
+                    match member {
+                        syn::ImplItem::Fn(f) if through_trait || public(&f.vis) => {
+                            paths.visit_signature(&f.sig)
+                        }
+                        syn::ImplItem::Const(c) if through_trait || public(&c.vis) => {
+                            paths.visit_type(&c.ty)
+                        }
+                        syn::ImplItem::Type(t) if through_trait || public(&t.vis) => {
+                            paths.visit_type(&t.ty)
+                        }
+                        syn::ImplItem::Macro(_) => {
+                            paths.0.push(dependency_scan::UNRESOLVABLE.to_string())
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => continue,
+        }
+        check(paths.0, out);
+    }
+}
+
+#[test]
+fn ports_guard_is_an_allowlist() {
+    let file = "src/application/environments/ports.rs";
+    for source in [
+        "pub use super::use_cases::FinalizeEnvironmentMember as X;",
+        "pub(crate) use super::use_cases::FinalizeEnvironmentMember as X;",
+        "pub use super::super::subagent_launch;",
+        "pub use crate::application::sessions as s;",
+        "pub use super::super::subagent_launch::SubagentLaunchUseCase;",
+        "pub use super::*;",
+        "pub type K = super::use_cases::KillEnvironment;",
+        "pub mod inner { pub use super::super::use_cases::KillEnvironment; }",
+        "#[cfg(not(test))]\npub use super::use_cases::KillEnvironment;",
+        "#[cfg(feature = \"attestation\")]\npub use super::use_cases::KillEnvironment;",
+        "pub use crate::application::environments::ports::use_cases::X;",
+        "#[cfg(any(test, feature = \"attestation\"))]\npub use super::use_cases::KillEnvironment;",
+        // Through a private binding, a local module or after a glob.
+        "use super::super::environments;\npub use environments::use_cases::KillEnvironment;",
+        "use super::use_cases as cases;\npub use cases::KillEnvironment;",
+        "mod use_cases { pub struct K; }\npub use use_cases::K;",
+        "use super::*;\npub use use_cases::KillEnvironment;",
+        // Chained private aliases and a glob through a binding (round 3).
+        "use super::super::environments as envs;\nuse envs::use_cases as cases;\npub use cases::KillEnvironment;",
+        "use super::super::environments;\nuse environments::*;\npub use use_cases::KillEnvironment;",
+        // A use case handed out through a signature, a field or a macro.
+        "pub fn build() -> super::use_cases::KillEnvironment { loop {} }",
+        "pub struct H(pub super::use_cases::KillEnvironment);",
+        "pub enum E { A(super::use_cases::KillEnvironment) }",
+        "pub struct S; impl S { pub fn k(&self) -> super::use_cases::KillEnvironment { loop {} } }",
+        "m! { pub use super::use_cases::KillEnvironment; }",
+        // A bare non-crate first segment that is no known crate.
+        "pub use not_a_dependency::Anything;",
+        // Through a trait impl, an associated type or an impl/type macro.
+        "pub struct H; impl Iterator for H { type Item = super::use_cases::KillEnvironment; fn next(&mut self) -> Option<Self::Item> { None } }",
+        "pub struct H; impl From<super::use_cases::KillEnvironment> for H { fn from(_: super::use_cases::KillEnvironment) -> Self { H } }",
+        "pub struct H; impl H { m!(); }",
+        "pub type T = m!(super::use_cases::KillEnvironment);",
+        "pub trait P { m!(); }",
+    ] {
+        assert!(!port_exposures(file, source).1.is_empty(), "{source}");
+    }
+    for source in [
+        "pub use crate::domain::environment_registry::EnvironmentRegistry;",
+        "pub use super::dto::EnvironmentLiveness;",
+        "pub use crate::application::sessions::ports::SessionStore;",
+        "pub use crate::application::subagent_launch::{LaunchFuture, SubagentLaunchPorts};",
+        "pub type F<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>>;",
+        "use super::use_cases::KillEnvironment;",
+        "#[cfg(any(test, feature = \"test-support\"))]\npub use super::use_cases::KillEnvironment;",
+        "mod local { pub struct X; }\npub use local::X;",
+        "pub struct Row { pub at: std::time::SystemTime, pub value: serde_json::Value, pub n: u64 }",
+        "pub fn f(record: &crate::domain::session::SessionRecord) -> Option<String> { None }",
+        "pub trait P { type E; fn f(&self) -> Result<(), Self::E>; }",
+        "pub fn g<I: Iterator>(i: I) -> Option<I::Item> { None }",
+        "pub struct H; impl Default for H { fn default() -> Self { H } }",
+        "pub struct S(pub u64); impl S { fn private(&self) -> super::use_cases::KillEnvironment { loop {} } }",
+    ] {
+        let (exposed, refused) = port_exposures(file, source);
+        assert_eq!(refused, Vec::<String>::new(), "{source}");
+        let private = source.starts_with("use ") || source.starts_with("#[cfg");
+        assert!(private || exposed > 0, "{source} was read");
+    }
+    // A `dto` module is surface too: it cannot launder a use case.
+    let (_, refused) = port_exposures(
+        "src/application/subagents/dto.rs",
+        "pub use super::use_cases::KillDelegatedAgent;",
+    );
+    assert_eq!(
+        refused,
+        ["crate::application::subagents::use_cases::KillDelegatedAgent"]
+    );
+    // Outside a ports module, nothing is an exposure of the ports surface.
+    let (exposed, _) = port_exposures(
+        "src/application/environments/mod.rs",
+        "pub use use_cases::KillEnvironment;",
+    );
+    assert_eq!(exposed, 0);
+}
+
 /// Application references use the explicit port and environment-owner surface.
 /// Parse each dependency independently, including grouped and qualified paths.
 fn assert_application_imports_are_ports_only(dir: &Path) {
@@ -211,11 +1008,14 @@ fn assert_application_imports_are_ports_only(dir: &Path) {
     collect_rs_files(dir, &mut files);
 
     for file_content in &files {
-        let (file_path, _) = file_content.split_once(":\n").unwrap();
-        let (_, source) = file_content.split_once(":\n").unwrap();
+        let (file_path, source) = file_content.split_once(":\n").unwrap();
+        if dependency_scan::test_only_file(file_path) {
+            continue;
+        }
+        let refused = refused_application_paths(file_path, source);
         assert!(
-            application_dependencies_allowed(source),
-            "Architecture violation in infrastructure: {file_path}"
+            refused.is_empty(),
+            "Architecture violation in infrastructure: {file_path} names {refused:?}"
         );
     }
 }
@@ -343,228 +1143,277 @@ fn query_dependencies_allowed(content: &str) -> bool {
 }
 
 fn application_dependencies_allowed(content: &str) -> bool {
-    dependency_paths(content).is_some_and(|paths| {
-        paths.iter().all(|path| {
-            let parts: Vec<_> = path.split("::").collect();
-            match parts.as_slice() {
-                ["crate", "application", "ports", ..] => true,
-                // Ports are capability-local (#1934, #1960): every
-                // `application/<capability>/ports.rs` is a contract this
-                // layer implements. Subagent teardown (#1935) was the first.
-                ["crate", "application", _, "ports", ..] => true,
-                // The sessions list port takes the capability's own query
-                // DTO (#1970); the file store names it to implement `list`.
-                // The export port (#1974) takes the records and manifest the
-                // use case assembled and returns the artifact receipt.
-                [
-                    "crate",
-                    "application",
-                    "sessions",
-                    "dto",
-                    "SessionListQuery" | "ExportRecord" | "ExportManifest" | "RawExportReceipt",
-                ] => true,
-                // Retained context (D9 #1978): the `recall` tool adapts the
-                // sessions capability's recall use case — it holds the
-                // composed handle, parses its schema and formats the
-                // outcomes; the selection is the use case's.
-                [
-                    "crate",
-                    "application",
-                    "sessions",
-                    "use_cases",
-                    "RecallContext",
-                ]
-                | [
-                    "crate",
-                    "application",
-                    "sessions",
-                    "dto",
-                    "retained_context",
-                    "RecallError" | "RecallOutcome" | "RecallQuery",
-                    ..,
-                ] => true,
-                // The launch-side lifecycle use cases (#1936) are invoked by
-                // the reaper, the monitor and the launch rollback — the
-                // adapters that observe a direct child's end — over the
-                // adapters this layer implements. The operator-facing kill
-                // is composed outside this layer.
-                [
-                    "crate",
-                    "application",
-                    "subagents",
-                    "use_cases",
-                    "ObserveOwnedChildExit"
-                    | "CompensateFailedLaunch"
-                    | "CompensateFailedLaunchPorts"
-                    // The environment member shutdown and the swarm member
-                    // termination (#1939) delegate to the per-child
-                    // settlement and the operator kill; both are built in
-                    // composition and only invoked here.
-                    | "SettleDelegatedChild"
-                    | "ChildSettlement"
-                    | "KillDelegatedAgent"
-                    // The spawn tool (#2024 S4a) holds the composed
-                    // container-config selection and invokes it for every
-                    // new container; the config adapter implements its port
-                    // in the capability's launch vocabulary.
-                    | "SelectContainerConfig",
-                    ..,
-                ]
-                | [
-                    "crate",
-                    "application",
-                    "subagents",
-                    "dto",
-                    "ObserveOwnedChildExitRequest"
-                    | "ObservedExit"
-                    | "CompensateFailedLaunchRequest"
-                    | "FleetChildResult"
-                    | "KillDelegatedAgentError"
-                    | "KillDelegatedAgentRequest"
-                    | "ContainerConfigSource"
-                    | "ContainerConfigsError"
-                    | "ContainerLaunchConfig"
-                    | "EffectiveContainerConfigSet"
-                    | "SelectContainerConfigRequest"
-                    // The doctor's lookup rewords the withheld-overlay
-                    // refusal for its own command (#2024 S4b review).
-                    | "SelectContainerConfigError"
-                    | "SelectedContainerConfig"
-                    // The embedded bundle's integrity adapter (#2024 S4e)
-                    // answers the launch policy's port with its verdict.
-                    | "StandardScriptVerdict",
-                    ..,
-                ]
-                // The container-script preflight and the doctor's config
-                // lookup (#2024 S4b) implement the environments capability's
-                // ports in the capability's own diagnosis vocabulary.
-                | [
-                    "crate",
-                    "application",
-                    "environments",
-                    "dto",
-                    "CheckStatus"
-                    | "ContainerRuntimeTarget"
-                    | "DiagnosableContainerConfig"
-                    | "PreflightCheck"
-                    // The liveness and inventory adapters (#2024 S4d)
-                    // answer in the capability's own records.
-                    | "EnvironmentLiveness"
-                    | "EnvironmentStateDir"
-                    | "RuntimeContainer"
-                    // … and the registry store's conditional correction.
-                    | "CorrectionOutcome"
-                    // Container-config discovery (#2024 S4c): the roster
-                    // adapter builds the inventory entries in the
-                    // capability's vocabulary; the spawn tool's roster line
-                    // presents the listing's inventory.
-                    | "ContainerConfigEntry"
-                    | "ContainerConfigInventory"
-                    | "ContainerConfigLayer"
-                    // The standard bundle (#2024 S4e): the embedded asset
-                    // store answers in the capability's asset vocabulary.
-                    | "AssetOutcome"
-                    // Whose file an asset is (#2073): a field of the
-                    // catalogue entries the store builds.
-                    | "AssetOwnership"
-                    | "AssetState"
-                    | "ContainerAsset"
-                    | "ContainerAssetCatalogue"
-                    // … and the integrity adapter locates a bundle by
-                    // the capability's own directory constant.
-                    | "STANDARD_CONTAINER_DIR",
-                    ..,
-                ] => true,
-                // The spawn tool (#1848) holds the composed change-reasoning-
-                // effort handle to validate an explicit-model `effort` the
-                // same way `set_effort` does; the vocabulary rule is the use
-                // case's, the tool only invokes it.
-                [
-                    "crate",
-                    "application",
-                    "catalogue",
-                    "use_cases",
-                    "ChangeReasoningEffort",
-                ] => true,
-                [
-                    "crate",
-                    "application",
-                    "agent_turn",
-                    "use_cases",
-                    "find",
-                    "FindPaths" | "FindPathsRequest" | "FindOutput" | "FindError",
-                    ..,
-                ] => true,
-                [
-                    "crate",
-                    "application",
-                    "agent_turn",
-                    "use_cases",
-                    "web_fetch",
-                    "FetchFailure" | "FetchOutcome" | "FetchRequest" | "FetchWebContent"
-                    | "HttpStatus",
-                    ..,
-                ] => true,
-                // The environments capability (#1939): its ports are
-                // implemented here, and its use cases are built beside the
-                // agent-control tools (the precedent of the retired
-                // `EnvironmentControlUseCase`) and by the cleanup path that
-                // finalizes a member.
-                [
-                    "crate",
-                    "application",
-                    "environments",
-                    "use_cases",
-                    "ListEnvironmentsQuery"
-                    | "KillEnvironment"
-                    | "KilledEnvironment"
-                    | "KillEnvironmentError"
-                    | "FinalizeEnvironmentMember"
-                    // The spawn and agent_cmd tools (#2024 S4c) hold the
-                    // composed container-config listing: the description's
-                    // roster line and `get_container_configs` invoke it.
-                    | "ListContainerConfigs",
-                    ..,
-                ] => true,
-                // The launch port moved out of the domain into its capability
-                // (#1940); the spawn adapter implements it. The swarm ports
-                // live in `application::swarm::ports` (#1960), covered above.
-                ["crate", "application", "subagent_launch", "SubagentLaunchPorts"] => true,
-                // The admission-operation capability (#2024 S3): the admin
-                // adapter implements its `AuthorityAdmin` port and builds the
-                // port's own result/error DTOs; the service manager
-                // implements `AuthorityServiceManager` and builds its spec/
-                // status types. (The ports themselves are covered by the
-                // generic `application/<capability>/ports` rule above.)
-                [
-                    "crate",
-                    "application",
-                    "admission",
-                    "dto",
-                    "AuthorityReport" | "AuthorityGroupReport" | "ResetReport"
-                    | "AuthorityAdminError",
-                    ..,
-                ] => true,
-                ["crate", "application", ..] => false,
-                _ => true,
-            }
-        })
-    })
+    application_paths_allowed(dependency_paths(content))
+}
+
+/// [`application_dependencies_allowed`] for a crate source file, with its
+/// relative paths resolved (#1637).
+fn application_dependencies_allowed_at(file: &str, content: &str) -> bool {
+    refused_application_paths(file, content).is_empty()
+}
+
+/// The crate paths `file` names that the infrastructure → application rule
+/// refuses, relative paths resolved; a file that does not parse is refused.
+fn refused_application_paths(file: &str, content: &str) -> Vec<String> {
+    match dependency_paths_at(file, content) {
+        Some(paths) => paths
+            .into_iter()
+            .filter(|path| !application_path_allowed(path))
+            .collect(),
+        None => vec!["<does not parse>".to_string()],
+    }
+}
+
+fn application_paths_allowed(paths: Option<Vec<String>>) -> bool {
+    paths.is_some_and(|paths| paths.iter().all(|path| application_path_allowed(path)))
+}
+
+fn application_path_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "application", "ports", ..] => true,
+        // Ports are capability-local (#1934, #1960): every
+        // `application/<capability>/ports.rs` is a contract this
+        // layer implements. Subagent teardown (#1935) was the first.
+        ["crate", "application", _, "ports", ..] => true,
+        // The sessions list port takes the capability's own query
+        // DTO (#1970); the file store names it to implement `list`.
+        // The export port (#1974) takes the records and manifest the
+        // use case assembled and returns the artifact receipt.
+        [
+            "crate",
+            "application",
+            "sessions",
+            "dto",
+            "SessionListQuery" | "ExportRecord" | "ExportManifest" | "RawExportReceipt",
+        ] => true,
+        // Retained context (D9 #1978): the `recall` tool adapts the
+        // sessions capability's recall use case — it holds the
+        // composed handle, parses its schema and formats the
+        // outcomes; the selection is the use case's.
+        [
+            "crate",
+            "application",
+            "sessions",
+            "use_cases",
+            "RecallContext",
+        ]
+        | [
+            "crate",
+            "application",
+            "sessions",
+            "dto",
+            "retained_context",
+            "RecallError" | "RecallOutcome" | "RecallQuery",
+            ..,
+        ] => true,
+        // The launch-side lifecycle use cases (#1936) are invoked by
+        // the reaper, the monitor and the launch rollback — the
+        // adapters that observe a direct child's end — over the
+        // adapters this layer implements. The operator-facing kill
+        // is composed outside this layer.
+        [
+            "crate",
+            "application",
+            "subagents",
+            "use_cases",
+            "ObserveOwnedChildExit"
+            | "CompensateFailedLaunch"
+            | "CompensateFailedLaunchPorts"
+            // The environment member shutdown and the swarm member
+            // termination (#1939) delegate to the per-child
+            // settlement and the operator kill; both are built in
+            // composition and only invoked here.
+            | "SettleDelegatedChild"
+            | "ChildSettlement"
+            | "KillDelegatedAgent"
+            // The spawn tool (#2024 S4a) holds the composed
+            // container-config selection and invokes it for every
+            // new container; the config adapter implements its port
+            // in the capability's launch vocabulary.
+            | "SelectContainerConfig",
+            ..,
+        ]
+        | [
+            "crate",
+            "application",
+            "subagents",
+            "dto",
+            "ObserveOwnedChildExitRequest"
+            | "ObservedExit"
+            | "CompensateFailedLaunchRequest"
+            | "FleetChildResult"
+            | "KillDelegatedAgentError"
+            | "KillDelegatedAgentRequest"
+            | "ContainerConfigSource"
+            | "ContainerConfigsError"
+            | "ContainerLaunchConfig"
+            | "EffectiveContainerConfigSet"
+            | "SelectContainerConfigRequest"
+            // The doctor's lookup rewords the withheld-overlay
+            // refusal for its own command (#2024 S4b review).
+            | "SelectContainerConfigError"
+            | "SelectedContainerConfig"
+            // The embedded bundle's integrity adapter (#2024 S4e)
+            // answers the launch policy's port with its verdict.
+            | "StandardScriptVerdict",
+            ..,
+        ]
+        // The container-script preflight and the doctor's config
+        // lookup (#2024 S4b) implement the environments capability's
+        // ports in the capability's own diagnosis vocabulary.
+        | [
+            "crate",
+            "application",
+            "environments",
+            "dto",
+            "CheckStatus"
+            | "ContainerRuntimeTarget"
+            | "DiagnosableContainerConfig"
+            | "PreflightCheck"
+            // The liveness and inventory adapters (#2024 S4d)
+            // answer in the capability's own records.
+            | "EnvironmentLiveness"
+            | "EnvironmentStateDir"
+            | "RuntimeContainer"
+            // … and the registry store's conditional correction.
+            | "CorrectionOutcome"
+            // Container-config discovery (#2024 S4c): the roster
+            // adapter builds the inventory entries in the
+            // capability's vocabulary; the spawn tool's roster line
+            // presents the listing's inventory.
+            | "ContainerConfigEntry"
+            | "ContainerConfigInventory"
+            | "ContainerConfigLayer"
+            // The standard bundle (#2024 S4e): the embedded asset
+            // store answers in the capability's asset vocabulary.
+            | "AssetOutcome"
+            // Whose file an asset is (#2073): a field of the
+            // catalogue entries the store builds.
+            | "AssetOwnership"
+            | "AssetState"
+            | "ContainerAsset"
+            | "ContainerAssetCatalogue"
+            // … and the integrity adapter locates a bundle by
+            // the capability's own directory constant.
+            | "STANDARD_CONTAINER_DIR",
+            ..,
+        ] => true,
+        // The spawn tool (#1848) holds the composed change-reasoning-
+        // effort handle to validate an explicit-model `effort` the
+        // same way `set_effort` does; the vocabulary rule is the use
+        // case's, the tool only invokes it.
+        [
+            "crate",
+            "application",
+            "catalogue",
+            "use_cases",
+            "ChangeReasoningEffort",
+        ] => true,
+        [
+            "crate",
+            "application",
+            "agent_turn",
+            "use_cases",
+            "find",
+            "FindPaths" | "FindPathsRequest" | "FindOutput" | "FindError",
+            ..,
+        ] => true,
+        [
+            "crate",
+            "application",
+            "agent_turn",
+            "use_cases",
+            "web_fetch",
+            "FetchFailure" | "FetchOutcome" | "FetchRequest" | "FetchWebContent"
+            | "HttpStatus",
+            ..,
+        ] => true,
+        // The environments capability (#1939): its ports are
+        // implemented here, and its use cases are built beside the
+        // agent-control tools (the precedent of the retired
+        // `EnvironmentControlUseCase`) and by the cleanup path that
+        // finalizes a member.
+        [
+            "crate",
+            "application",
+            "environments",
+            "use_cases",
+            "ListEnvironmentsQuery"
+            | "KillEnvironment"
+            | "KilledEnvironment"
+            | "KillEnvironmentError"
+            | "FinalizeEnvironmentMember"
+            // The spawn and agent_cmd tools (#2024 S4c) hold the
+            // composed container-config listing: the description's
+            // roster line and `get_container_configs` invoke it.
+            | "ListContainerConfigs",
+            ..,
+        ] => true,
+        // The launch port (#1940) is reached through
+        // `application::ports` like every other contract (#1637). The
+        // spawn tool still builds the launch use case over its own
+        // ports; moving that construction to composition belongs to
+        // "Launch a delegated agent" (#1880).
+        ["crate", "application", "subagent_launch", "SubagentLaunchUseCase"] => true,
+        // The admission-operation capability (#2024 S3): the admin
+        // adapter implements its `AuthorityAdmin` port and builds the
+        // port's own result/error DTOs; the service manager
+        // implements `AuthorityServiceManager` and builds its spec/
+        // status types. (The ports themselves are covered by the
+        // generic `application/<capability>/ports` rule above.)
+        [
+            "crate",
+            "application",
+            "admission",
+            "dto",
+            "AuthorityReport" | "AuthorityGroupReport" | "ResetReport"
+            | "AuthorityAdminError",
+            ..,
+        ] => true,
+        ["crate", "application", ..] => false,
+        // Every other crate path must start at a layer infrastructure
+        // may name: a root alias (`pub use application::x as y;` in
+        // `lib.rs`), a path climbing above the crate root, a module alias
+        // and `interface` (however it is spelled, relative paths included)
+        // are not, so no such route passes unchecked (#1637).
+        ["crate", "domain" | "infrastructure", ..] => true,
+        // `pub(crate)` names the crate itself, no layer.
+        ["crate"] => true,
+        ["crate", ..] => false,
+        _ => true,
+    }
 }
 
 /// Parse syntax, not lines: comments cannot authorize dependencies and grouped
 /// imports are expanded to their individual paths. Unknown query paths fail closed.
 fn dependency_paths(content: &str) -> Option<Vec<String>> {
+    dependency_paths_in(None, content)
+}
+
+/// [`dependency_paths`] for a crate source file: `super::`/`self::` paths are
+/// resolved against the file's module (and any inline `mod` around them), so
+/// a relative import is checked as the crate path it names (#1637).
+fn dependency_paths_at(file: &str, content: &str) -> Option<Vec<String>> {
+    dependency_paths_in(Some(dependency_scan::module_path(file)), content)
+}
+
+fn dependency_paths_in(module: Option<Vec<String>>, content: &str) -> Option<Vec<String>> {
+    use dependency_scan::test_only;
     use syn::visit::Visit;
-    #[derive(Default)]
-    struct Paths(Vec<String>);
-    fn test_only(attrs: &[syn::Attribute]) -> bool {
-        attrs.iter().any(|attr| {
-            attr.path().is_ident("cfg")
-                && attr
-                    .parse_args::<syn::Path>()
-                    .is_ok_and(|path| path.is_ident("test"))
-        })
+    struct Paths {
+        found: Vec<String>,
+        /// The module the visitor is in, when the file's module is known.
+        module: Option<Vec<String>>,
+    }
+    impl Paths {
+        fn push(&mut self, path: String) {
+            let path = match &self.module {
+                Some(module) => dependency_scan::resolve_relative(module, &path),
+                None => path,
+            };
+            self.found.push(path);
+        }
     }
     fn imports(tree: &syn::UseTree, prefix: &str, paths: &mut Vec<String>) {
         match tree {
@@ -572,6 +1421,20 @@ fn dependency_paths(content: &str) -> Option<Vec<String>> {
                 imports(&path.tree, &format!("{prefix}{}::", path.ident), paths)
             }
             syn::UseTree::Name(name) => paths.push(format!("{prefix}{}", name.ident)),
+            // `use crate as root;` / `use super::super as up;` alias a module,
+            // `use std as s;` / `use dirs as d;` a crate or module (snake
+            // case; `use LongEnum as Kind;` renames a type): paths through
+            // the alias could not be followed, so none is allowed.
+            syn::UseTree::Rename(name)
+                if dependency_scan::is_module_alias(&format!("{prefix}{}", name.ident))
+                    || (prefix.is_empty()
+                        && name
+                            .ident
+                            .to_string()
+                            .starts_with(|c: char| c.is_ascii_lowercase())) =>
+            {
+                paths.push(dependency_scan::UNRESOLVABLE.to_string())
+            }
             syn::UseTree::Rename(name) => paths.push(format!("{prefix}{}", name.ident)),
             syn::UseTree::Glob(_) => paths.push(format!("{prefix}*")),
             syn::UseTree::Group(group) => {
@@ -586,13 +1449,17 @@ fn dependency_paths(content: &str) -> Option<Vec<String>> {
             if attr.path().is_ident("doc") {
                 return;
             }
+            // `#[serde(with = "crate::…")]`: a path spelled in a string.
+            for path in dependency_scan::string_paths_in_tokens(attr.meta.to_token_stream()) {
+                self.push(path);
+            }
             if attr.path().is_ident("derive") {
                 match attr.parse_args_with(
                     syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
                 ) {
                     Ok(paths) => {
                         for path in paths {
-                            self.0.push(
+                            self.push(
                                 path.segments
                                     .iter()
                                     .map(|s| s.ident.to_string())
@@ -601,11 +1468,11 @@ fn dependency_paths(content: &str) -> Option<Vec<String>> {
                             );
                         }
                     }
-                    Err(_) => self.0.push("<unparsed attribute>".into()),
+                    Err(_) => self.found.push("<unparsed attribute>".into()),
                 }
                 return;
             }
-            self.0.push(
+            self.push(
                 attr.path()
                     .segments
                     .iter()
@@ -628,18 +1495,7 @@ fn dependency_paths(content: &str) -> Option<Vec<String>> {
         }
 
         fn visit_item(&mut self, item: &'ast syn::Item) {
-            let attrs = match item {
-                syn::Item::Use(i) => &i.attrs,
-                syn::Item::Mod(i) => &i.attrs,
-                syn::Item::Fn(i) => &i.attrs,
-                syn::Item::Struct(i) => &i.attrs,
-                syn::Item::Impl(i) => &i.attrs,
-                _ => {
-                    syn::visit::visit_item(self, item);
-                    return;
-                }
-            };
-            if test_only(attrs) {
+            if dependency_scan::item_test_only(item) {
                 return;
             }
             syn::visit::visit_item(self, item);
@@ -656,11 +1512,42 @@ fn dependency_paths(content: &str) -> Option<Vec<String>> {
             }
             syn::visit::visit_impl_item_fn(self, method);
         }
+        fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+            // An inline module nests the paths inside it one level deeper.
+            let inline = item.content.is_some();
+            if inline && let Some(module) = &mut self.module {
+                module.push(item.ident.to_string());
+            }
+            syn::visit::visit_item_mod(self, item);
+            if inline && let Some(module) = &mut self.module {
+                module.pop();
+            }
+        }
+        fn visit_item_extern_crate(&mut self, item: &'ast syn::ItemExternCrate) {
+            // `extern crate self as q;` / `extern crate std as s;` name a
+            // crate under another root the path rules could not follow.
+            if item.ident == "self" || item.rename.is_some() {
+                self.found.push(dependency_scan::UNRESOLVABLE.to_string());
+            }
+            syn::visit::visit_item_extern_crate(self, item);
+        }
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            // Macro arguments and `macro_rules!` bodies are tokens `syn`
+            // does not parse: read the crate-relative paths out of them.
+            for path in dependency_scan::crate_paths_in_tokens(mac.tokens.clone()) {
+                self.push(path);
+            }
+            syn::visit::visit_macro(self, mac);
+        }
         fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
-            imports(&item.tree, "", &mut self.0);
+            let mut found = Vec::new();
+            imports(&item.tree, "", &mut found);
+            for path in found {
+                self.push(path);
+            }
         }
         fn visit_path(&mut self, path: &'ast syn::Path) {
-            self.0.push(
+            self.push(
                 path.segments
                     .iter()
                     .map(|s| s.ident.to_string())
@@ -671,9 +1558,12 @@ fn dependency_paths(content: &str) -> Option<Vec<String>> {
         }
     }
     let file = syn::parse_file(content).ok()?;
-    let mut paths = Paths::default();
+    let mut paths = Paths {
+        found: Vec::new(),
+        module,
+    };
     paths.visit_file(&file);
-    Some(paths.0)
+    Some(paths.found)
 }
 
 #[test]
@@ -1455,22 +2345,15 @@ fn tui_conversation_pure_policy_has_no_outer_layer_imports() {
         let path = Path::new(TUI_CONVERSATION).join(rel);
         let content = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read pure conversation policy {}: {e}", path.display()));
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            for pattern in forbidden {
-                assert!(
-                    !trimmed.contains(pattern),
-                    "pure conversation policy {} must not import outer layer pattern {pattern}; line: {trimmed}",
-                    path.display()
-                );
-            }
-        }
+        assert_file_free_of(
+            &format!(
+                "pure conversation policy {} must not import outer layers",
+                path.display()
+            ),
+            &path.display().to_string(),
+            &content,
+            &forbidden,
+        );
     }
 }
 
@@ -1501,25 +2384,18 @@ fn tui_agents_pure_policy_has_no_outer_layer_imports() {
         let path = Path::new(TUI_AGENTS).join(rel);
         let content = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read pure agents policy {}: {e}", path.display()));
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            for pattern in forbidden {
-                assert!(
-                    !trimmed.contains(pattern),
-                    "pure agents policy {} must not contain pattern {pattern}; line: {trimmed}",
-                    path.display()
-                );
-            }
-        }
+        assert_file_free_of(
+            &format!("pure agents policy {}", path.display()),
+            &path.display().to_string(),
+            &content,
+            &forbidden,
+        );
     }
-    let ledger =
-        fs::read_to_string(Path::new(TUI_AGENTS).join("ledger.rs")).expect("read agents ledger");
+    let ledger_path = Path::new(TUI_AGENTS)
+        .join("ledger.rs")
+        .display()
+        .to_string();
+    let ledger = fs::read_to_string(&ledger_path).expect("read agents ledger");
     for pattern in [
         "crate::interface",
         "crate::components",
@@ -1530,19 +2406,7 @@ fn tui_agents_pure_policy_has_no_outer_layer_imports() {
         "Client::",
         "serde_json::",
     ] {
-        for line in ledger.lines() {
-            let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            assert!(
-                !trimmed.contains(pattern),
-                "agents ledger must not contain pattern {pattern}; line: {trimmed}"
-            );
-        }
+        assert_file_free_of("agents ledger", &ledger_path, &ledger, &[pattern]);
     }
 }
 
@@ -1551,6 +2415,7 @@ fn tui_workspace_files_adapter_does_not_import_presentation_layers() {
     // #1257 Phase 5: workspace_files moved out of infrastructure/; it may use
     // std/process IO but must not depend on presentation modules.
     let path = Path::new(TUI_WORKSPACE).join("workspace_files.rs");
+    let file = path.display().to_string();
     let content = fs::read_to_string(&path).expect("read workspace_files");
     for pattern in [
         "crate::interface",
@@ -1563,19 +2428,7 @@ fn tui_workspace_files_adapter_does_not_import_presentation_layers() {
         "crate::workflow",
         "crate::inference",
     ] {
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            assert!(
-                !trimmed.contains(pattern),
-                "workspace_files must not import {pattern}; line: {trimmed}"
-            );
-        }
+        assert_file_free_of("workspace_files", &file, &content, &[pattern]);
     }
 }
 
@@ -1596,11 +2449,109 @@ fn tui_protocol_has_no_feature_or_shell_imports() {
             "crate::workflow",
             "crate::inference",
             "crate::workspace",
+            "crate::setup",
             "super::components",
             "super::shell",
             "super::interface",
         ],
     );
+}
+
+/// The TUI protocol names no other crate module at all (#1637 review):
+/// every crate path a protocol file names — written, grouped, relative or
+/// aliased — stays under `crate::protocol`, whatever the top-level modules
+/// are called. The denylist above keeps its readable messages.
+#[test]
+fn tui_protocol_crate_paths_stay_in_protocol() {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new(TUI_PROTOCOL), &mut files);
+    assert!(files.len() > 5, "protocol sources were found");
+    for file_content in &files {
+        let (file, source) = file_content.split_once(":\n").unwrap();
+        if dependency_scan::test_only_file(file) {
+            continue;
+        }
+        let refused = paths_outside(file, source, &["protocol"]);
+        assert!(
+            refused.is_empty(),
+            "{file} names {refused:?}; the TUI protocol may only name crate::protocol"
+        );
+    }
+    let file = "../quecto-tui/src/protocol/session_payloads.rs";
+    for source in [
+        "use crate::components::ansi::sanitize_control;",
+        "use super::super::shell::App;",
+        "use crate::{setup::Wizard};",
+        "fn f() { vec![crate::ansi::x()]; }",
+    ] {
+        assert!(
+            !paths_outside(file, source, &["protocol"]).is_empty(),
+            "{source}"
+        );
+    }
+    assert!(
+        paths_outside(
+            file,
+            "use super::client::Client; use serde::Deserialize;",
+            &["protocol"]
+        )
+        .is_empty()
+    );
+}
+
+/// The crate paths `file` names (resolved) outside `roots`; unparseable
+/// source is refused.
+fn paths_outside(file: &str, source: &str, roots: &[&str]) -> Vec<String> {
+    match dependency_paths_at(file, source) {
+        Some(paths) => paths
+            .into_iter()
+            .filter(|path| !crate_path_within(path, roots))
+            .collect(),
+        None => vec!["<does not parse>".to_string()],
+    }
+}
+
+/// A crate root declares modules and nothing else (#1637): no `use`/`pub
+/// use` alias at the root can give a layer a second name the rules do not
+/// know (`pub use application::x as y;`, `pub(crate) use components::ansi;`).
+#[test]
+fn crate_roots_declare_only_modules() {
+    for root in ["src/lib.rs", "../quecto-tui/src/lib.rs"] {
+        let source = fs::read_to_string(root).expect("read crate root");
+        assert_eq!(
+            root_items_that_are_not_modules(&source),
+            Vec::<String>::new(),
+            "{root}"
+        );
+    }
+    for source in [
+        "pub mod application;\npub use application::subagent_launch as launch;",
+        "mod components;\npub(crate) use components::ansi;",
+        "pub mod a;\npub fn helper() {}",
+        "pub mod a;\nmacro_rules! m { () => {} }",
+    ] {
+        assert!(
+            !root_items_that_are_not_modules(source).is_empty(),
+            "{source}"
+        );
+    }
+    assert!(
+        root_items_that_are_not_modules(
+            "#![deny(dead_code)]\npub mod a;\n#[cfg(test)]\nextern crate self as q;\n#[cfg(test)]\nmod t;"
+        )
+        .is_empty()
+    );
+}
+
+/// Production items of a crate root other than `mod` declarations.
+fn root_items_that_are_not_modules(source: &str) -> Vec<String> {
+    let file = syn::parse_file(source).expect("crate root parses");
+    file.items
+        .iter()
+        .filter(|item| !dependency_scan::item_test_only(item))
+        .filter(|item| !matches!(item, syn::Item::Mod(module) if module.content.is_none()))
+        .map(|item| item.to_token_stream().to_string())
+        .collect()
 }
 
 #[test]
@@ -2482,8 +3433,59 @@ fn dependency_allowlists_use_paths_not_substrings() {
         // lives in `src/composition/catalogue_defaults.rs` (#2024 S2).
         "use crate::application::configuration::use_cases::PatchConfiguration;",
         "use crate::application::configuration::dto::{ConfigLayer, ConfigPatch};",
+        // Root aliases and unknown crate roots fail closed (#1637).
+        "use crate::subagent_launch_app::SubagentLaunchPorts;",
+        "fn run() { crate::app::secret::run(); }",
+        "use crate::{app::secret::Bad, domain::Tool};",
+        // Module aliases cannot be followed.
+        "use crate as root; fn run() { root::application::secret::run(); }",
+        "use crate::{self as root};",
+        // A use case after a test module is production code.
+        "#[cfg(test)]\nmod tests;\nuse crate::application::secret::Bad;",
+        // Only the launch use case is excepted (#1880); the rest of the
+        // launch surface goes through `application::ports`.
+        "use crate::application::subagent_launch::LaunchFuture;",
+        "use crate::application::subagent_launch::SubagentLaunchUseCaseExtra;",
+        // The crate under another root, macro tokens and attribute strings
+        // are read too (#1637 review).
+        "extern crate self as q; use q::application::secret::Bad;",
+        "fn f() { let _ = vec![crate::application::secret::Bad::new()]; }",
+        "macro_rules! m { () => { $crate::application::secret::run() }; }",
+        "struct S { #[serde(with = \"crate::application::secret\")] f: u8 }",
     ] {
         assert!(!application_dependencies_allowed(source), "{source}");
+    }
+}
+
+#[test]
+fn application_guard_resolves_relative_paths() {
+    let file = "src/infrastructure/tools/spawn.rs";
+    for source in [
+        "use super::super::super::application::secret::Bad;",
+        "use super::super::{super::application::secret::Bad};",
+        "fn run() { super::super::super::application::secret::run(); }",
+        "use super::super::super::super::escape::X;",
+        "use super::super::super as root;",
+        "mod inner { use super::super::super::super::application::secret::Bad; }",
+        "use super::super::super::app_alias::Bad;",
+    ] {
+        assert!(
+            !application_dependencies_allowed_at(file, source),
+            "{source}"
+        );
+    }
+    for source in [
+        "use super::spawn_entry::child_socket_path;",
+        "use super::super::super::application::ports::SubagentLaunchPorts;",
+        "use super::super::super::domain::tool::ToolResult;",
+        "mod inner { use super::super::super::super::domain::tool::ToolResult; }",
+        "use crate::application::subagent_launch::SubagentLaunchUseCase;",
+        "#[cfg(test)]\nmod tests { use super::super::super::application::secret::Bad; }",
+    ] {
+        assert!(
+            application_dependencies_allowed_at(file, source),
+            "{source}"
+        );
     }
 }
 
@@ -2936,7 +3938,6 @@ fn infrastructure_outward_dependencies_allowed(source: &str) -> bool {
                         | "domain"
                         | "infrastructure"
                         | "test_support"
-                        | "subagent_launch_app"
                         | "swarm_control_fixture"
                 ),
                 _ => true,

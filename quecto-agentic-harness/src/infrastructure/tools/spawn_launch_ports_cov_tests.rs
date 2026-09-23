@@ -74,7 +74,7 @@ async fn ports_ready_rollback_prompt_uncommit_and_success_paths() {
     let mut prepared = PreparedChild::new_for_test(
         None,
         Some("env".into()),
-        Some(crate::subagent_launch_app::ParentEndpoint::Direct {
+        Some(crate::domain::subagent_launch::ParentEndpoint::Direct {
             socket_path: socket.clone(),
         }),
     )

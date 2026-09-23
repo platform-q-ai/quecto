@@ -1,6 +1,11 @@
 use super::*;
 use serde_json::json;
 
+/// The shell passes the terminal sanitizer; the tests pass the same one.
+fn parse_session_search(data: &serde_json::Value) -> SessionSearchAnswer {
+    super::parse_session_search(data, &crate::components::ansi::sanitize_control)
+}
+
 #[test]
 fn a_request_is_sent_as_the_three_wire_fields() {
     let request = SessionSearchRequest {

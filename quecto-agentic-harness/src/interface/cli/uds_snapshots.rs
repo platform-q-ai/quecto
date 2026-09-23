@@ -124,16 +124,9 @@ pub(crate) fn build_get_messages_line(page: HistoryPage) -> String {
 pub(crate) fn build_get_subagents_line(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 ) -> String {
-    let mut data = serde_json::to_value(
-        super::protocol::build_compact_subagent_roster(registry, None).unwrap_or(
-            super::protocol::CompactSubagentRoster {
-                subagents: Vec::new(),
-                sequence: 0,
-                unchanged: None,
-            },
-        ),
-    )
-    .unwrap_or_default();
+    use crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster;
+    let roster = build_compact_subagent_roster(registry, None).unwrap_or_default();
+    let mut data = serde_json::to_value(roster).unwrap_or_default();
     if let Some(obj) = data.as_object_mut() {
         obj.insert("snapshot".to_string(), serde_json::json!(true));
     }

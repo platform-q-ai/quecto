@@ -187,7 +187,10 @@ impl App {
     pub(super) fn open_resume_selector(&mut self, data: &serde_json::Value) {
         // Presentation coordination is the sessions feature's: rows, IDs,
         // safe copy and the listed home versions come back projected.
-        let mut listed = session_payloads::parse_resume_sessions(data);
+        let mut listed = session_payloads::parse_resume_sessions(
+            data,
+            &crate::components::ansi::sanitize_control,
+        );
         listed.sort_by_key(|s| std::cmp::Reverse(s.updated_unix_secs.unwrap_or(0)));
         let rows = crate::sessions::resume_rows::ResumeRows::project(
             listed.clone(),

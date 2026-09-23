@@ -6,17 +6,17 @@ use super::spawn_entry::{
 use super::spawn_launch_args::write_private_new;
 use super::spawn_registry::register_and_broadcast;
 use super::subagent_registry::new_exit_signal_channel;
+use crate::application::ports::{LaunchFuture, SubagentLaunchPorts as SubagentLaunchPortsTrait};
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
 use crate::domain::subagent::SubagentConfig;
 use crate::domain::subagent::{
     DisplayNameResolutionEntry, DisplayNameResolveError, assert_display_name_available_for_spawn,
 };
-use crate::domain::tool::ToolResult;
-use crate::subagent_launch_app::{
-    LaunchFuture, LaunchIdentity, PreparedRuntime, RegisteredLaunch,
-    SubagentLaunchPorts as SubagentLaunchPortsTrait,
+use crate::domain::subagent_launch::{
+    LaunchIdentity, ParentEndpoint, PreparedRuntime, RegisteredLaunch,
 };
+use crate::domain::tool::ToolResult;
 use std::path::{Path, PathBuf};
 
 pub(super) struct SpawnLaunchPorts<'a> {
@@ -299,11 +299,11 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                         .await?;
                     socket_path
                 }
-                Some(crate::subagent_launch_app::ParentEndpoint::Direct { socket_path }) => {
+                Some(ParentEndpoint::Direct { socket_path }) => {
                     self.tool.wait_for_socket(&socket_path).await?;
                     socket_path
                 }
-                Some(crate::subagent_launch_app::ParentEndpoint::Proxy { argv }) => {
+                Some(ParentEndpoint::Proxy { argv }) => {
                     let readiness_deadline =
                         tokio::time::Instant::now() + std::time::Duration::from_secs(10);
                     self.initial_prompt_retry_deadline = Some(readiness_deadline);

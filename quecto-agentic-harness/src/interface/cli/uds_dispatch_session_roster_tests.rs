@@ -387,7 +387,7 @@ async fn restore_creates_no_operational_row_and_probes_nothing() {
         registry.lock().unwrap().keys().collect::<Vec<_>>()
     );
     assert!(
-        crate::interface::cli::protocol::build_compact_subagent_roster(
+        crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster(
             &Some(registry.clone()),
             None
         )
@@ -483,7 +483,7 @@ fn restore_with_no_registry_is_a_noop() {
 
 #[test]
 fn ordinary_exit_resume_cycles_stay_empty_of_old_children() {
-    use crate::interface::cli::protocol::build_compact_subagent_roster;
+    use crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster;
 
     for already_dead in [false, true] {
         let registry = new_registry();
