@@ -133,3 +133,32 @@ fn failed_systemctl_user_commands_report_stderr_and_preserve_unit() {
         ]
     );
 }
+
+#[test]
+fn disable_now_treats_only_missing_unit_errors_as_idempotent() {
+    for stderr in [
+        "Unit quecto-admission-broker.service not loaded.",
+        "Unit quecto-admission-broker.service does not exist.",
+        "Failed to disable unit: No such file or directory",
+        "Unit quecto-admission-broker.service not-found.",
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manager, log) = under_test(&tmp);
+        let script = tmp.path().join("systemctl");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf '%s\\n' '{}' >&2\nexit 7\n",
+                log.display(),
+                stderr
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!manager.disable_now().unwrap(), "{stderr}");
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "--user disable --now quecto-admission-broker.service\n"
+        );
+    }
+}

@@ -113,8 +113,8 @@ fn uninstall_of_an_absent_unit_reports_nothing_to_remove() {
     let report = UninstallAuthorityService::new(manager.clone())
         .execute(dir(), false)
         .unwrap();
-    assert!(manager.calls.lock().unwrap().is_empty());
-    assert_eq!(report.actions.len(), 1);
+    assert_eq!(*manager.calls.lock().unwrap(), ["daemon_reload"]);
+    assert_eq!(report.actions.len(), 2);
     assert!(matches!(
         report.actions[0],
         ServiceAction::NoUnitToRemove { .. }
@@ -248,7 +248,7 @@ fn status_failure_has_no_mutating_calls_and_retry_succeeds() {
 }
 
 #[test]
-fn reload_failure_follows_removal_and_absent_retry_does_not_repeat_mutations() {
+fn reload_failure_follows_removal_and_absent_retry_reloads_without_repeat_mutations() {
     let manager = Arc::new(FakeManager::default());
     manager
         .write_unit(&ServiceUnitSpec {
@@ -266,12 +266,44 @@ fn reload_failure_follows_removal_and_absent_retry_does_not_repeat_mutations() {
         ["disable_now", "remove_unit", "daemon_reload"]
     );
     assert!(matches!(manager.unit_status().unwrap(), UnitStatus::Absent));
-    let retry = use_case.execute(dir(), false).unwrap();
+    // A fresh use-case instance must recover after a process restart; another
+    // reload failure must remain an error rather than claim convergence.
+    manager.fail_once("daemon_reload");
+    assert_eq!(
+        UninstallAuthorityService::new(manager.clone())
+            .execute(dir(), false)
+            .unwrap_err(),
+        "daemon_reload failed"
+    );
+    assert_eq!(
+        *manager.calls.lock().unwrap(),
+        [
+            "disable_now",
+            "remove_unit",
+            "daemon_reload",
+            "daemon_reload"
+        ]
+    );
+    let retry = UninstallAuthorityService::new(manager.clone())
+        .execute(dir(), false)
+        .unwrap();
     assert!(matches!(
         retry.actions.as_slice(),
-        [ServiceAction::NoUnitToRemove { .. }]
+        [
+            ServiceAction::NoUnitToRemove { .. },
+            ServiceAction::DaemonReloaded
+        ]
     ));
-    assert_eq!(manager.calls.lock().unwrap().len(), 3);
+    assert_eq!(
+        *manager.calls.lock().unwrap(),
+        [
+            "disable_now",
+            "remove_unit",
+            "daemon_reload",
+            "daemon_reload",
+            "daemon_reload"
+        ]
+    );
 }
 
 #[test]
