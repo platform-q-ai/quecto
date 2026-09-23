@@ -144,3 +144,30 @@ fn a_context_message_cut_to_fit_says_how_to_read_it_whole() {
         crate::infrastructure::tools::agent_cmd_report::CONTEXT_CUT_NOTICE
     );
 }
+
+#[test]
+fn notices_say_where_the_rest_of_a_message_is() {
+    use crate::infrastructure::tools::agent_cmd_report::{
+        COLLAPSED_PREVIEW_NOTICE, PROGRESS_CUT_NOTICE,
+    };
+    // No final report yet (a tool-only turn): progress wording.
+    let tool_output =
+        serde_json::json!({"role": "tool", "ordinal": 1, "content": "x".repeat(20_000)});
+    let report = bounded_report_messages(vec![tool_output], 1);
+    assert_eq!(report.messages[0]["contentNotice"], PROGRESS_CUT_NOTICE);
+    // A context message the child collapsed points at export_raw.
+    let collapsed = serde_json::json!({
+        "role": "user", "ordinal": 1, "content": "preview", "collapsed": true, "truncated": true
+    });
+    let handoff = serde_json::json!({"role": "assistant", "ordinal": 2, "content": "done"});
+    let report = bounded_report_messages(vec![collapsed, handoff], 2);
+    assert_eq!(
+        report.messages[0]["contentNotice"],
+        COLLAPSED_PREVIEW_NOTICE
+    );
+    // A cut final report stays within its budget, notice included.
+    let big = serde_json::json!({"role": "assistant", "ordinal": 1, "content": "y".repeat(FINAL_REPORT_BUDGET_BYTES * 2)});
+    let report = bounded_report_messages(vec![big], 1);
+    assert!(serde_json::to_vec(&report.messages[0]).unwrap().len() <= FINAL_REPORT_BUDGET_BYTES);
+    assert_eq!(report.messages[0]["contentNotice"], FINAL_REPORT_NOTICE);
+}

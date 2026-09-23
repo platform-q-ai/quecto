@@ -251,12 +251,13 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And I acknowledge delivery of agent_cmd result for '{"agent_id":"w1","command":"get_messages","count":5}'
     Then the agent_cmd delivered ordinal for "w1" should be unset
 
-  Scenario: a final message with no text is incomplete and not acknowledged
-    Given an AgentCmdTool whose child "w1" has an unrecoverable final transcript
+  @issue-2114
+  Scenario: a final report the child cannot serve is incomplete and not acknowledged
+    Given an AgentCmdTool whose child "w1" has a final report it cannot serve
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'
     Then the agent_cmd result should not be an error
     And the agent_cmd result should contain '"reportIncomplete":true'
-    And the agent_cmd result should contain '"hasMoreMessages":true'
+    And the agent_cmd result should contain "Only a preview of this report could be read"
     And the agent_cmd result should not contain '"unchanged":true'
     When I acknowledge delivery of agent_cmd result for '{"agent_id":"w1","command":"get_messages"}'
     Then the agent_cmd delivered ordinal for "w1" should be 1

@@ -214,10 +214,25 @@ pub(crate) fn bounded_report_messages(
     if let Some(index) = final_idx {
         let final_message = &mut candidates[index];
         if report_envelope_size(&[], Some(final_message)) > FINAL_REPORT_BUDGET_BYTES {
-            truncate_message_to_fit(final_message, &[], FINAL_REPORT_BUDGET_BYTES);
+            // The notice first, so the cut makes room for it too.
             final_message["contentNotice"] = serde_json::json!(FINAL_REPORT_NOTICE);
+            truncate_message_to_fit(final_message, &[], FINAL_REPORT_BUDGET_BYTES);
         }
     }
+    // A message the child itself collapsed (too large for its history page)
+    // cannot be paged whole either; say where its text is.
+    for (index, msg) in candidates.iter_mut().enumerate() {
+        let collapsed = msg.get("collapsed").and_then(|v| v.as_bool()) == Some(true)
+            && msg.get("truncated").and_then(|v| v.as_bool()) == Some(true);
+        if collapsed && Some(index) != final_idx && msg.get("contentNotice").is_none() {
+            msg["contentNotice"] = serde_json::json!(COLLAPSED_PREVIEW_NOTICE);
+        }
+    }
+    let context_cut_notice = if final_idx.is_some() {
+        CONTEXT_CUT_NOTICE
+    } else {
+        PROGRESS_CUT_NOTICE
+    };
     let budget = final_idx
         .map(|index| report_envelope_size(&[], Some(&candidates[index])))
         .unwrap_or(0)
@@ -245,7 +260,7 @@ pub(crate) fn bounded_report_messages(
         if report_envelope_size(&selected, Some(&msg)) > budget {
             truncate_message_to_fit(&mut msg, &selected, budget);
             if msg.get("contentNotice").is_none() {
-                msg["contentNotice"] = serde_json::json!(CONTEXT_CUT_NOTICE);
+                msg["contentNotice"] = serde_json::json!(context_cut_notice);
                 if report_envelope_size(&selected, Some(&msg)) > budget {
                     truncate_message_to_fit(&mut msg, &selected, budget);
                 }
@@ -281,6 +296,14 @@ pub(crate) fn bounded_report_messages(
 /// Shown on a context message cut to fit beside the final report.
 pub(crate) const CONTEXT_CUT_NOTICE: &str =
     "Cut to fit beside the final report; read it in full with get_messages count/before.";
+
+/// Shown on a message cut to fit a progress report (no final report yet).
+pub(crate) const PROGRESS_CUT_NOTICE: &str =
+    "Cut to fit the report; read it in full with get_messages count/before.";
+
+/// Shown on a message the child collapsed because it is too large for a
+/// history page: paging returns the same preview.
+pub(crate) const COLLAPSED_PREVIEW_NOTICE: &str = "Only a preview: this message is too large to read through get_messages. Call agent_cmd get_report with export_raw true to write the full history to an artifact.";
 
 /// Shown on a final report cut at [`FINAL_REPORT_BUDGET_BYTES`].
 pub(crate) const FINAL_REPORT_NOTICE: &str = "This report is longer than the report budget and was cut; its start is shown. Call agent_cmd get_report with export_raw true to write the child's full retained history to an artifact you can read.";

@@ -732,8 +732,10 @@ fn given_agent_cmd_with_completed_transcript(world: &mut QuectoWorld, agent_id: 
     world.agent_cmd_last_command = Some(last_cmd);
 }
 
-#[given(expr = "an AgentCmdTool whose child {string} has an unrecoverable final transcript")]
-fn given_agent_cmd_with_unrecoverable_final_transcript(world: &mut QuectoWorld, agent_id: String) {
+/// The child's final report is too large for its history page (a collapsed
+/// preview) and the child does not answer the read of the rest (#2114).
+#[given(expr = "an AgentCmdTool whose child {string} has a final report it cannot serve")]
+fn given_agent_cmd_with_unservable_final_report(world: &mut QuectoWorld, agent_id: String) {
     let registry = AgentCmdTool::new_registry();
     let tmp = tempfile::TempDir::new().unwrap();
     let sock_path = tmp.path().join("unrecoverable-final.sock");
@@ -751,15 +753,19 @@ fn given_agent_cmd_with_unrecoverable_final_transcript(world: &mut QuectoWorld, 
                 {
                     *last_cmd_inner.lock().unwrap() = line.clone();
                     let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+                    // The read of the rest gets no answer.
+                    if request["type"] == "get_message" {
+                        return;
+                    }
                     let id = request.get("id").and_then(|v| v.as_str()).unwrap_or("");
                     let response = serde_json::json!({
                         "type": "response", "id": id, "command": "get_messages",
                         "success": true,
                         "data": {"messages": [
                             {"role": "assistant", "content": "old", "ordinal": 1},
-                            // No text at all (#2114: a long text final is now
-                            // delivered whole up to the final-report budget).
-                            {"role": "assistant", "content": {"omitted": "FINAL ".repeat(10_000)}, "ordinal": 2}
+                                                        {"id": "m2", "role": "assistant", "content": "FINAL preview",
+                             "collapsed": true, "truncated": true, "contentLength": 5_000_000,
+                             "toolCalls": [], "ordinal": 2}
                         ]}
                     });
                     let _ = writeln!(stream, "{response}");

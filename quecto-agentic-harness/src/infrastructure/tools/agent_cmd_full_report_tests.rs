@@ -25,6 +25,8 @@ enum Mode {
     NoMoreField,
     Stall,
     WrongOffset,
+    /// Closes the connection without answering.
+    Drop,
 }
 
 fn fake_child_with(
@@ -74,6 +76,7 @@ fn fake_child_with(
                             end -= 1;
                         }
                         match mode {
+                            Mode::Drop => return,
                             Mode::Fail => {
                                 let reply = serde_json::json!({
                                     "type": "response", "id": cmd["id"], "success": false,
@@ -383,47 +386,69 @@ async fn read_report(tool: &AgentCmdTool) -> crate::domain::tool::ToolResult {
         .unwrap()
 }
 
+/// One report read against a fake child in `mode`: the shaped result, the
+/// get_message reads it made, and the delivered ordinal after delivery.
+async fn read_with(mode: Mode) -> (serde_json::Value, usize, Option<u64>) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock = tmp.path().join("child.sock");
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    fake_child_with(sock.clone(), report_of(10_000), 4_000, seen.clone(), mode);
+    let (tool, registry) = tool_for(sock, None);
+    let result = read_report(&tool).await;
+    assert!(!result.is_error, "{}", result.content);
+    tool.result_delivered(
+        r#"{"agent_id":"child-uuid","command":"get_messages"}"#,
+        &result,
+    );
+    let reads = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c["type"] == "get_message")
+        .count();
+    let delivered = registry.lock().unwrap()["child-uuid"].delivered_message_ordinal;
+    (
+        serde_json::from_str(&result.content).unwrap(),
+        reads,
+        delivered,
+    )
+}
+
 #[tokio::test]
-async fn a_failed_read_leaves_the_preview_and_is_not_acknowledged() {
+async fn an_unreachable_child_leaves_the_report_unacknowledged_for_a_retry() {
+    let (response, _, delivered) = read_with(Mode::Drop).await;
+    let message = &response["data"]["messages"][0];
+    assert_eq!(message["content"].as_str().unwrap().len(), 2048);
+    assert_eq!(
+        message["contentNotice"],
+        super::full_report::READ_FAILED_NOTICE
+    );
+    assert_eq!(response["data"]["reportIncomplete"], true);
+    assert_eq!(
+        delivered, None,
+        "a preview is not the report: nothing is acknowledged"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_or_malformed_read_delivers_the_preview_as_final() {
     for mode in [
         Mode::Fail,
         Mode::NoMoreField,
         Mode::Stall,
         Mode::WrongOffset,
     ] {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let sock = tmp.path().join("child.sock");
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        fake_child_with(sock.clone(), report_of(10_000), 4_000, seen.clone(), mode);
-        let (tool, registry) = tool_for(sock, None);
-
-        let result = read_report(&tool).await;
-
-        assert!(!result.is_error, "{}", result.content);
-        let response: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        let (response, reads, delivered) = read_with(mode).await;
         let message = &response["data"]["messages"][0];
         assert_eq!(message["content"].as_str().unwrap().len(), 2048);
         assert_eq!(
             message["contentNotice"],
-            super::full_report::READ_FAILED_NOTICE
+            super::full_report::READ_REFUSED_NOTICE
         );
-        assert_eq!(response["data"]["reportIncomplete"], true);
-        tool.result_delivered(
-            r#"{"agent_id":"child-uuid","command":"get_messages"}"#,
-            &result,
-        );
-        assert_eq!(
-            registry.lock().unwrap()["child-uuid"].delivered_message_ordinal,
-            None,
-            "a preview is not the report: nothing is acknowledged"
-        );
+        assert_ne!(response["data"]["reportIncomplete"], true);
+        // Retrying would fail the same way: the preview is what there is.
+        assert_eq!(delivered, Some(1));
         if matches!(mode, Mode::Stall) {
-            let reads = seen
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|c| c["type"] == "get_message")
-                .count();
             assert_eq!(reads, 1, "a read that makes no progress stops at once");
         }
     }

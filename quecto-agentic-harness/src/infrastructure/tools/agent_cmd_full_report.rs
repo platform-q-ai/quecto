@@ -7,9 +7,10 @@
 //! child in ranges, up to just past the final-report budget, and hands the
 //! agent the text — never a recovery step.
 //!
-//! A read through an ancestor that is itself mid-turn is not served on the
-//! ancestor's busy path, so it can time out; the report is then marked
-//! incomplete (not acknowledged) and the agent is told to read it again.
+//! A read the child could not be reached for is retried: the report stays
+//! incomplete (not acknowledged). A read the child refused, or answered
+//! outside the protocol, would fail the same way again, so the preview is
+//! delivered with a notice pointing at `export_raw`.
 use super::super::agent_cmd_report::{FINAL_REPORT_BUDGET_BYTES, FINAL_REPORT_NOTICE};
 use super::*;
 
@@ -18,20 +19,40 @@ const MAX_RANGE_READS: usize = 64;
 /// Bound on the whole read of one message, however many ranges it takes.
 const READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// Shown when the rest of a report could not be read from the child.
+/// Shown when the child could not be reached to read the rest (retried).
 pub(crate) const READ_FAILED_NOTICE: &str = "Only a preview of this report could be read: the child did not answer the read in time. Call agent_cmd get_messages again later, or get_report with export_raw true to write the full history to an artifact.";
+
+/// Shown when the child refused the read (it will not succeed on retry).
+pub(crate) const READ_REFUSED_NOTICE: &str = "Only a preview of this report is available: the child could not serve the rest. Call agent_cmd get_report with export_raw true to write the full history to an artifact you can read.";
+
+/// Why the rest of a message could not be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReadFailure {
+    /// No answer (transport error or deadline): worth reading again.
+    Unreachable,
+    /// The child answered, but refused or broke the ranged-read protocol.
+    Refused,
+}
+
+impl ReadFailure {
+    fn notice(self) -> &'static str {
+        match self {
+            Self::Unreachable => READ_FAILED_NOTICE,
+            Self::Refused => READ_REFUSED_NOTICE,
+        }
+    }
+}
 
 impl AgentCmdTool {
     /// The first `cap + 1` bytes (at most) of `message_id`'s text, read
-    /// from the child in ranges: `(text, full content length)`. `None` when
-    /// a read fails, a range is not the one asked for, or the whole read
-    /// passes [`READ_DEADLINE`].
+    /// from the child in ranges: `(text, full content length)`.
     async fn read_message_text(
         socket_path: &std::path::Path,
         routed_target_id: Option<&str>,
         message_id: &str,
         cap: usize,
-    ) -> Option<(String, usize)> {
+    ) -> Result<(String, usize), ReadFailure> {
+        use ReadFailure::{Refused, Unreachable};
         let read = async {
             let mut text = String::new();
             for _ in 0..MAX_RANGE_READS {
@@ -51,36 +72,44 @@ impl AgentCmdTool {
                     super::super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
                 )
                 .await
-                .ok()?;
-                let reply: serde_json::Value = serde_json::from_str(&line).ok()?;
+                .map_err(|_| Unreachable)?;
+                let reply: serde_json::Value = serde_json::from_str(&line).map_err(|_| Refused)?;
                 if reply.get("success").and_then(|v| v.as_bool()) != Some(true) {
-                    return None;
+                    return Err(Refused);
                 }
-                let data = reply.get("data")?;
+                let data = reply.get("data").ok_or(Refused)?;
                 // The range must be the one asked for, and say what follows.
                 if data.get("offset").and_then(|v| v.as_u64()) != Some(offset as u64) {
-                    return None;
+                    return Err(Refused);
                 }
-                let chunk = data.get("content").and_then(|v| v.as_str())?;
-                let length = data.get("contentLength").and_then(|v| v.as_u64())? as usize;
-                let more = data.get("hasMoreContent").and_then(|v| v.as_bool())?;
+                let chunk = data
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .ok_or(Refused)?;
+                let length = data
+                    .get("contentLength")
+                    .and_then(|v| v.as_u64())
+                    .ok_or(Refused)? as usize;
+                let more = data
+                    .get("hasMoreContent")
+                    .and_then(|v| v.as_bool())
+                    .ok_or(Refused)?;
                 text.push_str(chunk);
                 if text.len() > length {
-                    return None;
+                    return Err(Refused);
                 }
                 if !more || text.len() > cap {
-                    return Some((text, length));
+                    return Ok((text, length));
                 }
                 if chunk.is_empty() {
-                    return None;
+                    return Err(Refused);
                 }
             }
-            None
+            Err(Refused)
         };
         tokio::time::timeout(READ_DEADLINE, read)
             .await
-            .ok()
-            .flatten()
+            .unwrap_or(Err(Unreachable))
     }
 
     /// For a default `get_messages` response: when the unread final
@@ -139,9 +168,9 @@ impl AgentCmdTool {
         )
         .await;
         let message = &mut messages[index];
-        let failed = read.is_none();
+        let unreachable = read == Err(ReadFailure::Unreachable);
         match read {
-            Some((text, length)) => {
+            Ok((text, length)) => {
                 let whole = text.len() == length;
                 message["content"] = serde_json::json!(text);
                 message["contentLength"] = serde_json::json!(length);
@@ -156,11 +185,13 @@ impl AgentCmdTool {
                     message["contentNotice"] = serde_json::json!(FINAL_REPORT_NOTICE);
                 }
             }
-            None => {
-                message["contentNotice"] = serde_json::json!(READ_FAILED_NOTICE);
+            Err(failure) => {
+                message["contentNotice"] = serde_json::json!(failure.notice());
             }
         }
-        if failed && let Some(data) = envelope.get_mut("data") {
+        // Only an unreachable child is worth reading again: keep the report
+        // unacknowledged. A refusal would repeat, so the preview is final.
+        if unreachable && let Some(data) = envelope.get_mut("data") {
             data["reportIncomplete"] = serde_json::json!(true);
         }
         envelope.to_string()
@@ -195,7 +226,7 @@ impl AgentCmdTool {
             .and_then(|v| v.as_str())
             .unwrap_or_default();
         let read = if message_id.is_empty() {
-            None
+            Err(ReadFailure::Refused)
         } else {
             Self::read_message_text(
                 socket_path,
@@ -207,7 +238,7 @@ impl AgentCmdTool {
         };
         let report = &mut data["report"];
         match read {
-            Some((text, length)) => {
+            Ok((text, length)) => {
                 let kept = serialized_prefix(&text, FINAL_REPORT_BUDGET_BYTES);
                 let whole = kept.len() == length;
                 report["content"] = serde_json::json!(kept);
@@ -216,8 +247,8 @@ impl AgentCmdTool {
                     report["contentNotice"] = serde_json::json!(FINAL_REPORT_NOTICE);
                 }
             }
-            None => {
-                report["contentNotice"] = serde_json::json!(READ_FAILED_NOTICE);
+            Err(failure) => {
+                report["contentNotice"] = serde_json::json!(failure.notice());
             }
         }
         envelope.to_string()
