@@ -535,7 +535,7 @@ mod effort_vocabulary {
 /// This regression combines the precedence and invalid-entry isolation paths:
 /// an invalid higher layer must not erase a valid lower-layer model.
 #[test]
-fn issue_2097_invalid_override_preserves_valid_builtin_and_other_overrides() {
+fn invalid_higher_layer_preserves_valid_lower_layer() {
     let mut invalid = entry("openai-api", "gpt-5", "Invalid override");
     invalid.provider = provider_descriptor("wrong-provider", AuthIdentity::ApiKey);
     let result = resolve_catalogue(
@@ -568,7 +568,7 @@ fn issue_2097_invalid_override_preserves_valid_builtin_and_other_overrides() {
 }
 
 #[test]
-fn issue_2097_same_provider_id_distinguishes_oauth_credential_identity() {
+fn oauth_credentials_are_distinct_identities() {
     let api = provider_descriptor("anthropic", AuthIdentity::ApiKey);
     let oauth_a = provider_descriptor(
         "anthropic",
@@ -588,7 +588,7 @@ fn issue_2097_same_provider_id_distinguishes_oauth_credential_identity() {
 }
 
 #[test]
-fn issue_2097_resolved_missing_credential_retains_structured_reason() {
+fn resolution_keeps_the_missing_credential_reason() {
     let mut missing = entry("custom", "local", "Local");
     missing.model.availability = Availability::unavailable(
         AvailabilityStatus::Configured,
