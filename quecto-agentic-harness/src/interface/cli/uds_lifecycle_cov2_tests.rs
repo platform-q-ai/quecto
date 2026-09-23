@@ -315,3 +315,226 @@ async fn single_client_socket_override_serves_get_state() {
     .expect("single-client loop should exit after disconnect");
     assert_eq!(code, 0);
 }
+
+// A published runtime, not a hand-wired AgentSession or accept-loop rig, is
+// the source of these warnings. The composed catalogue handles must carry its
+// store through lifecycle, dispatch and (for multi-client) the accept push.
+fn publish_admission_slots(base: &std::path::Path, slots: &[&str]) {
+    use crate::application::catalogue::{CatalogueSource, CredentialStatusPort, SourceEntries};
+    use crate::application::provider_runtime::{
+        AdmissionBindingDiagnostic, ComposeProviderRuntimeUseCase, CompositionPorts,
+        ProviderRuntimeFactory, ProviderRuntimeOutcome,
+    };
+    use crate::domain::catalogue::{CatalogueEntry, SourceLayer};
+    struct Source;
+    impl CatalogueSource for Source {
+        fn id(&self) -> &str {
+            "test"
+        }
+        fn layer(&self) -> SourceLayer {
+            SourceLayer::BuiltIn
+        }
+        fn load(&self) -> Result<SourceEntries, String> {
+            Ok(SourceEntries::from(Vec::<CatalogueEntry>::new()))
+        }
+    }
+    struct Credentials;
+    impl CredentialStatusPort for Credentials {
+        fn credential_available(&self, _: &CatalogueEntry) -> bool {
+            true
+        }
+    }
+    #[derive(Debug)]
+    struct UnboundProvider;
+    impl LlmProvider for UnboundProvider {
+        fn name(&self) -> &str {
+            "distinct-unbound-slot"
+        }
+        fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+        ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+            Box::pin(async {
+                Ok(LlmResponse {
+                    content: Some("usable".into()),
+                    tool_calls: vec![],
+                    usage: None,
+                    stop_reason: None,
+                    thinking_blocks: vec![],
+                })
+            })
+        }
+    }
+    struct Factory(Vec<String>);
+    impl ProviderRuntimeFactory<(), ()> for Factory {
+        fn compose_runtime(&self, _: &(), _: &()) -> Result<Arc<dyn LlmProvider>, String> {
+            Ok(Arc::new(UnboundProvider))
+        }
+        fn compose_runtime_outcome(
+            &self,
+            _: &(),
+            _: &(),
+        ) -> Result<ProviderRuntimeOutcome, String> {
+            Ok(ProviderRuntimeOutcome {
+                provider: Arc::new(UnboundProvider),
+                admission_binding_diagnostic: AdmissionBindingDiagnostic {
+                    unbound_slots: self.0.clone(),
+                },
+            })
+        }
+    }
+    ComposeProviderRuntimeUseCase::new()
+        .compose_and_publish(
+            &Factory(slots.iter().map(|s| (*s).to_string()).collect()),
+            &(),
+            &(),
+            &CompositionPorts {
+                sources: &[&Source],
+                credentials: &Credentials,
+                catalogue_store: &crate::infrastructure::catalogue_registry::snapshot_store_for(
+                    base,
+                ),
+                runtime_store: &crate::infrastructure::catalogue_registry::runtime_store_for(base),
+            },
+        )
+        .expect("publish usable runtime");
+}
+
+async fn admission_state(
+    lines: &mut tokio::io::Lines<tokio::io::BufReader<tokio::io::ReadHalf<tokio::net::UnixStream>>>,
+    id: Option<&str>,
+    expected_slot: Option<&str>,
+) {
+    let line = tokio::time::timeout(std::time::Duration::from_secs(2), lines.next_line())
+        .await
+        .expect("state response timeout")
+        .expect("read state")
+        .expect("socket closed");
+    let event: serde_json::Value = serde_json::from_str(&line).expect("state JSON");
+    assert_eq!(event["type"], "response", "{event}");
+    assert_eq!(event["command"], "get_state", "{event}");
+    assert_eq!(event["success"], true, "{event}");
+    match id {
+        Some(id) => assert_eq!(event["id"], id, "{event}"),
+        None => assert!(event.get("id").is_none(), "unsolicited state: {event}"),
+    }
+    let warnings = event["data"]["admissionWarnings"]
+        .as_array()
+        .expect("warnings array");
+    match expected_slot {
+        Some(slot) => {
+            assert_eq!(warnings.len(), 1, "{event}");
+            assert_eq!(warnings[0]["slot"], slot, "{event}");
+            assert_eq!(warnings[0]["code"], "admission_binding_missing", "{event}");
+        }
+        None => assert!(warnings.is_empty(), "stale warning: {event}"),
+    }
+}
+
+#[tokio::test]
+async fn composed_runtime_warning_reaches_single_client_requested_state_and_replacement() {
+    let dir = tempfile::tempdir().unwrap();
+    publish_admission_slots(dir.path(), &["distinct-unbound-slot"]);
+    let (client_std, server_std) = std::os::unix::net::UnixStream::pair().unwrap();
+    let task = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut args = loop_args(dir.path(), dir.path().join("unused.sock"));
+        args.socket_override = Some(server_std);
+        rt.block_on(uds_loop_async(args))
+    });
+    client_std.set_nonblocking(true).unwrap();
+    let client = tokio::net::UnixStream::from_std(client_std).unwrap();
+    let (read_half, mut write_half) = tokio::io::split(client);
+    let mut lines = tokio::io::BufReader::new(read_half).lines();
+    let workspace: serde_json::Value =
+        serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+    assert_eq!(workspace["type"], "workspace");
+    write_half
+        .write_all(b"{\"type\":\"get_state\",\"id\":\"single-before\"}\n")
+        .await
+        .unwrap();
+    admission_state(
+        &mut lines,
+        Some("single-before"),
+        Some("distinct-unbound-slot"),
+    )
+    .await;
+    // A later successful composition replaces the live snapshot, not the session.
+    let base = workspace["path"].as_str().unwrap();
+    publish_admission_slots(std::path::Path::new(base), &[]);
+    write_half
+        .write_all(b"{\"type\":\"get_state\",\"id\":\"single-after\"}\n")
+        .await
+        .unwrap();
+    admission_state(&mut lines, Some("single-after"), None).await;
+    drop(write_half);
+    drop(lines);
+    assert_eq!(task.join().unwrap(), 0);
+}
+
+#[tokio::test]
+async fn composed_runtime_warning_reaches_multi_client_push_and_requested_state() {
+    let dir = tempfile::tempdir().unwrap();
+    publish_admission_slots(dir.path(), &["distinct-unbound-slot"]);
+    let socket_path = dir.path().join("admission.sock");
+    let connect_path = socket_path.clone();
+    let task = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(uds_loop_async(loop_args(dir.path(), socket_path)))
+    });
+    let client = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Ok(s) = tokio::net::UnixStream::connect(&connect_path).await {
+                break s;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("socket bind");
+    let (read_half, mut write_half) = tokio::io::split(client);
+    let mut lines = tokio::io::BufReader::new(read_half).lines();
+    let workspace: serde_json::Value =
+        serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+    assert_eq!(workspace["type"], "workspace");
+    admission_state(&mut lines, None, Some("distinct-unbound-slot")).await;
+    write_half
+        .write_all(b"{\"type\":\"get_state\",\"id\":\"multi-before\"}\n")
+        .await
+        .unwrap();
+    admission_state(
+        &mut lines,
+        Some("multi-before"),
+        Some("distinct-unbound-slot"),
+    )
+    .await;
+    let base = workspace["path"].as_str().unwrap();
+    publish_admission_slots(std::path::Path::new(base), &[]);
+    // A second connection reads the latest runtime even when its shared
+    // turn-boundary state still describes the earlier generation.
+    let replacement_client = tokio::net::UnixStream::connect(&connect_path)
+        .await
+        .unwrap();
+    let (replacement_read, replacement_write) = tokio::io::split(replacement_client);
+    let mut replacement_lines = tokio::io::BufReader::new(replacement_read).lines();
+    let replacement_workspace: serde_json::Value =
+        serde_json::from_str(&replacement_lines.next_line().await.unwrap().unwrap()).unwrap();
+    assert_eq!(replacement_workspace["type"], "workspace");
+    admission_state(&mut replacement_lines, None, None).await;
+    drop(replacement_write);
+    drop(replacement_lines);
+    write_half
+        .write_all(b"{\"type\":\"get_state\",\"id\":\"multi-after\"}\n")
+        .await
+        .unwrap();
+    admission_state(&mut lines, Some("multi-after"), None).await;
+    drop(write_half);
+    drop(lines);
+    assert_eq!(task.join().unwrap(), 0);
+}
