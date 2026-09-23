@@ -746,6 +746,5 @@ fn build_subagent_info_list_includes_parent_and_workflow() {
     assert_eq!(info.parent_id.as_deref(), Some("root"));
     assert_eq!(info.workflow.as_ref().unwrap().steps_completed, 1);
 }
-
 #[path = "protocol_workspace_tests.rs"]
 mod workspace_tests;
