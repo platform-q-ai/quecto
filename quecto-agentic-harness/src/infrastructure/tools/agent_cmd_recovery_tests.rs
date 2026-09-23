@@ -110,3 +110,24 @@ fn a_final_message_without_text_is_not_delivered() {
         Some(1)
     );
 }
+
+/// #2114: a context message cut down to no text at all is never delivered,
+/// whatever the space left beside the final report (swept across the edge
+/// where only its empty shell would fit).
+#[test]
+fn a_context_message_cut_to_nothing_is_not_delivered() {
+    for pad in 2_900..3_300 {
+        let context = serde_json::json!({
+            "role": "user", "ordinal": 1, "content": "x".repeat(5_000), "pad": "p".repeat(pad)
+        });
+        let handoff = serde_json::json!({"role": "assistant", "ordinal": 2, "content": "done"});
+        let report = bounded_report_messages(vec![context, handoff], 2);
+        for message in &report.messages {
+            let empty = message["content"].as_str().is_some_and(str::is_empty);
+            assert!(
+                !(empty && message["truncated"] == true),
+                "pad {pad}: delivered an emptied message {message}"
+            );
+        }
+    }
+}
