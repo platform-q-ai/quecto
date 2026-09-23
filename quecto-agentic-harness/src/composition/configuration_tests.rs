@@ -55,11 +55,26 @@ fn the_composed_graph_selects_trusts_and_merges_a_real_overlay() {
     assert_eq!(trusted.document["agents"]["defaults"]["model"], "local");
     assert_eq!(trusted.document["agents"]["defaults"]["effort"], "high");
 
-    let loader = build_config_loader(base.path(), selection, HashMap::new());
+    let loader = build_config_loader(base.path(), selection, HashMap::new(), false);
     let config = loader().unwrap();
     assert_eq!(config.agents.defaults.model, "local");
     assert_eq!(config.agents.defaults.effort.as_deref(), Some("high"));
     assert!(format!("{handles:?}").contains("ConfigurationHandles"));
+}
+
+#[test]
+fn inherited_child_reload_ignores_invalid_local_admission_but_root_fails_closed() {
+    let base = TempDir::new().unwrap();
+    let explicit = base.path().join("explicit.json");
+    std::fs::write(
+        &explicit,
+        r#"{"admission":{"directory":"relative","groups":{},"aliases":{},"bindings":{}}}"#,
+    )
+    .unwrap();
+    let selection = ConfigSelection::Explicit(explicit);
+    assert!(build_config_loader(base.path(), selection.clone(), HashMap::new(), false)().is_err());
+    let child = build_config_loader(base.path(), selection, HashMap::new(), true)().unwrap();
+    assert!(child.admission.is_some());
 }
 
 #[test]
@@ -71,6 +86,7 @@ fn the_loader_reports_a_broken_selected_file() {
         base.path(),
         ConfigSelection::Explicit(explicit.clone()),
         HashMap::new(),
+        false,
     );
     let error = loader().unwrap_err();
     assert!(error.contains(&explicit.display().to_string()), "{error}");

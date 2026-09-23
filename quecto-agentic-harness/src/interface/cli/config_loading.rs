@@ -26,16 +26,23 @@ pub(crate) fn load_selected_config(
     selection: &ConfigSelection,
     prompt_for_trust: bool,
     env_overrides: &HashMap<String, String>,
+    inherited_child: bool,
 ) -> Result<LoadedConfig, String> {
     let handles = build_configuration(&ConfigurationEnvironment {
         base_dir: base_dir.to_path_buf(),
         prompt_for_trust,
     });
-    let effective = handles
-        .resolve
-        .execute(selection)
-        .map_err(|error| error.to_string())?;
-    let config = (handles.realize)(effective.document, env_overrides)?;
+    let effective = (if inherited_child {
+        handles.resolve.execute_inherited_child(selection)
+    } else {
+        handles.resolve.execute(selection)
+    })
+    .map_err(|error| error.to_string())?;
+    let config = (if inherited_child {
+        &handles.realize_inherited_child
+    } else {
+        &handles.realize
+    })(effective.document, env_overrides)?;
     Ok(LoadedConfig {
         config,
         sources: effective.sources,

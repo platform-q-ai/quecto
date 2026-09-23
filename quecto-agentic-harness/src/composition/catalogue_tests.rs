@@ -42,6 +42,7 @@ fn the_handles_and_the_runtime_inputs_describe_themselves_without_the_client_or_
         selection: crate::application::configuration::dto::ConfigSelection::Explicit(
             tmp.path().join("config.json"),
         ),
+        inherited_child: false,
         env_overrides: std::collections::HashMap::from([("K".to_string(), "v".to_string())]),
         http_client: reqwest::Client::new(),
         provider_runtime: crate::composition::runtime::build_agent_provider,

@@ -60,7 +60,16 @@ impl ResolveEffectiveConfig {
         &self,
         selection: &ConfigSelection,
     ) -> Result<EffectiveConfig, EffectiveConfigError> {
-        self.resolve(selection, None)
+        self.resolve(selection, None, false)
+    }
+
+    /// Child startup inherits the authority and must not validate its local
+    /// admission section as a root proposal.
+    pub fn execute_inherited_child(
+        &self,
+        selection: &ConfigSelection,
+    ) -> Result<EffectiveConfig, EffectiveConfigError> {
+        self.resolve(selection, None, true)
     }
 
     /// The effective configuration `selection` would produce if `document`
@@ -74,13 +83,14 @@ impl ResolveEffectiveConfig {
         layer: ConfigLayer,
         document: &Map<String, Value>,
     ) -> Result<EffectiveConfig, EffectiveConfigError> {
-        self.resolve(selection, Some((layer, document)))
+        self.resolve(selection, Some((layer, document)), false)
     }
 
     fn resolve(
         &self,
         selection: &ConfigSelection,
         substitute: Option<(ConfigLayer, &Map<String, Value>)>,
+        inherited_child: bool,
     ) -> Result<EffectiveConfig, EffectiveConfigError> {
         let substituted = |layer: ConfigLayer| {
             substitute
@@ -98,7 +108,7 @@ impl ResolveEffectiveConfig {
                         self.resolved_object(path, &bytes)?
                     }
                 };
-                self.validate(path, &document)?;
+                self.validate(path, &document, inherited_child)?;
                 Ok(EffectiveConfig {
                     document: Value::Object(document),
                     sources: ConfigSources {
@@ -116,13 +126,13 @@ impl ResolveEffectiveConfig {
                 // admission broker all load it alone.
                 let (global, global_present) = match substituted(ConfigLayer::Global) {
                     Some(global) => {
-                        self.validate(&layers.global, &global)?;
+                        self.validate(&layers.global, &global, inherited_child)?;
                         (global, true)
                     }
                     None => match self.read(&layers.global)? {
                         Some(bytes) => {
                             let global = self.resolved_object(&layers.global, &bytes)?;
-                            self.validate(&layers.global, &global)?;
+                            self.validate(&layers.global, &global, inherited_child)?;
                             (global, true)
                         }
                         None => (Map::new(), false),
@@ -148,15 +158,18 @@ impl ResolveEffectiveConfig {
                     .as_ref()
                     .filter(|report| report.state == OverlayState::Applied)
                 {
-                    Some(applied) => self
-                        .validator
-                        .validate(&Value::Object(document.clone()))
-                        .map_err(|reason| EffectiveConfigError::InvalidMerge {
-                            global: global_present.then(|| layers.global.clone()),
-                            overlay: applied.path.clone(),
-                            reason,
-                        })?,
-                    None => self.validate(layers.global.as_path(), &document)?,
+                    Some(applied) => (if inherited_child {
+                        self.validator
+                            .validate_inherited_child(&Value::Object(document.clone()))
+                    } else {
+                        self.validator.validate(&Value::Object(document.clone()))
+                    })
+                    .map_err(|reason| EffectiveConfigError::InvalidMerge {
+                        global: global_present.then(|| layers.global.clone()),
+                        overlay: applied.path.clone(),
+                        reason,
+                    })?,
+                    None => self.validate(layers.global.as_path(), &document, inherited_child)?,
                 }
                 let legacy_local = layers
                     .legacy_local
@@ -339,13 +352,18 @@ impl ResolveEffectiveConfig {
         &self,
         path: &Path,
         document: &Map<String, Value>,
+        inherited_child: bool,
     ) -> Result<(), EffectiveConfigError> {
-        self.validator
-            .validate(&Value::Object(document.clone()))
-            .map_err(|reason| EffectiveConfigError::Invalid {
-                path: path.to_path_buf(),
-                reason,
-            })
+        (if inherited_child {
+            self.validator
+                .validate_inherited_child(&Value::Object(document.clone()))
+        } else {
+            self.validator.validate(&Value::Object(document.clone()))
+        })
+        .map_err(|reason| EffectiveConfigError::Invalid {
+            path: path.to_path_buf(),
+            reason,
+        })
     }
 }
 

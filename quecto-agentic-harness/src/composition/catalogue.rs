@@ -78,6 +78,7 @@ pub fn build_catalogue_handles(
                     base_dir,
                     runtime.selection.clone(),
                     runtime.env_overrides.clone(),
+                    runtime.inherited_child,
                 ),
                 runtime.http_client.clone(),
                 runtime.provider_runtime,
