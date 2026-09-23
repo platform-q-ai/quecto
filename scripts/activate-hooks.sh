@@ -12,7 +12,8 @@
 # To deactivate: start a new shell, or remove the temp dir from PATH.
 
 _QUECTO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")"
-_QUECTO_WRAPPER_DIR="$_QUECTO_ROOT/.git/wrapper-bin"
+# Ask git for the path: in a linked worktree `.git` is a file, not a directory.
+_QUECTO_WRAPPER_DIR="$(git -C "$_QUECTO_ROOT" rev-parse --path-format=absolute --git-path wrapper-bin)"
 
 mkdir -p "$_QUECTO_WRAPPER_DIR"
 cp "$_QUECTO_ROOT/scripts/git-wrapper.sh" "$_QUECTO_WRAPPER_DIR/git"

@@ -3,7 +3,9 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
-HOOKS_DIR="$ROOT/.git/hooks"
+# Ask git for the paths: in a linked worktree `.git` is a file, not a directory.
+HOOKS_DIR="$(git rev-parse --path-format=absolute --git-path hooks)"
+mkdir -p "$HOOKS_DIR"
 
 install_hook() {
     local hook_name="$1"
@@ -26,7 +28,7 @@ rm -f "$HOOKS_DIR/pre-merge-commit"
 git config --unset merge.ff 2>/dev/null || true
 
 # Install git wrapper that bans --no-verify.
-WRAPPER_DIR="$ROOT/.git/wrapper-bin"
+WRAPPER_DIR="$(git rev-parse --path-format=absolute --git-path wrapper-bin)"
 mkdir -p "$WRAPPER_DIR"
 cp "$ROOT/scripts/git-wrapper.sh" "$WRAPPER_DIR/git"
 chmod +x "$WRAPPER_DIR/git"

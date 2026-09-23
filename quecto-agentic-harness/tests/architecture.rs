@@ -25,6 +25,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
+/// Hook scripts resolve git paths so they work in linked worktrees (#2119).
+#[path = "architecture/hook_scripts_worktree.rs"]
+mod hook_scripts_worktree;
 /// Sessions capability (#1968, D1 #1970): plural capability, one
 /// construction site, one layout owner, retirement of the singular path.
 #[path = "architecture/sessions_capability.rs"]
