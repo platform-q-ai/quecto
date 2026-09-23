@@ -97,18 +97,25 @@ pub const PATH_KEYS: [&str; 12] = [
 ];
 
 /// True when `tokens[at]` is a literal written as `key = "…"` for one of
-/// [`PATH_KEYS`].
-pub fn is_path_valued(tokens: &[TokenTree], at: usize) -> bool {
+/// [`PATH_KEYS`] — or, inside serde's `bound(…)` (`in_bound`), for
+/// `serialize`/`deserialize` (elsewhere those name renames, not code).
+pub fn is_path_valued(tokens: &[TokenTree], at: usize, in_bound: bool) -> bool {
     at >= 2
         && matches!(&tokens[at - 1], TokenTree::Punct(eq) if eq.as_char() == '=')
-        && matches!(&tokens[at - 2],
-            TokenTree::Ident(key) if PATH_KEYS.contains(&key.to_string().as_str()))
+        && matches!(&tokens[at - 2], TokenTree::Ident(key)
+            if PATH_KEYS.contains(&key.to_string().as_str())
+                || (in_bound && (key == "serialize" || key == "deserialize")))
+}
+
+/// True when the group at `tokens[at]` is serde's `bound(…)`.
+pub fn opens_bound(tokens: &[TokenTree], at: usize) -> bool {
+    at >= 1 && matches!(&tokens[at - 1], TokenTree::Ident(key) if key == "bound")
 }
 
 /// `attribute`: inside `#[…]`, where a path-valued string (see
 /// [`PATH_KEYS`]) is rendered as the code it holds; every other literal is
 /// dropped, as it cannot name a dependency.
-fn render(stream: TokenStream, out: &mut String, attribute: bool) {
+fn render(stream: TokenStream, out: &mut String, attribute: bool, in_bound: bool) {
     let tokens: Vec<TokenTree> = stream.into_iter().collect();
     let mut previous_hash = false;
     for (at, token) in tokens.iter().enumerate() {
@@ -124,7 +131,12 @@ fn render(stream: TokenStream, out: &mut String, attribute: bool) {
                 };
                 let opens_attribute = previous_hash && group.delimiter() == Delimiter::Bracket;
                 out.push_str(open);
-                render(group.stream(), out, attribute || opens_attribute);
+                render(
+                    group.stream(),
+                    out,
+                    attribute || opens_attribute,
+                    attribute && opens_bound(&tokens, at),
+                );
                 out.push_str(close);
             }
             TokenTree::Ident(ident) => {
@@ -134,7 +146,7 @@ fn render(stream: TokenStream, out: &mut String, attribute: bool) {
                 out.push_str(&ident.to_string());
             }
             TokenTree::Punct(punct) => out.push(punct.as_char()),
-            TokenTree::Literal(literal) if attribute && is_path_valued(&tokens, at) => {
+            TokenTree::Literal(literal) if attribute && is_path_valued(&tokens, at, in_bound) => {
                 if let Ok(text) = syn::parse_str::<syn::LitStr>(&literal.to_string()) {
                     out.extend(text.value().chars().filter(|c| !c.is_whitespace()));
                 }
@@ -152,7 +164,7 @@ pub fn production_text(source: &str) -> Option<String> {
     let mut file = syn::parse_file(source).ok()?;
     StripTestOnly.visit_file_mut(&mut file);
     let mut out = String::new();
-    render(file.into_token_stream(), &mut out, false);
+    render(file.into_token_stream(), &mut out, false, false);
     Some(out)
 }
 
@@ -160,7 +172,18 @@ pub fn production_text(source: &str) -> Option<String> {
 pub fn forbidden_hit(source: &str, forbidden: &[&str]) -> Result<(), String> {
     let text = production_text(source).ok_or_else(|| "file does not parse".to_string())?;
     for pattern in forbidden {
-        if let Some(at) = text.find(pattern) {
+        // A pattern that starts with a name matches at a name boundary:
+        // `dirs::` is not in `environment_dirs::`, `Client::` not in
+        // `HttpClient::`.
+        let named = pattern.starts_with(|c: char| c.is_alphanumeric() || c == '_');
+        let hit = text.match_indices(pattern).map(|(at, _)| at).find(|&at| {
+            !named
+                || !text[..at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        });
+        if let Some(at) = hit {
             let before: String = text[..at].chars().rev().take(60).collect();
             let after: String = text[at..].chars().take(pattern.len() + 60).collect();
             let before: String = before.chars().rev().collect();

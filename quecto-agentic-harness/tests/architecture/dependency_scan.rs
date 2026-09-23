@@ -132,12 +132,15 @@ fn mount(
 ) {
     let key = normalize(file);
     if let Some(mounted) = tree.production.get(&key) {
-        assert_eq!(
-            mounted,
-            &module,
-            "{} is mounted as two modules",
-            file.display()
-        );
+        // A test module may mount a production file as a fixture.
+        if !test {
+            assert_eq!(
+                mounted,
+                &module,
+                "{} is mounted as two modules",
+                file.display()
+            );
+        }
         return;
     }
     if test && !tree.test_only.insert(key.clone()) {
@@ -293,6 +296,22 @@ pub(super) fn crate_paths_in_tokens(stream: proc_macro2::TokenStream) -> Vec<Str
             i += 1;
             continue;
         }
+        // `use dirs as d;` / `extern crate std as s;` inside macro tokens
+        // alias a crate the text rules could not follow.
+        let word = |at: usize, text: &str| matches!(tokens.get(at), Some(TokenTree::Ident(w)) if w == text);
+        // `crate`/`super`/`self` aliases are the chain's case below.
+        let lower = |at: usize| {
+            matches!(tokens.get(at), Some(TokenTree::Ident(w))
+                if w.to_string().starts_with(|c: char| c.is_ascii_lowercase())
+                    && !matches!(w.to_string().as_str(), "crate" | "super" | "self"))
+        };
+        if (word(i, "use") && lower(i + 1) && word(i + 2, "as"))
+            || (word(i, "extern") && word(i + 1, "crate") && word(i + 3, "as"))
+        {
+            paths.push(UNRESOLVABLE.to_string());
+            i += 1;
+            continue;
+        }
         let start = match tokens.get(i) {
             Some(TokenTree::Ident(ident))
                 if matches!(ident.to_string().as_str(), "crate" | "super" | "self") =>
@@ -373,6 +392,10 @@ fn expand_use_tree(tree: &syn::UseTree, prefix: &str, paths: &mut Vec<String>) {
 /// path-valued keys (`#[serde(with = "crate::codec")]`, `try_from =
 /// "Vec<crate::X>"`, `bound = "T: crate::Tr"`); prose strings are ignored.
 pub(super) fn string_paths_in_tokens(stream: proc_macro2::TokenStream) -> Vec<String> {
+    string_paths_in(stream, false)
+}
+
+fn string_paths_in(stream: proc_macro2::TokenStream, in_bound: bool) -> Vec<String> {
     use proc_macro2::TokenTree;
     use syn::parse::Parser;
     use syn::visit::Visit;
@@ -390,8 +413,13 @@ pub(super) fn string_paths_in_tokens(stream: proc_macro2::TokenStream) -> Vec<St
     let mut paths = Paths(Vec::new());
     for (at, token) in tokens.iter().enumerate() {
         match token {
-            TokenTree::Group(group) => paths.0.extend(string_paths_in_tokens(group.stream())),
-            TokenTree::Literal(literal) if production_tokens::is_path_valued(&tokens, at) => {
+            TokenTree::Group(group) => paths.0.extend(string_paths_in(
+                group.stream(),
+                production_tokens::opens_bound(&tokens, at),
+            )),
+            TokenTree::Literal(literal)
+                if production_tokens::is_path_valued(&tokens, at, in_bound) =>
+            {
                 let Ok(text) = syn::parse_str::<syn::LitStr>(&literal.to_string()) else {
                     continue;
                 };
@@ -497,6 +525,11 @@ fn production_text_keeps_cfg_combinations_and_multiline_paths() {
         assert!(text.contains(pattern), "{source}: {text}");
     }
     assert!(production_text("fn broken( {").is_none());
+    // Name-led patterns match at a name boundary; others anywhere.
+    assert!(forbidden_hit("use crate::domain::environment_dirs::X;", &["dirs::"]).is_ok());
+    assert!(forbidden_hit("fn f() { HttpClient::new(); }", &["Client::"]).is_ok());
+    assert!(forbidden_hit("fn f() { dirs::home_dir(); }", &["dirs::"]).is_err());
+    assert!(forbidden_hit("fn f(p: P) { p.exists(); }", &[".exists("]).is_err());
     assert!(forbidden_hit("fn broken( {", &["x"]).is_err());
 }
 
@@ -611,6 +644,21 @@ fn walker_follows_inline_paths_includes_and_non_mod_rs_children() {
 }
 
 #[test]
+fn a_test_module_may_mount_a_production_file_in_either_order() {
+    for lib in [
+        "mod real;\n#[cfg(test)] #[path = \"real.rs\"] mod real_fixture;",
+        "#[cfg(test)] #[path = \"real.rs\"] mod real_fixture;\nmod real;",
+    ] {
+        let tree = walk_fixture(&[("lib.rs", lib), ("real.rs", "")]);
+        assert_eq!(
+            tree.get(Path::new("real.rs")),
+            Some(&vec!["real".to_string()]),
+            "{lib}"
+        );
+    }
+}
+
+#[test]
 #[should_panic(expected = "is mounted as two modules")]
 fn walker_refuses_a_file_mounted_twice() {
     walk_fixture(&[
@@ -704,6 +752,16 @@ fn crate_paths_are_read_out_of_macro_tokens() {
         string_paths_in_tokens(nested),
         ["crate::application::X", "crate::application::Tr"]
     );
+    let bound: proc_macro2::TokenStream =
+        "serde(bound(serialize = \"T: crate::application::Tr\"), \
+         rename(serialize = \"self-link\"))"
+            .parse()
+            .unwrap();
+    assert_eq!(string_paths_in_tokens(bound), ["crate::application::Tr"]);
+    let aliased: proc_macro2::TokenStream = "id! { use std as s; } extern crate dirs as d;"
+        .parse()
+        .unwrap();
+    assert_eq!(crate_paths_in_tokens(aliased), [UNRESOLVABLE, UNRESOLVABLE]);
     let prose: proc_macro2::TokenStream =
         "error(\"crate::application::x failed\")".parse().unwrap();
     assert!(string_paths_in_tokens(prose).is_empty());

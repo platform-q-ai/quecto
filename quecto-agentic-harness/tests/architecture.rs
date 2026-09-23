@@ -437,6 +437,7 @@ fn crate_path_roots_fail_closed() {
         "fn f() { let _ = vec![super::application::X::new()]; }",
         "id! { use crate::{application::secret::Bad}; }",
         "id! { use crate as c; }",
+        "#[serde(bound(serialize = \"T: super::application::Tr\"))]\nstruct S<T>(T);",
         "extern crate self as q;",
         "struct S { #[serde(default = \"super::application::d\")] f: u8 }",
     ] {
@@ -528,9 +529,12 @@ fn ports_modules_expose_only_contracts() {
     assert!(checked > 40, "ports exposures were read ({checked})");
 }
 
-/// Root `application::ports` contracts that live beside their capability's
-/// use cases rather than in a `ports`/`dto` module.
-const ROOT_PORT_CONTRACTS: &[(&str, &[&str])] = &[
+/// Contracts (port traits and the value types their signatures carry) that
+/// live beside their capability's use cases rather than in a `ports`/`dto`
+/// module, keyed by module path under `application`.
+const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
+    ("sessions::conversation_ledger", &["LedgerAdvance"]),
+    ("subagents::standard_script", &["StandardScriptVerdict"]),
     (
         "catalogue",
         &[
@@ -572,7 +576,11 @@ const ROOT_PORT_CONTRACTS: &[(&str, &[&str])] = &[
     ("inference_observation", &["AdmissionObservation"]),
     (
         "provider_runtime",
-        &["ProviderRuntimeFactory", "RuntimeSnapshotStore"],
+        &[
+            "CatalogueRuntimeSnapshot",
+            "ProviderRuntimeFactory",
+            "RuntimeSnapshotStore",
+        ],
     ),
     ("subagent_launch", &["LaunchFuture", "SubagentLaunchPorts"]),
 ];
@@ -587,9 +595,12 @@ fn port_target_allowed(path: &str) -> bool {
         {
             true
         }
-        ["crate", "application", module, name] => ROOT_PORT_CONTRACTS
-            .iter()
-            .any(|(owner, names)| owner == module && names.contains(name)),
+        ["crate", "application", owner @ .., name] => {
+            let owner = owner.join("::");
+            CONTRACTS_OUTSIDE_PORTS
+                .iter()
+                .any(|(module, names)| *module == owner && names.contains(name))
+        }
         // A crate path in no allowed place, or one that escaped resolution.
         ["crate", ..] => false,
         // External crates and primitives (`Pin`, `std::…`).
@@ -632,20 +643,51 @@ fn cfg_test_gated(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
+/// Crates a `ports`/`dto` path may start at besides `crate`: the standard
+/// library and the package's own (non-dev) dependencies. Any other bare
+/// first segment is a local name the guard could not follow.
+fn external_crates() -> &'static BTreeSet<String> {
+    static CRATES: std::sync::OnceLock<BTreeSet<String>> = std::sync::OnceLock::new();
+    CRATES.get_or_init(|| {
+        let manifest = fs::read_to_string("Cargo.toml").expect("read Cargo.toml");
+        let mut crates: BTreeSet<String> = ["std", "core", "alloc"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let mut in_dependencies = false;
+        for line in manifest.lines().map(str::trim) {
+            if line.starts_with('[') {
+                in_dependencies = line.ends_with("dependencies]") && !line.contains("dev-");
+                continue;
+            }
+            if in_dependencies && let Some((name, _)) = line.split_once('=') {
+                crates.insert(name.trim().replace('-', "_"));
+            }
+        }
+        assert!(
+            crates.contains("serde") && crates.contains("tokio"),
+            "{crates:?}"
+        );
+        crates
+    })
+}
+
 /// (number of exposures read, the refused ones) for one application file.
+/// The exposure surface is every module whose path has a `ports` or `dto`
+/// segment — by module path, so a `#[path]` or `include!` file counts.
 fn port_exposures(file: &str, source: &str) -> (usize, Vec<String>) {
     let module = dependency_scan::module_path(file);
-    let in_ports = file.ends_with("/ports.rs") || file.contains("/ports/");
+    let surface = module.iter().any(|s| s == "ports" || s == "dto");
     let parsed = syn::parse_file(source).unwrap_or_else(|e| panic!("{file}: {e}"));
     let mut out = (0, Vec::new());
-    port_items(&parsed.items, &module, in_ports, &mut out);
+    port_items(&parsed.items, &module, surface, &mut out);
     out
 }
 
 fn port_items(
     items: &[syn::Item],
     module: &[String],
-    in_ports: bool,
+    surface: bool,
     out: &mut (usize, Vec<String>),
 ) {
     use syn::visit::Visit;
@@ -661,6 +703,8 @@ fn port_items(
             );
             syn::visit::visit_path(self, path);
         }
+        // Signatures only: a body is not exposed.
+        fn visit_block(&mut self, _: &'ast syn::Block) {}
     }
     /// (bound name, full path) for each leaf; a glob binds `*`.
     fn use_bindings(tree: &syn::UseTree, prefix: &str, found: &mut Vec<(String, String)>) {
@@ -682,99 +726,63 @@ fn port_items(
             }
         }
     }
-    fn use_targets(tree: &syn::UseTree, prefix: &str, found: &mut Vec<String>) {
-        match tree {
-            syn::UseTree::Path(path) => {
-                use_targets(&path.tree, &format!("{prefix}{}::", path.ident), found)
-            }
-            syn::UseTree::Name(name) => found.push(format!("{prefix}{}", name.ident)),
-            syn::UseTree::Rename(name) => found.push(format!("{prefix}{}", name.ident)),
-            syn::UseTree::Glob(_) => found.push(format!("{prefix}*")),
-            syn::UseTree::Group(group) => {
-                for item in &group.items {
-                    use_targets(item, prefix, found);
-                }
-            }
-        }
-    }
-    // Names in scope here: declared modules and every `use` binding
-    // (private ones included — `use super::x; pub use x::Y;` reaches `x`).
-    // After a glob import of a crate path, a bare name could be anything.
+    let here = |name: &str| format!("crate::{}::{name}", module.join("::"));
+    // Names in scope: items defined or declared here and every `use`
+    // binding, private ones included (`use super::x; pub use x::Y;`).
     let mut local: BTreeMap<String, String> = BTreeMap::new();
-    let mut crate_glob = false;
+    let mut globs = Vec::new();
     for item in items {
-        match item {
-            syn::Item::Mod(declared) => {
-                let name = declared.ident.to_string();
-                local.insert(
-                    name.clone(),
-                    format!("crate::{}::{name}", module.join("::")),
-                );
-            }
-            syn::Item::Use(binding) => {
-                let mut bound = Vec::new();
-                use_bindings(&binding.tree, "", &mut bound);
-                for (name, path) in bound {
-                    let path = dependency_scan::resolve_relative(module, &path);
-                    if name == "*" {
-                        crate_glob |= path.starts_with("crate");
-                    } else {
-                        local.insert(name, path);
-                    }
+        let defined = match item {
+            syn::Item::Mod(i) => Some(&i.ident),
+            syn::Item::Struct(i) => Some(&i.ident),
+            syn::Item::Enum(i) => Some(&i.ident),
+            syn::Item::Trait(i) => Some(&i.ident),
+            syn::Item::Type(i) => Some(&i.ident),
+            syn::Item::Fn(i) => Some(&i.sig.ident),
+            syn::Item::Const(i) => Some(&i.ident),
+            syn::Item::Static(i) => Some(&i.ident),
+            syn::Item::Union(i) => Some(&i.ident),
+            _ => None,
+        };
+        if let Some(ident) = defined {
+            local.insert(ident.to_string(), here(&ident.to_string()));
+        }
+        if let syn::Item::Use(binding) = item {
+            let mut bound = Vec::new();
+            use_bindings(&binding.tree, "", &mut bound);
+            for (name, path) in bound {
+                if name == "*" {
+                    globs.push(path);
+                } else {
+                    local.insert(name, path);
                 }
             }
-            _ => {}
         }
     }
+    // Follow bindings to a crate path, a single (prelude/generic) name or a
+    // known external crate; anything else is unresolvable.
     let resolve = |path: &str| {
-        let (first, rest) = path.split_once("::").unwrap_or((path, ""));
-        let joined = |base: &str| {
-            if rest.is_empty() {
-                base.to_string()
-            } else {
-                format!("{base}::{rest}")
+        let mut path = path.to_string();
+        for _ in 0..16 {
+            let (first, rest) = path.split_once("::").unwrap_or((path.as_str(), ""));
+            if matches!(first, "crate" | "super" | "self") {
+                return dependency_scan::resolve_relative(module, &path);
             }
-        };
-        match first {
-            "crate" | "super" | "self" => dependency_scan::resolve_relative(module, path),
-            _ => match local.get(first) {
-                Some(base) if base != path => joined(base),
-                _ if crate_glob => dependency_scan::UNRESOLVABLE.to_string(),
-                _ => path.to_string(),
-            },
-        }
-    };
-    for item in items {
-        let (attrs, visibility) = match item {
-            syn::Item::Use(i) => (&i.attrs, &i.vis),
-            syn::Item::Type(i) => (&i.attrs, &i.vis),
-            syn::Item::Mod(i) => (&i.attrs, &i.vis),
-            _ => continue,
-        };
-        if cfg_test_gated(attrs) {
-            continue;
-        }
-        let mut targets = Vec::new();
-        match item {
-            syn::Item::Mod(declared) => {
-                if let Some((_, inner)) = &declared.content {
-                    let mut child = module.to_vec();
-                    child.push(declared.ident.to_string());
-                    port_items(inner, &child, in_ports || declared.ident == "ports", out);
+            match local.get(first) {
+                Some(base) if *base != path => {
+                    path = if rest.is_empty() {
+                        base.clone()
+                    } else {
+                        format!("{base}::{rest}")
+                    };
                 }
-                continue;
+                _ if !path.contains("::") || external_crates().contains(first) => return path,
+                _ => return dependency_scan::UNRESOLVABLE.to_string(),
             }
-            syn::Item::Use(reexport) => use_targets(&reexport.tree, "", &mut targets),
-            syn::Item::Type(alias) => {
-                let mut paths = TypePaths(Vec::new());
-                paths.visit_type(&alias.ty);
-                targets = paths.0;
-            }
-            _ => unreachable!("filtered above"),
         }
-        if !in_ports || matches!(visibility, syn::Visibility::Inherited) {
-            continue;
-        }
+        dependency_scan::UNRESOLVABLE.to_string()
+    };
+    let check = |targets: Vec<String>, out: &mut (usize, Vec<String>)| {
         for target in targets {
             out.0 += 1;
             let resolved = resolve(&target);
@@ -782,6 +790,92 @@ fn port_items(
                 out.1.push(resolved);
             }
         }
+    };
+    if surface {
+        // A glob of anything but an external crate makes every bare name
+        // ambiguous.
+        for glob in &globs {
+            let resolved = resolve(glob.trim_end_matches("::*"));
+            out.0 += 1;
+            if resolved.starts_with("crate") {
+                out.1.push(format!("glob {resolved}::*"));
+            }
+        }
+    }
+    for item in items {
+        let attrs: &[syn::Attribute] = match item {
+            syn::Item::Const(i) => &i.attrs,
+            syn::Item::Enum(i) => &i.attrs,
+            syn::Item::Fn(i) => &i.attrs,
+            syn::Item::Impl(i) => &i.attrs,
+            syn::Item::Macro(i) => &i.attrs,
+            syn::Item::Mod(i) => &i.attrs,
+            syn::Item::Static(i) => &i.attrs,
+            syn::Item::Struct(i) => &i.attrs,
+            syn::Item::Trait(i) => &i.attrs,
+            syn::Item::Type(i) => &i.attrs,
+            syn::Item::Union(i) => &i.attrs,
+            syn::Item::Use(i) => &i.attrs,
+            _ => &[],
+        };
+        if cfg_test_gated(attrs) {
+            continue;
+        }
+        if let syn::Item::Mod(declared) = item {
+            if let Some((_, inner)) = &declared.content {
+                let mut child = module.to_vec();
+                child.push(declared.ident.to_string());
+                let nested = surface || declared.ident == "ports" || declared.ident == "dto";
+                port_items(inner, &child, nested, out);
+            }
+            continue;
+        }
+        if !surface {
+            continue;
+        }
+        let public = |vis: &syn::Visibility| !matches!(vis, syn::Visibility::Inherited);
+        let mut paths = TypePaths(Vec::new());
+        match item {
+            // Tokens the guard cannot read: no macro in a contract module.
+            syn::Item::Macro(invocation) => {
+                out.0 += 1;
+                out.1
+                    .push(format!("macro {}", invocation.mac.path.to_token_stream()));
+                continue;
+            }
+            syn::Item::Use(i) if public(&i.vis) => {
+                let mut bound = Vec::new();
+                use_bindings(&i.tree, "", &mut bound);
+                check(
+                    bound
+                        .into_iter()
+                        .filter(|(name, _)| name != "*")
+                        .map(|(_, path)| path)
+                        .collect(),
+                    out,
+                );
+                continue;
+            }
+            syn::Item::Type(i) if public(&i.vis) => paths.visit_item_type(i),
+            syn::Item::Fn(i) if public(&i.vis) => paths.visit_signature(&i.sig),
+            syn::Item::Struct(i) if public(&i.vis) => paths.visit_item_struct(i),
+            syn::Item::Enum(i) if public(&i.vis) => paths.visit_item_enum(i),
+            syn::Item::Union(i) if public(&i.vis) => paths.visit_item_union(i),
+            syn::Item::Const(i) if public(&i.vis) => paths.visit_type(&i.ty),
+            syn::Item::Static(i) if public(&i.vis) => paths.visit_type(&i.ty),
+            syn::Item::Trait(i) if public(&i.vis) => paths.visit_item_trait(i),
+            syn::Item::Impl(block) => {
+                for member in &block.items {
+                    match member {
+                        syn::ImplItem::Fn(f) if public(&f.vis) => paths.visit_signature(&f.sig),
+                        syn::ImplItem::Const(c) if public(&c.vis) => paths.visit_type(&c.ty),
+                        _ => {}
+                    }
+                }
+            }
+            _ => continue,
+        }
+        check(paths.0, out);
     }
 }
 
@@ -806,6 +900,17 @@ fn ports_guard_is_an_allowlist() {
         "use super::use_cases as cases;\npub use cases::KillEnvironment;",
         "mod use_cases { pub struct K; }\npub use use_cases::K;",
         "use super::*;\npub use use_cases::KillEnvironment;",
+        // Chained private aliases and a glob through a binding (round 3).
+        "use super::super::environments as envs;\nuse envs::use_cases as cases;\npub use cases::KillEnvironment;",
+        "use super::super::environments;\nuse environments::*;\npub use use_cases::KillEnvironment;",
+        // A use case handed out through a signature, a field or a macro.
+        "pub fn build() -> super::use_cases::KillEnvironment { loop {} }",
+        "pub struct H(pub super::use_cases::KillEnvironment);",
+        "pub enum E { A(super::use_cases::KillEnvironment) }",
+        "pub struct S; impl S { pub fn k(&self) -> super::use_cases::KillEnvironment { loop {} } }",
+        "m! { pub use super::use_cases::KillEnvironment; }",
+        // A bare non-crate first segment that is no known crate.
+        "pub use not_a_dependency::Anything;",
     ] {
         assert!(!port_exposures(file, source).1.is_empty(), "{source}");
     }
@@ -818,12 +923,24 @@ fn ports_guard_is_an_allowlist() {
         "use super::use_cases::KillEnvironment;",
         "#[cfg(any(test, feature = \"test-support\"))]\npub use super::use_cases::KillEnvironment;",
         "mod local { pub struct X; }\npub use local::X;",
+        "pub struct Row { pub at: std::time::SystemTime, pub value: serde_json::Value, pub n: u64 }",
+        "pub fn f(record: &crate::domain::session::SessionRecord) -> Option<String> { None }",
+        "pub struct S(pub u64); impl S { fn private(&self) -> super::use_cases::KillEnvironment { loop {} } }",
     ] {
         let (exposed, refused) = port_exposures(file, source);
         assert_eq!(refused, Vec::<String>::new(), "{source}");
         let private = source.starts_with("use ") || source.starts_with("#[cfg");
         assert!(private || exposed > 0, "{source} was read");
     }
+    // A `dto` module is surface too: it cannot launder a use case.
+    let (_, refused) = port_exposures(
+        "src/application/subagents/dto.rs",
+        "pub use super::use_cases::KillDelegatedAgent;",
+    );
+    assert_eq!(
+        refused,
+        ["crate::application::subagents::use_cases::KillDelegatedAgent"]
+    );
     // Outside a ports module, nothing is an exposure of the ports surface.
     let (exposed, _) = port_exposures(
         "src/application/environments/mod.rs",
