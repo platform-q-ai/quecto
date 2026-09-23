@@ -41,8 +41,9 @@ is an error, not a fallback to unbounded inference.
   `fallback_base_ms`/`max_cooldown_ms` govern throttle cooldowns.
 - `aliases`: opaque, non-secret account/endpoint names mapped to a group.
   Credentials, endpoint URLs and model names are never used as identity.
-- `bindings`: exact router provider slot to alias (see below). Explicit bindings
-  take precedence over `"*"` and `"default"` fallbacks. A usable slot without
+- `bindings`: router provider slot to alias (matched case-insensitively,
+  consistent with routing; see below). Explicit bindings take precedence over
+  `"*"` and `"default"` fallbacks. A usable slot without
   an effective binding remains available **without broker gating** and produces
   an advisory warning; unknown aliases still fail configuration.
 - `directory` (optional, default `<base_dir>/admission`): a private, owner-only
@@ -340,8 +341,9 @@ Activation (per host, per user):
 Rollback:
 
 1. `quecto config unset --global admission` (or `config set --global
-   admission null`). Removing bindings while keeping admission enabled **does**
-   leave the affected usable slots ungated after restart; do not use this as a
+   admission null`). Removing all bindings while keeping admission enabled is
+   rejected: an enabled admission section requires at least one valid binding.
+   To stop admission entirely, remove the whole section; do not use this as a
    rollback shortcut if shared rate limiting is still required.
 2. Restart every agent process; a live reload with a changed section is
    rejected by design, so nothing changes until the restart.

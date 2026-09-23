@@ -1,7 +1,7 @@
 # ADR-0028: Advisory admission bindings for usable provider slots
 
 **Status:** Accepted
-**Date:** 2026-09-24
+**Date:** 2026-09-23
 **Scope:** #2111; narrowly supersedes [ADR-0026](adr-0026-shared-inference-admission.md)'s fail-closed requirement for a usable provider slot without an effective binding.
 
 ## Context
@@ -15,13 +15,13 @@ from a malformed admission policy or an unreachable required authority.
 ## Decision
 
 When admission is enabled, compose every **usable** provider slot. Resolve its
-exact binding first, then an applicable `"*"` or `"default"` fallback. A slot
-with no effective binding remains selectable and its requests run **without
-admission-broker gating**. Bound slots keep their gate for every actual attempt,
-including retries and OAuth provider rebuilds. This exception supersedes only
-the prior requirement that every constructed provider have a binding and the
-associated fail-closed behavior on an absent binding; all other ADR-0026
-admission lifecycle and policy decisions remain in force.
+case-insensitive router-slot binding first, then an applicable `"*"` or
+`"default"` fallback. A slot with no effective binding remains selectable and
+its requests run **without admission-broker gating**. Bound slots keep their gate
+for every actual attempt, including retries and OAuth provider rebuilds. This
+exception supersedes only the prior requirement that every constructed provider
+have a binding and the associated fail-closed behavior on an absent binding;
+all other ADR-0026 admission lifecycle and policy decisions remain in force.
 
 Emit a non-blocking, actionable startup warning naming each unbound usable slot
 once per startup session, including slots from built-in credentials and usable

@@ -165,7 +165,7 @@ pub struct StateSnapshot {
         deserialize_with = "present_optional"
     )]
     pub admission: Option<AdmissionSnapshot>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub admission_warnings: Vec<AdmissionBindingWarning>,
 }
 

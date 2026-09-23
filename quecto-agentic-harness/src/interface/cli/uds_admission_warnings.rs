@@ -1,7 +1,9 @@
 //! Startup presentation of the published runtime's advisory admission slots.
 
-pub(super) fn publish_startup_warnings(base_dir: &std::path::Path) -> Vec<String> {
-    let slots = crate::infrastructure::catalogue_registry::runtime_store_for(base_dir)
+pub(super) fn publish_startup_warnings(
+    store: &crate::application::ports::RuntimeSnapshotStore,
+) -> Vec<String> {
+    let slots = store
         .current()
         .map(|snapshot| snapshot.admission_binding_diagnostic.unbound_slots.clone())
         .unwrap_or_default();

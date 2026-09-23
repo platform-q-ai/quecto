@@ -25,7 +25,8 @@ pub struct UdsLoopArgs<'a> {
     pub retention: Option<super::retention_handles::RetentionHandles>,
     pub base_dir: &'a std::path::Path,
     pub workspace: &'a std::path::Path,
-    /// The typed identity the loop opens (D10 #1979).
+    /// The typed identity the loop opens (D10 #1979), carrying the stable
+    /// session key and its validated persisted-key form across CLI/UDS layers.
     pub identity: crate::domain::session_identity::SessionIdentity,
     pub model: String,
     pub ephemeral: bool,
@@ -121,7 +122,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         }
     };
     let messages = opened.messages;
-    let admission_slots = super::uds_admission_warnings::publish_startup_warnings(base_dir);
+    let admission_slots =
+        super::uds_admission_warnings::publish_startup_warnings(&catalogue.runtime_store);
     if let (Some(ws), Some(persisted)) = (&workflow_state, opened.workflow_run) {
         if let Ok(mut engine) = ws.lock() {
             engine.restore_run(persisted);
@@ -138,7 +140,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 session_key,
                 system_prompt,
                 admission_slots: admission_slots.clone(),
-                base_dir: base_dir.to_path_buf(),
                 ext_registry,
                 subagent_registry,
                 workflow_state,
@@ -168,7 +169,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 session_key,
                 system_prompt,
                 admission_slots: admission_slots.clone(),
-                base_dir: base_dir.to_path_buf(),
                 ext_registry,
                 lifetime,
                 notification_rx,

@@ -354,7 +354,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
     if let Some(context) = admission {
         for provider in &provider_list {
             if context.optional_binding(provider.name())?.is_none() {
-                unbound_slots.insert(provider.name().to_owned());
+                unbound_slots.insert(provider.name().trim().to_owned());
             }
         }
     }

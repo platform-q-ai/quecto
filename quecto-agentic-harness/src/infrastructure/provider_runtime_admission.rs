@@ -80,8 +80,10 @@ impl AdmissionRuntimeContext {
             .bindings
             .keys()
             .any(|key| key.eq_ignore_ascii_case(slot))
-            || self.effective.bindings.contains_key(DEFAULT_BINDING_KEY)
-            || self.effective.bindings.contains_key(DEFAULT_BINDING_ALT)
+            || self.effective.bindings.keys().any(|key| {
+                key.eq_ignore_ascii_case(DEFAULT_BINDING_KEY)
+                    || key.eq_ignore_ascii_case(DEFAULT_BINDING_ALT)
+            })
         {
             return self.binding(slot).map(Some);
         }
@@ -98,8 +100,20 @@ impl AdmissionRuntimeContext {
             .iter()
             .find(|(key, _)| key.eq_ignore_ascii_case(slot))
             .map(|(_, alias)| alias)
-            .or_else(|| self.effective.bindings.get(DEFAULT_BINDING_KEY))
-            .or_else(|| self.effective.bindings.get(DEFAULT_BINDING_ALT))
+            .or_else(|| {
+                self.effective
+                    .bindings
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(DEFAULT_BINDING_KEY))
+                    .map(|(_, alias)| alias)
+            })
+            .or_else(|| {
+                self.effective
+                    .bindings
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(DEFAULT_BINDING_ALT))
+                    .map(|(_, alias)| alias)
+            })
             .ok_or_else(|| {
                 format!("admission provider '{slot}' requires an explicit alias binding")
             })?;

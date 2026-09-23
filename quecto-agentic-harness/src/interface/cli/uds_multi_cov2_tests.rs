@@ -98,7 +98,6 @@ fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
         messages: vec![Message::user("seed")],
         model: "stub".into(),
         admission_slots: Vec::new(),
-        base_dir: base.to_path_buf(),
         session_key: "cli:cov".into(),
         system_prompt: "system from test".into(),
         ext_registry: None,

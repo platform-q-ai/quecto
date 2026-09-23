@@ -32,6 +32,9 @@ pub struct CatalogueHandles {
     /// reload reports so) for a loop built without
     /// [`RuntimeConfigurationInputs`].
     pub reload: Arc<ReloadRuntimeConfiguration>,
+    /// The runtime snapshot published by composition; interface readers only
+    /// receive this application port and never reach into infrastructure globals.
+    pub runtime_store: crate::application::ports::RuntimeSnapshotStore,
 }
 
 impl std::fmt::Debug for CatalogueHandles {
@@ -42,6 +45,7 @@ impl std::fmt::Debug for CatalogueHandles {
             .field("model", &self.model)
             .field("refresh", &self.refresh)
             .field("reload", &self.reload)
+            .field("runtime_store", &self.runtime_store)
             .finish()
     }
 }

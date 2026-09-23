@@ -8,7 +8,7 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 
 **Status vocabulary:** `Accepted` · `Proposed` (may be deferred) ·
 `Rejected — superseded by ADR-00NN`.
-**Numbering** is monotonic and may skip (0004 was never used). Next free: 0028.
+**Numbering** is monotonic and may skip (0004 was never used). Next free: 0029.
 
 | ADR | Title | Status | Decides |
 |----:|-------|--------|---------|
@@ -36,7 +36,8 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 | [0023](adr-0023-tui-is-a-multiplexer-of-replicant-agents.md) | The TUI Is a Multiplexer of Replicant Agents | ❌ Rejected → [0027](adr-0027-tui-is-a-single-connection-client.md) | Historical process-per-tab topology; superseded by the single-connection client. |
 | [0024](adr-0024-observation-tool-output-contract.md) | Observation Tools Use Projection, Delta, or Snapshot-to-File Outputs | ✅ Accepted | Observation tools default to bounded projections, use cursor deltas for polling, spill full-fidelity snapshots to files, exclude static echo data, carry freshness metadata, and degrade over-cap payloads to truncation plus file pointers. |
 | [0025](adr-0025-tui-ordinary-exit-terminates-owned-agents.md) | TUI Ordinary Exit Terminates Owned Agents After Durable Roster Capture | ❌ Rejected → [0027](adr-0027-tui-is-a-single-connection-client.md) | Historical multi-tab framing; its corrected ordinary-exit teardown semantics continue for the single owned agent. |
-| [0026](adr-0026-shared-inference-admission.md) | Single-host Shared Inference Admission | ✅ Accepted contract | Pure policy, private authority, per-attempt transport accounting and safety-first uncertainty; implementation pending #1679 P1–P4. |
+| [0026](adr-0026-shared-inference-admission.md) | Single-host Shared Inference Admission | ✅ Accepted contract (partially superseded by ADR-0028) | Pure policy, private authority, per-attempt transport accounting and safety-first uncertainty; implementation pending #1679 P1–P4. |
+| [0028](adr-0028-advisory-unbound-admission.md) | Advisory admission bindings for usable provider slots | ✅ Accepted | Usable slots without an effective binding remain available without broker gating and produce an advisory warning. |
 | [0027](adr-0027-tui-is-a-single-connection-client.md) | The TUI Is a Single-Connection Client | ✅ Accepted | One TUI owns one connection and one agent; no tab multiplexer, tab-agent registry, workspace manifest, or request-id namespace. |
 
 ## The ADR-0008 protocol series

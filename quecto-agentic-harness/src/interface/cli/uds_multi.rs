@@ -44,7 +44,9 @@ pub(super) static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 =
 /// Shared "agent is mid-turn" flag (#828). Set by the dispatch loop for the
 /// duration of `agent.process()` (via [`BusyGuard`]), read by the accept loop.
 /// Busy clients receive a connect-time conversation snapshot; idle clients
-/// receive no unsolicited messages.
+/// receive no unsolicited messages. The flag is shared across the accept and
+/// dispatch tasks so a connecting client can distinguish a stable idle view
+/// from a turn whose messages are still changing.
 pub(crate) type BusyFlag = std::sync::Arc<std::sync::atomic::AtomicBool>;
 
 /// Busy for a turn; cleared on every exit, including panic (#828).
@@ -52,6 +54,8 @@ pub(crate) struct BusyGuard(BusyFlag);
 
 impl BusyGuard {
     pub(crate) fn new(flag: &BusyFlag) -> Self {
+        // Publish busy before conversation history changes, so a concurrent
+        // accept gets the latest connect-time snapshot rather than an idle gap.
         flag.store(true, std::sync::atomic::Ordering::SeqCst);
         Self(flag.clone())
     }
@@ -71,7 +75,6 @@ pub(super) struct MultiClientArgs<'a> {
     pub messages: Vec<Message>,
     pub model: String,
     pub admission_slots: Vec<String>,
-    pub base_dir: std::path::PathBuf,
     pub session_key: String,
     pub system_prompt: String,
     /// Shared tool catalogue snapshot for get_tool_catalogue.
@@ -172,7 +175,6 @@ pub(super) async fn multi_client_loop(
         session_key,
         system_prompt,
         admission_slots,
-        base_dir,
         ext_registry,
         lifetime,
         notification_rx,
@@ -202,8 +204,7 @@ pub(super) async fn multi_client_loop(
 
     let mut agent_session = AgentSession::new(model);
     agent_session.set_admission_warnings(&admission_slots);
-    agent_session
-        .observe_runtime(crate::infrastructure::catalogue_registry::runtime_store_for(&base_dir));
+    agent_session.observe_runtime(catalogue.runtime_store.clone());
     let initial_state = agent_session.state_snapshot(
         &session_key,
         messages.len(),
@@ -327,7 +328,7 @@ pub(super) async fn multi_client_loop(
         client_tool_registry: client_tool_registry.clone(),
         session: session_reads.clone(),
         state_snapshot: state_snapshot.clone(),
-        runtime_store: crate::infrastructure::catalogue_registry::runtime_store_for(&base_dir),
+        runtime_store: catalogue.runtime_store.clone(),
         execution_state: execution_state.clone(),
         session_stats_snapshot: session_stats_snapshot.clone(),
         tool_catalogue_snapshot: tool_catalogue_snapshot.clone(),
