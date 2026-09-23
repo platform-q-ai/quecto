@@ -7,15 +7,14 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn worker(endpoint: String, dir: PathBuf, role: AgentRole) -> Worker {
-    Worker {
-        client: reqwest::Client::new(),
-        key: "test-key".into(),
+    Worker::new(
+        reqwest::Client::new(),
+        "test-key".into(),
         dir,
         role,
-        recent: VecDeque::new(),
         endpoint,
-        backoff: std::time::Duration::from_millis(1),
-    }
+        std::time::Duration::from_millis(1),
+    )
 }
 
 fn ok_body() -> serde_json::Value {
@@ -114,12 +113,7 @@ async fn a_failed_judgment_is_logged_with_its_error_not_dropped() {
             seq: 7,
             session_key: "s-1".into(),
             model: "m".into(),
-            event: CommanderEvent::ToolError {
-                turn: 1,
-                tool: "bash".into(),
-                arguments: "{}".into(),
-                result: "exit 1".into(),
-            },
+            event: turn_end("Done."),
         })
         .await;
 
@@ -140,12 +134,15 @@ fn waiting_answers_map_to_no_action() {
         "turn_end": {"choice": "waiting_on_others", "confidence": 0.95},
         "child_state": {"choice": "waiting_on_subagents", "confidence": 0.95}
     });
-    let actions = Worker::would_do(&answers);
+    let actions = Worker::would_do(&turn_end("x"), &AgentRole::Root, &answers);
     assert_eq!(actions["5"], "none");
     assert_eq!(actions["6"], "plain_idle_note");
     // Below the confidence bar nothing is acted on either way.
     let unsure = json!({"turn_end": {"choice": "stopped_early", "confidence": 0.4}});
-    assert_eq!(Worker::would_do(&unsure)["5"], "none_uncertain");
+    assert_eq!(
+        Worker::would_do(&turn_end("x"), &AgentRole::Root, &unsure)["5"],
+        "none_uncertain"
+    );
 }
 
 #[test]
@@ -178,5 +175,222 @@ fn a_child_turn_end_asks_the_waiting_questions() {
         questions["child_state"]["criteria"]
             .get("waiting_on_subagents")
             .is_some()
+    );
+}
+
+// ---- Replay round (2026-09-23): fixes from the first live evaluation. ----
+
+fn child() -> AgentRole {
+    AgentRole::Child {
+        parent_id: Some("p".into()),
+    }
+}
+
+fn turn_end(text: &str) -> CommanderEvent {
+    CommanderEvent::TurnEnd {
+        turn: 1,
+        prompt: "review".into(),
+        final_text: text.into(),
+        stop_reason: Some("end_turn".into()),
+        tool_rounds: 1,
+        ended_by: "final_response".into(),
+        output_tokens: None,
+        max_tokens: 100,
+    }
+}
+
+fn tool_error(result: &str) -> CommanderEvent {
+    CommanderEvent::ToolError {
+        turn: 1,
+        tool: "bash".into(),
+        arguments: "{}".into(),
+        result: result.into(),
+    }
+}
+
+fn provider_failure(status: u16) -> CommanderEvent {
+    CommanderEvent::ProviderFailure {
+        turn: 1,
+        provider: "p".into(),
+        class: "transient".into(),
+        http_status: Some(status),
+        error: "Unable to verify access. Please try again.".into(),
+        outcome: "transient_retry".into(),
+        attempt: 1,
+    }
+}
+
+#[tokio::test]
+async fn a_cloudflare_403_page_is_retried_but_an_api_403_is_not() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_string("<!DOCTYPE html><html>Just a moment</html>"),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_body()))
+        .mount(&server)
+        .await;
+    let tmp = tempfile::tempdir().unwrap();
+    let w = worker(
+        format!("{}/x", server.uri()),
+        tmp.path().into(),
+        AgentRole::Root,
+    );
+    assert!(w.ask(&json!({})).await.is_ok());
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({"error": "forbidden"})))
+        .mount(&server)
+        .await;
+    let w = worker(
+        format!("{}/x", server.uri()),
+        tmp.path().into(),
+        AgentRole::Root,
+    );
+    assert!(w.ask(&json!({})).await.unwrap_err().contains("HTTP 403"));
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_timed_out_request_is_retried() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(ok_body())
+                .set_delay(std::time::Duration::from_millis(800)),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_body()))
+        .mount(&server)
+        .await;
+    let tmp = tempfile::tempdir().unwrap();
+    let mut w = worker(
+        format!("{}/x", server.uri()),
+        tmp.path().into(),
+        AgentRole::Root,
+    );
+    w.client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(200))
+        .build()
+        .unwrap();
+    assert!(w.ask(&json!({})).await.is_ok(), "recovered after a timeout");
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+}
+
+#[test]
+fn a_child_is_asked_whether_its_parent_can_handle_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let w = worker("http://unused".into(), tmp.path().into(), child());
+    let (_, questions, _) = w.build(&turn_end("Blocked: the PR head moved."));
+    assert!(questions.contains_key("parent_can_handle"));
+    let root = worker("http://unused".into(), tmp.path().into(), AgentRole::Root);
+    let (_, questions, _) = root.build(&turn_end("Done."));
+    assert!(!questions.contains_key("parent_can_handle"));
+}
+
+#[test]
+fn a_child_escalation_the_parent_can_handle_stays_with_the_parent() {
+    let answers = json!({
+        "owner_needed": {"noul": 0.9},
+        "urgency": {"score": 3.0},
+        "parent_can_handle": {"noul": 0.8},
+        "child_state": {"choice": "blocked", "confidence": 0.9}
+    });
+    let actions = Worker::would_do(&turn_end("x"), &child(), &answers);
+    assert_eq!(actions["22"], "leave_to_parent");
+    assert_eq!(actions["6"], "tell_parent_blocked_badge");
+    assert!(actions.get("22_composed").is_none(), "{actions}");
+
+    let unsure_parent = json!({
+        "owner_needed": {"noul": 0.9},
+        "urgency": {"score": 3.0},
+        "parent_can_handle": {"noul": 0.3}
+    });
+    assert_eq!(
+        Worker::would_do(&turn_end("x"), &child(), &unsure_parent)["22"],
+        "interrupt_owner"
+    );
+}
+
+#[test]
+fn a_repeated_escalation_of_the_same_kind_interrupts_once_per_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut w = worker("http://unused".into(), tmp.path().into(), AgentRole::Root);
+    let answers = json!({
+        "owner_needed": {"noul": 0.9},
+        "urgency": {"score": 3.0},
+        "owner_kind": {"choice": "blocker", "confidence": 0.9}
+    });
+    let first = w.decide("s", &turn_end("x"), &answers);
+    let second = w.decide("s", &turn_end("x"), &answers);
+    let other_session = w.decide("t", &turn_end("x"), &answers);
+    assert_eq!(first["22"], "interrupt_owner");
+    assert_eq!(second["22"], "already_escalated");
+    assert_eq!(other_session["22"], "interrupt_owner");
+}
+
+#[tokio::test]
+async fn a_single_tool_error_is_not_sent_but_a_repeated_one_is() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_body()))
+        .mount(&server)
+        .await;
+    let tmp = tempfile::tempdir().unwrap();
+    let mut w = worker(
+        format!("{}/x", server.uri()),
+        tmp.path().into(),
+        AgentRole::Root,
+    );
+    let job = |seq, result: &str| Job {
+        ts: "1".into(),
+        seq,
+        session_key: "s".into(),
+        model: "m".into(),
+        event: tool_error(result),
+    };
+    w.judge(job(1, "test failed: expected 3")).await;
+    w.judge(job(2, "error: build failed")).await;
+    w.judge(job(3, "error: build failed")).await;
+    assert_eq!(server.received_requests().await.unwrap().len(), 0);
+    w.judge(job(4, "error: build failed")).await;
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+    let log = std::fs::read_to_string(tmp.path().join("s.jsonl")).unwrap();
+    let records: Vec<serde_json::Value> = log
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(records.len(), 4, "skipped events are still logged");
+    assert_eq!(records[0]["skipped"], "tool_error_not_repeated");
+    assert_eq!(records[3]["decisions"], json!(["22"]));
+}
+
+#[test]
+fn configuration_stops_the_run_only_on_an_owner_fixable_status_or_high_confidence() {
+    let config =
+        |conf: f64| json!({"provider_error": {"choice": "configuration", "confidence": conf}});
+    let root = AgentRole::Root;
+    assert_eq!(
+        Worker::would_do(&provider_failure(503), &root, &config(0.66))["12"],
+        "keep_rule_based_handling"
+    );
+    assert_eq!(
+        Worker::would_do(&provider_failure(503), &root, &config(0.9))["12"],
+        "stop_and_tell_owner"
+    );
+    assert_eq!(
+        Worker::would_do(&provider_failure(401), &root, &config(0.66))["12"],
+        "stop_and_tell_owner"
     );
 }

@@ -3,7 +3,7 @@ use serde::Serialize;
 
 /// One observed event. Everything here is raw fact from the loop; the
 /// commander decides what to ask about it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CommanderEvent {
     /// An agent's own turn ended (#5, #22; #6 when the agent is a child).
