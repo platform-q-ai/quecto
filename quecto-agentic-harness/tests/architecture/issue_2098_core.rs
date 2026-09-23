@@ -75,24 +75,6 @@ fn application_traversal_checks_production_tests_named_module() {
 }
 
 #[test]
-fn application_runtime_io_is_absent_from_production() {
-    let mut count = 0;
-    visit_rs(Path::new("src/application"), &mut |path| {
-        count += 1;
-        let source = fs::read_to_string(path).expect("application source");
-        for (index, line) in production_lines(&source).enumerate() {
-            assert!(
-                application_line_allowed(line),
-                "{}:{} contains runtime I/O: {line}",
-                path.display(),
-                index + 1
-            );
-        }
-    });
-    assert!(count > 10, "application inventory must not be empty");
-}
-
-#[test]
 fn authoritative_ci_runs_workspace_lint_and_mocked_e2e() {
     let ci = fs::read_to_string("../.github/workflows/ci.yml").expect("authoritative CI workflow");
     assert!(

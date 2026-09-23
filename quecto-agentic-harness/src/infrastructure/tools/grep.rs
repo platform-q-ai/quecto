@@ -555,3 +555,28 @@ mod tests;
 #[cfg(test)]
 #[path = "grep_cov_tests.rs"]
 mod cov_tests;
+
+#[cfg(test)]
+mod install_guidance_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn absent_rg_reports_actionable_install_guidance() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let missing = workspace.path().join("absent-rg");
+        assert!(!missing.exists(), "fixture executable must be absent");
+        let tool = GrepTool::with_rg_binary(
+            Arc::new(workspace.path().to_path_buf()),
+            Arc::new(Sandbox::new(Some(workspace.path().to_path_buf()))),
+            missing.to_string_lossy().into_owned(),
+        );
+        let result = tool.execute(r#"{"pattern":"needle"}"#).await;
+        let message = match result {
+            Ok(output) if output.is_error => output.content,
+            Err(error) => error.to_string(),
+            other => panic!("expected missing executable error, got {other:?}"),
+        };
+        assert!(message.contains("rg not found on PATH"), "{message}");
+        assert!(message.contains("https://github.com/BurntSushi/ripgrep#installation"), "{message}");
+    }
+}

@@ -1,6 +1,4 @@
-//! Issue #2098: affirmative inventory of the zero-cost and live LLM capability
-//! mirrors, with scenario-level tag ownership. Covers architecture.feature's
-//! capability-checklist, manual-only and provider-smoke scenarios.
+//! Live/mock BDD capability mirrors and lane ownership.
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;

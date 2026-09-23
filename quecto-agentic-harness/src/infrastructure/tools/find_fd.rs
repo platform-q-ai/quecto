@@ -335,3 +335,32 @@ fn normalize_output(bytes: &[u8], root: &Path, stopped: bool) -> Vec<String> {
 #[cfg(test)]
 #[path = "find_fd_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod install_guidance_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn absent_fd_reports_actionable_install_guidance() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let missing = workspace.path().join("absent-fd");
+        assert!(!missing.exists(), "fixture executable must be absent");
+        let effect = FdFindPaths::with_fd_binary(
+            Arc::new(workspace.path().to_path_buf()),
+            Arc::new(Sandbox::new(Some(workspace.path().to_path_buf()))),
+            missing.to_string_lossy().into_owned(),
+        );
+        let result = effect.find(FindPathsRequest {
+            pattern: "*".into(),
+            path: ".".into(),
+            limit: 10,
+        }).await;
+        match result {
+            Err(FindError::Spawn(message)) => {
+                assert!(message.contains("fd not found on PATH"), "{message}");
+                assert!(message.contains("https://github.com/sharkdp/fd#installation"), "{message}");
+            }
+            other => panic!("expected actionable spawn error, got {other:?}"),
+        }
+    }
+}
