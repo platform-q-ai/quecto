@@ -110,6 +110,14 @@ fn absolute_path_returned_as_is() {
 }
 
 #[test]
+fn tilde_alone_resolves_to_home() {
+    if let Some(home) = home_dir() {
+        let td = tmp();
+        assert_eq!(resolve_to_cwd("~", td.path()), home);
+    }
+}
+
+#[test]
 fn tilde_resolved() {
     if let Some(home) = home_dir() {
         let td = tmp();
@@ -148,6 +156,16 @@ fn existing_file_returned_directly() {
     let result = resolve_read_path("readme.md", td.path());
     assert_eq!(result, td.path().join("readme.md"));
     assert!(result.exists());
+}
+
+#[test]
+fn existing_file_returns_its_exact_resolved_path() {
+    let td = tmp();
+    std::fs::write(td.path().join("readme.md"), "hello").unwrap();
+    assert_eq!(
+        resolve_read_path("readme.md", td.path()),
+        td.path().join("readme.md")
+    );
 }
 
 #[test]
