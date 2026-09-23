@@ -577,6 +577,9 @@ mod install_guidance_tests {
             other => panic!("expected missing executable error, got {other:?}"),
         };
         assert!(message.contains("rg not found on PATH"), "{message}");
-        assert!(message.contains("https://github.com/BurntSushi/ripgrep#installation"), "{message}");
+        assert!(
+            message.contains("https://github.com/BurntSushi/ripgrep#installation"),
+            "{message}"
+        );
     }
 }

@@ -350,15 +350,20 @@ mod install_guidance_tests {
             Arc::new(Sandbox::new(Some(workspace.path().to_path_buf()))),
             missing.to_string_lossy().into_owned(),
         );
-        let result = effect.find(FindPathsRequest {
-            pattern: "*".into(),
-            path: ".".into(),
-            limit: 10,
-        }).await;
+        let result = effect
+            .find(FindPathsRequest {
+                pattern: "*".into(),
+                path: ".".into(),
+                limit: 10,
+            })
+            .await;
         match result {
             Err(FindError::Spawn(message)) => {
                 assert!(message.contains("fd not found on PATH"), "{message}");
-                assert!(message.contains("https://github.com/sharkdp/fd#installation"), "{message}");
+                assert!(
+                    message.contains("https://github.com/sharkdp/fd#installation"),
+                    "{message}"
+                );
             }
             other => panic!("expected actionable spawn error, got {other:?}"),
         }
