@@ -20,6 +20,7 @@ mod bdd_lanes;
 #[path = "architecture/dependency_scan.rs"]
 mod dependency_scan;
 
+use quote::ToTokens;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -80,12 +81,75 @@ fn assert_no_imports(layer: &str, dir: &Path, forbidden: &[&str]) {
 
     for file_content in &files {
         let (file_path, source) = file_content.split_once(":\n").unwrap();
-        dependency_scan::assert_no_forbidden(
+        assert_file_free_of(
             &format!("Architecture violation in {layer}: {file_path}"),
+            file_path,
             source,
             forbidden,
         );
     }
+}
+
+/// `forbidden` appears neither in the file's production tokens nor in any
+/// dependency path it names — as written or resolved against its module —
+/// so grouped (`use crate::{shell::X}`) and relative imports are caught
+/// alongside the flat spelling; a module alias is refused outright (#1637).
+fn assert_file_free_of(what: &str, file: &str, source: &str, forbidden: &[&str]) {
+    if let Some(offence) = file_offence(file, source, forbidden) {
+        panic!("{what}: {offence}");
+    }
+}
+
+fn file_offence(file: &str, source: &str, forbidden: &[&str]) -> Option<String> {
+    if let Err(hit) = dependency_scan::forbidden_hit(source, forbidden) {
+        return Some(hit);
+    }
+    let written = dependency_paths(source)?;
+    let resolved = dependency_paths_at(file, source)?;
+    for path in written.iter().chain(&resolved) {
+        if path == dependency_scan::UNRESOLVABLE {
+            return Some("module alias".to_string());
+        }
+        // `use std::fs;` names `std::fs::`; a lone `dirs` is a local name.
+        let path = if path.contains("::") {
+            format!("{path}::")
+        } else {
+            path.clone()
+        };
+        if let Some(pattern) = forbidden.iter().find(|pattern| path.contains(*pattern)) {
+            return Some(format!("names {path} ({pattern})"));
+        }
+    }
+    None
+}
+
+#[test]
+fn file_rules_catch_grouped_relative_and_aliased_imports() {
+    let file = "../quecto-tui/src/protocol/session_payloads.rs";
+    let forbidden = ["crate::components", "super::components"];
+    for source in [
+        "use crate::{components::ansi::sanitize_control};",
+        "use super::super::components::ansi;",
+        "fn f() { super::super::components::ansi::sanitize_control(\"\"); }",
+        "use crate as c; fn f() { c::components::ansi::x(); }",
+        "#[cfg(test)]\nmod tests;\nuse crate::components::ansi;",
+    ] {
+        assert!(file_offence(file, source, &forbidden).is_some(), "{source}");
+    }
+    for source in [
+        "use crate::protocol::client::Client;",
+        "// crate::components::ansi\nfn f() { let _ = \"crate::components\"; }",
+        "#[cfg(test)]\nmod tests { use crate::components::ansi; }",
+    ] {
+        assert_eq!(file_offence(file, source, &forbidden), None, "{source}");
+    }
+    // `use std::fs;` names `std::fs::`; a local `dirs` names nothing.
+    let domain = "src/domain/mod.rs";
+    assert!(file_offence(domain, "use std::fs;", &["std::fs::"]).is_some());
+    assert_eq!(
+        file_offence(domain, "fn f(dirs: u8) { dirs; }", &["dirs::"]),
+        None
+    );
 }
 
 fn assert_no_inline_test_modules(crate_src: &Path) {
@@ -186,6 +250,9 @@ fn crate_path_roots_fail_closed() {
         "use crate::subagent_launch_app::X;",
         "#[cfg(test)]\nmod tests;\npub use crate::application::X;",
         "use crate as root;",
+        "fn f() { let _ = vec![super::application::X::new()]; }",
+        "extern crate self as q;",
+        "struct S { #[serde(default = \"super::application::d\")] f: u8 }",
     ] {
         let paths = dependency_paths_at(file, source).expect("parses");
         assert!(
@@ -247,6 +314,132 @@ fn infrastructure_has_no_application_imports() {
     // allowed through explicit ports and named environment/find contracts.
     // Find use-case construction remains outside infrastructure.
     assert_application_imports_are_ports_only(Path::new("src/infrastructure"));
+}
+
+/// The ports surface cannot launder a use case (#1637 review): every
+/// application ports module (`ports.rs`, `ports/**`) re-exports only named
+/// items that are neither a `use_cases` path nor a use-case type. Anything
+/// infrastructure reaches through `application::…::ports` is then a contract.
+#[test]
+fn ports_modules_reexport_no_use_case() {
+    let mut application = Vec::new();
+    collect_rs_files(Path::new("src/application"), &mut application);
+    let use_cases = use_case_names(&application);
+    assert!(
+        use_cases.contains("SubagentLaunchUseCase") && use_cases.contains("KillEnvironment"),
+        "use-case inventory reads the tree: {use_cases:?}"
+    );
+    let mut ports = 0;
+    for file_content in &application {
+        let (file, source) = file_content.split_once(":\n").unwrap();
+        if !(file.ends_with("/ports.rs") || file.contains("/ports/")) {
+            continue;
+        }
+        ports += 1;
+        let refused = reexported_use_cases(source, &use_cases)
+            .unwrap_or_else(|| panic!("{file} does not parse"));
+        assert!(refused.is_empty(), "{file} re-exports {refused:?}");
+    }
+    assert!(ports > 10, "the ports modules were found ({ports})");
+}
+
+/// Names a use-case module defines: every `pub` struct/enum/fn/type in a
+/// `use_cases` file, and every application type named `*UseCase`.
+fn use_case_names(application: &[String]) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for file_content in application {
+        let (file, source) = file_content.split_once(":\n").unwrap();
+        let in_use_cases = file.contains("/use_cases/") || file.ends_with("/use_cases.rs");
+        let parsed = syn::parse_file(source).unwrap_or_else(|e| panic!("{file}: {e}"));
+        for item in parsed.items {
+            let (public, ident) = match &item {
+                syn::Item::Struct(i) => (&i.vis, &i.ident),
+                syn::Item::Enum(i) => (&i.vis, &i.ident),
+                syn::Item::Fn(i) => (&i.vis, &i.sig.ident),
+                syn::Item::Type(i) => (&i.vis, &i.ident),
+                _ => continue,
+            };
+            let name = ident.to_string();
+            if matches!(public, syn::Visibility::Public(_))
+                && (in_use_cases || name.ends_with("UseCase"))
+            {
+                names.insert(name);
+            }
+        }
+    }
+    names
+}
+
+/// The `pub use` targets in `source` that name a use case (or a glob, which
+/// cannot be checked). Test-gated re-exports are not part of the surface.
+fn reexported_use_cases(source: &str, use_cases: &BTreeSet<String>) -> Option<Vec<String>> {
+    fn targets(tree: &syn::UseTree, prefix: &str, out: &mut Vec<String>) {
+        match tree {
+            syn::UseTree::Path(path) => {
+                targets(&path.tree, &format!("{prefix}{}::", path.ident), out)
+            }
+            syn::UseTree::Name(name) => out.push(format!("{prefix}{}", name.ident)),
+            syn::UseTree::Rename(name) => out.push(format!("{prefix}{}", name.ident)),
+            syn::UseTree::Glob(_) => out.push(format!("{prefix}*")),
+            syn::UseTree::Group(group) => {
+                for item in &group.items {
+                    targets(item, prefix, out);
+                }
+            }
+        }
+    }
+    let parsed = syn::parse_file(source).ok()?;
+    let mut refused = Vec::new();
+    for item in parsed.items {
+        let syn::Item::Use(reexport) = item else {
+            continue;
+        };
+        let test_gated = reexport.attrs.iter().any(|attr| {
+            attr.path().is_ident("cfg") && attr.meta.to_token_stream().to_string().contains("test")
+        });
+        if !matches!(reexport.vis, syn::Visibility::Public(_)) || test_gated {
+            continue;
+        }
+        let mut found = Vec::new();
+        targets(&reexport.tree, "", &mut found);
+        refused.extend(found.into_iter().filter(|path| {
+            let segments: Vec<_> = path.split("::").collect();
+            let last = segments.last().copied().unwrap_or_default();
+            last == "*" || segments.contains(&"use_cases") || use_cases.contains(last)
+        }));
+    }
+    Some(refused)
+}
+
+#[test]
+fn ports_reexport_guard_refuses_use_cases() {
+    let use_cases: BTreeSet<String> = ["KillEnvironment", "SubagentLaunchUseCase"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    for source in [
+        "pub use super::environments::use_cases::Anything as X;",
+        "pub use super::environments::KillEnvironment;",
+        "pub use super::subagent_launch::{SubagentLaunchPorts, SubagentLaunchUseCase};",
+        "pub use super::environments::*;",
+    ] {
+        assert!(
+            !reexported_use_cases(source, &use_cases).unwrap().is_empty(),
+            "{source}"
+        );
+    }
+    for source in [
+        "pub use super::subagent_launch::{LaunchFuture, SubagentLaunchPorts};",
+        "use super::environments::KillEnvironment;",
+        "#[cfg(any(test, feature = \"test-support\"))]\npub use super::swarm::LifecycleService;",
+    ] {
+        assert_eq!(
+            reexported_use_cases(source, &use_cases),
+            Some(Vec::new()),
+            "{source}"
+        );
+    }
+    assert!(reexported_use_cases("pub use (", &use_cases).is_none());
 }
 
 /// Application references use the explicit port and environment-owner surface.
@@ -619,9 +812,9 @@ fn application_path_allowed(path: &str) -> bool {
         ["crate", "application", ..] => false,
         // Every other crate path must start at a layer infrastructure
         // may name: a root alias (`pub use application::x as y;` in
-        // `lib.rs`), a path climbing above the crate root or a module
-        // alias is not one, so no such route reaches `application`
-        // unchecked (#1637). `interface` is refused separately.
+        // `lib.rs`), a path climbing above the crate root, a module alias
+        // and `interface` (however it is spelled, relative paths included)
+        // are not, so no such route passes unchecked (#1637).
         ["crate", "domain" | "infrastructure", ..] => true,
         // `pub(crate)` names the crate itself, no layer.
         ["crate"] => true,
@@ -686,6 +879,10 @@ fn dependency_paths_in(module: Option<Vec<String>>, content: &str) -> Option<Vec
         fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
             if attr.path().is_ident("doc") {
                 return;
+            }
+            // `#[serde(with = "crate::…")]`: a path spelled in a string.
+            for path in dependency_scan::string_paths_in_tokens(attr.meta.to_token_stream()) {
+                self.push(path);
             }
             if attr.path().is_ident("derive") {
                 match attr.parse_args_with(
@@ -756,6 +953,22 @@ fn dependency_paths_in(module: Option<Vec<String>>, content: &str) -> Option<Vec
             if inline && let Some(module) = &mut self.module {
                 module.pop();
             }
+        }
+        fn visit_item_extern_crate(&mut self, item: &'ast syn::ItemExternCrate) {
+            // `extern crate self as q;` names the crate under another root
+            // the path rules could not follow.
+            if item.ident == "self" {
+                self.found.push(dependency_scan::UNRESOLVABLE.to_string());
+            }
+            syn::visit::visit_item_extern_crate(self, item);
+        }
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            // Macro arguments and `macro_rules!` bodies are tokens `syn`
+            // does not parse: read the crate-relative paths out of them.
+            for path in dependency_scan::crate_paths_in_tokens(mac.tokens.clone()) {
+                self.push(path);
+            }
+            syn::visit::visit_macro(self, mac);
         }
         fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
             let mut found = Vec::new();
@@ -1563,11 +1776,12 @@ fn tui_conversation_pure_policy_has_no_outer_layer_imports() {
         let path = Path::new(TUI_CONVERSATION).join(rel);
         let content = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read pure conversation policy {}: {e}", path.display()));
-        dependency_scan::assert_no_forbidden(
+        assert_file_free_of(
             &format!(
                 "pure conversation policy {} must not import outer layers",
                 path.display()
             ),
+            &path.display().to_string(),
             &content,
             &forbidden,
         );
@@ -1601,14 +1815,18 @@ fn tui_agents_pure_policy_has_no_outer_layer_imports() {
         let path = Path::new(TUI_AGENTS).join(rel);
         let content = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read pure agents policy {}: {e}", path.display()));
-        dependency_scan::assert_no_forbidden(
+        assert_file_free_of(
             &format!("pure agents policy {}", path.display()),
+            &path.display().to_string(),
             &content,
             &forbidden,
         );
     }
-    let ledger =
-        fs::read_to_string(Path::new(TUI_AGENTS).join("ledger.rs")).expect("read agents ledger");
+    let ledger_path = Path::new(TUI_AGENTS)
+        .join("ledger.rs")
+        .display()
+        .to_string();
+    let ledger = fs::read_to_string(&ledger_path).expect("read agents ledger");
     for pattern in [
         "crate::interface",
         "crate::components",
@@ -1619,7 +1837,7 @@ fn tui_agents_pure_policy_has_no_outer_layer_imports() {
         "Client::",
         "serde_json::",
     ] {
-        dependency_scan::assert_no_forbidden("agents ledger", &ledger, &[pattern]);
+        assert_file_free_of("agents ledger", &ledger_path, &ledger, &[pattern]);
     }
 }
 
@@ -1628,6 +1846,7 @@ fn tui_workspace_files_adapter_does_not_import_presentation_layers() {
     // #1257 Phase 5: workspace_files moved out of infrastructure/; it may use
     // std/process IO but must not depend on presentation modules.
     let path = Path::new(TUI_WORKSPACE).join("workspace_files.rs");
+    let file = path.display().to_string();
     let content = fs::read_to_string(&path).expect("read workspace_files");
     for pattern in [
         "crate::interface",
@@ -1640,7 +1859,7 @@ fn tui_workspace_files_adapter_does_not_import_presentation_layers() {
         "crate::workflow",
         "crate::inference",
     ] {
-        dependency_scan::assert_no_forbidden("workspace_files", &content, &[pattern]);
+        assert_file_free_of("workspace_files", &file, &content, &[pattern]);
     }
 }
 
@@ -2560,6 +2779,12 @@ fn dependency_allowlists_use_paths_not_substrings() {
         // launch surface goes through `application::ports`.
         "use crate::application::subagent_launch::LaunchFuture;",
         "use crate::application::subagent_launch::SubagentLaunchUseCaseExtra;",
+        // The crate under another root, macro tokens and attribute strings
+        // are read too (#1637 review).
+        "extern crate self as q; use q::application::secret::Bad;",
+        "fn f() { let _ = vec![crate::application::secret::Bad::new()]; }",
+        "macro_rules! m { () => { $crate::application::secret::run() }; }",
+        "struct S { #[serde(with = \"crate::application::secret\")] f: u8 }",
     ] {
         assert!(!application_dependencies_allowed(source), "{source}");
     }

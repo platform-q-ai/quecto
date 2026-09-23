@@ -59,71 +59,23 @@ fn stripped(path: &str) -> StrippedLines {
         .clone()
 }
 
-/// Brace delta of one line with string and char literals blanked, so a
-/// `"{"` inside a format string does not open an item.
-fn brace_delta(line: &str) -> i64 {
-    let mut delta = 0i64;
-    let mut chars = line.chars().peekable();
-    let mut in_string = false;
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' if in_string => {
-                chars.next();
-            }
-            '"' => in_string = !in_string,
-            '\'' if !in_string => {
-                // A char literal (`'{'`) or a lifetime (`'a`): skip a quoted
-                // single char, leave lifetimes alone.
-                let mut ahead = chars.clone();
-                if let (Some(_), Some('\'')) = (ahead.next(), ahead.next()) {
-                    chars.next();
-                    chars.next();
-                }
-            }
-            '{' if !in_string => delta += 1,
-            '}' if !in_string => delta -= 1,
-            _ => {}
-        }
-    }
-    delta
-}
-
 /// Remove every `#[cfg(test)]`-gated item; keeps the original line numbers.
+/// Parsed, not brace-counted (#1637): raw strings and byte chars cannot
+/// desynchronise it, and a file that does not parse is refused.
 pub(super) fn strip_test_items(source: &str) -> Vec<(usize, String)> {
-    let lines: Vec<&str> = source.lines().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        if lines[i].trim() != "#[cfg(test)]" {
-            out.push((i + 1, lines[i].to_string()));
-            i += 1;
-            continue;
-        }
-        // Skip the attribute run, then the one item it gates.
-        let mut j = i + 1;
-        while j < lines.len() && lines[j].trim_start().starts_with("#[") {
-            j += 1;
-        }
-        let mut depth = 0i64;
-        let mut opened = false;
-        while j < lines.len() {
-            let line = lines[j];
-            let delta = brace_delta(line);
-            if delta != 0 || line.contains('{') {
-                opened = true;
-            }
-            depth += delta;
-            j += 1;
-            if opened && depth <= 0 {
-                break;
-            }
-            if !opened && line.trim_end().ends_with(';') {
-                break;
-            }
-        }
-        i = j;
-    }
-    out
+    let ranges = super::dependency_scan::test_only_line_ranges(source)
+        .unwrap_or_else(|| panic!("strip_test_items: source does not parse"));
+    source
+        .lines()
+        .enumerate()
+        .map(|(index, line)| (index + 1, line))
+        .filter(|(number, _)| {
+            !ranges
+                .iter()
+                .any(|(start, end)| (start..=end).contains(&number))
+        })
+        .map(|(number, line)| (number, line.to_string()))
+        .collect()
 }
 
 #[test]
@@ -142,6 +94,10 @@ mod inline {
 }
 fn last() {}
 ";
+    // Raw strings and byte chars cannot desynchronise the strip (#1637).
+    let raw = "fn raw() { let _ = r\"}\"; let _ = b'{'; }\n#[cfg(test)]\nmod t {}\nfn after() {}\nstruct S;\nimpl S {\n    #[cfg(test)]\n    fn t() {}\n    fn kept() {}\n}\n";
+    let kept: Vec<usize> = strip_test_items(raw).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(kept, vec![1, 4, 5, 6, 9, 10]);
     let kept: Vec<String> = strip_test_items(source)
         .into_iter()
         .map(|(_, line)| line)

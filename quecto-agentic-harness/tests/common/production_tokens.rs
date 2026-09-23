@@ -77,8 +77,15 @@ impl VisitMut for StripTestOnly {
     }
 }
 
-fn render(stream: TokenStream, out: &mut String) {
+/// `keep_literals`: inside a non-doc attribute, string literals can name a
+/// path (`#[serde(with = "crate::infrastructure::codec")]`), so they are kept
+/// verbatim; everywhere else a literal cannot name a dependency and doc text
+/// is prose, so literals are dropped.
+fn render(stream: TokenStream, out: &mut String, keep_literals: bool) {
+    let mut previous_hash = false;
     for token in stream {
+        let hash = matches!(&token, TokenTree::Punct(p) if p.as_char() == '#')
+            || (previous_hash && matches!(&token, TokenTree::Punct(p) if p.as_char() == '!'));
         match token {
             TokenTree::Group(group) => {
                 let (open, close) = match group.delimiter() {
@@ -87,8 +94,12 @@ fn render(stream: TokenStream, out: &mut String) {
                     Delimiter::Bracket => ("[", "]"),
                     Delimiter::None => ("", ""),
                 };
+                let attribute = previous_hash && group.delimiter() == Delimiter::Bracket;
+                let doc = attribute
+                    && matches!(group.stream().into_iter().next(),
+                        Some(TokenTree::Ident(ident)) if ident == "doc");
                 out.push_str(open);
-                render(group.stream(), out);
+                render(group.stream(), out, (keep_literals || attribute) && !doc);
                 out.push_str(close);
             }
             TokenTree::Ident(ident) => {
@@ -98,20 +109,21 @@ fn render(stream: TokenStream, out: &mut String) {
                 out.push_str(&ident.to_string());
             }
             TokenTree::Punct(punct) => out.push(punct.as_char()),
-            // String, char and number literals cannot name a dependency.
+            TokenTree::Literal(literal) if keep_literals => out.push_str(&literal.to_string()),
             TokenTree::Literal(_) => {}
         }
+        previous_hash = hash;
     }
 }
 
 /// The file's production code as compact text (`std::fs::read(&p)`): test-only
-/// items, comments and literals removed. `None` when the file does not parse,
+/// items, comments and literals (outside non-doc attributes) removed. `None` when the file does not parse,
 /// which every caller treats as a violation (fail closed).
 pub fn production_text(source: &str) -> Option<String> {
     let mut file = syn::parse_file(source).ok()?;
     StripTestOnly.visit_file_mut(&mut file);
     let mut out = String::new();
-    render(file.into_token_stream(), &mut out);
+    render(file.into_token_stream(), &mut out, false);
     Some(out)
 }
 
@@ -134,4 +146,56 @@ pub fn assert_no_forbidden(what: &str, source: &str, forbidden: &[&str]) {
     if let Err(hit) = forbidden_hit(source, forbidden) {
         panic!("{what}: {hit}");
     }
+}
+
+/// The 1-based, inclusive line ranges of every `#[cfg(test)]` item (with its
+/// attributes) wherever it sits — file, inline module, impl or block — for
+/// scans that report line numbers. `None` when the file does not parse.
+pub fn test_only_line_ranges(source: &str) -> Option<Vec<(usize, usize)>> {
+    use syn::spanned::Spanned;
+    use syn::visit::Visit;
+    struct Ranges(Vec<(usize, usize)>);
+    impl Ranges {
+        fn add(&mut self, node: &impl Spanned) {
+            let span = node.span();
+            self.0.push((span.start().line, span.end().line));
+        }
+    }
+    impl<'ast> Visit<'ast> for Ranges {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            if item_test_only(item) {
+                self.add(item);
+                return;
+            }
+            syn::visit::visit_item(self, item);
+        }
+        fn visit_impl_item(&mut self, item: &'ast syn::ImplItem) {
+            let attrs = match item {
+                syn::ImplItem::Const(i) => &i.attrs,
+                syn::ImplItem::Fn(i) => &i.attrs,
+                syn::ImplItem::Type(i) => &i.attrs,
+                syn::ImplItem::Macro(i) => &i.attrs,
+                _ => {
+                    syn::visit::visit_impl_item(self, item);
+                    return;
+                }
+            };
+            if test_only(attrs) {
+                self.add(item);
+                return;
+            }
+            syn::visit::visit_impl_item(self, item);
+        }
+        fn visit_local(&mut self, local: &'ast syn::Local) {
+            if test_only(&local.attrs) {
+                self.add(local);
+                return;
+            }
+            syn::visit::visit_local(self, local);
+        }
+    }
+    let file = syn::parse_file(source).ok()?;
+    let mut ranges = Ranges(Vec::new());
+    ranges.visit_file(&file);
+    Some(ranges.0)
 }

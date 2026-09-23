@@ -68,7 +68,8 @@ test-support = []
 syn = { version = "2", features = ["full", "visit", "visit-mut"] }
 # The architecture scanners render production tokens after stripping
 # `#[cfg(test)]` items (#1637).
-proc-macro2 = "1"
+# `span-locations`: line numbers for the test-only item ranges.
+proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 cucumber = "0.21"
 futures = "0.3"
