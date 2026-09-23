@@ -25,9 +25,11 @@ fn admission_warnings_accept_only_typed_sanitized_nonempty_entries() {
             message: "not broker-gated".into(),
         }]
     );
-    assert!(parse_get_state(&json!({}), &sanitize)
-        .admission_warnings
-        .is_empty());
+    assert!(
+        parse_get_state(&json!({}), &sanitize)
+            .admission_warnings
+            .is_empty()
+    );
 }
 
 #[test]

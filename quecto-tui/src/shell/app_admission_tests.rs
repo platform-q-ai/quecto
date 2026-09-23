@@ -502,9 +502,10 @@ async fn missing_binding_warnings_survive_real_stack_limit_and_reconnect_refresh
         assert!(statuses.contains(&format!("slot-{i}")), "{statuses}");
     }
     app.begin_agent_stream_closed();
-    assert!(app
-        .notifications
-        .dismiss_prefixed("7 slots not broker-gated"));
+    assert!(
+        app.notifications
+            .dismiss_prefixed("7 slots not broker-gated")
+    );
     app.ac_mut().agent_connected = true;
     app.handle_event(response());
     assert!(
@@ -584,9 +585,10 @@ async fn missing_bindings_remain_readable_in_rendered_chat_at_80_and_120_columns
     };
     assert_rendered(&mut app);
     // Dismissing the transient toast cannot erase the durable chat diagnostic.
-    assert!(app
-        .notifications
-        .dismiss_prefixed("7 slots not broker-gated"));
+    assert!(
+        app.notifications
+            .dismiss_prefixed("7 slots not broker-gated")
+    );
     assert!(app.notifications.render(80).is_empty());
     assert_rendered(&mut app);
     app.handle_event(state(vec![])); // bound
@@ -648,11 +650,12 @@ async fn malformed_only_warning_snapshot_preserves_latch_but_valid_empty_rearms(
     app.handle_event(response(serde_json::json!([])));
     assert!(!app.shown_admission_warning_slots.contains("provider-a"));
     app.handle_event(response(serde_json::json!([valid])));
-    assert!(app
-        .notifications
-        .messages()
-        .iter()
-        .any(|m| m.contains("provider-a")));
+    assert!(
+        app.notifications
+            .messages()
+            .iter()
+            .any(|m| m.contains("provider-a"))
+    );
 }
 
 #[tokio::test]
@@ -733,9 +736,10 @@ async fn authoritative_bound_snapshot_rearms_missing_binding_warning() {
     );
     app.handle_event(state(false, false));
     app.handle_event(state(true, false));
-    assert!(app
-        .notifications
-        .messages()
-        .iter()
-        .any(|m| m.contains("openai-api")));
+    assert!(
+        app.notifications
+            .messages()
+            .iter()
+            .any(|m| m.contains("openai-api"))
+    );
 }
