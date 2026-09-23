@@ -27,6 +27,8 @@ enum Mode {
     WrongOffset,
     /// Closes the connection without answering.
     Drop,
+    /// Answers "message not found" (permanent).
+    NotFound,
 }
 
 fn fake_child_with(
@@ -77,10 +79,15 @@ fn fake_child_with(
                         }
                         match mode {
                             Mode::Drop => return,
-                            Mode::Fail => {
+                            Mode::Fail | Mode::NotFound => {
                                 let reply = serde_json::json!({
                                     "type": "response", "id": cmd["id"], "success": false,
-                                    "command": "get_message", "error": "busy"
+                                                                        "command": "get_message",
+                                    "error": if matches!(mode, Mode::NotFound) {
+                                        "message not found: m-final"
+                                    } else {
+                                        "descendant query capacity exhausted; retry after in-flight queries return"
+                                    }
                                 })
                                 .to_string();
                                 let _ = quecto_line_io::write_frame(
@@ -416,24 +423,27 @@ async fn read_with(mode: Mode) -> (serde_json::Value, usize, Option<u64>) {
 
 #[tokio::test]
 async fn an_unreachable_child_leaves_the_report_unacknowledged_for_a_retry() {
-    let (response, _, delivered) = read_with(Mode::Drop).await;
-    let message = &response["data"]["messages"][0];
-    assert_eq!(message["content"].as_str().unwrap().len(), 2048);
-    assert_eq!(
-        message["contentNotice"],
-        super::full_report::READ_FAILED_NOTICE
-    );
-    assert_eq!(response["data"]["reportIncomplete"], true);
-    assert_eq!(
-        delivered, None,
-        "a preview is not the report: nothing is acknowledged"
-    );
+    // No answer, or a refusal that is not known to be permanent.
+    for mode in [Mode::Drop, Mode::Fail] {
+        let (response, _, delivered) = read_with(mode).await;
+        let message = &response["data"]["messages"][0];
+        assert_eq!(message["content"].as_str().unwrap().len(), 2048);
+        assert_eq!(
+            message["contentNotice"],
+            super::full_report::READ_FAILED_NOTICE
+        );
+        assert_eq!(response["data"]["reportIncomplete"], true);
+        assert_eq!(
+            delivered, None,
+            "a preview is not the report: nothing is acknowledged"
+        );
+    }
 }
 
 #[tokio::test]
 async fn a_refused_or_malformed_read_delivers_the_preview_as_final() {
     for mode in [
-        Mode::Fail,
+        Mode::NotFound,
         Mode::NoMoreField,
         Mode::Stall,
         Mode::WrongOffset,

@@ -25,6 +25,11 @@ pub(crate) const READ_FAILED_NOTICE: &str = "Only a preview of this report could
 /// Shown when the child refused the read (it will not succeed on retry).
 pub(crate) const READ_REFUSED_NOTICE: &str = "Only a preview of this report is available: the child could not serve the rest. Call agent_cmd get_report with export_raw true to write the full history to an artifact you can read.";
 
+/// Errors a child answers that will not change on retry (the message is
+/// gone, or cannot be framed). Any other refusal — a busy ancestor's
+/// "capacity exhausted", say — is treated as a moment's unavailability.
+const PERMANENT_READ_ERRORS: [&str; 2] = ["message not found", "exceeds the protocol frame limit"];
+
 /// Why the rest of a message could not be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReadFailure {
@@ -75,7 +80,11 @@ impl AgentCmdTool {
                 .map_err(|_| Unreachable)?;
                 let reply: serde_json::Value = serde_json::from_str(&line).map_err(|_| Refused)?;
                 if reply.get("success").and_then(|v| v.as_bool()) != Some(true) {
-                    return Err(Refused);
+                    let error = reply.get("error").and_then(|v| v.as_str()).unwrap_or("");
+                    let permanent = PERMANENT_READ_ERRORS
+                        .iter()
+                        .any(|known| error.contains(known));
+                    return Err(if permanent { Refused } else { Unreachable });
                 }
                 let data = reply.get("data").ok_or(Refused)?;
                 // The range must be the one asked for, and say what follows.
