@@ -55,6 +55,15 @@ fn fake_child(
                             "contentLength": full.len(), "hasMoreContent": end < full.len()
                         })
                     }
+                    Some("get_report") => serde_json::json!({
+                        "report": {
+                            "messageId": "m-final",
+                            "content": full.chars().take(8192).collect::<String>(),
+                            "contentTruncated": true, "fullLengthBytes": full.len()
+                        },
+                        "recovery": {"command": "get_message", "messageId": "m-final", "offset": 8192},
+                        "snapshot": true
+                    }),
                     other => panic!("unexpected command {other:?}"),
                 };
                 let reply = serde_json::json!({
@@ -130,13 +139,9 @@ async fn a_direct_childs_final_report_arrives_in_full() {
 async fn a_report_beyond_the_final_report_cap_is_cut_with_a_plain_notice() {
     let tmp = tempfile::TempDir::new().unwrap();
     let sock = tmp.path().join("child.sock");
-    let full = report_of(super::super::agent_cmd_report::FINAL_REPORT_BUDGET_BYTES + 20_000);
-    fake_child(
-        sock.clone(),
-        full.clone(),
-        16_000,
-        Arc::new(Mutex::new(Vec::new())),
-    );
+    let full = report_of(super::super::agent_cmd_report::FINAL_REPORT_BUDGET_BYTES + 200_000);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    fake_child(sock.clone(), full.clone(), 16_000, seen.clone());
     let registry = new_registry();
     registry
         .lock()
@@ -170,6 +175,17 @@ async fn a_report_beyond_the_final_report_cap_is_cut_with_a_plain_notice() {
             .as_str()
             .is_some_and(|notice| notice.contains("export_raw")),
         "the agent is told how to get the rest: {message}"
+    );
+    // Reading stops just past the budget, not at the end of the report.
+    let reads = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|cmd| cmd["type"] == "get_message")
+        .count();
+    assert!(
+        reads <= super::super::agent_cmd_report::FINAL_REPORT_BUDGET_BYTES / 16_000 + 2,
+        "{reads} reads"
     );
 }
 
@@ -234,4 +250,42 @@ async fn a_grandchilds_final_report_is_read_through_its_ancestor() {
         reads.iter().all(|cmd| cmd["agent_id"] == "grandchild"),
         "{reads:?}"
     );
+}
+
+#[tokio::test]
+async fn get_report_hands_over_the_full_report_instead_of_a_recovery_reference() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock = tmp.path().join("child.sock");
+    let full = report_of(20_000);
+    fake_child(
+        sock.clone(),
+        full.clone(),
+        6_000,
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("child-uuid".to_string(), live_child(sock));
+    let tool = AgentCmdTool::new(registry);
+
+    let result = tool
+        .execute(r#"{"agent_id":"child-uuid","command":"get_report"}"#)
+        .await
+        .unwrap();
+
+    assert!(!result.is_error, "{}", result.content);
+    assert!(
+        !result.content.contains("get_message"),
+        "{}",
+        result.content
+    );
+    let response: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(
+        response["data"]["report"]["content"].as_str().unwrap(),
+        full
+    );
+    assert_eq!(response["data"]["report"]["contentTruncated"], false);
+    assert!(response["data"].get("recovery").is_none());
 }
