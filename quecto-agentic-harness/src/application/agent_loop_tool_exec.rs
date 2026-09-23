@@ -163,6 +163,13 @@ impl AgentLoopImpl {
                     result: content.chars().take(4000).collect(),
                 },
             );
+        } else {
+            self.commander_observe(
+                crate::application::agent_commander::ports::CommanderEvent::ToolOk {
+                    turn: 0,
+                    tool: tc.name.clone(),
+                },
+            );
         }
         // Emit ToolFinished so the REPL can replace the spinner line.
         // Build the bounded preview inside notify so headless runs allocate none.

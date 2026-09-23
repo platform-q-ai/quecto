@@ -340,7 +340,7 @@ fn a_repeated_escalation_of_the_same_kind_interrupts_once_per_session() {
 }
 
 #[tokio::test]
-async fn a_single_tool_error_is_not_sent_but_a_repeated_one_is() {
+async fn every_tool_error_is_judged_and_a_repeated_one_also_asks_about_progress() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200).set_body_json(ok_body()))
@@ -362,18 +362,32 @@ async fn a_single_tool_error_is_not_sent_but_a_repeated_one_is() {
     w.judge(job(1, "test failed: expected 3")).await;
     w.judge(job(2, "error: build failed")).await;
     w.judge(job(3, "error: build failed")).await;
-    assert_eq!(server.received_requests().await.unwrap().len(), 0);
     w.judge(job(4, "error: build failed")).await;
-    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    assert_eq!(server.received_requests().await.unwrap().len(), 4);
 
     let log = std::fs::read_to_string(tmp.path().join("s.jsonl")).unwrap();
     let records: Vec<serde_json::Value> = log
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    assert_eq!(records.len(), 4, "skipped events are still logged");
-    assert_eq!(records[0]["skipped"], "tool_error_not_repeated");
-    assert_eq!(records[3]["decisions"], json!(["22"]));
+    assert_eq!(records[0]["decisions"], json!(["22"]));
+    assert_eq!(records[3]["decisions"], json!(["22", "stall"]));
+}
+
+#[test]
+fn a_tool_error_reaches_the_owner_only_when_it_is_urgent() {
+    let event = tool_error("gh: HTTP 401 Bad credentials");
+    let digest = json!({"owner_needed": {"noul": 0.6}});
+    assert_eq!(
+        Worker::would_do(&event, &AgentRole::Root, &digest)["22"],
+        "none",
+        "routine failures are not digest material"
+    );
+    let urgent = json!({"owner_needed": {"noul": 0.9}, "urgency": {"score": 3.0}});
+    assert_eq!(
+        Worker::would_do(&event, &AgentRole::Root, &urgent)["22"],
+        "interrupt_owner"
+    );
 }
 
 #[test]
@@ -393,4 +407,234 @@ fn configuration_stops_the_run_only_on_an_owner_fixable_status_or_high_confidenc
         Worker::would_do(&provider_failure(401), &root, &config(0.66))["12"],
         "stop_and_tell_owner"
     );
+}
+
+#[tokio::test]
+async fn a_thrashing_agent_is_asked_whether_it_is_stuck() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_body()))
+        .mount(&server)
+        .await;
+    let tmp = tempfile::tempdir().unwrap();
+    let mut w = worker(format!("{}/x", server.uri()), tmp.path().into(), child());
+    for (seq, result) in ["a", "b", "c", "d", "e", "f"].into_iter().enumerate() {
+        w.judge(Job {
+            ts: format!("{}", 100 + seq),
+            seq: seq as u64,
+            session_key: "s".into(),
+            model: "m".into(),
+            event: tool_error(&format!("oldText not found {result}")),
+        })
+        .await;
+    }
+    let requests = server.received_requests().await.unwrap();
+    let asked: Vec<bool> = requests
+        .iter()
+        .map(|r| {
+            let body: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+            body["questions"].get("progress").is_some()
+        })
+        .collect();
+    assert_eq!(asked, [false, false, false, false, false, true]);
+    let last: serde_json::Value = serde_json::from_slice(&requests[5].body).unwrap();
+    assert_eq!(
+        last["state"]["recent_tool_calls"].as_array().unwrap().len(),
+        6
+    );
+}
+
+#[tokio::test]
+async fn a_successful_tool_call_is_logged_without_a_judgment() {
+    let server = MockServer::start().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let mut w = worker(format!("{}/x", server.uri()), tmp.path().into(), child());
+    w.judge(Job {
+        ts: "1".into(),
+        seq: 0,
+        session_key: "s".into(),
+        model: "m".into(),
+        event: CommanderEvent::ToolOk {
+            turn: 1,
+            tool: "bash".into(),
+        },
+    })
+    .await;
+    assert!(server.received_requests().await.unwrap().is_empty());
+    let log = std::fs::read_to_string(tmp.path().join("s.jsonl")).unwrap();
+    assert!(log.contains("\"tool_ok\""), "{log}");
+}
+
+#[tokio::test]
+async fn a_turn_end_starts_the_stall_window_afresh() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_body()))
+        .mount(&server)
+        .await;
+    let tmp = tempfile::tempdir().unwrap();
+    let mut w = worker(format!("{}/x", server.uri()), tmp.path().into(), child());
+    let mut seq = 0;
+    let mut send = |event: CommanderEvent| {
+        seq += 1;
+        Job {
+            ts: format!("{}", 100 + seq),
+            seq,
+            session_key: "s".into(),
+            model: "m".into(),
+            event,
+        }
+    };
+    for n in 0..5 {
+        w.judge(send(tool_error(&format!("red {n}")))).await;
+    }
+    w.judge(send(turn_end("Partial; continuing."))).await;
+    w.judge(send(tool_error("new attempt fails"))).await;
+    let requests = server.received_requests().await.unwrap();
+    let last: serde_json::Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    assert!(
+        last["questions"].get("progress").is_none(),
+        "five failures before the turn end and one after are not a stall"
+    );
+}
+
+#[test]
+fn only_a_clear_yes_leaves_an_urgent_matter_with_the_parent() {
+    let answers = |parent: f64| {
+        json!({
+            "owner_needed": {"noul": 0.92},
+            "urgency": {"score": 3.0},
+            "parent_can_handle": {"noul": parent}
+        })
+    };
+    assert_eq!(
+        Worker::would_do(&turn_end("x"), &child(), &answers(0.51))["22"],
+        "interrupt_owner"
+    );
+    assert_eq!(
+        Worker::would_do(&turn_end("x"), &child(), &answers(0.75))["22"],
+        "leave_to_parent"
+    );
+}
+
+#[test]
+fn a_sub_agent_notice_asks_whether_this_agent_can_handle_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = worker("http://unused".into(), tmp.path().into(), AgentRole::Root);
+    let notice = CommanderEvent::SubagentNotice {
+        child: "review".into(),
+        child_uuid: None,
+        notice: "Agent 'review' stalled: idle with workflow still active at 2/5.".into(),
+        detail: None,
+    };
+    let (_, questions, _) = root.build(&notice);
+    assert!(questions.contains_key("parent_can_handle"));
+    let answers = json!({"owner_needed": {"noul": 0.8}, "urgency": {"score": 2.0}, "parent_can_handle": {"noul": 0.9}});
+    assert_eq!(
+        Worker::would_do(&notice, &AgentRole::Root, &answers)["22"],
+        "leave_to_parent"
+    );
+}
+
+#[tokio::test]
+async fn an_identical_failure_repeated_three_times_asks_the_stall_question() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_body()))
+        .mount(&server)
+        .await;
+    let tmp = tempfile::tempdir().unwrap();
+    let mut w = worker(format!("{}/x", server.uri()), tmp.path().into(), child());
+    for seq in 0..3 {
+        w.judge(Job {
+            ts: format!("{}", 100 + seq),
+            seq,
+            session_key: "s".into(),
+            model: "m".into(),
+            event: tool_error("error[E0433]: failed to resolve"),
+        })
+        .await;
+    }
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 3);
+    let body: serde_json::Value = serde_json::from_slice(&requests[2].body).unwrap();
+    assert!(body["questions"].get("progress").is_some(), "{body}");
+}
+
+#[test]
+fn an_html_error_page_never_stops_the_run_as_configuration() {
+    let page = CommanderEvent::ProviderFailure {
+        turn: 1,
+        provider: "openrouter".into(),
+        class: "auth".into(),
+        http_status: Some(403),
+        error: "provider error: HTTP 403 from OpenRouter: <!DOCTYPE html><html><title>Just a moment...</title></html>".into(),
+        outcome: "terminal".into(),
+        attempt: 0,
+    };
+    let answers = json!({"provider_error": {"choice": "configuration", "confidence": 0.99}});
+    assert_eq!(
+        Worker::would_do(&page, &AgentRole::Root, &answers)["12"],
+        "keep_rule_based_handling"
+    );
+}
+
+#[test]
+fn a_terminal_provider_failure_on_the_root_reaches_the_owner() {
+    let mut failure = provider_failure(503);
+    if let CommanderEvent::ProviderFailure { outcome, .. } = &mut failure {
+        *outcome = "terminal".into();
+    }
+    let answers = json!({
+        "provider_error": {"choice": "transient", "confidence": 0.9},
+        "owner_needed": {"noul": 0.2}
+    });
+    let root = Worker::would_do(&failure, &AgentRole::Root, &answers);
+    assert_eq!(root["22_composed"], "promote_in_tui", "{root}");
+    let retried = Worker::would_do(&provider_failure(503), &AgentRole::Root, &answers);
+    assert!(retried.get("22_composed").is_none(), "{retried}");
+}
+
+#[test]
+fn a_policy_refusal_gets_a_digest_line() {
+    let answers = json!({
+        "provider_error": {"choice": "policy_refusal", "confidence": 0.9},
+        "owner_needed": {"noul": 0.2}
+    });
+    let actions = Worker::would_do(&provider_failure(400), &AgentRole::Root, &answers);
+    assert_eq!(actions["22_composed"], "add_to_digest", "{actions}");
+}
+
+#[test]
+fn a_stuck_root_is_shown_to_the_owner_and_a_stuck_child_to_its_parent() {
+    let answers = json!({
+        "progress": {"choice": "stuck", "confidence": 0.9},
+        "owner_needed": {"noul": 0.55}
+    });
+    let event = tool_error("oldText not found");
+    assert_eq!(
+        Worker::would_do(&event, &AgentRole::Root, &answers)["22_composed"],
+        "promote_in_tui"
+    );
+    assert_eq!(
+        Worker::would_do(&event, &child(), &answers)["22_composed"],
+        "leave_to_parent"
+    );
+}
+
+#[test]
+fn a_second_crash_in_a_session_is_promoted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut w = worker("http://unused".into(), tmp.path().into(), AgentRole::Root);
+    let crash = |child: &str| CommanderEvent::SubagentNotice {
+        child: child.into(),
+        child_uuid: None,
+        notice: format!("Agent '{child}' exited unexpectedly (killed by signal 9)"),
+        detail: None,
+    };
+    let answers = json!({"owner_needed": {"noul": 0.3}, "parent_can_handle": {"noul": 0.9}});
+    let first = w.decide("s", &crash("a"), &answers);
+    let second = w.decide("s", &crash("a-retry"), &answers);
+    assert!(first.get("22_composed").is_none(), "{first}");
+    assert_eq!(second["22_composed"], "promote_in_tui");
 }

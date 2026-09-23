@@ -37,6 +37,8 @@ pub enum CommanderEvent {
         arguments: String,
         result: String,
     },
+    /// A tool call succeeded (feeds the stall watch; never judged alone).
+    ToolOk { turn: u32, tool: String },
     /// A sub-agent notification reached this (parent) agent (#22).
     SubagentNotice {
         child: String,

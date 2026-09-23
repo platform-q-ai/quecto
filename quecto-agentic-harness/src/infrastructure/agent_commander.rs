@@ -25,6 +25,8 @@ const STOP_CONFIDENCE: f64 = 0.8;
 /// A tool error is judged only once the same failure happens this many times
 /// in a row; a single failure (a red test in TDD, a mistyped edit) is routine.
 const TOOL_ERROR_REPEATS: u32 = 3;
+/// A matter stays with the parent agent only on a clear yes.
+const PARENT_HANDLES: f64 = 0.7;
 
 #[derive(Debug)]
 struct Job {
@@ -93,6 +95,17 @@ fn load_key() -> Option<String> {
     (!key.is_empty()).then_some(key)
 }
 
+#[path = "agent_commander_questions.rs"]
+mod questions;
+#[path = "agent_commander_stall.rs"]
+mod stall;
+use questions::{escalation_questions, parent_question, receiving_parent_question};
+use stall::{StallWatch, progress_question};
+
+#[path = "agent_commander_policy.rs"]
+mod policy;
+use policy::escalation_rank;
+
 #[path = "agent_commander_replay.rs"]
 mod replay;
 pub use replay::replay_session;
@@ -136,6 +149,12 @@ struct Worker {
     escalated: HashSet<(String, String, String)>,
     /// The current run of identical tool failures: (signature, count).
     tool_streak: Option<(String, u32)>,
+    /// Recent tool calls, for the stall check.
+    stall: StallWatch,
+    /// Set while the event being built should carry the stall question.
+    stall_check: bool,
+    /// Sub-agent crashes seen per session: a second one is not a one-off.
+    crashes: std::collections::HashMap<String, u32>,
 }
 
 /// Rate limits and any server-side failure (5xx, incl. Cloudflare 520-529)
@@ -150,16 +169,12 @@ fn retryable_response(status: u16, body: &str) -> bool {
     retryable_status(status) || (status == 403 && body.trim_start().starts_with('<'))
 }
 
-/// Statuses whose configuration failures only the owner can fix.
-fn owner_fixable_status(status: Option<u16>) -> bool {
-    matches!(status, Some(400..=404))
-}
-
 fn event_kind(event: &CommanderEvent) -> &'static str {
     match event {
         CommanderEvent::TurnEnd { .. } => "turn_end",
         CommanderEvent::ProviderFailure { .. } => "provider_failure",
         CommanderEvent::ToolError { .. } => "tool_error",
+        CommanderEvent::ToolOk { .. } => "tool_ok",
         CommanderEvent::SubagentNotice { .. } => "subagent_notice",
     }
 }
@@ -178,63 +193,6 @@ fn head(text: &str, max: usize) -> String {
         return text.to_string();
     }
     format!("{}…", text.chars().take(max).collect::<String>())
-}
-
-/// #22 for a sub-agent: its parent reads every report first.
-fn parent_question(questions: &mut serde_json::Map<String, Value>) {
-    questions.insert(
-        "parent_can_handle".into(),
-        json!({
-            "type": "noul",
-            "instructions": "This agent is a sub-agent. Its parent agent reads this event and can relaunch or re-scope the sub-agent, retry, answer its questions, fix its inputs, or do the work itself. Can the parent agent deal with this event without involving the human owner?",
-            "criteria": {
-                "true": "The parent agent can resolve or route this itself: a blocked or failed task it can relaunch, a changed target it can re-point, a question it can answer, or a finished or partial result it can use",
-                "false": "Only the human can resolve it: an owner decision or approval, missing credentials or access, or a risky or harmful outcome the parent cannot undo"
-            }
-        }),
-    );
-}
-
-/// #22: does a human need to see this now, what kind, how urgent.
-fn escalation_questions(questions: &mut serde_json::Map<String, Value>) {
-    questions.insert(
-        "owner_needed".into(),
-        json!({
-            "type": "noul",
-            "instructions": "The owner is a human who supervises these coding agents but is not watching every event. Does the owner need to see this event now, rather than later or never?",
-            "criteria": {
-                "true": "Something only the owner can resolve or should know promptly: a decision or approval only the owner can give, a blocker agents cannot clear, a failure that stops the work, or a risky or surprising outcome",
-                "false": "Routine progress, a finished step, or something the agents can handle themselves"
-            }
-        }),
-    );
-    questions.insert(
-        "owner_kind".into(),
-        json!({
-            "type": "choice",
-            "instructions": "If this event were raised with the owner, what kind of matter would it be?",
-            "criteria": {
-                "owner_decision": "A choice only the owner can make (scope, priorities, trade-offs, preferences)",
-                "approval": "The agent needs permission before doing something (risky, destructive, outward-facing, or costly)",
-                "blocker": "Work cannot continue until something outside the agents is fixed (credentials, configuration, access, environment)",
-                "agent_answerable": "A question or problem another agent or the agent itself can resolve without the owner",
-                "information": "Useful to know, but no action is needed from anyone"
-            }
-        }),
-    );
-    questions.insert(
-        "urgency".into(),
-        json!({
-            "type": "score",
-            "instructions": "How urgently does the owner need to act on this event?",
-            "criteria": [
-                "No action needed from the owner at all",
-                "Can wait for the owner's next routine check-in or a daily digest",
-                "The owner should look within the hour; work is slowed or waiting",
-                "The owner should look now; work is stopped, at risk, or something harmful may happen"
-            ]
-        }),
-    );
 }
 
 impl Worker {
@@ -256,6 +214,9 @@ impl Worker {
             backoff,
             escalated: HashSet::new(),
             tool_streak: None,
+            stall: StallWatch::default(),
+            stall_check: false,
+            crashes: std::collections::HashMap::new(),
         }
     }
 
@@ -263,6 +224,20 @@ impl Worker {
     /// session; repeats of it are recorded as `already_escalated`.
     fn decide(&mut self, session: &str, event: &CommanderEvent, answers: &Value) -> Value {
         let mut actions = Self::would_do(event, &self.role, answers);
+        if let CommanderEvent::SubagentNotice { notice, .. } = event
+            && notice.contains("exited unexpectedly")
+        {
+            let crashes = self.crashes.entry(session.to_string()).or_default();
+            *crashes += 1;
+            let current = actions
+                .get("22_composed")
+                .or_else(|| actions.get("22"))
+                .and_then(Value::as_str)
+                .unwrap_or("none");
+            if *crashes >= 2 && escalation_rank(current) < escalation_rank("promote_in_tui") {
+                actions["22_composed"] = json!("promote_in_tui");
+            }
+        }
         let owner_kind = answers
             .pointer("/owner_kind/choice")
             .and_then(Value::as_str)
@@ -411,7 +386,7 @@ impl Worker {
                         "instructions": "A request from this agent to its language-model provider failed with `error`. The model only writes messages and tool calls; the harness sets the model name, endpoint, credentials and request parameters from configuration. What kind of failure is it, and so who can fix it?",
                         "criteria": {
                             "fixable_by_model": "Something the model itself wrote was invalid and it can correct it if told: its tool-call arguments, a tool name it invented, or the content of its own messages",
-                            "configuration": "A setting the harness sends on the model's behalf is wrong, so only the owner can fix it: authentication, billing or quota, model name, endpoint, permissions, or request parameters such as reasoning effort, temperature or token limits that the model or endpoint does not support. Usually a 4xx `http_status` (400, 401, 402, 403, 404) that says what is wrong",
+                            "configuration": "A setting the harness sends on the model's behalf is wrong, so only the owner can fix it: authentication, billing or quota, model name, endpoint, permissions, or request parameters such as reasoning effort, temperature or token limits that the model or endpoint does not support. Usually a 4xx `http_status` (400, 401, 402, 403, 404) that says what is wrong. A connection refused by a local model server (localhost, 127.0.0.1) means the server is not running, which is configuration",
                             "context_overflow": "The conversation is too long for the model's context window",
                             "policy_refusal": "The provider refused on content or safety policy",
                             "transient": "A temporary service problem (overload, rate limit, timeout, network, 5xx) that retrying later should fix. A 5xx `http_status` whose message says to try again is transient even when it mentions access, verification or accounts"
@@ -441,9 +416,17 @@ impl Worker {
             } => {
                 decisions.push("22");
                 escalation_questions(&mut questions);
+                let recent_tool_calls = if self.stall_check {
+                    decisions.push("stall");
+                    progress_question(&mut questions);
+                    Some(self.stall.window())
+                } else {
+                    None
+                };
                 json!({
                     "agent": self.role_text(),
                     "event": "tool_error",
+                    "recent_tool_calls": recent_tool_calls,
                     "turn": turn,
                     "tool": tool,
                     "arguments": head(arguments, 2000),
@@ -451,6 +434,7 @@ impl Worker {
                     "recent_events": recent,
                 })
             }
+            CommanderEvent::ToolOk { tool, .. } => json!({"event": "tool_ok", "tool": tool}),
             CommanderEvent::SubagentNotice {
                 child,
                 child_uuid,
@@ -459,6 +443,7 @@ impl Worker {
             } => {
                 decisions.push("22");
                 escalation_questions(&mut questions);
+                receiving_parent_question(&mut questions);
                 json!({
                     "agent": self.role_text(),
                     "event": "subagent_notice",
@@ -471,119 +456,6 @@ impl Worker {
             }
         };
         (state, questions, decisions)
-    }
-
-    /// What code would do with the answers (dry run: recorded only).
-    fn would_do(event: &CommanderEvent, role: &AgentRole, answers: &Value) -> Value {
-        let choice = |id: &str| -> Option<(String, f64)> {
-            let a = answers.get(id)?;
-            Some((
-                a.get("choice")?.as_str()?.to_string(),
-                a.get("confidence")?.as_f64()?,
-            ))
-        };
-        let mut actions = serde_json::Map::new();
-        if let Some((c, conf)) = choice("turn_end") {
-            let act = if conf < ACT_CONFIDENCE {
-                "none_uncertain"
-            } else {
-                match c.as_str() {
-                    "complete" => "none",
-                    "waiting_on_others" => "none",
-                    "needs_input" => "notify_asker_needs_input",
-                    "cut_off" => "auto_continue",
-                    "stopped_early" => "nudge_continue",
-                    _ => "none",
-                }
-            };
-            actions.insert("5".into(), json!(act));
-        }
-        if let Some((c, conf)) = choice("child_state") {
-            let act = if conf < ACT_CONFIDENCE {
-                "plain_idle_note_uncertain"
-            } else {
-                match c.as_str() {
-                    "done" => "tell_parent_done",
-                    "waiting_on_subagents" => "plain_idle_note",
-                    "question_for_parent" => "tell_parent_question",
-                    "blocked" => "tell_parent_blocked_badge",
-                    "failed" => "tell_parent_failed_badge",
-                    "partial" => "nudge_child_continue",
-                    _ => "plain_idle_note",
-                }
-            };
-            actions.insert("6".into(), json!(act));
-        }
-        if let Some((c, conf)) = choice("provider_error") {
-            let act = if conf < ACT_CONFIDENCE {
-                "keep_rule_based_handling"
-            } else {
-                match c.as_str() {
-                    "fixable_by_model" => "reprompt_with_error",
-                    "configuration" => {
-                        let status = match event {
-                            CommanderEvent::ProviderFailure { http_status, .. } => *http_status,
-                            _ => None,
-                        };
-                        if owner_fixable_status(status) || conf >= STOP_CONFIDENCE {
-                            "stop_and_tell_owner"
-                        } else {
-                            "keep_rule_based_handling"
-                        }
-                    }
-                    "context_overflow" => "compact_and_retry",
-                    "policy_refusal" => "stop_no_retry",
-                    "transient" => "retry_with_backoff",
-                    _ => "keep_rule_based_handling",
-                }
-            };
-            actions.insert("12".into(), json!(act));
-        }
-        if let Some(noul) = answers
-            .pointer("/owner_needed/noul")
-            .and_then(Value::as_f64)
-        {
-            let urgency = answers
-                .pointer("/urgency/score")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0);
-            let parent_handles = matches!(role, AgentRole::Child { .. })
-                && answers
-                    .pointer("/parent_can_handle/noul")
-                    .and_then(Value::as_f64)
-                    .is_some_and(|p| p >= 0.5);
-            let act = if parent_handles {
-                "leave_to_parent"
-            } else if noul >= 0.8 && urgency >= 2.0 {
-                "interrupt_owner"
-            } else if noul >= 0.8 {
-                "promote_in_tui"
-            } else if noul >= 0.5 {
-                "add_to_digest"
-            } else {
-                "none"
-            };
-            actions.insert("22".into(), json!(act));
-            // Composition (policy in code): a configuration failure only the
-            // owner can fix, or a child that is blocked/failed, reaches the
-            // owner whatever the standalone escalation judgment said.
-            let composed = match (
-                actions.get("12").and_then(Value::as_str),
-                actions.get("6").and_then(Value::as_str),
-            ) {
-                (Some("stop_and_tell_owner"), _) => Some("interrupt_owner"),
-                (_, Some("tell_parent_blocked_badge" | "tell_parent_failed_badge"))
-                    if !parent_handles =>
-                {
-                    Some("promote_in_tui")
-                }
-                _ => None,
-            };
-            if let Some(composed) = composed {
-                actions.insert("22_composed".into(), json!(composed));
-            }
-        }
-        Value::Object(actions)
     }
 
     async fn ask(&self, body: &Value) -> Result<Value, String> {
@@ -646,6 +518,7 @@ impl Worker {
                 )
             }
             CommanderEvent::ToolError { tool, .. } => format!("tool {tool} returned an error"),
+            CommanderEvent::ToolOk { tool, .. } => format!("tool {tool} succeeded"),
             CommanderEvent::SubagentNotice { child, notice, .. } => {
                 format!("sub-agent {child}: {notice}")
             }
@@ -653,21 +526,37 @@ impl Worker {
     }
 
     async fn judge(&mut self, job: Job) {
-        if !self.tool_error_repeated(&job.event) {
-            let record = json!({
-                "ts": job.ts,
-                "seq": job.seq,
-                "session": job.session_key,
-                "pid": std::process::id(),
-                "agent_role": format!("{:?}", self.role),
-                "agent_model": job.model,
-                "decisions": [],
-                "event": job.event,
-                "skipped": "tool_error_not_repeated",
-                "mode": "dry_run",
-            });
-            self.write(&job.session_key, &record);
-            return;
+        let ts = job.ts.parse::<f64>().unwrap_or_default();
+        self.stall_check = match &job.event {
+            CommanderEvent::ToolOk { tool, .. } => {
+                self.stall.record(ts, tool, true, "");
+                let record = json!({
+                    "ts": job.ts,
+                    "seq": job.seq,
+                    "session": job.session_key,
+                    "agent_role": format!("{:?}", self.role),
+                    "decisions": [],
+                    "event": job.event,
+                    "skipped": "tool_ok",
+                    "mode": "dry_run",
+                });
+                self.write(&job.session_key, &record);
+                return;
+            }
+            CommanderEvent::ToolError { tool, result, .. } => {
+                self.stall.record(ts, tool, false, result)
+            }
+            // A new instruction starts a new attempt: judge it on its own calls.
+            CommanderEvent::TurnEnd { .. } => {
+                self.stall = StallWatch::default();
+                false
+            }
+            _ => false,
+        };
+        let repeated = self.tool_error_repeated(&job.event);
+        if repeated && matches!(job.event, CommanderEvent::ToolError { .. }) {
+            // The same failure again and again is the plainest stall.
+            self.stall_check = true;
         }
         let (state, questions, decisions) = self.build(&job.event);
         let body = json!({ "model": MODEL, "state": state, "questions": questions });
