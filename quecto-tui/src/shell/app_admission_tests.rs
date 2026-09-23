@@ -502,10 +502,9 @@ async fn missing_binding_warnings_survive_real_stack_limit_and_reconnect_refresh
         assert!(statuses.contains(&format!("slot-{i}")), "{statuses}");
     }
     app.begin_agent_stream_closed();
-    assert!(
-        app.notifications
-            .dismiss_prefixed("7 slots not broker-gated")
-    );
+    assert!(app
+        .notifications
+        .dismiss_prefixed("7 slots not broker-gated"));
     app.ac_mut().agent_connected = true;
     app.handle_event(response());
     assert!(
@@ -585,10 +584,9 @@ async fn missing_bindings_remain_readable_in_rendered_chat_at_80_and_120_columns
     };
     assert_rendered(&mut app);
     // Dismissing the transient toast cannot erase the durable chat diagnostic.
-    assert!(
-        app.notifications
-            .dismiss_prefixed("7 slots not broker-gated")
-    );
+    assert!(app
+        .notifications
+        .dismiss_prefixed("7 slots not broker-gated"));
     assert!(app.notifications.render(80).is_empty());
     assert_rendered(&mut app);
     app.handle_event(state(vec![])); // bound
@@ -623,6 +621,67 @@ async fn malformed_warning_preserves_valid_binding_latch_on_authoritative_refres
         app.notifications.messages().is_empty(),
         "valid slot must not re-toast after malformed sibling"
     );
+}
+
+#[tokio::test]
+async fn malformed_only_warning_snapshot_preserves_latch_but_valid_empty_rearms() {
+    let mut app = test_app().await;
+    let response = |warnings: serde_json::Value| Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({"admissionWarnings":warnings})),
+        error: None,
+    };
+    let valid = serde_json::json!({"slot":"provider-a","code":"admission_binding_missing","message":"provider-a not broker-gated"});
+    app.handle_event(response(serde_json::json!([valid.clone()])));
+    assert!(app.notifications.dismiss_prefixed("provider-a"));
+    app.handle_event(response(
+        serde_json::json!([{"slot":42,"code":"admission_binding_missing","message":"invalid"}]),
+    ));
+    assert!(app.shown_admission_warning_slots.contains("provider-a"));
+    app.handle_event(response(serde_json::json!([valid.clone()])));
+    assert!(
+        app.notifications.messages().is_empty(),
+        "malformed-only snapshot rearmed warning"
+    );
+    app.handle_event(response(serde_json::json!([])));
+    assert!(!app.shown_admission_warning_slots.contains("provider-a"));
+    app.handle_event(response(serde_json::json!([valid])));
+    assert!(app
+        .notifications
+        .messages()
+        .iter()
+        .any(|m| m.contains("provider-a")));
+}
+
+#[tokio::test]
+async fn mixed_malformed_warning_snapshot_does_not_rearm_omitted_slot() {
+    let mut app = test_app().await;
+    let valid = |slot: &str| serde_json::json!({"slot":slot,"code":"admission_binding_missing","message":format!("{slot} not broker-gated")});
+    let state = |warnings: Vec<serde_json::Value>| Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({"admissionWarnings": warnings})),
+        error: None,
+    };
+    app.handle_event(state(vec![valid("a"), valid("b")]));
+    assert!(app.notifications.dismiss_prefixed("2 slots"));
+    app.handle_event(state(vec![
+        valid("a"),
+        serde_json::json!({"code":"unknown","slot":"b","message":"ignored"}),
+    ]));
+    assert!(app.shown_admission_warning_slots.contains("b"));
+    app.handle_event(state(vec![valid("a"), valid("b")]));
+    assert!(
+        app.notifications.messages().is_empty(),
+        "mixed malformed list must preserve b latch"
+    );
+    app.handle_event(state(vec![valid("a")]));
+    assert!(!app.shown_admission_warning_slots.contains("b"));
+    app.handle_event(state(vec![valid("a"), valid("b")]));
+    assert!(app.notifications.messages().iter().any(|m| m.contains("b")));
 }
 
 #[tokio::test]
@@ -674,10 +733,9 @@ async fn authoritative_bound_snapshot_rearms_missing_binding_warning() {
     );
     app.handle_event(state(false, false));
     app.handle_event(state(true, false));
-    assert!(
-        app.notifications
-            .messages()
-            .iter()
-            .any(|m| m.contains("openai-api"))
-    );
+    assert!(app
+        .notifications
+        .messages()
+        .iter()
+        .any(|m| m.contains("openai-api")));
 }

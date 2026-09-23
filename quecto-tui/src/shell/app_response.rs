@@ -507,7 +507,7 @@ impl App {
             self.ac_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
             self.sync_workflow_automation(wf);
         }
-        if snap.authoritative {
+        if snap.authoritative && snap.admission_warnings_authoritative {
             let current: std::collections::BTreeSet<_> = snap
                 .admission_warnings
                 .iter()

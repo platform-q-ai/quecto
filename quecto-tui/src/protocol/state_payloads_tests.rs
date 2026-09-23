@@ -25,11 +25,9 @@ fn admission_warnings_accept_only_typed_sanitized_nonempty_entries() {
             message: "not broker-gated".into(),
         }]
     );
-    assert!(
-        parse_get_state(&json!({}), &sanitize)
-            .admission_warnings
-            .is_empty()
-    );
+    assert!(parse_get_state(&json!({}), &sanitize)
+        .admission_warnings
+        .is_empty());
 }
 
 #[test]
@@ -48,6 +46,31 @@ fn malformed_warning_does_not_discard_valid_siblings() {
             .map(|w| w.slot.as_str())
             .collect::<Vec<_>>(),
         vec!["provider-a", "provider-b"]
+    );
+}
+
+#[test]
+fn warning_authority_requires_complete_valid_bounded_array() {
+    let warning =
+        json!({"code":"admission_binding_missing","slot":"a","message":"not broker-gated"});
+    for value in [
+        json!({}),
+        json!({"admissionWarnings":null}),
+        json!({"admissionWarnings":[warning, {"code":"unknown","slot":"b","message":"x"}]}),
+        json!({"admissionWarnings":vec![warning.clone();65]}),
+    ] {
+        assert!(
+            !parse_get_state(&value, &sanitize).admission_warnings_authoritative,
+            "{value}"
+        );
+    }
+    assert!(
+        parse_get_state(&json!({"admissionWarnings":[]}), &sanitize)
+            .admission_warnings_authoritative
+    );
+    assert!(
+        parse_get_state(&json!({"admissionWarnings":[warning]}), &sanitize)
+            .admission_warnings_authoritative
     );
 }
 
@@ -72,6 +95,24 @@ fn parse_get_state_footer_treats_missing_and_null_effort_as_default() {
     assert_eq!(missing.effort, None);
     let null = parse_get_state_footer(&json!({"effort": null}), &sanitize);
     assert_eq!(null.effort, None);
+}
+
+#[test]
+fn malformed_footer_field_does_not_discard_valid_siblings() {
+    let fields = parse_get_state_footer(
+        &json!({"model":42,"maxContextTokens":200_000,"effort":"high"}),
+        &sanitize,
+    );
+    assert_eq!(fields.model, None);
+    assert_eq!(fields.max_context_tokens, Some(200_000));
+    assert_eq!(fields.effort.as_deref(), Some("high"));
+    let fields = parse_get_state_footer(
+        &json!({"model":"provider/model","maxContextTokens":"invalid","effort":"low"}),
+        &sanitize,
+    );
+    assert_eq!(fields.model.as_deref(), Some("provider/model"));
+    assert_eq!(fields.max_context_tokens, None);
+    assert_eq!(fields.effort.as_deref(), Some("low"));
 }
 
 #[test]
