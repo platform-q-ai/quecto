@@ -54,8 +54,6 @@ pub(crate) struct BusyGuard(BusyFlag);
 
 impl BusyGuard {
     pub(crate) fn new(flag: &BusyFlag) -> Self {
-        // Publish busy before conversation history changes, so a concurrent
-        // accept gets the latest connect-time snapshot rather than an idle gap.
         flag.store(true, std::sync::atomic::Ordering::SeqCst);
         Self(flag.clone())
     }
