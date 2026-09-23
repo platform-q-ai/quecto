@@ -507,6 +507,15 @@ impl App {
             self.ac_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
             self.sync_workflow_automation(wf);
         }
+        if snap.authoritative {
+            let current: std::collections::BTreeSet<_> = snap
+                .admission_warnings
+                .iter()
+                .map(|warning| warning.slot.clone())
+                .collect();
+            self.shown_admission_warning_slots
+                .retain(|slot| current.contains(slot));
+        }
         let mut new_warnings = Vec::new();
         for warning in snap.admission_warnings {
             if self
@@ -526,11 +535,14 @@ impl App {
                 .join(", ");
             self.notify(
                 &format!(
-                    "Admission bindings missing ({}): {slots}; requests are not broker-gated — configure admission.bindings",
+                    "{} slots not broker-gated; configure admission.bindings",
                     new_warnings.len()
                 ),
                 NotifyLevel::Warning,
             );
+            self.ac_mut().master_session.chat.add_entry(crate::components::chat::ChatEntry::Status {
+                text: format!("Admission bindings missing ({}): {slots}; requests are not broker-gated — configure admission.bindings", new_warnings.len()),
+            });
         }
         if snap.authoritative {
             self.apply_get_state_admission(snap.admission.as_ref());

@@ -483,38 +483,107 @@ async fn missing_binding_warnings_survive_real_stack_limit_and_reconnect_refresh
     };
     app.handle_event(response());
     let messages = app.notifications.messages();
-    assert!(
-        messages
-            .iter()
-            .any(|m| m.contains("7") && m.contains("slot-0") && m.contains("slot-6")),
-        "{messages:?}"
-    );
-    assert!(messages.len() <= 5);
-    let first = &messages[0];
+    assert_eq!(messages.len(), 1, "bounded stack: {messages:?}");
+    let first = messages[0].clone();
     assert!(first.contains("not broker-gated") && first.contains("admission.bindings"));
+    let statuses = app
+        .ac()
+        .master_session
+        .chat
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry {
+            crate::components::chat::ChatEntry::Status { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     for i in 0..7 {
-        assert!(
-            first.contains(&format!("slot-{i}")),
-            "missing slot-{i}: {first}"
-        );
+        assert!(statuses.contains(&format!("slot-{i}")), "{statuses}");
     }
     app.begin_agent_stream_closed();
     assert!(
         app.notifications
-            .dismiss_prefixed("Admission bindings missing")
-    );
-    assert!(
-        !app.notifications
-            .messages()
-            .iter()
-            .any(|m| m.contains("slot-0"))
+            .dismiss_prefixed("7 slots not broker-gated")
     );
     app.ac_mut().agent_connected = true;
     app.handle_event(response());
-    let messages = app.notifications.messages();
     assert!(
-        messages.iter().any(|m| m == first),
-        "reconnect must re-emit: {messages:?}"
+        app.notifications.messages().iter().any(|m| m == &first),
+        "reconnect must re-emit"
     );
     assert_eq!(app.shown_admission_warning_slots.len(), 7);
+}
+
+#[tokio::test]
+async fn admission_warning_is_actionable_at_80_columns_and_slots_persist_in_transcript() {
+    use crate::components::component::Component;
+    let mut app = test_app().await;
+    app.handle_event(Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(
+            serde_json::json!({"admissionWarnings": (0..7).map(|i| serde_json::json!({
+            "slot": format!("provider-slot-{i}"), "code":"admission_binding_missing",
+            "message":format!("provider-slot-{i} requests are not broker-gated")
+        })).collect::<Vec<_>>() }),
+        ),
+        error: None,
+    });
+    let rendered = app.notifications.render(80).join("\n");
+    assert!(
+        rendered.contains("not broker-gated") && rendered.contains("admission.bindings"),
+        "{rendered}"
+    );
+    let statuses = app
+        .ac()
+        .master_session
+        .chat
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry {
+            crate::components::chat::ChatEntry::Status { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    for i in 0..7 {
+        assert!(
+            statuses.contains(&format!("provider-slot-{i}")),
+            "{statuses}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn authoritative_bound_snapshot_rearms_missing_binding_warning() {
+    let mut app = test_app().await;
+    let state = |missing: bool, unchanged: bool| Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(
+            serde_json::json!({"unchanged":unchanged,"admissionWarnings": if missing {
+            vec![serde_json::json!({"slot":"openai-api", "code":"admission_binding_missing", "message":"openai-api not broker-gated"})]
+        } else { vec![] }}),
+        ),
+        error: None,
+    };
+    app.handle_event(state(true, false));
+    app.notifications.dismiss_prefixed("openai-api");
+    app.handle_event(state(false, true)); // nonauthoritative omission cannot rearm
+    app.handle_event(state(true, false));
+    assert!(
+        app.notifications.messages().is_empty(),
+        "unchanged snapshot rearmed warning"
+    );
+    app.handle_event(state(false, false));
+    app.handle_event(state(true, false));
+    assert!(
+        app.notifications
+            .messages()
+            .iter()
+            .any(|m| m.contains("openai-api"))
+    );
 }
