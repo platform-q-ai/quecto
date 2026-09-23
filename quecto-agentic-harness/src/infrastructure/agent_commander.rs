@@ -63,6 +63,8 @@ impl DryRunCommander {
             dir,
             role,
             recent: VecDeque::new(),
+            endpoint: ENDPOINT.to_string(),
+            backoff: std::time::Duration::from_millis(500),
         };
         // Its own thread and runtime: independent of the agent's runtime
         // (which may not exist yet) and never competing with the loop.
@@ -116,6 +118,16 @@ struct Worker {
     dir: PathBuf,
     role: AgentRole,
     recent: VecDeque<String>,
+    /// The TypeSafe endpoint (a local mock in tests).
+    endpoint: String,
+    /// First retry delay; each retry waits four times longer.
+    backoff: std::time::Duration,
+}
+
+/// Rate limits and any server-side failure (5xx, incl. Cloudflare 520-529)
+/// are worth retrying; other client errors are final.
+fn retryable_status(status: u16) -> bool {
+    status == 429 || (500..600).contains(&status)
 }
 
 fn tail(text: &str, max: usize) -> String {
@@ -443,20 +455,18 @@ impl Worker {
     }
 
     async fn ask(&self, body: &Value) -> Result<Value, String> {
-        let mut delay = std::time::Duration::from_millis(500);
+        let mut delay = self.backoff;
         for attempt in 1..=3 {
             let response = self
                 .client
-                .post(ENDPOINT)
+                .post(&self.endpoint)
                 .bearer_auth(&self.key)
                 .json(body)
                 .send()
                 .await
                 .map_err(|e| format!("request: {e}"))?;
             let status = response.status();
-            // Rate limits and any server-side failure (5xx, incl. Cloudflare
-            // 520-529) are retried; other client errors are final.
-            if (status.as_u16() == 429 || status.is_server_error()) && attempt < 3 {
+            if retryable_status(status.as_u16()) && attempt < 3 {
                 tokio::time::sleep(delay).await;
                 delay *= 4;
                 continue;
@@ -467,7 +477,7 @@ impl Worker {
             }
             return serde_json::from_str(&text).map_err(|e| format!("json: {e}"));
         }
-        Err("rate limited".into())
+        Err("retries exhausted".into())
     }
 
     fn summary(event: &CommanderEvent, answers: &Value) -> String {
@@ -569,3 +579,7 @@ impl Worker {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "agent_commander_tests.rs"]
+mod tests;
