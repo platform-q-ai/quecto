@@ -338,8 +338,6 @@ pub struct QuectoWorld {
     pub catalogue_convergence: catalogue_convergence_steps::CatalogueConvergenceState,
     /// #1575 user catalogue extension surface state (temp base dir, resolution).
     pub catalogue_user_config: catalogue_user_config_steps::CatalogueUserConfigState,
-    /// #1571 catalogue domain slice state (typed ids, layers, resolution).
-    pub catalogue: catalogue_domain_steps::CatalogueDomainState,
     /// #1460 shared-state hardening scenario state (sockets, cred lock, ownership).
     pub hardening: shared_state_hardening_steps::HardeningState,
     /// Exit code from the last CLI invocation
@@ -1424,7 +1422,6 @@ mod audit_log_steps;
 mod auth_steps;
 mod catalogue_application_steps;
 mod catalogue_convergence_steps;
-mod catalogue_domain_steps;
 mod catalogue_runtime_steps;
 mod catalogue_user_config_steps;
 mod codex_provider_steps;
