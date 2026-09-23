@@ -49,7 +49,7 @@ pub struct GetStateSnapshot {
     pub admission: Option<crate::protocol::admission_payloads::AdmissionView>,
     /// Sanitized, typed startup warnings from the agent socket.
     pub admission_warnings: Vec<AdmissionBindingWarning>,
-    /// A full warning list was supplied without malformed-only content.
+    /// A full warning list was supplied without malformed content.
     pub admission_warnings_authoritative: bool,
 }
 
@@ -117,7 +117,6 @@ pub fn parse_get_state(
     let admission_warnings = warning_values
         .into_iter()
         .flatten()
-        .take(64)
         .filter_map(|value| {
             let Ok(warning) = serde_json::from_value::<AdmissionWarningEntry>(value.clone()) else {
                 warning_list_valid = false;
@@ -134,8 +133,7 @@ pub fn parse_get_state(
             None
         })
         .collect::<Vec<_>>();
-    let admission_warnings_authoritative =
-        matches!(warning_values, Some(values) if values.len() <= 64) && warning_list_valid;
+    let admission_warnings_authoritative = warning_values.is_some() && warning_list_valid;
     GetStateSnapshot {
         authoritative: crate::protocol::presentation_payloads::bool_field(data, "unchanged")
             != Some(true),

@@ -422,5 +422,9 @@ fn capitalize(label: &str) -> String {
 mod tests;
 
 #[cfg(test)]
+#[path = "app_admission_large_warnings_tests.rs"]
+mod large_warnings_tests;
+
+#[cfg(test)]
 #[path = "app_admission_reconciliation_tests.rs"]
 mod reconciliation_tests;

@@ -52,14 +52,13 @@ fn malformed_warning_does_not_discard_valid_siblings() {
 }
 
 #[test]
-fn warning_authority_requires_complete_valid_bounded_array() {
+fn warning_authority_requires_complete_valid_array() {
     let warning =
         json!({"code":"admission_binding_missing","slot":"a","message":"not broker-gated"});
     for value in [
         json!({}),
         json!({"admissionWarnings":null}),
         json!({"admissionWarnings":[warning, {"code":"unknown","slot":"b","message":"x"}]}),
-        json!({"admissionWarnings":vec![warning.clone();65]}),
     ] {
         assert!(
             !parse_get_state(&value, &sanitize).admission_warnings_authoritative,
@@ -74,6 +73,9 @@ fn warning_authority_requires_complete_valid_bounded_array() {
         parse_get_state(&json!({"admissionWarnings":[warning]}), &sanitize)
             .admission_warnings_authoritative
     );
+    let large = parse_get_state(&json!({"admissionWarnings":vec![warning;65]}), &sanitize);
+    assert_eq!(large.admission_warnings.len(), 65);
+    assert!(large.admission_warnings_authoritative);
 }
 
 #[test]
