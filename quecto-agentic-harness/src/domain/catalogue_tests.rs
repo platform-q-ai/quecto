@@ -530,3 +530,85 @@ mod effort_vocabulary {
         );
     }
 }
+
+/// #2097: the nine catalogue-domain scenarios are owned by domain tests.
+/// This regression combines the precedence and invalid-entry isolation paths:
+/// an invalid higher layer must not erase a valid lower-layer model.
+#[test]
+fn invalid_higher_layer_preserves_valid_lower_layer() {
+    let mut invalid = entry("openai-api", "gpt-5", "Invalid override");
+    invalid.provider = provider_descriptor("wrong-provider", AuthIdentity::ApiKey);
+    let result = resolve_catalogue(
+        42,
+        vec![
+            (
+                SourceLayer::UserOverride,
+                vec![invalid, entry("custom", "local", "User local")],
+            ),
+            (
+                SourceLayer::BuiltIn,
+                vec![entry("openai-api", "gpt-5", "Builtin GPT")],
+            ),
+        ],
+    );
+    assert_eq!(result.snapshot.generation(), 42);
+    assert_eq!(result.rejected.len(), 1);
+    assert_eq!(result.rejected[0].layer, SourceLayer::UserOverride);
+    assert_eq!(result.snapshot.entries().len(), 2);
+    let builtin = result
+        .snapshot
+        .find(&ModelRef::parse_qualified("openai-api/gpt-5").unwrap())
+        .unwrap();
+    assert_eq!(builtin.model.display_name.as_deref(), Some("Builtin GPT"));
+    let local = result
+        .snapshot
+        .find(&ModelRef::parse_qualified("custom/local").unwrap())
+        .unwrap();
+    assert_eq!(local.model.display_name.as_deref(), Some("User local"));
+}
+
+#[test]
+fn oauth_credentials_are_distinct_identities() {
+    let api = provider_descriptor("anthropic", AuthIdentity::ApiKey);
+    let oauth_a = provider_descriptor(
+        "anthropic",
+        AuthIdentity::OAuth {
+            provider: Some(ProviderId::new("credential-a").unwrap()),
+        },
+    );
+    let oauth_b = provider_descriptor(
+        "anthropic",
+        AuthIdentity::OAuth {
+            provider: Some(ProviderId::new("credential-b").unwrap()),
+        },
+    );
+    assert!(!api.same_identity(&oauth_a));
+    assert!(!oauth_a.same_identity(&oauth_b));
+    assert!(oauth_a.same_identity(&oauth_a.clone()));
+}
+
+#[test]
+fn resolution_keeps_the_missing_credential_reason() {
+    let mut missing = entry("custom", "local", "Local");
+    missing.model.availability = Availability::unavailable(
+        AvailabilityStatus::Configured,
+        vec![UnavailableReason::MissingCredential],
+    )
+    .unwrap();
+    let result = resolve_catalogue(1, vec![(SourceLayer::BuiltIn, vec![missing])]);
+    assert!(result.rejected.is_empty());
+    assert_eq!(result.snapshot.entries().len(), 1);
+    let resolved = result
+        .snapshot
+        .find(&ModelRef::parse_qualified("custom/local").unwrap())
+        .unwrap();
+    assert_eq!(
+        resolved.model.availability.status(),
+        AvailabilityStatus::Configured
+    );
+    assert!(!resolved.model.availability.is_runnable());
+    assert_eq!(
+        resolved.model.availability.reasons(),
+        &[UnavailableReason::MissingCredential]
+    );
+}
