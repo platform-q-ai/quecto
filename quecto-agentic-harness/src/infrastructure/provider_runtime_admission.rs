@@ -5,10 +5,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::provider_runtime::{AgentRuntimeInputs, compose_agent_provider_inner};
+use super::provider_runtime::{AgentRuntimeInputs, compose_agent_provider_inner_outcome};
 use super::providers::{AttemptTransportBinding, SingleAttemptClient};
 use crate::application::ports::AttemptAdmission;
 use crate::application::ports::ProviderRuntimeFactory;
+use crate::application::ports::ProviderRuntimeOutcome;
 use crate::application::providers::ports::LlmProvider;
 use crate::domain::inference_admission::{AdmissionConfig, GroupPolicy};
 use crate::infrastructure::config::Config;
@@ -64,10 +65,25 @@ impl AdmissionRuntimeContext {
         })
     }
 
+    /// An absent effective slot binding is advisory: the provider remains usable
+    /// but its requests bypass the admission broker.
+    pub(crate) fn optional_binding(
+        &self,
+        slot: &str,
+    ) -> Result<Option<AttemptTransportBinding>, String> {
+        if self.effective.bindings.contains_key(slot)
+            || self.effective.bindings.contains_key(DEFAULT_BINDING_KEY)
+            || self.effective.bindings.contains_key(DEFAULT_BINDING_ALT)
+        {
+            return self.binding(slot).map(Some);
+        }
+        Ok(None)
+    }
+
     pub(crate) fn binding(&self, slot: &str) -> Result<AttemptTransportBinding, String> {
         // An explicit slot binding wins; otherwise a default alias (`*` or
         // `default`, #2024 S3) catches every unlisted slot so adding a
-        // provider no longer fails composition for want of a new binding.
+        // provider receives the deliberate fallback instead of bypassing admission.
         let alias = self
             .effective
             .bindings
@@ -191,6 +207,17 @@ impl ProviderRuntimeFactory<AdmissionRuntimeCandidate<'_>, AgentRuntimeInputs>
             candidate.inherit,
         )
     }
+
+    fn compose_runtime_outcome(
+        &self,
+        candidate: &AdmissionRuntimeCandidate<'_>,
+        inputs: &AgentRuntimeInputs,
+    ) -> Result<ProviderRuntimeOutcome, String> {
+        if !candidate.inherit {
+            self.context.validate_candidate(candidate.admission)?;
+        }
+        compose_agent_provider_inner_outcome(candidate.providers, inputs, Some(&self.context))
+    }
 }
 
 /// Compose with an existing immutable authority. Rejections occur before publication;
@@ -211,7 +238,8 @@ pub fn compose_agent_provider_with_admission(
     if !inherit {
         context.validate_candidate(proposal)?;
     }
-    compose_agent_provider_inner(config, inputs, Some(context))
+    compose_agent_provider_inner_outcome(config, inputs, Some(context))
+        .map(|outcome| outcome.provider)
 }
 
 #[cfg(test)]

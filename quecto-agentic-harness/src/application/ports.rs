@@ -22,6 +22,7 @@ pub use super::inference_authority::{
 };
 pub use super::inference_authority_ports::{AdmissionJournal, AdmissionSecretSource, JournalError};
 pub use super::inference_observation::AdmissionObservation;
+pub use super::provider_runtime::dto::{AdmissionBindingDiagnostic, ProviderRuntimeOutcome};
 pub use super::provider_runtime::{ProviderRuntimeFactory, RuntimeSnapshotStore};
 pub use super::subagent_launch::{LaunchFuture, SubagentLaunchPorts};
 

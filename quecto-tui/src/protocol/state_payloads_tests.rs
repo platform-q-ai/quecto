@@ -9,6 +9,30 @@ fn sanitize(s: &str) -> String {
 }
 
 #[test]
+fn admission_warnings_accept_only_typed_sanitized_nonempty_entries() {
+    let snap = parse_get_state(
+        &json!({"admissionWarnings": [
+            {"code":"admission_binding_missing","slot":"api\u{1b}[31m","message":"not broker-gated\u{1b}"},
+            {"code":"other","slot":"ignored","message":"ignored"},
+            {"code":"admission_binding_missing","slot":"","message":"ignored"}
+        ]}),
+        &sanitize,
+    );
+    assert_eq!(
+        snap.admission_warnings,
+        vec![AdmissionBindingWarning {
+            slot: "api[31m".into(),
+            message: "not broker-gated".into(),
+        }]
+    );
+    assert!(
+        parse_get_state(&json!({}), &sanitize)
+            .admission_warnings
+            .is_empty()
+    );
+}
+
+#[test]
 fn parse_get_state_footer_extracts_model_window_and_effort() {
     let fields = parse_get_state_footer(
         &json!({

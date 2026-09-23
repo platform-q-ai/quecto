@@ -18,6 +18,10 @@ use crate::application::catalogue::{
 use crate::application::providers::ports::LlmProvider;
 use crate::domain::catalogue::{CatalogueEntry, CatalogueSnapshot, ModelRef, UnavailableReason};
 
+pub mod dto;
+
+pub use self::dto::{AdmissionBindingDiagnostic, ProviderRuntimeOutcome};
+
 /// Port for constructing the concrete execution runtime (providers, OAuth
 /// wrapping, retry decoration, router composition) from resolved provider
 /// definitions. Infrastructure implements this; the application orchestrates.
@@ -27,6 +31,18 @@ pub trait ProviderRuntimeFactory<C, R>: Send + Sync {
         config: &C,
         runtime_inputs: &R,
     ) -> Result<Arc<dyn LlmProvider>, String>;
+
+    fn compose_runtime_outcome(
+        &self,
+        config: &C,
+        runtime_inputs: &R,
+    ) -> Result<ProviderRuntimeOutcome, String> {
+        self.compose_runtime(config, runtime_inputs)
+            .map(|provider| ProviderRuntimeOutcome {
+                provider,
+                admission_binding_diagnostic: AdmissionBindingDiagnostic::default(),
+            })
+    }
 }
 
 /// Provider runtime and catalogue published as one immutable generation.
@@ -35,6 +51,7 @@ pub trait ProviderRuntimeFactory<C, R>: Send + Sync {
 pub struct CatalogueRuntimeSnapshot {
     pub catalogue: Arc<CatalogueSnapshot>,
     pub provider: Arc<dyn LlmProvider>,
+    pub admission_binding_diagnostic: AdmissionBindingDiagnostic,
 }
 
 impl CatalogueRuntimeSnapshot {
@@ -131,7 +148,7 @@ impl ComposeProviderRuntimeUseCase {
         // must leave both stores exactly as they were (the previous valid
         // runtime and catalogue generation stay current — or nothing, before
         // the first success).
-        let provider = match factory.compose_runtime(config, runtime_inputs) {
+        let outcome = match factory.compose_runtime_outcome(config, runtime_inputs) {
             Ok(provider) => provider,
             Err(error) => {
                 return Err(RuntimeCompositionError {
@@ -147,7 +164,8 @@ impl ComposeProviderRuntimeUseCase {
         );
         let snapshot = Arc::new(CatalogueRuntimeSnapshot {
             catalogue: resolution.snapshot.clone(),
-            provider,
+            provider: outcome.provider,
+            admission_binding_diagnostic: outcome.admission_binding_diagnostic,
         });
         // The runtime store is the coherent aggregate consumers read: its one
         // atomic publish pairs the routing runtime with the exact catalogue

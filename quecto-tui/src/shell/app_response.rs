@@ -507,6 +507,11 @@ impl App {
             self.ac_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
             self.sync_workflow_automation(wf);
         }
+        for warning in snap.admission_warnings {
+            if self.shown_admission_warning_slots.insert(warning.slot) {
+                self.notify(&warning.message, NotifyLevel::Warning);
+            }
+        }
         if snap.authoritative {
             self.apply_get_state_admission(snap.admission.as_ref());
         }

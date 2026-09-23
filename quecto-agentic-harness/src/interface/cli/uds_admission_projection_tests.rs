@@ -220,6 +220,7 @@ fn slim_get_state_carries_admission_and_since_sees_transitions() {
     let mut execution = ExecutionState::default();
     execution.set_admission_source(source.clone());
     let mut session = super::protocol::SessionState {
+        admission_warnings: Vec::new(),
         model: "m".into(),
         generation: 0,
         is_streaming: true,

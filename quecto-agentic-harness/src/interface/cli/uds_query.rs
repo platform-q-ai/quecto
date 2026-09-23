@@ -62,8 +62,8 @@ pub(super) fn query_response_data_result(
                     .execution_state
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
-                state.generation =
-                    execution.observe_visible_revisions(state.generation, workflow_revision);
+                execution.observe_visible_revisions(state.generation, workflow_revision);
+                state.generation = execution.observe_binding_warnings(&state.admission_warnings);
                 if ctx.session.is_streaming() {
                     state.message_count = execution.message_count();
                 } else {

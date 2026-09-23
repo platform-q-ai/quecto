@@ -1,18 +1,17 @@
 use super::protocol::{SessionState, SessionStats, TokenStats};
 use crate::application::agent_loop::UsageTotals;
-/// UDS session state — in-memory tracker and statistics for an active UDS connection.
 use crate::domain::message::{Message, Role};
 // ─── Session state tracker ────────────────────────────────────────────────────
 /// In-memory state for an active UDS session.
 #[path = "uds_session_notify.rs"]
 mod uds_session_notify;
 pub use uds_session_notify::NotificationEnqueueOutcome;
-/// The tracker holds no session key (D10 #1979): the active session's typed
-/// identity is the one owner of `sessionKey`, and every presenter that
-/// reports it is handed the key by its caller from that identity.
+/// Session identity owns its key; presenters receive it from the caller.
 #[derive(Debug)]
 pub struct AgentSession {
     model: String,
+    admission_warnings: Vec<crate::domain::state_snapshot::AdmissionBindingWarning>,
+    runtime_store: Option<crate::application::ports::RuntimeSnapshotStore>,
     streaming: bool,
     pub(crate) automatic_turns_allowed: bool,
     /// Why automatic turns are off and at which swarm control generation
@@ -36,12 +35,11 @@ pub struct AgentSession {
     last_subagent_notification: std::collections::HashMap<String, u64>,
     last_failure_notifications: std::collections::HashMap<String, String>,
     repeated_failure_notifications: u64,
-    /// Subagent notes that arrived while `pending` was full (#1082 review
-    /// round 2). Retained here — with their dedupe sequence recorded — and
-    /// appended by [`Self::drain_pending`], so supervision-critical notes
-    /// survive a saturated queue end-to-end instead of being dropped.
+    /// Overflow notes retain dedupe sequence until drained into pending.
     overflow_notifications: std::collections::VecDeque<PendingMessage>,
 }
+#[path = "uds_session_admission.rs"]
+mod admission_warnings;
 #[path = "uds_session_suspension.rs"]
 mod suspension;
 pub use suspension::{SuspensionCause, TurnSuspension};
@@ -210,6 +208,8 @@ impl AgentSession {
     pub fn new(model: String) -> Self {
         Self {
             model,
+            admission_warnings: Vec::new(),
+            runtime_store: None,
             streaming: false,
             automatic_turns_allowed: true,
             suspension: None,
@@ -421,6 +421,7 @@ impl AgentSession {
     ) -> SessionState {
         let effort = effort.into();
         SessionState {
+            admission_warnings: self.current_admission_warnings(),
             control_receipts: self.control_receipts.clone(),
             model: self.model.clone(),
             generation: self.generation,

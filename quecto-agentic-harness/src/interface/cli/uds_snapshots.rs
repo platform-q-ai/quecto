@@ -235,7 +235,8 @@ pub(crate) fn build_connect_get_state_line(
     let mut execution = execution_state
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    live.generation = execution.observe_visible_revisions(live.generation, workflow_revision);
+    execution.observe_visible_revisions(live.generation, workflow_revision);
+    live.generation = execution.observe_binding_warnings(&live.admission_warnings);
     live.message_count = execution.message_count();
     live.execution = Some(execution.snapshot());
     drop(execution);

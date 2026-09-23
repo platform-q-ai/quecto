@@ -241,6 +241,7 @@ fn given_runtime_over_inputs(world: &mut QuectoWorld) {
     world.active_model.runtime = Some(Arc::new(CatalogueRuntimeSnapshot {
         catalogue: resolved.snapshot,
         provider: Arc::new(AmProvider),
+        admission_binding_diagnostic: Default::default(),
     }));
 }
 

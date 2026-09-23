@@ -6,11 +6,13 @@
 //! previously lived in the interface; `composition::runtime` now wires
 //! [`AgentRuntimeInputs`] and invokes the compose-provider-runtime use case.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::application::ports::ProviderRuntimeFactory;
+use crate::application::ports::{
+    AdmissionBindingDiagnostic, ProviderRuntimeFactory, ProviderRuntimeOutcome,
+};
 use crate::infrastructure::providers::refreshable::{ProviderFactory, RefreshFn};
 
 use crate::application::providers::ports::LlmProvider;
@@ -56,6 +58,14 @@ impl ProviderRuntimeFactory<Config, AgentRuntimeInputs> for AgentProviderRuntime
     ) -> Result<Arc<dyn LlmProvider>, String> {
         compose_agent_provider(config, runtime_inputs)
     }
+
+    fn compose_runtime_outcome(
+        &self,
+        config: &Config,
+        runtime_inputs: &AgentRuntimeInputs,
+    ) -> Result<ProviderRuntimeOutcome, String> {
+        compose_agent_provider_inner_outcome(config, runtime_inputs, None)
+    }
 }
 
 /// Build a ProviderRouter from config + credential store.
@@ -74,6 +84,14 @@ pub(crate) fn compose_agent_provider_inner(
     inputs: &AgentRuntimeInputs,
     admission: Option<&AdmissionRuntimeContext>,
 ) -> Result<Arc<dyn LlmProvider>, String> {
+    compose_agent_provider_inner_outcome(config, inputs, admission).map(|outcome| outcome.provider)
+}
+
+pub(crate) fn compose_agent_provider_inner_outcome(
+    config: &Config,
+    inputs: &AgentRuntimeInputs,
+    admission: Option<&AdmissionRuntimeContext>,
+) -> Result<ProviderRuntimeOutcome, String> {
     let base_dir: &std::path::Path = &inputs.base_dir;
     let http_client = &inputs.http_client;
     let store = CredentialStore::new(base_dir);
@@ -150,7 +168,7 @@ pub(crate) fn compose_agent_provider_inner(
                 bound_attempt_transport(admission, "openai-oauth")?,
             )?;
             let factory = if let Some(context) = admission {
-                let binding = context.binding("openai-oauth")?;
+                let binding = context.optional_binding("openai-oauth")?;
                 let base = openai_base.clone();
                 let client = http_client.clone();
                 Arc::new(move |token: &str| {
@@ -160,7 +178,7 @@ pub(crate) fn compose_agent_provider_inner(
                         &base,
                         &client,
                         false,
-                        Some(binding.clone()),
+                        binding.clone(),
                     )
                     .expect("validated OpenAI OAuth provider should rebuild")
                 }) as ProviderFactory
@@ -332,11 +350,21 @@ pub(crate) fn compose_agent_provider_inner(
     // (honouring Retry-After) before the turn fails; Client/Auth/Cancelled pass
     // straight through (#931). Composed outside refreshable so a refreshed-token
     // retry still benefits from transient-error retries.
+    let mut unbound_slots = BTreeSet::new();
+    if let Some(context) = admission {
+        for provider in &provider_list {
+            if context.optional_binding(provider.name())?.is_none() {
+                unbound_slots.insert(provider.name().to_owned());
+            }
+        }
+    }
     let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::new(provider_list));
-    Ok(Arc::new(RetryingProvider::new(
-        router,
-        RetryConfig::default(),
-    )))
+    Ok(ProviderRuntimeOutcome {
+        provider: Arc::new(RetryingProvider::new(router, RetryConfig::default())),
+        admission_binding_diagnostic: AdmissionBindingDiagnostic {
+            unbound_slots: unbound_slots.into_iter().collect(),
+        },
+    })
 }
 
 #[cfg(feature = "test-support")]
@@ -596,8 +624,9 @@ fn bound_attempt_transport(
     slot: &str,
 ) -> Result<Option<AttemptTransportBinding>, String> {
     context
-        .map(|context| context.binding(slot.trim()))
+        .map(|context| context.optional_binding(slot.trim()))
         .transpose()
+        .map(Option::flatten)
 }
 
 /// The trimmed value, or `None` when blank. Trimming here keeps the initially

@@ -41,9 +41,10 @@ is an error, not a fallback to unbounded inference.
   `fallback_base_ms`/`max_cooldown_ms` govern throttle cooldowns.
 - `aliases`: opaque, non-secret account/endpoint names mapped to a group.
   Credentials, endpoint URLs and model names are never used as identity.
-- `bindings`: exact router provider slot to alias (see below). Every provider
-  constructed by the runtime must have an explicit binding when admission is
-  enabled; unknown aliases fail configuration.
+- `bindings`: exact router provider slot to alias (see below). Explicit bindings
+  take precedence over `"*"` and `"default"` fallbacks. A usable slot without
+  an effective binding remains available **without broker gating** and produces
+  an advisory warning; unknown aliases still fail configuration.
 - `directory` (optional, default `<base_dir>/admission`): a private, owner-only
   directory holding the authority's lock, journal and sockets. It must be
   absolute and must not be the base directory or one of its ancestors; it is
@@ -67,20 +68,58 @@ they do not bind the auth-specific providers. Custom `models.json` providers
 use their provider key as the slot (not their `oauthProvider` credential key).
 An `openai_compatible` endpoint uses its configured `prefix`.
 
-Bind **all constructed providers**, not just the provider of the selected
-model. Available credentials and configured endpoints/registry entries can
-cause additional providers to be constructed even when unused by the current
-session. For example, if both OpenAI API-key and OAuth providers are
-constructed, both `openai-api` and `openai-oauth` need bindings. A missing
-binding fails provider composition with
-`admission provider '<slot>' requires an explicit alias binding`; it does not
-leave that provider unbounded. Providers skipped because their required
-credentials are unavailable do not need bindings.
+To broker-manage **all usable providers**, bind every constructed slot, not
+just the selected model's slot. Available credentials and configured
+endpoints/registry entries can construct additional providers even when unused
+by the current session. If both OpenAI API-key and OAuth providers are usable,
+check `openai-api` and `openai-oauth` separately. An unbound usable provider
+remains selectable and its requests **bypass admission-broker gating**; the
+startup warning identifies it. Providers without required credentials or other
+required endpoint settings are not usable and do not produce this warning.
+See [diagnosis and configuration](#diagnosing-unbound-provider-slots) and
+[ADR-0028](architecture-design-records/adr-0028-advisory-unbound-admission.md).
 
 Multiple slots can map to the same alias/group when they share a quota; use
 separate groups for independent quotas. Authentication mode alone does not
 establish whether accounts share a quota. Adding credentials or another
 provider may require adding a binding and restarting.
+
+### Diagnosing unbound provider slots
+
+If startup warns about an unbound slot, requests on that slot are usable but
+**not admission-broker gated**. This is API-rate-limit advice, not a security
+or admission guarantee. Inspect the effective global policy with
+`quecto config get --effective admission` (do not publish output containing
+secrets), then compare `bindings` with the actual built-in slot names above,
+`models.json` provider keys and compatible-endpoint prefixes. A registry
+provider's `oauthProvider` names its credential, **not** its binding slot.
+Check the exact slot first, then `"*"` or `"default"`; a valid fallback is an
+intentional way to broker-manage additional slots without individual entries.
+
+Choose an existing group with the appropriate quota or create one, map a
+non-secret account alias to that group, and bind the slot to the alias. For
+example, for a usable `openai-api` slot, this writes a complete global section:
+
+```sh
+quecto config set --global admission '{"groups":{"shared":{"capacity":4,"reserve":1,"min_interval_ms":250,"queue_capacity":64,"queue_timeout_ms":120000,"attempt_timeout_ms":900000,"fallback_base_ms":2000,"max_cooldown_ms":600000}},"aliases":{"account":"shared"},"bindings":{"openai-api":"account"}}'
+quecto config get --effective admission
+```
+
+These numbers are illustrative, **not vendor-safe limits**. Preserve existing
+groups, aliases, bindings and directory when editing a live configuration;
+this command replaces the entire section. Incremental `quecto config set`
+updates can fail validation when an alias references a group not yet added, or
+a binding references an alias not yet added. In that case, submit the complete
+valid group + alias + binding together using the whole-section command above.
+Invalid policy or unknown aliases are errors, not unbound warnings.
+
+After changing policy, restart the running authority with
+`systemctl --user restart quecto-admission-broker.service`, or stop and
+restart a foreground `quecto admission-broker run`; check
+`quecto admission-broker status`. Then restart affected agents and `quecto-tui`
+(and respawn children). A changed config file alone does **not** prove that a
+running broker has adopted the new binding or group policy. Live agent reload
+rejects admission changes and retains its last-good generation.
 
 No numeric value above is a vendor-safe default; measure and set your own.
 Policy and bindings are restart-only: a reload with a changed section is
@@ -127,8 +166,8 @@ would cycle with `WantedBy=default.target` and drop the job at login),
 broker holds the lock) does not loop.
 
 A **default binding** — a `"*"` (or `"default"`) key in `bindings` — catches
-every provider slot with no explicit binding, so adding a provider does not fail
-composition. Its alias must still exist; an explicit slot binding wins over it.
+every provider slot with no explicit binding, so those slots receive broker
+gating rather than an unbound warning. Its alias must still exist; an explicit slot binding wins over it.
 
 **Roots survive a broker restart or reset without restarting; children fail
 closed and are respawned.** Every gate of a process routes through one
@@ -301,9 +340,9 @@ Activation (per host, per user):
 Rollback:
 
 1. `quecto config unset --global admission` (or `config set --global
-   admission null`). Removing bindings while keeping admission enabled is
-   not a selective bypass: missing bindings for constructed providers cause
-   composition to fail.
+   admission null`). Removing bindings while keeping admission enabled **does**
+   leave the affected usable slots ungated after restart; do not use this as a
+   rollback shortcut if shared rate limiting is still required.
 2. Restart every agent process; a live reload with a changed section is
    rejected by design, so nothing changes until the restart.
 3. Stop the authority last: `quecto admission-broker uninstall-service

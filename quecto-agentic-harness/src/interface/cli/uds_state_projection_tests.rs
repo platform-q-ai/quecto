@@ -6,6 +6,7 @@ use super::uds_state_projection::{
 
 fn state_with_execution(activity_generation: u64, progress_state: &str) -> SessionState {
     SessionState {
+        admission_warnings: Vec::new(),
         control_receipts: Vec::new(),
         automatic_turns_suspended: false,
         repeated_failure_notifications: 0,
@@ -35,6 +36,35 @@ fn state_with_execution(activity_generation: u64, progress_state: &str) -> Sessi
         }),
         sync: 0,
     }
+}
+
+#[test]
+fn missing_binding_warning_is_typed_visible_and_absent_when_all_bound() {
+    let mut state = state_with_execution(7, "quiet");
+    assert!(
+        slim_state_projection(&state)
+            .get("admissionWarnings")
+            .is_none()
+    );
+    state.admission_warnings = vec![crate::domain::state_snapshot::AdmissionBindingWarning::new(
+        "openai-api",
+    )];
+    let data = slim_state_projection(&state);
+    assert_eq!(data["admissionWarnings"][0]["slot"], "openai-api");
+    assert_eq!(
+        data["admissionWarnings"][0]["code"],
+        "admission_binding_missing"
+    );
+    assert!(
+        data["admissionWarnings"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("without admission-broker gating")
+    );
+    assert_eq!(
+        slim_state_response_data(&state, None)["admissionWarnings"],
+        data["admissionWarnings"]
+    );
 }
 
 #[test]

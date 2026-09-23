@@ -111,6 +111,27 @@ pub struct CooldownSnapshot {
     pub remaining_seconds: Option<u64>,
 }
 
+/// Advisory warning about a usable provider that bypasses broker admission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AdmissionBindingWarning {
+    pub slot: String,
+    pub code: String,
+    pub message: String,
+}
+
+impl AdmissionBindingWarning {
+    pub fn new(slot: &str) -> Self {
+        Self {
+            slot: slot.to_owned(),
+            code: "admission_binding_missing".into(),
+            message: format!(
+                "Provider slot '{slot}' is usable without admission-broker gating; requests may encounter API rate limits. Configure admission.bindings for this slot (with a valid alias and group, or an intentional */default fallback), then restart the broker and agent."
+            ),
+        }
+    }
+}
+
 /// Full slim projection. Defaults retain compatibility with older slim senders;
 /// present values still have to satisfy the declared wire types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +165,8 @@ pub struct StateSnapshot {
         deserialize_with = "present_optional"
     )]
     pub admission: Option<AdmissionSnapshot>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admission_warnings: Vec<AdmissionBindingWarning>,
 }
 
 fn required_nullable_string<'de, D: serde::Deserializer<'de>>(

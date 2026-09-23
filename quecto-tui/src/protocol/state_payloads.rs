@@ -3,6 +3,27 @@
 //!
 //! Follows the mapper convention in [`crate::protocol::model_payloads`].
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AdmissionWarningWire {
+    #[serde(default)]
+    admission_warnings: Vec<AdmissionWarningEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct AdmissionWarningEntry {
+    code: String,
+    slot: String,
+    message: String,
+}
+
+/// An unbound but usable provider slot: requests are not broker-gated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmissionBindingWarning {
+    pub slot: String,
+    pub message: String,
+}
+
 /// Footer-relevant fields from a successful `get_state` payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetStateFooterFields {
@@ -33,6 +54,8 @@ pub struct GetStateSnapshot {
     /// Bounded inference-admission view when the agent shares an authority
     /// (#1679 P4); absent otherwise.
     pub admission: Option<crate::protocol::admission_payloads::AdmissionView>,
+    /// Sanitized, typed startup warnings from the agent socket.
+    pub admission_warnings: Vec<AdmissionBindingWarning>,
 }
 
 /// Parse footer fields from a `get_state` payload.
@@ -80,6 +103,20 @@ pub fn parse_get_state(
     // object, so no raw key lookup is needed here.
     let admission =
         crate::protocol::admission_payloads::parse_admission(&data["admission"], sanitize);
+    let admission_warnings = <AdmissionWarningWire as serde::Deserialize>::deserialize(data)
+        .map(|wire| {
+            wire.admission_warnings
+                .into_iter()
+                .take(64)
+                .filter(|warning| warning.code == "admission_binding_missing")
+                .map(|warning| AdmissionBindingWarning {
+                    slot: sanitize(&warning.slot),
+                    message: sanitize(&warning.message),
+                })
+                .filter(|warning| !warning.slot.is_empty() && !warning.message.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
     GetStateSnapshot {
         authoritative: crate::protocol::presentation_payloads::bool_field(data, "unchanged")
             != Some(true),
@@ -88,6 +125,7 @@ pub fn parse_get_state(
         session_key,
         workflow,
         admission,
+        admission_warnings,
     }
 }
 

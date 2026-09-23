@@ -132,6 +132,7 @@ impl FakeRuntime {
             crate::application::provider_runtime::CatalogueRuntimeSnapshot {
                 catalogue: Arc::new(catalogue),
                 provider: Arc::new(SilentProvider),
+                admission_binding_diagnostic: Default::default(),
             },
         ))))
     }

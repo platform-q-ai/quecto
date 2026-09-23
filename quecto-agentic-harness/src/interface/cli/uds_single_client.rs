@@ -16,6 +16,8 @@ pub(super) struct SingleClientArgs<'a> {
     pub(super) workspace: &'a std::path::Path,
     pub(super) messages: Vec<Message>,
     pub(super) model: String,
+    pub(super) admission_slots: Vec<String>,
+    pub(super) base_dir: std::path::PathBuf,
     pub(super) session_key: String,
     pub(super) system_prompt: String,
     pub(super) ext_registry: Option<ExtRegistry>,
@@ -37,6 +39,8 @@ pub(super) async fn single_client_loop(
         model,
         session_key,
         system_prompt,
+        admission_slots,
+        base_dir,
         ext_registry,
         subagent_registry,
         workflow_state,
@@ -59,6 +63,9 @@ pub(super) async fn single_client_loop(
     inject_system_prompt(&mut messages, &system_prompt);
 
     let mut agent_session = AgentSession::new(model);
+    agent_session.set_admission_warnings(&admission_slots);
+    agent_session
+        .observe_runtime(crate::infrastructure::catalogue_registry::runtime_store_for(&base_dir));
     let effort = catalogue.effort_view(agent.effort(), agent_session.model());
     let initial_state =
         agent_session.state_snapshot(&session_key, 0, None, agent.max_context_tokens(), effort);

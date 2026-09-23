@@ -83,6 +83,7 @@ pub(crate) fn slim_state_projection(state: &SessionState) -> serde_json::Value {
         automatic_turns_suspended: state.automatic_turns_suspended,
         repeated_failure_notifications: state.repeated_failure_notifications,
         admission: state.execution.as_ref().and_then(|e| e.admission.clone()),
+        admission_warnings: state.admission_warnings.clone(),
     };
     serde_json::to_value(snapshot).expect("typed inspection snapshot serializes")
 }

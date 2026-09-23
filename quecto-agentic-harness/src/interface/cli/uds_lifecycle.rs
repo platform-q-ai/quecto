@@ -8,18 +8,15 @@ pub(crate) use crate::domain::conversation_view::remove_injected_system_prompt;
 #[cfg(test)]
 use crate::domain::message::Role;
 use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot;
-
 #[cfg(test)]
 #[path = "uds_lifecycle_cov2_tests.rs"]
 mod cov2_tests;
 #[cfg(test)]
 #[path = "uds_lifecycle_cov_tests.rs"]
 mod cov_tests;
-
 pub(super) type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
 >;
-
 pub struct UdsLoopArgs<'a> {
     pub agent: AgentLoopImpl,
     /// The run's retained-context handles (D9 #1978): the one store the
@@ -39,8 +36,7 @@ pub struct UdsLoopArgs<'a> {
     /// Composition's sessions handles builder (#1970): the loop hands over
     /// its base directory (and any override) and holds the handles back.
     pub sessions: super::SessionHandlesBuilder,
-    /// The run's catalogue handles (#1845, #1848), built once by the agent
-    /// startup and shared with the spawn tool.
+    /// Shared catalogue handles.
     pub catalogue: super::catalogue_handles::CatalogueHandles,
     pub ext_registry: Option<ExtRegistry>,
     /// How long this harness lives (#1937): decided once at startup.
@@ -48,17 +44,15 @@ pub struct UdsLoopArgs<'a> {
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    /// The lifecycle cell the spawn tool admits against (#1938); the
-    /// teardown graph freezes it. `None` builds a private one.
+    /// Spawn admission lifecycle, private if absent.
     pub harness_lifecycle:
         Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
-    /// The environment control slot (#2070) the loop hands its teardown.
     pub environment_control: Option<EnvironmentControlSlot>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     /// Pre-created broadcast channel for workflow event emission (#598).
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    /// The launch-bound parent control binding (#1935); `None` for a
+    /// Parent control binding; `None` for a
     /// top-level harness.
     pub parent_control: Option<super::uds_parent_control::ParentControlLaunch>,
     /// Composition's teardown handles builder; `None` runs the loop without
@@ -79,7 +73,6 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     code
 }
 use super::uds_socket::{SocketGuard, bind_secure_socket};
-
 async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let UdsLoopArgs {
         agent,
@@ -128,12 +121,12 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         }
     };
     let messages = opened.messages;
+    let admission_slots = super::uds_admission_warnings::publish_startup_warnings(base_dir);
     if let (Some(ws), Some(persisted)) = (&workflow_state, opened.workflow_run) {
         if let Ok(mut engine) = ws.lock() {
             engine.restore_run(persisted);
         }
     }
-
     if let Some(std_stream) = socket_override {
         // Single-client path: backward-compatible with existing tests.
         single_client_loop(
@@ -144,6 +137,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 model,
                 session_key,
                 system_prompt,
+                admission_slots: admission_slots.clone(),
+                base_dir: base_dir.to_path_buf(),
                 ext_registry,
                 subagent_registry,
                 workflow_state,
@@ -172,6 +167,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 model,
                 session_key,
                 system_prompt,
+                admission_slots: admission_slots.clone(),
+                base_dir: base_dir.to_path_buf(),
                 ext_registry,
                 lifetime,
                 notification_rx,

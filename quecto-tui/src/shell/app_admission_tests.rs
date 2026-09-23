@@ -184,6 +184,25 @@ async fn get_state_applies_or_clears_the_admission_view() {
 }
 
 #[tokio::test]
+async fn socket_startup_warning_is_visible_once_per_slot_across_state_refresh() {
+    let mut app = test_app().await;
+    let warning = serde_json::json!({"slot":"openai-api","code":"admission_binding_missing",
+        "message":"openai-api requests are not broker-gated; configure admission.bindings"});
+    let response = || Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({"admissionWarnings":[warning]})),
+        error: None,
+    };
+    app.handle_event(response());
+    assert!(app.shown_admission_warning_slots.contains("openai-api"));
+    assert_eq!(app.shown_admission_warning_slots.len(), 1);
+    app.handle_event(response());
+    assert_eq!(app.shown_admission_warning_slots.len(), 1);
+}
+
+#[tokio::test]
 async fn agent_error_ends_the_wait_and_the_panel_row_paints_a_child_label() {
     let mut app = test_app().await;
     app.handle_event(Event::AgentStart);
