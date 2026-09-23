@@ -92,6 +92,7 @@ pub fn build_catalogue_handles(
         model,
         refresh,
         reload,
+        runtime_store: runtime_store_for(base_dir),
     }
 }
 

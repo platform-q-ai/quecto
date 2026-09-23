@@ -107,7 +107,7 @@ fn request() -> ChatRequest<'static> {
     }
 }
 
-async fn actual_runtime_oauth_refresh(enabled: bool) {
+async fn actual_runtime_oauth_refresh(enabled: bool, bound: bool) {
     let server = MockServer::start().await;
     let old = token("old-account");
     let rotated = token("rotated-account");
@@ -184,7 +184,10 @@ async fn actual_runtime_oauth_refresh(enabled: bool) {
                 max_scopes: 2,
                 terminal_capacity: 2,
             },
-            bindings: BTreeMap::from([("openai-oauth".into(), "stable-explicit-account".into())]),
+            bindings: BTreeMap::from([(
+                if bound { "openai-oauth" } else { "other-slot" }.into(),
+                "stable-explicit-account".into(),
+            )]),
         };
         let context = AdmissionRuntimeContext::new(
             proposal.clone(),
@@ -214,7 +217,7 @@ async fn actual_runtime_oauth_refresh(enabled: bool) {
             .unwrap()
     };
     let task = tokio::spawn(async move { provider.chat(request()).await });
-    if enabled {
+    if enabled && bound {
         tokio::time::timeout(LIMIT, gate.second_waiting.notified())
             .await
             .expect("rebuilt leaf must acquire the original bound gate");
@@ -249,11 +252,11 @@ async fn actual_runtime_oauth_refresh(enabled: bool) {
     );
     assert_eq!(
         gate.starts.load(Ordering::SeqCst),
-        if enabled { 2 } else { 0 }
+        if enabled && bound { 2 } else { 0 }
     );
     assert_eq!(
         *gate.finishes.lock().unwrap(),
-        if enabled {
+        if enabled && bound {
             vec![Feedback::Failure, Feedback::Success]
         } else {
             vec![]
@@ -281,9 +284,14 @@ async fn actual_runtime_oauth_refresh(enabled: bool) {
 
 #[tokio::test]
 async fn actual_openai_oauth_refresh_retains_original_bound_gate_and_rotates_wire_account() {
-    actual_runtime_oauth_refresh(true).await;
+    actual_runtime_oauth_refresh(true, true).await;
 }
 #[tokio::test]
 async fn disabled_openai_oauth_refresh_preserves_caller_callback() {
-    actual_runtime_oauth_refresh(false).await;
+    actual_runtime_oauth_refresh(false, false).await;
+}
+
+#[tokio::test]
+async fn unbound_openai_oauth_refresh_stays_ungated_after_rebuild() {
+    actual_runtime_oauth_refresh(true, false).await;
 }

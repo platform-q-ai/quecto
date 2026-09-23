@@ -508,6 +508,7 @@ When no workflow template is selected, the `workflow` field is omitted entirely.
 | `generation` | integer | Activity cursor for `since` comparisons |
 | `workflow` | object \| omitted | Slim selected-workflow identity and current step only |
 | `admission` | object \| omitted | Bounded inference-admission view (#1679); present only when the process joined an admission authority |
+| `admissionWarnings` | array | Advisory usable provider slots with no effective admission binding; always present (empty when all usable slots are bound). Each item has `slot`, `code` (`admission_binding_missing`) and an actionable `message`. These slots remain usable but their requests are not broker-gated. |
 
 **Admission (`admission`, #1679 P4).** When the process shares an inference
 authority ([inference-admission.md](inference-admission.md)) the projection

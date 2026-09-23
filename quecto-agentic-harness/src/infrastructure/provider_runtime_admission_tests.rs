@@ -76,7 +76,43 @@ fn context_rejects_unknown_alias_and_missing_capability() {
 }
 
 #[test]
-fn configured_provider_without_binding_cannot_compose() {
+fn mixed_case_slot_binding_cannot_bypass_admission() {
+    let mut proposal = proposal();
+    proposal.bindings = BTreeMap::from([("OpenAI-API".into(), "account".into())]);
+    let context = AdmissionRuntimeContext::new(
+        proposal,
+        gates(),
+        crate::infrastructure::providers::SingleAttemptClient::build(
+            reqwest::Client::builder().no_proxy(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(context.optional_binding("openai-api").unwrap().is_some());
+    assert!(context.binding("OPENAI-API").is_ok());
+}
+
+#[test]
+fn ambiguous_case_folded_slot_bindings_are_rejected() {
+    let mut proposal = proposal();
+    proposal
+        .bindings
+        .insert("ENDPOINT".into(), "account".into());
+    assert!(
+        AdmissionRuntimeContext::new(
+            proposal,
+            gates(),
+            crate::infrastructure::providers::SingleAttemptClient::build(
+                reqwest::Client::builder().no_proxy()
+            )
+            .unwrap(),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn configured_provider_without_binding_remains_usable_without_gate() {
     let mut proposal = proposal();
     proposal.bindings.clear();
     let context = AdmissionRuntimeContext::new(
@@ -102,11 +138,8 @@ fn configured_provider_without_binding_cannot_compose() {
     config.providers.openai.api_key = "configured".into();
     let result =
         compose_agent_provider_with_admission(&config, &inputs, &context, Some(&proposal), false);
-    assert!(
-        result
-            .unwrap_err()
-            .contains("requires an explicit alias binding")
-    );
+    assert!(result.is_ok());
+    assert!(context.optional_binding("openai-api").unwrap().is_none());
 }
 
 #[test]
@@ -296,4 +329,114 @@ fn an_explicit_binding_still_wins_over_the_default() {
         &second_gate
     ));
     assert!(!Arc::ptr_eq(&account_gate, &second_gate));
+}
+
+#[test]
+fn mixed_usable_slots_report_only_unbound_once_and_fallback_covers_them() {
+    use crate::infrastructure::model_registry::{AuthMode, ModelCost, ModelRecord, ProviderApi};
+    let mut initial = proposal();
+    initial.bindings = BTreeMap::from([("openai-api".into(), "account".into())]);
+    let client = || SingleAttemptClient::build(reqwest::Client::builder().no_proxy()).unwrap();
+    let context = AdmissionRuntimeContext::new(initial.clone(), gates(), client()).unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let record = |id: &str, key: Option<&str>| ModelRecord {
+        provider: "custom".into(),
+        id: id.into(),
+        display_name: None,
+        api: ProviderApi::OpenAiCompletions,
+        base_url: Some("https://example.test/v1".into()),
+        api_key: key.map(str::to_owned),
+        auth_header: true,
+        allow_remote_http: false,
+        input: vec!["text".into()],
+        context_window: 128_000,
+        max_tokens: 4096,
+        max_tokens_explicit: false,
+        context_window_explicit: false,
+        cost: ModelCost::default(),
+        reasoning: false,
+        auth: AuthMode::ApiKey,
+        oauth_provider: None,
+    };
+    let inputs = AgentRuntimeInputs {
+        base_dir: tmp.path().into(),
+        http_client: reqwest::Client::new(),
+        refresh_fn: Arc::new(|_, _| Box::pin(async { panic!("no OAuth") })),
+        openai_oauth_factory: Arc::new(|_| panic!("no OAuth")),
+        model_registry: Ok(
+            crate::infrastructure::model_registry::ModelRegistry::from_file_records(vec![
+                record("one", Some("key")),
+                record("two", Some("key")),
+                {
+                    let mut unusable = record("three", None);
+                    unusable.provider = "missing".into();
+                    unusable
+                },
+            ]),
+        ),
+    };
+    let mut config = Config::default();
+    config.providers.openai.api_key = "key".into();
+    let outcome = compose_agent_provider_inner_outcome(&config, &inputs, Some(&context)).unwrap();
+    assert_eq!(
+        outcome.admission_binding_diagnostic.unbound_slots,
+        vec!["custom"]
+    );
+    assert!(context.optional_binding("openai-api").unwrap().is_some());
+    assert!(context.optional_binding("custom").unwrap().is_none());
+    for fallback in ["*", "default"] {
+        let mut bound = initial.clone();
+        bound.bindings.insert(fallback.into(), "account".into());
+        let context = AdmissionRuntimeContext::new(bound, gates(), client()).unwrap();
+        let outcome =
+            compose_agent_provider_inner_outcome(&config, &inputs, Some(&context)).unwrap();
+        assert!(
+            outcome
+                .admission_binding_diagnostic
+                .unbound_slots
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn all_unbound_including_compatible_endpoint_starts_but_zero_usable_still_fails() {
+    let mut initial = proposal();
+    initial.bindings.clear();
+    let context = AdmissionRuntimeContext::new(
+        initial,
+        gates(),
+        SingleAttemptClient::build(reqwest::Client::builder().no_proxy()).unwrap(),
+    )
+    .unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let inputs = AgentRuntimeInputs {
+        base_dir: tmp.path().into(),
+        http_client: reqwest::Client::new(),
+        refresh_fn: Arc::new(|_, _| Box::pin(async { panic!("no OAuth") })),
+        openai_oauth_factory: Arc::new(|_| panic!("no OAuth")),
+        model_registry: Ok(
+            crate::infrastructure::model_registry::ModelRegistry::from_file_records(vec![]),
+        ),
+    };
+    let mut config = Config::default();
+    assert!(
+        compose_agent_provider_inner_outcome(&config, &inputs, Some(&context))
+            .unwrap_err()
+            .contains("no LLM providers configured")
+    );
+    config.providers.openai.api_key = "key".into();
+    config.providers.openai_compatible.endpoints.push(
+        crate::infrastructure::config::OpenAiCompatibleEndpoint {
+            prefix: "compatible".into(),
+            api_key: "key".into(),
+            api_base: "https://example.test/v1".into(),
+            allow_remote_http: false,
+        },
+    );
+    let outcome = compose_agent_provider_inner_outcome(&config, &inputs, Some(&context)).unwrap();
+    assert_eq!(
+        outcome.admission_binding_diagnostic.unbound_slots,
+        vec!["compatible", "openai-api"]
+    );
 }

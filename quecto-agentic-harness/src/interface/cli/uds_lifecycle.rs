@@ -8,18 +8,15 @@ pub(crate) use crate::domain::conversation_view::remove_injected_system_prompt;
 #[cfg(test)]
 use crate::domain::message::Role;
 use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot;
-
 #[cfg(test)]
 #[path = "uds_lifecycle_cov2_tests.rs"]
 mod cov2_tests;
 #[cfg(test)]
 #[path = "uds_lifecycle_cov_tests.rs"]
 mod cov_tests;
-
 pub(super) type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
 >;
-
 pub struct UdsLoopArgs<'a> {
     pub agent: AgentLoopImpl,
     /// The run's retained-context handles (D9 #1978): the one store the
@@ -28,7 +25,8 @@ pub struct UdsLoopArgs<'a> {
     pub retention: Option<super::retention_handles::RetentionHandles>,
     pub base_dir: &'a std::path::Path,
     pub workspace: &'a std::path::Path,
-    /// The typed identity the loop opens (D10 #1979).
+    /// The typed identity the loop opens (D10 #1979), carrying the stable
+    /// session key and its validated persisted-key form across CLI/UDS layers.
     pub identity: crate::domain::session_identity::SessionIdentity,
     pub model: String,
     pub ephemeral: bool,
@@ -79,7 +77,6 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     code
 }
 use super::uds_socket::{SocketGuard, bind_secure_socket};
-
 async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let UdsLoopArgs {
         agent,
@@ -128,12 +125,13 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         }
     };
     let messages = opened.messages;
+    let admission_slots =
+        super::uds_admission_warnings::publish_startup_warnings(&catalogue.runtime_store);
     if let (Some(ws), Some(persisted)) = (&workflow_state, opened.workflow_run) {
         if let Ok(mut engine) = ws.lock() {
             engine.restore_run(persisted);
         }
     }
-
     if let Some(std_stream) = socket_override {
         // Single-client path: backward-compatible with existing tests.
         single_client_loop(
@@ -144,6 +142,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 model,
                 session_key,
                 system_prompt,
+                admission_slots: admission_slots.clone(),
                 ext_registry,
                 subagent_registry,
                 workflow_state,
@@ -172,6 +171,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 model,
                 session_key,
                 system_prompt,
+                admission_slots: admission_slots.clone(),
                 ext_registry,
                 lifetime,
                 notification_rx,

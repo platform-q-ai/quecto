@@ -436,7 +436,7 @@ fn area_pages_share_the_runbook_shape() {
     assert_in_order(
         "admission-broker",
         admission,
-        "1. **Write the section**",
+        "1. **Write the whole section atomically**",
         "3. **Install**",
     );
 }

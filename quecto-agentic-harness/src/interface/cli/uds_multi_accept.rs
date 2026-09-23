@@ -19,6 +19,7 @@ pub(super) struct AcceptLoopArgs {
     pub(super) client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
     pub(super) session: SessionReadHandles,
     pub(super) state_snapshot: StateSnapshot,
+    pub(super) runtime_store: crate::application::ports::RuntimeSnapshotStore,
     pub(super) execution_state: super::uds_execution_state::ExecutionStateHandle,
     pub(super) session_stats_snapshot: super::uds_snapshots::SessionStatsSnapshot,
     pub(super) tool_catalogue_snapshot: super::uds_extensions::ToolCatalogueSnapshot,
@@ -47,6 +48,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
         client_tool_registry,
         session,
         state_snapshot,
+        runtime_store,
         execution_state,
         session_stats_snapshot,
         tool_catalogue_snapshot,
@@ -109,7 +111,8 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         // `get_state` is a pure inspector read. Always publish the
                         // current point-in-time projection on connect so callers
                         // never depend on the serialized command loop replying.
-                        let live = state_snapshot.read().await.clone();
+                        let mut live = state_snapshot.read().await.clone();
+                        super::uds_admission_warnings::overlay_current(&mut live, &runtime_store);
                         let state_line = super::uds_snapshots::build_connect_get_state_line(
                             &live,
                             &workflow_state,

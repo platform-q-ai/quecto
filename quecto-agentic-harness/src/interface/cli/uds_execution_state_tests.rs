@@ -20,6 +20,19 @@ fn finished(id: &str, name: &str, is_error: bool) -> AgentProgressEvent {
 }
 
 #[test]
+fn binding_warning_cursor_changes_once_per_distinct_published_view() {
+    use crate::domain::state_snapshot::AdmissionBindingWarning;
+    let mut state = ExecutionState::default();
+    let initial = state.observe_visible_revisions(1, 0);
+    assert_eq!(state.observe_binding_warnings(&[]), initial);
+    assert_eq!(state.observe_binding_warnings(&[]), initial);
+    let missing = [AdmissionBindingWarning::new("openai-api")];
+    assert_eq!(state.observe_binding_warnings(&missing), initial + 1);
+    assert_eq!(state.observe_binding_warnings(&missing), initial + 1);
+    assert_eq!(state.observe_binding_warnings(&[]), initial + 2);
+}
+
+#[test]
 fn tool_events_report_live_and_recent_progress() {
     let mut state = ExecutionState::default();
     state.start_run();

@@ -16,5 +16,6 @@
   },
   "generation": 12,
   "automaticTurnsSuspended": false,
-  "repeatedFailureNotifications": 0
+  "repeatedFailureNotifications": 0,
+  "admissionWarnings": []
 }

@@ -667,3 +667,121 @@ restart_only_case!(
 
 #[path = "../common/admission_runtime_oracle_tests.rs"]
 mod oracle_tests;
+
+// A denying capability proves a request cannot reach even a loopback server.
+// Counting both acquisition and HTTP starts distinguishes bound from advisory slots.
+#[derive(Debug, Default)]
+struct DenyingGate(std::sync::atomic::AtomicUsize);
+impl AttemptAdmission for DenyingGate {
+    fn acquire(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Box<dyn AttemptPermit>, DomainError>> + Send + '_>>
+    {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async { Err(DomainError::Provider("fixture denied admission".into())) })
+    }
+}
+
+#[tokio::test]
+async fn builtin_and_models_json_requests_observe_only_their_explicit_gate() {
+    let server = server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let registry_path = dir.path().join("models.json");
+    std::fs::write(
+        &registry_path,
+        serde_json::json!({"providers": {
+            "registered": {"api":"openai-completions", "apiKey":"registry-secret",
+                "baseUrl":server.uri(), "models":[{"id":"registry-model"}]}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let records = ModelRegistry::load_file_records(&registry_path).unwrap();
+    assert_eq!(records.len(), 1);
+    let mut inputs = inputs(dir.path());
+    inputs.model_registry = Ok(ModelRegistry::from_file_records(records));
+    let mut providers = Config::default();
+    providers.providers.openai.api_key = "builtin-secret".into();
+    providers.providers.openai.api_base = server.uri();
+
+    let gate = Arc::new(DenyingGate::default());
+    let mut proposal = proposal();
+    proposal.bindings = BTreeMap::from([("OpenAI-API".into(), "account-a".into())]);
+    let context = AdmissionRuntimeContext::new(
+        proposal.clone(),
+        BTreeMap::from([(
+            "account-a".into(),
+            gate.clone() as Arc<dyn AttemptAdmission>,
+        )]),
+        quecto::infrastructure::providers::SingleAttemptClient::build(
+            reqwest::Client::builder().no_proxy(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let runtime = AdmissionProviderRuntimeFactory::new(Arc::new(context))
+        .compose_runtime(
+            &Candidate {
+                providers: &providers,
+                admission: Some(&proposal),
+                inherit: false,
+            },
+            &inputs,
+        )
+        .unwrap();
+    assert!(
+        runtime
+            .chat(request("openai-api/builtin-model"))
+            .await
+            .is_err()
+    );
+    assert_eq!(gate.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_wire(&server, &[]).await;
+    chat(&runtime, "registered/registry-model").await;
+    assert_eq!(gate.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_wire(&server, &[("registry-model", "Bearer registry-secret")]).await;
+
+    let second_gate = Arc::new(DenyingGate::default());
+    let mut second_proposal = self::proposal();
+    second_proposal.bindings = BTreeMap::from([("registered".into(), "account-a".into())]);
+    let second_context = AdmissionRuntimeContext::new(
+        second_proposal.clone(),
+        BTreeMap::from([(
+            "account-a".into(),
+            second_gate.clone() as Arc<dyn AttemptAdmission>,
+        )]),
+        quecto::infrastructure::providers::SingleAttemptClient::build(
+            reqwest::Client::builder().no_proxy(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let second_runtime = AdmissionProviderRuntimeFactory::new(Arc::new(second_context))
+        .compose_runtime(
+            &Candidate {
+                providers: &providers,
+                admission: Some(&second_proposal),
+                inherit: false,
+            },
+            &inputs,
+        )
+        .unwrap();
+    assert!(
+        second_runtime
+            .chat(request("registered/registry-model"))
+            .await
+            .is_err()
+    );
+    assert_eq!(second_gate.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_wire(&server, &[("registry-model", "Bearer registry-secret")]).await;
+    chat(&second_runtime, "openai-api/builtin-model").await;
+    assert_eq!(second_gate.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_wire(
+        &server,
+        &[
+            ("registry-model", "Bearer registry-secret"),
+            ("builtin-model", "Bearer builtin-secret"),
+        ],
+    )
+    .await;
+}

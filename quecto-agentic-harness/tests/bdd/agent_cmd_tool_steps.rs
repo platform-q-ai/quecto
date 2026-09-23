@@ -341,6 +341,7 @@ fn install_busy_state_snapshot_entry(
             std::thread::spawn(move || {
                 use std::io::Write;
                 let mut state = quecto::interface::cli::protocol::SessionState {
+                    admission_warnings: vec![],
                     control_receipts: vec![],
                     automatic_turns_suspended: false,
                     repeated_failure_notifications: 0,
@@ -1142,7 +1143,8 @@ fn then_agent_cmd_response_slim_state(world: &mut QuectoWorld, command: String) 
             "progress",
             "generation",
             "automaticTurnsSuspended",
-            "repeatedFailureNotifications"
+            "repeatedFailureNotifications",
+            "admissionWarnings"
         ]
         .into_iter()
         .collect(),

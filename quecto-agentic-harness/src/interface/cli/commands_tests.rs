@@ -280,3 +280,95 @@ fn test_status_invalid_config_fails() {
         out.stderr
     );
 }
+
+#[test]
+fn status_reports_only_published_runtime_admission_warnings() {
+    use crate::application::catalogue::{
+        CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SourceEntries,
+    };
+    use crate::application::provider_runtime::{
+        AdmissionBindingDiagnostic, ComposeProviderRuntimeUseCase, CompositionPorts,
+        ProviderRuntimeFactory, ProviderRuntimeOutcome,
+    };
+    use crate::application::providers::ports::{ChatRequest, LlmProvider};
+    use crate::domain::catalogue::{CatalogueEntry, SourceLayer};
+    use crate::domain::error::DomainError;
+    use crate::domain::message::LlmResponse;
+    use std::sync::Arc;
+
+    #[derive(Debug)]
+    struct StubProvider;
+    impl LlmProvider for StubProvider {
+        fn name(&self) -> &str {
+            "stub"
+        }
+        fn chat<'a>(
+            &'a self,
+            _request: ChatRequest<'a>,
+        ) -> std::pin::Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>>
+        {
+            Box::pin(async { Err(DomainError::Provider("unused".into())) })
+        }
+    }
+    struct StubFactory;
+    impl ProviderRuntimeFactory<(), ()> for StubFactory {
+        fn compose_runtime(&self, _: &(), _: &()) -> Result<Arc<dyn LlmProvider>, String> {
+            Ok(Arc::new(StubProvider))
+        }
+        fn compose_runtime_outcome(
+            &self,
+            _: &(),
+            _: &(),
+        ) -> Result<ProviderRuntimeOutcome, String> {
+            Ok(ProviderRuntimeOutcome {
+                provider: Arc::new(StubProvider),
+                admission_binding_diagnostic: AdmissionBindingDiagnostic {
+                    unbound_slots: vec!["openai-api".into()],
+                },
+            })
+        }
+    }
+    struct EmptySource;
+    impl CatalogueSource for EmptySource {
+        fn id(&self) -> &str {
+            "empty"
+        }
+        fn layer(&self) -> SourceLayer {
+            SourceLayer::BuiltIn
+        }
+        fn load(&self) -> Result<SourceEntries, String> {
+            Ok(SourceEntries::from(Vec::<CatalogueEntry>::new()))
+        }
+    }
+    struct Credentials;
+    impl CredentialStatusPort for Credentials {
+        fn credential_available(&self, _: &CatalogueEntry) -> bool {
+            true
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(dir.path().to_path_buf()),
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        ..Default::default()
+    };
+    let before = run_with_output(args("status"), &ctx);
+    assert!(!before.stderr.contains("admission-broker gating"));
+    let runtime_store = crate::infrastructure::catalogue_registry::runtime_store_for(dir.path());
+    let catalogue_store = CatalogueSnapshotStore::empty();
+    ComposeProviderRuntimeUseCase::new()
+        .compose_and_publish(
+            &StubFactory,
+            &(),
+            &(),
+            &CompositionPorts {
+                sources: &[&EmptySource],
+                credentials: &Credentials,
+                catalogue_store: &catalogue_store,
+                runtime_store: &runtime_store,
+            },
+        )
+        .unwrap();
+    let after = run_with_output(args("status"), &ctx);
+    assert!(!after.stderr.contains("admission-broker gating"));
+}

@@ -54,16 +54,21 @@ absolute, owner-only, and below or separate from the base directory (never the
 base directory or its ancestor). `groups`, `aliases`, and `bindings` are required;
 every group needs an alias. Unknown fields and invalid configurations are rejected.
 
-Bindings map exact router provider slots to opaque aliases, which map to quota
-groups. Bind **every constructed provider**, not just the selected model.
+Bindings map router provider slots to opaque aliases, which map to quota
+groups. To bound every usable provider, bind **every constructed provider**, not
+just the selected model. A usable slot without an effective binding remains
+selectable and its requests run **without broker gating**, with an advisory
+warning. A case-mismatched slot must not be treated as deliberately unbound.
+See [ADR-0028](../architecture-design-records/adr-0028-advisory-unbound-admission.md).
 Built-ins are `openai-api`, `openai-oauth`, `anthropic-api`, and
 `anthropic-oauth`; bare `openai`/`anthropic` do not bind them. Custom registry
 providers use their provider key; `openai_compatible` uses its configured prefix.
 Use the same group only for slots actually sharing quota. Credentials/model names
-are not quota identities. A missing binding fails composition explicitly, unless
-you add a **default binding**: a `"*"` (or `"default"`) key whose alias catches
-every unlisted slot, so adding a provider does not fail composition for want of a
-new binding. The default alias must itself exist. Example
+are not quota identities. A missing binding does not fail composition: it
+leaves that usable slot ungated. Inspect `quecto config get --effective admission`
+and compare its bindings with usable slots before assuming they are bounded.
+Add a **default binding** (`"*"` or `"default"`) to bound every unlisted slot,
+including providers added later. The default alias must itself exist. Example
 `"bindings": { "*": "account" }`. An explicit slot binding still wins over it.
 
 ## One host-wide broker, agent-operable (#2024 S3)
@@ -87,7 +92,7 @@ broker you address. Every output names the directory it addressed.
 
 ## Do
 
-1. **Write the section** into the global file (values are illustrative — measure your own; every group field is required):
+1. **Write the whole section atomically** into the global file (values are illustrative — measure your own; every group field is required). Do not patch individual bindings in a running policy:
    ```
    quecto config set --global admission '{"groups":{"shared":{"capacity":4,"reserve":1,"min_interval_ms":250,"queue_capacity":64,"queue_timeout_ms":120000,"attempt_timeout_ms":900000,"fallback_base_ms":2000,"max_cooldown_ms":600000}},"aliases":{"account":"shared"},"bindings":{"*":"account"}}'
    ```
@@ -107,7 +112,7 @@ broker you address. Every output names the directory it addressed.
    quecto admission-broker install-service
    ```
    Expected: `applied quecto-admission-broker.service (directory …/admission)` with "wrote unit …", "reloaded the user daemon", "enabled and started …". Idempotent: a second run reports "already up to date"; a changed binary or config path rewrites the unit and reports "restarted … on the rewritten unit". `--config <abs path>` pins another global file. Do not run `quecto admission-broker run` from a tool call: it stays in the foreground and ends with the call.
-4. **Restart agents** you want bounded: sessions started before the section existed compose without admission and keep running unbounded until restarted (a live reload never switches admission on or off — it reports the change and keeps the last-good runtime). Say this in your report; it includes the session you are running in.
+4. **Restart the broker after subsequent policy changes** (initial install starts it), then restart agents you want bounded: sessions started before the section existed compose without admission and keep running unbounded until restarted (a live reload never switches admission on or off — it reports the change and keeps the last-good runtime). Say this in your report; it includes the session you are running in.
 
 ## Verify
 

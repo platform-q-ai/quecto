@@ -43,31 +43,9 @@ pub(super) const BROADCAST_CHANNEL_CAPACITY: usize = 256;
 pub(super) static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
-/// Shared "agent is mid-turn" flag (#828). Set by the dispatch loop for the
-/// duration of `agent.process()` (via [`BusyGuard`]), read by the accept loop.
-/// The connect-time conversation snapshot is pushed to a newly-connected client
-/// ONLY when this is `true` — i.e. the agent is busy and cannot answer a
-/// `get_messages` promptly via the (blocked) single dispatch loop. When idle the
-/// dispatch loop answers `get_messages` itself in FIFO order, so no unsolicited
-/// bytes are written and clients that don't ask see no protocol change.
-pub(crate) type BusyFlag = std::sync::Arc<std::sync::atomic::AtomicBool>;
-
-/// RAII guard: marks the agent busy for the duration of a turn and clears the
-/// flag on drop (normal completion, early return, or panic) (#828).
-pub(crate) struct BusyGuard(BusyFlag);
-
-impl BusyGuard {
-    pub(crate) fn new(flag: &BusyFlag) -> Self {
-        flag.store(true, std::sync::atomic::Ordering::SeqCst);
-        Self(flag.clone())
-    }
-}
-
-impl Drop for BusyGuard {
-    fn drop(&mut self) {
-        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
-    }
-}
+#[path = "uds_multi_busy.rs"]
+mod busy;
+pub(crate) use busy::{BusyFlag, BusyGuard};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -76,6 +54,7 @@ pub(super) struct MultiClientArgs<'a> {
     pub workspace: &'a std::path::Path,
     pub messages: Vec<Message>,
     pub model: String,
+    pub admission_slots: Vec<String>,
     pub session_key: String,
     pub system_prompt: String,
     /// Shared tool catalogue snapshot for get_tool_catalogue.
@@ -175,6 +154,7 @@ pub(super) async fn multi_client_loop(
         model,
         session_key,
         system_prompt,
+        admission_slots,
         ext_registry,
         lifetime,
         notification_rx,
@@ -203,6 +183,8 @@ pub(super) async fn multi_client_loop(
         .publish(&messages);
 
     let mut agent_session = AgentSession::new(model);
+    agent_session.set_admission_warnings(&admission_slots);
+    agent_session.observe_runtime(catalogue.runtime_store.clone());
     let initial_state = agent_session.state_snapshot(
         &session_key,
         messages.len(),
@@ -326,6 +308,7 @@ pub(super) async fn multi_client_loop(
         client_tool_registry: client_tool_registry.clone(),
         session: session_reads.clone(),
         state_snapshot: state_snapshot.clone(),
+        runtime_store: catalogue.runtime_store.clone(),
         execution_state: execution_state.clone(),
         session_stats_snapshot: session_stats_snapshot.clone(),
         tool_catalogue_snapshot: tool_catalogue_snapshot.clone(),

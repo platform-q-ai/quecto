@@ -5,10 +5,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::provider_runtime::{AgentRuntimeInputs, compose_agent_provider_inner};
+use super::provider_runtime::{AgentRuntimeInputs, compose_agent_provider_inner_outcome};
 use super::providers::{AttemptTransportBinding, SingleAttemptClient};
 use crate::application::ports::AttemptAdmission;
 use crate::application::ports::ProviderRuntimeFactory;
+use crate::application::ports::ProviderRuntimeOutcome;
 use crate::application::providers::ports::LlmProvider;
 use crate::domain::inference_admission::{AdmissionConfig, GroupPolicy};
 use crate::infrastructure::config::Config;
@@ -47,9 +48,13 @@ impl AdmissionRuntimeContext {
             .policy
             .validate()
             .map_err(|e| format!("invalid admission policy: {e:?}"))?;
+        let mut normalized_slots = std::collections::BTreeSet::new();
         for (slot, alias) in &proposal.bindings {
             if slot.is_empty() || slot.trim() != slot || slot.contains('/') {
                 return Err("invalid admission provider binding".into());
+            }
+            if !normalized_slots.insert(slot.to_ascii_lowercase()) {
+                return Err("ambiguous admission provider bindings differing only by case".into());
             }
             if !proposal.policy.aliases.contains_key(alias) || !gates_by_alias.contains_key(alias) {
                 return Err(format!(
@@ -64,16 +69,51 @@ impl AdmissionRuntimeContext {
         })
     }
 
+    /// An absent effective slot binding is advisory: the provider remains usable
+    /// but its requests bypass the admission broker.
+    pub(crate) fn optional_binding(
+        &self,
+        slot: &str,
+    ) -> Result<Option<AttemptTransportBinding>, String> {
+        if self
+            .effective
+            .bindings
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case(slot))
+            || self.effective.bindings.keys().any(|key| {
+                key.eq_ignore_ascii_case(DEFAULT_BINDING_KEY)
+                    || key.eq_ignore_ascii_case(DEFAULT_BINDING_ALT)
+            })
+        {
+            return self.binding(slot).map(Some);
+        }
+        Ok(None)
+    }
+
     pub(crate) fn binding(&self, slot: &str) -> Result<AttemptTransportBinding, String> {
         // An explicit slot binding wins; otherwise a default alias (`*` or
         // `default`, #2024 S3) catches every unlisted slot so adding a
-        // provider no longer fails composition for want of a new binding.
+        // provider receives the deliberate fallback instead of bypassing admission.
         let alias = self
             .effective
             .bindings
-            .get(slot)
-            .or_else(|| self.effective.bindings.get(DEFAULT_BINDING_KEY))
-            .or_else(|| self.effective.bindings.get(DEFAULT_BINDING_ALT))
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(slot))
+            .map(|(_, alias)| alias)
+            .or_else(|| {
+                self.effective
+                    .bindings
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(DEFAULT_BINDING_KEY))
+                    .map(|(_, alias)| alias)
+            })
+            .or_else(|| {
+                self.effective
+                    .bindings
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(DEFAULT_BINDING_ALT))
+                    .map(|(_, alias)| alias)
+            })
             .ok_or_else(|| {
                 format!("admission provider '{slot}' requires an explicit alias binding")
             })?;
@@ -191,6 +231,17 @@ impl ProviderRuntimeFactory<AdmissionRuntimeCandidate<'_>, AgentRuntimeInputs>
             candidate.inherit,
         )
     }
+
+    fn compose_runtime_outcome(
+        &self,
+        candidate: &AdmissionRuntimeCandidate<'_>,
+        inputs: &AgentRuntimeInputs,
+    ) -> Result<ProviderRuntimeOutcome, String> {
+        if !candidate.inherit {
+            self.context.validate_candidate(candidate.admission)?;
+        }
+        compose_agent_provider_inner_outcome(candidate.providers, inputs, Some(&self.context))
+    }
 }
 
 /// Compose with an existing immutable authority. Rejections occur before publication;
@@ -211,7 +262,8 @@ pub fn compose_agent_provider_with_admission(
     if !inherit {
         context.validate_candidate(proposal)?;
     }
-    compose_agent_provider_inner(config, inputs, Some(context))
+    compose_agent_provider_inner_outcome(config, inputs, Some(context))
+        .map(|outcome| outcome.provider)
 }
 
 #[cfg(test)]

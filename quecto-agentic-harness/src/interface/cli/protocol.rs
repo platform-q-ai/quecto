@@ -484,6 +484,8 @@ pub use crate::domain::state_snapshot::{ControlReceipt, ControlStatus};
 #[serde(rename_all = "camelCase")]
 pub struct SessionState {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admission_warnings: Vec<crate::domain::state_snapshot::AdmissionBindingWarning>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub control_receipts: Vec<ControlReceipt>,
     #[serde(default)]
     pub automatic_turns_suspended: bool,

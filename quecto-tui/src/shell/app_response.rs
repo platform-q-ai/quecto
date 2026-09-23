@@ -507,6 +507,41 @@ impl App {
             self.ac_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
             self.sync_workflow_automation(wf);
         }
+        if snap.authoritative && snap.admission_warnings_authoritative {
+            let current: std::collections::BTreeSet<_> = snap
+                .admission_warnings
+                .iter()
+                .map(|warning| warning.slot.clone())
+                .collect();
+            self.shown_admission_warning_slots
+                .retain(|slot| current.contains(slot));
+        }
+        let mut new_warnings = Vec::new();
+        for warning in snap.admission_warnings {
+            if self
+                .shown_admission_warning_slots
+                .insert(warning.slot.clone())
+            {
+                new_warnings.push(warning);
+            }
+        }
+        if new_warnings.len() == 1 {
+            self.notify(&new_warnings[0].message, NotifyLevel::Warning);
+            self.ac_mut().master_session.chat.add_entry(crate::components::chat::ChatEntry::Status {
+                text: format!("Admission binding missing: {}\nRequests not broker-gated; configure admission.bindings", new_warnings[0].slot),
+            });
+        } else if new_warnings.len() > 1 {
+            self.notify(
+                &format!(
+                    "{} slots not broker-gated; configure admission.bindings",
+                    new_warnings.len()
+                ),
+                NotifyLevel::Warning,
+            );
+            self.ac_mut().master_session.chat.add_entry(crate::components::chat::ChatEntry::Status {
+                text: format!("Admission bindings missing ({}):\nRequests not broker-gated; configure admission.bindings\n{}", new_warnings.len(), new_warnings.iter().map(|warning| warning.slot.as_str()).collect::<Vec<_>>().join("\n")),
+            });
+        }
         if snap.authoritative {
             self.apply_get_state_admission(snap.admission.as_ref());
         }

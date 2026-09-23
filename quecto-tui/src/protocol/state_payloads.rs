@@ -3,6 +3,20 @@
 //!
 //! Follows the mapper convention in [`crate::protocol::model_payloads`].
 
+#[derive(serde::Deserialize)]
+struct AdmissionWarningEntry {
+    code: String,
+    slot: String,
+    message: String,
+}
+
+/// An unbound but usable provider slot: requests are not broker-gated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmissionBindingWarning {
+    pub slot: String,
+    pub message: String,
+}
+
 /// Footer-relevant fields from a successful `get_state` payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetStateFooterFields {
@@ -33,6 +47,21 @@ pub struct GetStateSnapshot {
     /// Bounded inference-admission view when the agent shares an authority
     /// (#1679 P4); absent otherwise.
     pub admission: Option<crate::protocol::admission_payloads::AdmissionView>,
+    /// Sanitized, typed startup warnings from the agent socket.
+    pub admission_warnings: Vec<AdmissionBindingWarning>,
+    /// A full warning list was supplied without malformed content.
+    pub admission_warnings_authoritative: bool,
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct RawFooterFields {
+    #[serde(default)]
+    model: serde_json::Value,
+    #[serde(default)]
+    max_context_tokens: serde_json::Value,
+    #[serde(default)]
+    effort: serde_json::Value,
 }
 
 /// Parse footer fields from a `get_state` payload.
@@ -45,9 +74,10 @@ pub fn parse_get_state_footer(
 ) -> GetStateFooterFields {
     // Parity: do not drop empty-after-sanitize strings — historical footer
     // behaviour applied whatever sanitize returned, including empty.
-    let model = data.get("model").and_then(|m| m.as_str()).map(sanitize);
-    let max_context_tokens = data.get("maxContextTokens").and_then(|v| v.as_u64());
-    let effort = data.get("effort").and_then(|v| v.as_str()).map(sanitize);
+    let raw: RawFooterFields = serde_json::from_value(data.clone()).unwrap_or_default();
+    let model = raw.model.as_str().map(sanitize);
+    let max_context_tokens = raw.max_context_tokens.as_u64();
+    let effort = raw.effort.as_str().map(sanitize);
     GetStateFooterFields {
         model,
         max_context_tokens,
@@ -80,6 +110,30 @@ pub fn parse_get_state(
     // object, so no raw key lookup is needed here.
     let admission =
         crate::protocol::admission_payloads::parse_admission(&data["admission"], sanitize);
+    let warning_values = data
+        .get("admissionWarnings")
+        .and_then(serde_json::Value::as_array);
+    let mut warning_list_valid = true;
+    let admission_warnings = warning_values
+        .into_iter()
+        .flatten()
+        .filter_map(|value| {
+            let Ok(warning) = serde_json::from_value::<AdmissionWarningEntry>(value.clone()) else {
+                warning_list_valid = false;
+                return None;
+            };
+            if warning.code == "admission_binding_missing" {
+                let slot = sanitize(&warning.slot);
+                let message = sanitize(&warning.message);
+                if !slot.is_empty() && !message.is_empty() {
+                    return Some(AdmissionBindingWarning { slot, message });
+                }
+            }
+            warning_list_valid = false;
+            None
+        })
+        .collect::<Vec<_>>();
+    let admission_warnings_authoritative = warning_values.is_some() && warning_list_valid;
     GetStateSnapshot {
         authoritative: crate::protocol::presentation_payloads::bool_field(data, "unchanged")
             != Some(true),
@@ -88,6 +142,8 @@ pub fn parse_get_state(
         session_key,
         workflow,
         admission,
+        admission_warnings,
+        admission_warnings_authoritative,
     }
 }
 

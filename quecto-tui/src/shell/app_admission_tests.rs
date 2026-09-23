@@ -184,6 +184,25 @@ async fn get_state_applies_or_clears_the_admission_view() {
 }
 
 #[tokio::test]
+async fn socket_startup_warning_is_visible_once_per_slot_across_state_refresh() {
+    let mut app = test_app().await;
+    let warning = serde_json::json!({"slot":"openai-api","code":"admission_binding_missing",
+        "message":"openai-api requests are not broker-gated; configure admission.bindings"});
+    let response = || Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({"admissionWarnings":[warning]})),
+        error: None,
+    };
+    app.handle_event(response());
+    assert!(app.shown_admission_warning_slots.contains("openai-api"));
+    assert_eq!(app.shown_admission_warning_slots.len(), 1);
+    app.handle_event(response());
+    assert_eq!(app.shown_admission_warning_slots.len(), 1);
+}
+
+#[tokio::test]
 async fn agent_error_ends_the_wait_and_the_panel_row_paints_a_child_label() {
     let mut app = test_app().await;
     app.handle_event(Event::AgentStart);
@@ -444,5 +463,283 @@ async fn a_pushed_event_with_an_authority_status_moves_the_health_badge() {
     assert_eq!(
         app.ac().master_session.footer.admission_health(),
         Some("admission ✓")
+    );
+}
+
+#[tokio::test]
+async fn missing_binding_warnings_survive_real_stack_limit_and_reconnect_refresh() {
+    let mut app = test_app().await;
+    let response = || Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(
+            serde_json::json!({"admissionWarnings": (0..7).map(|i| serde_json::json!({
+            "slot":format!("slot-{i}"), "code":"admission_binding_missing",
+            "message":format!("slot-{i} requests are not broker-gated")
+        })).collect::<Vec<_>>() }),
+        ),
+        error: None,
+    };
+    app.handle_event(response());
+    let messages = app.notifications.messages();
+    assert_eq!(messages.len(), 1, "bounded stack: {messages:?}");
+    let first = messages[0].clone();
+    assert!(first.contains("not broker-gated") && first.contains("admission.bindings"));
+    let statuses = app
+        .ac()
+        .master_session
+        .chat
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry {
+            crate::components::chat::ChatEntry::Status { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    for i in 0..7 {
+        assert!(statuses.contains(&format!("slot-{i}")), "{statuses}");
+    }
+    app.begin_agent_stream_closed();
+    assert!(
+        app.notifications
+            .dismiss_prefixed("7 slots not broker-gated")
+    );
+    app.ac_mut().agent_connected = true;
+    app.handle_event(response());
+    assert!(
+        app.notifications.messages().iter().any(|m| m == &first),
+        "reconnect must re-emit"
+    );
+    assert_eq!(app.shown_admission_warning_slots.len(), 7);
+}
+
+#[tokio::test]
+async fn admission_warning_is_actionable_at_80_columns_and_slots_persist_in_transcript() {
+    use crate::components::component::Component;
+    let mut app = test_app().await;
+    app.handle_event(Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(
+            serde_json::json!({"admissionWarnings": (0..7).map(|i| serde_json::json!({
+            "slot": format!("provider-slot-{i}"), "code":"admission_binding_missing",
+            "message":format!("provider-slot-{i} requests are not broker-gated")
+        })).collect::<Vec<_>>() }),
+        ),
+        error: None,
+    });
+    let rendered = app.notifications.render(80).join("\n");
+    assert!(
+        rendered.contains("not broker-gated") && rendered.contains("admission.bindings"),
+        "{rendered}"
+    );
+    let statuses = app
+        .ac()
+        .master_session
+        .chat
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry {
+            crate::components::chat::ChatEntry::Status { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    for i in 0..7 {
+        assert!(
+            statuses.contains(&format!("provider-slot-{i}")),
+            "{statuses}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn missing_bindings_remain_readable_in_rendered_chat_at_80_and_120_columns() {
+    use crate::components::component::Component;
+    let mut app = test_app().await;
+    let warning = |slot: &str| serde_json::json!({"slot":slot,"code":"admission_binding_missing","message":format!("{slot} requests are not broker-gated")});
+    let state = |warnings: Vec<serde_json::Value>| Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({"admissionWarnings":warnings})),
+        error: None,
+    };
+    let slots = (0..7)
+        .map(|i| format!("provider-slot-{i}"))
+        .collect::<Vec<_>>();
+    app.handle_event(state(slots.iter().map(|s| warning(s)).collect()));
+    let assert_rendered = |app: &mut App| {
+        for width in [80, 120] {
+            let frame = app.ac_mut().master_session.chat.render(width).join("\n");
+            let plain = crate::components::ansi::strip_ansi(&frame);
+            for slot in &slots {
+                assert!(plain.contains(slot), "{width}: {plain}");
+            }
+            assert!(plain.contains("admission.bindings"), "{width}: {plain}");
+            assert!(plain.contains("not broker-gated"), "{width}: {plain}");
+        }
+    };
+    assert_rendered(&mut app);
+    // Dismissing the transient toast cannot erase the durable chat diagnostic.
+    assert!(
+        app.notifications
+            .dismiss_prefixed("7 slots not broker-gated")
+    );
+    assert!(app.notifications.render(80).is_empty());
+    assert_rendered(&mut app);
+    app.handle_event(state(vec![])); // bound
+    app.handle_event(state(slots.iter().map(|s| warning(s)).collect())); // unbound
+    assert_rendered(&mut app);
+    app.begin_agent_stream_closed();
+    app.ac_mut().agent_connected = true;
+    app.handle_event(state(slots.iter().map(|s| warning(s)).collect()));
+    assert_rendered(&mut app);
+}
+
+#[tokio::test]
+async fn malformed_warning_preserves_valid_binding_latch_on_authoritative_refresh() {
+    let mut app = test_app().await;
+    let response = |warnings: Vec<serde_json::Value>| Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({"admissionWarnings":warnings})),
+        error: None,
+    };
+    let valid = serde_json::json!({"slot":"provider-a","code":"admission_binding_missing","message":"provider-a not broker-gated"});
+    app.handle_event(response(vec![valid.clone()]));
+    assert!(app.notifications.dismiss_prefixed("provider-a"));
+    app.handle_event(response(vec![
+        valid.clone(),
+        serde_json::json!({"slot":42,"code":"admission_binding_missing","message":"invalid"}),
+    ]));
+    assert!(app.shown_admission_warning_slots.contains("provider-a"));
+    app.handle_event(response(vec![valid]));
+    assert!(
+        app.notifications.messages().is_empty(),
+        "valid slot must not re-toast after malformed sibling"
+    );
+}
+
+#[tokio::test]
+async fn malformed_only_warning_snapshot_preserves_latch_but_valid_empty_rearms() {
+    let mut app = test_app().await;
+    let response = |warnings: serde_json::Value| Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({"admissionWarnings":warnings})),
+        error: None,
+    };
+    let valid = serde_json::json!({"slot":"provider-a","code":"admission_binding_missing","message":"provider-a not broker-gated"});
+    app.handle_event(response(serde_json::json!([valid.clone()])));
+    assert!(app.notifications.dismiss_prefixed("provider-a"));
+    app.handle_event(response(
+        serde_json::json!([{"slot":42,"code":"admission_binding_missing","message":"invalid"}]),
+    ));
+    assert!(app.shown_admission_warning_slots.contains("provider-a"));
+    app.handle_event(response(serde_json::json!([valid.clone()])));
+    assert!(
+        app.notifications.messages().is_empty(),
+        "malformed-only snapshot rearmed warning"
+    );
+    app.handle_event(response(serde_json::json!([])));
+    assert!(!app.shown_admission_warning_slots.contains("provider-a"));
+    app.handle_event(response(serde_json::json!([valid])));
+    assert!(
+        app.notifications
+            .messages()
+            .iter()
+            .any(|m| m.contains("provider-a"))
+    );
+}
+
+#[tokio::test]
+async fn mixed_malformed_warning_snapshot_does_not_rearm_omitted_slot() {
+    let mut app = test_app().await;
+    let valid = |slot: &str| serde_json::json!({"slot":slot,"code":"admission_binding_missing","message":format!("{slot} not broker-gated")});
+    let state = |warnings: Vec<serde_json::Value>| Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({"admissionWarnings": warnings})),
+        error: None,
+    };
+    app.handle_event(state(vec![valid("a"), valid("b")]));
+    assert!(app.notifications.dismiss_prefixed("2 slots"));
+    app.handle_event(state(vec![
+        valid("a"),
+        serde_json::json!({"code":"unknown","slot":"b","message":"ignored"}),
+    ]));
+    assert!(app.shown_admission_warning_slots.contains("b"));
+    app.handle_event(state(vec![valid("a"), valid("b")]));
+    assert!(
+        app.notifications.messages().is_empty(),
+        "mixed malformed list must preserve b latch"
+    );
+    app.handle_event(state(vec![valid("a")]));
+    assert!(!app.shown_admission_warning_slots.contains("b"));
+    app.handle_event(state(vec![valid("a"), valid("b")]));
+    assert!(app.notifications.messages().iter().any(|m| m.contains("b")));
+}
+
+#[tokio::test]
+async fn single_missing_binding_remains_actionable_after_toast_dismissal() {
+    use crate::components::component::Component;
+    let mut app = test_app().await;
+    app.handle_event(Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({"admissionWarnings":[{
+            "slot":"openai-api", "code":"admission_binding_missing",
+            "message":"openai-api requests are not broker-gated; configure admission.bindings"
+        }]})),
+        error: None,
+    });
+    assert!(app.notifications.dismiss_prefixed("openai-api"));
+    assert!(app.notifications.render(80).is_empty());
+    for width in [80, 120] {
+        let frame = app.ac_mut().master_session.chat.render(width).join("\n");
+        let plain = crate::components::ansi::strip_ansi(&frame);
+        assert!(plain.contains("openai-api"), "{width}: {plain}");
+        assert!(plain.contains("not broker-gated"), "{width}: {plain}");
+        assert!(plain.contains("admission.bindings"), "{width}: {plain}");
+    }
+}
+
+#[tokio::test]
+async fn authoritative_bound_snapshot_rearms_missing_binding_warning() {
+    let mut app = test_app().await;
+    let state = |missing: bool, unchanged: bool| Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(
+            serde_json::json!({"unchanged":unchanged,"admissionWarnings": if missing {
+            vec![serde_json::json!({"slot":"openai-api", "code":"admission_binding_missing", "message":"openai-api not broker-gated"})]
+        } else { vec![] }}),
+        ),
+        error: None,
+    };
+    app.handle_event(state(true, false));
+    app.notifications.dismiss_prefixed("openai-api");
+    app.handle_event(state(false, true)); // nonauthoritative omission cannot rearm
+    app.handle_event(state(true, false));
+    assert!(
+        app.notifications.messages().is_empty(),
+        "unchanged snapshot rearmed warning"
+    );
+    app.handle_event(state(false, false));
+    app.handle_event(state(true, false));
+    assert!(
+        app.notifications
+            .messages()
+            .iter()
+            .any(|m| m.contains("openai-api"))
     );
 }

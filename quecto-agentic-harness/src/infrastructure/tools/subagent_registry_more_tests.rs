@@ -308,6 +308,7 @@ async fn busy_get_state_snapshot_without_live_reply_for(
 
 fn busy_get_state_changed_snapshot() -> serde_json::Value {
     let state = crate::interface::cli::protocol::SessionState {
+        admission_warnings: Vec::new(),
         control_receipts: vec![],
         automatic_turns_suspended: false,
         repeated_failure_notifications: 0,

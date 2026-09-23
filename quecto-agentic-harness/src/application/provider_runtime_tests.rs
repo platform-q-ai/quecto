@@ -36,17 +36,23 @@ impl LlmProvider for FakeProvider {
 /// failure after a valid runtime has been published.
 struct FakeFactory {
     result: Mutex<Result<String, String>>,
+    warning_slots: Mutex<Vec<String>>,
 }
 
 impl FakeFactory {
     fn named(name: &str) -> Self {
         Self {
             result: Mutex::new(Ok(name.to_string())),
+            warning_slots: Mutex::new(Vec::new()),
         }
     }
 
     fn fail_with(&self, error: &str) {
         *self.result.lock().unwrap() = Err(error.to_string());
+    }
+
+    fn warn_for(&self, slots: &[&str]) {
+        *self.warning_slots.lock().unwrap() = slots.iter().map(|s| (*s).to_string()).collect();
     }
 }
 
@@ -57,6 +63,20 @@ impl ProviderRuntimeFactory<(), ()> for FakeFactory {
             .unwrap()
             .clone()
             .map(|name| Arc::new(FakeProvider { name }) as Arc<dyn LlmProvider>)
+    }
+
+    fn compose_runtime_outcome(
+        &self,
+        config: &(),
+        inputs: &(),
+    ) -> Result<ProviderRuntimeOutcome, String> {
+        self.compose_runtime(config, inputs)
+            .map(|provider| ProviderRuntimeOutcome {
+                provider,
+                admission_binding_diagnostic: AdmissionBindingDiagnostic {
+                    unbound_slots: self.warning_slots.lock().unwrap().clone(),
+                },
+            })
     }
 }
 
@@ -388,6 +408,7 @@ fn selection_of_unsupported_transport_returns_unsupported_transport_reason() {
         provider: Arc::new(FakeProvider {
             name: "router".to_string(),
         }),
+        admission_binding_diagnostic: Default::default(),
     };
     let reference = ModelRef::parse_qualified("openai-api/gpt-5").unwrap();
     let error = select_in_snapshot(&snapshot, &reference).expect_err("selection fails");
@@ -395,4 +416,25 @@ fn selection_of_unsupported_transport_returns_unsupported_transport_reason() {
         SelectionError::NotRunnable { reasons, .. } => assert_eq!(reasons, vec![unsupported]),
         other => panic!("expected NotRunnable, got {other:?}"),
     }
+}
+
+#[test]
+fn admission_advisory_publishes_atomically_and_failed_reload_retains_prior_diagnostic() {
+    let fixture = Fixture::new(vec![gpt5()]);
+    fixture.factory.warn_for(&["openai-api"]);
+    let first = fixture.compose().unwrap().snapshot;
+    assert_eq!(
+        first.admission_binding_diagnostic.unbound_slots,
+        vec!["openai-api"]
+    );
+    fixture.factory.warn_for(&[]);
+    fixture.factory.fail_with("invalid admission policy");
+    let error = fixture.compose().unwrap_err();
+    assert!(error.error.contains("invalid admission policy"));
+    let current = fixture.runtime_store.current().unwrap();
+    assert!(Arc::ptr_eq(&current, &first));
+    assert_eq!(
+        current.admission_binding_diagnostic.unbound_slots,
+        vec!["openai-api"]
+    );
 }

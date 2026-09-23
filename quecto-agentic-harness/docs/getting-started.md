@@ -95,6 +95,15 @@ each situation to one runbook page; these are the same commands:
 | Admission broker (one per host) | `quecto config set --global admission '{…}'`, `quecto admission-broker install-service` | `quecto admission-broker status` → `{"directory":…,"epoch":1,"journal_healthy":true,…}` | `quecto config unset --global admission`, then `quecto admission-broker uninstall-service --directory ~/.quecto/admission` |
 | Container for this repo | `quecto container init`, then make `.quecto/containers/standard/Containerfile` this repo's (its toolchain and `ai.quecto.required-tools` label — `/setup container` does it with you), then the `podman build …` line init printed | `quecto container status` → `ready: …`; `quecto container doctor` → no `✗` line, exit 0 | `quecto config unset --local container_configs.standard`, `rm -r .quecto/containers/standard` |
 
+An agent or TUI warning about an unbound provider means that provider remains
+usable **without broker gating**. Inspect `quecto config get --effective
+admission`, bind its actual built-in or `models.json` slot to an alias/group
+(or deliberately use a `"*"`/`"default"` fallback), and restart the broker
+**and** agent/TUI; config edits do not hot-update broker policy. For a complete
+whole-section `quecto config set` command when partial updates fail validation,
+see [diagnosing unbound provider slots](inference-admission.md#diagnosing-unbound-provider-slots)
+and the [superseding ADR](architecture-design-records/adr-0028-advisory-unbound-admission.md).
+
 Order on a fresh machine: credential → (global model) → repo overlay →
 admission → container, then `quecto status` once more. Details, expected
 outputs and failure tables: the [README](../README.md#commands),

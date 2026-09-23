@@ -46,6 +46,8 @@ pub struct App {
     /// The TUI's one connection state (#2044): the transport plus all
     /// agent-lifecycle state. Call sites reach it via `ac()` / `ac_mut()`.
     conn: connection_state::ConnectionState,
+    /// Slots whose startup admission warning has already been shown in this TUI session.
+    shown_admission_warning_slots: std::collections::BTreeSet<String>,
     editor: Editor,
     autocomplete: Autocomplete,
     workspace: WorkspaceFlow,
@@ -148,6 +150,7 @@ impl App {
             stdin_buffer: crate::shell::stdin_buffer::StdinBuffer::new(),
             inference: InferenceFlow::default(),
             subagents,
+            shown_admission_warning_slots: Default::default(),
             render_log_path: std::env::var("QUECTO_TUI_RENDER_LOG").ok(),
             #[cfg(any(test, feature = "test-harness"))]
             rendered_frames: 0,

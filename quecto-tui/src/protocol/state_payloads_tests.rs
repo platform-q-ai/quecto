@@ -9,6 +9,76 @@ fn sanitize(s: &str) -> String {
 }
 
 #[test]
+fn admission_warnings_accept_only_typed_sanitized_nonempty_entries() {
+    let snap = parse_get_state(
+        &json!({"admissionWarnings": [
+            {"code":"admission_binding_missing","slot":"api\u{1b}[31m","message":"not broker-gated\u{1b}"},
+            {"code":"other","slot":"ignored","message":"ignored"},
+            {"code":"admission_binding_missing","slot":"","message":"ignored"}
+        ]}),
+        &sanitize,
+    );
+    assert_eq!(
+        snap.admission_warnings,
+        vec![AdmissionBindingWarning {
+            slot: "api[31m".into(),
+            message: "not broker-gated".into(),
+        }]
+    );
+    assert!(
+        parse_get_state(&json!({}), &sanitize)
+            .admission_warnings
+            .is_empty()
+    );
+}
+
+#[test]
+fn malformed_warning_does_not_discard_valid_siblings() {
+    let snap = parse_get_state(
+        &json!({"admissionWarnings":[
+            {"code":"admission_binding_missing","slot":"provider-a","message":"not broker-gated"},
+            {"code":"admission_binding_missing","slot":42,"message":"invalid"},
+            {"code":"admission_binding_missing","slot":"provider-b","message":"not broker-gated"}
+        ]}),
+        &sanitize,
+    );
+    assert_eq!(
+        snap.admission_warnings
+            .iter()
+            .map(|w| w.slot.as_str())
+            .collect::<Vec<_>>(),
+        vec!["provider-a", "provider-b"]
+    );
+}
+
+#[test]
+fn warning_authority_requires_complete_valid_array() {
+    let warning =
+        json!({"code":"admission_binding_missing","slot":"a","message":"not broker-gated"});
+    for value in [
+        json!({}),
+        json!({"admissionWarnings":null}),
+        json!({"admissionWarnings":[warning, {"code":"unknown","slot":"b","message":"x"}]}),
+    ] {
+        assert!(
+            !parse_get_state(&value, &sanitize).admission_warnings_authoritative,
+            "{value}"
+        );
+    }
+    assert!(
+        parse_get_state(&json!({"admissionWarnings":[]}), &sanitize)
+            .admission_warnings_authoritative
+    );
+    assert!(
+        parse_get_state(&json!({"admissionWarnings":[warning]}), &sanitize)
+            .admission_warnings_authoritative
+    );
+    let large = parse_get_state(&json!({"admissionWarnings":vec![warning;65]}), &sanitize);
+    assert_eq!(large.admission_warnings.len(), 65);
+    assert!(large.admission_warnings_authoritative);
+}
+
+#[test]
 fn parse_get_state_footer_extracts_model_window_and_effort() {
     let fields = parse_get_state_footer(
         &json!({
@@ -29,6 +99,24 @@ fn parse_get_state_footer_treats_missing_and_null_effort_as_default() {
     assert_eq!(missing.effort, None);
     let null = parse_get_state_footer(&json!({"effort": null}), &sanitize);
     assert_eq!(null.effort, None);
+}
+
+#[test]
+fn malformed_footer_field_does_not_discard_valid_siblings() {
+    let fields = parse_get_state_footer(
+        &json!({"model":42,"maxContextTokens":200_000,"effort":"high"}),
+        &sanitize,
+    );
+    assert_eq!(fields.model, None);
+    assert_eq!(fields.max_context_tokens, Some(200_000));
+    assert_eq!(fields.effort.as_deref(), Some("high"));
+    let fields = parse_get_state_footer(
+        &json!({"model":"provider/model","maxContextTokens":"invalid","effort":"low"}),
+        &sanitize,
+    );
+    assert_eq!(fields.model.as_deref(), Some("provider/model"));
+    assert_eq!(fields.max_context_tokens, None);
+    assert_eq!(fields.effort.as_deref(), Some("low"));
 }
 
 #[test]

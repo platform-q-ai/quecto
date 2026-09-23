@@ -549,6 +549,7 @@ fn test_response_without_id_omits_id_field() {
 #[test]
 fn test_session_state_serializes() {
     let state = SessionState {
+        admission_warnings: Vec::new(),
         control_receipts: Vec::new(),
         automatic_turns_suspended: false,
         repeated_failure_notifications: 0,
@@ -574,6 +575,7 @@ fn test_session_state_serializes() {
 #[test]
 fn test_session_state_with_workflow_serializes() {
     let state = SessionState {
+        admission_warnings: Vec::new(),
         control_receipts: Vec::new(),
         automatic_turns_suspended: false,
         repeated_failure_notifications: 0,
@@ -603,6 +605,7 @@ fn test_session_state_with_workflow_serializes() {
 #[test]
 fn test_session_state_without_workflow_omits_field() {
     let state = SessionState {
+        admission_warnings: Vec::new(),
         control_receipts: Vec::new(),
         automatic_turns_suspended: false,
         repeated_failure_notifications: 0,
@@ -743,6 +746,5 @@ fn build_subagent_info_list_includes_parent_and_workflow() {
     assert_eq!(info.parent_id.as_deref(), Some("root"));
     assert_eq!(info.workflow.as_ref().unwrap().steps_completed, 1);
 }
-
 #[path = "protocol_workspace_tests.rs"]
 mod workspace_tests;

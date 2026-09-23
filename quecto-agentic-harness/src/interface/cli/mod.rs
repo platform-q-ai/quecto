@@ -55,6 +55,7 @@ pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_wit
 pub use uds_shutdown::test_support::deliver_termination_signal;
 
 pub mod retention_handles;
+mod uds_admission_warnings;
 pub mod uds_discovery_handles;
 #[cfg(test)]
 mod uds_execution_state_tests;
@@ -71,6 +72,8 @@ mod uds_query;
 mod uds_reader;
 mod uds_reader_dispatch;
 pub mod uds_session;
+#[cfg(test)]
+mod uds_session_admission_tests;
 pub mod uds_session_handles;
 pub mod uds_session_switch_runtime;
 mod uds_shutdown;

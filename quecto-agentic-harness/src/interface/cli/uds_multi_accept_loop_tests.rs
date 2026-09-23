@@ -48,7 +48,9 @@ pub(super) fn make_args(
         session: crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(
             &[Message::user("hello")],
         ),
+        runtime_store: Default::default(),
         state_snapshot: Arc::new(tokio::sync::RwLock::new(SessionState {
+            admission_warnings: Vec::new(),
             control_receipts: Vec::new(),
             automatic_turns_suspended: false,
             repeated_failure_notifications: 0,

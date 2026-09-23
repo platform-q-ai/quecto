@@ -84,11 +84,17 @@ impl AdmissionSection {
                 "policy rejected ({e:?}): every group needs capacity>0, reserve<capacity, positive intervals/deadlines, fallback_base<=max_cooldown, and at least one alias"
             ))
         })?;
+        let mut normalized_slots = std::collections::BTreeSet::new();
         for (slot, alias) in &self.bindings {
             if slot.is_empty() || slot.trim() != slot || slot.contains('/') {
                 return Err(invalid(format!(
                     "binding slot '{slot}' is not a provider slot name"
                 )));
+            }
+            if !normalized_slots.insert(slot.to_ascii_lowercase()) {
+                return Err(invalid(
+                    "ambiguous admission provider bindings differing only by case".into(),
+                ));
             }
             if !policy.aliases.contains_key(alias) {
                 return Err(invalid(format!(

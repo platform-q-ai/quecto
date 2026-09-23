@@ -66,6 +66,7 @@ pub struct ExecutionState {
     authority: Option<AuthorityProbe>,
     /// Last admission revision folded into `visible_generation`.
     observed_admission_revision: u64,
+    observed_binding_warnings: Option<Vec<crate::domain::state_snapshot::AdmissionBindingWarning>>,
     /// Single monotonic cursor exposed by the slim `get_state` projection.
     visible_generation: u64,
     /// Last component revisions folded into `visible_generation`.
@@ -136,6 +137,7 @@ impl Default for ExecutionState {
             admission: None,
             authority: None,
             observed_admission_revision: 0,
+            observed_binding_warnings: None,
             visible_generation: 1,
             observed_session_generation: 0,
             observed_workflow_revision: 0,
@@ -203,6 +205,22 @@ impl ExecutionState {
         }
         self.visible_generation
     }
+    /// Advance the public cursor only when the runtime advisory changes.
+    pub(crate) fn observe_binding_warnings(
+        &mut self,
+        warnings: &[crate::domain::state_snapshot::AdmissionBindingWarning],
+    ) -> u64 {
+        match self.observed_binding_warnings.as_deref() {
+            Some(previous) if previous == warnings => {}
+            None => self.observed_binding_warnings = Some(warnings.to_vec()),
+            Some(_) => {
+                self.observed_binding_warnings = Some(warnings.to_vec());
+                self.visible_generation = self.visible_generation.saturating_add(1);
+            }
+        }
+        self.visible_generation
+    }
+
     pub(crate) fn set_message_count(&mut self, count: usize) {
         self.message_count = count;
     }
