@@ -97,3 +97,24 @@ fn a_chunk_without_a_finish_reason_does_not_erase_an_earlier_one() {
     let response = super::super::openai_sse_parser::parse_sse_response(&sse).unwrap();
     assert_eq!(response.stop_reason, Some(StopReason::MaxTokens));
 }
+
+#[tokio::test]
+async fn the_streaming_handler_keeps_an_earlier_finish_reason() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    let mut handler = OpenAiSseHandler::new();
+    for chunk in [
+        serde_json::json!({"choices": [{"delta": {"content": "hi"}, "finish_reason": "length"}]}),
+        serde_json::json!({"choices": [{"delta": {}}]}),
+    ] {
+        handler.process_line(&format!("data: {chunk}"), &tx).await;
+    }
+    handler.process_line("data: [DONE]", &tx).await;
+    drop(tx);
+    let mut done = None;
+    while let Some(event) = rx.recv().await {
+        if let StreamEvent::Done(response) = event {
+            done = Some(response);
+        }
+    }
+    assert_eq!(done.expect("Done").stop_reason, Some(StopReason::MaxTokens));
+}

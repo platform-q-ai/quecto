@@ -149,12 +149,13 @@ fn openai_finish_reasons_map_to_stop_reasons() {
         ("tool_calls", StopReason::ToolUse),
         ("function_call", StopReason::ToolUse),
         ("content_filter", StopReason::Refusal),
+        ("error", StopReason::Error),
+        ("model_context_window_exceeded", StopReason::MaxTokens),
         ("other", StopReason::Unknown("other".into())),
     ] {
-        assert_eq!(
-            StopReason::from_openai_finish_reason(raw),
-            expected,
-            "{raw}"
-        );
+        let live = StopReason::from_openai_finish_reason(raw);
+        assert_eq!(live, expected, "{raw}");
+        // What a session reload reads back is what was live.
+        assert_eq!(StopReason::parse(live.as_str()), live, "{raw} round-trip");
     }
 }

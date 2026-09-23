@@ -396,15 +396,18 @@ impl StopReason {
         }
     }
 
-    /// Map an OpenAI Chat Completions `finish_reason` (#2116). Unknown
-    /// values are kept verbatim rather than dropped.
+    /// Map an OpenAI Chat Completions `finish_reason` (#2116). Anything
+    /// else goes through [`Self::parse`] — the same reading a persisted
+    /// stop reason gets on reload — so a value (`error`,
+    /// `model_context_window_exceeded`) means the same live and reloaded;
+    /// a truly unknown one is kept verbatim.
     pub fn from_openai_finish_reason(reason: &str) -> Self {
         match reason {
             "stop" => Self::EndTurn,
             "length" => Self::MaxTokens,
             "tool_calls" | "function_call" => Self::ToolUse,
             "content_filter" => Self::Refusal,
-            other => Self::Unknown(other.to_string()),
+            other => Self::parse(other),
         }
     }
 
