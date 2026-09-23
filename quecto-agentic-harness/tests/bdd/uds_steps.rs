@@ -1386,6 +1386,7 @@ fn assert_slim_get_state_data(data: &serde_json::Value, workflow: bool) {
         [
             "automaticTurnsSuspended",
             "repeatedFailureNotifications",
+            "admissionWarnings",
             "state",
             "effort",
             "effortLevels",
@@ -1404,6 +1405,7 @@ fn assert_slim_get_state_data(data: &serde_json::Value, workflow: bool) {
         [
             "automaticTurnsSuspended",
             "repeatedFailureNotifications",
+            "admissionWarnings",
             "state",
             "effort",
             "effortLevels",

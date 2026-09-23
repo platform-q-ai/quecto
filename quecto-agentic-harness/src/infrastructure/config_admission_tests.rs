@@ -121,3 +121,16 @@ fn authority_directory_may_not_be_the_base_dir_itself() {
     let err = config.admission_proposal().unwrap_err().to_string();
     assert!(err.contains("base directory"), "{err}");
 }
+
+#[test]
+fn case_duplicate_bindings_are_rejected_on_config_load() {
+    let duplicate = ENABLED.replace(
+        "\"bindings\":{\"fake\":\"acct\"}",
+        "\"bindings\":{\"fake\":\"acct\",\"FAKE\":\"acct\"}",
+    );
+    let err = load(&duplicate).unwrap_err().to_string();
+    assert!(
+        err.contains("ambiguous admission provider bindings"),
+        "{err}"
+    );
+}

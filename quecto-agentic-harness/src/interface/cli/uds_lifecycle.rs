@@ -37,7 +37,8 @@ pub struct UdsLoopArgs<'a> {
     /// Composition's sessions handles builder (#1970): the loop hands over
     /// its base directory (and any override) and holds the handles back.
     pub sessions: super::SessionHandlesBuilder,
-    /// Shared catalogue handles.
+    /// The run's catalogue handles (#1845, #1848), built once by the agent
+    /// startup and shared with the spawn tool.
     pub catalogue: super::catalogue_handles::CatalogueHandles,
     pub ext_registry: Option<ExtRegistry>,
     /// How long this harness lives (#1937): decided once at startup.
@@ -45,15 +46,17 @@ pub struct UdsLoopArgs<'a> {
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    /// Spawn admission lifecycle, private if absent.
+    /// The lifecycle cell the spawn tool admits against (#1938); the
+    /// teardown graph freezes it. `None` builds a private one.
     pub harness_lifecycle:
         Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
+    /// The environment control slot (#2070) the loop hands its teardown.
     pub environment_control: Option<EnvironmentControlSlot>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     /// Pre-created broadcast channel for workflow event emission (#598).
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    /// Parent control binding; `None` for a
+    /// The launch-bound parent control binding (#1935); `None` for a
     /// top-level harness.
     pub parent_control: Option<super::uds_parent_control::ParentControlLaunch>,
     /// Composition's teardown handles builder; `None` runs the loop without

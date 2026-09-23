@@ -35,35 +35,17 @@ use super::uds_snapshots::{
 /// Maximum number of concurrent client connections.
 pub(super) const MAX_CLIENTS: u32 = 64;
 
+/// Broadcast channel capacity for UDS event delivery.
+/// Shared between the early-creation path (workflow) and the default path.
 pub(super) const BROADCAST_CHANNEL_CAPACITY: usize = 256;
 
 /// Atomic counter for assigning unique client IDs (#352).
 pub(super) static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
-/// Shared "agent is mid-turn" flag (#828). Set by the dispatch loop for the
-/// duration of `agent.process()` (via [`BusyGuard`]), read by the accept loop.
-/// Busy clients receive a connect-time conversation snapshot; idle clients
-/// receive no unsolicited messages. The flag is shared across the accept and
-/// dispatch tasks so a connecting client can distinguish a stable idle view
-/// from a turn whose messages are still changing.
-pub(crate) type BusyFlag = std::sync::Arc<std::sync::atomic::AtomicBool>;
-
-/// Busy for a turn; cleared on every exit, including panic (#828).
-pub(crate) struct BusyGuard(BusyFlag);
-
-impl BusyGuard {
-    pub(crate) fn new(flag: &BusyFlag) -> Self {
-        flag.store(true, std::sync::atomic::Ordering::SeqCst);
-        Self(flag.clone())
-    }
-}
-
-impl Drop for BusyGuard {
-    fn drop(&mut self) {
-        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
-    }
-}
+#[path = "uds_multi_busy.rs"]
+mod busy;
+pub(crate) use busy::{BusyFlag, BusyGuard};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
