@@ -3,8 +3,20 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
-# Ask git for the paths: in a linked worktree `.git` is a file, not a directory.
-HOOKS_DIR="$(git rev-parse --path-format=absolute --git-path hooks)"
+# Hooks and the wrapper live in the repository's shared git directory, so one
+# install serves the main checkout and every linked worktree (where `.git` is
+# a file, not a directory).
+COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
+HOOKS_DIR="$COMMON_DIR/hooks"
+WRAPPER_DIR="$COMMON_DIR/wrapper-bin"
+
+# git ignores $HOOKS_DIR while core.hooksPath is set, and that directory may be
+# shared with other repositories: never write into it.
+if HOOKS_PATH="$(git config --get core.hooksPath)"; then
+    echo "install-hooks.sh: core.hooksPath is set to '$HOOKS_PATH', so git would ignore quecto's hooks in $HOOKS_DIR." >&2
+    echo "Unset it (git config --unset core.hooksPath, or with --global) and re-run." >&2
+    exit 1
+fi
 mkdir -p "$HOOKS_DIR"
 
 install_hook() {
@@ -28,7 +40,6 @@ rm -f "$HOOKS_DIR/pre-merge-commit"
 git config --unset merge.ff 2>/dev/null || true
 
 # Install git wrapper that bans --no-verify.
-WRAPPER_DIR="$(git rev-parse --path-format=absolute --git-path wrapper-bin)"
 mkdir -p "$WRAPPER_DIR"
 cp "$ROOT/scripts/git-wrapper.sh" "$WRAPPER_DIR/git"
 chmod +x "$WRAPPER_DIR/git"
@@ -41,4 +52,6 @@ echo "To activate the --no-verify ban in your current shell:"
 echo "  source scripts/activate-hooks.sh"
 echo ""
 echo "To activate automatically, add to your .bashrc or .zshrc:"
-echo "  source $(realpath "$ROOT/scripts/activate-hooks.sh")"
+# The main checkout outlives any linked worktree, so point the shell there.
+MAIN_ROOT="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
+echo "  source $(realpath "${MAIN_ROOT:-$ROOT}/scripts/activate-hooks.sh")"

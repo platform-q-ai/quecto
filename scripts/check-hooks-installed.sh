@@ -2,13 +2,19 @@
 # check-hooks-installed.sh — verifies local quality hooks and the --no-verify wrapper.
 set -euo pipefail
 
-ROOT="$(git rev-parse --show-toplevel)"
+# Hooks and the wrapper live in the repository's shared git directory.
+COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
 FAIL=0
+
+if HOOKS_PATH="$(git config --get core.hooksPath)"; then
+    echo "FAIL: core.hooksPath is set to '$HOOKS_PATH'; git ignores the hooks in $COMMON_DIR/hooks" >&2
+    FAIL=1
+fi
 
 check_hook() {
     local hook_name="$1"
     local hook_path
-    hook_path="$(git rev-parse --git-path "hooks/$hook_name")"
+    hook_path="$COMMON_DIR/hooks/$hook_name"
     local expected="exec \"\$(git rev-parse --show-toplevel)/scripts/${hook_name}.sh\""
 
     if [[ ! -x "$hook_path" ]]; then
@@ -29,7 +35,7 @@ check_hook() {
 check_hook pre-commit
 check_hook pre-push
 
-WRAPPER="$(git rev-parse --git-path wrapper-bin/git)"
+WRAPPER="$COMMON_DIR/wrapper-bin/git"
 if [[ ! -x "$WRAPPER" ]]; then
     echo "FAIL: git --no-verify wrapper missing at $WRAPPER" >&2
     FAIL=1

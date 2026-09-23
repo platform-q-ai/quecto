@@ -13,20 +13,26 @@ const SCRIPTS: [&str; 6] = [
     "pre-push.sh",
 ];
 
-/// Runs `bash -c script` in `dir` with git isolated from the user's config.
+/// Runs `bash -c script` in `dir` with git isolated from the user's config
+/// and from any `GIT_*` state inherited from a hook that runs this test.
 fn bash(dir: &Path, home: &Path, script: &str) -> Output {
-    Command::new("bash")
+    let mut command = Command::new("bash");
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(name);
+        }
+    }
+    command
         .arg("-c")
         .arg(script)
         .current_dir(dir)
         .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_AUTHOR_NAME", "t")
         .env("GIT_AUTHOR_EMAIL", "t@example.com")
         .env("GIT_COMMITTER_NAME", "t")
         .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
         .output()
         .expect("bash runs")
 }
@@ -90,4 +96,74 @@ fn hooks_install_and_verify_in_the_main_checkout() {
     assert!(main.join(".git").is_dir());
 
     install_activate_and_check(&main, tmp.path());
+}
+
+#[test]
+fn one_activation_covers_every_worktree_of_the_repository() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (main, _) = repository_with_worktree(tmp.path());
+    let checked = bash(
+        &main,
+        tmp.path(),
+        "bash scripts/install-hooks.sh >/dev/null && source scripts/activate-hooks.sh \
+         && cd ../linked && bash scripts/check-hooks-installed.sh",
+    );
+    assert_ok(
+        "check in the linked worktree after activating in main",
+        &checked,
+    );
+}
+
+#[test]
+fn a_configured_hooks_path_is_refused_and_left_untouched() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (main, _) = repository_with_worktree(tmp.path());
+    let shared = tmp.path().join("shared-hooks");
+    std::fs::create_dir_all(&shared).expect("shared hooks dir");
+    std::fs::write(shared.join("pre-merge-commit"), "#!/bin/sh\nexit 0\n").expect("user hook");
+    let configured = bash(
+        &main,
+        tmp.path(),
+        &format!("git config --global core.hooksPath {}", shared.display()),
+    );
+    assert_ok("configure core.hooksPath", &configured);
+
+    let installed = bash(&main, tmp.path(), "bash scripts/install-hooks.sh");
+
+    assert!(!installed.status.success(), "install must refuse");
+    assert!(
+        String::from_utf8_lossy(&installed.stderr).contains("core.hooksPath"),
+        "the refusal names the setting: {}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let mut left: Vec<_> = std::fs::read_dir(&shared)
+        .expect("read shared hooks")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    left.sort();
+    assert_eq!(left, ["pre-merge-commit"], "the user's hooks are untouched");
+}
+
+#[test]
+fn activating_outside_a_repository_fails_without_touching_path() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let loose = tmp.path().join("loose");
+    std::fs::create_dir_all(loose.join("scripts")).expect("scripts dir");
+    for name in ["activate-hooks.sh", "git-wrapper.sh"] {
+        std::fs::copy(
+            Path::new("../scripts").join(name),
+            loose.join("scripts").join(name),
+        )
+        .expect("copy script");
+    }
+    let sourced = bash(
+        &loose,
+        tmp.path(),
+        "before=\"$PATH\"; source scripts/activate-hooks.sh; status=$?; \
+         [ \"$PATH\" = \"$before\" ] && echo unchanged; exit $status",
+    );
+    assert!(!sourced.status.success(), "activation must report failure");
+    let stdout = String::from_utf8_lossy(&sourced.stdout);
+    assert!(stdout.contains("unchanged"), "PATH changed: {stdout}");
+    assert!(!stdout.contains("activated"), "no false success: {stdout}");
 }

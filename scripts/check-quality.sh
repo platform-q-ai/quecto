@@ -99,8 +99,9 @@ if [ -n "$baseline_warnings" ]; then
 fi
 
 # Warn (not block) if git wrapper is not active.
-WRAPPER_DIR="$(git rev-parse --path-format=absolute --git-path wrapper-bin)"
-if ! echo "$PATH" | tr ':' '\n' | grep -qF "$WRAPPER_DIR"; then
+COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+WRAPPER_DIR="$COMMON_DIR/wrapper-bin"
+if [[ "$COMMON_DIR" != /* ]] || ! echo "$PATH" | tr ':' '\n' | grep -qxF "$WRAPPER_DIR"; then
     echo -e "${YELLOW}WARN${NC}: Git --no-verify wrapper is not active."
     echo "  Run: source scripts/activate-hooks.sh"
     echo ""
