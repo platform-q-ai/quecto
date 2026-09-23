@@ -369,10 +369,7 @@ impl AgentSession {
         self.pending.push_front(PendingMessage::user(msg));
         true
     }
-    /// Test-only: simulate dedupe-watermark eviction at the
-    /// `MAX_DEDUPE_AGENTS` cap (#1082 review round 2). Clearing this bounded
-    /// cache forces a subsequently observed notification to be evaluated as a
-    /// fresh delivery rather than incorrectly treated as already seen.
+    /// Test-only: simulate eviction at the `MAX_DEDUPE_AGENTS` cap (#1082).
     #[cfg(test)]
     pub fn clear_subagent_notification_watermarks_for_test(&mut self) {
         self.last_subagent_notification.clear();
@@ -402,10 +399,8 @@ impl AgentSession {
         // previous .into_iter().collect().  Pending queue is capped at 64
         // entries so worst case is ~64 fat-pointer copies (~1.5 KiB).
         let mut drained = Vec::from(std::mem::take(&mut self.pending));
-        // #1082 review round 2: notes retained under a full queue drain here
-        // too, so queue saturation delays but never loses them. Drain the
-        // overflow deque only together with admitted work so its notification
-        // ordering and once-only ownership survive back-pressure.
+        // #1082: overflow notes drain with admitted work; saturation delays
+        // them without losing order or once-only ownership.
         drained.extend(std::mem::take(&mut self.overflow_notifications));
         drained
     }
@@ -414,8 +409,7 @@ impl AgentSession {
     /// (the agent and the change-reasoning-effort use case), so callers pass
     /// the presented view in and every `get_state` shape (live or snapshot)
     /// carries it. `session_key` is the active session's key (D10 #1979):
-    /// the tracker holds no copy. Keeping identity at the dispatch boundary
-    /// avoids stale per-session state surviving a resume or session switch.
+    /// the tracker holds no copy, avoiding stale per-session state.
     pub fn state_snapshot(
         &self,
         session_key: &str,
