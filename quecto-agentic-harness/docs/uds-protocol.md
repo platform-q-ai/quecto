@@ -1703,6 +1703,6 @@ turn completed, not that its instructions were semantically fulfilled.
 returns the latest assistant report and optional retained raw export paths plus
 checksum. Omit `agent_id` for the connected agent and `export_raw` for report-only
 inspection. It is available while busy, does not advance unread history cursors,
-and includes `get_message` recovery for truncated content. Artifact paths are
+and includes `get_message` recovery for truncated content (agents never see it: `agent_cmd get_report` reads the rest itself and returns the text, up to 64 KiB, #2114). Artifact paths are
 local to the responding runtime. See [swarm diagnostics](swarm.md#operational-diagnostics-and-budgets)
 for retention, accounting availability, provenance and export consistency.

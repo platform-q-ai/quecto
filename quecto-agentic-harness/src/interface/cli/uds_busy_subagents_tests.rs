@@ -373,10 +373,14 @@ async fn delete_all_subagents_without_registry_is_a_correlated_error() {
 
 #[tokio::test]
 async fn descendant_report_and_control_receipt_reads_bypass_busy_parent() {
-    for command in ["get_report", "get_state"] {
+    // `get_message` too (#2114): agent_cmd reads a grandchild's long report
+    // through its ancestor while that ancestor is mid-turn.
+    for command in ["get_report", "get_state", "get_message"] {
         let (clients, mut replies) = registry_with_writer();
-        let line =
-            serde_json::json!({"type":command,"id":"inspect-42","agent_id":"child"}).to_string();
+        let line = serde_json::json!({
+            "type": command, "id": "inspect-42", "agent_id": "child", "messageId": "m1", "offset": 0
+        })
+        .to_string();
         assert!(
             run(&line, &None, None, &clients).await,
             "{command} must not queue behind the parent turn"
