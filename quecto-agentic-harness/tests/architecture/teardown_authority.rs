@@ -9,12 +9,11 @@ use std::fs;
 use std::path::Path;
 
 /// Production lines of a source file, numbered: every `#[cfg(test)]`-gated
-/// ITEM is removed — the attribute, any attributes that follow it, and the
-/// one item they gate (a `;`-terminated `use`/`mod x;`, or a braced item
-/// such as `mod tests { … }` / `fn`, to its matching close brace) — and
-/// comment-only lines are dropped so a doc comment naming `kill(2)` is not
-/// an effect. Nothing else is cut: an early `#[cfg(test)] use …` no longer
-/// hides the rest of the file (review of #1940).
+/// ITEM is removed wherever it sits — parsed, with its attributes, blanked by
+/// column ([`strip_test_items`]) — and comment-only lines are dropped so a
+/// doc comment naming `kill(2)` is not an effect. Nothing else is cut: an
+/// early `#[cfg(test)] use …` does not hide the rest of the file (review of
+/// #1940, #1637).
 pub(super) fn production_code(path: &str) -> Vec<(usize, String)> {
     stripped(path)
         .iter()
@@ -61,21 +60,11 @@ fn stripped(path: &str) -> StrippedLines {
 
 /// Remove every `#[cfg(test)]`-gated item; keeps the original line numbers.
 /// Parsed, not brace-counted (#1637): raw strings and byte chars cannot
-/// desynchronise it, and a file that does not parse is refused.
+/// desynchronise it, test items are blanked by column so production code on
+/// the same line survives, and a file that does not parse is refused.
 pub(super) fn strip_test_items(source: &str) -> Vec<(usize, String)> {
-    let ranges = super::dependency_scan::test_only_line_ranges(source)
-        .unwrap_or_else(|| panic!("strip_test_items: source does not parse"));
-    source
-        .lines()
-        .enumerate()
-        .map(|(index, line)| (index + 1, line))
-        .filter(|(number, _)| {
-            !ranges
-                .iter()
-                .any(|(start, end)| (start..=end).contains(&number))
-        })
-        .map(|(number, line)| (number, line.to_string()))
-        .collect()
+    super::dependency_scan::production_lines(source)
+        .unwrap_or_else(|| panic!("strip_test_items: source does not parse"))
 }
 
 #[test]
@@ -98,6 +87,21 @@ fn last() {}
     let raw = "fn raw() { let _ = r\"}\"; let _ = b'{'; }\n#[cfg(test)]\nmod t {}\nfn after() {}\nstruct S;\nimpl S {\n    #[cfg(test)]\n    fn t() {}\n    fn kept() {}\n}\n";
     let kept: Vec<usize> = strip_test_items(raw).into_iter().map(|(n, _)| n).collect();
     assert_eq!(kept, vec![1, 4, 5, 6, 9, 10]);
+    // A production call sharing a line with a test item survives.
+    let shared =
+        "fn f() { #[cfg(test)] let _x = 1; libc::kill(1, 9); }\n#[cfg(test)] mod t {} fn g() {}\n";
+    let lines: Vec<String> = strip_test_items(shared)
+        .into_iter()
+        .map(|(_, l)| l)
+        .collect();
+    assert!(
+        lines[0].contains("libc::kill(1, 9)") && !lines[0].contains("_x"),
+        "{lines:?}"
+    );
+    assert!(
+        lines[1].contains("fn g()") && !lines[1].contains("mod t"),
+        "{lines:?}"
+    );
     let kept: Vec<String> = strip_test_items(source)
         .into_iter()
         .map(|(_, line)| line)

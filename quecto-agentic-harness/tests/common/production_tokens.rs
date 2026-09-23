@@ -177,17 +177,22 @@ pub fn assert_no_forbidden(what: &str, source: &str, forbidden: &[&str]) {
     }
 }
 
-/// The 1-based, inclusive line ranges of every `#[cfg(test)]` item (with its
+/// A source position: 1-based line, 0-based column in chars.
+pub type Position = (usize, usize);
+
+/// The spans (start, end-exclusive) of every `#[cfg(test)]` item (with its
 /// attributes) wherever it sits — file, inline module, impl or block — for
 /// scans that report line numbers. `None` when the file does not parse.
-pub fn test_only_line_ranges(source: &str) -> Option<Vec<(usize, usize)>> {
+pub fn test_only_spans(source: &str) -> Option<Vec<(Position, Position)>> {
     use syn::spanned::Spanned;
     use syn::visit::Visit;
-    struct Ranges(Vec<(usize, usize)>);
+    struct Ranges(Vec<(Position, Position)>);
     impl Ranges {
         fn add(&mut self, node: &impl Spanned) {
             let span = node.span();
-            self.0.push((span.start().line, span.end().line));
+            let (start, end) = (span.start(), span.end());
+            self.0
+                .push(((start.line, start.column), (end.line, end.column)));
         }
     }
     impl<'ast> Visit<'ast> for Ranges {
@@ -227,4 +232,33 @@ pub fn test_only_line_ranges(source: &str) -> Option<Vec<(usize, usize)>> {
     let mut ranges = Ranges(Vec::new());
     ranges.visit_file(&file);
     Some(ranges.0)
+}
+
+/// `source`'s lines with every `#[cfg(test)]` item blanked by column (a
+/// production call sharing a line with a test item survives), keeping the
+/// original 1-based line numbers; lines left blank are dropped. `None` when
+/// the file does not parse.
+pub fn production_lines(source: &str) -> Option<Vec<(usize, String)>> {
+    let spans = test_only_spans(source)?;
+    let hidden = |line: usize, column: usize| {
+        spans
+            .iter()
+            .any(|&(start, end)| (line, column) >= start && (line, column) < end)
+    };
+    Some(
+        source
+            .lines()
+            .enumerate()
+            .map(|(index, text)| {
+                let line = index + 1;
+                let kept: String = text
+                    .chars()
+                    .enumerate()
+                    .map(|(column, c)| if hidden(line, column) { ' ' } else { c })
+                    .collect();
+                (line, kept.trim_end().to_string())
+            })
+            .filter(|(_, text)| !text.trim().is_empty())
+            .collect(),
+    )
 }

@@ -6,8 +6,8 @@
 #[path = "../common/production_tokens.rs"]
 mod production_tokens;
 pub(super) use production_tokens::{
-    assert_no_forbidden, forbidden_hit, item_test_only, production_text, test_only,
-    test_only_line_ranges,
+    assert_no_forbidden, forbidden_hit, item_test_only, production_lines, production_text,
+    test_only,
 };
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};

@@ -1,6 +1,11 @@
 use super::*;
 /// The architecture suite's production-token scanner (#1637): test-only items
-/// are stripped wherever they sit and comments/literals never match.
+/// are stripped wherever they sit and comments/literals never match. These
+/// steps are the readable, text-only form of the TUI layer rules; the
+/// authoritative checks — grouped, relative and aliased imports resolved
+/// against the module tree, crate-root allowlists — are in
+/// `tests/architecture.rs` (`assert_file_free_of`,
+/// `tui_protocol_crate_paths_stay_in_protocol`).
 use common::catalogue_conformance::production_tokens;
 use quecto_tui::components::chat::{Chat, ChatEntry};
 use quecto_tui::components::component::Component;

@@ -491,130 +491,280 @@ fn infrastructure_has_no_application_imports() {
     assert_application_imports_are_ports_only(Path::new("src/infrastructure"));
 }
 
-/// The ports surface cannot launder a use case (#1637 review): every
-/// application ports module (`ports.rs`, `ports/**`) re-exports only named
-/// items that are neither a `use_cases` path nor a use-case type. Anything
-/// infrastructure reaches through `application::…::ports` is then a contract.
+/// The ports surface is an allowlist (#1637 review): whatever a ports
+/// module (`ports.rs`, `ports/**`, or an inline `mod ports`) exposes — a
+/// re-export of any visibility but private, or a type alias — names only the
+/// domain, another `ports`/`dto` module, or a contract the root
+/// `application::ports` has always listed. A use case, a `use_cases` path or
+/// a whole capability module cannot be reached through `…::ports`.
 #[test]
-fn ports_modules_reexport_no_use_case() {
+fn ports_modules_expose_only_contracts() {
     let mut application = Vec::new();
     collect_rs_files(Path::new("src/application"), &mut application);
-    let use_cases = use_case_names(&application);
-    assert!(
-        use_cases.contains("SubagentLaunchUseCase") && use_cases.contains("KillEnvironment"),
-        "use-case inventory reads the tree: {use_cases:?}"
-    );
-    let mut ports = 0;
+    let mut checked = 0;
     for file_content in &application {
         let (file, source) = file_content.split_once(":\n").unwrap();
-        if !(file.ends_with("/ports.rs") || file.contains("/ports/")) {
+        if dependency_scan::test_only_file(file) {
             continue;
         }
-        ports += 1;
-        let refused = reexported_use_cases(source, &use_cases)
-            .unwrap_or_else(|| panic!("{file} does not parse"));
-        assert!(refused.is_empty(), "{file} re-exports {refused:?}");
+        let (exposed, refused) = port_exposures(file, source);
+        checked += exposed;
+        assert!(
+            refused.is_empty(),
+            "{file} exposes {refused:?} through a ports module"
+        );
     }
-    assert!(ports > 10, "the ports modules were found ({ports})");
+    assert!(checked > 40, "ports exposures were read ({checked})");
 }
 
-/// Names a use-case module defines: every `pub` struct/enum/fn/type in a
-/// `use_cases` file, and every application type named `*UseCase`.
-fn use_case_names(application: &[String]) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    for file_content in application {
-        let (file, source) = file_content.split_once(":\n").unwrap();
-        let in_use_cases = file.contains("/use_cases/") || file.ends_with("/use_cases.rs");
-        let parsed = syn::parse_file(source).unwrap_or_else(|e| panic!("{file}: {e}"));
-        for item in parsed.items {
-            let (public, ident) = match &item {
-                syn::Item::Struct(i) => (&i.vis, &i.ident),
-                syn::Item::Enum(i) => (&i.vis, &i.ident),
-                syn::Item::Fn(i) => (&i.vis, &i.sig.ident),
-                syn::Item::Type(i) => (&i.vis, &i.ident),
-                _ => continue,
-            };
-            let name = ident.to_string();
-            if matches!(public, syn::Visibility::Public(_))
-                && (in_use_cases || name.ends_with("UseCase"))
-            {
-                names.insert(name);
-            }
+/// Root `application::ports` contracts that live beside their capability's
+/// use cases rather than in a `ports`/`dto` module.
+const ROOT_PORT_CONTRACTS: &[(&str, &[&str])] = &[
+    (
+        "catalogue",
+        &[
+            "CatalogueSnapshotStore",
+            "CatalogueSource",
+            "CatalogueSourceError",
+            "CredentialStatusPort",
+            "ResolvedCatalogue",
+            "SkippedRecord",
+            "SourceEntries",
+        ],
+    ),
+    (
+        "inference_admission",
+        &[
+            "AdmissionClient",
+            "AdmissionDispatcher",
+            "AdmissionRecovery",
+            "AdmissionRegistry",
+        ],
+    ),
+    (
+        "inference_attempt",
+        &["AttemptAcquisition", "AttemptAdmission", "AttemptPermit"],
+    ),
+    (
+        "inference_authority",
+        &[
+            "AdmissionAuthority",
+            "AuthorityError",
+            "AuthorityStatus",
+            "Credential",
+        ],
+    ),
+    (
+        "inference_authority_ports",
+        &["AdmissionJournal", "AdmissionSecretSource", "JournalError"],
+    ),
+    ("inference_observation", &["AdmissionObservation"]),
+    (
+        "provider_runtime",
+        &["ProviderRuntimeFactory", "RuntimeSnapshotStore"],
+    ),
+    ("subagent_launch", &["LaunchFuture", "SubagentLaunchPorts"]),
+];
+
+fn port_target_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "domain", ..] => true,
+        ["crate", rest @ ..]
+            if !rest.contains(&"use_cases")
+                && (rest.contains(&"ports") || rest.contains(&"dto")) =>
+        {
+            true
         }
+        ["crate", "application", module, name] => ROOT_PORT_CONTRACTS
+            .iter()
+            .any(|(owner, names)| owner == module && names.contains(name)),
+        // A crate path in no allowed place, or one that escaped resolution.
+        ["crate", ..] => false,
+        // External crates and primitives (`Pin`, `std::…`).
+        _ => true,
     }
-    names
 }
 
-/// The `pub use` targets in `source` that name a use case (or a glob, which
-/// cannot be checked). Test-gated re-exports are not part of the surface.
-fn reexported_use_cases(source: &str, use_cases: &BTreeSet<String>) -> Option<Vec<String>> {
-    fn targets(tree: &syn::UseTree, prefix: &str, out: &mut Vec<String>) {
-        match tree {
-            syn::UseTree::Path(path) => {
-                targets(&path.tree, &format!("{prefix}{}::", path.ident), out)
+/// True when a `cfg` on the item makes it exist only in test or
+/// `test-support` builds (`cfg(test)`, `cfg(any(test, feature =
+/// "test-support"))`); `not(…)` and other features are production.
+fn cfg_test_gated(attrs: &[syn::Attribute]) -> bool {
+    fn requires(meta: &syn::Meta) -> bool {
+        use syn::punctuated::Punctuated;
+        match meta {
+            syn::Meta::Path(path) => path.is_ident("test"),
+            syn::Meta::NameValue(value) => {
+                value.path.is_ident("feature")
+                    && matches!(&value.value, syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(name), ..
+                    }) if name.value() == "test-support")
             }
-            syn::UseTree::Name(name) => out.push(format!("{prefix}{}", name.ident)),
-            syn::UseTree::Rename(name) => out.push(format!("{prefix}{}", name.ident)),
-            syn::UseTree::Glob(_) => out.push(format!("{prefix}*")),
-            syn::UseTree::Group(group) => {
-                for item in &group.items {
-                    targets(item, prefix, out);
+            syn::Meta::List(list) => {
+                let Ok(children) =
+                    list.parse_args_with(Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+                else {
+                    return false;
+                };
+                if list.path.is_ident("all") {
+                    children.iter().any(requires)
+                } else if list.path.is_ident("any") {
+                    !children.is_empty() && children.iter().all(requires)
+                } else {
+                    false
                 }
             }
         }
     }
-    let parsed = syn::parse_file(source).ok()?;
-    let mut refused = Vec::new();
-    for item in parsed.items {
-        let syn::Item::Use(reexport) = item else {
-            continue;
+    attrs.iter().any(|attr| {
+        attr.path().is_ident("cfg") && attr.parse_args::<syn::Meta>().is_ok_and(|m| requires(&m))
+    })
+}
+
+/// (number of exposures read, the refused ones) for one application file.
+fn port_exposures(file: &str, source: &str) -> (usize, Vec<String>) {
+    let module = dependency_scan::module_path(file);
+    let in_ports = file.ends_with("/ports.rs") || file.contains("/ports/");
+    let parsed = syn::parse_file(source).unwrap_or_else(|e| panic!("{file}: {e}"));
+    let mut out = (0, Vec::new());
+    port_items(&parsed.items, &module, in_ports, &mut out);
+    out
+}
+
+fn port_items(
+    items: &[syn::Item],
+    module: &[String],
+    in_ports: bool,
+    out: &mut (usize, Vec<String>),
+) {
+    use syn::visit::Visit;
+    struct TypePaths(Vec<String>);
+    impl<'ast> Visit<'ast> for TypePaths {
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            self.0.push(
+                path.segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::"),
+            );
+            syn::visit::visit_path(self, path);
+        }
+    }
+    fn use_targets(tree: &syn::UseTree, prefix: &str, found: &mut Vec<String>) {
+        match tree {
+            syn::UseTree::Path(path) => {
+                use_targets(&path.tree, &format!("{prefix}{}::", path.ident), found)
+            }
+            syn::UseTree::Name(name) => found.push(format!("{prefix}{}", name.ident)),
+            syn::UseTree::Rename(name) => found.push(format!("{prefix}{}", name.ident)),
+            syn::UseTree::Glob(_) => found.push(format!("{prefix}*")),
+            syn::UseTree::Group(group) => {
+                for item in &group.items {
+                    use_targets(item, prefix, found);
+                }
+            }
+        }
+    }
+    // A path starting at a module declared right here is relative to it.
+    let local: BTreeSet<String> = items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Mod(declared) => Some(declared.ident.to_string()),
+            _ => None,
+        })
+        .collect();
+    let resolve = |path: &str| {
+        if path
+            .split("::")
+            .next()
+            .is_some_and(|first| local.contains(first))
+        {
+            format!("crate::{}::{path}", module.join("::"))
+        } else {
+            dependency_scan::resolve_relative(module, path)
+        }
+    };
+    for item in items {
+        let (attrs, visibility) = match item {
+            syn::Item::Use(i) => (&i.attrs, &i.vis),
+            syn::Item::Type(i) => (&i.attrs, &i.vis),
+            syn::Item::Mod(i) => (&i.attrs, &i.vis),
+            _ => continue,
         };
-        let test_gated = reexport.attrs.iter().any(|attr| {
-            attr.path().is_ident("cfg") && attr.meta.to_token_stream().to_string().contains("test")
-        });
-        if !matches!(reexport.vis, syn::Visibility::Public(_)) || test_gated {
+        if cfg_test_gated(attrs) {
             continue;
         }
-        let mut found = Vec::new();
-        targets(&reexport.tree, "", &mut found);
-        refused.extend(found.into_iter().filter(|path| {
-            let segments: Vec<_> = path.split("::").collect();
-            let last = segments.last().copied().unwrap_or_default();
-            last == "*" || segments.contains(&"use_cases") || use_cases.contains(last)
-        }));
+        let mut targets = Vec::new();
+        match item {
+            syn::Item::Mod(declared) => {
+                if let Some((_, inner)) = &declared.content {
+                    let mut child = module.to_vec();
+                    child.push(declared.ident.to_string());
+                    port_items(inner, &child, in_ports || declared.ident == "ports", out);
+                }
+                continue;
+            }
+            syn::Item::Use(reexport) => use_targets(&reexport.tree, "", &mut targets),
+            syn::Item::Type(alias) => {
+                let mut paths = TypePaths(Vec::new());
+                paths.visit_type(&alias.ty);
+                targets = paths.0;
+            }
+            _ => unreachable!("filtered above"),
+        }
+        if !in_ports || matches!(visibility, syn::Visibility::Inherited) {
+            continue;
+        }
+        for target in targets {
+            out.0 += 1;
+            let resolved = resolve(&target);
+            if !port_target_allowed(&resolved) {
+                out.1.push(resolved);
+            }
+        }
     }
-    Some(refused)
 }
 
 #[test]
-fn ports_reexport_guard_refuses_use_cases() {
-    let use_cases: BTreeSet<String> = ["KillEnvironment", "SubagentLaunchUseCase"]
-        .into_iter()
-        .map(String::from)
-        .collect();
+fn ports_guard_is_an_allowlist() {
+    let file = "src/application/environments/ports.rs";
     for source in [
-        "pub use super::environments::use_cases::Anything as X;",
-        "pub use super::environments::KillEnvironment;",
-        "pub use super::subagent_launch::{SubagentLaunchPorts, SubagentLaunchUseCase};",
-        "pub use super::environments::*;",
+        "pub use super::use_cases::FinalizeEnvironmentMember as X;",
+        "pub(crate) use super::use_cases::FinalizeEnvironmentMember as X;",
+        "pub use super::super::subagent_launch;",
+        "pub use crate::application::sessions as s;",
+        "pub use super::super::subagent_launch::SubagentLaunchUseCase;",
+        "pub use super::*;",
+        "pub type K = super::use_cases::KillEnvironment;",
+        "pub mod inner { pub use super::super::use_cases::KillEnvironment; }",
+        "#[cfg(not(test))]\npub use super::use_cases::KillEnvironment;",
+        "#[cfg(feature = \"attestation\")]\npub use super::use_cases::KillEnvironment;",
+        "pub use crate::application::environments::ports::use_cases::X;",
     ] {
-        assert!(
-            !reexported_use_cases(source, &use_cases).unwrap().is_empty(),
-            "{source}"
-        );
+        assert!(!port_exposures(file, source).1.is_empty(), "{source}");
     }
     for source in [
-        "pub use super::subagent_launch::{LaunchFuture, SubagentLaunchPorts};",
-        "use super::environments::KillEnvironment;",
-        "#[cfg(any(test, feature = \"test-support\"))]\npub use super::swarm::LifecycleService;",
+        "pub use crate::domain::environment_registry::EnvironmentRegistry;",
+        "pub use super::dto::EnvironmentLiveness;",
+        "pub use crate::application::sessions::ports::SessionStore;",
+        "pub use crate::application::subagent_launch::{LaunchFuture, SubagentLaunchPorts};",
+        "pub type F<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>>;",
+        "use super::use_cases::KillEnvironment;",
+        "#[cfg(any(test, feature = \"test-support\"))]\npub use super::use_cases::KillEnvironment;",
+        "mod local { pub struct X; }\npub use local::X;",
     ] {
-        assert_eq!(
-            reexported_use_cases(source, &use_cases),
-            Some(Vec::new()),
-            "{source}"
-        );
+        let (exposed, refused) = port_exposures(file, source);
+        assert_eq!(refused, Vec::<String>::new(), "{source}");
+        let private = source.starts_with("use ") || source.starts_with("#[cfg");
+        assert!(private || exposed > 0, "{source} was read");
     }
-    assert!(reexported_use_cases("pub use (", &use_cases).is_none());
+    // Outside a ports module, nothing is an exposure of the ports surface.
+    let (exposed, _) = port_exposures(
+        "src/application/environments/mod.rs",
+        "pub use use_cases::KillEnvironment;",
+    );
+    assert_eq!(exposed, 0);
 }
 
 /// Application references use the explicit port and environment-owner surface.
