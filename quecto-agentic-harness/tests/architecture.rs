@@ -13,6 +13,9 @@
 //! - infrastructure/ imports domain/ only
 //! - interface/ imports all three (composition root)
 
+#[path = "architecture/bdd_lanes.rs"]
+mod bdd_lanes;
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
