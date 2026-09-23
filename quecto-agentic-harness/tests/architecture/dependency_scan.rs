@@ -558,6 +558,17 @@ fn production_text_keeps_cfg_combinations_and_multiline_paths() {
         )
         .is_err()
     );
+    // Whitespace inside the code string cannot split a path.
+    // The last one does not tokenise (unbalanced): whitespace-stripped text.
+    for spaced in [
+        "dirs :: home_dir",
+        "dirs\n::home_dir",
+        "dirs::\thome_dir",
+        "dirs::home_dir (",
+    ] {
+        let source = format!("struct S {{ #[serde(default = {spaced:?})] f: u8 }}");
+        assert!(forbidden_hit(&source, &["dirs::"]).is_err(), "{source}");
+    }
     assert!(forbidden_hit("fn broken( {", &["x"]).is_err());
 }
 

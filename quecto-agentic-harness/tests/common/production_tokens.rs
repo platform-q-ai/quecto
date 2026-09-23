@@ -148,15 +148,14 @@ fn render(stream: TokenStream, out: &mut String, attribute: bool, in_bound: bool
             TokenTree::Punct(punct) => out.push(punct.as_char()),
             TokenTree::Literal(literal) if attribute && is_path_valued(&tokens, at, in_bound) => {
                 if let Ok(text) = syn::parse_str::<syn::LitStr>(&literal.to_string()) {
-                    // One space per whitespace run: `dyn dirs::X` keeps its
-                    // name boundary.
-                    out.push_str(
-                        &text
-                            .value()
-                            .split_whitespace()
-                            .collect::<Vec<_>>()
-                            .join(" "),
-                    );
+                    // Rendered as the code it holds, like any other tokens:
+                    // `dirs :: x` reads `dirs::x`, `dyn dirs::X` keeps its
+                    // name boundary. Text that does not tokenise loses its
+                    // whitespace (fails toward matching).
+                    match text.value().parse::<TokenStream>() {
+                        Ok(code) => render(code, out, false, false),
+                        Err(_) => out.extend(text.value().chars().filter(|c| !c.is_whitespace())),
+                    }
                 }
             }
             TokenTree::Literal(_) => {}
