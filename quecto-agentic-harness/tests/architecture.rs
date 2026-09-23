@@ -21,7 +21,7 @@ mod bdd_lanes;
 mod dependency_scan;
 
 use quote::ToTokens;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -321,10 +321,7 @@ fn inner_layers_invoke_no_outer_layer_macros() {
             if dependency_scan::test_only_file(file) {
                 continue;
             }
-            let invoked: Vec<_> = macro_invocations(source)
-                .into_iter()
-                .filter(|name| outer.contains(name))
-                .collect();
+            let invoked = outer_macro_invocations(source, &outer);
             assert!(
                 invoked.is_empty(),
                 "{file} invokes outer-layer macros {invoked:?}"
@@ -335,10 +332,24 @@ fn inner_layers_invoke_no_outer_layer_macros() {
         macro_definitions("macro_rules! outer { () => {} }"),
         ["outer"]
     );
+    let outer: BTreeSet<String> = ["outer".to_string()].into_iter().collect();
+    assert_eq!(
+        outer_macro_invocations("fn f() { vec![outer!()]; }", &outer),
+        ["outer"]
+    );
+    assert!(outer_macro_invocations("fn f() { inner!(); }", &outer).is_empty());
     assert_eq!(
         macro_invocations("fn f() { outer!(); let _ = vec![inner!()]; }"),
         ["outer", "vec", "inner"]
     );
+}
+
+/// The macros in `outer` that `source` invokes.
+fn outer_macro_invocations(source: &str, outer: &BTreeSet<String>) -> Vec<String> {
+    macro_invocations(source)
+        .into_iter()
+        .filter(|name| outer.contains(name))
+        .collect()
 }
 
 /// `macro_rules!` names a file defines (test-only ones excluded).
@@ -651,6 +662,26 @@ fn port_items(
             syn::visit::visit_path(self, path);
         }
     }
+    /// (bound name, full path) for each leaf; a glob binds `*`.
+    fn use_bindings(tree: &syn::UseTree, prefix: &str, found: &mut Vec<(String, String)>) {
+        match tree {
+            syn::UseTree::Path(path) => {
+                use_bindings(&path.tree, &format!("{prefix}{}::", path.ident), found)
+            }
+            syn::UseTree::Name(name) => {
+                found.push((name.ident.to_string(), format!("{prefix}{}", name.ident)))
+            }
+            syn::UseTree::Rename(name) => {
+                found.push((name.rename.to_string(), format!("{prefix}{}", name.ident)))
+            }
+            syn::UseTree::Glob(_) => found.push(("*".to_string(), format!("{prefix}*"))),
+            syn::UseTree::Group(group) => {
+                for item in &group.items {
+                    use_bindings(item, prefix, found);
+                }
+            }
+        }
+    }
     fn use_targets(tree: &syn::UseTree, prefix: &str, found: &mut Vec<String>) {
         match tree {
             syn::UseTree::Path(path) => {
@@ -666,23 +697,51 @@ fn port_items(
             }
         }
     }
-    // A path starting at a module declared right here is relative to it.
-    let local: BTreeSet<String> = items
-        .iter()
-        .filter_map(|item| match item {
-            syn::Item::Mod(declared) => Some(declared.ident.to_string()),
-            _ => None,
-        })
-        .collect();
+    // Names in scope here: declared modules and every `use` binding
+    // (private ones included — `use super::x; pub use x::Y;` reaches `x`).
+    // After a glob import of a crate path, a bare name could be anything.
+    let mut local: BTreeMap<String, String> = BTreeMap::new();
+    let mut crate_glob = false;
+    for item in items {
+        match item {
+            syn::Item::Mod(declared) => {
+                let name = declared.ident.to_string();
+                local.insert(
+                    name.clone(),
+                    format!("crate::{}::{name}", module.join("::")),
+                );
+            }
+            syn::Item::Use(binding) => {
+                let mut bound = Vec::new();
+                use_bindings(&binding.tree, "", &mut bound);
+                for (name, path) in bound {
+                    let path = dependency_scan::resolve_relative(module, &path);
+                    if name == "*" {
+                        crate_glob |= path.starts_with("crate");
+                    } else {
+                        local.insert(name, path);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
     let resolve = |path: &str| {
-        if path
-            .split("::")
-            .next()
-            .is_some_and(|first| local.contains(first))
-        {
-            format!("crate::{}::{path}", module.join("::"))
-        } else {
-            dependency_scan::resolve_relative(module, path)
+        let (first, rest) = path.split_once("::").unwrap_or((path, ""));
+        let joined = |base: &str| {
+            if rest.is_empty() {
+                base.to_string()
+            } else {
+                format!("{base}::{rest}")
+            }
+        };
+        match first {
+            "crate" | "super" | "self" => dependency_scan::resolve_relative(module, path),
+            _ => match local.get(first) {
+                Some(base) if base != path => joined(base),
+                _ if crate_glob => dependency_scan::UNRESOLVABLE.to_string(),
+                _ => path.to_string(),
+            },
         }
     };
     for item in items {
@@ -741,6 +800,12 @@ fn ports_guard_is_an_allowlist() {
         "#[cfg(not(test))]\npub use super::use_cases::KillEnvironment;",
         "#[cfg(feature = \"attestation\")]\npub use super::use_cases::KillEnvironment;",
         "pub use crate::application::environments::ports::use_cases::X;",
+        "#[cfg(any(test, feature = \"attestation\"))]\npub use super::use_cases::KillEnvironment;",
+        // Through a private binding, a local module or after a glob.
+        "use super::super::environments;\npub use environments::use_cases::KillEnvironment;",
+        "use super::use_cases as cases;\npub use cases::KillEnvironment;",
+        "mod use_cases { pub struct K; }\npub use use_cases::K;",
+        "use super::*;\npub use use_cases::KillEnvironment;",
     ] {
         assert!(!port_exposures(file, source).1.is_empty(), "{source}");
     }
@@ -2237,14 +2302,43 @@ fn tui_protocol_crate_paths_stay_in_protocol() {
         if dependency_scan::test_only_file(file) {
             continue;
         }
-        let paths =
-            dependency_paths_at(file, source).unwrap_or_else(|| panic!("{file} does not parse"));
-        for path in paths {
-            assert!(
-                crate_path_within(&path, &["protocol"]),
-                "{file} names {path}; the TUI protocol may only name crate::protocol"
-            );
-        }
+        let refused = paths_outside(file, source, &["protocol"]);
+        assert!(
+            refused.is_empty(),
+            "{file} names {refused:?}; the TUI protocol may only name crate::protocol"
+        );
+    }
+    let file = "../quecto-tui/src/protocol/session_payloads.rs";
+    for source in [
+        "use crate::components::ansi::sanitize_control;",
+        "use super::super::shell::App;",
+        "use crate::{setup::Wizard};",
+        "fn f() { vec![crate::ansi::x()]; }",
+    ] {
+        assert!(
+            !paths_outside(file, source, &["protocol"]).is_empty(),
+            "{source}"
+        );
+    }
+    assert!(
+        paths_outside(
+            file,
+            "use super::client::Client; use serde::Deserialize;",
+            &["protocol"]
+        )
+        .is_empty()
+    );
+}
+
+/// The crate paths `file` names (resolved) outside `roots`; unparseable
+/// source is refused.
+fn paths_outside(file: &str, source: &str, roots: &[&str]) -> Vec<String> {
+    match dependency_paths_at(file, source) {
+        Some(paths) => paths
+            .into_iter()
+            .filter(|path| !crate_path_within(path, roots))
+            .collect(),
+        None => vec!["<does not parse>".to_string()],
     }
 }
 
