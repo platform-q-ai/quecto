@@ -49,6 +49,10 @@ impl UninstallAuthorityService {
             actions.push(ServiceAction::NoUnitToRemove {
                 path: unit_path.clone(),
             });
+            // The unit may have been removed before a previous daemon-reload
+            // failed. Reload even when absent so a retry completes that work.
+            self.manager.daemon_reload()?;
+            actions.push(ServiceAction::DaemonReloaded);
             return Ok(ServiceReport {
                 directory,
                 unit,

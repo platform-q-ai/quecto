@@ -73,3 +73,92 @@ fn lifecycle_calls_reach_systemctl_user() {
     );
     assert!(logged.contains("--user disable --now"), "{logged}");
 }
+
+#[test]
+fn failed_systemctl_user_commands_report_stderr_and_preserve_unit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, log) = under_test(&tmp);
+    let script = tmp.path().join("systemctl");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf 'service unavailable\\n' >&2\nexit 7\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    manager
+        .write_unit(&ServiceUnitSpec {
+            contents: "[Service]\nExecStart=/x\n".into(),
+        })
+        .unwrap();
+    for (args, result) in [
+        ("--user daemon-reload", manager.daemon_reload()),
+        (
+            "--user enable --now quecto-admission-broker.service",
+            manager.enable_now(),
+        ),
+        (
+            "--user restart quecto-admission-broker.service",
+            manager.restart(),
+        ),
+    ] {
+        let error = result.expect_err("nonzero exit must be reported");
+        assert!(error.contains(args), "{error}");
+        assert!(error.contains("service unavailable"), "{error}");
+    }
+    let error = manager
+        .disable_now()
+        .expect_err("non-idempotent failure must propagate");
+    assert!(
+        error.contains("--user disable --now quecto-admission-broker.service"),
+        "{error}"
+    );
+    assert!(error.contains("service unavailable"), "{error}");
+    assert!(matches!(
+        manager.unit_status().unwrap(),
+        UnitStatus::Present { .. }
+    ));
+    assert_eq!(
+        std::fs::read_to_string(log)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        [
+            "--user daemon-reload",
+            "--user enable --now quecto-admission-broker.service",
+            "--user restart quecto-admission-broker.service",
+            "--user disable --now quecto-admission-broker.service",
+        ]
+    );
+}
+
+#[test]
+fn disable_now_treats_only_missing_unit_errors_as_idempotent() {
+    for stderr in [
+        "Unit quecto-admission-broker.service not loaded.",
+        "Unit quecto-admission-broker.service does not exist.",
+        "Failed to disable unit: No such file or directory",
+        "Unit quecto-admission-broker.service not-found.",
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manager, log) = under_test(&tmp);
+        let script = tmp.path().join("systemctl");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf '%s\\n' '{}' >&2\nexit 7\n",
+                log.display(),
+                stderr
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!manager.disable_now().unwrap(), "{stderr}");
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "--user disable --now quecto-admission-broker.service\n"
+        );
+    }
+}
