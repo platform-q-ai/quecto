@@ -143,25 +143,6 @@ fn registry_updates_allocate_roster_global_sequence() {
 }
 
 #[test]
-fn get_subagents_command_round_trips_since_cursor() {
-    let cmd = AgentCommand::GetSubagents {
-        id: Some("gs".into()),
-        since: Some(42),
-    };
-    let value = serde_json::to_value(&cmd).unwrap();
-    assert_eq!(value["type"], "get_subagents");
-    assert_eq!(value["since"], 42);
-    let parsed: AgentCommand = serde_json::from_value(value).unwrap();
-    match parsed {
-        AgentCommand::GetSubagents { id, since } => {
-            assert_eq!(id.as_deref(), Some("gs"));
-            assert_eq!(since, Some(42));
-        }
-        _ => panic!("expected get_subagents"),
-    }
-}
-
-#[test]
 fn compact_roster_omits_dead_and_exited_subagents_retained_in_registry() {
     let reg = new_registry();
     {

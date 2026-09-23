@@ -1,4 +1,8 @@
 use super::*;
+/// The architecture suite's production-token scanner (#1637): test-only items
+/// are stripped wherever they sit and comments/literals never match.
+#[path = "../common/production_tokens.rs"]
+mod production_tokens;
 use quecto_tui::components::chat::{Chat, ChatEntry};
 use quecto_tui::components::component::Component;
 use quecto_tui::shell::app::tui_harness::TuiHarness;
@@ -146,22 +150,11 @@ fn then_tui_conversation_pure_policy_no_outer_layers(_world: &mut QuectoWorld) {
         let path = Path::new(TUI_ROOT).join("conversation").join(rel);
         let content = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read pure conversation policy {}: {e}", path.display()));
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            for pattern in forbidden {
-                assert!(
-                    !trimmed.contains(pattern),
-                    "pure conversation policy {} must not import outer layer pattern {pattern}; line: {trimmed}",
-                    path.display()
-                );
-            }
-        }
+        production_tokens::assert_no_forbidden(
+            &format!("pure conversation policy {}", path.display()),
+            &content,
+            &forbidden,
+        );
     }
 }
 
@@ -183,29 +176,13 @@ fn then_tui_agents_pure_policy_no_outer_layers(_world: &mut QuectoWorld) {
         let path = Path::new(TUI_ROOT).join("agents").join(rel);
         let content = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read pure agents policy {}: {e}", path.display()));
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            // ledger may import protocol agent_ledger_payloads + conversation
-            if rel == "ledger.rs"
-                && (trimmed.contains("crate::protocol::agent_ledger_payloads")
-                    || trimmed.contains("crate::conversation::"))
-            {
-                continue;
-            }
-            for pattern in forbidden {
-                assert!(
-                    !trimmed.contains(pattern),
-                    "pure agents policy {} must not import outer layer pattern {pattern}; line: {trimmed}",
-                    path.display()
-                );
-            }
-        }
+        // The ledger's allowed `crate::protocol::agent_ledger_payloads` and
+        // `crate::conversation::` imports match no forbidden pattern.
+        production_tokens::assert_no_forbidden(
+            &format!("pure agents policy {}", path.display()),
+            &content,
+            &forbidden,
+        );
     }
 }
 
@@ -231,19 +208,7 @@ fn then_tui_workspace_files_no_presentation(_world: &mut QuectoWorld) {
         "crate::workflow",
         "crate::inference",
     ] {
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            assert!(
-                !trimmed.contains(pattern),
-                "workspace_files must not import {pattern}; line: {trimmed}"
-            );
-        }
+        production_tokens::assert_no_forbidden("workspace_files", &content, &[pattern]);
     }
 }
 
@@ -1359,24 +1324,14 @@ fn assert_no_tui_patterns(layer: &str, forbidden: &[&str]) {
     );
 
     for file_content in &files {
-        let (file_path, _) = file_content
+        let (file_path, source) = file_content
             .split_once(":\n")
             .expect("split path from file content");
-        for line in file_content.lines().skip(1) {
-            let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-            if trimmed.starts_with("//") || trimmed.starts_with("//!") {
-                continue;
-            }
-            for pattern in forbidden {
-                assert!(
-                    !trimmed.contains(pattern),
-                    "quecto-tui {layer} architecture violation in {file_path}: {trimmed}; forbidden pattern: {pattern}"
-                );
-            }
-        }
+        production_tokens::assert_no_forbidden(
+            &format!("quecto-tui {layer} architecture violation in {file_path}"),
+            source,
+            forbidden,
+        );
     }
 }
 

@@ -69,7 +69,7 @@ pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
                     }
                 },
             };
-            let mut data = match super::protocol::build_compact_subagent_roster(subagents, since)
+            let mut data = match crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster(subagents, since)
                 .and_then(|roster| serde_json::to_value(roster).map_err(|e| e.to_string()))
             {
                 Ok(data) => data,

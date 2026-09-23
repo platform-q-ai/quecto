@@ -6,6 +6,7 @@ use super::spawn_input::parse_container_selection;
 #[cfg(test)]
 use super::spawn_launch_args::write_private_new;
 pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
+use crate::application::subagent_launch::SubagentLaunchUseCase;
 use crate::application::tools::ports::Tool;
 use crate::domain::environment_registry::EnvironmentRegistry;
 use crate::domain::error::DomainError;
@@ -16,7 +17,6 @@ use crate::domain::subagent::{
 };
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
-use crate::subagent_launch_app::SubagentLaunchUseCase;
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -348,8 +348,7 @@ impl SpawnTool {
     #[doc(hidden)]
     pub fn launch_ports_for_contract(
         &self,
-    ) -> impl crate::application::subagent_launch::SubagentLaunchPorts<Prepared: Send> + Send + '_
-    {
+    ) -> impl crate::application::ports::SubagentLaunchPorts<Prepared: Send> + Send + '_ {
         super::spawn_launch_ports::SpawnLaunchPorts::new(self)
     }
 

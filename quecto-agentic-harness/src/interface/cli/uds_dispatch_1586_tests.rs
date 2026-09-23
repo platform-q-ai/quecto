@@ -10,7 +10,7 @@ use crate::interface::cli::protocol::AgentCommand;
 #[test]
 fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appears() {
     use crate::domain::session::SubagentRestoreReason;
-    use crate::interface::cli::protocol::build_compact_subagent_roster;
+    use crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster;
     use crate::interface::cli::uds::dispatch_session_roster_tests::{
         reset_roster_for_restore, snapshot_subagent_roster_with_restore_reason,
     };

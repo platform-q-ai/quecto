@@ -64,8 +64,10 @@ impl App {
         {
             self.ac_mut().sessions.pending_list_id = None;
             if let Some(data) = data {
-                let diagnostics =
-                    crate::protocol::session_payloads::session_discovery_diagnostics(&data);
+                let diagnostics = crate::protocol::session_payloads::session_discovery_diagnostics(
+                    &data,
+                    &crate::components::ansi::sanitize_control,
+                );
                 if let Some(line) = crate::sessions::discovery_diagnostics::unseen_diagnostics_toast(
                     &mut self.ac_mut().sessions.shown_diagnostics,
                     &diagnostics,

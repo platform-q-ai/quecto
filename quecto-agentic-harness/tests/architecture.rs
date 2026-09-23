@@ -15,6 +15,10 @@
 
 #[path = "architecture/bdd_lanes.rs"]
 mod bdd_lanes;
+/// Production-token and relative-path scanning shared by the layer rules
+/// (#1637).
+#[path = "architecture/dependency_scan.rs"]
+mod dependency_scan;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -67,44 +71,20 @@ fn collect_rs_files(dir: &Path, files: &mut Vec<String>) {
     }
 }
 
-/// Check that no file in `dir` contains any of the `forbidden` import patterns.
-/// Only checks production code — everything after `#[cfg(test)]` is skipped.
+/// Check that no file in `dir` contains any of the `forbidden` patterns in its
+/// production code: every `#[cfg(test)]` item is removed wherever it sits, and
+/// comments and string literals never match (#1637).
 fn assert_no_imports(layer: &str, dir: &Path, forbidden: &[&str]) {
     let mut files = Vec::new();
     collect_rs_files(dir, &mut files);
 
     for file_content in &files {
-        let (file_path, _) = file_content.split_once(":\n").unwrap();
-
-        for line in file_content.lines().skip(1) {
-            let trimmed = line.trim();
-
-            // Stop scanning this file once we hit a test module.
-            // Convention: #[cfg(test)] appears at the end of the file.
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-
-            // Skip comments
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            for pattern in forbidden {
-                if trimmed.contains(pattern) {
-                    panic!(
-                        "Architecture violation in {layer}: {file_path}\n\
-                         Line: {trimmed}\n\
-                         Forbidden import: {pattern}\n\
-                         Rule: {layer}/ must not import from {}",
-                        pattern
-                            .trim_start_matches("crate::")
-                            .split("::")
-                            .nth(1)
-                            .unwrap_or(pattern)
-                    );
-                }
-            }
-        }
+        let (file_path, source) = file_content.split_once(":\n").unwrap();
+        dependency_scan::assert_no_forbidden(
+            &format!("Architecture violation in {layer}: {file_path}"),
+            source,
+            forbidden,
+        );
     }
 }
 
@@ -163,6 +143,71 @@ fn domain_has_no_application_imports() {
     assert_no_imports("domain", Path::new("src/domain"), &["crate::application"]);
 }
 
+/// Relative paths and root aliases cannot route around the substring rules
+/// (#1637): every crate path a domain file names stays in the domain, and
+/// every one an application file names stays in application or domain.
+#[test]
+fn domain_and_application_crate_paths_stay_inward() {
+    for (dir, roots) in [
+        ("src/domain", &["domain"][..]),
+        ("src/application", &["application", "domain"][..]),
+    ] {
+        let mut files = Vec::new();
+        collect_rs_files(Path::new(dir), &mut files);
+        assert!(!files.is_empty(), "{dir} has sources");
+        for file_content in &files {
+            let (file, source) = file_content.split_once(":\n").unwrap();
+            let paths = dependency_paths_at(file, source)
+                .unwrap_or_else(|| panic!("{file} does not parse"));
+            for path in paths {
+                assert!(
+                    crate_path_within(&path, roots),
+                    "{file} names {path}; {dir} may only name crate::{roots:?}"
+                );
+            }
+        }
+    }
+}
+
+/// True for non-crate paths and for crate paths under one of `roots`.
+fn crate_path_within(path: &str, roots: &[&str]) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", root, ..] => roots.contains(root),
+        _ => true,
+    }
+}
+
+#[test]
+fn crate_path_roots_fail_closed() {
+    let file = "src/domain/mod.rs";
+    for source in [
+        "use super::application::secret::Bad;",
+        "use crate::subagent_launch_app::X;",
+        "#[cfg(test)]\nmod tests;\npub use crate::application::X;",
+        "use crate as root;",
+    ] {
+        let paths = dependency_paths_at(file, source).expect("parses");
+        assert!(
+            !paths
+                .iter()
+                .all(|path| crate_path_within(path, &["domain"])),
+            "{source}: {paths:?}"
+        );
+    }
+    let paths = dependency_paths_at(
+        file,
+        "use self::tool::Tool; #[cfg(test)] const X: crate::application::Y = 0;",
+    )
+    .expect("parses");
+    assert!(
+        paths
+            .iter()
+            .all(|path| crate_path_within(path, &["domain"])),
+        "{paths:?}"
+    );
+}
+
 #[test]
 fn domain_has_no_infrastructure_imports() {
     assert_no_imports(
@@ -211,11 +256,15 @@ fn assert_application_imports_are_ports_only(dir: &Path) {
     collect_rs_files(dir, &mut files);
 
     for file_content in &files {
-        let (file_path, _) = file_content.split_once(":\n").unwrap();
-        let (_, source) = file_content.split_once(":\n").unwrap();
+        let (file_path, source) = file_content.split_once(":\n").unwrap();
+        let refused: Vec<String> = dependency_paths_at(file_path, source)
+            .unwrap_or_else(|| vec!["<does not parse>".to_string()])
+            .into_iter()
+            .filter(|path| !application_paths_allowed(Some(vec![path.clone()])))
+            .collect();
         assert!(
-            application_dependencies_allowed(source),
-            "Architecture violation in infrastructure: {file_path}"
+            application_dependencies_allowed_at(file_path, source) && refused.is_empty(),
+            "Architecture violation in infrastructure: {file_path} names {refused:?}"
         );
     }
 }
@@ -343,7 +392,17 @@ fn query_dependencies_allowed(content: &str) -> bool {
 }
 
 fn application_dependencies_allowed(content: &str) -> bool {
-    dependency_paths(content).is_some_and(|paths| {
+    application_paths_allowed(dependency_paths(content))
+}
+
+/// [`application_dependencies_allowed`] for a crate source file, with its
+/// relative paths resolved (#1637).
+fn application_dependencies_allowed_at(file: &str, content: &str) -> bool {
+    application_paths_allowed(dependency_paths_at(file, content))
+}
+
+fn application_paths_allowed(paths: Option<Vec<String>>) -> bool {
+    paths.is_some_and(|paths| {
         paths.iter().all(|path| {
             let parts: Vec<_> = path.split("::").collect();
             match parts.as_slice() {
@@ -526,10 +585,12 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     | "ListContainerConfigs",
                     ..,
                 ] => true,
-                // The launch port moved out of the domain into its capability
-                // (#1940); the spawn adapter implements it. The swarm ports
-                // live in `application::swarm::ports` (#1960), covered above.
-                ["crate", "application", "subagent_launch", "SubagentLaunchPorts"] => true,
+                // The launch port (#1940) is reached through
+                // `application::ports` like every other contract (#1637). The
+                // spawn tool still builds the launch use case over its own
+                // ports; moving that construction to composition belongs to
+                // "Launch a delegated agent" (#1880).
+                ["crate", "application", "subagent_launch", "SubagentLaunchUseCase"] => true,
                 // The admission-operation capability (#2024 S3): the admin
                 // adapter implements its `AuthorityAdmin` port and builds the
                 // port's own result/error DTOs; the service manager
@@ -546,6 +607,15 @@ fn application_dependencies_allowed(content: &str) -> bool {
                     ..,
                 ] => true,
                 ["crate", "application", ..] => false,
+                // Every other crate path must start at a layer infrastructure
+                // may name: a root alias (`pub use application::x as y;` in
+                // `lib.rs`), a path climbing above the crate root or a module
+                // alias is not one, so no such route reaches `application`
+                // unchecked (#1637). `interface` is refused separately.
+                ["crate", "domain" | "infrastructure", ..] => true,
+                // `pub(crate)` names the crate itself, no layer.
+                ["crate"] => true,
+                ["crate", ..] => false,
                 _ => true,
             }
         })
@@ -555,16 +625,32 @@ fn application_dependencies_allowed(content: &str) -> bool {
 /// Parse syntax, not lines: comments cannot authorize dependencies and grouped
 /// imports are expanded to their individual paths. Unknown query paths fail closed.
 fn dependency_paths(content: &str) -> Option<Vec<String>> {
+    dependency_paths_in(None, content)
+}
+
+/// [`dependency_paths`] for a crate source file: `super::`/`self::` paths are
+/// resolved against the file's module (and any inline `mod` around them), so
+/// a relative import is checked as the crate path it names (#1637).
+fn dependency_paths_at(file: &str, content: &str) -> Option<Vec<String>> {
+    dependency_paths_in(Some(dependency_scan::module_path(file)), content)
+}
+
+fn dependency_paths_in(module: Option<Vec<String>>, content: &str) -> Option<Vec<String>> {
+    use dependency_scan::test_only;
     use syn::visit::Visit;
-    #[derive(Default)]
-    struct Paths(Vec<String>);
-    fn test_only(attrs: &[syn::Attribute]) -> bool {
-        attrs.iter().any(|attr| {
-            attr.path().is_ident("cfg")
-                && attr
-                    .parse_args::<syn::Path>()
-                    .is_ok_and(|path| path.is_ident("test"))
-        })
+    struct Paths {
+        found: Vec<String>,
+        /// The module the visitor is in, when the file's module is known.
+        module: Option<Vec<String>>,
+    }
+    impl Paths {
+        fn push(&mut self, path: String) {
+            let path = match &self.module {
+                Some(module) => dependency_scan::resolve_relative(module, &path),
+                None => path,
+            };
+            self.found.push(path);
+        }
     }
     fn imports(tree: &syn::UseTree, prefix: &str, paths: &mut Vec<String>) {
         match tree {
@@ -572,6 +658,13 @@ fn dependency_paths(content: &str) -> Option<Vec<String>> {
                 imports(&path.tree, &format!("{prefix}{}::", path.ident), paths)
             }
             syn::UseTree::Name(name) => paths.push(format!("{prefix}{}", name.ident)),
+            // `use crate as root;` / `use super::super as up;` alias a module:
+            // paths through the alias could not be followed, so none is allowed.
+            syn::UseTree::Rename(name)
+                if dependency_scan::is_module_alias(&format!("{prefix}{}", name.ident)) =>
+            {
+                paths.push(dependency_scan::UNRESOLVABLE.to_string())
+            }
             syn::UseTree::Rename(name) => paths.push(format!("{prefix}{}", name.ident)),
             syn::UseTree::Glob(_) => paths.push(format!("{prefix}*")),
             syn::UseTree::Group(group) => {
@@ -592,7 +685,7 @@ fn dependency_paths(content: &str) -> Option<Vec<String>> {
                 ) {
                     Ok(paths) => {
                         for path in paths {
-                            self.0.push(
+                            self.push(
                                 path.segments
                                     .iter()
                                     .map(|s| s.ident.to_string())
@@ -601,11 +694,11 @@ fn dependency_paths(content: &str) -> Option<Vec<String>> {
                             );
                         }
                     }
-                    Err(_) => self.0.push("<unparsed attribute>".into()),
+                    Err(_) => self.found.push("<unparsed attribute>".into()),
                 }
                 return;
             }
-            self.0.push(
+            self.push(
                 attr.path()
                     .segments
                     .iter()
@@ -628,18 +721,7 @@ fn dependency_paths(content: &str) -> Option<Vec<String>> {
         }
 
         fn visit_item(&mut self, item: &'ast syn::Item) {
-            let attrs = match item {
-                syn::Item::Use(i) => &i.attrs,
-                syn::Item::Mod(i) => &i.attrs,
-                syn::Item::Fn(i) => &i.attrs,
-                syn::Item::Struct(i) => &i.attrs,
-                syn::Item::Impl(i) => &i.attrs,
-                _ => {
-                    syn::visit::visit_item(self, item);
-                    return;
-                }
-            };
-            if test_only(attrs) {
+            if dependency_scan::item_test_only(item) {
                 return;
             }
             syn::visit::visit_item(self, item);
@@ -656,11 +738,26 @@ fn dependency_paths(content: &str) -> Option<Vec<String>> {
             }
             syn::visit::visit_impl_item_fn(self, method);
         }
+        fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+            // An inline module nests the paths inside it one level deeper.
+            let inline = item.content.is_some();
+            if inline && let Some(module) = &mut self.module {
+                module.push(item.ident.to_string());
+            }
+            syn::visit::visit_item_mod(self, item);
+            if inline && let Some(module) = &mut self.module {
+                module.pop();
+            }
+        }
         fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
-            imports(&item.tree, "", &mut self.0);
+            let mut found = Vec::new();
+            imports(&item.tree, "", &mut found);
+            for path in found {
+                self.push(path);
+            }
         }
         fn visit_path(&mut self, path: &'ast syn::Path) {
-            self.0.push(
+            self.push(
                 path.segments
                     .iter()
                     .map(|s| s.ident.to_string())
@@ -671,9 +768,12 @@ fn dependency_paths(content: &str) -> Option<Vec<String>> {
         }
     }
     let file = syn::parse_file(content).ok()?;
-    let mut paths = Paths::default();
+    let mut paths = Paths {
+        found: Vec::new(),
+        module,
+    };
     paths.visit_file(&file);
-    Some(paths.0)
+    Some(paths.found)
 }
 
 #[test]
@@ -1455,22 +1555,14 @@ fn tui_conversation_pure_policy_has_no_outer_layer_imports() {
         let path = Path::new(TUI_CONVERSATION).join(rel);
         let content = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read pure conversation policy {}: {e}", path.display()));
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            for pattern in forbidden {
-                assert!(
-                    !trimmed.contains(pattern),
-                    "pure conversation policy {} must not import outer layer pattern {pattern}; line: {trimmed}",
-                    path.display()
-                );
-            }
-        }
+        dependency_scan::assert_no_forbidden(
+            &format!(
+                "pure conversation policy {} must not import outer layers",
+                path.display()
+            ),
+            &content,
+            &forbidden,
+        );
     }
 }
 
@@ -1501,22 +1593,11 @@ fn tui_agents_pure_policy_has_no_outer_layer_imports() {
         let path = Path::new(TUI_AGENTS).join(rel);
         let content = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read pure agents policy {}: {e}", path.display()));
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            for pattern in forbidden {
-                assert!(
-                    !trimmed.contains(pattern),
-                    "pure agents policy {} must not contain pattern {pattern}; line: {trimmed}",
-                    path.display()
-                );
-            }
-        }
+        dependency_scan::assert_no_forbidden(
+            &format!("pure agents policy {}", path.display()),
+            &content,
+            &forbidden,
+        );
     }
     let ledger =
         fs::read_to_string(Path::new(TUI_AGENTS).join("ledger.rs")).expect("read agents ledger");
@@ -1530,19 +1611,7 @@ fn tui_agents_pure_policy_has_no_outer_layer_imports() {
         "Client::",
         "serde_json::",
     ] {
-        for line in ledger.lines() {
-            let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            assert!(
-                !trimmed.contains(pattern),
-                "agents ledger must not contain pattern {pattern}; line: {trimmed}"
-            );
-        }
+        dependency_scan::assert_no_forbidden("agents ledger", &ledger, &[pattern]);
     }
 }
 
@@ -1563,19 +1632,7 @@ fn tui_workspace_files_adapter_does_not_import_presentation_layers() {
         "crate::workflow",
         "crate::inference",
     ] {
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
-                break;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            assert!(
-                !trimmed.contains(pattern),
-                "workspace_files must not import {pattern}; line: {trimmed}"
-            );
-        }
+        dependency_scan::assert_no_forbidden("workspace_files", &content, &[pattern]);
     }
 }
 
@@ -2482,8 +2539,49 @@ fn dependency_allowlists_use_paths_not_substrings() {
         // lives in `src/composition/catalogue_defaults.rs` (#2024 S2).
         "use crate::application::configuration::use_cases::PatchConfiguration;",
         "use crate::application::configuration::dto::{ConfigLayer, ConfigPatch};",
+        // Root aliases and unknown crate roots fail closed (#1637).
+        "use crate::subagent_launch_app::SubagentLaunchPorts;",
+        "fn run() { crate::app::secret::run(); }",
+        "use crate::{app::secret::Bad, domain::Tool};",
+        // Module aliases cannot be followed.
+        "use crate as root; fn run() { root::application::secret::run(); }",
+        "use crate::{self as root};",
+        // A use case after a test module is production code.
+        "#[cfg(test)]\nmod tests;\nuse crate::application::secret::Bad;",
     ] {
         assert!(!application_dependencies_allowed(source), "{source}");
+    }
+}
+
+#[test]
+fn application_guard_resolves_relative_paths() {
+    let file = "src/infrastructure/tools/spawn.rs";
+    for source in [
+        "use super::super::super::application::secret::Bad;",
+        "use super::super::{super::application::secret::Bad};",
+        "fn run() { super::super::super::application::secret::run(); }",
+        "use super::super::super::super::escape::X;",
+        "use super::super::super as root;",
+        "mod inner { use super::super::super::super::application::secret::Bad; }",
+        "use super::super::super::app_alias::Bad;",
+    ] {
+        assert!(
+            !application_dependencies_allowed_at(file, source),
+            "{source}"
+        );
+    }
+    for source in [
+        "use super::spawn_entry::child_socket_path;",
+        "use super::super::super::application::ports::SubagentLaunchPorts;",
+        "use super::super::super::domain::tool::ToolResult;",
+        "mod inner { use super::super::super::super::domain::tool::ToolResult; }",
+        "use crate::application::subagent_launch::SubagentLaunchUseCase;",
+        "#[cfg(test)]\nmod tests { use super::super::super::application::secret::Bad; }",
+    ] {
+        assert!(
+            application_dependencies_allowed_at(file, source),
+            "{source}"
+        );
     }
 }
 
@@ -2936,7 +3034,6 @@ fn infrastructure_outward_dependencies_allowed(source: &str) -> bool {
                         | "domain"
                         | "infrastructure"
                         | "test_support"
-                        | "subagent_launch_app"
                         | "swarm_control_fixture"
                 ),
                 _ => true,
