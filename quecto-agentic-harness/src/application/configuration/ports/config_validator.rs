@@ -27,4 +27,10 @@ pub trait ConfigValidator: Send + Sync {
     /// hold for a complete configuration (exactly one default container
     /// config) are left to the merge.
     fn validate_layer(&self, document: &serde_json::Value) -> Result<(), String>;
+
+    /// Child processes inherit admission authority; validate all other
+    /// fields while ignoring only local admission semantics.
+    fn validate_inherited_child(&self, document: &serde_json::Value) -> Result<(), String> {
+        self.validate(document)
+    }
 }

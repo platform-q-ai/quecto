@@ -31,6 +31,7 @@ pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut Str
         &selection,
         false,
         &Default::default(),
+        false,
     ) {
         Ok(loaded) => loaded,
         Err(error) => {

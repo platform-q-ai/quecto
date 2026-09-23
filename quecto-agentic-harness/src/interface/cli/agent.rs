@@ -346,6 +346,7 @@ pub(crate) fn build_agent_from_config(
         selection,
         prompt_for_trust,
         &env_overrides,
+        flags.admission_context.is_some(),
     ) {
         Ok(loaded) => loaded,
         Err(error) => {

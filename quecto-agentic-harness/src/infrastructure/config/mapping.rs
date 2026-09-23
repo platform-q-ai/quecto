@@ -46,6 +46,13 @@ impl Config {
     /// effective merge of the global file and a repo-local overlay, or any
     /// document the safe writer is about to persist. Every load-time
     /// validation applies.
+    pub fn from_inherited_child_document(value: serde_json::Value) -> Result<Self, ConfigError> {
+        let config: Config = serde_json::from_value(value).map_err(ConfigError::Parse)?;
+        config.validate_effort()?;
+        config.validate_container_configs()?;
+        Ok(config)
+    }
+
     pub fn from_document(value: serde_json::Value) -> Result<Self, ConfigError> {
         let config: Config = serde_json::from_value(value).map_err(ConfigError::Parse)?;
         config.validated()
@@ -102,6 +109,12 @@ impl ConfigValidator for ConfigValidatorAdapter {
             .map_err(|error| error.to_string())
     }
 
+    fn validate_inherited_child(&self, document: &serde_json::Value) -> Result<(), String> {
+        Config::from_inherited_child_document(document.clone())
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
     fn validate_layer(&self, document: &serde_json::Value) -> Result<(), String> {
         Config::layer_from_document(document.clone())
             .map(|_| ())
@@ -120,6 +133,17 @@ pub fn realize_config(
     base_dir: &Path,
 ) -> Result<Config, String> {
     Config::from_document(document)
+        .and_then(|config| config.with_env_overrides(env_overrides))
+        .map(|config| config.with_admission_base_dir(base_dir))
+        .map_err(|error| error.to_string())
+}
+
+pub fn realize_inherited_child_config(
+    document: serde_json::Value,
+    env_overrides: &HashMap<String, String>,
+    base_dir: &Path,
+) -> Result<Config, String> {
+    Config::from_inherited_child_document(document)
         .and_then(|config| config.with_env_overrides(env_overrides))
         .map(|config| config.with_admission_base_dir(base_dir))
         .map_err(|error| error.to_string())

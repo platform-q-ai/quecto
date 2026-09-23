@@ -15,7 +15,9 @@ use crate::application::configuration::use_cases::{
     PatchConfiguration, ReadConfiguration, ResolveEffectiveConfig, SelectConfig, TrustConfigOverlay,
 };
 use crate::infrastructure::config::loaders::FilesystemConfigDocumentStore;
-use crate::infrastructure::config::mapping::{ConfigValidatorAdapter, realize_config};
+use crate::infrastructure::config::mapping::{
+    ConfigValidatorAdapter, realize_config, realize_inherited_child_config,
+};
 use crate::infrastructure::config::persistence::{
     PersistentOverlayTrustStore, TRUST_RECORD_FILE_NAME,
 };
@@ -52,6 +54,7 @@ pub fn build_configuration_handles(env: &ConfigurationEnvironment) -> Configurat
         trust: Arc::new(TrustConfigOverlay::new(store, validator, trust)),
         resolve,
         realize: realizer(&env.base_dir),
+        realize_inherited_child: inherited_child_realizer(&env.base_dir),
     }
 }
 
@@ -60,6 +63,13 @@ pub fn build_configuration_handles(env: &ConfigurationEnvironment) -> Configurat
 fn realizer(base_dir: &Path) -> ConfigRealizer {
     let base_dir = base_dir.to_path_buf();
     Arc::new(move |document, env_overrides| realize_config(document, env_overrides, &base_dir))
+}
+
+fn inherited_child_realizer(base_dir: &Path) -> ConfigRealizer {
+    let base_dir = base_dir.to_path_buf();
+    Arc::new(move |document, env_overrides| {
+        realize_inherited_child_config(document, env_overrides, &base_dir)
+    })
 }
 
 /// The run's configuration as one reloadable read (#2024): the selected
