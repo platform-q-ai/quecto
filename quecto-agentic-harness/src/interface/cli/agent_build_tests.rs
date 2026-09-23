@@ -353,3 +353,173 @@ fn test_agent_with_both_providers_reaches_session() {
 
 #[path = "agent_container_selection_tests.rs"]
 mod container_selection_tests;
+
+fn admission_flags() -> AgentFlags {
+    AgentFlags {
+        session_name: None,
+        no_session: true,
+        message: None,
+        system_prompt: None,
+        model_override: None,
+        max_iterations: None,
+        max_time: None,
+        uds_mode: false,
+        socket_path: None,
+        persist: false,
+        disabled_tools: vec![],
+        effort: None,
+        workflow: false,
+        workflow_guards: false,
+        workflow_disabled: true,
+        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        workflow_spec_path: None,
+        inherited_tool_policy: None,
+        parent_id: None,
+        spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
+        cwd_override: None,
+        web_fetch_tool_factory: None,
+        kill_tool: None,
+        retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
+        admission_context: None,
+        parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
+        container_configs: Some(
+            crate::composition::container_configs::build_agent_container_config_handles,
+        ),
+        stdin_is_tty: false,
+        environment_registry: None,
+    }
+}
+
+/// #2107: drive the same composed handles injected by main through the agent
+/// builder, not merely the negotiation plan. The subprocess isolates the
+/// once-only process binding from unrelated unit tests.
+#[test]
+fn composed_admission_startup_child_root_and_disabled() {
+    const CHILD: &str = "QUECTO_2107_STARTUP_CASE";
+    if let Ok(case) = std::env::var(CHILD) {
+        let temp = tempfile::tempdir().unwrap();
+        let config_file = temp.path().join("config.json");
+        let mut flags = admission_flags();
+        let broker = if case == "child" {
+            use crate::domain::inference_admission::{AdmissionConfig, GroupId, GroupPolicy};
+            use crate::infrastructure::admission::{
+                AuthorityDirectory, AuthorityServer, Negotiation, negotiate,
+                write_admission_context,
+            };
+            use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+            let group = GroupId::new("g").unwrap();
+            let proposal = AdmissionRuntimeProposal {
+                policy: AdmissionConfig {
+                    groups: std::collections::BTreeMap::from([(
+                        group.clone(),
+                        GroupPolicy {
+                            capacity: 1,
+                            reserve: 0,
+                            min_interval_ms: 1,
+                            queue_capacity: 1,
+                            queue_timeout_ms: 100,
+                            attempt_timeout_ms: 100,
+                            fallback_base_ms: 1,
+                            max_cooldown_ms: 100,
+                        },
+                    )]),
+                    aliases: std::collections::BTreeMap::from([("a".into(), group)]),
+                    max_scopes: 8,
+                    terminal_capacity: 8,
+                },
+                bindings: std::collections::BTreeMap::from([("openai-api".into(), "a".into())]),
+            };
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap();
+            let directory = temp.path().join("broker");
+            let server = rt
+                .block_on(AuthorityServer::start(
+                    AuthorityDirectory::open(&directory).unwrap(),
+                    proposal,
+                ))
+                .unwrap();
+            let root = negotiate(Negotiation::Root { directory }).unwrap();
+            let credential = rt.block_on(root.connection().register_child()).unwrap();
+            let context = temp.path().join("child.ctx");
+            write_admission_context(&context, &root.endpoint(), &credential).unwrap();
+            flags.admission_context = Some(context);
+            Some((rt, server, root))
+        } else {
+            None
+        };
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let api = format!("http://{}/v1", listener.local_addr().unwrap());
+        let invalid = r#""admission":{"directory":"relative","groups":{"g":{"capacity":1,"reserve":0,"min_interval_ms":1,"queue_capacity":1,"queue_timeout_ms":100,"attempt_timeout_ms":100,"fallback_base_ms":1,"max_cooldown_ms":100}},"aliases":{"a":"g"},"bindings":{"openai-api":"a"}}"#;
+        let config = match case.as_str() {
+            "child" => {
+                format!(
+                    r#"{{"providers":{{"openai":{{"api_key":"sk-fake","api_base":"{api}"}}}}, {invalid}}}"#
+                )
+            }
+            "root" => format!(
+                r#"{{"providers":{{"openai":{{"api_key":"sk-fake","api_base":"{api}"}}}}, {invalid}}}"#
+            ),
+            "disabled" => format!(
+                r#"{{"providers":{{"openai":{{"api_key":"sk-fake","api_base":"{api}"}}}}}}"#
+            ),
+            other => panic!("unexpected case {other}"),
+        };
+        std::fs::write(&config_file, config).unwrap();
+        let mut stderr = String::new();
+        let result = build_agent_from_config(
+            temp.path(),
+            &selection_for_test(&config_file, true),
+            &flags,
+            &mut stderr,
+            None,
+        );
+        match case.as_str() {
+            "root" => {
+                assert!(result.is_none(), "invalid root must stop startup");
+                assert!(stderr.contains("absolute"), "{stderr}");
+                assert!(crate::infrastructure::admission::process::current().is_none());
+            }
+            "disabled" => {
+                assert!(result.is_some(), "disabled startup: {stderr}");
+                assert!(crate::infrastructure::admission::process::current().is_none());
+            }
+            "child" => {
+                assert!(result.is_some(), "child must inherit: {stderr}");
+                assert!(crate::infrastructure::admission::process::current().is_some());
+            }
+            _ => unreachable!(),
+        }
+        // A startup build never performs inference. Keep a local socket as
+        // the only possible outbound destination and assert no connection was
+        // attempted while composing even when the provider is runnable.
+        assert!(
+            matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+        );
+        drop(broker);
+        return;
+    }
+    for case in ["root", "disabled", "child"] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "interface::cli::agent::build_tests::composed_admission_startup_child_root_and_disabled", "--nocapture"])
+            .env(CHILD, case)
+            .output().unwrap();
+        assert!(
+            output.status.success(),
+            "{case}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}

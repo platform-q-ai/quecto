@@ -1537,6 +1537,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             selection: quecto::application::configuration::dto::ConfigSelection::Explicit(
                 config_path,
             ),
+            inherited_child: false,
             env_overrides,
             http_client,
             provider_runtime: build_agent_provider,

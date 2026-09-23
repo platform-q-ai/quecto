@@ -909,6 +909,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
             selection: quecto::application::configuration::dto::ConfigSelection::Explicit(
                 config_path,
             ),
+            inherited_child: false,
             env_overrides,
             http_client,
             provider_runtime: build_agent_provider,

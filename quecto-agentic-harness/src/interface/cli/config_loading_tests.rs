@@ -119,6 +119,7 @@ fn loading_reports_a_missing_explicit_file_by_path() {
         &ConfigSelection::Explicit(PathBuf::from("/nowhere/config.json")),
         false,
         &HashMap::new(),
+        false,
     )
     .err()
     .unwrap();

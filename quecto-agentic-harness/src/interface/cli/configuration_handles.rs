@@ -34,6 +34,7 @@ pub struct ConfigurationHandles {
     pub trust: Arc<TrustConfigOverlay>,
     /// Document → `Config` (#2024): the step after `resolve` on every load.
     pub realize: ConfigRealizer,
+    pub realize_inherited_child: ConfigRealizer,
 }
 
 impl std::fmt::Debug for ConfigurationHandles {

@@ -15,7 +15,9 @@ use crate::application::configuration::use_cases::{
     PatchConfiguration, ReadConfiguration, ResolveEffectiveConfig, SelectConfig, TrustConfigOverlay,
 };
 use crate::infrastructure::config::loaders::FilesystemConfigDocumentStore;
-use crate::infrastructure::config::mapping::{ConfigValidatorAdapter, realize_config};
+use crate::infrastructure::config::mapping::{
+    ConfigValidatorAdapter, realize_config, realize_inherited_child_config,
+};
 use crate::infrastructure::config::persistence::{
     PersistentOverlayTrustStore, TRUST_RECORD_FILE_NAME,
 };
@@ -52,6 +54,7 @@ pub fn build_configuration_handles(env: &ConfigurationEnvironment) -> Configurat
         trust: Arc::new(TrustConfigOverlay::new(store, validator, trust)),
         resolve,
         realize: realizer(&env.base_dir),
+        realize_inherited_child: inherited_child_realizer(&env.base_dir),
     }
 }
 
@@ -62,6 +65,13 @@ fn realizer(base_dir: &Path) -> ConfigRealizer {
     Arc::new(move |document, env_overrides| realize_config(document, env_overrides, &base_dir))
 }
 
+fn inherited_child_realizer(base_dir: &Path) -> ConfigRealizer {
+    let base_dir = base_dir.to_path_buf();
+    Arc::new(move |document, env_overrides| {
+        realize_inherited_child_config(document, env_overrides, &base_dir)
+    })
+}
+
 /// The run's configuration as one reloadable read (#2024): the selected
 /// layers resolved (a never-prompting trust decision — a reload runs on the
 /// dispatch loop, not a terminal), realized into a `Config` with
@@ -70,6 +80,7 @@ pub fn build_config_loader(
     base_dir: &Path,
     selection: ConfigSelection,
     env_overrides: HashMap<String, String>,
+    inherited_child: bool,
 ) -> ConfigLoader {
     let base_dir = base_dir.to_path_buf();
     let handles = build_configuration_handles(&ConfigurationEnvironment {
@@ -77,17 +88,23 @@ pub fn build_config_loader(
         prompt_for_trust: false,
     });
     Arc::new(move || {
-        let effective = handles
-            .resolve
-            .execute(&selection)
-            .map_err(|error| error.to_string())?;
+        let effective = (if inherited_child {
+            handles.resolve.execute_inherited_child(&selection)
+        } else {
+            handles.resolve.execute(&selection)
+        })
+        .map_err(|error| error.to_string())?;
         // A reload has no terminal: an overlay that became untrusted (a
         // hand edit mid-run) drops out of the effective configuration, and
         // the operator's log is the only place that says so.
         for line in effective.sources.diagnostics() {
             tracing::warn!(target: "quecto::configuration", "{line}");
         }
-        realize_config(effective.document, &env_overrides, &base_dir)
+        if inherited_child {
+            realize_inherited_child_config(effective.document, &env_overrides, &base_dir)
+        } else {
+            realize_config(effective.document, &env_overrides, &base_dir)
+        }
     })
 }
 
