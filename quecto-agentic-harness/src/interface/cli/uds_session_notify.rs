@@ -87,6 +87,18 @@ impl AgentSession {
         {
             return NotificationEnqueueOutcome::Duplicate;
         }
+        if let Some((commander, session_key)) = &self.commander {
+            commander.observe(
+                session_key,
+                &self.model,
+                crate::application::agent_commander::ports::CommanderEvent::SubagentNotice {
+                    child: agent_id.clone(),
+                    child_uuid: None,
+                    notice: content.clone(),
+                    detail: None,
+                },
+            );
+        }
         if is_completion {
             self.last_failure_notifications.remove(&agent_id);
         } else if self.last_failure_notifications.get(&agent_id) == Some(&content) {

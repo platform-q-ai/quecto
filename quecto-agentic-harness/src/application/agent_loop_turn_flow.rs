@@ -117,6 +117,8 @@ impl AgentLoopImpl {
                         error_class = %class,
                         "retrying stream initiation after transient failure"
                     );
+                    // Spike: the inner request has no turn number (0).
+                    self.commander_provider_failure(0, &err, "transient_retry", attempt as u32);
                     let Some(delay) = crate::domain::provider_retry::bounded_delay(
                         &err,
                         std::time::Duration::from_millis(
@@ -214,6 +216,27 @@ impl AgentLoopImpl {
         }
     }
 
+    /// Agent Commander spike: report a provider failure (#12, #22).
+    pub(super) fn commander_provider_failure(
+        &self,
+        turn: u32,
+        error: &DomainError,
+        outcome: &str,
+        attempt: u32,
+    ) {
+        self.commander_observe(
+            crate::application::agent_commander::ports::CommanderEvent::ProviderFailure {
+                turn,
+                provider: self.provider.name().to_string(),
+                class: classify_provider_error(error).to_string(),
+                http_status: crate::domain::provider_error::provider_http_status(error),
+                error: error.to_string(),
+                outcome: outcome.to_string(),
+                attempt,
+            },
+        );
+    }
+
     pub(super) async fn recover_malformed_response(
         &self,
         messages: &mut Vec<Message>,
@@ -223,6 +246,7 @@ impl AgentLoopImpl {
         appended_messages: &mut Vec<Message>,
     ) {
         *malformed_retries += 1;
+        self.commander_provider_failure(current_turn, error, "malformed_retry", *malformed_retries);
         tracing::warn!(
             target: "provider_retry",
             attempt = *malformed_retries,
@@ -247,6 +271,7 @@ impl AgentLoopImpl {
         // terminal failure, never per retry, so it survives TUI line-truncation
         // (#937). `provider` is the harness adapter name (e.g. `openai`), not
         // the upstream endpoint (#939 review).
+        self.commander_provider_failure(current_turn, &error, "terminal", 0);
         let ev = provider_failure_audit_event(self.provider.name(), &error);
         self.audit(current_turn, ev).await;
         self.notify(|| AgentProgressEvent::Done);

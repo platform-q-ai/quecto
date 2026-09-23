@@ -154,6 +154,16 @@ impl AgentLoopImpl {
             Err(e) => (format!("Error: {}", e), vec![], None, true),
         };
 
+        if is_err {
+            self.commander_observe(
+                crate::application::agent_commander::ports::CommanderEvent::ToolError {
+                    turn: 0,
+                    tool: tc.name.clone(),
+                    arguments: tc.arguments.to_string(),
+                    result: content.chars().take(4000).collect(),
+                },
+            );
+        }
         // Emit ToolFinished so the REPL can replace the spinner line.
         // Build the bounded preview inside notify so headless runs allocate none.
         self.notify(|| AgentProgressEvent::ToolFinished {

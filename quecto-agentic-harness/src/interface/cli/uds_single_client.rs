@@ -63,6 +63,7 @@ pub(super) async fn single_client_loop(
     let mut agent_session = AgentSession::new(model);
     agent_session.set_admission_warnings(&admission_slots);
     agent_session.observe_runtime(catalogue.runtime_store.clone());
+    agent_session.commander = agent.commander().map(|c| (c, session_key.to_string()));
     let effort = catalogue.effort_view(agent.effort(), agent_session.model());
     let initial_state =
         agent_session.state_snapshot(&session_key, 0, None, agent.max_context_tokens(), effort);

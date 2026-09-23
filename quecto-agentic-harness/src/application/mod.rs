@@ -34,4 +34,5 @@ pub mod inference_attempt;
 pub mod swarm;
 pub mod tools;
 
+pub mod agent_commander;
 pub mod agent_turn;

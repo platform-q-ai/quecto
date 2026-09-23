@@ -12,6 +12,11 @@ pub use uds_session_notify::NotificationEnqueueOutcome;
 /// reports it is handed the key by its caller from that identity.
 #[derive(Debug)]
 pub struct AgentSession {
+    /// Agent Commander spike: (observer, session key) for sub-agent notices.
+    pub(crate) commander: Option<(
+        std::sync::Arc<dyn crate::application::agent_commander::ports::CommanderSink>,
+        String,
+    )>,
     model: String,
     admission_warnings: Vec<crate::domain::state_snapshot::AdmissionBindingWarning>,
     runtime_store: Option<crate::application::ports::RuntimeSnapshotStore>,
@@ -213,6 +218,7 @@ fn escape_text(value: &str) -> String {
 impl AgentSession {
     pub fn new(model: String) -> Self {
         Self {
+            commander: None,
             model,
             admission_warnings: Vec::new(),
             runtime_store: None,

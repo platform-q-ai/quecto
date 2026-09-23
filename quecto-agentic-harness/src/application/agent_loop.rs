@@ -128,6 +128,8 @@ pub struct AgentLoopImpl {
     pub(super) default_effort: Option<EffortLevel>,
     /// Optional append-only audit log for durable event recording.
     audit_log: Option<Arc<dyn AuditSink>>,
+    /// Agent Commander spike: dry-run observer (never acts).
+    commander: Option<Arc<dyn crate::application::agent_commander::ports::CommanderSink>>,
     /// #1072: latched by `apply_context_pruning` whenever a pass mutated
     /// existing history; the session save transaction consumes it.
     durable_prefix_dirty: Arc<DurablePrefixLatch>,
@@ -186,6 +188,7 @@ impl AgentLoopImpl {
             effort: config.effort,
             default_effort: config.effort,
             audit_log: config.audit_log,
+            commander: None,
             durable_prefix_dirty: DurablePrefixLatch::shared(),
             context_manager,
             pending_tool_policy_requests: std::sync::Mutex::new(Vec::new()),
@@ -410,6 +413,41 @@ impl AgentLoopImpl {
     /// after construction).
     pub fn set_audit_log(&mut self, log: Option<Arc<dyn AuditSink>>) {
         self.audit_log = log;
+    }
+
+    /// Agent Commander spike: attach the dry-run observer.
+    pub fn set_commander(
+        &mut self,
+        commander: Option<Arc<dyn crate::application::agent_commander::ports::CommanderSink>>,
+    ) {
+        self.commander = commander;
+    }
+
+    /// Agent Commander spike: the attached observer, if any.
+    pub fn commander(
+        &self,
+    ) -> Option<Arc<dyn crate::application::agent_commander::ports::CommanderSink>> {
+        self.commander.clone()
+    }
+
+    /// Agent Commander spike: report an event (fire-and-forget).
+    pub(super) fn commander_observe(
+        &self,
+        event: crate::application::agent_commander::ports::CommanderEvent,
+    ) {
+        if let Some(commander) = &self.commander {
+            commander.observe(&self.session_key, &self.model, event);
+        }
+    }
+
+    /// The text of the last user message that is not a tool result.
+    fn commander_prompt(messages: &[Message]) -> String {
+        messages
+            .iter()
+            .rev()
+            .find(|m| m.role == crate::domain::message::Role::User && m.tool_call_id.is_none())
+            .map(|m| m.content.clone())
+            .unwrap_or_default()
     }
 
     /// Emit an audit event if audit logging is enabled.
@@ -659,6 +697,21 @@ impl AgentLoopImpl {
 
             match next_state_after_provider_response(&response) {
                 TurnState::FinalizeAssistantResponse => {
+                    self.commander_observe(
+                        crate::application::agent_commander::ports::CommanderEvent::TurnEnd {
+                            turn: current_turn,
+                            prompt: Self::commander_prompt(messages),
+                            final_text: response.content.clone().unwrap_or_default(),
+                            stop_reason: response
+                                .stop_reason
+                                .as_ref()
+                                .map(|r| r.as_str().to_string()),
+                            tool_rounds: iterations,
+                            ended_by: "final_response".into(),
+                            output_tokens: response.usage.as_ref().map(|u| u.completion_tokens),
+                            max_tokens: self.max_tokens,
+                        },
+                    );
                     let end = TurnEnd {
                         iterations,
                         usage: usage_totals,
@@ -702,6 +755,18 @@ impl AgentLoopImpl {
 
             if iterations >= self.max_tool_iterations {
                 let _state = TurnState::StopAtToolIterationLimit;
+                self.commander_observe(
+                    crate::application::agent_commander::ports::CommanderEvent::TurnEnd {
+                        turn: current_turn,
+                        prompt: Self::commander_prompt(messages),
+                        final_text: String::new(),
+                        stop_reason: None,
+                        tool_rounds: iterations,
+                        ended_by: "iteration_limit".into(),
+                        output_tokens: None,
+                        max_tokens: self.max_tokens,
+                    },
+                );
                 let result = self.tool_iteration_limit_result(
                     messages,
                     iterations,
