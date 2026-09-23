@@ -8,6 +8,9 @@ use crate::application::agent_commander::ports::CommanderSink;
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::infrastructure::agent_commander::{AgentRole, DryRunCommander};
 
+/// A session's observer and its session key, for sub-agent notices.
+pub(crate) type SessionCommander = Option<(Arc<dyn CommanderSink>, String)>;
+
 pub(super) fn attach(
     agent: &mut AgentLoopImpl,
     base_dir: &Path,

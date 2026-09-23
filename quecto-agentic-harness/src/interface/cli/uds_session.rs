@@ -12,18 +12,13 @@ pub use uds_session_notify::NotificationEnqueueOutcome;
 /// reports it is handed the key by its caller from that identity.
 #[derive(Debug)]
 pub struct AgentSession {
-    /// Agent Commander spike: (observer, session key) for sub-agent notices.
-    pub(crate) commander: Option<(
-        std::sync::Arc<dyn crate::application::agent_commander::ports::CommanderSink>,
-        String,
-    )>,
+    pub(crate) commander: super::agent_commander_wiring::SessionCommander,
     model: String,
     admission_warnings: Vec<crate::domain::state_snapshot::AdmissionBindingWarning>,
     runtime_store: Option<crate::application::ports::RuntimeSnapshotStore>,
     streaming: bool,
     pub(crate) automatic_turns_allowed: bool,
-    /// Why automatic turns are off and at which swarm control generation
-    /// (#1721): a later resume re-arms provider-failure suspensions.
+    /// Why automatic turns are off, and at which control generation (#1721).
     suspension: Option<TurnSuspension>,
     /// Latest swarm control generation this session has seen (control
     /// receipts, the startup probe); dates a suspension when it happens.

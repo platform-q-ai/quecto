@@ -45,6 +45,8 @@ mod catalogue_consumers;
 mod catalogue_inputs_loader;
 #[path = "contracts/catalogue_source.rs"]
 mod catalogue_source;
+#[path = "contracts/commander_sink.rs"]
+mod commander_sink;
 #[path = "contracts/config_document_store.rs"]
 mod config_document_store;
 #[path = "contracts/config_document_writer.rs"]
