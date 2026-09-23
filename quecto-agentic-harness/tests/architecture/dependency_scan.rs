@@ -212,6 +212,8 @@ fn production_text_keeps_cfg_combinations_and_multiline_paths() {
         ),
         ("fn f(p: &Path) -> bool { p\n    .exists() }", ".exists("),
         ("fn f() { Command::new(\"x\"); }", "Command::new"),
+        // Only `cfg(test)` is test-only; other cfg-gated items are production.
+        ("#[cfg(unix)]\nuse std::fs::read;", "std::fs::"),
     ] {
         let text = production_text(source).expect("parses");
         assert!(text.contains(pattern), "{source}: {text}");

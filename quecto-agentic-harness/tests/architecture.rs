@@ -257,13 +257,9 @@ fn assert_application_imports_are_ports_only(dir: &Path) {
 
     for file_content in &files {
         let (file_path, source) = file_content.split_once(":\n").unwrap();
-        let refused: Vec<String> = dependency_paths_at(file_path, source)
-            .unwrap_or_else(|| vec!["<does not parse>".to_string()])
-            .into_iter()
-            .filter(|path| !application_paths_allowed(Some(vec![path.clone()])))
-            .collect();
+        let refused = refused_application_paths(file_path, source);
         assert!(
-            application_dependencies_allowed_at(file_path, source) && refused.is_empty(),
+            refused.is_empty(),
             "Architecture violation in infrastructure: {file_path} names {refused:?}"
         );
     }
@@ -398,228 +394,240 @@ fn application_dependencies_allowed(content: &str) -> bool {
 /// [`application_dependencies_allowed`] for a crate source file, with its
 /// relative paths resolved (#1637).
 fn application_dependencies_allowed_at(file: &str, content: &str) -> bool {
-    application_paths_allowed(dependency_paths_at(file, content))
+    refused_application_paths(file, content).is_empty()
+}
+
+/// The crate paths `file` names that the infrastructure → application rule
+/// refuses, relative paths resolved; a file that does not parse is refused.
+fn refused_application_paths(file: &str, content: &str) -> Vec<String> {
+    match dependency_paths_at(file, content) {
+        Some(paths) => paths
+            .into_iter()
+            .filter(|path| !application_path_allowed(path))
+            .collect(),
+        None => vec!["<does not parse>".to_string()],
+    }
 }
 
 fn application_paths_allowed(paths: Option<Vec<String>>) -> bool {
-    paths.is_some_and(|paths| {
-        paths.iter().all(|path| {
-            let parts: Vec<_> = path.split("::").collect();
-            match parts.as_slice() {
-                ["crate", "application", "ports", ..] => true,
-                // Ports are capability-local (#1934, #1960): every
-                // `application/<capability>/ports.rs` is a contract this
-                // layer implements. Subagent teardown (#1935) was the first.
-                ["crate", "application", _, "ports", ..] => true,
-                // The sessions list port takes the capability's own query
-                // DTO (#1970); the file store names it to implement `list`.
-                // The export port (#1974) takes the records and manifest the
-                // use case assembled and returns the artifact receipt.
-                [
-                    "crate",
-                    "application",
-                    "sessions",
-                    "dto",
-                    "SessionListQuery" | "ExportRecord" | "ExportManifest" | "RawExportReceipt",
-                ] => true,
-                // Retained context (D9 #1978): the `recall` tool adapts the
-                // sessions capability's recall use case — it holds the
-                // composed handle, parses its schema and formats the
-                // outcomes; the selection is the use case's.
-                [
-                    "crate",
-                    "application",
-                    "sessions",
-                    "use_cases",
-                    "RecallContext",
-                ]
-                | [
-                    "crate",
-                    "application",
-                    "sessions",
-                    "dto",
-                    "retained_context",
-                    "RecallError" | "RecallOutcome" | "RecallQuery",
-                    ..,
-                ] => true,
-                // The launch-side lifecycle use cases (#1936) are invoked by
-                // the reaper, the monitor and the launch rollback — the
-                // adapters that observe a direct child's end — over the
-                // adapters this layer implements. The operator-facing kill
-                // is composed outside this layer.
-                [
-                    "crate",
-                    "application",
-                    "subagents",
-                    "use_cases",
-                    "ObserveOwnedChildExit"
-                    | "CompensateFailedLaunch"
-                    | "CompensateFailedLaunchPorts"
-                    // The environment member shutdown and the swarm member
-                    // termination (#1939) delegate to the per-child
-                    // settlement and the operator kill; both are built in
-                    // composition and only invoked here.
-                    | "SettleDelegatedChild"
-                    | "ChildSettlement"
-                    | "KillDelegatedAgent"
-                    // The spawn tool (#2024 S4a) holds the composed
-                    // container-config selection and invokes it for every
-                    // new container; the config adapter implements its port
-                    // in the capability's launch vocabulary.
-                    | "SelectContainerConfig",
-                    ..,
-                ]
-                | [
-                    "crate",
-                    "application",
-                    "subagents",
-                    "dto",
-                    "ObserveOwnedChildExitRequest"
-                    | "ObservedExit"
-                    | "CompensateFailedLaunchRequest"
-                    | "FleetChildResult"
-                    | "KillDelegatedAgentError"
-                    | "KillDelegatedAgentRequest"
-                    | "ContainerConfigSource"
-                    | "ContainerConfigsError"
-                    | "ContainerLaunchConfig"
-                    | "EffectiveContainerConfigSet"
-                    | "SelectContainerConfigRequest"
-                    // The doctor's lookup rewords the withheld-overlay
-                    // refusal for its own command (#2024 S4b review).
-                    | "SelectContainerConfigError"
-                    | "SelectedContainerConfig"
-                    // The embedded bundle's integrity adapter (#2024 S4e)
-                    // answers the launch policy's port with its verdict.
-                    | "StandardScriptVerdict",
-                    ..,
-                ]
-                // The container-script preflight and the doctor's config
-                // lookup (#2024 S4b) implement the environments capability's
-                // ports in the capability's own diagnosis vocabulary.
-                | [
-                    "crate",
-                    "application",
-                    "environments",
-                    "dto",
-                    "CheckStatus"
-                    | "ContainerRuntimeTarget"
-                    | "DiagnosableContainerConfig"
-                    | "PreflightCheck"
-                    // The liveness and inventory adapters (#2024 S4d)
-                    // answer in the capability's own records.
-                    | "EnvironmentLiveness"
-                    | "EnvironmentStateDir"
-                    | "RuntimeContainer"
-                    // … and the registry store's conditional correction.
-                    | "CorrectionOutcome"
-                    // Container-config discovery (#2024 S4c): the roster
-                    // adapter builds the inventory entries in the
-                    // capability's vocabulary; the spawn tool's roster line
-                    // presents the listing's inventory.
-                    | "ContainerConfigEntry"
-                    | "ContainerConfigInventory"
-                    | "ContainerConfigLayer"
-                    // The standard bundle (#2024 S4e): the embedded asset
-                    // store answers in the capability's asset vocabulary.
-                    | "AssetOutcome"
-                    // Whose file an asset is (#2073): a field of the
-                    // catalogue entries the store builds.
-                    | "AssetOwnership"
-                    | "AssetState"
-                    | "ContainerAsset"
-                    | "ContainerAssetCatalogue"
-                    // … and the integrity adapter locates a bundle by
-                    // the capability's own directory constant.
-                    | "STANDARD_CONTAINER_DIR",
-                    ..,
-                ] => true,
-                // The spawn tool (#1848) holds the composed change-reasoning-
-                // effort handle to validate an explicit-model `effort` the
-                // same way `set_effort` does; the vocabulary rule is the use
-                // case's, the tool only invokes it.
-                [
-                    "crate",
-                    "application",
-                    "catalogue",
-                    "use_cases",
-                    "ChangeReasoningEffort",
-                ] => true,
-                [
-                    "crate",
-                    "application",
-                    "agent_turn",
-                    "use_cases",
-                    "find",
-                    "FindPaths" | "FindPathsRequest" | "FindOutput" | "FindError",
-                    ..,
-                ] => true,
-                [
-                    "crate",
-                    "application",
-                    "agent_turn",
-                    "use_cases",
-                    "web_fetch",
-                    "FetchFailure" | "FetchOutcome" | "FetchRequest" | "FetchWebContent"
-                    | "HttpStatus",
-                    ..,
-                ] => true,
-                // The environments capability (#1939): its ports are
-                // implemented here, and its use cases are built beside the
-                // agent-control tools (the precedent of the retired
-                // `EnvironmentControlUseCase`) and by the cleanup path that
-                // finalizes a member.
-                [
-                    "crate",
-                    "application",
-                    "environments",
-                    "use_cases",
-                    "ListEnvironmentsQuery"
-                    | "KillEnvironment"
-                    | "KilledEnvironment"
-                    | "KillEnvironmentError"
-                    | "FinalizeEnvironmentMember"
-                    // The spawn and agent_cmd tools (#2024 S4c) hold the
-                    // composed container-config listing: the description's
-                    // roster line and `get_container_configs` invoke it.
-                    | "ListContainerConfigs",
-                    ..,
-                ] => true,
-                // The launch port (#1940) is reached through
-                // `application::ports` like every other contract (#1637). The
-                // spawn tool still builds the launch use case over its own
-                // ports; moving that construction to composition belongs to
-                // "Launch a delegated agent" (#1880).
-                ["crate", "application", "subagent_launch", "SubagentLaunchUseCase"] => true,
-                // The admission-operation capability (#2024 S3): the admin
-                // adapter implements its `AuthorityAdmin` port and builds the
-                // port's own result/error DTOs; the service manager
-                // implements `AuthorityServiceManager` and builds its spec/
-                // status types. (The ports themselves are covered by the
-                // generic `application/<capability>/ports` rule above.)
-                [
-                    "crate",
-                    "application",
-                    "admission",
-                    "dto",
-                    "AuthorityReport" | "AuthorityGroupReport" | "ResetReport"
-                    | "AuthorityAdminError",
-                    ..,
-                ] => true,
-                ["crate", "application", ..] => false,
-                // Every other crate path must start at a layer infrastructure
-                // may name: a root alias (`pub use application::x as y;` in
-                // `lib.rs`), a path climbing above the crate root or a module
-                // alias is not one, so no such route reaches `application`
-                // unchecked (#1637). `interface` is refused separately.
-                ["crate", "domain" | "infrastructure", ..] => true,
-                // `pub(crate)` names the crate itself, no layer.
-                ["crate"] => true,
-                ["crate", ..] => false,
-                _ => true,
-            }
-        })
-    })
+    paths.is_some_and(|paths| paths.iter().all(|path| application_path_allowed(path)))
+}
+
+fn application_path_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "application", "ports", ..] => true,
+        // Ports are capability-local (#1934, #1960): every
+        // `application/<capability>/ports.rs` is a contract this
+        // layer implements. Subagent teardown (#1935) was the first.
+        ["crate", "application", _, "ports", ..] => true,
+        // The sessions list port takes the capability's own query
+        // DTO (#1970); the file store names it to implement `list`.
+        // The export port (#1974) takes the records and manifest the
+        // use case assembled and returns the artifact receipt.
+        [
+            "crate",
+            "application",
+            "sessions",
+            "dto",
+            "SessionListQuery" | "ExportRecord" | "ExportManifest" | "RawExportReceipt",
+        ] => true,
+        // Retained context (D9 #1978): the `recall` tool adapts the
+        // sessions capability's recall use case — it holds the
+        // composed handle, parses its schema and formats the
+        // outcomes; the selection is the use case's.
+        [
+            "crate",
+            "application",
+            "sessions",
+            "use_cases",
+            "RecallContext",
+        ]
+        | [
+            "crate",
+            "application",
+            "sessions",
+            "dto",
+            "retained_context",
+            "RecallError" | "RecallOutcome" | "RecallQuery",
+            ..,
+        ] => true,
+        // The launch-side lifecycle use cases (#1936) are invoked by
+        // the reaper, the monitor and the launch rollback — the
+        // adapters that observe a direct child's end — over the
+        // adapters this layer implements. The operator-facing kill
+        // is composed outside this layer.
+        [
+            "crate",
+            "application",
+            "subagents",
+            "use_cases",
+            "ObserveOwnedChildExit"
+            | "CompensateFailedLaunch"
+            | "CompensateFailedLaunchPorts"
+            // The environment member shutdown and the swarm member
+            // termination (#1939) delegate to the per-child
+            // settlement and the operator kill; both are built in
+            // composition and only invoked here.
+            | "SettleDelegatedChild"
+            | "ChildSettlement"
+            | "KillDelegatedAgent"
+            // The spawn tool (#2024 S4a) holds the composed
+            // container-config selection and invokes it for every
+            // new container; the config adapter implements its port
+            // in the capability's launch vocabulary.
+            | "SelectContainerConfig",
+            ..,
+        ]
+        | [
+            "crate",
+            "application",
+            "subagents",
+            "dto",
+            "ObserveOwnedChildExitRequest"
+            | "ObservedExit"
+            | "CompensateFailedLaunchRequest"
+            | "FleetChildResult"
+            | "KillDelegatedAgentError"
+            | "KillDelegatedAgentRequest"
+            | "ContainerConfigSource"
+            | "ContainerConfigsError"
+            | "ContainerLaunchConfig"
+            | "EffectiveContainerConfigSet"
+            | "SelectContainerConfigRequest"
+            // The doctor's lookup rewords the withheld-overlay
+            // refusal for its own command (#2024 S4b review).
+            | "SelectContainerConfigError"
+            | "SelectedContainerConfig"
+            // The embedded bundle's integrity adapter (#2024 S4e)
+            // answers the launch policy's port with its verdict.
+            | "StandardScriptVerdict",
+            ..,
+        ]
+        // The container-script preflight and the doctor's config
+        // lookup (#2024 S4b) implement the environments capability's
+        // ports in the capability's own diagnosis vocabulary.
+        | [
+            "crate",
+            "application",
+            "environments",
+            "dto",
+            "CheckStatus"
+            | "ContainerRuntimeTarget"
+            | "DiagnosableContainerConfig"
+            | "PreflightCheck"
+            // The liveness and inventory adapters (#2024 S4d)
+            // answer in the capability's own records.
+            | "EnvironmentLiveness"
+            | "EnvironmentStateDir"
+            | "RuntimeContainer"
+            // … and the registry store's conditional correction.
+            | "CorrectionOutcome"
+            // Container-config discovery (#2024 S4c): the roster
+            // adapter builds the inventory entries in the
+            // capability's vocabulary; the spawn tool's roster line
+            // presents the listing's inventory.
+            | "ContainerConfigEntry"
+            | "ContainerConfigInventory"
+            | "ContainerConfigLayer"
+            // The standard bundle (#2024 S4e): the embedded asset
+            // store answers in the capability's asset vocabulary.
+            | "AssetOutcome"
+            // Whose file an asset is (#2073): a field of the
+            // catalogue entries the store builds.
+            | "AssetOwnership"
+            | "AssetState"
+            | "ContainerAsset"
+            | "ContainerAssetCatalogue"
+            // … and the integrity adapter locates a bundle by
+            // the capability's own directory constant.
+            | "STANDARD_CONTAINER_DIR",
+            ..,
+        ] => true,
+        // The spawn tool (#1848) holds the composed change-reasoning-
+        // effort handle to validate an explicit-model `effort` the
+        // same way `set_effort` does; the vocabulary rule is the use
+        // case's, the tool only invokes it.
+        [
+            "crate",
+            "application",
+            "catalogue",
+            "use_cases",
+            "ChangeReasoningEffort",
+        ] => true,
+        [
+            "crate",
+            "application",
+            "agent_turn",
+            "use_cases",
+            "find",
+            "FindPaths" | "FindPathsRequest" | "FindOutput" | "FindError",
+            ..,
+        ] => true,
+        [
+            "crate",
+            "application",
+            "agent_turn",
+            "use_cases",
+            "web_fetch",
+            "FetchFailure" | "FetchOutcome" | "FetchRequest" | "FetchWebContent"
+            | "HttpStatus",
+            ..,
+        ] => true,
+        // The environments capability (#1939): its ports are
+        // implemented here, and its use cases are built beside the
+        // agent-control tools (the precedent of the retired
+        // `EnvironmentControlUseCase`) and by the cleanup path that
+        // finalizes a member.
+        [
+            "crate",
+            "application",
+            "environments",
+            "use_cases",
+            "ListEnvironmentsQuery"
+            | "KillEnvironment"
+            | "KilledEnvironment"
+            | "KillEnvironmentError"
+            | "FinalizeEnvironmentMember"
+            // The spawn and agent_cmd tools (#2024 S4c) hold the
+            // composed container-config listing: the description's
+            // roster line and `get_container_configs` invoke it.
+            | "ListContainerConfigs",
+            ..,
+        ] => true,
+        // The launch port (#1940) is reached through
+        // `application::ports` like every other contract (#1637). The
+        // spawn tool still builds the launch use case over its own
+        // ports; moving that construction to composition belongs to
+        // "Launch a delegated agent" (#1880).
+        ["crate", "application", "subagent_launch", "SubagentLaunchUseCase"] => true,
+        // The admission-operation capability (#2024 S3): the admin
+        // adapter implements its `AuthorityAdmin` port and builds the
+        // port's own result/error DTOs; the service manager
+        // implements `AuthorityServiceManager` and builds its spec/
+        // status types. (The ports themselves are covered by the
+        // generic `application/<capability>/ports` rule above.)
+        [
+            "crate",
+            "application",
+            "admission",
+            "dto",
+            "AuthorityReport" | "AuthorityGroupReport" | "ResetReport"
+            | "AuthorityAdminError",
+            ..,
+        ] => true,
+        ["crate", "application", ..] => false,
+        // Every other crate path must start at a layer infrastructure
+        // may name: a root alias (`pub use application::x as y;` in
+        // `lib.rs`), a path climbing above the crate root or a module
+        // alias is not one, so no such route reaches `application`
+        // unchecked (#1637). `interface` is refused separately.
+        ["crate", "domain" | "infrastructure", ..] => true,
+        // `pub(crate)` names the crate itself, no layer.
+        ["crate"] => true,
+        ["crate", ..] => false,
+        _ => true,
+    }
 }
 
 /// Parse syntax, not lines: comments cannot authorize dependencies and grouped
@@ -2548,6 +2556,10 @@ fn dependency_allowlists_use_paths_not_substrings() {
         "use crate::{self as root};",
         // A use case after a test module is production code.
         "#[cfg(test)]\nmod tests;\nuse crate::application::secret::Bad;",
+        // Only the launch use case is excepted (#1880); the rest of the
+        // launch surface goes through `application::ports`.
+        "use crate::application::subagent_launch::LaunchFuture;",
+        "use crate::application::subagent_launch::SubagentLaunchUseCaseExtra;",
     ] {
         assert!(!application_dependencies_allowed(source), "{source}");
     }
