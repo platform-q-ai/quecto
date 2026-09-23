@@ -623,11 +623,6 @@ envs=(-e "RUST_LOG=${RUST_LOG:-info}" -e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER
 if [[ -n "${QUECTO_AGENT_COMMANDER:-}" ]]; then
     envs+=(-e "QUECTO_AGENT_COMMANDER=$QUECTO_AGENT_COMMANDER")
 fi
-# SPIKE (Agent Commander): the on/off switch is not a secret. The TypeSafe key
-# is never forwarded; without it the in-container agent records events only.
-if [[ -n "${QUECTO_AGENT_COMMANDER:-}" ]]; then
-    envs+=(-e "QUECTO_AGENT_COMMANDER=$QUECTO_AGENT_COMMANDER")
-fi
 # Run as the host user so the identity-mounted paths keep their ownership.
 # Under rootless Podman, --userns=keep-id maps the host uid/gid to the same
 # ids inside the container (the default rootless mapping would send uid 1000

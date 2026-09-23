@@ -89,11 +89,6 @@ envs=(-e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER=isolated-pid-v1" -e "QUECTO_SWA
 if [[ -n "${QUECTO_AGENT_COMMANDER:-}" ]]; then
     envs+=(-e "QUECTO_AGENT_COMMANDER=$QUECTO_AGENT_COMMANDER")
 fi
-# SPIKE (Agent Commander): the on/off switch is not a secret. The TypeSafe key
-# is never forwarded; without it the in-container agent records events only.
-if [[ -n "${QUECTO_AGENT_COMMANDER:-}" ]]; then
-    envs+=(-e "QUECTO_AGENT_COMMANDER=$QUECTO_AGENT_COMMANDER")
-fi
 # Joiners get the same environment contract as the creator: git identity +
 # gh credential helper as non-secret GIT_CONFIG_* entries, and the 0600
 # provider-env file (API keys + GH token) sourced by a bootstrap so secrets
