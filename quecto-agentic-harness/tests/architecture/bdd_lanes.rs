@@ -53,8 +53,12 @@ fn scenario_tags(content: &str) -> Vec<BTreeSet<&str>> {
     let mut feature_tags = BTreeSet::new();
     let mut scenarios = Vec::new();
     let mut in_examples = false;
+    let mut examples_has_rows = false;
     for line in content.lines().map(str::trim) {
         if line.starts_with('@') {
+            if examples_has_rows {
+                in_examples = false;
+            }
             if !in_examples {
                 pending.extend(tags(line));
             }
@@ -62,6 +66,7 @@ fn scenario_tags(content: &str) -> Vec<BTreeSet<&str>> {
             feature_tags = std::mem::take(&mut pending);
         } else if line.starts_with("Scenario:") || line.starts_with("Scenario Outline:") {
             in_examples = false;
+            examples_has_rows = false;
             let mut effective = feature_tags.clone();
             effective.append(&mut pending);
             scenarios.push(effective);
@@ -69,6 +74,9 @@ fn scenario_tags(content: &str) -> Vec<BTreeSet<&str>> {
             // Tags following Examples belong to that example table, never the next scenario.
             pending.clear();
             in_examples = true;
+            examples_has_rows = false;
+        } else if in_examples && line.starts_with('|') {
+            examples_has_rows = true;
         } else if line.starts_with("Background:") || line.starts_with("Rule:") {
             pending.clear();
         }
@@ -187,6 +195,15 @@ fn deliberate_capability_and_tag_violations_are_rejected() {
         )
         .is_err(),
         "Examples tags must not leak into the following scenario"
+    );
+    assert!(
+        validate_tags(
+            &fixture("@mock-llm\nFeature: mirror\n  Scenario Outline: first\n    Examples:\n      | x |\n      | 1 |\n  @real-llm\n  Scenario: tagged follower"),
+            &["@mock-llm"],
+            &["@real-llm"]
+        )
+        .is_err(),
+        "tags after an Examples table must belong to the following scenario"
     );
     assert!(
         validate_tags(
