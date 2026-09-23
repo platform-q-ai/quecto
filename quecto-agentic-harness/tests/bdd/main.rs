@@ -693,9 +693,6 @@ pub struct QuectoWorld {
     /// Context pruning: collapsed-message count recorded before a rewind so
     /// the survival assertion is not vacuous (PR #1048)
     pub context_rewind_collapsed_before: Option<usize>,
-    // --- Path utils BDD fields ---
-    /// Resolved path from path_utils scenarios
-    pub path_utils_resolved: Option<std::path::PathBuf>,
     // --- Truncation BDD fields ---
     /// Input string for truncation scenarios
     pub truncation_input: Option<String>,
@@ -1459,7 +1456,6 @@ mod observability_steps;
 mod openai_routing_1066_steps;
 mod parent_control_steps;
 mod parent_control_supervisor_steps;
-mod path_utils_steps;
 mod provider_auth_modes_steps;
 mod provider_steps;
 mod pruning_1072_steps;

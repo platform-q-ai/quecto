@@ -26,18 +26,16 @@ fn double_at_strips_one() {
 
 #[test]
 fn tilde_alone_expands_to_home() {
-    if let Some(home) = home_dir() {
-        let result = expand_tilde("~");
-        assert_eq!(result, home);
-    }
+    let home = home_dir().expect("the tilde tests need a home directory");
+    let result = expand_tilde("~");
+    assert_eq!(result, home);
 }
 
 #[test]
 fn tilde_slash_expands() {
-    if let Some(home) = home_dir() {
-        let result = expand_tilde("~/foo/bar");
-        assert_eq!(result, home.join("foo/bar"));
-    }
+    let home = home_dir().expect("the tilde tests need a home directory");
+    let result = expand_tilde("~/foo/bar");
+    assert_eq!(result, home.join("foo/bar"));
 }
 
 #[test]
@@ -110,12 +108,18 @@ fn absolute_path_returned_as_is() {
 }
 
 #[test]
+fn tilde_alone_resolves_to_home() {
+    let home = home_dir().expect("the tilde tests need a home directory");
+    let td = tmp();
+    assert_eq!(resolve_to_cwd("~", td.path()), home);
+}
+
+#[test]
 fn tilde_resolved() {
-    if let Some(home) = home_dir() {
-        let td = tmp();
-        let result = resolve_to_cwd("~/foo.txt", td.path());
-        assert_eq!(result, home.join("foo.txt"));
-    }
+    let home = home_dir().expect("the tilde tests need a home directory");
+    let td = tmp();
+    let result = resolve_to_cwd("~/foo.txt", td.path());
+    assert_eq!(result, home.join("foo.txt"));
 }
 
 #[test]
@@ -148,6 +152,16 @@ fn existing_file_returned_directly() {
     let result = resolve_read_path("readme.md", td.path());
     assert_eq!(result, td.path().join("readme.md"));
     assert!(result.exists());
+}
+
+#[test]
+fn existing_file_returns_its_exact_resolved_path() {
+    let td = tmp();
+    std::fs::write(td.path().join("readme.md"), "hello").unwrap();
+    assert_eq!(
+        resolve_read_path("readme.md", td.path()),
+        td.path().join("readme.md")
+    );
 }
 
 #[test]

@@ -61,7 +61,6 @@ non_behavioral_features = [
   "tests/features/spawn_tool.feature",
   "tests/features/nsjail_exec.feature",
   "tests/features/truncate.feature",
-  "tests/features/path_utils.feature",
 
   # CLI / config / auth plumbing — invoke the system but exercise no single
   # domain noun directly; their behaviour is driven by composition, not by
