@@ -638,3 +638,37 @@ fn a_second_crash_in_a_session_is_promoted() {
     assert!(first.get("22_composed").is_none(), "{first}");
     assert_eq!(second["22_composed"], "promote_in_tui");
 }
+
+#[tokio::test]
+async fn without_a_key_events_are_recorded_for_later_judgment_not_sent() {
+    let server = MockServer::start().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let mut w = worker(format!("{}/x", server.uri()), tmp.path().into(), child());
+    w.record_only = true;
+    for (seq, event) in [turn_end("Blocked."), tool_error("boom")]
+        .into_iter()
+        .enumerate()
+    {
+        w.judge(Job {
+            ts: format!("{}", 100 + seq),
+            seq: seq as u64,
+            session_key: "in-container".into(),
+            model: "m".into(),
+            event,
+        })
+        .await;
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+    let log = std::fs::read_to_string(tmp.path().join("in-container.jsonl")).unwrap();
+    let records: Vec<serde_json::Value> = log
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(records.len(), 2);
+    for record in &records {
+        assert_eq!(record["mode"], "record", "{record}");
+        assert!(record["answers"].is_null());
+        assert!(record["event"]["kind"].is_string());
+        assert!(record["agent_role"].as_str().unwrap().starts_with("Child"));
+    }
+}

@@ -618,6 +618,16 @@ fi
 # trace of why (termination signal, teardown, socket close). The host can
 # still override the level per spawn.
 envs=(-e "RUST_LOG=${RUST_LOG:-info}" -e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER=isolated-pid-v1" -e "QUECTO_SWARM_HOST_PID_NS=$(readlink /proc/self/ns/pid)" -e "QUECTO_SWARM_CHECKOUT=$child_cwd" -e "QUECTO_SWARM_BOOTSTRAP=1")
+# SPIKE (Agent Commander): the on/off switch is not a secret. The TypeSafe key
+# is never forwarded; without it the in-container agent records events only.
+if [[ -n "${QUECTO_AGENT_COMMANDER:-}" ]]; then
+    envs+=(-e "QUECTO_AGENT_COMMANDER=$QUECTO_AGENT_COMMANDER")
+fi
+# SPIKE (Agent Commander): the on/off switch is not a secret. The TypeSafe key
+# is never forwarded; without it the in-container agent records events only.
+if [[ -n "${QUECTO_AGENT_COMMANDER:-}" ]]; then
+    envs+=(-e "QUECTO_AGENT_COMMANDER=$QUECTO_AGENT_COMMANDER")
+fi
 # Run as the host user so the identity-mounted paths keep their ownership.
 # Under rootless Podman, --userns=keep-id maps the host uid/gid to the same
 # ids inside the container (the default rootless mapping would send uid 1000

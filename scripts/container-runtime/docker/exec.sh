@@ -84,6 +84,16 @@ workdir="$workspace_path/repo"
 [ -d "$workdir" ] || workdir="$workspace_path"
 
 envs=(-e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER=isolated-pid-v1" -e "QUECTO_SWARM_HOST_PID_NS=$(readlink /proc/self/ns/pid)" -e "QUECTO_SWARM_CHECKOUT=$workdir" -e "QUECTO_SWARM_BOOTSTRAP=0")
+# SPIKE (Agent Commander): the on/off switch is not a secret. The TypeSafe key
+# is never forwarded; without it the in-container agent records events only.
+if [[ -n "${QUECTO_AGENT_COMMANDER:-}" ]]; then
+    envs+=(-e "QUECTO_AGENT_COMMANDER=$QUECTO_AGENT_COMMANDER")
+fi
+# SPIKE (Agent Commander): the on/off switch is not a secret. The TypeSafe key
+# is never forwarded; without it the in-container agent records events only.
+if [[ -n "${QUECTO_AGENT_COMMANDER:-}" ]]; then
+    envs+=(-e "QUECTO_AGENT_COMMANDER=$QUECTO_AGENT_COMMANDER")
+fi
 # Joiners get the same environment contract as the creator: git identity +
 # gh credential helper as non-secret GIT_CONFIG_* entries, and the 0600
 # provider-env file (API keys + GH token) sourced by a bootstrap so secrets

@@ -50,21 +50,25 @@ impl DryRunCommander {
         if !matches!(switch.as_str(), "dry-run" | "1") {
             return None;
         }
-        let key = load_key()?;
+        // No key (e.g. inside a container, where it is never forwarded):
+        // record events only; the host judges them later with the replay tool.
+        let key = load_key();
+        let record_only = key.is_none();
         let dir = base_dir.join("agent-commander");
         std::fs::create_dir_all(&dir).ok()?;
         let (tx, rx) = mpsc::unbounded_channel();
-        let worker = Worker::new(
+        let mut worker = Worker::new(
             reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(20))
                 .build()
                 .ok()?,
-            key,
+            key.unwrap_or_default(),
             dir,
             role,
             ENDPOINT.to_string(),
             std::time::Duration::from_millis(500),
         );
+        worker.record_only = record_only;
         // Its own thread and runtime: independent of the agent's runtime
         // (which may not exist yet) and never competing with the loop.
         std::thread::Builder::new()
@@ -155,6 +159,8 @@ struct Worker {
     stall_check: bool,
     /// Sub-agent crashes seen per session: a second one is not a one-off.
     crashes: std::collections::HashMap<String, u32>,
+    /// No key: log events for later judgment (replay) instead of asking Jev.
+    record_only: bool,
 }
 
 /// Rate limits and any server-side failure (5xx, incl. Cloudflare 520-529)
@@ -217,6 +223,7 @@ impl Worker {
             stall: StallWatch::default(),
             stall_check: false,
             crashes: std::collections::HashMap::new(),
+            record_only: false,
         }
     }
 
@@ -526,6 +533,23 @@ impl Worker {
     }
 
     async fn judge(&mut self, job: Job) {
+        if self.record_only {
+            let record = json!({
+                "ts": job.ts,
+                "seq": job.seq,
+                "session": job.session_key,
+                "pid": std::process::id(),
+                "agent_role": format!("{:?}", self.role),
+                "agent_model": job.model,
+                "decisions": [],
+                "event": job.event,
+                // Where it ran, for analysis: set inside swarm containers.
+                "container": std::env::var("QUECTO_SWARM_CONTAINER").ok(),
+                "mode": "record",
+            });
+            self.write(&job.session_key, &record);
+            return;
+        }
         let ts = job.ts.parse::<f64>().unwrap_or_default();
         self.stall_check = match &job.event {
             CommanderEvent::ToolOk { tool, .. } => {
