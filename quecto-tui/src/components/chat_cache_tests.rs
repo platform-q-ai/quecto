@@ -445,3 +445,25 @@ fn prepend_history_merges_split_tool_result_at_page_boundary() {
     assert_eq!(text.matches("$ older call").count(), 1, "{text}");
     assert_eq!(text.matches("newest page result").count(), 1, "{text}");
 }
+
+/// #2099: the last viewport that begins at line zero must remain reachable
+/// after the rendered cache has moved from the tail into historical entries.
+#[test]
+fn viewport_edge_after_eviction_matches_full_history() {
+    let height = 8;
+    let mut chat = chat_with_long_history(200);
+    chat.set_viewport_height(height);
+    let _ = chat.render(80);
+    let full = baseline_lines(200, 80);
+    let oldest_offset = full.len() - height;
+
+    chat.scroll_up(oldest_offset - 1);
+    let second_window = render_plain(&mut chat, 80);
+    assert_eq!(second_window, full[1..height + 1].join("\n"));
+    assert_eq!(chat.scroll_offset(), oldest_offset - 1);
+
+    chat.scroll_up(1);
+    assert_eq!(render_plain(&mut chat, 80), full[..height].join("\n"));
+    assert_eq!(chat.scroll_offset(), oldest_offset);
+    assert!(chat.cached_rendered_line_count() <= chat.rendered_line_retention_bound());
+}
