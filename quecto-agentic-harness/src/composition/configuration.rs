@@ -80,6 +80,7 @@ pub fn build_config_loader(
     base_dir: &Path,
     selection: ConfigSelection,
     env_overrides: HashMap<String, String>,
+    inherited_child: bool,
 ) -> ConfigLoader {
     let base_dir = base_dir.to_path_buf();
     let handles = build_configuration_handles(&ConfigurationEnvironment {
@@ -87,17 +88,23 @@ pub fn build_config_loader(
         prompt_for_trust: false,
     });
     Arc::new(move || {
-        let effective = handles
-            .resolve
-            .execute(&selection)
-            .map_err(|error| error.to_string())?;
+        let effective = (if inherited_child {
+            handles.resolve.execute_inherited_child(&selection)
+        } else {
+            handles.resolve.execute(&selection)
+        })
+        .map_err(|error| error.to_string())?;
         // A reload has no terminal: an overlay that became untrusted (a
         // hand edit mid-run) drops out of the effective configuration, and
         // the operator's log is the only place that says so.
         for line in effective.sources.diagnostics() {
             tracing::warn!(target: "quecto::configuration", "{line}");
         }
-        realize_config(effective.document, &env_overrides, &base_dir)
+        if inherited_child {
+            realize_inherited_child_config(effective.document, &env_overrides, &base_dir)
+        } else {
+            realize_config(effective.document, &env_overrides, &base_dir)
+        }
     })
 }
 

@@ -42,7 +42,12 @@ fn under_test(dir: &std::path::Path) -> (Box<dyn RuntimeConfigurationSource>, st
             config_path.clone(),
         )],
         dir.to_path_buf(),
-        quecto::composition::configuration::build_config_loader(dir, selection, HashMap::new()),
+        quecto::composition::configuration::build_config_loader(
+            dir,
+            selection,
+            HashMap::new(),
+            false,
+        ),
         reqwest::Client::new(),
         quecto::composition::runtime::build_agent_provider,
     );

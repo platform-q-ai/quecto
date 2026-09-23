@@ -412,6 +412,8 @@ pub(crate) fn build_agent_from_config(
     // seeded now, after the startup composition read the same files.
     let runtime_inputs = crate::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
         selection: selection.clone(),
+        inherited_child: crate::infrastructure::admission::process::current()
+            .is_some_and(|admission| admission.inherits_authority()),
         env_overrides: env_overrides.clone(),
         http_client: http_client.clone(),
         provider_runtime: build_provider,

@@ -56,6 +56,7 @@ impl std::fmt::Debug for CatalogueHandles {
 #[derive(Clone)]
 pub struct RuntimeConfigurationInputs {
     pub selection: crate::application::configuration::dto::ConfigSelection,
+    pub inherited_child: bool,
     pub env_overrides: std::collections::HashMap<String, String>,
     pub http_client: reqwest::Client,
     pub provider_runtime: crate::infrastructure::runtime_configuration::ProviderRuntimeBuilder,

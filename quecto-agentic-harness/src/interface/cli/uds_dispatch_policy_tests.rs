@@ -171,6 +171,7 @@ async fn immediate_persist_failure_dispatch_returns_error_without_retained_polic
     let tmp = tempfile::TempDir::new().unwrap();
     fx.runtime_configuration = Some(RuntimeConfigurationInputs {
         selection: ConfigSelection::Explicit(tmp.path().to_path_buf()),
+        inherited_child: false,
         env_overrides: std::collections::HashMap::new(),
         http_client: reqwest::Client::new(),
         provider_runtime: crate::composition::runtime::build_agent_provider,
@@ -230,6 +231,7 @@ async fn forced_reload_reapplies_persisted_tool_policy_to_live_registry() {
     std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
     fx.runtime_configuration = Some(RuntimeConfigurationInputs {
         selection: ConfigSelection::Explicit(config_path),
+        inherited_child: false,
         env_overrides: std::collections::HashMap::new(),
         http_client: reqwest::Client::new(),
         provider_runtime: crate::composition::runtime::build_agent_provider,
@@ -274,6 +276,7 @@ async fn queued_persist_tool_policy_is_written_when_boundary_drains() {
     .unwrap();
     fx.runtime_configuration = Some(RuntimeConfigurationInputs {
         selection: ConfigSelection::Explicit(config_path.clone()),
+        inherited_child: false,
         env_overrides: std::collections::HashMap::new(),
         http_client: reqwest::Client::new(),
         provider_runtime: crate::composition::runtime::build_agent_provider,

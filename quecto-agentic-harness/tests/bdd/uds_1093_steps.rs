@@ -282,6 +282,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
             selection: quecto::application::configuration::dto::ConfigSelection::Explicit(
                 config_path,
             ),
+            inherited_child: false,
             env_overrides,
             http_client,
             provider_runtime: build_agent_provider,

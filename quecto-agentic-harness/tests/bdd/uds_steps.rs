@@ -117,6 +117,7 @@ pub(crate) fn build_uds_agent(
                 selection: quecto::application::configuration::dto::ConfigSelection::Explicit(
                     config_path,
                 ),
+                inherited_child: false,
                 env_overrides,
                 http_client,
                 provider_runtime: build_agent_provider,
