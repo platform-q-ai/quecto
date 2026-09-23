@@ -128,13 +128,28 @@ fn file_rules_catch_grouped_relative_and_aliased_imports() {
     let file = "../quecto-tui/src/protocol/session_payloads.rs";
     let forbidden = ["crate::components", "super::components"];
     for source in [
-        "use crate::{components::ansi::sanitize_control};",
-        "use super::super::components::ansi;",
-        "fn f() { super::super::components::ansi::sanitize_control(\"\"); }",
         "use crate as c; fn f() { c::components::ansi::x(); }",
         "#[cfg(test)]\nmod tests;\nuse crate::components::ansi;",
     ] {
         assert!(file_offence(file, source, &forbidden).is_some(), "{source}");
+    }
+    // Only the written path spells the pattern (the text does not).
+    for source in [
+        "use crate::{components::ansi::sanitize_control};",
+        "use super::{components::ansi};",
+    ] {
+        assert!(file_offence(file, source, &forbidden).is_some(), "{source}");
+    }
+    // Only the resolved path spells the pattern.
+    for source in [
+        "use super::super::components::ansi;",
+        "fn f() { super::super::components::ansi::sanitize_control(\"\"); }",
+        "use super::super::{components::ansi};",
+    ] {
+        assert!(
+            file_offence(file, source, &["crate::components"]).is_some(),
+            "{source}"
+        );
     }
     for source in [
         "use crate::protocol::client::Client;",

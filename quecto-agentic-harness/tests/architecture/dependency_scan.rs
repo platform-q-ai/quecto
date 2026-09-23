@@ -212,9 +212,10 @@ pub(super) fn resolve_relative(module: &[String], path: &str) -> String {
         .join("::")
 }
 
-/// Crate-relative paths (`crate::…`, `$crate::…`, `super::…`, `self::…`)
-/// spelled in raw tokens — macro arguments and `macro_rules!` bodies, which
-/// `syn` leaves unparsed. A lone `self`/`super` (`self.field`) is no path.
+/// Crate-relative paths (`crate::…`, `super::…`, `self::…`; `$crate` is the
+/// `$` punct then the `crate` ident) spelled in raw tokens — macro arguments
+/// and `macro_rules!` bodies, which `syn` leaves unparsed. A lone
+/// `self`/`super` (`self.field`) is no path.
 pub(super) fn crate_paths_in_tokens(stream: proc_macro2::TokenStream) -> Vec<String> {
     use proc_macro2::TokenTree;
     let tokens: Vec<TokenTree> = stream.into_iter().collect();
@@ -226,13 +227,9 @@ pub(super) fn crate_paths_in_tokens(stream: proc_macro2::TokenStream) -> Vec<Str
             i += 1;
             continue;
         }
-        let dollar = matches!(&tokens[i], TokenTree::Punct(p) if p.as_char() == '$');
-        let head = if dollar { i + 1 } else { i };
-        let start = match tokens.get(head) {
+        let start = match tokens.get(i) {
             Some(TokenTree::Ident(ident))
-                if (dollar && ident == "crate")
-                    || (!dollar
-                        && matches!(ident.to_string().as_str(), "crate" | "super" | "self")) =>
+                if matches!(ident.to_string().as_str(), "crate" | "super" | "self") =>
             {
                 ident.to_string()
             }
@@ -242,7 +239,7 @@ pub(super) fn crate_paths_in_tokens(stream: proc_macro2::TokenStream) -> Vec<Str
             }
         };
         let mut segments = vec![start];
-        let mut next = head + 1;
+        let mut next = i + 1;
         while let (
             Some(TokenTree::Punct(a)),
             Some(TokenTree::Punct(b)),
