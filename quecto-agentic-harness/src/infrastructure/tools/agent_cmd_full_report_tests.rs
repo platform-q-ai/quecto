@@ -24,6 +24,7 @@ enum Mode {
     Fail,
     NoMoreField,
     Stall,
+    WrongOffset,
 }
 
 fn fake_child_with(
@@ -67,7 +68,8 @@ fn fake_child_with(
                     Some("get_message") => {
                         let offset = cmd["offset"].as_u64().unwrap_or(0) as usize;
                         // Like the real child: ranges end on a char boundary.
-                        let mut end = (offset + chunk).min(full.len());
+                        let limit = cmd["limit"].as_u64().map_or(usize::MAX, |l| l as usize);
+                        let mut end = (offset + chunk.min(limit)).min(full.len());
                         while !full.is_char_boundary(end) {
                             end -= 1;
                         }
@@ -88,6 +90,11 @@ fn fake_child_with(
                             }
                             Mode::Stall => serde_json::json!({
                                 "content": "", "offset": offset, "nextOffset": offset,
+                                "contentLength": full.len(), "hasMoreContent": true
+                            }),
+                            Mode::WrongOffset => serde_json::json!({
+                                "content": &full[..end - offset], "offset": 0,
+                                "nextOffset": end - offset,
                                 "contentLength": full.len(), "hasMoreContent": true
                             }),
                             Mode::NoMoreField => serde_json::json!({
@@ -223,13 +230,28 @@ async fn a_report_beyond_the_final_report_cap_is_cut_with_a_plain_notice() {
             .is_some_and(|notice| notice.contains("export_raw")),
         "the agent is told how to get the rest: {message}"
     );
-    // Reading stops just past the budget, not at the end of the report.
-    let reads = seen
+    // Reading stops just past the budget, not at the end of the report,
+    // and never asks for more than it can keep.
+    let budget = super::super::agent_cmd_report::FINAL_REPORT_BUDGET_BYTES;
+    let asked: Vec<_> = seen
         .lock()
         .unwrap()
         .iter()
         .filter(|cmd| cmd["type"] == "get_message")
-        .count();
+        .map(|cmd| {
+            (
+                cmd["offset"].as_u64().unwrap(),
+                cmd["limit"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert!(
+        asked
+            .iter()
+            .all(|(offset, limit)| offset + limit <= budget as u64 + 1),
+        "{asked:?}"
+    );
+    let reads = asked.len();
     assert!(
         reads <= super::super::agent_cmd_report::FINAL_REPORT_BUDGET_BYTES / 16_000 + 2,
         "{reads} reads"
@@ -362,16 +384,16 @@ async fn read_report(tool: &AgentCmdTool) -> crate::domain::tool::ToolResult {
 
 #[tokio::test]
 async fn a_failed_read_leaves_the_preview_and_is_not_acknowledged() {
-    for mode in [Mode::Fail, Mode::NoMoreField, Mode::Stall] {
+    for mode in [
+        Mode::Fail,
+        Mode::NoMoreField,
+        Mode::Stall,
+        Mode::WrongOffset,
+    ] {
         let tmp = tempfile::TempDir::new().unwrap();
         let sock = tmp.path().join("child.sock");
-        fake_child_with(
-            sock.clone(),
-            report_of(10_000),
-            4_000,
-            Arc::new(Mutex::new(Vec::new())),
-            mode,
-        );
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        fake_child_with(sock.clone(), report_of(10_000), 4_000, seen.clone(), mode);
         let (tool, registry) = tool_for(sock, None);
 
         let result = read_report(&tool).await;
@@ -394,6 +416,15 @@ async fn a_failed_read_leaves_the_preview_and_is_not_acknowledged() {
             None,
             "a preview is not the report: nothing is acknowledged"
         );
+        if matches!(mode, Mode::Stall) {
+            let reads = seen
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|c| c["type"] == "get_message")
+                .count();
+            assert_eq!(reads, 1, "a read that makes no progress stops at once");
+        }
     }
 }
 
@@ -439,12 +470,16 @@ async fn an_already_delivered_final_is_not_read_again() {
 async fn get_report_passes_a_null_report_and_a_raw_export_through() {
     // A null report: the recovery reference goes, nothing is read.
     let tool = AgentCmdTool::new(new_registry());
-    let unchanged = r#"{"success":true,"data":{"report":null,"recovery":null,"snapshot":true}}"#;
+    let null_report = serde_json::json!({"success": true, "data": {
+        "report": null, "recovery": {"command": "get_message", "messageId": "m", "offset": 1}
+    }});
     let tmp = tempfile::TempDir::new().unwrap();
     let out = tool
-        .expand_report(&tmp.path().join("none.sock"), None, unchanged.to_string())
+        .expand_report(&tmp.path().join("none.sock"), None, null_report.to_string())
         .await;
-    assert_eq!(out, unchanged);
+    let out: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(out["data"]["report"].is_null(), "{out}");
+    assert!(out["data"].get("recovery").is_none());
     // A raw export receipt is kept as the child sent it.
     let sock = tmp.path().join("child.sock");
     fake_child(
@@ -479,4 +514,25 @@ fn serialized_prefix_fits_the_encoded_budget() {
     assert_eq!(serialized_prefix("short", 100), "short");
     let wide = "漢".repeat(500);
     assert!(wide.is_char_boundary(serialized_prefix(&wide, 301).len()));
+}
+
+#[tokio::test]
+async fn get_report_is_cut_on_its_encoded_size() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock = tmp.path().join("child.sock");
+    // Every quote doubles when encoded: 60 KB of text, ~120 KB of JSON.
+    let full = "\"".repeat(60_000);
+    fake_child(sock.clone(), full, 70_000, Arc::new(Mutex::new(Vec::new())));
+    let (tool, _) = tool_for(sock, None);
+    let result = tool
+        .execute(r#"{"agent_id":"child-uuid","command":"get_report"}"#)
+        .await
+        .unwrap();
+    let response: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    let content = response["data"]["report"]["content"].as_str().unwrap();
+    assert!(
+        serde_json::to_string(content).unwrap().len()
+            <= super::super::agent_cmd_report::FINAL_REPORT_BUDGET_BYTES
+    );
+    assert_eq!(response["data"]["report"]["contentTruncated"], true);
 }
