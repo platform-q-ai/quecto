@@ -507,10 +507,30 @@ impl App {
             self.ac_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
             self.sync_workflow_automation(wf);
         }
+        let mut new_warnings = Vec::new();
         for warning in snap.admission_warnings {
-            if self.shown_admission_warning_slots.insert(warning.slot) {
-                self.notify(&warning.message, NotifyLevel::Warning);
+            if self
+                .shown_admission_warning_slots
+                .insert(warning.slot.clone())
+            {
+                new_warnings.push(warning);
             }
+        }
+        if new_warnings.len() == 1 {
+            self.notify(&new_warnings[0].message, NotifyLevel::Warning);
+        } else if new_warnings.len() > 1 {
+            let slots = new_warnings
+                .iter()
+                .map(|warning| warning.slot.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.notify(
+                &format!(
+                    "Admission bindings missing ({}): {slots}; requests are not broker-gated — configure admission.bindings",
+                    new_warnings.len()
+                ),
+                NotifyLevel::Warning,
+            );
         }
         if snap.authoritative {
             self.apply_get_state_admission(snap.admission.as_ref());

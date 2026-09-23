@@ -48,9 +48,13 @@ impl AdmissionRuntimeContext {
             .policy
             .validate()
             .map_err(|e| format!("invalid admission policy: {e:?}"))?;
+        let mut normalized_slots = std::collections::BTreeSet::new();
         for (slot, alias) in &proposal.bindings {
             if slot.is_empty() || slot.trim() != slot || slot.contains('/') {
                 return Err("invalid admission provider binding".into());
+            }
+            if !normalized_slots.insert(slot.to_ascii_lowercase()) {
+                return Err("ambiguous admission provider bindings differing only by case".into());
             }
             if !proposal.policy.aliases.contains_key(alias) || !gates_by_alias.contains_key(alias) {
                 return Err(format!(
@@ -71,7 +75,11 @@ impl AdmissionRuntimeContext {
         &self,
         slot: &str,
     ) -> Result<Option<AttemptTransportBinding>, String> {
-        if self.effective.bindings.contains_key(slot)
+        if self
+            .effective
+            .bindings
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case(slot))
             || self.effective.bindings.contains_key(DEFAULT_BINDING_KEY)
             || self.effective.bindings.contains_key(DEFAULT_BINDING_ALT)
         {
@@ -87,7 +95,9 @@ impl AdmissionRuntimeContext {
         let alias = self
             .effective
             .bindings
-            .get(slot)
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(slot))
+            .map(|(_, alias)| alias)
             .or_else(|| self.effective.bindings.get(DEFAULT_BINDING_KEY))
             .or_else(|| self.effective.bindings.get(DEFAULT_BINDING_ALT))
             .ok_or_else(|| {

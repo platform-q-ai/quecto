@@ -76,6 +76,42 @@ fn context_rejects_unknown_alias_and_missing_capability() {
 }
 
 #[test]
+fn mixed_case_slot_binding_cannot_bypass_admission() {
+    let mut proposal = proposal();
+    proposal.bindings = BTreeMap::from([("OpenAI-API".into(), "account".into())]);
+    let context = AdmissionRuntimeContext::new(
+        proposal,
+        gates(),
+        crate::infrastructure::providers::SingleAttemptClient::build(
+            reqwest::Client::builder().no_proxy(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(context.optional_binding("openai-api").unwrap().is_some());
+    assert!(context.binding("OPENAI-API").is_ok());
+}
+
+#[test]
+fn ambiguous_case_folded_slot_bindings_are_rejected() {
+    let mut proposal = proposal();
+    proposal
+        .bindings
+        .insert("ENDPOINT".into(), "account".into());
+    assert!(
+        AdmissionRuntimeContext::new(
+            proposal,
+            gates(),
+            crate::infrastructure::providers::SingleAttemptClient::build(
+                reqwest::Client::builder().no_proxy()
+            )
+            .unwrap(),
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn configured_provider_without_binding_remains_usable_without_gate() {
     let mut proposal = proposal();
     proposal.bindings.clear();

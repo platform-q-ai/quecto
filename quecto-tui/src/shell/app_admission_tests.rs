@@ -465,3 +465,56 @@ async fn a_pushed_event_with_an_authority_status_moves_the_health_badge() {
         Some("admission ✓")
     );
 }
+
+#[tokio::test]
+async fn missing_binding_warnings_survive_real_stack_limit_and_reconnect_refresh() {
+    let mut app = test_app().await;
+    let response = || Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(
+            serde_json::json!({"admissionWarnings": (0..7).map(|i| serde_json::json!({
+            "slot":format!("slot-{i}"), "code":"admission_binding_missing",
+            "message":format!("slot-{i} requests are not broker-gated")
+        })).collect::<Vec<_>>() }),
+        ),
+        error: None,
+    };
+    app.handle_event(response());
+    let messages = app.notifications.messages();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("7") && m.contains("slot-0") && m.contains("slot-6")),
+        "{messages:?}"
+    );
+    assert!(messages.len() <= 5);
+    let first = &messages[0];
+    assert!(first.contains("not broker-gated") && first.contains("admission.bindings"));
+    for i in 0..7 {
+        assert!(
+            first.contains(&format!("slot-{i}")),
+            "missing slot-{i}: {first}"
+        );
+    }
+    app.begin_agent_stream_closed();
+    assert!(
+        app.notifications
+            .dismiss_prefixed("Admission bindings missing")
+    );
+    assert!(
+        !app.notifications
+            .messages()
+            .iter()
+            .any(|m| m.contains("slot-0"))
+    );
+    app.ac_mut().agent_connected = true;
+    app.handle_event(response());
+    let messages = app.notifications.messages();
+    assert!(
+        messages.iter().any(|m| m == first),
+        "reconnect must re-emit: {messages:?}"
+    );
+    assert_eq!(app.shown_admission_warning_slots.len(), 7);
+}
