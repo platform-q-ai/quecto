@@ -119,11 +119,21 @@ fn file_offence(file: &str, source: &str, forbidden: &[&str]) -> Option<String> 
         } else {
             path.clone()
         };
-        if let Some(pattern) = forbidden.iter().find(|pattern| path.contains(*pattern)) {
+        if let Some(pattern) = forbidden
+            .iter()
+            .find(|pattern| names_segment_pattern(&path, pattern))
+        {
             return Some(format!("names {path} ({pattern})"));
         }
     }
     None
+}
+
+/// `pattern` occurs in `path` starting at a segment (`dirs::` in
+/// `dirs::home_dir::`, not in `crate::domain::environment_dirs::`).
+fn names_segment_pattern(path: &str, pattern: &str) -> bool {
+    path.match_indices(pattern)
+        .any(|(at, _)| at == 0 || path[..at].ends_with(':'))
 }
 
 #[test]
@@ -163,6 +173,29 @@ fn file_rules_catch_grouped_relative_and_aliased_imports() {
     }
     // `use std::fs;` names `std::fs::`; a local `dirs` names nothing.
     let domain = "src/domain/mod.rs";
+    for source in [
+        "use dirs as d; fn f() { d::home_dir(); }",
+        "use std as s; fn f() { s::fs::read(\"x\"); }",
+        "extern crate std as s;",
+    ] {
+        assert!(
+            file_offence(domain, source, &["dirs::", "std::fs::"]).is_some(),
+            "{source}"
+        );
+    }
+    for source in [
+        "use crate::domain::environment_dirs;",
+        "use crate::protocol::HttpClient;",
+        "use std::fs as filesystem_is_fine_elsewhere;",
+        "fn f() { use ResumeDecisionKind as Kind; }",
+    ] {
+        assert_eq!(
+            file_offence(domain, source, &["dirs::", "Client::", "std::env::"]),
+            None,
+            "{source}"
+        );
+    }
+    assert!(file_offence(domain, "use std::fs as f;", &["std::fs::"]).is_some());
     assert!(file_offence(domain, "use std::fs;", &["std::fs::"]).is_some());
     assert_eq!(
         file_offence(domain, "fn f(dirs: u8) { dirs; }", &["dirs::"]),
@@ -254,6 +287,125 @@ fn domain_and_application_crate_paths_stay_inward() {
     }
 }
 
+/// Macros hide their bodies' paths from the invoking file, so an inner layer
+/// may not invoke a `macro_rules!` an outer layer defines (#1637 review): a
+/// domain file cannot reach application through an application macro.
+#[test]
+fn inner_layers_invoke_no_outer_layer_macros() {
+    let defined_outside = |inner: &[&str]| -> BTreeSet<String> {
+        let mut files = Vec::new();
+        collect_rs_files(Path::new("src"), &mut files);
+        files
+            .iter()
+            .filter(|file_content| {
+                let (file, _) = file_content.split_once(":\n").unwrap();
+                !inner
+                    .iter()
+                    .any(|layer| file.starts_with(&format!("src/{layer}/")))
+            })
+            .flat_map(|file_content| {
+                let (_, source) = file_content.split_once(":\n").unwrap();
+                macro_definitions(source)
+            })
+            .collect()
+    };
+    for (dir, inner) in [
+        ("src/domain", &["domain"][..]),
+        ("src/application", &["domain", "application"][..]),
+    ] {
+        let outer = defined_outside(inner);
+        let mut files = Vec::new();
+        collect_rs_files(Path::new(dir), &mut files);
+        for file_content in &files {
+            let (file, source) = file_content.split_once(":\n").unwrap();
+            if dependency_scan::test_only_file(file) {
+                continue;
+            }
+            let invoked: Vec<_> = macro_invocations(source)
+                .into_iter()
+                .filter(|name| outer.contains(name))
+                .collect();
+            assert!(
+                invoked.is_empty(),
+                "{file} invokes outer-layer macros {invoked:?}"
+            );
+        }
+    }
+    assert_eq!(
+        macro_definitions("macro_rules! outer { () => {} }"),
+        ["outer"]
+    );
+    assert_eq!(
+        macro_invocations("fn f() { outer!(); let _ = vec![inner!()]; }"),
+        ["outer", "vec", "inner"]
+    );
+}
+
+/// `macro_rules!` names a file defines (test-only ones excluded).
+fn macro_definitions(source: &str) -> Vec<String> {
+    use syn::visit::Visit;
+    struct Definitions(Vec<String>);
+    impl<'ast> Visit<'ast> for Definitions {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            if dependency_scan::item_test_only(item) {
+                return;
+            }
+            if let syn::Item::Macro(definition) = item
+                && definition.mac.path.is_ident("macro_rules")
+                && let Some(name) = &definition.ident
+            {
+                self.0.push(name.to_string());
+            }
+            syn::visit::visit_item(self, item);
+        }
+    }
+    let file = syn::parse_file(source).expect("source parses");
+    let mut definitions = Definitions(Vec::new());
+    definitions.visit_file(&file);
+    definitions.0
+}
+
+/// The last path segment of every macro a file invokes, including inside
+/// other macros' tokens (test-only items excluded).
+fn macro_invocations(source: &str) -> Vec<String> {
+    use syn::visit::Visit;
+    struct Invocations(Vec<String>);
+    fn in_tokens(stream: proc_macro2::TokenStream, out: &mut Vec<String>) {
+        let tokens: Vec<_> = stream.into_iter().collect();
+        for (at, token) in tokens.iter().enumerate() {
+            match token {
+                proc_macro2::TokenTree::Group(group) => in_tokens(group.stream(), out),
+                proc_macro2::TokenTree::Ident(ident)
+                    if matches!(tokens.get(at + 1),
+                        Some(proc_macro2::TokenTree::Punct(bang)) if bang.as_char() == '!')
+                        && matches!(tokens.get(at + 2), Some(proc_macro2::TokenTree::Group(_))) =>
+                {
+                    out.push(ident.to_string())
+                }
+                _ => {}
+            }
+        }
+    }
+    impl<'ast> Visit<'ast> for Invocations {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            if dependency_scan::item_test_only(item) {
+                return;
+            }
+            syn::visit::visit_item(self, item);
+        }
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            if let Some(last) = mac.path.segments.last() {
+                self.0.push(last.ident.to_string());
+            }
+            in_tokens(mac.tokens.clone(), &mut self.0);
+        }
+    }
+    let file = syn::parse_file(source).expect("source parses");
+    let mut invocations = Invocations(Vec::new());
+    invocations.visit_file(&file);
+    invocations.0
+}
+
 /// True for non-crate paths and for crate paths under one of `roots`.
 fn crate_path_within(path: &str, roots: &[&str]) -> bool {
     let parts: Vec<_> = path.split("::").collect();
@@ -272,6 +424,8 @@ fn crate_path_roots_fail_closed() {
         "#[cfg(test)]\nmod tests;\npub use crate::application::X;",
         "use crate as root;",
         "fn f() { let _ = vec![super::application::X::new()]; }",
+        "id! { use crate::{application::secret::Bad}; }",
+        "id! { use crate as c; }",
         "extern crate self as q;",
         "struct S { #[serde(default = \"super::application::d\")] f: u8 }",
     ] {
@@ -883,10 +1037,17 @@ fn dependency_paths_in(module: Option<Vec<String>>, content: &str) -> Option<Vec
                 imports(&path.tree, &format!("{prefix}{}::", path.ident), paths)
             }
             syn::UseTree::Name(name) => paths.push(format!("{prefix}{}", name.ident)),
-            // `use crate as root;` / `use super::super as up;` alias a module:
-            // paths through the alias could not be followed, so none is allowed.
+            // `use crate as root;` / `use super::super as up;` alias a module,
+            // `use std as s;` / `use dirs as d;` a crate or module (snake
+            // case; `use LongEnum as Kind;` renames a type): paths through
+            // the alias could not be followed, so none is allowed.
             syn::UseTree::Rename(name)
-                if dependency_scan::is_module_alias(&format!("{prefix}{}", name.ident)) =>
+                if dependency_scan::is_module_alias(&format!("{prefix}{}", name.ident))
+                    || (prefix.is_empty()
+                        && name
+                            .ident
+                            .to_string()
+                            .starts_with(|c: char| c.is_ascii_lowercase())) =>
             {
                 paths.push(dependency_scan::UNRESOLVABLE.to_string())
             }
@@ -979,9 +1140,9 @@ fn dependency_paths_in(module: Option<Vec<String>>, content: &str) -> Option<Vec
             }
         }
         fn visit_item_extern_crate(&mut self, item: &'ast syn::ItemExternCrate) {
-            // `extern crate self as q;` names the crate under another root
-            // the path rules could not follow.
-            if item.ident == "self" {
+            // `extern crate self as q;` / `extern crate std as s;` name a
+            // crate under another root the path rules could not follow.
+            if item.ident == "self" || item.rename.is_some() {
                 self.found.push(dependency_scan::UNRESOLVABLE.to_string());
             }
             syn::visit::visit_item_extern_crate(self, item);
@@ -1904,11 +2065,80 @@ fn tui_protocol_has_no_feature_or_shell_imports() {
             "crate::workflow",
             "crate::inference",
             "crate::workspace",
+            "crate::setup",
             "super::components",
             "super::shell",
             "super::interface",
         ],
     );
+}
+
+/// The TUI protocol names no other crate module at all (#1637 review):
+/// every crate path a protocol file names — written, grouped, relative or
+/// aliased — stays under `crate::protocol`, whatever the top-level modules
+/// are called. The denylist above keeps its readable messages.
+#[test]
+fn tui_protocol_crate_paths_stay_in_protocol() {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new(TUI_PROTOCOL), &mut files);
+    assert!(files.len() > 5, "protocol sources were found");
+    for file_content in &files {
+        let (file, source) = file_content.split_once(":\n").unwrap();
+        if dependency_scan::test_only_file(file) {
+            continue;
+        }
+        let paths =
+            dependency_paths_at(file, source).unwrap_or_else(|| panic!("{file} does not parse"));
+        for path in paths {
+            assert!(
+                crate_path_within(&path, &["protocol"]),
+                "{file} names {path}; the TUI protocol may only name crate::protocol"
+            );
+        }
+    }
+}
+
+/// A crate root declares modules and nothing else (#1637): no `use`/`pub
+/// use` alias at the root can give a layer a second name the rules do not
+/// know (`pub use application::x as y;`, `pub(crate) use components::ansi;`).
+#[test]
+fn crate_roots_declare_only_modules() {
+    for root in ["src/lib.rs", "../quecto-tui/src/lib.rs"] {
+        let source = fs::read_to_string(root).expect("read crate root");
+        assert_eq!(
+            root_items_that_are_not_modules(&source),
+            Vec::<String>::new(),
+            "{root}"
+        );
+    }
+    for source in [
+        "pub mod application;\npub use application::subagent_launch as launch;",
+        "mod components;\npub(crate) use components::ansi;",
+        "pub mod a;\npub fn helper() {}",
+        "pub mod a;\nmacro_rules! m { () => {} }",
+    ] {
+        assert!(
+            !root_items_that_are_not_modules(source).is_empty(),
+            "{source}"
+        );
+    }
+    assert!(
+        root_items_that_are_not_modules(
+            "#![deny(dead_code)]\npub mod a;\n#[cfg(test)]\nextern crate self as q;\n#[cfg(test)]\nmod t;"
+        )
+        .is_empty()
+    );
+}
+
+/// Production items of a crate root other than `mod` declarations.
+fn root_items_that_are_not_modules(source: &str) -> Vec<String> {
+    let file = syn::parse_file(source).expect("crate root parses");
+    file.items
+        .iter()
+        .filter(|item| !dependency_scan::item_test_only(item))
+        .filter(|item| !matches!(item, syn::Item::Mod(module) if module.content.is_none()))
+        .map(|item| item.to_token_stream().to_string())
+        .collect()
 }
 
 #[test]

@@ -318,40 +318,105 @@ pub(super) fn crate_paths_in_tokens(stream: proc_macro2::TokenStream) -> Vec<Str
             segments.push(ident.to_string());
             next += 3;
         }
-        if segments.len() > 1 {
-            paths.push(segments.join("::"));
+        let joint = |at: usize| {
+            matches!((tokens.get(at), tokens.get(at + 1)),
+                (Some(TokenTree::Punct(a)), Some(TokenTree::Punct(b)))
+                    if a.as_char() == ':' && b.as_char() == ':')
+        };
+        match tokens.get(next + 2) {
+            // `crate::{a::X, b as c}`: expand the group as a use tree.
+            Some(TokenTree::Group(group))
+                if joint(next) && group.delimiter() == proc_macro2::Delimiter::Brace =>
+            {
+                let tree = format!("{}::{}", segments.join("::"), group);
+                match syn::parse_str::<syn::UseTree>(&tree) {
+                    Ok(tree) => expand_use_tree(&tree, "", &mut paths),
+                    Err(_) => paths.push(UNRESOLVABLE.to_string()),
+                }
+                next += 3;
+            }
+            // `crate as c` / `super::super as up` inside a macro.
+            _ if matches!(tokens.get(next), Some(TokenTree::Ident(word)) if word == "as")
+                && is_module_alias(&segments.join("::")) =>
+            {
+                paths.push(UNRESOLVABLE.to_string());
+            }
+            _ if segments.len() > 1 => paths.push(segments.join("::")),
+            _ => {}
         }
         i = next.max(i + 1);
     }
     paths
 }
 
-/// Crate-relative paths spelled as string literals in tokens (attribute
-/// arguments such as `#[serde(with = "crate::codec")]`).
+/// The leaf paths of a use tree; a module alias is [`UNRESOLVABLE`].
+fn expand_use_tree(tree: &syn::UseTree, prefix: &str, paths: &mut Vec<String>) {
+    match tree {
+        syn::UseTree::Path(path) => {
+            expand_use_tree(&path.tree, &format!("{prefix}{}::", path.ident), paths)
+        }
+        syn::UseTree::Name(name) => paths.push(format!("{prefix}{}", name.ident)),
+        syn::UseTree::Rename(name) if is_module_alias(&format!("{prefix}{}", name.ident)) => {
+            paths.push(UNRESOLVABLE.to_string())
+        }
+        syn::UseTree::Rename(name) => paths.push(format!("{prefix}{}", name.ident)),
+        syn::UseTree::Glob(_) => paths.push(format!("{prefix}*")),
+        syn::UseTree::Group(group) => {
+            for item in &group.items {
+                expand_use_tree(item, prefix, paths);
+            }
+        }
+    }
+}
+
+/// Crate-relative paths in the code an attribute holds as strings — the
+/// path-valued keys (`#[serde(with = "crate::codec")]`, `try_from =
+/// "Vec<crate::X>"`, `bound = "T: crate::Tr"`); prose strings are ignored.
 pub(super) fn string_paths_in_tokens(stream: proc_macro2::TokenStream) -> Vec<String> {
     use proc_macro2::TokenTree;
-    let mut paths = Vec::new();
-    for token in stream {
+    use syn::parse::Parser;
+    use syn::visit::Visit;
+    struct Paths(Vec<String>);
+    impl<'ast> Visit<'ast> for Paths {
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+            if segments.len() > 1 && matches!(segments[0].as_str(), "crate" | "super" | "self") {
+                self.0.push(segments.join("::"));
+            }
+            syn::visit::visit_path(self, path);
+        }
+    }
+    let tokens: Vec<TokenTree> = stream.into_iter().collect();
+    let mut paths = Paths(Vec::new());
+    for (at, token) in tokens.iter().enumerate() {
         match token {
-            TokenTree::Group(group) => paths.extend(string_paths_in_tokens(group.stream())),
-            TokenTree::Literal(literal) => {
+            TokenTree::Group(group) => paths.0.extend(string_paths_in_tokens(group.stream())),
+            TokenTree::Literal(literal) if production_tokens::is_path_valued(&tokens, at) => {
                 let Ok(text) = syn::parse_str::<syn::LitStr>(&literal.to_string()) else {
                     continue;
                 };
-                let value = text.value();
-                if let Ok(path) = syn::parse_str::<syn::Path>(&value)
-                    && path.segments.len() > 1
-                    && path.segments.first().is_some_and(|first| {
-                        matches!(first.ident.to_string().as_str(), "crate" | "super" | "self")
-                    })
+                let code = text.value();
+                if let Ok(ty) = syn::parse_str::<syn::Type>(&code) {
+                    paths.visit_type(&ty);
+                } else if let Ok(predicates) = syn::punctuated::Punctuated::<
+                    syn::WherePredicate,
+                    syn::Token![,],
+                >::parse_terminated
+                    .parse_str(&code)
                 {
-                    paths.push(value.replace(' ', ""));
+                    for predicate in &predicates {
+                        paths.visit_where_predicate(predicate);
+                    }
+                } else if code.contains("crate") || code.contains("super") || code.contains("self")
+                {
+                    // Unparseable code that may name the crate fails closed.
+                    paths.0.push(UNRESOLVABLE.to_string());
                 }
             }
             _ => {}
         }
     }
-    paths
+    paths.0
 }
 
 /// True when every segment names a module relative to the crate (`crate`,
@@ -389,6 +454,8 @@ fn production_text_ignores_comments_and_literals() {
         "// use crate::application::secret::Bad;\nfn ok() {}",
         "/// crate::application::secret::Bad\nfn ok() {}",
         "#![doc = \"crate::application::secret::Bad\"]\nfn ok() {}",
+        "#[derive(Debug)]\n#[error(\"std::fs::read failed in crate::application\")]\nstruct E;",
+        "#[expect(clippy::x, reason = \"calls .exists( via std::fs::\")]\nfn ok() {}",
         "/* std::fs::read */ fn ok() {}",
         "fn ok() { let _ = \"std::fs::read\"; }",
         "fn ok() { println!(\"crate::application::x\"); }",
@@ -420,6 +487,10 @@ fn production_text_keeps_cfg_combinations_and_multiline_paths() {
         (
             "#[serde(with = \"crate::infrastructure::codec\")]\nstruct S;",
             "crate::infrastructure",
+        ),
+        (
+            "#[serde(try_from = \"Vec<crate::interface::X>\")]\nstruct S;",
+            "crate::interface",
         ),
     ] {
         let text = production_text(source).expect("parses");
@@ -603,6 +674,20 @@ fn crate_paths_are_read_out_of_macro_tokens() {
             "self::local",
         ]
     );
+    let grouped: proc_macro2::TokenStream =
+        "use crate::{application::secret::Bad, domain::{a::A, b as c}}; use crate as root; self as s"
+            .parse()
+            .unwrap();
+    assert_eq!(
+        crate_paths_in_tokens(grouped),
+        [
+            "crate::application::secret::Bad",
+            "crate::domain::a::A",
+            "crate::domain::b",
+            UNRESOLVABLE,
+            UNRESOLVABLE,
+        ]
+    );
     let attr: proc_macro2::TokenStream = "serde(with = \"crate::infrastructure::codec\", \
          rename = \"camelCase\", default = \"Default::default\")"
         .parse()
@@ -611,6 +696,17 @@ fn crate_paths_are_read_out_of_macro_tokens() {
         string_paths_in_tokens(attr),
         ["crate::infrastructure::codec"]
     );
+    let nested: proc_macro2::TokenStream = "serde(try_from = \"Vec<crate::application::X>\", \
+         bound = \"T: crate::application::Tr\", rename = \"crate::not::code\")"
+        .parse()
+        .unwrap();
+    assert_eq!(
+        string_paths_in_tokens(nested),
+        ["crate::application::X", "crate::application::Tr"]
+    );
+    let prose: proc_macro2::TokenStream =
+        "error(\"crate::application::x failed\")".parse().unwrap();
+    assert!(string_paths_in_tokens(prose).is_empty());
 }
 
 #[test]

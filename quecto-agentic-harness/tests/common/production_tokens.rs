@@ -77,15 +77,43 @@ impl VisitMut for StripTestOnly {
     }
 }
 
-/// `keep_literals`: inside a non-doc attribute, string literals can name a
-/// path (`#[serde(with = "crate::infrastructure::codec")]`), so they are kept
-/// verbatim; everywhere else a literal cannot name a dependency and doc text
-/// is prose, so literals are dropped.
-fn render(stream: TokenStream, out: &mut String, keep_literals: bool) {
+/// Attribute keys whose string value is Rust code naming paths
+/// (`#[serde(with = "crate::codec")]`, `bound = "T: crate::Tr"`). Every
+/// other attribute string (`#[error("…")]`, `reason = "…"`, doc text) is
+/// prose and never matches.
+pub const PATH_KEYS: [&str; 12] = [
+    "with",
+    "serialize_with",
+    "deserialize_with",
+    "default",
+    "from",
+    "into",
+    "try_from",
+    "remote",
+    "crate",
+    "bound",
+    "getter",
+    "path",
+];
+
+/// True when `tokens[at]` is a literal written as `key = "…"` for one of
+/// [`PATH_KEYS`].
+pub fn is_path_valued(tokens: &[TokenTree], at: usize) -> bool {
+    at >= 2
+        && matches!(&tokens[at - 1], TokenTree::Punct(eq) if eq.as_char() == '=')
+        && matches!(&tokens[at - 2],
+            TokenTree::Ident(key) if PATH_KEYS.contains(&key.to_string().as_str()))
+}
+
+/// `attribute`: inside `#[…]`, where a path-valued string (see
+/// [`PATH_KEYS`]) is rendered as the code it holds; every other literal is
+/// dropped, as it cannot name a dependency.
+fn render(stream: TokenStream, out: &mut String, attribute: bool) {
+    let tokens: Vec<TokenTree> = stream.into_iter().collect();
     let mut previous_hash = false;
-    for token in stream {
-        let hash = matches!(&token, TokenTree::Punct(p) if p.as_char() == '#')
-            || (previous_hash && matches!(&token, TokenTree::Punct(p) if p.as_char() == '!'));
+    for (at, token) in tokens.iter().enumerate() {
+        let hash = matches!(token, TokenTree::Punct(p) if p.as_char() == '#')
+            || (previous_hash && matches!(token, TokenTree::Punct(p) if p.as_char() == '!'));
         match token {
             TokenTree::Group(group) => {
                 let (open, close) = match group.delimiter() {
@@ -94,12 +122,9 @@ fn render(stream: TokenStream, out: &mut String, keep_literals: bool) {
                     Delimiter::Bracket => ("[", "]"),
                     Delimiter::None => ("", ""),
                 };
-                let attribute = previous_hash && group.delimiter() == Delimiter::Bracket;
-                let doc = attribute
-                    && matches!(group.stream().into_iter().next(),
-                        Some(TokenTree::Ident(ident)) if ident == "doc");
+                let opens_attribute = previous_hash && group.delimiter() == Delimiter::Bracket;
                 out.push_str(open);
-                render(group.stream(), out, (keep_literals || attribute) && !doc);
+                render(group.stream(), out, attribute || opens_attribute);
                 out.push_str(close);
             }
             TokenTree::Ident(ident) => {
@@ -109,7 +134,11 @@ fn render(stream: TokenStream, out: &mut String, keep_literals: bool) {
                 out.push_str(&ident.to_string());
             }
             TokenTree::Punct(punct) => out.push(punct.as_char()),
-            TokenTree::Literal(literal) if keep_literals => out.push_str(&literal.to_string()),
+            TokenTree::Literal(literal) if attribute && is_path_valued(&tokens, at) => {
+                if let Ok(text) = syn::parse_str::<syn::LitStr>(&literal.to_string()) {
+                    out.extend(text.value().chars().filter(|c| !c.is_whitespace()));
+                }
+            }
             TokenTree::Literal(_) => {}
         }
         previous_hash = hash;
