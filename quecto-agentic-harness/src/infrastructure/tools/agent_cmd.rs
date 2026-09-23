@@ -577,8 +577,13 @@ impl Tool for AgentCmdTool {
                                 &agent_id,
                             )
                             .await;
-                        self.expand_collapsed_final_report(socket_path, routed, backfilled)
-                            .await
+                        self.expand_collapsed_final_report(
+                            socket_path,
+                            routed,
+                            backfilled,
+                            &agent_id,
+                        )
+                        .await
                     } else if command == "get_report" {
                         self.expand_report(socket_path, routed, response).await
                     } else {

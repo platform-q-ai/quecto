@@ -757,7 +757,9 @@ fn given_agent_cmd_with_unrecoverable_final_transcript(world: &mut QuectoWorld, 
                         "success": true,
                         "data": {"messages": [
                             {"role": "assistant", "content": "old", "ordinal": 1},
-                            {"role": "assistant", "content": "FINAL ".repeat(10_000), "ordinal": 2}
+                            // No text at all (#2114: a long text final is now
+                            // delivered whole up to the final-report budget).
+                            {"role": "assistant", "content": {"omitted": "FINAL ".repeat(10_000)}, "ordinal": 2}
                         ]}
                     });
                     let _ = writeln!(stream, "{response}");

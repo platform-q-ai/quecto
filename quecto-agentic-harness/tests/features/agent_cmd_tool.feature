@@ -113,11 +113,12 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":null,"before":null}'
     Then the agent_cmd should have sent command type "get_messages"
 
-  @issue-1515
-  Scenario: get_message preserves model-facing recovery arguments
+  @issue-2114
+  Scenario: get_message is a client command, not an agent_cmd command
     Given an AgentCmdTool with a mock registry entry "w1"
-    When I execute agent_cmd with '{"agent_id":"w1","command":"get_message","messageId":"msg-1","toolCallId":"call-1","offset":2,"limit":8}'
-    Then the agent_cmd should have sent command type "get_message"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_message","messageId":"msg-1","offset":2,"limit":8}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "unsupported command 'get_message'"
 
   @issue-1515
   Scenario: set_model accepts the provider and model_id form
@@ -250,7 +251,7 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And I acknowledge delivery of agent_cmd result for '{"agent_id":"w1","command":"get_messages","count":5}'
     Then the agent_cmd delivered ordinal for "w1" should be unset
 
-  Scenario: unrecoverable plain get_messages is incomplete and not acknowledged
+  Scenario: a final message with no text is incomplete and not acknowledged
     Given an AgentCmdTool whose child "w1" has an unrecoverable final transcript
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'
     Then the agent_cmd result should not be an error

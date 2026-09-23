@@ -131,3 +131,16 @@ fn a_context_message_cut_to_nothing_is_not_delivered() {
         }
     }
 }
+
+#[test]
+fn a_context_message_cut_to_fit_says_how_to_read_it_whole() {
+    let context = serde_json::json!({"role": "user", "ordinal": 1, "content": "x".repeat(20_000)});
+    let handoff = serde_json::json!({"role": "assistant", "ordinal": 2, "content": "done"});
+    let report = bounded_report_messages(vec![context, handoff], 2);
+    let cut = &report.messages[0];
+    assert_eq!(cut["truncated"], true);
+    assert_eq!(
+        cut["contentNotice"],
+        crate::infrastructure::tools::agent_cmd_report::CONTEXT_CUT_NOTICE
+    );
+}

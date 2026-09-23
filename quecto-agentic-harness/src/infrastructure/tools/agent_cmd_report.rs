@@ -244,6 +244,12 @@ pub(crate) fn bounded_report_messages(
     for mut msg in ordered.drain(..) {
         if report_envelope_size(&selected, Some(&msg)) > budget {
             truncate_message_to_fit(&mut msg, &selected, budget);
+            if msg.get("contentNotice").is_none() {
+                msg["contentNotice"] = serde_json::json!(CONTEXT_CUT_NOTICE);
+                if report_envelope_size(&selected, Some(&msg)) > budget {
+                    truncate_message_to_fit(&mut msg, &selected, budget);
+                }
+            }
         }
         if is_emptied_by_truncation(&msg) {
             break;
@@ -271,6 +277,10 @@ pub(crate) fn bounded_report_messages(
         messages: selected,
     }
 }
+
+/// Shown on a context message cut to fit beside the final report.
+pub(crate) const CONTEXT_CUT_NOTICE: &str =
+    "Cut to fit beside the final report; read it in full with get_messages count/before.";
 
 /// Shown on a final report cut at [`FINAL_REPORT_BUDGET_BYTES`].
 pub(crate) const FINAL_REPORT_NOTICE: &str = "This report is longer than the report budget and was cut; its start is shown. Call agent_cmd get_report with export_raw true to write the child's full retained history to an artifact you can read.";
