@@ -92,10 +92,11 @@ fn fake_child_with(
                                 "content": "", "offset": offset, "nextOffset": offset,
                                 "contentLength": full.len(), "hasMoreContent": true
                             }),
+                            // The right text, but a range it did not ask for.
                             Mode::WrongOffset => serde_json::json!({
-                                "content": &full[..end - offset], "offset": 0,
-                                "nextOffset": end - offset,
-                                "contentLength": full.len(), "hasMoreContent": true
+                                "content": &full[offset..end], "offset": offset + 1,
+                                "nextOffset": end, "contentLength": full.len(),
+                                "hasMoreContent": end < full.len()
                             }),
                             Mode::NoMoreField => serde_json::json!({
                                 "content": &full[offset..end], "offset": offset,
