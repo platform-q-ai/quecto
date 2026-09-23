@@ -130,6 +130,53 @@ fn search_tools_retain_direct_install_guidance() {
     }
 }
 
+/// Exercise the public tool boundary: source text alone cannot prove the error path runs.
+#[tokio::test]
+async fn missing_search_executables_return_install_guidance() {
+    use quecto::application::tools::ports::Tool;
+    use quecto::composition::find::build_find_tool_with_binary;
+    use quecto::infrastructure::security::sandbox::Sandbox;
+    use quecto::infrastructure::tools::grep::GrepTool;
+    use std::sync::Arc;
+
+    let workspace = tempfile::tempdir().expect("workspace");
+    let root = Arc::new(workspace.path().to_path_buf());
+    let sandbox = Arc::new(Sandbox::new(Some(workspace.path().to_path_buf())));
+    let missing = workspace.path().join("missing-search-binary");
+    assert!(!missing.exists(), "fixture binary must be absent");
+    let binary = missing.to_string_lossy().into_owned();
+    let grep = GrepTool::with_rg_binary(root.clone(), sandbox.clone(), binary.clone());
+    let find = build_find_tool_with_binary(root, sandbox, binary);
+    for (result, binary, url) in [
+        (
+            grep.execute(r#"{"pattern":"needle"}"#).await,
+            INSTALLERS[0].0,
+            INSTALLERS[0].1,
+        ),
+        (
+            find.execute(r#"{"pattern":"*"}"#).await,
+            INSTALLERS[1].0,
+            INSTALLERS[1].1,
+        ),
+    ] {
+        let error = match result {
+            Ok(result) => {
+                assert!(
+                    result.is_error,
+                    "{binary} missing executable must be an error"
+                );
+                result.content
+            }
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            error.contains(&format!("{binary} not found on PATH")),
+            "{error}"
+        );
+        assert!(error.contains(url), "{error}");
+    }
+}
+
 #[test]
 fn unicode_normalization_is_macos_only() {
     let manifest = fs::read_to_string("Cargo.toml").expect("harness manifest");

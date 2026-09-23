@@ -25,11 +25,7 @@ fn visit_rs(dir: &Path, check: &mut impl FnMut(&Path)) {
         let path = entry.expect("architecture source entry").path();
         if path.is_dir() {
             visit_rs(&path, check);
-        } else if path.extension().is_some_and(|ext| ext == "rs")
-            && !path
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().ends_with("_tests.rs"))
-        {
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
             check(&path);
         }
     }
@@ -53,6 +49,29 @@ fn pre_push_paid_lane_allowed(source: &str) -> bool {
     ["OPENAI_API_KEY", "REAL_LLM_STATE"]
         .iter()
         .all(|probe| !source.contains(probe))
+}
+
+#[test]
+fn application_traversal_checks_production_tests_named_module() {
+    let dir = std::env::temp_dir().join(format!("quecto-2098-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("fixture directory");
+    let fixture = dir.join("production_tests.rs");
+    fs::write(
+        &fixture,
+        "std::fs::read(path)\n#[cfg(test)]\nstd::fs::read(path)\n",
+    )
+    .expect("fixture source");
+    let mut violations = Vec::new();
+    visit_rs(&dir, &mut |path| {
+        let source = fs::read_to_string(path).expect("fixture source");
+        for line in production_lines(&source) {
+            if !application_line_allowed(line) {
+                violations.push(line.to_owned());
+            }
+        }
+    });
+    fs::remove_dir_all(&dir).expect("remove fixture directory");
+    assert_eq!(violations, ["std::fs::read(path)"]);
 }
 
 #[test]

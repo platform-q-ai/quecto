@@ -45,8 +45,7 @@ fn feature_files(dir: &Path, prefix: &str) -> Vec<(String, String)> {
 }
 
 fn tags(line: &str) -> BTreeSet<&str> {
-    line.trim()
-        .split_whitespace()
+    line.split_whitespace()
         .filter(|tag| tag.starts_with('@'))
         .collect()
 }
@@ -55,15 +54,23 @@ fn scenario_tags(content: &str) -> Vec<BTreeSet<&str>> {
     let mut pending = BTreeSet::new();
     let mut feature_tags = BTreeSet::new();
     let mut scenarios = Vec::new();
+    let mut in_examples = false;
     for line in content.lines().map(str::trim) {
         if line.starts_with('@') {
-            pending.extend(tags(line));
+            if !in_examples {
+                pending.extend(tags(line));
+            }
         } else if line.starts_with("Feature:") {
             feature_tags = std::mem::take(&mut pending);
         } else if line.starts_with("Scenario:") || line.starts_with("Scenario Outline:") {
+            in_examples = false;
             let mut effective = feature_tags.clone();
             effective.append(&mut pending);
             scenarios.push(effective);
+        } else if line.starts_with("Examples:") {
+            // Tags following Examples belong to that example table, never the next scenario.
+            pending.clear();
+            in_examples = true;
         } else if line.starts_with("Background:") || line.starts_with("Rule:") {
             pending.clear();
         }
@@ -176,10 +183,28 @@ fn deliberate_capability_and_tag_violations_are_rejected() {
     );
     assert!(
         validate_tags(
+            &fixture("Feature: mirror\n  @mock-llm\n  Scenario Outline: first\n    Examples:\n      @mock-llm\n      | x |\n      | 1 |\n  Scenario: untagged"),
+            &["@mock-llm"],
+            &[]
+        )
+        .is_err(),
+        "Examples tags must not leak into the following scenario"
+    );
+    assert!(
+        validate_tags(
             &fixture("@provider-smoke\nFeature: smoke\n  @mock-llm\n  Scenario: leaked"),
             &["@provider-smoke"],
             &["@mock-llm"]
         )
         .is_err()
     );
+}
+
+#[test]
+fn tag_tokens_ignore_surrounding_and_repeated_whitespace() {
+    assert_eq!(
+        tags(" \t@mock  @smoke\n "),
+        BTreeSet::from(["@mock", "@smoke"])
+    );
+    assert!(tags(" \t\n ").is_empty());
 }
