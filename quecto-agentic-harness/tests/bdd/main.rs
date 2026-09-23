@@ -1417,7 +1417,6 @@ mod active_model_steps;
 mod agent_cmd_tool_steps;
 mod agent_loop_steps;
 mod agent_tools_steps;
-mod architecture_steps;
 mod audit_log_steps;
 mod auth_steps;
 mod catalogue_application_steps;

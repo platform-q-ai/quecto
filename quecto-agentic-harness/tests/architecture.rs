@@ -13,6 +13,13 @@
 //! - infrastructure/ imports domain/ only
 //! - interface/ imports all three (composition root)
 
+#[path = "architecture/issue_2098_capability.rs"]
+mod issue_2098_capability;
+#[path = "architecture/issue_2098_core.rs"]
+mod issue_2098_core;
+#[path = "architecture/issue_2098_dependencies.rs"]
+mod issue_2098_dependencies;
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
