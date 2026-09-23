@@ -6,8 +6,9 @@ set -euo pipefail
 COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
 FAIL=0
 
-if HOOKS_PATH="$(git config --get core.hooksPath)"; then
-    echo "FAIL: core.hooksPath is set to '$HOOKS_PATH'; git ignores the hooks in $COMMON_DIR/hooks" >&2
+ACTIVE_HOOKS="$(realpath -m "$(git rev-parse --path-format=absolute --git-path hooks)")"
+if [[ "$ACTIVE_HOOKS" != "$(realpath -m "$COMMON_DIR/hooks")" ]]; then
+    echo "FAIL: core.hooksPath makes git use $ACTIVE_HOOKS, not $COMMON_DIR/hooks" >&2
     FAIL=1
 fi
 

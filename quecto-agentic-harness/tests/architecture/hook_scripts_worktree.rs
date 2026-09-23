@@ -28,6 +28,7 @@ fn bash(dir: &Path, home: &Path, script: &str) -> Output {
         .current_dir(dir)
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("GIT_CONFIG_GLOBAL", home.join(".gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_AUTHOR_NAME", "t")
         .env("GIT_AUTHOR_EMAIL", "t@example.com")
@@ -166,4 +167,42 @@ fn activating_outside_a_repository_fails_without_touching_path() {
     let stdout = String::from_utf8_lossy(&sourced.stdout);
     assert!(stdout.contains("unchanged"), "PATH changed: {stdout}");
     assert!(!stdout.contains("activated"), "no false success: {stdout}");
+}
+
+#[test]
+fn activation_works_with_cdpath_set() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (main, _) = repository_with_worktree(tmp.path());
+    let checked = bash(
+        &main,
+        tmp.path(),
+        "bash scripts/install-hooks.sh >/dev/null && export CDPATH=.:/tmp \
+         && source scripts/activate-hooks.sh && bash scripts/check-hooks-installed.sh",
+    );
+    assert_ok("activate with CDPATH set", &checked);
+}
+
+#[test]
+fn a_hooks_path_naming_the_repository_hooks_directory_is_accepted() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (main, _) = repository_with_worktree(tmp.path());
+    let configured = bash(&main, tmp.path(), "git config core.hooksPath .git/hooks");
+    assert_ok("configure core.hooksPath", &configured);
+
+    install_activate_and_check(&main, tmp.path());
+}
+
+#[test]
+fn activation_without_the_wrapper_script_fails_without_touching_path() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (main, _) = repository_with_worktree(tmp.path());
+    std::fs::remove_file(main.join("scripts/git-wrapper.sh")).expect("remove wrapper");
+    let sourced = bash(
+        &main,
+        tmp.path(),
+        "before=\"$PATH\"; source scripts/activate-hooks.sh; status=$?; \
+         [ \"$PATH\" = \"$before\" ] && echo unchanged; exit $status",
+    );
+    assert!(!sourced.status.success(), "activation must report failure");
+    assert!(String::from_utf8_lossy(&sourced.stdout).contains("unchanged"));
 }

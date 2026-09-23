@@ -10,10 +10,11 @@ COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
 HOOKS_DIR="$COMMON_DIR/hooks"
 WRAPPER_DIR="$COMMON_DIR/wrapper-bin"
 
-# git ignores $HOOKS_DIR while core.hooksPath is set, and that directory may be
-# shared with other repositories: never write into it.
-if HOOKS_PATH="$(git config --get core.hooksPath)"; then
-    echo "install-hooks.sh: core.hooksPath is set to '$HOOKS_PATH', so git would ignore quecto's hooks in $HOOKS_DIR." >&2
+# A core.hooksPath elsewhere makes git ignore $HOOKS_DIR, and that directory
+# may be shared with other repositories: never write into it.
+ACTIVE_HOOKS="$(realpath -m "$(git rev-parse --path-format=absolute --git-path hooks)")"
+if [[ "$ACTIVE_HOOKS" != "$(realpath -m "$HOOKS_DIR")" ]]; then
+    echo "install-hooks.sh: core.hooksPath makes git use $ACTIVE_HOOKS, so it would ignore quecto's hooks in $HOOKS_DIR." >&2
     echo "Unset it (git config --unset core.hooksPath, or with --global) and re-run." >&2
     exit 1
 fi
@@ -53,5 +54,11 @@ echo "  source scripts/activate-hooks.sh"
 echo ""
 echo "To activate automatically, add to your .bashrc or .zshrc:"
 # The main checkout outlives any linked worktree, so point the shell there.
+# (A bare repository lists itself first and has no scripts: use this checkout.)
 MAIN_ROOT="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
-echo "  source $(realpath "${MAIN_ROOT:-$ROOT}/scripts/activate-hooks.sh")"
+if [[ -f "$MAIN_ROOT/scripts/activate-hooks.sh" ]]; then
+    ACTIVATE="$MAIN_ROOT/scripts/activate-hooks.sh"
+else
+    ACTIVATE="$ROOT/scripts/activate-hooks.sh"
+fi
+echo "  source $(realpath "$ACTIVATE")"
