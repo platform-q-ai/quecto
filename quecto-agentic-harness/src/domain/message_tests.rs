@@ -139,3 +139,22 @@ fn stop_reason_as_str_and_display_round_trip() {
     assert_eq!(StopReason::Unknown("weird".into()).as_str(), "weird");
     assert_eq!(StopReason::ToolUse.to_string(), "tool_use");
 }
+
+/// #2116: OpenAI Chat Completions `finish_reason` values.
+#[test]
+fn openai_finish_reasons_map_to_stop_reasons() {
+    for (raw, expected) in [
+        ("stop", StopReason::EndTurn),
+        ("length", StopReason::MaxTokens),
+        ("tool_calls", StopReason::ToolUse),
+        ("function_call", StopReason::ToolUse),
+        ("content_filter", StopReason::Refusal),
+        ("other", StopReason::Unknown("other".into())),
+    ] {
+        assert_eq!(
+            StopReason::from_openai_finish_reason(raw),
+            expected,
+            "{raw}"
+        );
+    }
+}

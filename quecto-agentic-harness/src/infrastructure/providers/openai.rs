@@ -291,7 +291,7 @@ impl OpenAiProvider {
             content,
             tool_calls,
             usage,
-            stop_reason: None,
+            stop_reason: openai_sse_parser::choice_stop_reason(choice),
             thinking_blocks,
         })
     }

@@ -396,6 +396,18 @@ impl StopReason {
         }
     }
 
+    /// Map an OpenAI Chat Completions `finish_reason` (#2116). Unknown
+    /// values are kept verbatim rather than dropped.
+    pub fn from_openai_finish_reason(reason: &str) -> Self {
+        match reason {
+            "stop" => Self::EndTurn,
+            "length" => Self::MaxTokens,
+            "tool_calls" | "function_call" => Self::ToolUse,
+            "content_filter" => Self::Refusal,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+
     /// Return the canonical string representation for this stop reason.
     pub fn as_str(&self) -> &str {
         match self {
