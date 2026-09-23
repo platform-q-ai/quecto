@@ -266,8 +266,8 @@ session. `completed` means the turn completed; verify the coordinator's explicit
 acknowledgment and resulting work in `get_report`.
 
 `agent_cmd {"agent_id":"...","command":"get_report"}` returns the latest
-substantive assistant report independently of unread transcript backlog. Long
-reports include stable `get_message` recovery parameters. Add `export_raw:true`
+substantive assistant report independently of unread transcript backlog, in
+full up to 64 KiB (a longer one is cut with a notice). Add `export_raw:true`
 to write retained message/spill JSONL and a checksum manifest to artifacts; the
 response contains paths, not the raw transcript. Paths belong to the target
 agent's filesystem. Exports cannot reconstruct data already cleared or evicted.

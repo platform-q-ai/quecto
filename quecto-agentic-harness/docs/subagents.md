@@ -380,7 +380,7 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
     "command": {
       "type": "string",
       "enum": ["prompt", "steer", "follow_up", "abort", "kill",
-               "get_state", "get_messages", "get_message", "get_report", "swarm_control",
+               "get_state", "get_messages", "get_report", "swarm_control",
                "get_session_stats", "get_subagents", "get_subagents_all",
                "get_containers", "get_container_configs", "kill_container",
                "set_model", "set_effort", "clear_history"],
@@ -395,10 +395,6 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
     "reason": {"type": "string"},
     "token_limit": {"type": ["integer", "null"], "minimum": 1},
     "strict_unknown": {"type": "boolean"},
-    "messageId": {"type": "string", "description": "Stable ID for get_message recovery"},
-    "toolCallId": {"type": "string"},
-    "offset": {"type": "integer", "minimum": 0},
-    "limit": {"type": "integer", "minimum": 0},
     "count": {
       "type": "integer",
       "description": "Explicit history page size for get_messages; omit/null for the default unread report; does not move the report cursor"
@@ -447,14 +443,13 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
 |---------|-------------|--------------------|
 | `swarm_control` | Durable pause/resume/status/usage_budget control, independent of the model queue; supports descendant routing | No |
 | `get_report` | Latest substantive assistant report without advancing unread cursors; optional export_raw writes retained records and a checksum manifest | No |
-| `get_message` | Recover content by stable messageId, with optional toolCallId, byte offset and limit | No |
 | `prompt` | Send a task/message to the subagent | Yes |
 | `steer` | Interrupt and redirect the agent (takes precedence over the workflow auto-continue nudge) | Yes |
 | `follow_up` | Queue a message for after the current run | Yes |
 | `abort` | Full stop: cancel the current run, kill in-flight tool/child processes, and suppress workflow auto-continue (does not resume) | No |
 | `kill` | Terminate one delegated agent (a direct child or a reported descendant) and its subtree; returns `{"target","result","killed"}` with `result` one of `graceful`, `fallback`, `already-exited`, or an error carrying `"result":"failed"` | No |
 | `get_state` | Inspect live/in-flight supervision state: slim state/effort/model/progress, generation cursor, and selected workflow identity/current step. Pass `since` for an unchanged marker | No |
-| `get_messages` | Default report mode: omit/null `count` and `before`; first call returns the latest substantive assistant message, subsequent calls return unread deltas, or `unchanged` if none. The cursor advances on successful delivery to the parent model. Explicit `count` and/or `before` requests cursor-neutral history pages; `before` pages older history. A busy snapshot can lag the active turn | No |
+| `get_messages` | Default report mode: omit/null `count` and `before`; first call returns the latest substantive assistant message (in full up to 64 KiB; `agent_cmd` reads a long report's text from the child itself, #2114), subsequent calls return unread deltas, or `unchanged` if none. The cursor advances on successful delivery to the parent model. Explicit `count` and/or `before` requests cursor-neutral history pages; `before` pages older history. A busy snapshot can lag the active turn | No |
 | `get_session_stats` | Get token usage and cost | No |
 | `get_subagents` | List nested subagents spawned by the targeted live subagent; not parent/session-wide inventory | No |
 | `get_subagents_all` | With `agent_id: "*"`, list parent/session-wide subagent inventory for cleanup/inspection | No |

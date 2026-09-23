@@ -208,20 +208,6 @@ fn test_parse_get_messages_tail_aliases_to_get_messages_count() {
 }
 
 #[test]
-fn parse_get_message_accepts_aliases_and_range_fields() {
-    let (_, cmd, _) = empty_tool()
-        .parse_and_build(
-            r#"{"agent_id":"w1","command":"get_message","message_id":"m1","tool_call_id":"t1","offset":2,"limit":3}"#,
-        )
-        .unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
-    assert_eq!(parsed["messageId"], "m1");
-    assert_eq!(parsed["toolCallId"], "t1");
-    assert_eq!(parsed["offset"], 2);
-    assert_eq!(parsed["limit"], 3);
-}
-
-#[test]
 fn parse_set_model_and_effort_cover_validation_paths() {
     let (_, cmd, _) = empty_tool()
         .parse_and_build(
@@ -534,21 +520,3 @@ fn test_parse_kill_command() {
 
 #[path = "agent_cmd_kill_tests.rs"]
 mod kill_tests;
-
-#[test]
-fn parse_get_message_builds_recovery_command() {
-    let tool = empty_tool();
-    let (agent_id, cmd, command) = tool
-        .parse_and_build(
-            r#"{"agent_id":"w1","command":"get_message","messageId":"m1","offset":42,"limit":7,"toolCallId":"tc1"}"#,
-        )
-        .unwrap();
-    assert_eq!(agent_id, "w1");
-    assert_eq!(command, "get_message");
-    let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
-    assert_eq!(parsed["type"], "get_message");
-    assert_eq!(parsed["messageId"], "m1");
-    assert_eq!(parsed["offset"], 42);
-    assert_eq!(parsed["limit"], 7);
-    assert_eq!(parsed["toolCallId"], "tc1");
-}

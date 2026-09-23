@@ -51,11 +51,13 @@ impl RoutableInspectionCommand {
         }
     }
 
+    /// The inspection commands an agent can send through `agent_cmd`.
+    /// `get_message` is a client (TUI) command, not an agent one (#2114):
+    /// `agent_cmd` fetches a long report's full text itself.
     pub fn from_agent_cmd(command: &str) -> Option<Self> {
         match command {
             "get_report" => Some(Self::GetReport),
             "get_messages" => Some(Self::GetMessages),
-            "get_message" => Some(Self::GetMessage),
             "get_state" => Some(Self::GetState),
             _ => None,
         }
