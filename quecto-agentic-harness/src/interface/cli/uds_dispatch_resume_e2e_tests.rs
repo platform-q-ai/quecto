@@ -239,8 +239,11 @@ async fn e2e_resume_restores_history_without_readopting_children() {
         registry.lock().unwrap().keys().collect::<Vec<_>>()
     );
     let roster =
-        crate::interface::cli::protocol::build_compact_subagent_roster(&Some(registry), None)
-            .unwrap();
+        crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster(
+            &Some(registry),
+            None,
+        )
+        .unwrap();
     assert!(roster.subagents.is_empty());
 }
 

@@ -6,9 +6,12 @@ use crate::infrastructure::tools::subagent_registry::{
 fn compact_roster(
     registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry,
     since: Option<u64>,
-) -> crate::interface::cli::protocol::CompactSubagentRoster {
-    crate::interface::cli::protocol::build_compact_subagent_roster(&Some(registry.clone()), since)
-        .unwrap()
+) -> crate::infrastructure::tools::subagent_compact_roster::CompactSubagentRoster {
+    crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster(
+        &Some(registry.clone()),
+        since,
+    )
+    .unwrap()
 }
 
 fn add(

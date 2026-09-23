@@ -32,11 +32,12 @@ fn register_and_broadcast_assigns_roster_global_sequence() {
         &crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
     )
     .unwrap();
-    let rows = crate::interface::cli::protocol::build_compact_subagent_roster(
-        &Some(registry),
-        Some(first_sequence),
-    )
-    .unwrap();
+    let rows =
+        crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster(
+            &Some(registry),
+            Some(first_sequence),
+        )
+        .unwrap();
     assert_eq!(rows.sequence, 2);
     assert_eq!(rows.subagents.len(), 1);
     assert_eq!(rows.subagents[0].agent_id, "second");

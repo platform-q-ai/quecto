@@ -12,6 +12,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Public so the BDD binary, which loads this module through `common`, can
+/// share the one copy (a second `mod` of the same file is `duplicate_mod`).
+#[path = "production_tokens.rs"]
+pub mod production_tokens;
+
 pub fn harness_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -24,9 +29,9 @@ pub const LEGACY_BRIDGE_MODULES: [&str; 2] = [
     "src/interface/cli/catalogue_refresh_bridge.rs",
 ];
 
-/// The production portion (everything before a trailing `#[cfg(test)]`
-/// module marker) of every non-test `.rs` file under `dir`, as
-/// `(path, content)` pairs. `_tests.rs` companions are skipped entirely.
+/// The production tokens (`#[cfg(test)]` items, comments and literals
+/// removed) of every non-test `.rs` file under `dir`, as `(path, content)`
+/// pairs. `_tests.rs` companions are skipped entirely.
 pub fn production_sources(dir: &Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for entry in fs::read_dir(dir).expect("readable source dir") {
@@ -42,7 +47,10 @@ pub fn production_sources(dir: &Path) -> Vec<(String, String)> {
         let raw = fs::read_to_string(&path).expect("readable source file");
         out.push((
             path.display().to_string(),
-            raw.split("#[cfg(test)]").next().unwrap().to_string(),
+            // Production tokens, not the text before the first
+            // `#[cfg(test)]`: items after a test module still count (#1637).
+            production_tokens::production_text(&raw)
+                .unwrap_or_else(|| panic!("{} does not parse", path.display())),
         ));
     }
     out

@@ -230,7 +230,7 @@ impl AgentCmdTool {
                 }
             },
         };
-        let roster = crate::interface::cli::protocol::build_compact_subagent_roster(
+        let roster = super::subagent_compact_roster::build_compact_subagent_roster(
             &Some(self.registry.clone()),
             since,
         );

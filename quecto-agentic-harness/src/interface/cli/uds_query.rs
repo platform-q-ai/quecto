@@ -119,7 +119,7 @@ pub(super) fn query_response_data_result(
         // a blocking worker thread: its sequential HTTP must never run inline
         // on the async dispatch loop (slice-4 review).
         AgentCommand::GetSubagents { since, .. } => Some(
-            serde_json::to_value(super::protocol::build_compact_subagent_roster(
+            serde_json::to_value(crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster(
                 &ctx.subagent_registry,
                 *since,
             )?)
