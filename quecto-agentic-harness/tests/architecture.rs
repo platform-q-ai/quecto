@@ -81,6 +81,9 @@ fn assert_no_imports(layer: &str, dir: &Path, forbidden: &[&str]) {
 
     for file_content in &files {
         let (file_path, source) = file_content.split_once(":\n").unwrap();
+        if dependency_scan::test_only_file(file_path) {
+            continue;
+        }
         assert_file_free_of(
             &format!("Architecture violation in {layer}: {file_path}"),
             file_path,
@@ -236,6 +239,9 @@ fn domain_and_application_crate_paths_stay_inward() {
         assert!(!files.is_empty(), "{dir} has sources");
         for file_content in &files {
             let (file, source) = file_content.split_once(":\n").unwrap();
+            if dependency_scan::test_only_file(file) {
+                continue;
+            }
             let paths = dependency_paths_at(file, source)
                 .unwrap_or_else(|| panic!("{file} does not parse"));
             for path in paths {
@@ -465,6 +471,9 @@ fn assert_application_imports_are_ports_only(dir: &Path) {
 
     for file_content in &files {
         let (file_path, source) = file_content.split_once(":\n").unwrap();
+        if dependency_scan::test_only_file(file_path) {
+            continue;
+        }
         let refused = refused_application_paths(file_path, source);
         assert!(
             refused.is_empty(),

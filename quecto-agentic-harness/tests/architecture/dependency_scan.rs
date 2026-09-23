@@ -20,19 +20,68 @@ use std::sync::OnceLock;
 /// the module that declares it, not by where its file sits. A file outside the
 /// tree is a caller bug.
 pub(super) fn module_path(file: &str) -> Vec<String> {
-    static TREE: OnceLock<BTreeMap<PathBuf, Vec<String>>> = OnceLock::new();
-    let tree = TREE.get_or_init(|| {
-        let mut tree = BTreeMap::new();
+    assert!(
+        !test_only_file(file),
+        "{file} is mounted only under #[cfg(test)]"
+    );
+    crate_tree().production[&normalize(Path::new(file))].clone()
+}
+
+/// True when `file` is mounted only under `#[cfg(test)]` (test code the
+/// layer rules skip, like `*_tests.rs`); false for a production module. A
+/// file in neither tree (not compiled, or a caller bug) is refused.
+pub(super) fn test_only_file(file: &str) -> bool {
+    let key = normalize(Path::new(file));
+    let tree = crate_tree();
+    if tree.production.contains_key(&key) {
+        return false;
+    }
+    assert!(
+        tree.test_only.contains(&key),
+        "{file} is not in the crate module tree"
+    );
+    true
+}
+
+/// The files the crate roots mount: production modules with their module
+/// paths, and files reached only through `#[cfg(test)]` declarations.
+#[derive(Default)]
+struct Tree {
+    production: BTreeMap<PathBuf, Vec<String>>,
+    test_only: std::collections::BTreeSet<PathBuf>,
+}
+
+fn crate_tree() -> &'static Tree {
+    static TREE: OnceLock<Tree> = OnceLock::new();
+    TREE.get_or_init(|| {
+        let mut tree = Tree::default();
         // The harness (the suite runs from its package directory) and the
         // TUI, whose layer rules this suite also enforces.
         for root in CRATE_ROOTS {
-            walk_module(Path::new(root), true, Vec::new(), &mut tree);
+            walk_module(Path::new(root), true, Vec::new(), false, &mut tree);
         }
         tree
-    });
-    tree.get(&normalize(Path::new(file)))
-        .cloned()
-        .unwrap_or_else(|| panic!("{file} is not in the crate module tree"))
+    })
+}
+
+/// The layer rules skip `*_tests.rs` files by name, so a production module
+/// must never be one: every such file is mounted only under `#[cfg(test)]`.
+#[test]
+fn production_modules_are_not_test_files() {
+    let tree = &crate_tree().production;
+    assert!(tree.len() > 500, "both crates were walked ({})", tree.len());
+    let named_as_tests: Vec<_> = tree
+        .keys()
+        .filter(|file| {
+            file.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with("_tests.rs"))
+        })
+        .collect();
+    assert!(
+        named_as_tests.is_empty(),
+        "production *_tests.rs: {named_as_tests:?}"
+    );
 }
 
 /// The crate roots whose module trees the path rules resolve against.
@@ -58,16 +107,31 @@ fn normalize(path: &Path) -> PathBuf {
 /// `mod_rs`: the file names its own directory for child modules (`lib.rs`,
 /// `mod.rs`, or a file loaded by `#[path]`); otherwise children live in the
 /// directory named after the file.
-fn walk_module(
+fn walk_module(file: &Path, mod_rs: bool, module: Vec<String>, test: bool, tree: &mut Tree) {
+    let file_dir = file.parent().expect("module file has a directory");
+    let child_dir = if mod_rs {
+        file_dir.to_path_buf()
+    } else {
+        file_dir.join(file.file_stem().expect("module file has a stem"))
+    };
+    mount(file, file_dir, &child_dir, module, test, tree);
+}
+
+/// Record `file` as `module` and walk its declarations. One file, one
+/// module: a second mount would make `super::` mean two things, so the scan
+/// refuses it rather than pick one.
+/// `test`: reached through a `#[cfg(test)]` declaration — recorded apart,
+/// and free to share a file (two test modules may mount one fixture).
+fn mount(
     file: &Path,
-    mod_rs: bool,
+    path_base: &Path,
+    child_dir: &Path,
     module: Vec<String>,
-    tree: &mut BTreeMap<PathBuf, Vec<String>>,
+    test: bool,
+    tree: &mut Tree,
 ) {
     let key = normalize(file);
-    if let Some(mounted) = tree.get(&key) {
-        // One file, one module: a second mount would make `super::` mean
-        // two things, so the scan refuses it rather than pick one.
+    if let Some(mounted) = tree.production.get(&key) {
         assert_eq!(
             mounted,
             &module,
@@ -76,40 +140,44 @@ fn walk_module(
         );
         return;
     }
-    let file_dir = file.parent().expect("module file has a directory");
-    let child_dir = if mod_rs {
-        file_dir.to_path_buf()
-    } else {
-        file_dir.join(file.file_stem().expect("module file has a stem"))
-    };
-    mount(file, key, file_dir, &child_dir, module, tree);
-}
-
-/// Record `file` as `module` and walk its declarations.
-fn mount(
-    file: &Path,
-    key: PathBuf,
-    path_base: &Path,
-    child_dir: &Path,
-    module: Vec<String>,
-    tree: &mut BTreeMap<PathBuf, Vec<String>>,
-) {
+    if test && !tree.test_only.insert(key.clone()) {
+        return;
+    }
     let source = std::fs::read_to_string(file)
         .unwrap_or_else(|e| panic!("read module file {}: {e}", file.display()));
     let parsed = syn::parse_file(&source)
         .unwrap_or_else(|e| panic!("parse module file {}: {e}", file.display()));
-    tree.insert(key, module.clone());
-    walk_items(&parsed.items, path_base, child_dir, &module, tree);
+    if !test {
+        tree.test_only.remove(&key);
+        tree.production.insert(key, module.clone());
+    }
+    let dirs = Dirs {
+        include_base: file.parent().expect("module file has a directory"),
+        path_base,
+        child_dir,
+    };
+    walk_items(&parsed.items, &dirs, &module, test, tree);
+}
+
+/// Where a file's declarations resolve (Rust reference, "Modules"):
+/// `include!` against the file holding the macro; `#[path]` on a declaration
+/// against `path_base` (the file's directory, or an inline module's); an
+/// implicit `mod x;` under `child_dir`.
+struct Dirs<'a> {
+    include_base: &'a Path,
+    path_base: &'a Path,
+    child_dir: &'a Path,
 }
 
 fn walk_items(
     items: &[syn::Item],
-    path_base: &Path,
-    child_dir: &Path,
+    dirs: &Dirs<'_>,
     module: &[String],
-    tree: &mut BTreeMap<PathBuf, Vec<String>>,
+    test: bool,
+    tree: &mut Tree,
 ) {
     for item in items {
+        let test = test || item_test_only(item);
         // `include!("x.rs")` splices the file into the including module.
         if let syn::Item::Macro(included) = item
             && included.mac.path.is_ident("include")
@@ -118,18 +186,15 @@ fn walk_items(
                 .mac
                 .parse_body()
                 .unwrap_or_else(|e| panic!("include! without a literal path: {e}"));
-            let file = path_base.join(target.value());
-            let key = normalize(&file);
-            if let Some(mounted) = tree.get(&key) {
-                assert_eq!(
-                    mounted,
-                    module,
-                    "{} is mounted as two modules",
-                    file.display()
-                );
-                continue;
-            }
-            mount(&file, key, path_base, child_dir, module.to_vec(), tree);
+            let file = dirs.include_base.join(target.value());
+            mount(
+                &file,
+                dirs.path_base,
+                dirs.child_dir,
+                module.to_vec(),
+                test,
+                tree,
+            );
             continue;
         }
         let syn::Item::Mod(declared) = item else {
@@ -140,28 +205,29 @@ fn walk_items(
         child.push(name.clone());
         let explicit = path_attribute(&declared.attrs);
         if let Some((_, inline)) = &declared.content {
-            // Declarations inside an inline module resolve against its own
-            // directory: `#[path = "d"] mod m { … }` names `d`, otherwise
-            // `m` under the enclosing directory.
-            let dir = match &explicit {
-                Some(path) => path_base.join(path),
-                None => child_dir.join(&name),
+            // An inline module's declarations resolve under the enclosing
+            // module's directory (the file-stem directory in a non-mod-rs
+            // file): `#[path = "d"] mod m { … }` names `d`, otherwise `m`.
+            let dir = dirs.child_dir.join(explicit.as_deref().unwrap_or(&name));
+            let inner = Dirs {
+                include_base: dirs.include_base,
+                path_base: &dir,
+                child_dir: &dir,
             };
-            walk_items(inline, &dir, &dir, &child, tree);
+            walk_items(inline, &inner, &child, test, tree);
             continue;
         }
-        match explicit {
-            Some(path) => walk_module(&path_base.join(path), true, child, tree),
-            None => {
-                let flat = child_dir.join(format!("{name}.rs"));
-                let nested = child_dir.join(&name).join("mod.rs");
-                if flat.is_file() {
-                    walk_module(&flat, false, child, tree);
-                } else if nested.is_file() {
-                    walk_module(&nested, true, child, tree);
-                }
-                // Neither: a declaration for another target; nothing to map.
-            }
+        let candidates = match &explicit {
+            Some(path) => vec![(dirs.path_base.join(path), true)],
+            None => vec![
+                (dirs.child_dir.join(format!("{name}.rs")), false),
+                (dirs.child_dir.join(&name).join("mod.rs"), true),
+            ],
+        };
+        // No file: a declaration for another target; nothing to map (a
+        // scanned file outside the tree is refused by `module_path`).
+        if let Some((file, mod_rs)) = candidates.into_iter().find(|(file, _)| file.is_file()) {
+            walk_module(&file, mod_rs, child, test, tree);
         }
     }
 }
@@ -384,17 +450,33 @@ fn module_paths_follow_the_module_tree() {
 
 /// Walk a synthetic crate rooted at `lib` (files: relative path → source).
 fn walk_fixture(files: &[(&str, &str)]) -> BTreeMap<PathBuf, Vec<String>> {
+    walk_fixture_tree(files).production
+}
+
+fn walk_fixture_tree(files: &[(&str, &str)]) -> Tree {
     let dir = tempfile::tempdir().expect("tempdir");
     for (path, source) in files {
         let path = dir.path().join(path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, source).unwrap();
     }
-    let mut tree = BTreeMap::new();
-    walk_module(&dir.path().join("lib.rs"), true, Vec::new(), &mut tree);
-    tree.into_iter()
-        .map(|(path, module)| (path.strip_prefix(dir.path()).unwrap().to_path_buf(), module))
-        .collect()
+    let mut tree = Tree::default();
+    walk_module(
+        &dir.path().join("lib.rs"),
+        true,
+        Vec::new(),
+        false,
+        &mut tree,
+    );
+    let relative = |path: PathBuf| path.strip_prefix(dir.path()).unwrap().to_path_buf();
+    Tree {
+        production: tree
+            .production
+            .into_iter()
+            .map(|(path, module)| (relative(path), module))
+            .collect(),
+        test_only: tree.test_only.into_iter().map(relative).collect(),
+    }
 }
 
 #[test]
@@ -402,11 +484,20 @@ fn walker_follows_inline_paths_includes_and_non_mod_rs_children() {
     let tree = walk_fixture(&[
         (
             "lib.rs",
-            "#[path = \"d\"] mod m { mod c; }\nmod a;\ninclude!(\"spliced.rs\");",
+            "#[path = \"d\"] mod m { mod c; }\nmod a;\ninclude!(\"spliced.rs\");\n\
+             #[cfg(test)] #[path = \"t_tests.rs\"] mod t1;\n\
+             #[cfg(test)] #[path = \"t_tests.rs\"] mod t2;\n\
+             #[cfg(windows)] #[path = \"win.rs\"] mod imp;",
         ),
         ("d/c.rs", ""),
-        ("a.rs", "mod b;"),
+        ("t_tests.rs", ""),
+        (
+            "a.rs",
+            "mod b;\n#[path = \"foo\"] mod inline { mod c2; }\nmod x { include!(\"inc.rs\"); }",
+        ),
         ("a/b.rs", ""),
+        ("a/foo/c2.rs", ""),
+        ("inc.rs", ""),
         ("spliced.rs", "mod s;"),
         ("s.rs", ""),
     ]);
@@ -420,6 +511,31 @@ fn walker_follows_inline_paths_includes_and_non_mod_rs_children() {
         Some(vec!["a".to_string(), "b".to_string()])
     );
     assert_eq!(module("spliced.rs"), Some(vec![]));
+    // Inline `#[path]` in a non-mod-rs file resolves under its stem
+    // directory; `include!` against the file holding it.
+    assert_eq!(
+        module("a/foo/c2.rs"),
+        Some(vec![
+            "a".to_string(),
+            "inline".to_string(),
+            "c2".to_string()
+        ])
+    );
+    assert_eq!(
+        module("inc.rs"),
+        Some(vec!["a".to_string(), "x".to_string()])
+    );
+    // Test-only mounts are not production and may share a file.
+    assert_eq!(module("t_tests.rs"), None);
+    assert!(
+        walk_fixture_tree(&[
+            ("lib.rs", "#[cfg(test)] mod fakes;"),
+            ("fakes.rs", "mod inner;"),
+            ("fakes/inner.rs", ""),
+        ])
+        .test_only
+        .contains(Path::new("fakes/inner.rs"))
+    );
     assert_eq!(module("s.rs"), Some(vec!["s".to_string()]));
 }
 
