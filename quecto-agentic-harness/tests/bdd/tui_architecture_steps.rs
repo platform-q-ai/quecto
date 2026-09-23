@@ -1,8 +1,7 @@
 use super::*;
 /// The architecture suite's production-token scanner (#1637): test-only items
 /// are stripped wherever they sit and comments/literals never match.
-#[path = "../common/production_tokens.rs"]
-mod production_tokens;
+use common::catalogue_conformance::production_tokens;
 use quecto_tui::components::chat::{Chat, ChatEntry};
 use quecto_tui::components::component::Component;
 use quecto_tui::shell::app::tui_harness::TuiHarness;

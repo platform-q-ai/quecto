@@ -565,6 +565,9 @@ pub struct TokenStats {
 }
 
 #[cfg(test)]
+#[path = "protocol_roster_tests.rs"]
+mod protocol_roster_tests;
+#[cfg(test)]
 #[path = "protocol_tests.rs"]
 mod tests;
 #[cfg(test)]

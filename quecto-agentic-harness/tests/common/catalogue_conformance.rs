@@ -12,8 +12,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Public so the BDD binary, which loads this module through `common`, can
+/// share the one copy (a second `mod` of the same file is `duplicate_mod`).
 #[path = "production_tokens.rs"]
-mod production_tokens;
+pub mod production_tokens;
 
 pub fn harness_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
