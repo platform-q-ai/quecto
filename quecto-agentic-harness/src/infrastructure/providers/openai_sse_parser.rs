@@ -26,6 +26,18 @@ pub(crate) const MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES: usize = 2 * 1024 * 1024;
 
 pub(crate) use crate::infrastructure::providers::sse_limits::append_with_limit;
 
+/// The stop reason a Chat Completions `choice` reports, if it names one
+/// (#2116). A choice without a string `finish_reason` reports nothing, so
+/// callers keep any reason an earlier chunk already gave.
+pub(crate) fn choice_stop_reason(
+    choice: &serde_json::Value,
+) -> Option<crate::domain::message::StopReason> {
+    choice
+        .get("finish_reason")
+        .and_then(|v| v.as_str())
+        .map(crate::domain::message::StopReason::from_openai_finish_reason)
+}
+
 /// Parse an SSE text stream into an assembled `LlmResponse`.
 ///
 /// Captures content deltas, tool-call deltas, and the final `usage` chunk
@@ -35,6 +47,7 @@ pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> 
     let mut content = String::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
     let mut usage: Option<UsageInfo> = None;
+    let mut stop_reason = None;
 
     for line in raw.lines() {
         let line = line.trim();
@@ -48,6 +61,9 @@ pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> 
 
         if let Some(choices) = chunk.get("choices").and_then(|v| v.as_array()) {
             for choice in choices {
+                if let Some(reason) = choice_stop_reason(choice) {
+                    stop_reason = Some(reason);
+                }
                 apply_delta(
                     choice.get("delta").unwrap_or(&serde_json::Value::Null),
                     &mut content,
@@ -73,7 +89,7 @@ pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> 
         content,
         tool_calls,
         usage,
-        stop_reason: None,
+        stop_reason,
         thinking_blocks: vec![],
     })
 }
