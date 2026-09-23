@@ -370,6 +370,5 @@ fn status_reports_only_published_runtime_admission_warnings() {
         )
         .unwrap();
     let after = run_with_output(args("status"), &ctx);
-    assert!(after.stderr.contains("openai-api"), "{}", after.stderr);
-    assert!(after.stderr.contains("without admission-broker gating"));
+    assert!(!after.stderr.contains("admission-broker gating"));
 }

@@ -78,16 +78,8 @@ pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut Str
 
     // Status is config-only when no runtime was composed in this process.
     // Never infer broker health from a file or absent published snapshot.
-    if let Some(runtime) =
-        crate::infrastructure::catalogue_registry::runtime_store_for(&ctx.base_dir()).current()
-    {
-        for slot in &runtime.admission_binding_diagnostic.unbound_slots {
-            stderr.push_str(&format!(
-                "warning: {}\n",
-                crate::domain::state_snapshot::AdmissionBindingWarning::new(slot).message
-            ));
-        }
-    }
+    // Admission warnings are emitted by agent startup, where composition has
+    // validated effective bindings and credentials.
 
     0
 }
