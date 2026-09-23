@@ -645,22 +645,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         }
     }
 
-    // Agent Commander spike: dry-run observer, off unless switched on.
-    if let Some(commander) = crate::infrastructure::agent_commander::DryRunCommander::from_env(
-        &base_dir,
-        if flags.parent_id.is_some() || flags.parent_control.is_some() {
-            crate::infrastructure::agent_commander::AgentRole::Child {
-                parent_id: flags.parent_id.clone(),
-            }
-        } else {
-            crate::infrastructure::agent_commander::AgentRole::Root
-        },
-    ) {
-        agent.set_commander(Some(
-            commander as Arc<dyn crate::application::agent_commander::ports::CommanderSink>,
-        ));
-        stderr.push_str("agent commander: dry run on (decisions logged, none acted on)\n");
-    }
+    super::agent_commander_wiring::attach(&mut agent, &base_dir, &flags, stderr);
 
     let model = build.model.clone();
 

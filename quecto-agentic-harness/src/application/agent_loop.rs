@@ -26,6 +26,8 @@ pub type ToolPolicyPersistence =
     Arc<dyn Fn(&crate::domain::tool::ToolPolicyReconciliation) -> Result<(), String> + Send + Sync>;
 #[path = "agent_loop_clamp.rs"]
 mod agent_loop_clamp;
+#[path = "agent_loop_commander.rs"]
+mod agent_loop_commander;
 #[path = "agent_loop_effort.rs"]
 mod agent_loop_effort;
 #[path = "agent_loop_errors.rs"]
@@ -37,6 +39,7 @@ mod agent_loop_pruning;
 #[path = "agent_loop_reload.rs"]
 mod agent_loop_reload;
 mod agent_loop_session;
+
 #[path = "agent_loop_spill.rs"]
 mod agent_loop_spill;
 #[path = "agent_loop_tool_exec.rs"]
@@ -128,8 +131,7 @@ pub struct AgentLoopImpl {
     pub(super) default_effort: Option<EffortLevel>,
     /// Optional append-only audit log for durable event recording.
     audit_log: Option<Arc<dyn AuditSink>>,
-    /// Agent Commander spike: dry-run observer (never acts).
-    commander: Option<Arc<dyn crate::application::agent_commander::ports::CommanderSink>>,
+    pub(super) commander: agent_loop_commander::CommanderHandle,
     /// #1072: latched by `apply_context_pruning` whenever a pass mutated
     /// existing history; the session save transaction consumes it.
     durable_prefix_dirty: Arc<DurablePrefixLatch>,
@@ -415,41 +417,6 @@ impl AgentLoopImpl {
         self.audit_log = log;
     }
 
-    /// Agent Commander spike: attach the dry-run observer.
-    pub fn set_commander(
-        &mut self,
-        commander: Option<Arc<dyn crate::application::agent_commander::ports::CommanderSink>>,
-    ) {
-        self.commander = commander;
-    }
-
-    /// Agent Commander spike: the attached observer, if any.
-    pub fn commander(
-        &self,
-    ) -> Option<Arc<dyn crate::application::agent_commander::ports::CommanderSink>> {
-        self.commander.clone()
-    }
-
-    /// Agent Commander spike: report an event (fire-and-forget).
-    pub(super) fn commander_observe(
-        &self,
-        event: crate::application::agent_commander::ports::CommanderEvent,
-    ) {
-        if let Some(commander) = &self.commander {
-            commander.observe(&self.session_key, &self.model, event);
-        }
-    }
-
-    /// The text of the last user message that is not a tool result.
-    fn commander_prompt(messages: &[Message]) -> String {
-        messages
-            .iter()
-            .rev()
-            .find(|m| m.role == crate::domain::message::Role::User && m.tool_call_id.is_none())
-            .map(|m| m.content.clone())
-            .unwrap_or_default()
-    }
-
     /// Emit an audit event if audit logging is enabled.
     ///
     /// Write failures are logged via `tracing::warn!` but never crash the agent.
@@ -697,21 +664,7 @@ impl AgentLoopImpl {
 
             match next_state_after_provider_response(&response) {
                 TurnState::FinalizeAssistantResponse => {
-                    self.commander_observe(
-                        crate::application::agent_commander::ports::CommanderEvent::TurnEnd {
-                            turn: current_turn,
-                            prompt: Self::commander_prompt(messages),
-                            final_text: response.content.clone().unwrap_or_default(),
-                            stop_reason: response
-                                .stop_reason
-                                .as_ref()
-                                .map(|r| r.as_str().to_string()),
-                            tool_rounds: iterations,
-                            ended_by: "final_response".into(),
-                            output_tokens: response.usage.as_ref().map(|u| u.completion_tokens),
-                            max_tokens: self.max_tokens,
-                        },
-                    );
+                    self.commander_turn_end(messages, &response, current_turn, iterations);
                     let end = TurnEnd {
                         iterations,
                         usage: usage_totals,
@@ -728,10 +681,7 @@ impl AgentLoopImpl {
                 _ => unreachable!("provider response classification returned non-response state"),
             }
 
-            // #1072: this turn's appended messages are recorded in the run
-            // ledger AT APPEND TIME inside `execute_tool_calls_for_response`
-            // — never recovered from a positional slice of `messages`, which
-            // pruning can shrink or demote in place.
+            // #1072: appended messages are recorded in the ledger at append time.
             let ledger_from = appended_messages.len();
             self.execute_tool_calls_for_response(
                 messages,
@@ -740,11 +690,7 @@ impl AgentLoopImpl {
                 &mut appended_messages,
             )
             .await;
-            // Stream this turn's output (assistant message + tool results) over
-            // the live progress path so a parent/inspector sees it turn-by-turn,
-            // not only at completion (#797). The clone is only paid when a
-            // progress callback is registered (via `notify`'s guard), and the
-            // Arc<[Message]> payload makes further event clones refcount bumps (#993).
+            // Stream this turn's output over the live progress path (#797, #993).
             self.notify(|| AgentProgressEvent::TurnCompleted {
                 messages: appended_messages[ledger_from..].into(),
             });
@@ -755,18 +701,7 @@ impl AgentLoopImpl {
 
             if iterations >= self.max_tool_iterations {
                 let _state = TurnState::StopAtToolIterationLimit;
-                self.commander_observe(
-                    crate::application::agent_commander::ports::CommanderEvent::TurnEnd {
-                        turn: current_turn,
-                        prompt: Self::commander_prompt(messages),
-                        final_text: String::new(),
-                        stop_reason: None,
-                        tool_rounds: iterations,
-                        ended_by: "iteration_limit".into(),
-                        output_tokens: None,
-                        max_tokens: self.max_tokens,
-                    },
-                );
+                self.commander_iteration_limit(messages, current_turn, iterations);
                 let result = self.tool_iteration_limit_result(
                     messages,
                     iterations,

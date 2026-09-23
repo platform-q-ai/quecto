@@ -54,6 +54,7 @@ pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_wit
 #[cfg(any(test, feature = "test-support"))]
 pub use uds_shutdown::test_support::deliver_termination_signal;
 
+mod agent_commander_wiring;
 pub mod retention_handles;
 mod uds_admission_warnings;
 pub mod uds_discovery_handles;
