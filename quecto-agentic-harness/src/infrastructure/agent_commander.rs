@@ -225,7 +225,8 @@ impl Worker {
                         "type": "choice",
                         "instructions": "Why did this agent's turn end? Judge from `final_text` (the agent's last message), `stop_reason` from the model provider, and `ended_by`.",
                         "criteria": {
-                            "complete": "The work asked for in `prompt` is finished and nothing is asked of anyone",
+                                                        "complete": "The work asked for in `prompt` is finished and nothing is asked of anyone",
+                            "waiting_on_others": "The agent handed work to sub-agents, reviewers or other processes and correctly paused until their results arrive; it will continue when they report, and nothing is asked of anyone now",
                             "needs_input": "The agent asks a question or needs a decision or approval before it can continue",
                             "cut_off": "The message was truncated mid-thought (output token limit, interruption) and the agent meant to keep going",
                             "stopped_early": "The agent stopped before finishing without asking anything: it gave up, summarised a plan it did not carry out, or hit a limit"
@@ -240,7 +241,8 @@ impl Worker {
                             "type": "choice",
                             "instructions": "This is a sub-agent's last message to its parent agent. What state is the sub-agent's task in?",
                             "criteria": {
-                                "done": "The task is finished and the result is reported",
+                                                                "done": "The task is finished and the result is reported",
+                                "waiting_on_subagents": "The sub-agent delegated parts of its task to its own sub-agents and is correctly waiting for their reports before it continues",
                                 "question_for_parent": "The sub-agent asks its parent a question or needs a decision to continue",
                                 "blocked": "The sub-agent cannot proceed because of something outside its control (access, missing input, broken environment)",
                                 "failed": "The sub-agent tried and could not do the task",
@@ -362,6 +364,7 @@ impl Worker {
             } else {
                 match c.as_str() {
                     "complete" => "none",
+                    "waiting_on_others" => "none",
                     "needs_input" => "notify_asker_needs_input",
                     "cut_off" => "auto_continue",
                     "stopped_early" => "nudge_continue",
@@ -376,6 +379,7 @@ impl Worker {
             } else {
                 match c.as_str() {
                     "done" => "tell_parent_done",
+                    "waiting_on_subagents" => "plain_idle_note",
                     "question_for_parent" => "tell_parent_question",
                     "blocked" => "tell_parent_blocked_badge",
                     "failed" => "tell_parent_failed_badge",
@@ -450,7 +454,9 @@ impl Worker {
                 .await
                 .map_err(|e| format!("request: {e}"))?;
             let status = response.status();
-            if (status.as_u16() == 429 || status.as_u16() == 529) && attempt < 3 {
+            // Rate limits and any server-side failure (5xx, incl. Cloudflare
+            // 520-529) are retried; other client errors are final.
+            if (status.as_u16() == 429 || status.is_server_error()) && attempt < 3 {
                 tokio::time::sleep(delay).await;
                 delay *= 4;
                 continue;
