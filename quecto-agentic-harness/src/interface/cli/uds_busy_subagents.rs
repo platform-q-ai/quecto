@@ -107,7 +107,11 @@ pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
             });
             true
         }
-        Some("get_report" | "get_state") if value.get("agent_id").is_some() => {
+        // A targeted `get_message` is agent_cmd reading a descendant's long
+        // report (#2114); like its `get_report`, it must not wait behind
+        // this agent's own turn. Busy or idle, targeted reads share the
+        // forwarder cap below; past it a reader is told to retry.
+        Some("get_report" | "get_state" | "get_message") if value.get("agent_id").is_some() => {
             let Ok(command) = serde_json::from_str::<super::protocol::AgentCommand>(line) else {
                 return false;
             };

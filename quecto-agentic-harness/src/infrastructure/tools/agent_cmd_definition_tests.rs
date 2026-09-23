@@ -21,29 +21,6 @@ fn definition_does_not_expose_await() {
 }
 
 #[test]
-fn advertised_truncation_recovery_is_callable_through_tool_schema() {
-    let schema: serde_json::Value = serde_json::from_str(
-        &AgentCmdTool::new(new_registry())
-            .definition()
-            .parameters_schema,
-    )
-    .unwrap();
-    assert!(
-        schema["properties"]["command"]["enum"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|v| v == "get_message")
-    );
-    for field in ["messageId", "toolCallId", "offset", "limit"] {
-        assert!(
-            schema["properties"].get(field).is_some(),
-            "missing recovery input {field}"
-        );
-    }
-}
-
-#[test]
 fn latest_report_is_a_separate_cursor_neutral_command() {
     let (_, wire, command) = super::super::agent_cmd_parse::build_command(&serde_json::json!({
         "agent_id":"11111111-1111-4111-8111-111111111111", "command":"get_report"
@@ -110,4 +87,28 @@ fn supervisor_close_and_extend_commands_are_typed() {
         .expect_err("extend needs positive seconds");
         assert!(refused.contains("deadline_seconds"), "{refused}");
     }
+}
+
+/// #2114: `get_message` is a client (TUI) command; agents are handed a
+/// long report's full text instead of a recovery step.
+#[test]
+fn get_message_and_its_range_inputs_are_not_agent_facing() {
+    let definition = AgentCmdTool::new(new_registry()).definition();
+    let schema: serde_json::Value = serde_json::from_str(&definition.parameters_schema).unwrap();
+    let commands = schema["properties"]["command"]["enum"].as_array().unwrap();
+    assert!(commands.iter().any(|v| v == "get_messages"));
+    assert!(!commands.iter().any(|v| v == "get_message"));
+    for field in ["messageId", "toolCallId", "offset", "limit"] {
+        assert!(
+            schema["properties"].get(field).is_none(),
+            "{field} is exposed"
+        );
+    }
+    assert!(!definition.description.contains("get_message "));
+    assert!(
+        schema["properties"]["agent_id"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("UUID")
+    );
 }

@@ -103,8 +103,13 @@ fn agent_cmd_allowlist_is_closed() {
         RoutableInspectionCommand::from_agent_cmd("get_messages"),
         Some(RoutableInspectionCommand::GetMessages)
     );
+    // A client (TUI) command, not an agent one (#2114).
     assert_eq!(
         RoutableInspectionCommand::from_agent_cmd("get_message"),
+        None
+    );
+    assert_eq!(
+        RoutableInspectionCommand::from_uds_type("get_message"),
         Some(RoutableInspectionCommand::GetMessage)
     );
     assert_eq!(

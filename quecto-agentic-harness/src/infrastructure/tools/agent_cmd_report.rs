@@ -189,6 +189,9 @@ pub(crate) fn needs_default_report_backfill(
 }
 
 pub(crate) const REPORT_BUDGET_BYTES: usize = 800 * 4;
+/// A finished child's final report is delivered whole up to this size
+/// (#2114); beyond it the start is kept with a plain notice.
+pub(crate) const FINAL_REPORT_BUDGET_BYTES: usize = 64 * 1024;
 
 pub(crate) struct BoundedReport {
     pub messages: Vec<serde_json::Value>,
@@ -204,12 +207,43 @@ pub(crate) fn bounded_report_messages(
         strip_unbounded_payloads(msg);
     }
 
+    // The latest substantive assistant message is the child's handoff: it
+    // gets its own budget (#2114) and the rest of the report, context, the
+    // ordinary one on top of it.
+    let final_idx = candidates.iter().rposition(is_substantive_assistant);
+    if let Some(index) = final_idx {
+        let final_message = &mut candidates[index];
+        if report_envelope_size(&[], Some(final_message)) > FINAL_REPORT_BUDGET_BYTES {
+            // The notice first, so the cut makes room for it too.
+            final_message["contentNotice"] = serde_json::json!(FINAL_REPORT_NOTICE);
+            truncate_message_to_fit(final_message, &[], FINAL_REPORT_BUDGET_BYTES);
+        }
+    }
+    // A message the child itself collapsed (too large for its history page)
+    // cannot be paged whole either; say where its text is.
+    for (index, msg) in candidates.iter_mut().enumerate() {
+        let collapsed = msg.get("collapsed").and_then(|v| v.as_bool()) == Some(true)
+            && msg.get("truncated").and_then(|v| v.as_bool()) == Some(true);
+        if collapsed && Some(index) != final_idx && msg.get("contentNotice").is_none() {
+            msg["contentNotice"] = serde_json::json!(COLLAPSED_PREVIEW_NOTICE);
+        }
+    }
+    let context_cut_notice = if final_idx.is_some() {
+        CONTEXT_CUT_NOTICE
+    } else {
+        PROGRESS_CUT_NOTICE
+    };
+    let budget = final_idx
+        .map(|index| report_envelope_size(&[], Some(&candidates[index])))
+        .unwrap_or(0)
+        + REPORT_BUDGET_BYTES;
+
     // Preserve transcript order when it already fits. If it does not, reserve the
     // envelope for the latest substantive assistant handoff before optional context.
-    let all_fit = report_envelope_size(&candidates, None) <= REPORT_BUDGET_BYTES;
+    let all_fit = report_envelope_size(&candidates, None) <= budget;
     let mut ordered = if all_fit {
         candidates
-    } else if let Some(final_idx) = candidates.iter().rposition(is_substantive_assistant) {
+    } else if let Some(final_idx) = final_idx {
         let final_message = candidates.remove(final_idx);
         let mut prioritized = vec![final_message];
         prioritized.extend(candidates.into_iter().rev());
@@ -223,13 +257,19 @@ pub(crate) fn bounded_report_messages(
     let candidate_count = ordered.len();
     let mut selected = Vec::new();
     for mut msg in ordered.drain(..) {
-        if report_envelope_size(&selected, Some(&msg)) > REPORT_BUDGET_BYTES {
-            truncate_message_to_fit(&mut msg, &selected);
+        if report_envelope_size(&selected, Some(&msg)) > budget {
+            truncate_message_to_fit(&mut msg, &selected, budget);
+            if msg.get("contentNotice").is_none() {
+                msg["contentNotice"] = serde_json::json!(context_cut_notice);
+                if report_envelope_size(&selected, Some(&msg)) > budget {
+                    truncate_message_to_fit(&mut msg, &selected, budget);
+                }
+            }
         }
-        if is_unrecoverably_truncated(&msg) {
+        if is_emptied_by_truncation(&msg) {
             break;
         }
-        if report_envelope_size(&selected, Some(&msg)) <= REPORT_BUDGET_BYTES {
+        if report_envelope_size(&selected, Some(&msg)) <= budget {
             selected.push(msg);
         } else {
             break;
@@ -253,6 +293,21 @@ pub(crate) fn bounded_report_messages(
     }
 }
 
+/// Shown on a context message cut to fit beside the final report.
+pub(crate) const CONTEXT_CUT_NOTICE: &str =
+    "Cut to fit beside the final report; read it in full with get_messages count/before.";
+
+/// Shown on a message cut to fit a progress report (no final report yet).
+pub(crate) const PROGRESS_CUT_NOTICE: &str =
+    "Cut to fit the report; read it in full with get_messages count/before.";
+
+/// Shown on a message the child collapsed because it is too large for a
+/// history page: paging returns the same preview.
+pub(crate) const COLLAPSED_PREVIEW_NOTICE: &str = "Only a preview: this message is too large to read through get_messages. Call agent_cmd get_report with export_raw true to write the full history to an artifact.";
+
+/// Shown on a final report cut at [`FINAL_REPORT_BUDGET_BYTES`].
+pub(crate) const FINAL_REPORT_NOTICE: &str = "This report is longer than the report budget and was cut; its start is shown. Call agent_cmd get_report with export_raw true to write the child's full retained history to an artifact you can read.";
+
 pub(crate) fn is_substantive_assistant(msg: &serde_json::Value) -> bool {
     msg.get("role").and_then(|v| v.as_str()) == Some("assistant")
         && msg
@@ -269,24 +324,13 @@ pub(crate) fn is_substantive_assistant(msg: &serde_json::Value) -> bool {
             .is_none_or(Vec::is_empty)
 }
 
-fn is_unrecoverably_truncated(msg: &serde_json::Value) -> bool {
+/// A message truncation left with no content cannot be delivered.
+fn is_emptied_by_truncation(msg: &serde_json::Value) -> bool {
     msg.get("truncated").and_then(|v| v.as_bool()) == Some(true)
-        && !has_usable_content_recovery(msg)
-}
-
-fn has_usable_content_recovery(msg: &serde_json::Value) -> bool {
-    let Some(recovery) = msg.get("contentRecovery") else {
-        return false;
-    };
-    recovery.get("command").and_then(|v| v.as_str()) == Some("get_message")
-        && recovery
-            .get("messageId")
+        && msg
+            .get("content")
             .and_then(|v| v.as_str())
-            .is_some_and(|id| !id.is_empty())
-        && recovery
-            .get("offset")
-            .and_then(|v| v.as_u64())
-            .is_some_and(|offset| offset > 0)
+            .is_none_or(str::is_empty)
 }
 
 fn report_envelope_size(selected: &[serde_json::Value], next: Option<&serde_json::Value>) -> usize {
@@ -309,8 +353,15 @@ fn strip_unbounded_payloads(msg: &mut serde_json::Value) {
     }
 }
 
-fn truncate_message_to_fit(msg: &mut serde_json::Value, selected: &[serde_json::Value]) {
-    let original_len = msg.get("content").and_then(|v| v.as_str()).map(str::len);
+/// Cut `msg`'s content to the longest prefix (on a character boundary)
+/// that keeps the report envelope within `budget`. The cut is marked
+/// `truncated` with the original `contentLength`; no recovery command is
+/// offered (#2114).
+fn truncate_message_to_fit(
+    msg: &mut serde_json::Value,
+    selected: &[serde_json::Value],
+    budget: usize,
+) {
     let Some(original) = msg
         .get("content")
         .and_then(|v| v.as_str())
@@ -319,6 +370,14 @@ fn truncate_message_to_fit(msg: &mut serde_json::Value, selected: &[serde_json::
         msg["truncated"] = serde_json::json!(true);
         return;
     };
+    // A length the child already reported (a preview's) is the true one.
+    if msg.get("contentLength").is_none() {
+        msg["contentLength"] = serde_json::json!(original.len());
+    }
+    msg["truncated"] = serde_json::json!(true);
+    if let Some(obj) = msg.as_object_mut() {
+        obj.remove("contentRecovery");
+    }
     let mut low = 0usize;
     let mut high = original.len();
     let mut best = 0usize;
@@ -329,22 +388,7 @@ fn truncate_message_to_fit(msg: &mut serde_json::Value, selected: &[serde_json::
             end -= 1;
         }
         msg["content"] = serde_json::Value::String(original[..end].to_string());
-        if let Some(len) = original_len {
-            msg["contentLength"] = serde_json::json!(len);
-        }
-        msg["truncated"] = serde_json::json!(true);
-        if end > 0 {
-            if let Some(id) = msg.get("id").and_then(|v| v.as_str()).map(str::to_owned) {
-                msg["contentRecovery"] = serde_json::json!({
-                    "command": "get_message",
-                    "messageId": id,
-                    "offset": end,
-                });
-            }
-        } else if let Some(obj) = msg.as_object_mut() {
-            obj.remove("contentRecovery");
-        }
-        if report_envelope_size(selected, Some(msg)) <= REPORT_BUDGET_BYTES {
+        if report_envelope_size(selected, Some(msg)) <= budget {
             best = end;
             low = mid.saturating_add(1);
         } else if mid == 0 {
@@ -354,15 +398,4 @@ fn truncate_message_to_fit(msg: &mut serde_json::Value, selected: &[serde_json::
         }
     }
     msg["content"] = serde_json::Value::String(original[..best].to_string());
-    if best > 0 {
-        if let Some(id) = msg.get("id").and_then(|v| v.as_str()).map(str::to_owned) {
-            msg["contentRecovery"] = serde_json::json!({
-                "command": "get_message",
-                "messageId": id,
-                "offset": best,
-            });
-        }
-    } else if let Some(obj) = msg.as_object_mut() {
-        obj.remove("contentRecovery");
-    }
 }

@@ -1,7 +1,9 @@
 use crate::application::tools::ports::Tool;
 use crate::domain::tool::ToolResult;
 use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
-use crate::infrastructure::tools::agent_cmd_report::bounded_report_messages;
+use crate::infrastructure::tools::agent_cmd_report::{
+    REPORT_BUDGET_BYTES, bounded_report_messages,
+};
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
 use std::io::Write;
 use std::path::PathBuf;
@@ -187,7 +189,7 @@ fn stale_lower_ordinals_do_not_reset_cursor_or_report_duplicate_assistant() {
 }
 
 #[test]
-fn bounded_report_stops_when_truncated_message_still_cannot_fit() {
+fn bounded_report_keeps_the_final_whole_and_gives_context_only_the_context_budget() {
     let older = serde_json::json!({
         "id":"00000000-0000-0000-0000-000000000001",
         "role":"assistant",
@@ -201,8 +203,19 @@ fn bounded_report_stops_when_truncated_message_still_cannot_fit() {
         "ordinal":2
     });
     let report = bounded_report_messages(vec![older, newer], 2);
-    assert!(report.has_more_messages);
-    assert!(report.messages.len() <= 1);
+    // The newer message is the handoff: whole (#2114). The older one is
+    // context and only gets what fits in the ordinary budget beside it.
+    assert_eq!(report.messages.len(), 2);
+    assert_eq!(report.messages[1]["content"], "y".repeat(18_000));
+    assert_eq!(report.messages[0]["truncated"], true);
+    assert!(report.messages[0]["content"].as_str().unwrap().len() < REPORT_BUDGET_BYTES);
+    assert!(report.message_content_truncated);
+    assert!(
+        !report.messages[0]
+            .as_object()
+            .unwrap()
+            .contains_key("contentRecovery")
+    );
 }
 
 #[test]
@@ -350,16 +363,18 @@ fn completed_final_response_survives_intermediate_tool_output_crowding() {
     }));
     assert_eq!(parsed["data"]["messageContentTruncated"], true);
     assert!(parsed["data"]["hasMoreMessages"].is_boolean());
-    let recovery = &messages
+    // The final response arrives whole (#2114); only the crowding tool
+    // output is cut, and nothing offers a recovery command.
+    let final_message = messages
         .iter()
         .find(|message| message["ordinal"] == 8)
-        .unwrap()["contentRecovery"];
-    assert_eq!(recovery["command"], "get_message");
+        .unwrap();
     assert_eq!(
-        recovery["messageId"],
-        "00000000-0000-0000-0000-000000000008"
+        final_message["content"],
+        "the completed final response ".repeat(300)
     );
-    assert!(recovery["offset"].as_u64().is_some_and(|offset| offset > 0));
+    assert_ne!(final_message["truncated"], true);
+    assert!(!shaped.contains("contentRecovery"));
     tool.result_delivered(
         r#"{"agent_id":"w1","command":"get_messages"}"#,
         &ToolResult {
@@ -514,10 +529,11 @@ fn default_get_messages_truncates_multibyte_content_safely() {
         "w1",
         &json_response(serde_json::json!([
             {"role":"assistant","content":"old","ordinal":1},
-            {"id":"00000000-0000-0000-0000-000000000002","role":"assistant","content":"é".repeat(2000),"ordinal":2}
+                        {"id":"00000000-0000-0000-0000-000000000002","role":"assistant","content":"é".repeat(40_000),"ordinal":2}
         ])),
     );
     let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
+    // 80 KB of two-byte characters is over the final-report budget.
     assert_eq!(parsed["data"]["truncated"], true);
     assert!(
         parsed["data"]["messages"][0]["content"]
@@ -666,9 +682,12 @@ fn default_get_messages_strips_unbounded_payloads_to_fit_envelope_budget() {
         ])),
     );
     let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
+    // Payloads are stripped; the stripped final message then fits whole in
+    // the final-report budget (#2114).
+    assert_eq!(parsed["data"]["messages"][0]["content"], "é".repeat(2000));
     assert!(
         serde_json::to_vec(&parsed["data"]).unwrap().len()
-            <= crate::infrastructure::tools::agent_cmd_report::REPORT_BUDGET_BYTES
+            <= crate::infrastructure::tools::agent_cmd_report::FINAL_REPORT_BUDGET_BYTES
     );
     for key in ["toolCalls", "tool_calls", "imageBlocks", "image_blocks"] {
         assert!(parsed["data"]["messages"][0].get(key).is_none(), "{key}");
@@ -693,38 +712,6 @@ fn incomplete_backfill_returns_bounded_progress_without_advancing_cursor() {
     assert_eq!(parsed["data"]["messages"][0]["content"], "progress");
     assert_eq!(parsed["data"]["reportIncomplete"], true);
     assert_eq!(registry.lock().unwrap()["w1"].pending_message_ordinal, None);
-}
-
-#[test]
-fn agent_schema_exposes_supported_message_recovery() {
-    let definition = empty_tool().definition();
-    let schema: serde_json::Value = serde_json::from_str(&definition.parameters_schema).unwrap();
-    let properties = &schema["properties"];
-    let commands = properties["command"]["enum"].as_array().unwrap();
-    assert!(commands.iter().any(|command| command == "get_messages"));
-    assert!(commands.iter().any(|command| command == "get_message"));
-    for internal_field in ["messageId", "offset", "limit", "toolCallId"] {
-        assert!(properties.get(internal_field).is_some());
-    }
-    assert!(
-        properties["agent_id"]["description"]
-            .as_str()
-            .unwrap()
-            .contains("UUID")
-    );
-    let (_, command, _) =
-        crate::infrastructure::tools::agent_cmd_parse::build_command(&serde_json::json!({
-            "agent_id": "11111111-1111-4111-8111-111111111111",
-            "command": "get_message", "messageId": "message-1", "offset": 4,
-            "limit": 128, "toolCallId": "call-1"
-        }))
-        .unwrap();
-    let command: serde_json::Value = serde_json::from_str(&command).unwrap();
-    assert_eq!(command["type"], "get_message");
-    assert_eq!(command["messageId"], "message-1");
-    assert_eq!(command["offset"], 4);
-    assert_eq!(command["limit"], 128);
-    assert_eq!(command["toolCallId"], "call-1");
 }
 
 #[path = "agent_cmd_trial_tests.rs"]
