@@ -196,6 +196,15 @@ fn file_rules_catch_grouped_relative_and_aliased_imports() {
         );
     }
     assert!(file_offence(domain, "use std::fs as f;", &["std::fs::"]).is_some());
+    // An import hidden in macro tokens is read like a real one.
+    assert!(
+        file_offence(
+            domain,
+            "id! { use std::fs; fn f() { let _ = fs::read(\"x\"); } }",
+            &["std::fs::"]
+        )
+        .is_some()
+    );
     assert!(file_offence(domain, "use std::fs;", &["std::fs::"]).is_some());
     assert_eq!(
         file_offence(domain, "fn f(dirs: u8) { dirs; }", &["dirs::"]),
@@ -705,6 +714,11 @@ fn port_items(
         }
         // Signatures only: a body is not exposed.
         fn visit_block(&mut self, _: &'ast syn::Block) {}
+        // Tokens the guard cannot read (a type-position, impl-item or
+        // trait-item macro): refused.
+        fn visit_macro(&mut self, _: &'ast syn::Macro) {
+            self.0.push(dependency_scan::UNRESOLVABLE.to_string());
+        }
     }
     /// (bound name, full path) for each leaf; a glob binds `*`.
     fn use_bindings(tree: &syn::UseTree, prefix: &str, found: &mut Vec<(String, String)>) {
@@ -776,7 +790,16 @@ fn port_items(
                         format!("{base}::{rest}")
                     };
                 }
-                _ if !path.contains("::") || external_crates().contains(first) => return path,
+                // A single name (prelude, primitive), a known crate, or a
+                // type-led path no binding names — `Self::E`, a generic
+                // `T::Item`, `<I as Iterator>::Item` — which can only be a
+                // generic, `Self` or a prelude trait (globs are refused).
+                _ if !path.contains("::")
+                    || external_crates().contains(first)
+                    || first.starts_with(|c: char| c.is_ascii_uppercase()) =>
+                {
+                    return path;
+                }
                 _ => return dependency_scan::UNRESOLVABLE.to_string(),
             }
         }
@@ -865,10 +888,30 @@ fn port_items(
             syn::Item::Static(i) if public(&i.vis) => paths.visit_type(&i.ty),
             syn::Item::Trait(i) if public(&i.vis) => paths.visit_item_trait(i),
             syn::Item::Impl(block) => {
+                // A trait impl is public through the trait: its header,
+                // associated types and every signature are exposed.
+                let through_trait = block.trait_.is_some();
+                if through_trait {
+                    paths.visit_generics(&block.generics);
+                    paths.visit_type(&block.self_ty);
+                    if let Some((_, trait_path, _)) = &block.trait_ {
+                        paths.visit_path(trait_path);
+                    }
+                }
                 for member in &block.items {
                     match member {
-                        syn::ImplItem::Fn(f) if public(&f.vis) => paths.visit_signature(&f.sig),
-                        syn::ImplItem::Const(c) if public(&c.vis) => paths.visit_type(&c.ty),
+                        syn::ImplItem::Fn(f) if through_trait || public(&f.vis) => {
+                            paths.visit_signature(&f.sig)
+                        }
+                        syn::ImplItem::Const(c) if through_trait || public(&c.vis) => {
+                            paths.visit_type(&c.ty)
+                        }
+                        syn::ImplItem::Type(t) if through_trait || public(&t.vis) => {
+                            paths.visit_type(&t.ty)
+                        }
+                        syn::ImplItem::Macro(_) => {
+                            paths.0.push(dependency_scan::UNRESOLVABLE.to_string())
+                        }
                         _ => {}
                     }
                 }
@@ -911,6 +954,12 @@ fn ports_guard_is_an_allowlist() {
         "m! { pub use super::use_cases::KillEnvironment; }",
         // A bare non-crate first segment that is no known crate.
         "pub use not_a_dependency::Anything;",
+        // Through a trait impl, an associated type or an impl/type macro.
+        "pub struct H; impl Iterator for H { type Item = super::use_cases::KillEnvironment; fn next(&mut self) -> Option<Self::Item> { None } }",
+        "pub struct H; impl From<super::use_cases::KillEnvironment> for H { fn from(_: super::use_cases::KillEnvironment) -> Self { H } }",
+        "pub struct H; impl H { m!(); }",
+        "pub type T = m!(super::use_cases::KillEnvironment);",
+        "pub trait P { m!(); }",
     ] {
         assert!(!port_exposures(file, source).1.is_empty(), "{source}");
     }
@@ -925,6 +974,9 @@ fn ports_guard_is_an_allowlist() {
         "mod local { pub struct X; }\npub use local::X;",
         "pub struct Row { pub at: std::time::SystemTime, pub value: serde_json::Value, pub n: u64 }",
         "pub fn f(record: &crate::domain::session::SessionRecord) -> Option<String> { None }",
+        "pub trait P { type E; fn f(&self) -> Result<(), Self::E>; }",
+        "pub fn g<I: Iterator>(i: I) -> Option<I::Item> { None }",
+        "pub struct H; impl Default for H { fn default() -> Self { H } }",
         "pub struct S(pub u64); impl S { fn private(&self) -> super::use_cases::KillEnvironment { loop {} } }",
     ] {
         let (exposed, refused) = port_exposures(file, source);

@@ -299,15 +299,26 @@ pub(super) fn crate_paths_in_tokens(stream: proc_macro2::TokenStream) -> Vec<Str
         // `use dirs as d;` / `extern crate std as s;` inside macro tokens
         // alias a crate the text rules could not follow.
         let word = |at: usize, text: &str| matches!(tokens.get(at), Some(TokenTree::Ident(w)) if w == text);
-        // `crate`/`super`/`self` aliases are the chain's case below.
-        let lower = |at: usize| {
-            matches!(tokens.get(at), Some(TokenTree::Ident(w))
-                if w.to_string().starts_with(|c: char| c.is_ascii_lowercase())
-                    && !matches!(w.to_string().as_str(), "crate" | "super" | "self"))
-        };
-        if (word(i, "use") && lower(i + 1) && word(i + 2, "as"))
-            || (word(i, "extern") && word(i + 1, "crate") && word(i + 3, "as"))
-        {
+
+        // A `use … ;` inside macro tokens is read like a real import:
+        // every leaf (`std::fs`, `crate::x::Y`), crate/module aliases
+        // refused, and tokens that do not parse as an import refused.
+        if word(i, "use") {
+            let end = (i..tokens.len())
+                .find(|&at| matches!(&tokens[at], TokenTree::Punct(p) if p.as_char() == ';'));
+            let Some(end) = end else {
+                paths.push(UNRESOLVABLE.to_string());
+                break;
+            };
+            let statement: proc_macro2::TokenStream = tokens[i..=end].iter().cloned().collect();
+            match syn::parse2::<syn::ItemUse>(statement) {
+                Ok(import) => expand_use_tree(&import.tree, "", &mut paths),
+                Err(_) => paths.push(UNRESOLVABLE.to_string()),
+            }
+            i = end + 1;
+            continue;
+        }
+        if word(i, "extern") && word(i + 1, "crate") && word(i + 3, "as") {
             paths.push(UNRESOLVABLE.to_string());
             i += 1;
             continue;
@@ -375,7 +386,17 @@ fn expand_use_tree(tree: &syn::UseTree, prefix: &str, paths: &mut Vec<String>) {
             expand_use_tree(&path.tree, &format!("{prefix}{}::", path.ident), paths)
         }
         syn::UseTree::Name(name) => paths.push(format!("{prefix}{}", name.ident)),
-        syn::UseTree::Rename(name) if is_module_alias(&format!("{prefix}{}", name.ident)) => {
+        // A module-chain or crate-root alias (`crate as c`, `std as s`: a
+        // snake-case root) could not be followed, as outside macros; a
+        // deeper rename (`std::fs as f`) keeps its leaf path `std::fs`.
+        syn::UseTree::Rename(name)
+            if is_module_alias(&format!("{prefix}{}", name.ident))
+                || (prefix.is_empty()
+                    && name
+                        .ident
+                        .to_string()
+                        .starts_with(|c: char| c.is_ascii_lowercase())) =>
+        {
             paths.push(UNRESOLVABLE.to_string())
         }
         syn::UseTree::Rename(name) => paths.push(format!("{prefix}{}", name.ident)),
@@ -530,6 +551,13 @@ fn production_text_keeps_cfg_combinations_and_multiline_paths() {
     assert!(forbidden_hit("fn f() { HttpClient::new(); }", &["Client::"]).is_ok());
     assert!(forbidden_hit("fn f() { dirs::home_dir(); }", &["dirs::"]).is_err());
     assert!(forbidden_hit("fn f(p: P) { p.exists(); }", &[".exists("]).is_err());
+    assert!(
+        forbidden_hit(
+            "#[serde(bound = \"T: Tr<Box<dyn dirs::X>>\")]\nstruct S<T>(T);",
+            &["dirs::"]
+        )
+        .is_err()
+    );
     assert!(forbidden_hit("fn broken( {", &["x"]).is_err());
 }
 
@@ -762,6 +790,21 @@ fn crate_paths_are_read_out_of_macro_tokens() {
         .parse()
         .unwrap();
     assert_eq!(crate_paths_in_tokens(aliased), [UNRESOLVABLE, UNRESOLVABLE]);
+    let imports: proc_macro2::TokenStream = "id! { use std::fs; use std::{env, fs as f}; \
+         use ::std::path::Path; use Kind as K; use not valid; fn f() {} }"
+        .parse()
+        .unwrap();
+    assert_eq!(
+        crate_paths_in_tokens(imports),
+        [
+            "std::fs",
+            "std::env",
+            "std::fs",
+            "std::path::Path",
+            "Kind",
+            UNRESOLVABLE
+        ]
+    );
     let prose: proc_macro2::TokenStream =
         "error(\"crate::application::x failed\")".parse().unwrap();
     assert!(string_paths_in_tokens(prose).is_empty());
