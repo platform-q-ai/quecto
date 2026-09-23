@@ -287,7 +287,16 @@ fn tui_status(world: &mut TuiWorld) -> std::process::ExitStatus {
 
 // ── Then ───────────────────────────────────────────────────────────────────
 
-#[then(regex = r"^the stand-in harness should have exited on one SIGTERM within (\d+) seconds$")]
+/// One shutdown, not one signal: `PR_SET_PDEATHSIG` fires when the parent
+/// *thread* exits, and a SIGKILLed multi-threaded TUI's threads exit one
+/// after another, so the kernel may re-deliver SIGTERM as the orphan is
+/// re-parented through them (seen on CI: two, in the same millisecond). The
+/// real harness ignores a repeat inside its shutdown budget
+/// (`uds_shutdown::FORCE_EXIT_AFTER`,
+/// `a_repeated_signal_inside_the_budget_is_ignored_and_the_shutdown_completes`),
+/// so what must hold is: it was signalled, and every SIGTERM belongs to that
+/// one moment.
+#[then(regex = r"^the stand-in harness should have exited on SIGTERM within (\d+) seconds$")]
 fn harness_exited_on_term(world: &mut TuiWorld, within: u64) {
     let f = fixture(world);
     let pid = f.harness_pid().expect("the stand-in wrote its pid");
@@ -295,11 +304,17 @@ fn harness_exited_on_term(world: &mut TuiWorld, within: u64) {
     wait_until(deadline, "the stand-in harness to exit", || {
         !process_alive(pid)
     });
-    assert_eq!(
-        term_times(f).len(),
-        1,
-        "exactly one SIGTERM reached the stand-in: {:?}",
-        f.read("harness.signals")
+    let times = term_times(f);
+    let signals = f.read("harness.signals");
+    let (Some(first), Some(last)) = (
+        times.iter().copied().reduce(f64::min),
+        times.iter().copied().reduce(f64::max),
+    ) else {
+        panic!("the stand-in exited without a SIGTERM: {signals:?}");
+    };
+    assert!(
+        last - first < 1.0,
+        "every SIGTERM belongs to one shutdown: {signals:?}"
     );
 }
 

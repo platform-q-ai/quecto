@@ -14,25 +14,25 @@ Feature: Termination signals to the TUI end its owned harness
   Scenario: SIGHUP to the TUI ends its owned harness through the ordinary exit
     Given a real TUI process owns a stand-in harness
     When the TUI process receives SIGHUP
-    Then the stand-in harness should have exited on one SIGTERM within 10 seconds
+    Then the stand-in harness should have exited on SIGTERM within 10 seconds
     And the TUI process should have exited with code 0
 
   Scenario: SIGTERM to the TUI ends its owned harness through the ordinary exit
     Given a real TUI process owns a stand-in harness
     When the TUI process receives SIGTERM
-    Then the stand-in harness should have exited on one SIGTERM within 10 seconds
+    Then the stand-in harness should have exited on SIGTERM within 10 seconds
     And the TUI process should have exited with code 0
 
   Scenario: SIGINT to the TUI ends its owned harness through the ordinary exit
     Given a real TUI process owns a stand-in harness
     When the TUI process receives SIGINT
-    Then the stand-in harness should have exited on one SIGTERM within 10 seconds
+    Then the stand-in harness should have exited on SIGTERM within 10 seconds
     And the TUI process should have exited with code 0
 
   Scenario: SIGKILL to the TUI ends its owned harness by parent death
     Given a real TUI process owns a stand-in harness
     When the TUI process receives SIGKILL
-    Then the stand-in harness should have exited on one SIGTERM within 10 seconds
+    Then the stand-in harness should have exited on SIGTERM within 10 seconds
     And the TUI process should have been killed by signal 9
 
   Scenario: Detach-on-exit leaves the owned harness running whatever ends the TUI
