@@ -21,6 +21,8 @@ pub(crate) struct OpenAiSseHandler {
     /// here, since content is accumulated into `content` directly).
     delta_scratch: String,
     model: Option<String>,
+    /// The latest `finish_reason` seen on any chunk (#2116).
+    stop_reason: Option<crate::domain::message::StopReason>,
 }
 
 impl OpenAiSseHandler {
@@ -32,6 +34,7 @@ impl OpenAiSseHandler {
             reasoning: String::new(),
             delta_scratch: String::new(),
             model: None,
+            stop_reason: None,
         }
     }
 
@@ -59,7 +62,7 @@ impl OpenAiSseHandler {
             content,
             tool_calls: std::mem::take(&mut self.tool_calls),
             usage: self.usage.take(),
-            stop_reason: None,
+            stop_reason: self.stop_reason.take(),
             thinking_blocks,
         };
         if let Some(model) = &self.model {
@@ -96,6 +99,9 @@ impl SseHandler for OpenAiSseHandler {
                 // extraction. Reuse one buffer across choices instead of
                 // allocating a fresh `String` per delta.
                 for choice in choices {
+                    if let Some(reason) = super::openai_sse_parser::choice_stop_reason(choice) {
+                        self.stop_reason = Some(reason);
+                    }
                     let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
                     if let Some(text) = delta
                         .get("reasoning")
@@ -177,6 +183,9 @@ pub(crate) async fn pump_sse_response_for_model(
     pump_sse_bytes_for_model(&mut response, &tx, &model).await;
 }
 
+#[cfg(test)]
+#[path = "openai_finish_reason_tests.rs"]
+mod finish_reason_tests;
 #[cfg(test)]
 #[path = "openai_sse_tests.rs"]
 mod tests;
