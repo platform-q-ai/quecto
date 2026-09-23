@@ -5,7 +5,7 @@ use crate::application::tools::ports::Tool;
 use crate::domain::tool::ToolResult;
 use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
 use crate::infrastructure::tools::agent_cmd_report::{
-    FINAL_REPORT_BUDGET_BYTES, FINAL_REPORT_NOTICE,
+    FINAL_REPORT_BUDGET_BYTES, FINAL_REPORT_NOTICE, bounded_report_messages,
 };
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
 use std::path::PathBuf;
