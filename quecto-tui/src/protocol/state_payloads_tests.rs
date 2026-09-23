@@ -33,6 +33,25 @@ fn admission_warnings_accept_only_typed_sanitized_nonempty_entries() {
 }
 
 #[test]
+fn malformed_warning_does_not_discard_valid_siblings() {
+    let snap = parse_get_state(
+        &json!({"admissionWarnings":[
+            {"code":"admission_binding_missing","slot":"provider-a","message":"not broker-gated"},
+            {"code":"admission_binding_missing","slot":42,"message":"invalid"},
+            {"code":"admission_binding_missing","slot":"provider-b","message":"not broker-gated"}
+        ]}),
+        &sanitize,
+    );
+    assert_eq!(
+        snap.admission_warnings
+            .iter()
+            .map(|w| w.slot.as_str())
+            .collect::<Vec<_>>(),
+        vec!["provider-a", "provider-b"]
+    );
+}
+
+#[test]
 fn parse_get_state_footer_extracts_model_window_and_effort() {
     let fields = parse_get_state_footer(
         &json!({

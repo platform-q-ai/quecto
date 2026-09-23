@@ -527,12 +527,10 @@ impl App {
         }
         if new_warnings.len() == 1 {
             self.notify(&new_warnings[0].message, NotifyLevel::Warning);
+            self.ac_mut().master_session.chat.add_entry(crate::components::chat::ChatEntry::Status {
+                text: format!("Admission binding missing: {}\nRequests not broker-gated; configure admission.bindings", new_warnings[0].slot),
+            });
         } else if new_warnings.len() > 1 {
-            let slots = new_warnings
-                .iter()
-                .map(|warning| warning.slot.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
             self.notify(
                 &format!(
                     "{} slots not broker-gated; configure admission.bindings",
@@ -541,7 +539,7 @@ impl App {
                 NotifyLevel::Warning,
             );
             self.ac_mut().master_session.chat.add_entry(crate::components::chat::ChatEntry::Status {
-                text: format!("Admission bindings missing ({}): {slots}; requests are not broker-gated — configure admission.bindings", new_warnings.len()),
+                text: format!("Admission bindings missing ({}):\nRequests not broker-gated; configure admission.bindings\n{}", new_warnings.len(), new_warnings.iter().map(|warning| warning.slot.as_str()).collect::<Vec<_>>().join("\n")),
             });
         }
         if snap.authoritative {

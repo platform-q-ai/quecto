@@ -557,6 +557,100 @@ async fn admission_warning_is_actionable_at_80_columns_and_slots_persist_in_tran
 }
 
 #[tokio::test]
+async fn missing_bindings_remain_readable_in_rendered_chat_at_80_and_120_columns() {
+    use crate::components::component::Component;
+    let mut app = test_app().await;
+    let warning = |slot: &str| serde_json::json!({"slot":slot,"code":"admission_binding_missing","message":format!("{slot} requests are not broker-gated")});
+    let state = |warnings: Vec<serde_json::Value>| Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({"admissionWarnings":warnings})),
+        error: None,
+    };
+    let slots = (0..7)
+        .map(|i| format!("provider-slot-{i}"))
+        .collect::<Vec<_>>();
+    app.handle_event(state(slots.iter().map(|s| warning(s)).collect()));
+    let assert_rendered = |app: &mut App| {
+        for width in [80, 120] {
+            let frame = app.ac_mut().master_session.chat.render(width).join("\n");
+            let plain = crate::components::ansi::strip_ansi(&frame);
+            for slot in &slots {
+                assert!(plain.contains(slot), "{width}: {plain}");
+            }
+            assert!(plain.contains("admission.bindings"), "{width}: {plain}");
+            assert!(plain.contains("not broker-gated"), "{width}: {plain}");
+        }
+    };
+    assert_rendered(&mut app);
+    // Dismissing the transient toast cannot erase the durable chat diagnostic.
+    assert!(
+        app.notifications
+            .dismiss_prefixed("7 slots not broker-gated")
+    );
+    assert!(app.notifications.render(80).is_empty());
+    assert_rendered(&mut app);
+    app.handle_event(state(vec![])); // bound
+    app.handle_event(state(slots.iter().map(|s| warning(s)).collect())); // unbound
+    assert_rendered(&mut app);
+    app.begin_agent_stream_closed();
+    app.ac_mut().agent_connected = true;
+    app.handle_event(state(slots.iter().map(|s| warning(s)).collect()));
+    assert_rendered(&mut app);
+}
+
+#[tokio::test]
+async fn malformed_warning_preserves_valid_binding_latch_on_authoritative_refresh() {
+    let mut app = test_app().await;
+    let response = |warnings: Vec<serde_json::Value>| Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({"admissionWarnings":warnings})),
+        error: None,
+    };
+    let valid = serde_json::json!({"slot":"provider-a","code":"admission_binding_missing","message":"provider-a not broker-gated"});
+    app.handle_event(response(vec![valid.clone()]));
+    assert!(app.notifications.dismiss_prefixed("provider-a"));
+    app.handle_event(response(vec![
+        valid.clone(),
+        serde_json::json!({"slot":42,"code":"admission_binding_missing","message":"invalid"}),
+    ]));
+    assert!(app.shown_admission_warning_slots.contains("provider-a"));
+    app.handle_event(response(vec![valid]));
+    assert!(
+        app.notifications.messages().is_empty(),
+        "valid slot must not re-toast after malformed sibling"
+    );
+}
+
+#[tokio::test]
+async fn single_missing_binding_remains_actionable_after_toast_dismissal() {
+    use crate::components::component::Component;
+    let mut app = test_app().await;
+    app.handle_event(Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({"admissionWarnings":[{
+            "slot":"openai-api", "code":"admission_binding_missing",
+            "message":"openai-api requests are not broker-gated; configure admission.bindings"
+        }]})),
+        error: None,
+    });
+    assert!(app.notifications.dismiss_prefixed("openai-api"));
+    assert!(app.notifications.render(80).is_empty());
+    for width in [80, 120] {
+        let frame = app.ac_mut().master_session.chat.render(width).join("\n");
+        let plain = crate::components::ansi::strip_ansi(&frame);
+        assert!(plain.contains("openai-api"), "{width}: {plain}");
+        assert!(plain.contains("not broker-gated"), "{width}: {plain}");
+        assert!(plain.contains("admission.bindings"), "{width}: {plain}");
+    }
+}
+
+#[tokio::test]
 async fn authoritative_bound_snapshot_rearms_missing_binding_warning() {
     let mut app = test_app().await;
     let state = |missing: bool, unchanged: bool| Event::Response {

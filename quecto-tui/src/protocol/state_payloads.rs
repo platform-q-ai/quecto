@@ -4,13 +4,6 @@
 //! Follows the mapper convention in [`crate::protocol::model_payloads`].
 
 #[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AdmissionWarningWire {
-    #[serde(default)]
-    admission_warnings: Vec<AdmissionWarningEntry>,
-}
-
-#[derive(serde::Deserialize)]
 struct AdmissionWarningEntry {
     code: String,
     slot: String,
@@ -103,20 +96,20 @@ pub fn parse_get_state(
     // object, so no raw key lookup is needed here.
     let admission =
         crate::protocol::admission_payloads::parse_admission(&data["admission"], sanitize);
-    let admission_warnings = <AdmissionWarningWire as serde::Deserialize>::deserialize(data)
-        .map(|wire| {
-            wire.admission_warnings
-                .into_iter()
-                .take(64)
-                .filter(|warning| warning.code == "admission_binding_missing")
-                .map(|warning| AdmissionBindingWarning {
-                    slot: sanitize(&warning.slot),
-                    message: sanitize(&warning.message),
-                })
-                .filter(|warning| !warning.slot.is_empty() && !warning.message.is_empty())
-                .collect()
+    let admission_warnings = data
+        .get("admissionWarnings")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(64)
+        .filter_map(|value| serde_json::from_value::<AdmissionWarningEntry>(value.clone()).ok())
+        .filter(|warning| warning.code == "admission_binding_missing")
+        .map(|warning| AdmissionBindingWarning {
+            slot: sanitize(&warning.slot),
+            message: sanitize(&warning.message),
         })
-        .unwrap_or_default();
+        .filter(|warning| !warning.slot.is_empty() && !warning.message.is_empty())
+        .collect();
     GetStateSnapshot {
         authoritative: crate::protocol::presentation_payloads::bool_field(data, "unchanged")
             != Some(true),
