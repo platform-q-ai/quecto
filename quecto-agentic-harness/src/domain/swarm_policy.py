@@ -136,6 +136,8 @@ READY_WORK_ACTIONS = ('task_created', 'dependencies', 'released', 'verified', 'r
 OWNERSHIP_ACTIONS = ('claimed', 'submitted', 'blocked')
 # Task statuses in which the owner is working on, or waiting on, its own task.
 WORK_HOLDING_STATUSES = ('claimed', 'blocked', 'submitted')
+# Of those, the ones in which the owner is still working (not parked).
+WORKING_STATUSES = ('claimed', 'blocked')
 
 
 def ready_work_takers(run, event_actor, everyone, tasks):
@@ -153,7 +155,7 @@ def ready_work_takers(run, event_actor, everyone, tasks):
     if free - {run['coordinator']}:
         return free
     working = {task.get('owner') for task in tasks.values()
-               if task['status'] in ('claimed', 'blocked') and task.get('owner')}
+               if task['status'] in WORKING_STATUSES and task.get('owner')}
     return {identity for identity in others if identity not in working}
 
 
