@@ -192,6 +192,20 @@ class PolicyContract(unittest.TestCase):
         created = [{'action': 'task_created', 'detail': {'task': 2}}]
         self.assertEqual(notification_targets(run, 'parent', members, created, state), [])
 
+    def test_a_confirmed_death_re_offers_ready_work(self):
+        # The only free member was woken for task 1 and died before claiming
+        # it: its death must hand the work to the parked member.
+        run = MemoryRepository().run()
+        members = [{'id': 'parent', 'status': 'live'}, {'id': 'gone', 'status': 'dead'},
+                   {'id': 'parked', 'status': 'live'}]
+        state = {'tasks': [
+            {'id': 1, 'status': 'ready', 'dependencies': [], 'owner': None},
+            {'id': 2, 'status': 'submitted', 'dependencies': [], 'owner': 'parked'},
+        ], 'messages': []}
+        death = [{'action': 'death_confirmed', 'detail': {'member': 'gone'}, 'actor': 'parent'}]
+        woken = [m['id'] for m in notification_targets(run, 'parent', members, death, state)]
+        self.assertEqual(woken, ['parked'])
+
     def test_the_fallback_never_wakes_a_busy_worker(self):
         run = MemoryRepository().run()
         members = [{'id': m, 'status': 'live'} for m in ('parent', 'busy')]

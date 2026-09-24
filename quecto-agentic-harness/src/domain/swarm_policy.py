@@ -130,7 +130,7 @@ def notification_targets(run, actor, members, events, state):
 
 # Events after which ready work may be waiting for a taker (#2127).
 READY_WORK_ACTIONS = ('task_created', 'dependencies', 'released', 'verified', 'revalidated',
-                      'recovered', 'revoked', 'claimed', 'submitted', 'blocked')
+                      'recovered', 'revoked', 'claimed', 'submitted', 'blocked', 'death_confirmed')
 # A worker's own progress: it concerns the coordinator only through its own
 # submitted/blocked wake, not as a taker of the remaining ready work.
 OWNERSHIP_ACTIONS = ('claimed', 'submitted', 'blocked')
