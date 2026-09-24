@@ -120,14 +120,12 @@ Feature: E2E Real LLM UDS Agent
     And the agent output should contain a response command "set_model" with success false
 
   @done @manual-real-llm @mock-llm
-  Scenario: UDS set_model with nonexistent provider prefix
+  Scenario: UDS set_model with nonexistent provider prefix is refused
     When I start the real LLM UDS agent
     And I send set_model "gemini/gemini-pro"
-    And I send prompt "hello"
     And I close the UDS connection
     Then the UDS agent exits with code 0
-    And the agent output should contain an agent_error event
-    And the agent_error event should mention "no configured provider"
+    And the agent output should contain a response command "set_model" with success false
 
   @done @manual-real-llm @mock-llm
   Scenario: UDS agent recovers after set_model to nonexistent provider

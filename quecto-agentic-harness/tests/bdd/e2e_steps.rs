@@ -768,7 +768,22 @@ fn responses_for_prompt(prompt: &str) -> Vec<serde_json::Value> {
 }
 
 pub(crate) fn mount_auto_mock_responses_for_messages(world: &mut QuectoWorld, messages: &[String]) {
-    if !world.auto_mock_manual_llm || messages.is_empty() {
+    if !world.auto_mock_manual_llm {
+        return;
+    }
+    if messages.is_empty() {
+        // #2126: a switch to `anthropic/...` is refused unless a configured
+        // provider routes it. Scenarios that only switch and read state send
+        // no prompt, so configure the mock-mode Anthropic provider here too.
+        let config_path = base_path(world).join("config.json");
+        let config: serde_json::Value = std::fs::read_to_string(&config_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        if let Some(base) = config["providers"]["openai"]["api_base"].as_str() {
+            let base = base.to_string();
+            rewrite_config_to_provider_uri(world, "anthropic", &base);
+        }
         return;
     }
 
