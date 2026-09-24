@@ -88,9 +88,21 @@ fn a_listing_is_capped_by_the_limit_and_the_output_budget() {
         format(many.clone(), 2, 1024),
         "a\nb\n\n[2 of 3 files shown. Use limit=4 for more, or refine pattern]"
     );
-    let capped = format(many, 10, 3);
-    assert!(capped.starts_with("a\n\n["), "{capped}");
-    assert!(capped.contains("limit reached"), "{capped}");
+    // The byte budget stops the listing first: the count is what was shown,
+    // and the notice names the budget, not the limit (PR #2137 review).
+    let budget = "files shown: the 3B output limit was reached; narrow the search";
+    assert_eq!(
+        format(many.clone(), 10, 3),
+        format!("a\n\n[1 of 3 {budget}]")
+    );
+    assert_eq!(
+        format(many.clone(), 2, 3),
+        format!("a\n\n[1 of 3 {budget}]")
+    );
+    assert_eq!(
+        format(many, 2, 1),
+        "[0 of 3 files shown: the 1B output limit was reached; narrow the search]"
+    );
 }
 
 #[test]

@@ -98,25 +98,31 @@ pub(super) fn format_listing(mut files: Vec<ListedFile>, f: &ListingFormat<'_>) 
         }
         lines.push(line);
     }
+    // Count what was emitted: the byte budget can stop the listing short
+    // of the limit.
+    let shown = lines.len();
     let mut output = lines.join("\n");
-    let mut notices = Vec::new();
-    if total > f.limit {
+    if shown < total {
         let total = if f.total_is_partial {
             format!("at least {total}")
         } else {
             total.to_string()
         };
-        notices.push(format!(
-            "{} of {total} files shown. Use limit={} for more, or refine pattern",
-            f.limit,
-            f.limit.saturating_mul(2)
-        ));
-    }
-    if byte_capped {
-        notices.push(format!("{} limit reached", format_size(f.max_output_bytes)));
-    }
-    if !notices.is_empty() {
-        output.push_str(&format!("\n\n[{}]", notices.join(". ")));
+        let notice = if byte_capped {
+            format!(
+                "{shown} of {total} files shown: the {} output limit was reached; narrow the search",
+                format_size(f.max_output_bytes)
+            )
+        } else {
+            format!(
+                "{shown} of {total} files shown. Use limit={} for more, or refine pattern",
+                f.limit.saturating_mul(2)
+            )
+        };
+        output = match output.as_str() {
+            "" => format!("[{notice}]"),
+            listed => format!("{listed}\n\n[{notice}]"),
+        };
     }
     output
 }

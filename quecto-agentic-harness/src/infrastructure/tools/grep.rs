@@ -282,6 +282,9 @@ fn build_rg_command(
 ) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(rg_cmd);
     cmd.current_dir(workspace)
+        // A user's rg config could add --pre (a child process per file) or
+        // change output: the tool's search is defined by its own flags.
+        .arg("--no-config")
         .arg("--line-number")
         .arg("--color=never")
         .arg("--hidden");

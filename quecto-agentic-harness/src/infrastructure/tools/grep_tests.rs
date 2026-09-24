@@ -332,6 +332,24 @@ fn a_multiline_match_prints_every_line_it_spans() {
     assert_eq!(result, "m.rs-1- a\nm.rs:2: b(\nm.rs:3:   c)\nm.rs-4- d");
 }
 
+/// Run a tool backed by a freshly written fake rg. Executing a script just
+/// written can fail with ETXTBSY while another test thread's fork briefly
+/// holds its write handle: retry that, and only that.
+async fn execute_fake(
+    tool: &GrepTool,
+    args: &str,
+) -> Result<ToolResult, crate::domain::error::DomainError> {
+    for _ in 0..50 {
+        match tool.execute(args).await {
+            Err(e) if e.to_string().contains("Text file busy") => {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            other => return other,
+        }
+    }
+    tool.execute(args).await
+}
+
 /// A stand-in rg that prints `stdout` then exits with `code`.
 fn fake_rg(dir: &std::path::Path, stdout_command: &str, code: i32) -> String {
     use std::os::unix::fs::PermissionsExt;
@@ -354,8 +372,7 @@ async fn partial_results_before_an_rg_error_are_returned_with_a_notice() {
         Arc::new(Sandbox::new(None)),
         fake_rg(tmp.path(), &listing, 2),
     );
-    let result = tool
-        .execute(r#"{"pattern": "needle", "output": "files"}"#)
+    let result = execute_fake(&tool, r#"{"pattern": "needle", "output": "files"}"#)
         .await
         .unwrap();
     assert!(!result.is_error, "{}", result.content);
@@ -372,8 +389,7 @@ async fn partial_results_before_an_rg_error_are_returned_with_a_notice() {
         Arc::new(Sandbox::new(None)),
         fake_rg(tmp.path(), "true", 2),
     );
-    let result = tool
-        .execute(r#"{"pattern": "needle", "output": "files"}"#)
+    let result = execute_fake(&tool, r#"{"pattern": "needle", "output": "files"}"#)
         .await
         .unwrap();
     assert!(result.is_error, "{}", result.content);
@@ -396,9 +412,10 @@ async fn output_past_the_cap_is_reported_as_incomplete() {
             fake_rg(tmp.path(), &flood, 0),
         );
         async move {
-            tool.execute(&format!(
-                r#"{{"pattern": "x", "output": "files", "limit": {limit}}}"#
-            ))
+            execute_fake(
+                &tool,
+                &format!(r#"{{"pattern": "x", "output": "files", "limit": {limit}}}"#),
+            )
             .await
             .unwrap()
         }
@@ -440,7 +457,9 @@ async fn an_rg_error_with_only_a_summary_is_an_error() {
         Arc::new(Sandbox::new(None)),
         fake_rg(tmp.path(), summary, 2),
     );
-    let result = tool.execute(r#"{"pattern": "needle"}"#).await.unwrap();
+    let result = execute_fake(&tool, r#"{"pattern": "needle"}"#)
+        .await
+        .unwrap();
     assert!(result.is_error, "{}", result.content);
     assert!(
         result.content.contains("Permission denied"),
@@ -468,7 +487,7 @@ async fn a_flood_of_rg_errors_never_blocks_and_a_slow_rg_is_stopped() {
     .with_rg_timeout(std::time::Duration::from_secs(20));
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(15),
-        tool.execute(r#"{"pattern": "needle", "output": "files"}"#),
+        execute_fake(&tool, r#"{"pattern": "needle", "output": "files"}"#),
     )
     .await
     .expect("the tool must not block on rg's stderr")
@@ -486,8 +505,7 @@ async fn a_flood_of_rg_errors_never_blocks_and_a_slow_rg_is_stopped() {
     )
     .with_rg_timeout(std::time::Duration::from_millis(300));
     let started = std::time::Instant::now();
-    let error = tool
-        .execute(r#"{"pattern": "needle"}"#)
+    let error = execute_fake(&tool, r#"{"pattern": "needle"}"#)
         .await
         .unwrap_err()
         .to_string();
@@ -513,7 +531,7 @@ async fn a_matching_line_larger_than_the_cap_is_explained() {
         Arc::new(Sandbox::new(None)),
         fake_rg(tmp.path(), &huge, 0),
     );
-    let result = tool.execute(r#"{"pattern": "a"}"#).await.unwrap();
+    let result = execute_fake(&tool, r#"{"pattern": "a"}"#).await.unwrap();
     assert!(!result.is_error, "{}", result.content);
     assert!(
         result.content.contains("A matching line is larger than"),
@@ -536,8 +554,7 @@ async fn rg_stopped_by_a_signal_is_reported_incomplete() {
         Arc::new(Sandbox::new(None)),
         fake_rg(tmp.path(), &listing, 0),
     );
-    let result = tool
-        .execute(r#"{"pattern": "x", "output": "files"}"#)
+    let result = execute_fake(&tool, r#"{"pattern": "x", "output": "files"}"#)
         .await
         .unwrap();
     assert!(!result.is_error, "{}", result.content);
@@ -546,5 +563,63 @@ async fn rg_stopped_by_a_signal_is_reported_incomplete() {
         result.content.contains("rg was stopped by a signal"),
         "{}",
         result.content
+    );
+}
+
+/// PR #2137 review (P1): a descendant that inherits rg's pipes cannot keep
+/// the results waiting: past the cap rg is stopped and stderr, still held
+/// open by the descendant, is abandoned after a short grace.
+#[tokio::test]
+async fn a_descendant_holding_the_pipes_cannot_hold_the_results() {
+    let tmp = TempDir::new().unwrap();
+    let flood = format!(
+        "sleep 6 & i=0; while [ $i -lt 20000 ]; do printf '%s/f%05d.rs\\0' '{}' $i; i=$((i+1)); done; wait",
+        tmp.path().display()
+    );
+    let tool = GrepTool::with_rg_binary(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(None)),
+        fake_rg(tmp.path(), &flood, 0),
+    )
+    .with_rg_timeout(std::time::Duration::from_secs(30));
+    let started = std::time::Instant::now();
+    let result = execute_fake(&tool, r#"{"pattern": "x", "output": "files", "limit": 3}"#)
+        .await
+        .unwrap();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(!result.is_error, "{}", result.content);
+    assert!(
+        result
+            .content
+            .starts_with("f00000.rs\nf00001.rs\nf00002.rs"),
+        "{}",
+        result.content
+    );
+}
+
+/// PR #2137 review (P1): the tool's search is defined by its own flags; a
+/// user's rg config (which could add --pre, a process per file) is ignored.
+#[test]
+fn rg_runs_without_a_users_config() {
+    let request = grep_request::parse_request(&serde_json::json!({"pattern": "x"})).unwrap();
+    let cmd = build_rg_command("rg", Path::new("/ws"), Path::new("/ws"), &request);
+    let args: Vec<String> = cmd
+        .as_std()
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        args.first().map(String::as_str),
+        Some("--no-config"),
+        "{args:?}"
+    );
+    assert!(
+        args.iter()
+            .all(|a| a != "--pre" && a != "--search-zip" && a != "-z"),
+        "{args:?}"
     );
 }

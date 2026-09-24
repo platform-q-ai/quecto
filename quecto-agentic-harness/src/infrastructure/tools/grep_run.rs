@@ -1,6 +1,8 @@
 //! Running rg for the grep tool (#2136): stdout up to a cap and stderr
 //! read at the same time, so rg never blocks on a full pipe; rg is killed at
-//! the cap and after a timeout.
+//! the cap and after a timeout. rg starts no processes of its own: the tool
+//! passes neither `--pre` nor `--search-zip`, and `--no-config` keeps a
+//! user's rg config from adding them. Draining is bounded all the same.
 
 use crate::domain::error::DomainError;
 
@@ -22,6 +24,8 @@ pub(super) const RG_STDOUT_CAP: usize = MAX_OUTPUT_BYTES * 4;
 
 /// How much of rg's stderr is kept (the rest is read and discarded).
 const RG_STDERR_KEEP: usize = 4096;
+/// How long stderr may stay open once stdout is done.
+const STDERR_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 /// How long one rg run may take before it is killed.
 pub(super) const RG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -43,23 +47,27 @@ pub(super) async fn run_rg(
         }
     })?;
     let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
+    // stderr drains in its own task, so neither pipe can block rg; once
+    // stdout is done it gets a short grace and is then abandoned, so
+    // nothing still holding the pipe can keep the results waiting.
+    let stderr_task = tokio::spawn(read_head(child.stderr.take(), RG_STDERR_KEEP));
+    let abort_stderr = stderr_task.abort_handle();
     let run = async {
-        let (read, stderr) = tokio::join!(
-            async {
-                let read = read_capped(stdout, RG_STDOUT_CAP).await;
-                if read.1 {
-                    // Nothing more will be read: end rg so stderr closes.
-                    let _ = child.start_kill();
-                }
-                read
-            },
-            read_head(stderr, RG_STDERR_KEEP)
-        );
+        let (stdout, capped) = read_capped(stdout, RG_STDOUT_CAP).await;
+        if capped {
+            // Nothing more will be read: end rg.
+            let _ = child.start_kill();
+        }
+        let stderr = match tokio::time::timeout(STDERR_GRACE, stderr_task).await {
+            Ok(Ok(kept)) => kept,
+            Ok(Err(_)) | Err(_) => Vec::new(),
+        };
         let status = child.wait().await;
-        (read, stderr, status)
+        ((stdout, capped), stderr, status)
     };
-    match tokio::time::timeout(timeout, run).await {
+    let outcome = tokio::time::timeout(timeout, run).await;
+    abort_stderr.abort();
+    match outcome {
         Ok(((stdout, capped), stderr, status)) => Ok(RgRun {
             stdout,
             stderr,
