@@ -100,6 +100,30 @@ impl ProviderRouter {
 }
 
 impl LlmProvider for ProviderRouter {
+    fn route_check(&self, model: &str) -> crate::application::providers::ports::RouteCheck {
+        use crate::application::providers::ports::RouteCheck;
+        match parse_qualified_model(model) {
+            Some((prefix, _))
+                if self
+                    .providers
+                    .iter()
+                    .any(|p| provider_prefix_matches(prefix, p.name())) =>
+            {
+                RouteCheck::Routable
+            }
+            Some((prefix, _)) => RouteCheck::UnknownProvider {
+                provider: truncate_prefix(prefix, MAX_PREFIX_IN_ERROR).to_string(),
+                configured: self
+                    .provider_names()
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            },
+            // A bare id goes to the first provider.
+            None => RouteCheck::Routable,
+        }
+    }
+
     fn name(&self) -> &str {
         "router"
     }

@@ -112,6 +112,19 @@ impl ChangeActiveModel {
         persist: Option<DefaultScope>,
     ) -> Result<ModelSwitched, ModelSwitchError> {
         let plan = self.plan(model);
+        // Every switch, persisted or not, must land on a provider this
+        // harness can reach, or the next request fails (#2126).
+        if let crate::application::providers::ports::RouteCheck::UnknownProvider {
+            provider,
+            configured,
+        } = runtime.route_check(&plan.model)
+        {
+            return Err(ModelSwitchError::Unroutable {
+                model: plan.model.clone(),
+                provider,
+                configured,
+            });
+        }
         let persisted = match persist {
             None => None,
             Some(scope) => {

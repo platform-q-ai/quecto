@@ -11,6 +11,7 @@ use crate::application::catalogue::ports::{
     RuntimeSnapshotSource,
 };
 use crate::application::catalogue::{CatalogueSource, CredentialStatusPort, SourceEntries};
+use crate::application::providers::ports::RouteCheck;
 use crate::domain::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
     ModelId, ProviderDescriptor, ProviderId, SourceLayer, TransportKind, UnavailableReason,
@@ -173,6 +174,8 @@ struct FakeLoop {
     model: String,
     limits: ModelLimits,
     effort: Option<EffortLevel>,
+    /// Providers the fake router is configured with; empty routes anything.
+    configured: Vec<String>,
 }
 
 impl EffortRuntime for FakeLoop {
@@ -194,6 +197,23 @@ impl ModelRuntime for FakeLoop {
     fn apply_model(&mut self, model: String, limits: ModelLimits) {
         self.model = model;
         self.limits = limits;
+    }
+    fn route_check(&self, model: &str) -> RouteCheck {
+        match model.split_once('/') {
+            Some((provider, _))
+                if !self.configured.is_empty()
+                    && !self
+                        .configured
+                        .iter()
+                        .any(|c| c.eq_ignore_ascii_case(provider)) =>
+            {
+                RouteCheck::UnknownProvider {
+                    provider: provider.to_string(),
+                    configured: self.configured.clone(),
+                }
+            }
+            _ => RouteCheck::Routable,
+        }
     }
 }
 
@@ -550,4 +570,63 @@ fn a_provider_the_published_catalogue_does_not_know_is_not_recorded_and_not_appl
         .execute_with_default(&mut lp, "ACME/m", Some(DefaultScope::Global))
         .unwrap();
     assert_eq!(persistence.records.lock().unwrap()[1].2, "acme/m");
+}
+
+// ── #2126: a switch to a provider this harness cannot route is refused ──
+
+#[test]
+fn a_switch_to_an_unconfigured_provider_is_refused_and_names_the_configured_ones() {
+    let rig = rig(vec![entry("fireworks", "glm", None)], FakeRuntime::none());
+    let mut runtime = FakeLoop {
+        model: "fireworks/glm".into(),
+        configured: vec!["fireworks".into(), "openai-oauth".into()],
+        ..FakeLoop::default()
+    };
+    let error = rig
+        .use_case
+        .execute_with_default(&mut runtime, "openai/gpt-5.2", None)
+        .expect_err("an unroutable model is refused");
+    assert_eq!(
+        runtime.model, "fireworks/glm",
+        "the session keeps its model"
+    );
+    let message = error.to_string();
+    assert!(
+        message.contains("openai") && message.contains("fireworks, openai-oauth"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_refused_switch_is_never_persisted() {
+    let persistence = Arc::new(RecordedDefaults::default());
+    let rig = rig_persisting(
+        vec![entry("openai", "gpt-5.2", None)],
+        FakeRuntime::none(),
+        persistence.clone(),
+    );
+    let mut runtime = FakeLoop {
+        model: "fireworks/glm".into(),
+        configured: vec!["fireworks".into()],
+        ..FakeLoop::default()
+    };
+    rig.use_case
+        .execute_with_default(&mut runtime, "openai/gpt-5.2", Some(DefaultScope::Global))
+        .expect_err("refused before it is recorded");
+    assert!(persistence.records.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_bare_or_routable_model_still_switches() {
+    let rig = rig(vec![entry("fireworks", "glm", None)], FakeRuntime::none());
+    let mut runtime = FakeLoop {
+        configured: vec!["fireworks".into()],
+        ..FakeLoop::default()
+    };
+    for model in ["glm", "FIREWORKS/other-model"] {
+        rig.use_case
+            .execute_with_default(&mut runtime, model, None)
+            .unwrap_or_else(|e| panic!("{model}: {e}"));
+        assert_eq!(runtime.model, model);
+    }
 }

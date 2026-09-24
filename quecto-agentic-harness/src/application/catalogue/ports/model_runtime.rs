@@ -10,4 +10,6 @@ pub trait ModelRuntime: EffortRuntime {
     fn model(&self) -> &str;
     /// Switch model and limits together, from the next turn on.
     fn apply_model(&mut self, model: String, limits: ModelLimits);
+    /// Whether a request for `model` would reach a configured provider.
+    fn route_check(&self, model: &str) -> crate::application::providers::ports::RouteCheck;
 }

@@ -147,6 +147,10 @@ fn jitter(base: Duration) -> Duration {
 }
 
 impl LlmProvider for RetryingProvider {
+    fn route_check(&self, model: &str) -> crate::application::providers::ports::RouteCheck {
+        self.inner.route_check(model)
+    }
+
     fn name(&self) -> &str {
         self.inner.name()
     }

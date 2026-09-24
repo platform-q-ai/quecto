@@ -54,9 +54,29 @@ pub struct ChatRequest<'a> {
 }
 
 /// Port: an LLM provider that can process chat requests.
+/// Whether a model id would reach a provider (#2126).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RouteCheck {
+    /// A request for this model has a provider to go to.
+    Routable,
+    /// A `provider/model` id names a provider this harness is not configured
+    /// with; `configured` lists the ones it is.
+    UnknownProvider {
+        provider: String,
+        configured: Vec<String>,
+    },
+}
+
 pub trait LlmProvider: Send + Sync + std::fmt::Debug {
     /// Human-readable provider name (e.g. "openai", "anthropic").
     fn name(&self) -> &str;
+
+    /// Whether a request for `model` would reach a provider. A single
+    /// provider takes whatever it is given; a router answers from the
+    /// providers it holds, and every decorator around one must forward.
+    fn route_check(&self, _model: &str) -> RouteCheck {
+        RouteCheck::Routable
+    }
 
     /// Downcast support for introspection (e.g. recovering a concrete
     /// `ProviderRouter` for diagnostics and tests). Implementors that need to be

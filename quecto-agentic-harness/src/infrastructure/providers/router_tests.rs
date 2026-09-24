@@ -545,3 +545,40 @@ async fn slice_ptr_provider_trait_surface_defaults_are_exercised() {
     }
     assert!(rx.recv().await.is_none());
 }
+
+// ── #2126: which models the router can reach ──────────────────────────────
+
+#[test]
+fn route_check_names_the_configured_providers_for_an_unknown_one() {
+    use crate::application::providers::ports::RouteCheck;
+    let router = ProviderRouter::new(vec![
+        TestProvider::succeeding("fireworks", "x") as Arc<dyn LlmProvider>,
+        TestProvider::succeeding("openai-oauth", "x"),
+    ]);
+    assert_eq!(router.route_check("fireworks/glm"), RouteCheck::Routable);
+    assert_eq!(router.route_check("FIREWORKS/glm"), RouteCheck::Routable);
+    assert_eq!(router.route_check("glm-bare"), RouteCheck::Routable);
+    assert_eq!(
+        router.route_check("openai/gpt-5.2"),
+        RouteCheck::UnknownProvider {
+            provider: "openai".into(),
+            configured: vec!["fireworks".into(), "openai-oauth".into()],
+        }
+    );
+}
+
+#[test]
+fn the_retry_decorator_forwards_the_route_check_to_the_router() {
+    // Production wraps the router in RetryingProvider; a default "routable"
+    // there would hide every unconfigured provider.
+    use crate::application::providers::ports::RouteCheck;
+    use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
+    let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::new(vec![
+        TestProvider::succeeding("fireworks", "x") as Arc<dyn LlmProvider>,
+    ]));
+    let wrapped = RetryingProvider::new(router, RetryConfig::no_delay(1));
+    assert!(matches!(
+        wrapped.route_check("openai/gpt-5.2"),
+        RouteCheck::UnknownProvider { .. }
+    ));
+}

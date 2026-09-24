@@ -189,6 +189,10 @@ impl ModelRuntime for AmLoop<'_> {
         self.0.loop_model = model;
         self.0.loop_limits = limits;
     }
+    fn route_check(&self, _model: &str) -> quecto::application::providers::ports::RouteCheck {
+        // These scenarios switch among catalogue models on configured providers.
+        quecto::application::providers::ports::RouteCheck::Routable
+    }
 }
 
 fn am_store(state: &mut ActiveModelState) -> CatalogueSnapshotStore {
