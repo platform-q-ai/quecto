@@ -27,6 +27,8 @@ const STOP_CONFIDENCE: f64 = 0.8;
 const TOOL_ERROR_REPEATS: u32 = 3;
 /// A matter stays with the parent agent only on a clear yes.
 const PARENT_HANDLES: f64 = 0.7;
+/// Sub-agent exits closer together than this are one episode (swarm end).
+const CRASH_BURST_SECS: f64 = 10.0;
 
 #[derive(Debug)]
 struct Job {
@@ -158,7 +160,7 @@ struct Worker {
     /// Set while the event being built should carry the stall question.
     stall_check: bool,
     /// Sub-agent crashes seen per session: a second one is not a one-off.
-    crashes: std::collections::HashMap<String, u32>,
+    crashes: std::collections::HashMap<String, (u32, f64)>,
     /// No key: log events for later judgment (replay) instead of asking Jev.
     record_only: bool,
 }
@@ -229,13 +231,22 @@ impl Worker {
 
     /// `would_do`, then each kind of matter interrupts the owner once per
     /// session; repeats of it are recorded as `already_escalated`.
-    fn decide(&mut self, session: &str, event: &CommanderEvent, answers: &Value) -> Value {
+    fn decide(&mut self, session: &str, ts: f64, event: &CommanderEvent, answers: &Value) -> Value {
         let mut actions = Self::would_do(event, &self.role, answers);
         if let CommanderEvent::SubagentNotice { notice, .. } = event
             && notice.contains("exited unexpectedly")
         {
-            let crashes = self.crashes.entry(session.to_string()).or_default();
-            *crashes += 1;
+            // Exits within a few seconds of each other are one episode: a
+            // swarm ending reports every member at once. Relaunched agents
+            // crashing again are minutes apart.
+            let (crashes, last) = self
+                .crashes
+                .entry(session.to_string())
+                .or_insert((0, f64::MIN));
+            if ts - *last > CRASH_BURST_SECS {
+                *crashes += 1;
+            }
+            *last = ts;
             let current = actions
                 .get("22_composed")
                 .or_else(|| actions.get("22"))
@@ -346,9 +357,9 @@ impl Worker {
                             "instructions": "This is a sub-agent's last message to its parent agent. What state is the sub-agent's task in?",
                             "criteria": {
                                                                 "done": "The task is finished and the result is reported",
-                                "waiting_on_subagents": "The sub-agent delegated parts of its task to its own sub-agents and is correctly waiting for their reports before it continues",
+                                "waiting_on_subagents": "The sub-agent is correctly waiting and will continue on its own: for its own sub-agents' reports, or for a handoff or signal it agreed with its parent, coordinator or a peer (a rebase-complete signal, a file-ownership handoff)",
                                 "question_for_parent": "The sub-agent asks its parent a question or needs a decision to continue",
-                                "blocked": "The sub-agent cannot proceed because of something outside its control: access, missing input, a broken environment, or the task can no longer be done as instructed because its target changed or a precondition failed (for example the branch or PR head moved), even if it stopped cleanly and reported this",
+                                "blocked": "The sub-agent cannot proceed because of an unplanned obstacle outside its control, not a planned wait for a coordinator's signal or a peer's handoff: access, missing input, a broken environment, or the task can no longer be done as instructed because its target changed or a precondition failed (for example the branch or PR head moved), even if it stopped cleanly and reported this",
                                 "failed": "The sub-agent tried and could not do the task",
                                 "partial": "Some of the task is done and more remains, without a question or blocker"
                             }
@@ -608,7 +619,7 @@ impl Worker {
             "state_sent": state,
             "questions": questions,
             "answers": answers,
-            "would_do": self.decide(&job.session_key, &job.event, &answers),
+            "would_do": self.decide(&job.session_key, ts, &job.event, &answers),
             "jev_model": jev_model,
             "usage": usage,
             "latency_ms": latency_ms,

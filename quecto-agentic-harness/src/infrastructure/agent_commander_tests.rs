@@ -331,9 +331,9 @@ fn a_repeated_escalation_of_the_same_kind_interrupts_once_per_session() {
         "urgency": {"score": 3.0},
         "owner_kind": {"choice": "blocker", "confidence": 0.9}
     });
-    let first = w.decide("s", &turn_end("x"), &answers);
-    let second = w.decide("s", &turn_end("x"), &answers);
-    let other_session = w.decide("t", &turn_end("x"), &answers);
+    let first = w.decide("s", 1.0, &turn_end("x"), &answers);
+    let second = w.decide("s", 1.0, &turn_end("x"), &answers);
+    let other_session = w.decide("t", 1.0, &turn_end("x"), &answers);
     assert_eq!(first["22"], "interrupt_owner");
     assert_eq!(second["22"], "already_escalated");
     assert_eq!(other_session["22"], "interrupt_owner");
@@ -633,8 +633,8 @@ fn a_second_crash_in_a_session_is_promoted() {
         detail: None,
     };
     let answers = json!({"owner_needed": {"noul": 0.3}, "parent_can_handle": {"noul": 0.9}});
-    let first = w.decide("s", &crash("a"), &answers);
-    let second = w.decide("s", &crash("a-retry"), &answers);
+    let first = w.decide("s", 100.0, &crash("a"), &answers);
+    let second = w.decide("s", 400.0, &crash("a-retry"), &answers);
     assert!(first.get("22_composed").is_none(), "{first}");
     assert_eq!(second["22_composed"], "promote_in_tui");
 }
@@ -671,4 +671,46 @@ async fn without_a_key_events_are_recorded_for_later_judgment_not_sent() {
         assert!(record["event"]["kind"].is_string());
         assert!(record["agent_role"].as_str().unwrap().starts_with("Child"));
     }
+}
+
+#[test]
+fn a_burst_of_member_exits_at_swarm_end_is_one_episode_not_repeated_crashes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut w = worker("http://unused".into(), tmp.path().into(), AgentRole::Root);
+    let exited = |child: &str| CommanderEvent::SubagentNotice {
+        child: child.into(),
+        child_uuid: None,
+        notice: format!("Agent '{child}' exited unexpectedly (process_exit)"),
+        detail: None,
+    };
+    let answers = json!({"owner_needed": {"noul": 0.3}, "parent_can_handle": {"noul": 0.9}});
+    for (n, child) in ["core", "integration", "threads", "parser"]
+        .into_iter()
+        .enumerate()
+    {
+        let actions = w.decide("s", 1000.0 + n as f64 * 0.01, &exited(child), &answers);
+        assert!(actions.get("22_composed").is_none(), "{child}: {actions}");
+    }
+}
+
+#[test]
+fn a_planned_handoff_wait_is_offered_as_waiting_not_blocked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let w = worker("http://unused".into(), tmp.path().into(), child());
+    let (_, questions, _) = w.build(&turn_end("Waiting for the coordinator's rebase signal."));
+    let criteria = &questions["child_state"]["criteria"];
+    assert!(
+        criteria["waiting_on_subagents"]
+            .as_str()
+            .unwrap()
+            .contains("handoff"),
+        "{criteria}"
+    );
+    assert!(
+        criteria["blocked"]
+            .as_str()
+            .unwrap()
+            .contains("not a planned wait"),
+        "{criteria}"
+    );
 }
