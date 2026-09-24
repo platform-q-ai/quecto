@@ -1,5 +1,18 @@
 use super::*;
 
+/// Retries for a reply cut off at the output limit with nothing visible.
+pub(super) const MAX_CUT_OFF_RETRIES: u32 = 1;
+
+/// What the loop does after a provider response or failure.
+pub(super) enum AfterResponse {
+    /// Continue the turn with this response.
+    Proceed(LlmResponse),
+    /// Feedback was added: ask the provider again.
+    Retry,
+    /// The turn ends with this result.
+    Finish(Result<AgentResult, DomainError>),
+}
+
 impl AgentLoopImpl {
     pub(super) async fn request_provider_response(
         &self,
@@ -155,7 +168,9 @@ impl AgentLoopImpl {
             model: self.model.clone(),
         });
 
-        self.build_chat_request(messages, tool_defs)
+        let mut request = self.build_chat_request(messages, tool_defs);
+        request.max_tokens = self.request_max_tokens(estimated_context_tokens);
+        request
     }
 
     pub(super) async fn audit_provider_request_start(
@@ -214,6 +229,87 @@ impl AgentLoopImpl {
         }
     }
 
+    /// Audits a provider response and counts its usage, whether the loop then
+    /// proceeds with it or drops it (#2124): its tokens were spent either way.
+    pub(super) async fn account_response(
+        &self,
+        response: &Result<LlmResponse, DomainError>,
+        (current_turn, context_tokens, duration_ms): (u32, usize, u64),
+        usage_totals: &mut UsageTotals,
+    ) {
+        if let Ok(response) = response {
+            self.audit_provider_response_end(current_turn, response, context_tokens, duration_ms)
+                .await;
+            if let Some(ref usage) = response.usage {
+                usage_totals.record(usage);
+            }
+        }
+    }
+
+    /// What follows a provider failure: re-prompt a model-malformed request
+    /// while retries remain, otherwise fail the turn.
+    pub(super) async fn after_provider_failure(
+        &mut self,
+        messages: &mut Vec<Message>,
+        error: DomainError,
+        current_turn: u32,
+        (malformed_retries, appended_messages): (&mut u32, &mut Vec<Message>),
+    ) -> AfterResponse {
+        let transition =
+            classify_provider_failure(&error, *malformed_retries, MAX_MALFORMED_REQUEST_RETRIES);
+        let _state = state_for_provider_failure_transition(&transition);
+        match transition {
+            ProviderFailureTransition::RecoverMalformedRequest => {
+                let _state = TurnState::RecoverMalformedResponse;
+                self.recover_malformed_response(
+                    messages,
+                    &error,
+                    current_turn,
+                    malformed_retries,
+                    appended_messages,
+                )
+                .await;
+                AfterResponse::Retry
+            }
+            ProviderFailureTransition::Terminal(_class) => {
+                let _state = TurnState::FailProviderRequest;
+                self.drain_tool_policy_mutations_at_boundary();
+                AfterResponse::Finish(self.fail_provider_request(current_turn, error).await)
+            }
+        }
+    }
+
+    /// A reply cut off at the output limit with nothing visible (#2124): the
+    /// model is asked again, concisely, and the reply is not recorded; once
+    /// the retries are spent the turn fails instead of ending empty.
+    pub(super) async fn after_cut_off_answer(
+        &mut self,
+        messages: &mut Vec<Message>,
+        response: &LlmResponse,
+        current_turn: u32,
+        (retries, appended_messages, feedback): (&mut u32, &mut Vec<Message>, String),
+    ) -> AfterResponse {
+        if *retries < MAX_CUT_OFF_RETRIES {
+            *retries += 1;
+            tracing::warn!(
+                target: "provider_retry",
+                attempt = *retries,
+                max = MAX_CUT_OFF_RETRIES,
+                "reply hit the output limit with nothing visible — asking again, concisely"
+            );
+            let how = append_feedback(messages, feedback, current_turn);
+            record_feedback(messages, appended_messages, how);
+            // The retry may use the model's cap, not repeat the same budget.
+            self.output_boost
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            AfterResponse::Retry
+        } else {
+            self.drain_tool_policy_mutations_at_boundary();
+            let error = DomainError::Provider(empty_stream_error_message(response));
+            AfterResponse::Finish(self.fail_provider_request(current_turn, error).await)
+        }
+    }
+
     pub(super) async fn recover_malformed_response(
         &self,
         messages: &mut Vec<Message>,
@@ -230,12 +326,9 @@ impl AgentLoopImpl {
             error = %error,
             "provider rejected request as malformed — re-prompting with addressable feedback"
         );
-        append_malformed_feedback(messages, error, current_turn);
-        // The feedback user message was appended by this run, so it belongs in
-        // the ledger (#1072 review).
-        if let Some(feedback) = messages.last() {
-            appended_messages.push(feedback.clone());
-        }
+        let how = append_malformed_feedback(messages, error, current_turn);
+        // Feedback the run added belongs in the ledger (#1072 review), once.
+        record_feedback(messages, appended_messages, how);
     }
 
     pub(super) async fn fail_provider_request(

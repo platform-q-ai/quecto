@@ -640,6 +640,8 @@ mod clamp_max_tokens_tests;
 mod context_tokens_tests;
 #[path = "agent_loop_2123_tests.rs"]
 mod invalid_tool_arguments_tests;
+#[path = "agent_loop_2124_tests.rs"]
+mod output_limit_tests;
 #[path = "agent_loop_progress_tests.rs"]
 mod progress_tests;
 #[path = "agent_loop_931_tests.rs"]

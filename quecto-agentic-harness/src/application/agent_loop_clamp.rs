@@ -3,11 +3,16 @@
 //! The configured `max_tokens` is a global default; a model whose real output
 //! limit is lower (e.g. Fireworks qwen3p7-plus = 65536) must never receive a
 //! larger value or the provider rejects every request. These mutators carry the
-//! per-model registry cap and the request builder uses `effective_max_tokens`.
+//! per-model registry cap and the request builder uses `effective_max_tokens`;
+//! the loop's requests go through `request_max_tokens`, which may raise one
+//! request after an output-limit cut-off (#2124).
 
 use super::AgentLoopImpl;
 use crate::application::catalogue::dto::ModelLimits;
 use crate::application::catalogue::ports::ModelRuntime;
+
+/// Tokens kept free of the context window when a retry raises the output limit.
+const OUTPUT_ROOM_MARGIN: usize = 1024;
 
 impl ModelRuntime for AgentLoopImpl {
     fn model(&self) -> &str {
@@ -51,6 +56,45 @@ impl AgentLoopImpl {
     pub fn with_model_max_tokens(mut self, model_max_tokens: Option<u32>) -> Self {
         self.model_max_tokens = model_max_tokens;
         self
+    }
+
+    /// The output limit for the next request (#2124). After an output-limit
+    /// cut-off one request may go above the effective limit, up to the
+    /// model's declared cap, twice the effective limit (the configured
+    /// `max_tokens` is also a cost ceiling), and what the context window has
+    /// left beside the prompt; never below the effective limit. The value is
+    /// remembered so the reply is judged against what the request asked for.
+    pub(super) fn request_max_tokens(&self, context_tokens: usize) -> u32 {
+        use std::sync::atomic::Ordering::Relaxed;
+        let boosted = self.output_boost.swap(false, Relaxed);
+        let effective = self.effective_max_tokens();
+        let limit = match (boosted, self.model_max_tokens) {
+            (true, Some(cap)) if cap > effective => {
+                let room = self
+                    .effective_max_context_tokens()
+                    .saturating_sub(context_tokens)
+                    .saturating_sub(OUTPUT_ROOM_MARGIN);
+                let room = u32::try_from(room).unwrap_or(u32::MAX);
+                cap.min(effective.saturating_mul(2))
+                    .min(room)
+                    .max(effective)
+            }
+            _ => effective,
+        };
+        self.last_request_max_tokens.store(limit, Relaxed);
+        limit
+    }
+
+    /// The output limit the last request was sent with (the effective limit
+    /// before any request).
+    pub(super) fn last_request_max_tokens(&self) -> u32 {
+        match self
+            .last_request_max_tokens
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            0 => self.effective_max_tokens(),
+            sent => sent,
+        }
     }
 
     /// The effective per-request output cap: configured `max_tokens` clamped

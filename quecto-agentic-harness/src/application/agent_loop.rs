@@ -1,7 +1,8 @@
 use super::durable_prefix::DurablePrefixLatch;
 use crate::application::agent_loop_policy::ToolPolicyState;
 use crate::application::agent_loop_stream::{
-    StreamProviderError, TurnEnd, empty_stream_error_message, is_empty_streamed_response,
+    StreamProviderError, TurnEnd, empty_stream_error_message, is_cut_off_without_answer,
+    is_empty_streamed_response,
 };
 use crate::application::agent_turn::ports::AgentLoop;
 pub use crate::application::agent_usage::UsageTotals;
@@ -48,14 +49,16 @@ mod agent_loop_turn_flow;
 #[path = "agent_loop_uds_tools.rs"]
 mod agent_loop_uds_tools;
 use agent_loop_errors::{
-    append_malformed_feedback, enhance_provider_error, is_context_or_output_limit_error,
-    provider_failure_audit_event,
+    append_feedback, append_malformed_feedback, enhance_provider_error,
+    is_context_or_output_limit_error, output_limit_feedback, provider_failure_audit_event,
+    record_feedback,
 };
 use agent_loop_spill::ToolMessageArgs;
 use agent_loop_turn::{
     ProviderFailureTransition, TurnState, classify_provider_failure,
     next_state_after_provider_response, state_for_provider_failure_transition,
 };
+use agent_loop_turn_flow::AfterResponse;
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
 const MAX_PROVIDER_ATTEMPTS: usize = 3;
 const PROVIDER_RETRY_BACKOFF_MS: u64 = 100;
@@ -110,6 +113,9 @@ pub struct AgentLoopImpl {
     max_tokens: u32,
     /// Per-model registry output cap, if known; see `agent_loop_clamp` (#935).
     model_max_tokens: Option<u32>,
+    /// One request after an output-limit cut-off may go above the limit (#2124).
+    output_boost: std::sync::atomic::AtomicBool,
+    last_request_max_tokens: std::sync::atomic::AtomicU32,
     temperature: f32,
     max_tool_iterations: u32,
     /// Whether the loop retains context (D9 #1978): the spill manifest is
@@ -176,6 +182,8 @@ impl AgentLoopImpl {
             model: config.model.clone(),
             max_tokens: config.max_tokens,
             model_max_tokens: None,
+            output_boost: std::sync::atomic::AtomicBool::new(false),
+            last_request_max_tokens: std::sync::atomic::AtomicU32::new(0),
             temperature: config.temperature,
             max_tool_iterations: DEFAULT_MAX_TOOL_ITERATIONS,
             retains_context: config.retention.is_some(),
@@ -578,6 +586,7 @@ impl AgentLoopImpl {
         // every message id stays the same, which a snapshot comparison misses.
         // Count of model-malformed requests turned into addressable feedback.
         let mut malformed_retries: u32 = 0;
+        let mut cut_off_retries: u32 = 0;
 
         loop {
             if iterations > 0 {
@@ -613,49 +622,38 @@ impl AgentLoopImpl {
                 .await;
 
             let llm_duration_ms = llm_start.elapsed().as_millis() as u64;
-            let response = match response {
-                Ok(response) => response,
+            // Every response is audited and counted, including one dropped below.
+            let timing = (current_turn, estimated_context_tokens, llm_duration_ms);
+            self.account_response(&response, timing, &mut usage_totals)
+                .await;
+            let after = match response {
+                // #2124: nothing visible before the output limit is no answer.
+                Ok(response)
+                    if is_cut_off_without_answer(&response, self.last_request_max_tokens()) =>
+                {
+                    let feedback = output_limit_feedback(self.last_request_max_tokens());
+                    let recovery = (&mut cut_off_retries, &mut appended_messages, feedback);
+                    self.after_cut_off_answer(messages, &response, current_turn, recovery)
+                        .await
+                }
+                Ok(response) => AfterResponse::Proceed(response),
                 Err(error) => {
-                    let transition = classify_provider_failure(
-                        &error,
-                        malformed_retries,
-                        MAX_MALFORMED_REQUEST_RETRIES,
-                    );
-                    let _state = state_for_provider_failure_transition(&transition);
-                    match transition {
-                        ProviderFailureTransition::RecoverMalformedRequest => {
-                            let _state = TurnState::RecoverMalformedResponse;
-                            self.recover_malformed_response(
-                                messages,
-                                &error,
-                                current_turn,
-                                &mut malformed_retries,
-                                &mut appended_messages,
-                            )
-                            .await;
-                            current_turn += 1;
-                            continue;
-                        }
-                        ProviderFailureTransition::Terminal(_class) => {
-                            let _state = TurnState::FailProviderRequest;
-                            self.drain_tool_policy_mutations_at_boundary();
-                            return self.fail_provider_request(current_turn, error).await;
-                        }
-                    }
+                    let recovery = (&mut malformed_retries, &mut appended_messages);
+                    self.after_provider_failure(messages, error, current_turn, recovery)
+                        .await
                 }
             };
-
-            self.audit_provider_response_end(
-                current_turn,
-                &response,
-                estimated_context_tokens,
-                llm_duration_ms,
-            )
-            .await;
-
-            if let Some(ref usage) = response.usage {
-                usage_totals.record(usage);
-            }
+            let response = match after {
+                AfterResponse::Proceed(response) => {
+                    cut_off_retries = 0;
+                    response
+                }
+                AfterResponse::Retry => {
+                    current_turn += 1;
+                    continue;
+                }
+                AfterResponse::Finish(result) => return result,
+            };
 
             match next_state_after_provider_response(&response) {
                 TurnState::FinalizeAssistantResponse => {
