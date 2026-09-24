@@ -295,6 +295,9 @@ pub(crate) fn build_tool_runtime(
             ToolRuntimeProfileContext::Child => Some(ProfileAvailabilityScope::Child),
         },
     );
+    if !config.tools.rust_ast_graph.enabled {
+        registry.disable_tool_by_entrypoint_default("rust_ast_graph");
+    }
 
     register_bundled_native_tools(
         &mut registry,

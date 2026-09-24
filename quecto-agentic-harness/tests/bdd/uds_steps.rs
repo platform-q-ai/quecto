@@ -142,6 +142,12 @@ pub(crate) fn build_uds_agent(
             ..Default::default()
         },
     );
+    // Mirror the entrypoint's default availability policy. This fixture builds
+    // the native registry directly rather than using interface::tool_runtime.
+    match config.tools.rust_ast_graph.enabled {
+        true => {}
+        false => assert!(registry.disable_tool_by_entrypoint_default("rust_ast_graph")),
+    }
 
     // Create broadcast channel early so the workflow emitter can use it (#598).
     let broadcast_tx = if world._workflow_enabled {
@@ -3350,6 +3356,22 @@ fn then_get_tool_catalogue_count(world: &mut QuectoWorld, count: usize) {
         "expected {count} tools, got {}\ntools: {tools:?}",
         tools.len()
     );
+}
+
+#[then(expr = "the get_tool_catalogue response for {string} should be disabled")]
+fn then_get_tool_catalogue_entry_disabled(world: &mut QuectoWorld, name: String) {
+    execute_uds(world);
+    let resp = find_get_tool_catalogue_response(&world.agent_events, None)
+        .expect("no get_tool_catalogue response");
+    let tools = resp["data"]["tools"]
+        .as_array()
+        .expect("tools not an array");
+    let entry = tools
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some(name.as_str()))
+        .unwrap_or_else(|| panic!("expected catalogue entry {name:?} in {tools:?}"));
+    assert_eq!(entry["defaultEnabled"], false, "entry: {entry:?}");
+    assert_eq!(entry["effectiveEnabled"], false, "entry: {entry:?}");
 }
 
 #[then(expr = "the get_tool_catalogue response should not list tool {string}")]

@@ -150,6 +150,12 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
                 .with_workflow_engine(deps.workflow_engine),
             ),
             deps.find_tool,
+            Arc::new(
+                crate::infrastructure::tools::rust_ast_graph::RustAstGraphTool::new(
+                    workspace.clone(),
+                    sandbox.clone(),
+                ),
+            ),
             // Quecto operating manual, embedded in the binary. Runtime profile
             // policy owns availability; the docs tool only receives explicit
             // role-compatible construction; manual content is shared by all agents.
