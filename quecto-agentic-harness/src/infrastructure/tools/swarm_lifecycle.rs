@@ -287,9 +287,35 @@ pub fn supervise(
 const SELF_END_GRACE: std::time::Duration = std::time::Duration::from_secs(
     crate::infrastructure::processes::direct_child_routing::PER_HOP_CONCLUSION_BOUND.as_secs() * 3,
 );
-/// Consecutive failed attempts after which a member stops trying to end
-/// itself (it cannot reach its own endpoint); the failure is logged once.
+/// Attempts after which a member stops trying to end itself: it cannot reach
+/// its own endpoint, or its harness accepted the shutdown but does not exit.
 const SELF_END_ATTEMPTS: u32 = 5;
+/// Consecutive unreadable snapshots (a contended store at close) tolerated
+/// before the watch gives up.
+const SNAPSHOT_ATTEMPTS: u32 = 10;
+
+/// How long the settlement watch keeps trying before it gives up.
+#[derive(Debug, Default)]
+struct WatchBudget {
+    unreadable: u32,
+    self_end_attempts: u32,
+}
+
+impl WatchBudget {
+    fn readable(&mut self) {
+        self.unreadable = 0;
+    }
+    /// Records an unreadable snapshot; true once too many came in a row.
+    fn unreadable_exhausted(&mut self) -> bool {
+        self.unreadable += 1;
+        self.unreadable >= SNAPSHOT_ATTEMPTS
+    }
+    /// Records an attempt to end itself; true once none is left.
+    fn self_end_exhausted(&mut self) -> bool {
+        self.self_end_attempts += 1;
+        self.self_end_attempts >= SELF_END_ATTEMPTS
+    }
+}
 
 /// After settling, a member waits to be ended by its launcher (#2121). Each
 /// tick settles again on a fresh snapshot, so a coordinator lost meanwhile
@@ -300,11 +326,21 @@ fn watch_until_ended(context: &SwarmContext, runtime: &tokio::runtime::Runtime) 
     use crate::application::swarm::SettlementStep;
     let started = std::time::Instant::now();
     let mut retry_logged = false;
-    let mut self_end_failures = 0;
+    let mut budget = WatchBudget::default();
     loop {
-        let Ok(snapshot) = context.snapshot() else {
-            tracing::error!("swarm settlement watch lost coordination");
-            return;
+        let snapshot = match context.snapshot() {
+            Ok(snapshot) => {
+                budget.readable();
+                snapshot
+            }
+            Err(error) => {
+                if budget.unreadable_exhausted() {
+                    tracing::error!(%error, "swarm settlement watch lost coordination");
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                continue;
+            }
         };
         let step = context.lifecycle.settlement_step(
             &snapshot,
@@ -327,14 +363,20 @@ fn watch_until_ended(context: &SwarmContext, runtime: &tokio::runtime::Runtime) 
             )),
         };
         match (outcome, step) {
-            (Ok(()), _) => {}
-            (Err(error), SettlementStep::EndSelf) => {
-                self_end_failures += 1;
-                if self_end_failures >= SELF_END_ATTEMPTS {
-                    tracing::error!(%error, "swarm member could not end itself; giving up");
+            (outcome, SettlementStep::EndSelf) => {
+                // Every attempt counts, accepted or not: a harness that took
+                // the shutdown but is still here is as stuck as one that
+                // refused it.
+                if budget.self_end_exhausted() {
+                    let reason = outcome.err().map_or_else(
+                        || "shutdown accepted but still running".into(),
+                        |e| e.to_string(),
+                    );
+                    tracing::error!(%reason, "swarm member could not end itself; giving up");
                     return;
                 }
             }
+            (Ok(()), _) => {}
             (Err(error), _) => {
                 if !retry_logged {
                     tracing::warn!(%error, "swarm settlement retry failed; still waiting");
