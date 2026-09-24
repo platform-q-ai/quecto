@@ -491,7 +491,7 @@ fn gc_dry_run_leaves_the_registry_document_untouched_and_a_real_gc_corrects_it()
     assert!(
         output
             .stderr
-            .contains("C2 would be forgotten (stopped; nothing left on disk)"),
+            .contains("C2 would be forgotten (stopped; nothing left on disk or in the runtime)"),
         "{}",
         output.stderr
     );
@@ -506,7 +506,7 @@ fn gc_dry_run_leaves_the_registry_document_untouched_and_a_real_gc_corrects_it()
     assert!(
         output
             .stderr
-            .contains("C2 forgotten (stopped; nothing left on disk)"),
+            .contains("C2 forgotten (stopped; nothing left on disk or in the runtime)"),
         "{}",
         output.stderr
     );

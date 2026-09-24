@@ -50,8 +50,11 @@ runs, so an exited container counts as gone: `quecto container gc` removes
 leftover containers carrying the config's state-root label). The restore
 then forgets it: the CLI prints each forgotten ref, a session start logs
 them, and `gc --dry-run` only reports what it would forget. One restore
-inspects at most 20 such records and stops at the first the runtime cannot
-answer for; the rest wait for the next restore. Once nothing is left, refs restart at
+spends at most about 15 seconds inspecting such records, so a hanging
+runtime cannot hold a session start; the rest wait for the next restore.
+A record whose state root itself is missing is kept (an unmounted disk
+says nothing about what it held): if you deleted a state root on purpose,
+recreate it empty and the next restore forgets its records. Once nothing is left, refs restart at
 C1. A session never reuses a ref it holds, but a ref names a box only
 within the sessions that saw it: after a stopped C5 is forgotten, a later
 session may create a different C5, so check the name or repository before

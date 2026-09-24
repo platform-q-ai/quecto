@@ -3,17 +3,21 @@
 //! (with its state root present) and its container reported gone by its
 //! own retained `inspect` is nothing left, and the record may be
 //! forgotten. The disk is asked first, so a box that left its state is
-//! never inspected; each probe inspects at most [`MAX_RESIDUE_INSPECTS`]
-//! records and stops at the first the runtime cannot answer for, so a
-//! hanging runtime cannot hold a session start. What is not inspected is
-//! kept, to be judged by a later restore.
+//! never inspected. Inspects share a time budget per probe
+//! ([`RESIDUE_INSPECT_BUDGET`]), so a hanging runtime cannot hold a
+//! session start, while a record whose inspect fails fast (no argv, an
+//! unrecognised status) costs next to nothing and holds back no other.
+//! What is not inspected is kept, to be judged by a later restore.
+use std::time::{Duration, Instant};
+
 use crate::domain::environment_registry::EnvironmentRecord;
 
 use super::super::dto::{EnvironmentLiveness, StateOnDisk};
 use super::super::ports::EnvironmentProcess;
 
-/// The most inspects one restore or collection runs for stopped records.
-pub const MAX_RESIDUE_INSPECTS: usize = 20;
+/// How long one restore or collection spends inspecting stopped records
+/// (one inspect started within it may run to its own bound).
+pub const RESIDUE_INSPECT_BUDGET: Duration = Duration::from_secs(15);
 
 /// Why a stopped record whose workspace names no environment directory is
 /// kept.
@@ -31,26 +35,42 @@ pub(super) enum Residue {
     Nothing,
     /// Its state directory is on disk: the collector's to remove.
     StateOnDisk,
-    /// Not inspected this time (the budget is spent, or the runtime has
-    /// stopped answering): judged again by a later restore.
+    /// Not inspected this time (the inspect budget is spent): judged again
+    /// by a later restore.
     Deferred,
     /// Kept, with the reason worth saying.
     Kept(String),
 }
 
+/// Monotonic time since a probe began.
+type Clock<'a> = Box<dyn Fn() -> Duration + 'a>;
+
 /// One restore's (or collection's) judge of stopped records' boxes.
 pub(super) struct ResidueProbe<'a> {
     process: &'a dyn EnvironmentProcess,
-    inspects_left: usize,
-    runtime_answers: bool,
+    clock: Clock<'a>,
+    budget: Duration,
 }
 
 impl<'a> ResidueProbe<'a> {
     pub fn new(process: &'a dyn EnvironmentProcess) -> Self {
+        let began = Instant::now();
+        Self::with_clock(
+            process,
+            Box::new(move || began.elapsed()),
+            RESIDUE_INSPECT_BUDGET,
+        )
+    }
+
+    pub fn with_clock(
+        process: &'a dyn EnvironmentProcess,
+        clock: Clock<'a>,
+        budget: Duration,
+    ) -> Self {
         Self {
             process,
-            inspects_left: MAX_RESIDUE_INSPECTS,
-            runtime_answers: true,
+            clock,
+            budget,
         }
     }
 
@@ -68,21 +88,16 @@ impl<'a> ResidueProbe<'a> {
     }
 
     fn runtime_residue(&mut self, record: &EnvironmentRecord) -> Residue {
-        match (self.runtime_answers, self.inspects_left) {
-            (true, left) if left > 0 => {
-                self.inspects_left = left - 1;
-                match self.process.observe(record) {
-                    EnvironmentLiveness::Gone => Residue::Nothing,
-                    EnvironmentLiveness::Running => {
-                        Residue::Kept(STATE_GONE_CONTAINER_RUNNING.to_string())
-                    }
-                    EnvironmentLiveness::Unknown(reason) => {
-                        self.runtime_answers = false;
-                        Residue::Kept(reason)
-                    }
+        if (self.clock)() < self.budget {
+            match self.process.observe(record) {
+                EnvironmentLiveness::Gone => Residue::Nothing,
+                EnvironmentLiveness::Running => {
+                    Residue::Kept(STATE_GONE_CONTAINER_RUNNING.to_string())
                 }
+                EnvironmentLiveness::Unknown(reason) => Residue::Kept(reason),
             }
-            _ => Residue::Deferred,
+        } else {
+            Residue::Deferred
         }
     }
 }

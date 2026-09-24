@@ -177,7 +177,7 @@ fn an_observing_restore_writes_nothing_and_says_what_it_would_forget() {
     assert_eq!(
         report.diagnostics,
         [
-            "C4 would be forgotten (stopped; nothing left on disk); not written: this restore only observes"
+            "C4 would be forgotten (stopped; nothing left on disk or in the runtime); not written: this restore only observes"
         ]
     );
 }
@@ -210,21 +210,28 @@ fn a_record_an_older_build_relabelled_is_restored_to_retained_not_forgotten() {
 }
 
 #[test]
-fn a_restore_inspects_within_its_budget_and_the_next_one_finishes() {
-    use super::MAX_RESIDUE_INSPECTS;
-    let many: Vec<EnvironmentRecord> = (1..=MAX_RESIDUE_INSPECTS + 2)
-        .map(|n| laid_out(&format!("C{n}"), EnvironmentStatus::Stopped))
-        .collect();
-    let store = store_with(many);
+fn a_record_whose_inspect_cannot_answer_holds_back_no_other_across_restores() {
+    // The same lowest ref is judged first on every restore (#2134 round 3).
+    let store = store_with(
+        (2..=5)
+            .map(|n| laid_out(&format!("C{n}"), EnvironmentStatus::Stopped))
+            .collect(),
+    );
     let restore = || {
-        let process = process_with_disk(gone, disk(&[], Arc::default()));
+        let liveness = |record: &EnvironmentRecord| match record.environment_ref.as_str() {
+            "C2" => EnvironmentLiveness::Unknown("no inspect argv".into()),
+            _ => EnvironmentLiveness::Gone,
+        };
+        let process = process_with_disk(liveness, disk(&[], Arc::default()));
         RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:two")
     };
+    let (_, report) = restore();
+    assert_eq!(report.forgotten, ["C3", "C4", "C5"]);
+    assert_eq!(
+        report.kept_stopped,
+        [("C2".to_string(), "no inspect argv".to_string())]
+    );
     let (registry, report) = restore();
-    assert_eq!(report.forgotten.len(), MAX_RESIDUE_INSPECTS);
-    assert!(report.kept_stopped.is_empty(), "deferred, not reported");
-    assert_eq!(registry.entries().len(), 2);
-    let (registry, report) = restore();
-    assert_eq!(report.forgotten.len(), 2);
-    assert!(registry.entries().is_empty());
+    assert!(report.forgotten.is_empty());
+    assert_eq!(refs(&registry.entries()), ["C2"]);
 }

@@ -342,7 +342,7 @@ impl RestoreRegistry {
     ) {
         if mode == RestoreMode::Observe {
             report.diagnostics.push(format!(
-                "{} would be forgotten (stopped; nothing left on disk); not written: this restore only observes",
+                "{} would be forgotten (stopped; nothing left on disk or in the runtime); not written: this restore only observes",
                 record.environment_ref
             ));
             return;
