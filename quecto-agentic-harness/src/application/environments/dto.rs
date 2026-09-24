@@ -177,9 +177,13 @@ pub struct RestoredRegistry {
     pub restored: Vec<String>,
     /// Refs whose container was gone and that were marked stopped.
     pub stopped: Vec<String>,
-    /// Refs of `stopped` records with nothing left on disk, forgotten so
-    /// their numbers are free again (#2134).
+    /// Refs of `stopped` records whose box left nothing behind, forgotten
+    /// so their numbers are free again (#2134).
     pub forgotten: Vec<String>,
+    /// `stopped` records kept although part of their box is gone, each
+    /// with the reason (#2134): not the runtime's failure to answer about
+    /// a live record, which is `unverified`.
+    pub kept_stopped: Vec<(String, String)>,
     /// Refs relabelled `retained` (round 4 M1/L3, #2033), each with the
     /// reason now on its `metadata.retained`: a gone container whose
     /// checkout hosts an unfinished swarm run, or an older build's

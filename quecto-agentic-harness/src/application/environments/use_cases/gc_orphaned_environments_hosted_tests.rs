@@ -5,6 +5,7 @@
 //! placeholder or no store is collected as before. An own-root directory is judged by
 //! the record's own retained inspect; a record an older build relabelled
 //! `stopped` while retained is kept; a record seen nowhere is reported.
+use super::STATE_GONE_CONTAINER_RUNNING;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -12,7 +13,7 @@ use super::super::dto::{EnvironmentLiveness, EnvironmentStateDir, GcRemoval, GcR
 use super::super::ports::HostedSwarmRunInspection;
 use super::gc_orphaned_environments::CREATE_GRACE_SECS;
 use super::gc_orphaned_environments_tests::{Rig, container, dir, record};
-use super::restore_registry::GONE_AT_RESTORE;
+use crate::domain::environment_registry::GONE_AT_RESTORE;
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentStatus};
 use crate::domain::environment_retention::{HostedSwarmRun, SwarmRunObservation};
 use crate::domain::swarm::RunStatus;
@@ -327,7 +328,28 @@ fn a_record_seen_nowhere_is_reported_kept_or_forgotten_never_skipped() {
         .commit(record("C3", "env-gone-killing", EnvironmentStatus::Killing));
     rig.registry
         .commit(record("C4", "env-gone-stopped", EnvironmentStatus::Stopped));
+    rig.process
+        .liveness
+        .lock()
+        .unwrap()
+        .push(("C4".into(), EnvironmentLiveness::Gone));
+    // #2134: seen nowhere by this config, but its own inspect finds its
+    // container still running (a listing that misses it): kept.
+    rig.registry.commit(record(
+        "C5",
+        "env-unlisted-running",
+        EnvironmentStatus::Stopped,
+    ));
+    rig.process
+        .liveness
+        .lock()
+        .unwrap()
+        .push(("C5".into(), EnvironmentLiveness::Running));
     let report = rig.use_case().execute(&GcRequest::default()).unwrap();
+    assert_eq!(
+        kept_reason(&report, "env-unlisted-running"),
+        format!("recorded C5 as stopped; not forgotten: {STATE_GONE_CONTAINER_RUNNING}")
+    );
     assert_eq!(
         kept_reason(&report, "env-gone-running"),
         "recorded C1 as empty; nothing on disk or in the runtime; not collected: kill it (`quecto container kill C1`) so the record is stopped, then gc"
@@ -356,8 +378,8 @@ fn a_record_seen_nowhere_is_reported_kept_or_forgotten_never_skipped() {
         .collect();
     assert_eq!(
         refs,
-        ["C1", "C2", "C3"],
-        "only the stopped record is forgotten"
+        ["C1", "C2", "C3", "C5"],
+        "only the stopped record that left nothing is forgotten"
     );
     assert!(
         rig.hosted.asked.lock().unwrap().is_empty(),

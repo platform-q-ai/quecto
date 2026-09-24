@@ -1,5 +1,6 @@
 //! Session environment use cases.
 
+mod box_residue;
 mod container_status;
 mod diagnose_container_runtime;
 mod finalize_environment_member;
@@ -10,6 +11,7 @@ mod list_container_configs;
 mod list_environments;
 mod restore_registry;
 
+pub use box_residue::{MAX_RESIDUE_INSPECTS, NO_ENVIRONMENT_DIR, STATE_GONE_CONTAINER_RUNNING};
 pub use container_status::ContainerStatus;
 pub use diagnose_container_runtime::DiagnoseContainerRuntime;
 pub use finalize_environment_member::FinalizeEnvironmentMember;
@@ -21,8 +23,8 @@ pub use kill_environment::{KillEnvironment, KillEnvironmentError, KilledEnvironm
 pub use list_container_configs::ListContainerConfigs;
 pub use list_environments::ListEnvironmentsQuery;
 pub use restore_registry::{
-    GONE_AT_RESTORE, KILL_IN_FLIGHT, NO_ENVIRONMENT_DIR, RELABELLED_BY_OLDER_BUILD,
-    RETAINED_EXITED, RestoreRegistry, STATE_GONE_CONTAINER_RUNNING, unfinished_run_reason,
+    KILL_IN_FLIGHT, RELABELLED_BY_OLDER_BUILD, RETAINED_EXITED, RestoreRegistry,
+    unfinished_run_reason,
 };
 
 #[cfg(test)]

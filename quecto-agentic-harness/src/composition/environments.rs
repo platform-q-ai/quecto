@@ -180,6 +180,16 @@ fn report_restore(report: &RestoredRegistry) {
     for (environment_ref, reason) in &report.retained {
         eprintln!("{environment_ref} retained at restore: {reason}");
     }
+    match report.forgotten.as_slice() {
+        [] => {}
+        refs => tracing::info!(
+            ?refs,
+            "stopped environments that left nothing behind were forgotten"
+        ),
+    }
+    for (environment_ref, reason) in &report.kept_stopped {
+        tracing::info!(environment_ref, %reason, "stopped environment kept at restore");
+    }
     for (environment_ref, reason) in &report.unverified {
         tracing::warn!(environment_ref, %reason, "restored environment could not be verified against the runtime");
     }

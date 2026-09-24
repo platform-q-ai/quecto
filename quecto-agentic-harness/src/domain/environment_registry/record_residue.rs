@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 use super::{EnvironmentRecord, EnvironmentStatus};
 
-/// The last error a record gone at restore carries.
+/// The last error a record gone at restore carries. A display string and,
+/// with a `retained` reason, the older build's relabel signature
+/// [`EnvironmentRecord::relabelled_while_retained`] matches: hence here.
 pub const GONE_AT_RESTORE: &str = "container not found at restore: the runtime reports it gone";
 
 impl EnvironmentRecord {

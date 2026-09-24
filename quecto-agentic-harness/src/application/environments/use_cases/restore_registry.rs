@@ -43,15 +43,15 @@
 use std::sync::Arc;
 
 use crate::domain::environment_registry::{
-    EnvironmentJournal, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, JournalWrite,
+    EnvironmentJournal, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, GONE_AT_RESTORE,
+    JournalWrite,
 };
 
 use crate::domain::environment_retention::{HostedSwarmRun, SwarmRunObservation};
 
-use super::super::dto::{
-    CorrectionOutcome, EnvironmentLiveness, RestoreMode, RestoredRegistry, StateOnDisk,
-};
+use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, RestoreMode, RestoredRegistry};
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore, HostedSwarmRunInspection};
+use super::box_residue::{Residue, ResidueProbe};
 
 #[derive(Clone)]
 pub struct RestoreRegistry {
@@ -66,8 +66,6 @@ impl std::fmt::Debug for RestoreRegistry {
     }
 }
 
-pub use crate::domain::environment_registry::GONE_AT_RESTORE;
-
 /// The reason a `killing` record is reported unverified at restore.
 pub const KILL_IN_FLIGHT: &str =
     "kill in flight (its session may be live and settling it); kill_container retries it";
@@ -79,14 +77,6 @@ pub const RETAINED_EXITED: &str = "retained: container exited; only container ki
 /// The reason a record an older build relabelled `stopped` while it was
 /// retained is restored to `retained` (round 4 L3, #2033).
 pub const RELABELLED_BY_OLDER_BUILD: &str = "was retained; relabelled stopped by an older build's restore — restored to retained; kill explicitly to collect";
-
-/// Why a stopped record whose workspace names no environment directory is
-/// kept at restore (#2134).
-pub const NO_ENVIRONMENT_DIR: &str = "stopped; its workspace names no environment directory, so what it left cannot be told; kept for `quecto container gc`";
-
-/// Why a stopped record whose state directory is gone but whose container
-/// still runs is kept at restore (#2134).
-pub const STATE_GONE_CONTAINER_RUNNING: &str = "stopped, but the runtime still runs its container although its state directory is gone; kill the container by hand";
 
 const KEPT: &str = "environment retained for inspection, kill_container to remove";
 
@@ -264,8 +254,9 @@ impl RestoreRegistry {
         report: &mut RestoredRegistry,
     ) -> Vec<EnvironmentRecord> {
         let mut restored = Vec::with_capacity(records.len());
+        let mut probe = ResidueProbe::new(self.process.as_ref());
         for record in records {
-            if self.left_nothing(&record, report) {
+            if Self::left_nothing(&record, &mut probe, report) {
                 self.forget(record, mode, report, &mut restored);
                 continue;
             }
@@ -317,41 +308,26 @@ impl RestoreRegistry {
     }
 
     /// A plain `stopped` record whose box left nothing behind (#2134): its
-    /// environment directory is absent from disk and the runtime reports
-    /// its container gone, so keeping it would only hold its number. The
-    /// disk is asked first, so a box that left its state is never
-    /// inspected. Anything else is kept: another status, an older build's
-    /// relabel (restored below), a directory that is present or cannot be
-    /// examined, a container the runtime still runs or cannot report on.
-    /// A record whose workspace names no environment directory is kept and
-    /// reported unverified: what it left cannot be told.
-    fn left_nothing(&self, record: &EnvironmentRecord, report: &mut RestoredRegistry) -> bool {
-        record.is_plain_stopped() && self.box_left_nothing(record, report)
-    }
-
-    /// Where the box of a plain stopped record stands: gone from disk and
-    /// from the runtime, or kept (said so when the reason is worth saying).
-    fn box_left_nothing(&self, record: &EnvironmentRecord, report: &mut RestoredRegistry) -> bool {
-        let keep = |report: &mut RestoredRegistry, reason: String| {
-            report
-                .unverified
-                .push((record.environment_ref.clone(), reason));
-            false
-        };
-        match record.environment_dir() {
-            Some(dir) => match self.process.state_on_disk(&dir) {
-                StateOnDisk::Absent => match self.process.observe(record) {
-                    EnvironmentLiveness::Gone => true,
-                    EnvironmentLiveness::Running => {
-                        keep(report, STATE_GONE_CONTAINER_RUNNING.to_string())
-                    }
-                    EnvironmentLiveness::Unknown(reason) => keep(report, reason),
-                },
-                // What it left is there (gc collects it), or cannot be seen.
-                StateOnDisk::Present | StateOnDisk::Unknown(_) => false,
-            },
-            None => keep(report, NO_ENVIRONMENT_DIR.to_string()),
-        }
+    /// number is held for nothing. Anything else is kept: another status,
+    /// an older build's relabel (restored below), a box that left its
+    /// state or could not be judged. A kept stopped record with a reason
+    /// worth saying is reported.
+    fn left_nothing(
+        record: &EnvironmentRecord,
+        probe: &mut ResidueProbe<'_>,
+        report: &mut RestoredRegistry,
+    ) -> bool {
+        record.is_plain_stopped()
+            && match probe.residue(record) {
+                Residue::Nothing => true,
+                Residue::StateOnDisk | Residue::Deferred => false,
+                Residue::Kept(reason) => {
+                    report
+                        .kept_stopped
+                        .push((record.environment_ref.clone(), reason));
+                    false
+                }
+            }
     }
 
     /// Forget a record [`Self::left_nothing`] found, as `mode` says: an

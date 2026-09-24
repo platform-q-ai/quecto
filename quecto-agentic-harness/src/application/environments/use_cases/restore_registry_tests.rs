@@ -2,7 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, StateOnDisk};
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore, HostedSwarmRunInspection};
-use super::{GONE_AT_RESTORE, KILL_IN_FLIGHT, RETAINED_EXITED, RestoreRegistry};
+use super::{KILL_IN_FLIGHT, RETAINED_EXITED, RestoreRegistry};
+use crate::domain::environment_registry::GONE_AT_RESTORE;
 use crate::domain::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };

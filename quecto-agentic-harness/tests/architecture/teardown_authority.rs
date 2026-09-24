@@ -436,6 +436,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/environments/use_cases/kill_environment.rs",
     "src/application/environments/use_cases/finalize_environment_member.rs",
     "src/application/environments/use_cases/restore_registry.rs",
+    "src/application/environments/use_cases/box_residue.rs",
     "src/application/environments/use_cases/gc_orphaned_environments.rs",
     "src/application/swarm/mod.rs",
     "src/application/swarm/ports.rs",

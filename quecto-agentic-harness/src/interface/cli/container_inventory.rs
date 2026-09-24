@@ -100,6 +100,12 @@ pub(crate) fn cmd_ls(
                     "note: {environment_ref} could not be verified against the runtime: {reason}\n"
                 ));
             }
+            // Stopped records are the listing's only with --all (#2134).
+            if all {
+                for (environment_ref, reason) in &handles.restore.kept_stopped {
+                    stderr.push_str(&format!("note: stopped {environment_ref} kept: {reason}\n"));
+                }
+            }
             0
         }
         Err(error) => fail(stderr, &error),

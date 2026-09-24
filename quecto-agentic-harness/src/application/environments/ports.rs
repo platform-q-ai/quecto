@@ -218,14 +218,16 @@ pub trait EnvironmentRegistryStore: Send + Sync {
         record: &EnvironmentRecord,
         expected: &EnvironmentStatus,
     ) -> Result<CorrectionOutcome, String>;
-    /// Remove `record` from the file (a rolled-back create) — only while
+    /// Remove `record` from the file (a rolled-back create, or a stopped
+    /// record whose box left nothing behind, #2134) — only while
     /// its ref still names this environment (#2070): a ref another session
     /// has since taken is left as that session recorded it.
     fn forget(&self, record: &EnvironmentRecord) -> Result<(), String>;
 }
 
 /// The runtime reality behind a record: its container's liveness through
-/// the retained `inspect` argv, and its retained `cleanup`. Synchronous
+/// the retained `inspect` argv, its retained `cleanup`, and whether its
+/// state directory is still on disk (the host filesystem, #2134). Synchronous
 /// (bounded scripts) so a startup restore and the CLI collector can ask
 /// without a runtime.
 pub trait EnvironmentProcess: Send + Sync {

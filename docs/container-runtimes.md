@@ -45,8 +45,13 @@ directory's registry. A stopped environment stays listed, and its ref
 taken, until a restore — every session start and every `quecto container
 ls|kill|gc` — finds nothing of it left: its state directory absent (with
 its state root present) and its container reported gone by its own
-retained `inspect`. The restore then forgets it and says so; `gc --dry-run`
-only reports what it would forget. Once nothing is left, refs restart at
+retained `inspect` (the standard inspect asks whether `quecto-<id>` still
+runs, so an exited container counts as gone: `quecto container gc` removes
+leftover containers carrying the config's state-root label). The restore
+then forgets it: the CLI prints each forgotten ref, a session start logs
+them, and `gc --dry-run` only reports what it would forget. One restore
+inspects at most 20 such records and stops at the first the runtime cannot
+answer for; the rest wait for the next restore. Once nothing is left, refs restart at
 C1. A session never reuses a ref it holds, but a ref names a box only
 within the sessions that saw it: after a stopped C5 is forgotten, a later
 session may create a different C5, so check the name or repository before

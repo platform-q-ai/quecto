@@ -138,10 +138,20 @@ impl EnvironmentProcess for FakeProcess {
         }
         Ok(())
     }
-    // The collector's own judgement is under test: the restore keeps every
-    // stopped record for it (#2134 forgetting is the restore's, tested there).
-    fn state_on_disk(&self, _environment_dir: &std::path::Path) -> StateOnDisk {
-        StateOnDisk::Present
+    /// On disk exactly when the host inventory lists the directory's
+    /// environment (#2134); with no host, nothing is.
+    fn state_on_disk(&self, environment_dir: &std::path::Path) -> StateOnDisk {
+        let listed = self.host.as_ref().is_some_and(|host| {
+            host.dirs
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|d| environment_dir.file_name() == Some(d.environment_id.as_ref()))
+        });
+        match listed {
+            true => StateOnDisk::Present,
+            false => StateOnDisk::Absent,
+        }
     }
 }
 
@@ -427,6 +437,11 @@ fn a_real_run_removes_through_the_right_cleanup_forgets_collected_records_and_re
     // Stopped with nothing left anywhere: the record alone is forgotten.
     rig.registry
         .commit(record("C5", "env-memory", EnvironmentStatus::Stopped));
+    rig.process
+        .liveness
+        .lock()
+        .unwrap()
+        .push(("C5".into(), EnvironmentLiveness::Gone));
     *rig.host.dirs.lock().unwrap() = vec![
         dir("env-stopped", Some("quecto-env-stopped")),
         dir("env-bare", None),

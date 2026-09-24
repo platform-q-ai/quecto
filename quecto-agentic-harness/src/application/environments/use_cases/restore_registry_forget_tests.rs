@@ -130,7 +130,7 @@ fn a_record_whose_workspace_names_no_environment_dir_is_kept_unasked() {
     assert!(asked.lock().unwrap().is_empty());
     assert_eq!(refs(&registry.entries()), ["C1"]);
     assert_eq!(
-        report.unverified,
+        report.kept_stopped,
         [("C1".to_string(), NO_ENVIRONMENT_DIR.to_string())]
     );
 }
@@ -154,7 +154,7 @@ fn a_stopped_record_whose_container_still_runs_or_cannot_be_asked_is_kept() {
     assert_eq!(refs(&registry.entries()), ["C1", "C2"]);
     assert_eq!(refs(&store.load().unwrap()), ["C1", "C2"]);
     assert_eq!(
-        report.unverified,
+        report.kept_stopped,
         [
             ("C1".to_string(), STATE_GONE_CONTAINER_RUNNING.to_string()),
             ("C2".to_string(), "inspect timed out".to_string()),
@@ -200,11 +200,31 @@ fn a_record_that_cannot_be_forgotten_is_kept_and_said_so() {
 fn a_record_an_older_build_relabelled_is_restored_to_retained_not_forgotten() {
     let mut relabelled = laid_out("C4", EnvironmentStatus::Stopped);
     relabelled.metadata = serde_json::json!({"retained": "run r1 unfinished"});
-    relabelled.last_error = Some(super::GONE_AT_RESTORE.to_string());
+    relabelled.last_error = Some(crate::domain::environment_registry::GONE_AT_RESTORE.to_string());
     let store = store_with(vec![relabelled]);
     let process = process_with_disk(never_inspected, disk(&[], Arc::default()));
     let (registry, report) =
         RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:two");
     assert!(report.forgotten.is_empty());
     assert_eq!(registry.entries()[0].status, EnvironmentStatus::Retained);
+}
+
+#[test]
+fn a_restore_inspects_within_its_budget_and_the_next_one_finishes() {
+    use super::MAX_RESIDUE_INSPECTS;
+    let many: Vec<EnvironmentRecord> = (1..=MAX_RESIDUE_INSPECTS + 2)
+        .map(|n| laid_out(&format!("C{n}"), EnvironmentStatus::Stopped))
+        .collect();
+    let store = store_with(many);
+    let restore = || {
+        let process = process_with_disk(gone, disk(&[], Arc::default()));
+        RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:two")
+    };
+    let (registry, report) = restore();
+    assert_eq!(report.forgotten.len(), MAX_RESIDUE_INSPECTS);
+    assert!(report.kept_stopped.is_empty(), "deferred, not reported");
+    assert_eq!(registry.entries().len(), 2);
+    let (registry, report) = restore();
+    assert_eq!(report.forgotten.len(), 2);
+    assert!(registry.entries().is_empty());
 }
