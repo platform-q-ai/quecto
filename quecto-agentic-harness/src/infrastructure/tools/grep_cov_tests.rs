@@ -37,7 +37,8 @@ fn with_rg_binary_sets_definition_and_format_match_block_paths_and_truncation() 
     assert!(format_match_block(
         &RgMatch {
             file_path: file,
-            line_number: 2
+            line_number: 2,
+            line_count: 1
         },
         &mut cache,
         &cfg,
@@ -72,7 +73,8 @@ fn format_match_block_stops_at_byte_cap() {
     assert!(!format_match_block(
         &RgMatch {
             file_path: file,
-            line_number: 1
+            line_number: 1,
+            line_count: 1
         },
         &mut cache,
         &cfg,

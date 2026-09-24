@@ -1,6 +1,7 @@
 // Grep tool — ripgrep-powered file content search (Quecto compatibility).
-// Uses `rg --json` for robust structured match extraction.
-// Context lines are extracted from a file cache, not rg's --context output.
+// Uses `rg --json` for robust structured match extraction; files and count
+// modes use rg's `--null` listings (#2136). Context lines are extracted from
+// a file cache, not rg's --context output.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -15,16 +16,20 @@ use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::path_utils::resolve_to_cwd;
 use crate::infrastructure::tools::truncate::format_size;
 
-/// Maximum number of matches to return (default).
-const DEFAULT_MATCH_LIMIT: usize = 100;
+#[path = "grep_listing.rs"]
+mod grep_listing;
+#[path = "grep_request.rs"]
+mod grep_request;
+
+use grep_listing::{ListingFormat, format_listing, parse_listing};
+use grep_request::{DEFAULT_MATCH_LIMIT, GrepRequest, OutputMode, parse_request};
+
 /// Maximum line length before truncation (chars); matches Quecto's GREP_MAX_LINE_LENGTH.
 const MAX_LINE_BYTES: usize = 500;
 /// Maximum total output bytes (50KB); matches Quecto's DEFAULT_MAX_BYTES.
 const MAX_OUTPUT_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 /// Maximum individual file size for context reads (1MB); prevents OOM from huge cached files.
 const MAX_FILE_CACHE_BYTES: usize = 1024 * 1024;
-/// Maximum context lines per side; prevents unbounded file reads.
-const MAX_CONTEXT_LINES: usize = 50;
 
 pub struct GrepTool {
     workspace: Arc<PathBuf>,
@@ -66,10 +71,14 @@ impl Tool for GrepTool {
         ToolDefinition {
             name: "grep".into(),
             description: format!(
-                "Search file contents using ripgrep (rg). Requires rg on PATH. \
-                 Returns file:line:content matches with optional context lines (file-N- format). \
-                 Output capped at {} matches or {}KB. \
-                 Example: {{\"pattern\": \"search_term\"}}",
+                "Search file contents with ripgrep. USE THIS TOOL FOR ALL CONTENT SEARCH: do not \
+                 run rg, grep or git grep through bash. It takes the same options (several \
+                 patterns, globs and file types, whole words, multiline, a per-file cap, files-only \
+                 and count output), keeps output bounded and checks paths against the sandbox. \
+                 Returns file:line: content matches with optional context lines (file-N- format), \
+                 capped at {} matches (or files) or {}KB. Use output=files or output=count to scope \
+                 a search cheaply before reading matches. \
+                 Example: {{\"pattern\": \"search_term\", \"type\": [\"rust\"]}}",
                 DEFAULT_MATCH_LIMIT,
                 MAX_OUTPUT_BYTES / 1024
             )
@@ -77,15 +86,20 @@ impl Tool for GrepTool {
             parameters_schema: r#"{
                 "type": "object",
                 "properties": {
-                    "pattern":    {"type":"string","description":"Search pattern (regex or literal)"},
+                    "pattern":    {"type":"string","description":"Search pattern (regex, or literal with literal=true)"},
+                    "patterns":   {"type":"array","items":{"type":"string"},"description":"Several patterns; a line matching any of them matches (with or instead of pattern)"},
                     "path":       {"type":"string","description":"Directory or file to search (defaults to '.')"},
-                    "glob":       {"type":"string","description":"Glob pattern to filter files, e.g. '*.rs'"},
+                    "glob":       {"type":"array","items":{"type":"string"},"description":"Globs to include, e.g. ['*.rs']; prefix with ! to exclude, e.g. '!*_tests.rs' (a single string is accepted too)"},
+                    "type":       {"type":"array","items":{"type":"string"},"description":"ripgrep file types, e.g. ['rust'], ['py', 'ts'] (a single string is accepted too)"},
                     "ignoreCase": {"type":"boolean","description":"Case-insensitive search"},
-                    "literal":    {"type":"boolean","description":"Treat pattern as literal string"},
-                    "context":    {"type":"number","description":"Context lines before and after each match"},
-                    "limit":      {"type":"number","description":"Maximum matches to return (default 100)"}
-                },
-                "required": ["pattern"]
+                    "literal":    {"type":"boolean","description":"Treat patterns as literal strings"},
+                    "wordRegexp": {"type":"boolean","description":"Match whole words only"},
+                    "multiline":  {"type":"boolean","description":"Let patterns span lines (use \\n in the pattern)"},
+                    "maxPerFile": {"type":"number","description":"At most this many matches per file"},
+                    "output":     {"type":"string","enum":["content","files","count"],"description":"content (default): matching lines; files: each matching file once; count: matches per file, busiest first"},
+                    "context":    {"type":"number","description":"Context lines before and after each match (content output)"},
+                    "limit":      {"type":"number","description":"Maximum matches (or files) to return (default 100)"}
+                }
             }"#
             .into(),
         }
@@ -116,42 +130,25 @@ impl Tool for GrepTool {
                 }
             };
 
-            let Some(pattern) = args["pattern"].as_str() else {
-                return Ok(ToolResult {
-                    content: "missing 'pattern' argument. Example: {\"pattern\": \"search_term\"}"
-                        .to_string(),
-                    is_error: true,
-                    image_blocks: vec![],
-                    delivery_metadata: None,
-                });
+            let request = match parse_request(&args) {
+                Ok(request) => request,
+                Err(problem) => {
+                    return Ok(ToolResult {
+                        content: problem,
+                        is_error: true,
+                        image_blocks: vec![],
+                        delivery_metadata: None,
+                    });
+                }
             };
 
-            let search_path = args["path"].as_str().unwrap_or(".");
-            let full_path = resolve_to_cwd(search_path, &workspace);
+            let full_path = resolve_to_cwd(&request.path, &workspace);
             let full_str = full_path.to_string_lossy().to_string();
             sandbox
                 .validate_path(&full_str)
                 .map_err(|e| DomainError::Security(e.to_string()))?;
 
-            let glob = args["glob"].as_str().map(String::from);
-            let ignore_case = args["ignoreCase"].as_bool().unwrap_or(false);
-            let literal = args["literal"].as_bool().unwrap_or(false);
-            let context_lines =
-                (args["context"].as_f64().unwrap_or(0.0) as usize).min(MAX_CONTEXT_LINES);
-            let limit = args["limit"]
-                .as_f64()
-                .map(|v| (v.round() as usize).max(1))
-                .unwrap_or(DEFAULT_MATCH_LIMIT);
-
-            let cmd = build_rg_command(RgArgs {
-                rg_cmd: &rg_cmd,
-                workspace: &workspace,
-                pattern,
-                full_path: &full_path,
-                glob: glob.as_deref(),
-                ignore_case,
-                literal,
-            });
+            let cmd = build_rg_command(&rg_cmd, &workspace, &full_path, &request);
             let (stdout_bytes, stderr_bytes, exit_code) = run_rg(cmd).await?;
 
             // rg exits: 0 = matches found, 1 = no matches, 2+ = error, None = signal-killed.
@@ -176,16 +173,29 @@ impl Tool for GrepTool {
             }
 
             let stdout = String::from_utf8_lossy(&stdout_bytes);
-            let result = format_grep_output(GrepFormatArgs {
-                json_output: &stdout,
-                workspace: &workspace,
-                sandbox: &sandbox,
-                match_limit: limit,
-                context_lines,
-                max_line_bytes: MAX_LINE_BYTES,
-                max_output_bytes: MAX_OUTPUT_BYTES,
-            })
-            .await;
+            let result = match request.output {
+                OutputMode::Content => {
+                    format_grep_output(GrepFormatArgs {
+                        json_output: &stdout,
+                        workspace: &workspace,
+                        sandbox: &sandbox,
+                        match_limit: request.limit,
+                        context_lines: request.context_lines,
+                        max_line_bytes: MAX_LINE_BYTES,
+                        max_output_bytes: MAX_OUTPUT_BYTES,
+                    })
+                    .await
+                }
+                OutputMode::Files | OutputMode::Count => format_listing(
+                    parse_listing(&stdout, request.output),
+                    &ListingFormat {
+                        workspace: &workspace,
+                        sandbox: &sandbox,
+                        limit: request.limit,
+                        max_output_bytes: MAX_OUTPUT_BYTES,
+                    },
+                ),
+            };
 
             Ok(ToolResult {
                 content: result,
@@ -201,35 +211,50 @@ impl Tool for GrepTool {
 // rg invocation
 // ---------------------------------------------------------------------------
 
-struct RgArgs<'a> {
-    rg_cmd: &'a str,
-    workspace: &'a Path,
-    pattern: &'a str,
-    full_path: &'a Path,
-    glob: Option<&'a str>,
-    ignore_case: bool,
-    literal: bool,
-}
-
-/// Build the ripgrep command. Uses `--json` for structured output.
-/// Context lines are extracted from a file cache after parsing, not via `--context`.
-fn build_rg_command(a: RgArgs<'_>) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new(a.rg_cmd);
-    cmd.current_dir(a.workspace)
-        .arg("--json")
+/// Build the ripgrep command for `request`: `--json` for matching lines
+/// (context comes from a file cache, not `--context`), `--null` listings
+/// for files and counts. Patterns always go through `-e` and the path
+/// after `--`, so neither can be read as a flag.
+fn build_rg_command(
+    rg_cmd: &str,
+    workspace: &Path,
+    full_path: &Path,
+    request: &GrepRequest,
+) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(rg_cmd);
+    cmd.current_dir(workspace)
         .arg("--line-number")
         .arg("--color=never")
         .arg("--hidden");
-    if a.ignore_case {
-        cmd.arg("--ignore-case");
+    match request.output {
+        OutputMode::Content => cmd.arg("--json"),
+        OutputMode::Files => cmd.arg("--files-with-matches").arg("--null"),
+        OutputMode::Count => cmd.arg("--count").arg("--with-filename").arg("--null"),
+    };
+    let flags = [
+        (request.ignore_case, "--ignore-case"),
+        (request.literal, "--fixed-strings"),
+        (request.word, "--word-regexp"),
+        (request.multiline, "--multiline"),
+    ];
+    for (on, flag) in flags {
+        if on {
+            cmd.arg(flag);
+        }
     }
-    if a.literal {
-        cmd.arg("--fixed-strings");
+    if let Some(max) = request.max_per_file {
+        cmd.arg("--max-count").arg(max.to_string());
     }
-    if let Some(g) = a.glob {
-        cmd.arg("--glob").arg(g);
+    for glob in &request.globs {
+        cmd.arg("--glob").arg(glob);
     }
-    cmd.arg("--").arg(a.pattern).arg(a.full_path);
+    for file_type in &request.types {
+        cmd.arg("--type").arg(file_type);
+    }
+    for pattern in &request.patterns {
+        cmd.arg("-e").arg(pattern);
+    }
+    cmd.arg("--").arg(full_path);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     cmd
@@ -292,6 +317,8 @@ struct RgMatch {
     file_path: PathBuf,
     /// 1-based line number of the match.
     line_number: usize,
+    /// Lines the match spans (more than one only for a multiline pattern).
+    line_count: usize,
 }
 
 /// Parse `rg --json` output: extract only `"match"` type events.
@@ -314,9 +341,15 @@ fn parse_rg_matches(json_output: &str) -> Vec<RgMatch> {
         let Some(line_number) = event["data"]["line_number"].as_u64() else {
             continue;
         };
+        // rg reports the lines a match spans in `lines.text`, ending in a
+        // newline: a multiline match spans several (#2136).
+        let line_count = event["data"]["lines"]["text"]
+            .as_str()
+            .map_or(1, |text| text.trim_end_matches('\n').lines().count().max(1));
         matches.push(RgMatch {
             file_path: PathBuf::from(file_path),
             line_number: line_number as usize,
+            line_count,
         });
     }
     matches
@@ -370,18 +403,15 @@ fn format_match_block(
     } else {
         raw_path.as_ref()
     };
+    // A search of "." reports `<workspace>/./x`: show `x`, as files mode does.
+    let rel_path = rel_path.strip_prefix("./").unwrap_or(rel_path);
 
     let total_lines = file_lines.len();
-    let start = if cfg.context_lines > 0 {
-        m.line_number.saturating_sub(cfg.context_lines).max(1)
-    } else {
-        m.line_number
-    };
-    let end = if cfg.context_lines > 0 {
-        (m.line_number + cfg.context_lines).min(total_lines)
-    } else {
-        m.line_number
-    };
+    let last_matched = m.line_number + m.line_count.max(1) - 1;
+    let start = m.line_number.saturating_sub(cfg.context_lines).max(1);
+    let end = (last_matched + cfg.context_lines)
+        .min(total_lines.max(last_matched))
+        .max(m.line_number);
 
     for current in start..=end {
         let line_text = file_lines
@@ -394,7 +424,7 @@ fn format_match_block(
             state.lines_truncated = true;
         }
 
-        let formatted = if current == m.line_number {
+        let formatted = if (m.line_number..=last_matched).contains(&current) {
             format!("{}:{}: {}", rel_path, current, display_text)
         } else {
             format!("{}-{}- {}", rel_path, current, display_text)

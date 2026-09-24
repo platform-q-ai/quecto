@@ -271,3 +271,63 @@ fn test_grep_description_includes_example() {
         def.description
     );
 }
+
+/// #2136: the tool is the one content search agents use; its description
+/// says so, and its schema offers the rg options agents reach for in bash.
+#[test]
+fn the_definition_claims_all_content_search_and_offers_rg_options() {
+    let (tool, _ws, _tmp) = test_grep();
+    let definition = tool.definition();
+    assert!(
+        definition.description.contains(
+            "USE THIS TOOL FOR ALL CONTENT SEARCH: do not run rg, grep or git grep through bash"
+        ),
+        "{}",
+        definition.description
+    );
+    let schema: serde_json::Value = serde_json::from_str(&definition.parameters_schema).unwrap();
+    let properties = schema["properties"].as_object().unwrap();
+    for option in [
+        "pattern",
+        "patterns",
+        "path",
+        "glob",
+        "type",
+        "ignoreCase",
+        "literal",
+        "wordRegexp",
+        "multiline",
+        "maxPerFile",
+        "output",
+        "context",
+        "limit",
+    ] {
+        assert!(properties.contains_key(option), "schema lacks {option}");
+    }
+    assert_eq!(
+        schema["properties"]["output"]["enum"],
+        serde_json::json!(["content", "files", "count"])
+    );
+}
+
+/// #2136: a multiline match prints every line it spans as a match line.
+#[test]
+fn a_multiline_match_prints_every_line_it_spans() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let ws = tempfile::TempDir::new().unwrap();
+    std::fs::write(ws.path().join("m.rs"), "a\nb(\n  c)\nd\n").unwrap();
+    let json = format!(
+        r#"{{"type":"match","data":{{"path":{{"text":"{}/m.rs"}},"line_number":2,"lines":{{"text":"b(\n  c)\n"}},"absolute_offset":2,"submatches":[]}}}}"#,
+        ws.path().to_string_lossy()
+    );
+    let result = rt.block_on(format_grep_output(GrepFormatArgs {
+        json_output: &json,
+        sandbox: &Sandbox::new(None),
+        workspace: ws.path(),
+        match_limit: 100,
+        context_lines: 1,
+        max_line_bytes: 500,
+        max_output_bytes: 50 * 1024,
+    }));
+    assert_eq!(result, "m.rs-1- a\nm.rs:2: b(\nm.rs:3:   c)\nm.rs-4- d");
+}
