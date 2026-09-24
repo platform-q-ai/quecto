@@ -149,9 +149,10 @@ fn time_outside_the_probes_own_inspects_is_not_its_to_count() {
 }
 
 #[test]
-fn a_slow_inspect_trips_the_breaker_for_its_runtime_only() {
-    // A 4 s inspect (the script bound is 5 s): its runtime is hanging, so
-    // its other records wait; another runtime's record is still judged.
+fn a_slow_inspect_trips_the_breaker_for_its_config_only() {
+    // A 4 s inspect (the script bound is 5 s): its config's inspect command
+    // is hanging, so the records sharing it wait; another config's record
+    // is still judged.
     let host = Host {
         cost_millis: SLOW_INSPECT_MILLIS,
         ..host(vec![], vec![])
@@ -159,8 +160,8 @@ fn a_slow_inspect_trips_the_breaker_for_its_runtime_only() {
     let mut probe = ResidueProbe::new(&host);
     assert_eq!(probe.residue(&stopped("C1")), Residue::Nothing);
     assert_eq!(probe.residue(&stopped("C2")), Residue::Deferred);
-    let mut other_runtime = stopped("C3");
-    other_runtime.retained_inspect_argv = vec!["other-inspect".into()];
-    assert_eq!(probe.residue(&other_runtime), Residue::Nothing);
+    let mut other_config = stopped("C3");
+    other_config.retained_inspect_argv = vec!["other-inspect".into()];
+    assert_eq!(probe.residue(&other_config), Residue::Nothing);
     assert_eq!(*host.inspected.lock().unwrap(), ["C1", "C3"]);
 }

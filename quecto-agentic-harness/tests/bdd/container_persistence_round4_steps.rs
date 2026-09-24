@@ -253,3 +253,22 @@ fn then_registry_records_nothing(world: &mut QuectoWorld) {
         "every record should have been collected: {document}"
     );
 }
+
+// ─── A config's records share one inspect command (#2134) ───────────────────
+
+/// The residue probe's breaker is keyed on the retained inspect argv: two
+/// environments created through one config must record the same one.
+#[then(
+    expr = "the durable environment registry should record the same inspect command for {string} and {string}"
+)]
+fn then_same_inspect_command(world: &mut QuectoWorld, first: String, second: String) {
+    let document = super::container_persistence_steps::registry_document(world);
+    let inspect = |environment_ref: &str| {
+        document["environments"][environment_ref]["inspect"]
+            .as_array()
+            .filter(|argv| !argv.is_empty())
+            .cloned()
+            .unwrap_or_else(|| panic!("{environment_ref} records no inspect argv: {document}"))
+    };
+    assert_eq!(inspect(&first), inspect(&second), "{document}");
+}

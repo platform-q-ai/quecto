@@ -41,7 +41,8 @@ Feature: Environments outlive sessions
     # Stopped but still on file: its number stays taken within the session.
     When I spawn script-managed subagent "impl-ref-c2" into a new shared environment with task "IMPL_REF_C2_MARKER"
     Then the spawn result should not be an error
-    And the spawn result should include environment reference "C2"
+        And the spawn result should include environment reference "C2"
+    And the durable environment registry should record the same inspect command for "C1" and "C2"
     When I kill container "C2"
     Then the container command result should not be an error
     When I run quecto with arguments "container gc"

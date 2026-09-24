@@ -52,8 +52,11 @@ then forgets it: the CLI prints each forgotten ref, a session start logs
 them, and `gc --dry-run` only reports what it would forget. One restore
 spends at most 15 seconds of inspect time on such records (plus the last
 inspect's own 5-second bound), and an inspect that takes 4 seconds or more
-marks its runtime as hanging: that runtime's other records wait for a later
-restore while other runtimes' records are still judged. A `gc` judges once
+marks its config's inspect command as hanging: that config's other records
+wait for a later restore while other configs' records are still judged.
+Several configs on one hanging runtime (each repo's standard container is
+its own config) can spend the budget between them, and later records then
+wait until the runtime answers again. A `gc` judges once
 in its restore and again for what that restore kept, so it may take twice
 as long.
 A record whose state root itself is missing is kept (an unmounted disk

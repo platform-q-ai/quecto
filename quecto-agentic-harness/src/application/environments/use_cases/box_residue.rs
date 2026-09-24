@@ -5,11 +5,11 @@
 //! forgotten. The disk is asked first, so a box that left its state is
 //! never inspected. A probe counts only the time inside its own inspects
 //! against a budget ([`RESIDUE_INSPECT_BUDGET_MILLIS`]), and an inspect
-//! that answers slowly ([`SLOW_INSPECT_MILLIS`]) marks its runtime as
-//! hanging: the other records inspected the same way wait, while other
-//! runtimes' records are still judged. So a hanging runtime cannot hold a
-//! session start, and a record whose inspect fails fast (no argv, an
-//! unrecognised status) holds back no other. What is not inspected is
+//! that answers slowly ([`SLOW_INSPECT_MILLIS`]) marks its inspect command
+//! as hanging: the other records of that config (those sharing the command)
+//! wait, while other configs' records are still judged. So a hanging
+//! runtime cannot hold a session start, and a record whose inspect fails
+//! fast (no argv, an unrecognised status) holds back no other. What is not inspected is
 //! kept, to be judged by a later restore.
 use crate::domain::environment_registry::EnvironmentRecord;
 
@@ -20,8 +20,8 @@ use super::super::ports::EnvironmentProcess;
 /// stopped records (one inspect started within it may run to its bound).
 pub const RESIDUE_INSPECT_BUDGET_MILLIS: u64 = 15_000;
 
-/// An inspect this slow (the script bound is 5 s) marks its runtime as
-/// hanging for the rest of the probe.
+/// An inspect this slow (the script bound is 5 s) marks its inspect command,
+/// and so its config, as hanging for the rest of the probe.
 pub const SLOW_INSPECT_MILLIS: u64 = 4_000;
 
 /// Why a stopped record whose workspace names no environment directory is
@@ -54,9 +54,9 @@ pub(super) struct ResidueProbe<'a> {
     /// inspects (live records) is not the probe's to count.
     spent_millis: u64,
     budget_millis: u64,
-    /// Inspect argvs that answered slowly: their runtime is taken as
-    /// hanging (a circuit breaker), and its other records wait for a later
-    /// restore.
+    /// Inspect argvs that answered slowly: a config's records share one
+    /// (the environment id travels in the environment), so its other records
+    /// wait for a later restore (a circuit breaker).
     hanging: Vec<Vec<String>>,
 }
 
@@ -97,7 +97,7 @@ impl<'a> ResidueProbe<'a> {
     }
 
     /// Run the record's own inspect, counting its time and tripping the
-    /// breaker for its runtime when it answered slowly.
+    /// breaker for its config when it answered slowly.
     fn inspect(&mut self, record: &EnvironmentRecord) -> Residue {
         let started = self.process.inspect_clock_millis();
         let liveness = self.process.observe(record);
