@@ -59,6 +59,13 @@ impl ProcessObservation for Observation {
         p.started == "generation"
     }
 }
+/// Every harness is alive: settlement is decided by the actor alone.
+pub(super) struct Alive;
+impl ProcessObservation for Alive {
+    fn harness_dead(&self, _: &ProcessIdentity) -> bool {
+        false
+    }
+}
 pub(super) struct Board(pub Mutex<Vec<String>>);
 impl CoordinationPort for Board {
     fn snapshot(&self) -> Result<Snapshot, DomainError> {
@@ -92,14 +99,23 @@ async fn injected_application_service_runs_through_its_public_contract() {
     let mut snapshot = snapshot();
     snapshot.coordinator = "parent".into();
     let effects = Effects(Mutex::new(vec![]));
-    service.settle(&snapshot, "parent", &effects).await.unwrap();
+    service
+        .settle(&snapshot, "parent", &effects, &Alive)
+        .await
+        .unwrap();
     assert!(effects.0.lock().unwrap().is_empty());
     snapshot.status = service.observed_outcome(&snapshot, &Time(100.));
     assert_eq!(snapshot.status, RunStatus::Paused);
-    service.settle(&snapshot, "parent", &effects).await.unwrap();
+    service
+        .settle(&snapshot, "parent", &effects, &Alive)
+        .await
+        .unwrap();
     assert_eq!(*effects.0.lock().unwrap(), ["suspend"]);
     snapshot.status = RunStatus::Cancelled;
-    service.settle(&snapshot, "parent", &effects).await.unwrap();
+    service
+        .settle(&snapshot, "parent", &effects, &Alive)
+        .await
+        .unwrap();
     assert_eq!(
         *effects.0.lock().unwrap(),
         ["suspend", "cancel", "abort", "terminate"]

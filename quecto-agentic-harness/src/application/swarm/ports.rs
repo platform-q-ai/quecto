@@ -80,6 +80,7 @@ pub trait SwarmLifecycle: std::fmt::Debug + Send + Sync {
         snapshot: &'a Snapshot,
         actor: &'a str,
         processes: &'a dyn ProcessControl,
+        observation: &'a (dyn ProcessObservation + Sync),
     ) -> PortFuture<'a, Result<(), DomainError>>;
     fn observed_outcome(&self, snapshot: &Snapshot, clock: &dyn Clock) -> RunStatus;
 }

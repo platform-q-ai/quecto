@@ -296,8 +296,12 @@ reporting (native `summary`, `events`, `usage`; its own finished interpreter is
 cancelled). The supervisor then either resumes the same run (`swarm_control
 resume`, which extends the deadline by the paused time, clears the outcome and
 wakes every member) or closes it (`swarm_control close`), which makes the held
-outcome terminal and settles: local Python is cancelled, workers are aborted
-and asked to shut down by delegation (the `shutdown` protocol over the
+outcome terminal and settles: local Python is cancelled everywhere, and the
+coordinator ends the workers (#2121). Its harness launched them, so each end
+is recorded as deliberate first and posts no "exited unexpectedly" note; every
+other member only stops its own work and waits to be ended. Only when the
+coordinator's harness is gone do the remaining members end each other.
+Workers are aborted and asked to shut down by delegation (the `shutdown` protocol over the
 endpoint each member registered, the locally owned handle only for a member
 this harness launched itself; a member reachable neither way is reported as
 a settlement failure — no member is ever ended by its pid, and a member's

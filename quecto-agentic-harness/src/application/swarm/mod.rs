@@ -54,10 +54,27 @@ pub fn member_exited(
     reconcile(coordination, processes)
 }
 
+/// Whether the coordinator can no longer end the members itself: its row is
+/// dead, or its harness was observed gone.
+fn coordinator_gone(snapshot: &Snapshot, observation: &(impl ProcessObservation + ?Sized)) -> bool {
+    snapshot
+        .members
+        .iter()
+        .find(|m| m.id == snapshot.coordinator)
+        .is_some_and(|coordinator| {
+            coordinator.status == MemberStatus::Dead
+                || coordinator
+                    .process
+                    .as_ref()
+                    .is_some_and(|p| observation.harness_dead(p))
+        })
+}
+
 pub async fn settle(
     snapshot: &Snapshot,
     actor: &str,
     processes: &(impl ProcessControl + ?Sized),
+    observation: &(impl ProcessObservation + ?Sized),
 ) -> Result<(), DomainError> {
     if snapshot.status == crate::domain::swarm::RunStatus::Paused {
         // Every pause suspends local executions admitted up to this control
@@ -74,9 +91,30 @@ pub async fn settle(
         return Ok(());
     }
     processes.cancel_local_executions();
-    if actor == snapshot.coordinator && snapshot.status.abort_coordinator() {
+    let coordinating = actor == snapshot.coordinator;
+    if coordinating && snapshot.status.abort_coordinator() {
         processes.suspend_local_inference(snapshot);
     }
+    // Members are ended by the coordinator, whose harness launched them and
+    // so records each teardown as deliberate before the process exits
+    // (#2121). A member ending peers (or itself) over their sockets bypasses
+    // that record, and every exit is reported as unexpected. So a member
+    // stops only its own work and waits, unless the coordinator is gone and
+    // nobody else would end the run.
+    if coordinating || coordinator_gone(snapshot, observation) {
+        return end_members(snapshot, actor, processes).await;
+    }
+    processes.suspend_local_inference(snapshot);
+    Ok(())
+}
+
+/// Abort and terminate every live member except the coordinator, the actor
+/// last; one unreachable member never leaves the rest running.
+async fn end_members(
+    snapshot: &Snapshot,
+    actor: &str,
+    processes: &(impl ProcessControl + ?Sized),
+) -> Result<(), DomainError> {
     let mut members: Vec<_> = snapshot.members.iter().collect();
     members.sort_by_key(|m| m.id == actor);
     // Every live member is asked; a member that cannot be ended is reported
@@ -91,6 +129,10 @@ pub async fn settle(
         if coordinator {
             continue;
         }
+        debug_assert_ne!(
+            member.id, snapshot.coordinator,
+            "settlement never ends the coordinator"
+        );
         processes.abort(member).await;
         if let Err(error) = processes.terminate(member).await {
             failures.push(error.to_string());
@@ -148,8 +190,9 @@ impl SwarmLifecycle for LifecycleService {
         snapshot: &'a Snapshot,
         actor: &'a str,
         processes: &'a dyn ProcessControl,
+        observation: &'a (dyn ProcessObservation + Sync),
     ) -> PortFuture<'a, Result<(), DomainError>> {
-        Box::pin(settle(snapshot, actor, processes))
+        Box::pin(settle(snapshot, actor, processes, observation))
     }
     fn observed_outcome(
         &self,

@@ -197,7 +197,12 @@ pub async fn settle(context: SwarmContext) -> Result<Value, DomainError> {
         .map_err(|e| DomainError::Tool(e.to_string()))??;
     context
         .lifecycle
-        .settle(&snapshot, &context.member, &RuntimeProcesses(&context))
+        .settle(
+            &snapshot,
+            &context.member,
+            &RuntimeProcesses(&context),
+            &LinuxProcesses,
+        )
         .await?;
     tokio::task::spawn_blocking(move || reconcile(&context))
         .await
@@ -265,6 +270,7 @@ pub fn supervise(
                     &snapshot,
                     &context.member,
                     &RuntimeProcesses(&context),
+                    &LinuxProcesses,
                 )) {
                     tracing::error!(%error, "swarm terminal settlement failed");
                 }
@@ -411,6 +417,7 @@ fn settle_observed_snapshot(
                 snapshot,
                 &context.member,
                 &RuntimeProcesses(context),
+                &LinuxProcesses,
             )) {
                 tracing::error!(%error, "swarm suspension failed");
             }

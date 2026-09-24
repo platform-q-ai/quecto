@@ -77,7 +77,7 @@ async fn terminal_settlement_cancels_jobs_before_any_abort_and_preserves_reporti
             accepts: true,
             fail_terminate: false,
         };
-        settle(&snapshot(status), "parent", &processes)
+        settle(&snapshot(status), "parent", &processes, &AllAlive)
             .await
             .unwrap();
         let mut expected = vec!["cancel-jobs", "abort:worker", "terminate:worker"];
@@ -94,9 +94,14 @@ async fn failed_worker_abort_still_terminates_worker_and_suspends_local_coordina
         accepts: false,
         fail_terminate: false,
     };
-    settle(&snapshot(RunStatus::Failed), "parent", &processes)
-        .await
-        .unwrap();
+    settle(
+        &snapshot(RunStatus::Failed),
+        "parent",
+        &processes,
+        &AllAlive,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         *processes.events.lock().unwrap(),
         [
@@ -115,7 +120,7 @@ async fn active_runs_have_no_settlement_effects() {
             accepts: false,
             fail_terminate: false,
         };
-        settle(&snapshot(status), "parent", &processes)
+        settle(&snapshot(status), "parent", &processes, &AllAlive)
             .await
             .unwrap();
         assert!(processes.events.lock().unwrap().is_empty());
@@ -188,9 +193,14 @@ async fn suspension_cancels_only_local_work_without_terminating_members() {
         accepts: false,
         fail_terminate: false,
     };
-    settle(&snapshot(RunStatus::Paused), "parent", &processes)
-        .await
-        .unwrap();
+    settle(
+        &snapshot(RunStatus::Paused),
+        "parent",
+        &processes,
+        &AllAlive,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         *processes.events.lock().unwrap(),
         ["suspend-jobs", "suspend-local"]
@@ -205,7 +215,7 @@ async fn failed_or_expired_run_retains_coordinator_when_abort_delivery_fails() {
             accepts: false,
             fail_terminate: false,
         };
-        settle(&snapshot(status), "parent", &processes)
+        settle(&snapshot(status), "parent", &processes, &AllAlive)
             .await
             .unwrap();
         let events = processes.events.lock().unwrap();
@@ -235,7 +245,9 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
         accepts: true,
         fail_terminate: false,
     };
-    settle(&ended, "parent", &coordinator).await.unwrap();
+    settle(&ended, "parent", &coordinator, &AllAlive)
+        .await
+        .unwrap();
     assert_eq!(
         *coordinator.events.lock().unwrap(),
         ["suspend-jobs"],
@@ -246,7 +258,7 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
         accepts: true,
         fail_terminate: false,
     };
-    settle(&ended, "worker", &worker).await.unwrap();
+    settle(&ended, "worker", &worker, &AllAlive).await.unwrap();
     assert_eq!(
         *worker.events.lock().unwrap(),
         ["suspend-jobs", "suspend-local"]
@@ -259,7 +271,9 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
         accepts: true,
         fail_terminate: false,
     };
-    settle(&plain, "parent", &processes).await.unwrap();
+    settle(&plain, "parent", &processes, &AllAlive)
+        .await
+        .unwrap();
     assert_eq!(
         *processes.events.lock().unwrap(),
         ["suspend-jobs", "suspend-local"]
@@ -287,7 +301,7 @@ async fn an_unreachable_member_is_reported_after_the_others_were_asked() {
         process: None,
         endpoint: None,
     });
-    let error = settle(&snapshot, "parent", &processes)
+    let error = settle(&snapshot, "parent", &processes, &AllAlive)
         .await
         .expect_err("an unreachable member is a truthful failure");
     let text = error.to_string();
@@ -395,4 +409,71 @@ fn a_socket_loss_without_an_observed_exit_never_confirms_death() {
     // confirmed death.
     reconcile(&board, &Observations).unwrap();
     assert_eq!(*board.log.lock().unwrap(), ["quarantine:worker"]);
+}
+
+/// The coordinator's harness (pid 1) is gone; every other harness is alive.
+struct CoordinatorGone;
+impl ProcessObservation for CoordinatorGone {
+    fn harness_dead(&self, process: &ProcessIdentity) -> bool {
+        process.pid == 1
+    }
+}
+
+fn recording() -> Processes {
+    Processes {
+        events: Mutex::new(vec![]),
+        accepts: true,
+        fail_terminate: false,
+    }
+}
+
+#[tokio::test]
+async fn a_member_settling_a_closed_run_ends_nobody_and_leaves_ending_to_the_coordinator() {
+    // #2121: members that ended each other (and themselves) over their
+    // sockets bypassed the launcher, which then reported every exit as
+    // unexpected. Only the coordinator, whose harness launched them, ends
+    // members; a member stops only its own work.
+    for status in [
+        RunStatus::Succeeded,
+        RunStatus::Cancelled,
+        RunStatus::Failed,
+    ] {
+        let processes = recording();
+        settle(&snapshot(status), "worker", &processes, &AllAlive)
+            .await
+            .unwrap();
+        assert_eq!(
+            *processes.events.lock().unwrap(),
+            ["cancel-jobs", "suspend-local"],
+            "{status:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn members_end_the_run_themselves_once_the_coordinator_is_gone() {
+    let processes = recording();
+    settle(
+        &snapshot(RunStatus::Failed),
+        "worker",
+        &processes,
+        &CoordinatorGone,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        *processes.events.lock().unwrap(),
+        ["cancel-jobs", "abort:worker", "terminate:worker"]
+    );
+
+    let mut dead = snapshot(RunStatus::Failed);
+    dead.members[0].status = MemberStatus::Dead;
+    let processes = recording();
+    settle(&dead, "worker", &processes, &AllAlive)
+        .await
+        .unwrap();
+    assert_eq!(
+        *processes.events.lock().unwrap(),
+        ["cancel-jobs", "abort:worker", "terminate:worker"]
+    );
 }
