@@ -70,6 +70,7 @@ async fn runtime_never_signals_a_member_by_pid_when_it_is_neither_reachable_nor_
         status: MemberStatus::Live,
         process: Some(identity.clone()),
         endpoint: None,
+        launcher: None,
     };
     assert!(!processes.abort(&member).await);
     let error = processes

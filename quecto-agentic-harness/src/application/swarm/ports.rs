@@ -82,6 +82,13 @@ pub trait SwarmLifecycle: std::fmt::Debug + Send + Sync {
         processes: &'a dyn ProcessControl,
         observation: &'a (dyn ProcessObservation + Sync),
     ) -> PortFuture<'a, Result<(), DomainError>>;
+    /// A member still alive a grace after its run settled ends itself.
+    fn settle_overdue<'a>(
+        &'a self,
+        snapshot: &'a Snapshot,
+        actor: &'a str,
+        processes: &'a dyn ProcessControl,
+    ) -> PortFuture<'a, Result<(), DomainError>>;
     fn observed_outcome(&self, snapshot: &Snapshot, clock: &dyn Clock) -> RunStatus;
 }
 

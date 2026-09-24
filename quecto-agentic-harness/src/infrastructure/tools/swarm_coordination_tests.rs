@@ -43,3 +43,24 @@ fn control_receipts_require_typed_status_generation_and_budget() {
     assert_eq!(receipt.status, RunStatus::Paused);
     assert_eq!(receipt.generation, 7);
 }
+
+#[test]
+fn each_member_carries_its_launcher_so_settlement_knows_who_ends_it() {
+    // #2121: the store records who launched each member; a legacy row or the
+    // bootstrapped coordinator has none.
+    let snapshot = decode(
+        json!({"control_generation":0,"status":"succeeded","coordinator":"p",
+        "deadline":1,"members":[
+            {"id":"p","status":"live","launcher":null},
+            {"id":"w","status":"live","launcher":"p"},
+            {"id":"legacy","status":"live"}
+        ]}),
+    )
+    .expect("a closed run is readable");
+    let launchers: Vec<_> = snapshot
+        .members
+        .iter()
+        .map(|m| m.launcher.as_deref())
+        .collect();
+    assert_eq!(launchers, [None, Some("p"), None]);
+}

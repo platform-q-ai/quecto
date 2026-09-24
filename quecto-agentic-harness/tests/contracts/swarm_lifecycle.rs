@@ -18,6 +18,7 @@ pub(super) fn snapshot() -> Snapshot {
             id: "worker".into(),
             status: MemberStatus::Live,
             endpoint: Some("opaque-endpoint".into()),
+            launcher: None,
             process: Some(ProcessIdentity {
                 pid: 42,
                 started: "generation".into(),

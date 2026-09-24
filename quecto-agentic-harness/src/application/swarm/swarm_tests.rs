@@ -59,6 +59,7 @@ fn snapshot(status: RunStatus) -> Snapshot {
                     started: "identity".into(),
                 }),
                 endpoint: Some(id.into()),
+                launcher: None,
             })
             .collect(),
     }
@@ -300,6 +301,7 @@ async fn an_unreachable_member_is_reported_after_the_others_were_asked() {
         status: MemberStatus::Live,
         process: None,
         endpoint: None,
+        launcher: None,
     });
     let error = settle(&snapshot, "parent", &processes, &AllAlive)
         .await
@@ -475,5 +477,102 @@ async fn members_end_the_run_themselves_once_the_coordinator_is_gone() {
     assert_eq!(
         *processes.events.lock().unwrap(),
         ["cancel-jobs", "abort:worker", "terminate:worker"]
+    );
+}
+
+/// parent (coordinator, pid 1) launched a (2) and b (3); a launched c (4);
+/// r is reserved but never launched.
+fn tree(status: RunStatus) -> Snapshot {
+    let member = |id: &str, pid: Option<u32>, launcher: Option<&str>, status| Member {
+        id: id.into(),
+        status,
+        process: pid.map(|pid| ProcessIdentity {
+            pid,
+            started: "identity".into(),
+        }),
+        endpoint: Some(id.into()),
+        launcher: launcher.map(str::to_string),
+    };
+    Snapshot {
+        control_generation: 0,
+        status,
+        outcome: None,
+        coordinator: "parent".into(),
+        deadline: 100.,
+        members: vec![
+            member("parent", Some(1), None, MemberStatus::Live),
+            member("a", Some(2), Some("parent"), MemberStatus::Live),
+            member("b", Some(3), Some("parent"), MemberStatus::Live),
+            member("c", Some(4), Some("a"), MemberStatus::Live),
+            member("r", None, Some("parent"), MemberStatus::Reserved),
+        ],
+    }
+}
+
+fn ended_by(
+    snapshot: &Snapshot,
+    actor: &str,
+    observation: &impl ProcessObservation,
+) -> Vec<String> {
+    let processes = recording();
+    futures::executor::block_on(settle(snapshot, actor, &processes, observation)).unwrap();
+    let events = processes.events.lock().unwrap().clone();
+    events
+        .into_iter()
+        .filter_map(|e| e.strip_prefix("terminate:").map(str::to_string))
+        .collect()
+}
+
+#[test]
+fn each_harness_ends_the_members_it_launched_and_never_a_reserved_row() {
+    let run = tree(RunStatus::Succeeded);
+    assert_eq!(ended_by(&run, "parent", &AllAlive), ["a", "b"]);
+    assert_eq!(ended_by(&run, "a", &AllAlive), ["c"]);
+    assert!(ended_by(&run, "b", &AllAlive).is_empty());
+    assert!(ended_by(&run, "c", &AllAlive).is_empty());
+}
+
+#[test]
+fn the_coordinator_ends_members_whose_launcher_is_gone() {
+    let mut run = tree(RunStatus::Succeeded);
+    run.members[1].status = MemberStatus::Dead;
+    assert_eq!(ended_by(&run, "parent", &AllAlive), ["b", "c"]);
+}
+
+#[test]
+fn without_a_coordinator_every_member_ends_the_rest_itself_last() {
+    let run = tree(RunStatus::Failed);
+    assert_eq!(ended_by(&run, "b", &CoordinatorGone), ["a", "c", "b"]);
+    let mut missing = tree(RunStatus::Failed);
+    missing.members.remove(0);
+    assert_eq!(ended_by(&missing, "b", &AllAlive), ["a", "c", "b"]);
+}
+
+#[test]
+fn a_coordinator_that_cannot_be_observed_is_treated_as_present() {
+    let mut run = tree(RunStatus::Failed);
+    run.members[0].process = None;
+    assert!(ended_by(&run, "b", &AllAlive).is_empty());
+}
+
+#[tokio::test]
+async fn an_overdue_member_ends_only_itself_and_the_coordinator_never_does() {
+    let run = tree(RunStatus::Succeeded);
+    let processes = recording();
+    settle_overdue(&run, "b", &processes).await.unwrap();
+    assert_eq!(
+        *processes.events.lock().unwrap(),
+        ["abort:b", "terminate:b"]
+    );
+    let processes = recording();
+    settle_overdue(&run, "parent", &processes).await.unwrap();
+    assert!(processes.events.lock().unwrap().is_empty());
+    let processes = recording();
+    settle_overdue(&tree(RunStatus::Running), "b", &processes)
+        .await
+        .unwrap();
+    assert!(
+        processes.events.lock().unwrap().is_empty(),
+        "only a settled run"
     );
 }

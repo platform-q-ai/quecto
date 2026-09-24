@@ -274,10 +274,56 @@ pub fn supervise(
                 )) {
                     tracing::error!(%error, "swarm terminal settlement failed");
                 }
+                watch_until_ended(&context, &runtime);
             }
             Err(error) => tracing::error!(%error, "swarm settlement runtime failed"),
         }
     });
+}
+
+/// How long a member waits after settlement for its launcher to end it.
+const SELF_END_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// After settling, a member waits to be ended by its launcher (#2121). Each
+/// tick settles again on a fresh snapshot, so a coordinator lost meanwhile
+/// hands the ending to the members; a member still alive after the grace
+/// ends itself instead of keeping the environment alive. The coordinator's
+/// harness stays for reporting, so it stops watching at once.
+fn watch_until_ended(context: &SwarmContext, runtime: &tokio::runtime::Runtime) {
+    let started = std::time::Instant::now();
+    loop {
+        let Ok(snapshot) = context.snapshot() else {
+            tracing::error!("swarm settlement watch lost coordination");
+            return;
+        };
+        let waiting = snapshot.members.iter().any(|m| {
+            m.id == context.member
+                && m.id != snapshot.coordinator
+                && m.status == crate::domain::swarm::MemberStatus::Live
+        });
+        if waiting {
+            let outcome = if started.elapsed() >= SELF_END_GRACE {
+                runtime.block_on(context.lifecycle.settle_overdue(
+                    &snapshot,
+                    &context.member,
+                    &RuntimeProcesses(context),
+                ))
+            } else {
+                runtime.block_on(context.lifecycle.settle(
+                    &snapshot,
+                    &context.member,
+                    &RuntimeProcesses(context),
+                    &LinuxProcesses,
+                ))
+            };
+            if let Err(error) = outcome {
+                tracing::error!(%error, "swarm settlement retry failed");
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        } else {
+            return;
+        }
+    }
 }
 
 struct SystemClock;

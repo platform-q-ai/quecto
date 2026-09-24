@@ -296,12 +296,16 @@ reporting (native `summary`, `events`, `usage`; its own finished interpreter is
 cancelled). The supervisor then either resumes the same run (`swarm_control
 resume`, which extends the deadline by the paused time, clears the outcome and
 wakes every member) or closes it (`swarm_control close`), which makes the held
-outcome terminal and settles: local Python is cancelled everywhere, and the
-coordinator ends the workers (#2121). Its harness launched them, so each end
-is recorded as deliberate first and posts no "exited unexpectedly" note; every
-other member only stops its own work and waits to be ended. Only when the
-coordinator's harness is gone do the remaining members end each other.
-Workers are aborted and asked to shut down by delegation (the `shutdown` protocol over the
+outcome terminal and settles: local Python is cancelled everywhere, and each
+member is ended by the harness that launched it (#2121), which records the
+end as deliberate first, so a close posts no "exited unexpectedly" notes. The
+coordinator also ends members whose launcher is gone. Any other member only
+stops its own work and waits; if the coordinator's harness is gone, the
+members end each other, and a member still alive 30 seconds after settling
+ends itself (its launcher then reports that exit, since the teardown did not
+go as planned). A member that joined from outside the swarm is ended by the
+coordinator over its endpoint, so the harness outside that launched it still
+reports its exit. Workers are aborted and asked to shut down by delegation (the `shutdown` protocol over the
 endpoint each member registered, the locally owned handle only for a member
 this harness launched itself; a member reachable neither way is reported as
 a settlement failure — no member is ever ended by its pid, and a member's
