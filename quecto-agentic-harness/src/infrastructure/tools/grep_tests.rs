@@ -331,3 +331,82 @@ fn a_multiline_match_prints_every_line_it_spans() {
     }));
     assert_eq!(result, "m.rs-1- a\nm.rs:2: b(\nm.rs:3:   c)\nm.rs-4- d");
 }
+
+/// A stand-in rg that prints `stdout` then exits with `code`.
+fn fake_rg(dir: &std::path::Path, stdout_command: &str, code: i32) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("fake-rg.sh");
+    std::fs::write(&path, format!("#!/bin/sh\n{stdout_command}\necho 'rg: ./locked: Permission denied (os error 13)' >&2\nexit {code}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+/// #2136: rg's exit 2 after partial results (one unreadable file) returns
+/// what it found with a notice, not an error; with nothing found it is one.
+#[tokio::test]
+async fn partial_results_before_an_rg_error_are_returned_with_a_notice() {
+    let tmp = TempDir::new().unwrap();
+    let ws = Arc::new(tmp.path().to_path_buf());
+    std::fs::write(tmp.path().join("a.rs"), "needle\n").unwrap();
+    let listing = format!("printf '%s\\0' '{}/a.rs'", tmp.path().display());
+    let tool = GrepTool::with_rg_binary(
+        ws.clone(),
+        Arc::new(Sandbox::new(None)),
+        fake_rg(tmp.path(), &listing, 2),
+    );
+    let result = tool
+        .execute(r#"{"pattern": "needle", "output": "files"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    assert!(result.content.starts_with("a.rs\n"), "{}", result.content);
+    assert!(
+        result.content.contains(
+            "rg reported errors, results may be incomplete: rg: ./locked: Permission denied"
+        ),
+        "{}",
+        result.content
+    );
+    let tool = GrepTool::with_rg_binary(
+        ws,
+        Arc::new(Sandbox::new(None)),
+        fake_rg(tmp.path(), "true", 2),
+    );
+    let result = tool
+        .execute(r#"{"pattern": "needle", "output": "files"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error, "{}", result.content);
+}
+
+/// #2136: output past the read cap is reported, and a listing it cut off
+/// keeps only complete records.
+#[tokio::test]
+async fn output_past_the_cap_is_reported_as_incomplete() {
+    let tmp = TempDir::new().unwrap();
+    let ws = Arc::new(tmp.path().to_path_buf());
+    let flood = format!(
+        "i=0; while [ $i -lt 20000 ]; do printf '%s/f%05d.rs\\0' '{}' $i; i=$((i+1)); done",
+        tmp.path().display()
+    );
+    let tool = GrepTool::with_rg_binary(
+        ws,
+        Arc::new(Sandbox::new(None)),
+        fake_rg(tmp.path(), &flood, 0),
+    );
+    let result = tool
+        .execute(r#"{"pattern": "x", "output": "files", "limit": 5}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains("results are incomplete"),
+        "{}",
+        result.content
+    );
+    assert!(
+        result.content.starts_with("f00000.rs\n"),
+        "{}",
+        result.content
+    );
+}

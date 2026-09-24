@@ -17,29 +17,42 @@ pub(super) struct ListedFile {
 }
 
 /// Parse rg's `--null` listing: `path\0` per file (`-l`), or
-/// `path\0count\n` per file (`-c`). A record that does not parse is skipped.
+/// `path\0count\n` per file (`--count-matches`). Only complete records are
+/// read: a tail cut off by the output cap is dropped, and a path may hold a
+/// newline or a colon.
 pub(super) fn parse_listing(stdout: &str, mode: OutputMode) -> Vec<ListedFile> {
     match mode {
-        OutputMode::Files => stdout
-            .split('\0')
-            .map(|path| path.trim_start_matches('\n'))
-            .filter(|path| !path.is_empty())
-            .map(|path| ListedFile {
-                path: path.to_string(),
-                count: None,
-            })
-            .collect(),
-        OutputMode::Count => stdout
-            .lines()
-            .filter_map(|line| {
-                let (path, count) = line.split_once('\0')?;
-                let count = count.trim().parse::<u64>().ok()?;
-                (!path.is_empty()).then(|| ListedFile {
+        OutputMode::Files => {
+            let mut records: Vec<&str> = stdout.split('\0').collect();
+            // The piece after the last terminator is incomplete (or empty).
+            records.pop();
+            records
+                .into_iter()
+                .filter(|path| !path.is_empty())
+                .map(|path| ListedFile {
                     path: path.to_string(),
-                    count: Some(count),
+                    count: None,
                 })
-            })
-            .collect(),
+                .collect()
+        }
+        OutputMode::Count => {
+            let mut files = Vec::new();
+            let mut rest = stdout;
+            while let Some((path, after)) = rest.split_once('\0') {
+                let Some((count, next)) = after.split_once('\n') else {
+                    break;
+                };
+                rest = next;
+                match count.trim().parse::<u64>() {
+                    Ok(count) if !path.is_empty() => files.push(ListedFile {
+                        path: path.to_string(),
+                        count: Some(count),
+                    }),
+                    Ok(_) | Err(_) => {}
+                }
+            }
+            files
+        }
         OutputMode::Content => Vec::new(),
     }
 }
@@ -66,11 +79,12 @@ pub(super) fn format_listing(mut files: Vec<ListedFile>, f: &ListingFormat<'_>) 
     let mut bytes = 0;
     let mut byte_capped = false;
     for file in files.iter().take(f.limit) {
-        let shown = file
+        let relative = file
             .path
             .strip_prefix(ws_slash.as_str())
-            .or_else(|| file.path.strip_prefix("./"))
             .unwrap_or(&file.path);
+        // A search of "." reports `<workspace>/./x`: show `x`.
+        let shown = relative.strip_prefix("./").unwrap_or(relative);
         let line = match file.count {
             Some(count) => format!("{shown}: {count}"),
             None => shown.to_string(),

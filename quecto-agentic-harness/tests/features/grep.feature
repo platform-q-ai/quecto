@@ -129,9 +129,13 @@ Feature: Grep Tool
       """
       needle
       """
-    And a grep workspace file "src/c.rs" with content:
+        And a grep workspace file "src/c.rs" with content:
       """
       nothing here
+      """
+    And a grep workspace file ".git/COMMIT_EDITMSG" with content:
+      """
+      add needle
       """
     When I grep with arguments:
       """
@@ -139,20 +143,22 @@ Feature: Grep Tool
       """
     Then the grep result should contain "src/a.rs"
     And the grep result should contain "src/b.rs"
+    And the grep result should list "src/a.rs" before "src/b.rs"
     And the grep result should not contain "src/c.rs"
     And the grep result should not contain "fn needle"
+    And the grep result should not contain ".git"
+    And the grep result should not contain "./"
     And the grep result should not be an error
 
   @done @issue-2136
-  Scenario: Count mode reports each file's matches, busiest first
+    Scenario: Count mode reports each file's matches, busiest first
     Given a grep workspace file "one.rs" with content:
       """
       needle
       """
     And a grep workspace file "three.rs" with content:
       """
-      needle
-      needle
+      needle needle
       needle
       """
     When I grep with arguments:

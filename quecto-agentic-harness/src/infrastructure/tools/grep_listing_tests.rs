@@ -91,3 +91,38 @@ fn a_listing_is_capped_by_the_limit_and_the_output_budget() {
     assert!(capped.starts_with("a\n\n["), "{capped}");
     assert!(capped.contains("limit reached"), "{capped}");
 }
+
+#[test]
+fn a_record_cut_off_by_the_output_cap_is_dropped() {
+    assert_eq!(
+        parse_listing("/ws/a.rs\0/ws/b.r", OutputMode::Files),
+        files(&["/ws/a.rs"])
+    );
+    assert_eq!(
+        parse_listing("/ws/a.rs\x0012\n/ws/b.rs\x001", OutputMode::Count),
+        vec![ListedFile {
+            path: "/ws/a.rs".into(),
+            count: Some(12)
+        }],
+        "a count without its newline may be short"
+    );
+}
+
+#[test]
+fn a_count_record_keeps_a_path_holding_a_newline_whole() {
+    assert_eq!(
+        parse_listing("/ws/nl\nname.txt\x001\n", OutputMode::Count),
+        vec![ListedFile {
+            path: "/ws/nl\nname.txt".into(),
+            count: Some(1)
+        }]
+    );
+}
+
+#[test]
+fn a_search_of_dot_shows_paths_without_the_dot() {
+    assert_eq!(
+        format(files(&["/ws/./src/a.rs", "./b.rs"]), 10, 1024),
+        "b.rs\nsrc/a.rs"
+    );
+}

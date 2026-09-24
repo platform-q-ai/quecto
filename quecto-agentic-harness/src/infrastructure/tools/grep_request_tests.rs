@@ -107,6 +107,10 @@ fn an_argument_of_the_wrong_shape_is_refused_by_name() {
             "maxPerFile must be a whole number of at least 1",
         ),
         (
+            json!({"pattern": "x", "limit": 0}),
+            "limit must be a whole number of at least 1",
+        ),
+        (
             json!({"pattern": "x", "limit": -3}),
             "limit must be a whole number of at least 1",
         ),
