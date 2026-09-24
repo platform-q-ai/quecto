@@ -462,18 +462,7 @@ pub(crate) fn build_agent_from_config(
         }
     };
     let effort = startup_effort::admit(&catalogue.effort, flags.effort, &config, &model, stderr)?;
-    match startup_route::startup_route(provider.route_check(&model), &model, flags.spawned) {
-        startup_route::StartupRoute::Proceed => {}
-        startup_route::StartupRoute::Warn(message) => {
-            // Shown now: the buffer is only returned when the harness exits.
-            eprintln!("{message}");
-            stderr.push_str(&format!("{message}\n"));
-        }
-        startup_route::StartupRoute::Refuse(message) => {
-            stderr.push_str(&format!("{message}\n"));
-            return None;
-        }
-    }
+    startup_route::admit(provider.route_check(&model), &model, flags.spawned, stderr)?;
     // #1113: an explicit `--workflow` session arms the idle-boundary template
     // selector nudge — the selector reaches the model through the nudge
     // channel and the workflow tool description, never through the system

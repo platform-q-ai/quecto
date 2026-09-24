@@ -36,6 +36,29 @@ pub(super) fn startup_route(check: RouteCheck, model: &str, spawned: bool) -> St
     }
 }
 
+/// Applies the verdict: `None` stops the startup (a spawned child), a
+/// warning is shown at once (the buffer is only returned when the harness
+/// exits) and kept for the exit report.
+pub(super) fn admit(
+    check: RouteCheck,
+    model: &str,
+    spawned: bool,
+    stderr: &mut String,
+) -> Option<()> {
+    match startup_route(check, model, spawned) {
+        StartupRoute::Proceed => Some(()),
+        StartupRoute::Warn(message) => {
+            eprintln!("{message}");
+            stderr.push_str(&format!("{message}\n"));
+            Some(())
+        }
+        StartupRoute::Refuse(message) => {
+            stderr.push_str(&format!("{message}\n"));
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "startup_route_tests.rs"]
 mod tests;

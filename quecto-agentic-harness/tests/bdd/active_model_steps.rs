@@ -273,7 +273,10 @@ fn when_active_model_changed(world: &mut QuectoWorld, model: String) {
         effort,
         defaults,
     );
-    let switched = use_case.execute(&mut AmLoop(&mut world.active_model), &model);
+    // AmLoop routes every model, so these catalogue switches always apply.
+    let switched = use_case
+        .execute(&mut AmLoop(&mut world.active_model), &model)
+        .expect("a routable switch applies");
     world.active_model.switched = Some(switched);
 }
 
