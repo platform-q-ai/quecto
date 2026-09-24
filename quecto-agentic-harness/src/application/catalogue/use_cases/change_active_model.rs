@@ -88,9 +88,14 @@ impl ChangeActiveModel {
     }
 
     /// Plan and apply: the loop runs on `model` with its limits from the
-    /// next turn on, and its effort is reset for the new model.
-    pub fn execute(&self, runtime: &mut dyn ModelRuntime, model: &str) -> ModelSwitched {
-        self.apply(runtime, self.plan(model), None)
+    /// next turn on, and its effort is reset for the new model. Refused, like
+    /// every switch, when no configured provider can route it (#2126).
+    pub fn execute(
+        &self,
+        runtime: &mut dyn ModelRuntime,
+        model: &str,
+    ) -> Result<ModelSwitched, ModelSwitchError> {
+        self.execute_with_default(runtime, model, None)
     }
 
     /// Plan, record the model as the configured default of `persist` when

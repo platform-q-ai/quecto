@@ -464,7 +464,11 @@ pub(crate) fn build_agent_from_config(
     let effort = startup_effort::admit(&catalogue.effort, flags.effort, &config, &model, stderr)?;
     match startup_route::startup_route(provider.route_check(&model), &model, flags.spawned) {
         startup_route::StartupRoute::Proceed => {}
-        startup_route::StartupRoute::Warn(message) => stderr.push_str(&format!("{message}\n")),
+        startup_route::StartupRoute::Warn(message) => {
+            // Shown now: the buffer is only returned when the harness exits.
+            eprintln!("{message}");
+            stderr.push_str(&format!("{message}\n"));
+        }
         startup_route::StartupRoute::Refuse(message) => {
             stderr.push_str(&format!("{message}\n"));
             return None;
@@ -740,6 +744,9 @@ mod issue_926_tests;
 mod no_session_tests;
 #[path = "agent/parent_control_startup.rs"]
 mod parent_control_startup;
+#[cfg(test)]
+#[path = "agent_2126_route_tests.rs"]
+mod route_2126_tests;
 #[cfg(test)]
 #[path = "agent_startup_identity_tests.rs"]
 mod startup_identity_tests;

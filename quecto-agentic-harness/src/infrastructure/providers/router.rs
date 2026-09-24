@@ -58,8 +58,10 @@ impl ProviderRouter {
             }
             let truncated = truncate_prefix(prefix, MAX_PREFIX_IN_ERROR);
             return Err(DomainError::Provider(format!(
-                "no configured provider '{}'",
-                truncated
+                "no configured provider '{}'; configured providers: {}. Switch with \
+                 /model <provider>/<model>",
+                truncated,
+                self.provider_names().join(", ")
             )));
         }
 

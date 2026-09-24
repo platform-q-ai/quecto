@@ -24,7 +24,10 @@ pub(super) fn startup_route(check: RouteCheck, model: &str, spawned: bool) -> St
                 configured.join(", ")
             );
             match spawned {
-                true => StartupRoute::Refuse(format!("agent: cannot start with {message}")),
+                true => StartupRoute::Refuse(format!(
+                    "agent: cannot start with {message}. Spawn it with `model` set to one of \
+                     them as provider/model"
+                )),
                 false => StartupRoute::Warn(format!(
                     "agent: warning: {message}. Prompts will fail until the model is changed"
                 )),

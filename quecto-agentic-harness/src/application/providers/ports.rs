@@ -53,7 +53,6 @@ pub struct ChatRequest<'a> {
     pub effort: Option<EffortLevel>,
 }
 
-/// Port: an LLM provider that can process chat requests.
 /// Whether a model id would reach a provider (#2126).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RouteCheck {
@@ -67,6 +66,7 @@ pub enum RouteCheck {
     },
 }
 
+/// Port: an LLM provider that can process chat requests.
 pub trait LlmProvider: Send + Sync + std::fmt::Debug {
     /// Human-readable provider name (e.g. "openai", "anthropic").
     fn name(&self) -> &str;

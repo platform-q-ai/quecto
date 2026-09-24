@@ -332,7 +332,10 @@ fn a_model_added_since_the_last_read_is_switchable_without_a_refresh() {
 fn an_unparsable_reference_is_unknown_with_no_limits_and_still_switches() {
     let rig = rig(vec![], FakeRuntime::none());
     let mut runtime = FakeLoop::default();
-    let switched = rig.use_case.execute(&mut runtime, "not a reference");
+    let switched = rig
+        .use_case
+        .execute(&mut runtime, "not a reference")
+        .unwrap();
     assert_eq!(
         switched.plan.verdict,
         ModelSelectionVerdict::Unknown {
@@ -352,7 +355,7 @@ fn execute_applies_model_and_limits_and_resets_effort_for_the_new_model() {
         effort: Some(EffortLevel::XHigh),
         ..Default::default()
     };
-    let switched = rig.use_case.execute(&mut runtime, "acme/limited");
+    let switched = rig.use_case.execute(&mut runtime, "acme/limited").unwrap();
     assert_eq!(runtime.model, "acme/limited");
     assert_eq!(runtime.limits.max_output_tokens, Some(50));
     assert_eq!(
@@ -397,7 +400,7 @@ fn a_not_runnable_verdict_is_carried_and_the_switch_still_proceeds() {
     .unwrap();
     let rig = rig(vec![keyless.clone()], FakeRuntime::over(vec![keyless], 1));
     let mut runtime = FakeLoop::default();
-    let switched = rig.use_case.execute(&mut runtime, "acme/keyless");
+    let switched = rig.use_case.execute(&mut runtime, "acme/keyless").unwrap();
     assert_eq!(runtime.model, "acme/keyless");
     assert_eq!(
         switched.plan.verdict,
@@ -514,7 +517,10 @@ fn without_a_scope_nothing_is_recorded_and_execute_is_unchanged() {
         .execute_with_default(&mut lp, "acme/m", None)
         .unwrap();
     assert_eq!(switched.persisted, None);
-    assert_eq!(rig.use_case.execute(&mut lp, "acme/m").persisted, None);
+    assert_eq!(
+        rig.use_case.execute(&mut lp, "acme/m").unwrap().persisted,
+        None
+    );
 }
 
 #[test]
