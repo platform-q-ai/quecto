@@ -60,6 +60,18 @@ pub trait Clock {
     fn now_seconds(&self) -> f64;
 }
 
+/// What a harness does next once its run has settled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettlementStep {
+    /// Nothing is left for this harness: it is the coordinator, or its own
+    /// row is no longer live, or the run is not terminal.
+    Done,
+    /// Still live: settle again on a fresh snapshot and wait for the launcher.
+    Wait,
+    /// Still live past the grace its launcher's teardown needs: end itself.
+    EndSelf,
+}
+
 /// Application lifecycle entrypoint, injected by the composition root.
 pub trait SwarmLifecycle: std::fmt::Debug + Send + Sync {
     fn reconcile(
@@ -89,7 +101,7 @@ pub trait SwarmLifecycle: std::fmt::Debug + Send + Sync {
         actor: &str,
         elapsed: std::time::Duration,
         grace: std::time::Duration,
-    ) -> super::SettlementStep;
+    ) -> SettlementStep;
     /// A member still alive a grace after its run settled ends itself.
     fn settle_overdue<'a>(
         &'a self,

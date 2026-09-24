@@ -323,7 +323,7 @@ impl WatchBudget {
 /// ends itself instead of keeping the environment alive. What to do each
 /// tick is the application's decision (`settlement_step`).
 fn watch_until_ended(context: &SwarmContext, runtime: &tokio::runtime::Runtime) {
-    use crate::application::swarm::SettlementStep;
+    use crate::application::swarm::ports::SettlementStep;
     let started = std::time::Instant::now();
     let mut retry_logged = false;
     let mut budget = WatchBudget::default();

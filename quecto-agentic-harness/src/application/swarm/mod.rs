@@ -6,7 +6,8 @@ use crate::domain::swarm::{Member, MemberExit, MemberStatus, Snapshot};
 pub mod ports;
 
 use ports::{
-    Clock, CoordinationPort, PortFuture, ProcessControl, ProcessObservation, SwarmLifecycle,
+    Clock, CoordinationPort, PortFuture, ProcessControl, ProcessObservation, SettlementStep,
+    SwarmLifecycle,
 };
 
 pub fn reconcile(
@@ -107,18 +108,6 @@ fn ends(
         (None, SettlingAs::Coordinator | SettlingAs::Orphan) => true,
         _ => false,
     }
-}
-
-/// What a harness does next once its run has settled.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SettlementStep {
-    /// Nothing is left for this harness: it is the coordinator, or its own
-    /// row is no longer live, or the run is not terminal.
-    Done,
-    /// Still live: settle again on a fresh snapshot and wait for the launcher.
-    Wait,
-    /// Still live past the grace its launcher's teardown needs: end itself.
-    EndSelf,
 }
 
 /// The next step for `actor` `elapsed` after it first settled (#2121).
