@@ -97,7 +97,11 @@ def revalidation(task, revision, evidence):
 
 
 def notification_targets(run, actor, members, events, state):
-    """Coalesce actionable changes; reads/acks/ownership bookkeeping never wake peers."""
+    """Coalesce actionable changes; reads/acks never wake peers.
+
+    Each event is judged from its own actor's view (`event['actor']`, else
+    `actor`), so the sender and a receiver's accept_wake re-check agree.
+    """
     if run['status'] != 'running':
         return []
     targets = set()
@@ -107,19 +111,52 @@ def notification_targets(run, actor, members, events, state):
         tasks.get(dep, {}).get('status') == 'completed' for dep in task['dependencies'])
         for task in tasks.values())
     live = {m['id']: m for m in members if m['status'] == 'live' and m['id'] != actor}
+    everyone = {m['id'] for m in members if m['status'] == 'live'}
     for event in events:
         action, detail = event['action'], event['detail']
         if action == 'message_accepted' and detail['message'] in unread:
             targets.add(detail['recipient'])
-        elif action in ('submitted', 'blocked'):
-            if tasks.get(detail['task'], {}).get('status') == action:
-                targets.add(run['coordinator'])
+        elif action == 'amended':
+            targets.update(live)
         elif action in ('evidence', 'death_confirmed'):
             targets.add(run['coordinator'])
-        elif action == 'amended' or (ready and action in (
-                'task_created', 'dependencies', 'released', 'verified', 'revalidated', 'recovered', 'revoked')):
-            targets.update(live)
+        elif action in ('submitted', 'blocked') and tasks.get(detail['task'], {}).get('status') == action:
+            targets.add(run['coordinator'])
+        if ready and action in READY_WORK_ACTIONS:
+            takers = ready_work_takers(run, event.get('actor', actor), everyone, tasks)
+            targets.update(takers - {run['coordinator']} if action in OWNERSHIP_ACTIONS else takers)
     return [live[identity] for identity in sorted(targets) if identity in live]
+
+
+# Events after which ready work may be waiting for a taker (#2127).
+READY_WORK_ACTIONS = ('task_created', 'dependencies', 'released', 'verified', 'revalidated',
+                      'recovered', 'revoked', 'claimed', 'submitted', 'blocked', 'death_confirmed')
+# A worker's own progress: it concerns the coordinator only through its own
+# submitted/blocked wake, not as a taker of the remaining ready work.
+OWNERSHIP_ACTIONS = ('claimed', 'submitted', 'blocked')
+# Task statuses in which the owner is working on, or waiting on, its own task.
+WORK_HOLDING_STATUSES = ('claimed', 'blocked', 'submitted')
+# Of those, the ones in which the owner is still working (not parked).
+WORKING_STATUSES = ('claimed', 'blocked')
+
+
+def ready_work_takers(run, event_actor, everyone, tasks):
+    """Who an event hands ready work to (#2127), from the event actor's view.
+
+    A member holding a claimed, blocked or submitted task has its work, so
+    ready work is for the others. When none of them but the coordinator (which
+    never claims) is free, members that only wait for review (parked) take it
+    after all, so it is never left idle. The event's actor is never a taker.
+    """
+    others = everyone - {event_actor}
+    holding = {task.get('owner') for task in tasks.values()
+               if task['status'] in WORK_HOLDING_STATUSES and task.get('owner')}
+    free = {identity for identity in others if identity not in holding}
+    if free - {run['coordinator']}:
+        return free
+    working = {task.get('owner') for task in tasks.values()
+               if task['status'] in WORKING_STATUSES and task.get('owner')}
+    return {identity for identity in others if identity not in working}
 
 
 OWNER_STATES = ('active', 'idle', 'reserved', 'lost', 'dead', 'unknown')

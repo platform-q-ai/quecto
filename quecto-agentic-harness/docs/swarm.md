@@ -461,7 +461,21 @@ Wake hints are selected from the invoking member's actionable events and coalesc
 using a durable per-actor cursor. Reading the board, acknowledging messages and
 reservation bookkeeping do not broadcast more work. Message hints target their
 recipient; submissions/blockers/evidence target the coordinator; changes that
-make work available notify peers. The cursor advances atomically before external
+make work available notify only peers free to take it (#2127). Any task event
+that leaves claimable work (created, released, verified, claimed, submitted,
+blocked, ...) wakes the members other than its actor that hold no claimed,
+blocked or submitted task, plus the coordinator unless the event is a worker's
+own claim, submission or block. When none of them but the coordinator is free,
+members waiting only for review (parked) are woken as well. A worker is not
+told about work that became ready while it held its claim, so the guidance has
+it check `op=summary` for ready work after submitting before it yields; a
+confirmed member death also re-offers ready work. Otherwise a parked member stays parked until a message reaches
+it, the contract is amended, or its task is verified or revoked (it is then
+free). When a burst of new tasks outnumbers the free members, the rest are handed
+on claim by claim rather than every member being woken at once. Each event is judged from its actor's view, by
+the sender and again by the receiver's wake check, so both agree. A member
+that cannot reserve a file releases the task and yields rather than holding
+its claim: its release hands the task on. The cursor advances atomically before external
 notification, so a failed hint is reported but not endlessly retried; the durable
 board/inbox remains authoritative. Terminal runs generate no new actionable hints.
 Already queued hints instruct the recipient to inspect `op=summary` first and,
