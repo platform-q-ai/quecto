@@ -181,6 +181,9 @@ fn a_joiners_write_on_a_restored_record_never_reverts_the_creators_status() {
         fn state_on_disk(&self, _: &std::path::Path) -> StateOnDisk {
             StateOnDisk::Present
         }
+        fn inspect_clock_millis(&self) -> u64 {
+            0
+        }
     }
     let dir = tempfile::TempDir::new().unwrap();
     let store: Arc<dyn EnvironmentRegistryStore> =

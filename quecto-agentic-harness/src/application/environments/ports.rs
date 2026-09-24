@@ -236,6 +236,9 @@ pub trait EnvironmentProcess: Send + Sync {
     fn cleanup(&self, record: &EnvironmentRecord) -> Result<(), String>;
     /// Whether an environment's state directory is still on disk (#2134).
     fn state_on_disk(&self, environment_dir: &Path) -> StateOnDisk;
+    /// Monotonic milliseconds, so a caller can bound how long it spends
+    /// inspecting (#2134); only differences are meaningful.
+    fn inspect_clock_millis(&self) -> u64;
 }
 
 /// The host's inventory of environments outside any registry, through a

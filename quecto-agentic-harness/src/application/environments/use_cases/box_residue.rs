@@ -4,20 +4,18 @@
 //! own retained `inspect` is nothing left, and the record may be
 //! forgotten. The disk is asked first, so a box that left its state is
 //! never inspected. Inspects share a time budget per probe
-//! ([`RESIDUE_INSPECT_BUDGET`]), so a hanging runtime cannot hold a
+//! ([`RESIDUE_INSPECT_BUDGET_MILLIS`]), so a hanging runtime cannot hold a
 //! session start, while a record whose inspect fails fast (no argv, an
 //! unrecognised status) costs next to nothing and holds back no other.
 //! What is not inspected is kept, to be judged by a later restore.
-use std::time::{Duration, Instant};
-
 use crate::domain::environment_registry::EnvironmentRecord;
 
 use super::super::dto::{EnvironmentLiveness, StateOnDisk};
 use super::super::ports::EnvironmentProcess;
 
-/// How long one restore or collection spends inspecting stopped records
-/// (one inspect started within it may run to its own bound).
-pub const RESIDUE_INSPECT_BUDGET: Duration = Duration::from_secs(15);
+/// How long, in milliseconds, one restore or collection spends inspecting
+/// stopped records (one inspect started within it may run to its bound).
+pub const RESIDUE_INSPECT_BUDGET_MILLIS: u64 = 15_000;
 
 /// Why a stopped record whose workspace names no environment directory is
 /// kept.
@@ -42,35 +40,23 @@ pub(super) enum Residue {
     Kept(String),
 }
 
-/// Monotonic time since a probe began.
-type Clock<'a> = Box<dyn Fn() -> Duration + 'a>;
-
 /// One restore's (or collection's) judge of stopped records' boxes.
 pub(super) struct ResidueProbe<'a> {
     process: &'a dyn EnvironmentProcess,
-    clock: Clock<'a>,
-    budget: Duration,
+    began_millis: u64,
+    budget_millis: u64,
 }
 
 impl<'a> ResidueProbe<'a> {
     pub fn new(process: &'a dyn EnvironmentProcess) -> Self {
-        let began = Instant::now();
-        Self::with_clock(
-            process,
-            Box::new(move || began.elapsed()),
-            RESIDUE_INSPECT_BUDGET,
-        )
+        Self::with_budget(process, RESIDUE_INSPECT_BUDGET_MILLIS)
     }
 
-    pub fn with_clock(
-        process: &'a dyn EnvironmentProcess,
-        clock: Clock<'a>,
-        budget: Duration,
-    ) -> Self {
+    pub fn with_budget(process: &'a dyn EnvironmentProcess, budget_millis: u64) -> Self {
         Self {
             process,
-            clock,
-            budget,
+            began_millis: process.inspect_clock_millis(),
+            budget_millis,
         }
     }
 
@@ -88,7 +74,11 @@ impl<'a> ResidueProbe<'a> {
     }
 
     fn runtime_residue(&mut self, record: &EnvironmentRecord) -> Residue {
-        if (self.clock)() < self.budget {
+        let spent = self
+            .process
+            .inspect_clock_millis()
+            .saturating_sub(self.began_millis);
+        if spent < self.budget_millis {
             match self.process.observe(record) {
                 EnvironmentLiveness::Gone => Residue::Nothing,
                 EnvironmentLiveness::Running => {

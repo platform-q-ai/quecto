@@ -153,6 +153,9 @@ impl EnvironmentProcess for FakeProcess {
             false => StateOnDisk::Absent,
         }
     }
+    fn inspect_clock_millis(&self) -> u64 {
+        0
+    }
 }
 
 pub(super) fn config() -> DiagnosableContainerConfig {

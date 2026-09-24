@@ -82,6 +82,12 @@ impl EnvironmentProcess for ScriptEnvironmentProcess {
             )),
         }
     }
+
+    fn inspect_clock_millis(&self) -> u64 {
+        static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let elapsed = ORIGIN.get_or_init(std::time::Instant::now).elapsed();
+        u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+    }
 }
 
 #[cfg(test)]

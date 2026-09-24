@@ -144,6 +144,9 @@ impl EnvironmentProcess for FakeProcess {
     fn state_on_disk(&self, environment_dir: &std::path::Path) -> StateOnDisk {
         (self.1)(environment_dir)
     }
+    fn inspect_clock_millis(&self) -> u64 {
+        0
+    }
 }
 
 pub(super) fn record(reference: &str, status: EnvironmentStatus) -> EnvironmentRecord {

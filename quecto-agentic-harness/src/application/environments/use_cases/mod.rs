@@ -11,7 +11,9 @@ mod list_container_configs;
 mod list_environments;
 mod restore_registry;
 
-pub use box_residue::{NO_ENVIRONMENT_DIR, RESIDUE_INSPECT_BUDGET, STATE_GONE_CONTAINER_RUNNING};
+pub use box_residue::{
+    NO_ENVIRONMENT_DIR, RESIDUE_INSPECT_BUDGET_MILLIS, STATE_GONE_CONTAINER_RUNNING,
+};
 pub use container_status::ContainerStatus;
 pub use diagnose_container_runtime::DiagnoseContainerRuntime;
 pub use finalize_environment_member::FinalizeEnvironmentMember;

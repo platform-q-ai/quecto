@@ -1,6 +1,5 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Mutex;
 
 use super::{NO_ENVIRONMENT_DIR, Residue, ResidueProbe, STATE_GONE_CONTAINER_RUNNING};
 use crate::application::environments::dto::{EnvironmentLiveness, StateOnDisk};
@@ -30,6 +29,10 @@ impl EnvironmentProcess for Host {
     }
     fn cleanup(&self, _: &EnvironmentRecord) -> Result<(), String> {
         Ok(())
+    }
+    /// Each inspect takes 4 s.
+    fn inspect_clock_millis(&self) -> u64 {
+        4_000 * self.inspected.lock().unwrap().len() as u64
     }
     fn state_on_disk(&self, dir: &Path) -> StateOnDisk {
         match self.present.iter().any(|p| Path::new(p) == dir) {
@@ -98,24 +101,10 @@ fn a_record_the_runtime_cannot_answer_for_holds_back_no_other() {
 
 #[test]
 fn a_probe_inspects_until_its_time_budget_is_spent() {
-    // Each inspect takes 4 s on a fake clock; the budget is 10 s: inspects
-    // start at 0, 4 and 8 s, the fourth would start at 12 s and waits.
+    // Each inspect takes 4 s (the fake's clock); the budget is 10 s:
+    // inspects start at 0, 4 and 8 s, the fourth would start at 12 s.
     let host = host(vec!["/state/env-C9"], vec![]);
-    let now = Arc::new(Mutex::new(Duration::ZERO));
-    let clock = {
-        let now = now.clone();
-        let inspected = Arc::new(Mutex::new(0usize));
-        let host_inspected = &host.inspected;
-        Box::new(move || {
-            let count = host_inspected.lock().unwrap().len();
-            let mut seen = inspected.lock().unwrap();
-            let mut t = now.lock().unwrap();
-            *t += Duration::from_secs(4) * (count - *seen) as u32;
-            *seen = count;
-            *t
-        })
-    };
-    let mut probe = ResidueProbe::with_clock(&host, clock, Duration::from_secs(10));
+    let mut probe = ResidueProbe::with_budget(&host, 10_000);
     let judged: Vec<Residue> = (1..=4)
         .map(|n| probe.residue(&stopped(&format!("C{n}"))))
         .collect();
@@ -131,4 +120,9 @@ fn a_probe_inspects_until_its_time_budget_is_spent() {
     assert_eq!(host.inspected.lock().unwrap().len(), 3);
     // The disk is still asked once the budget is spent.
     assert_eq!(probe.residue(&stopped("C9")), Residue::StateOnDisk);
+    // A new probe has its own budget.
+    assert_eq!(
+        ResidueProbe::with_budget(&host, 10_000).residue(&stopped("C5")),
+        Residue::Nothing
+    );
 }

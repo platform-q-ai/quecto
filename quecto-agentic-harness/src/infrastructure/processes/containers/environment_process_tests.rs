@@ -140,3 +140,12 @@ fn state_on_disk_is_absent_only_when_nothing_exists_under_the_name() {
         StateOnDisk::Unknown(reason) if reason.contains("is the disk mounted?")
     ));
 }
+
+#[test]
+fn the_inspect_clock_is_monotonic() {
+    let process = ScriptEnvironmentProcess;
+    let first = process.inspect_clock_millis();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let second = process.inspect_clock_millis();
+    assert!(second >= first + 5, "{first} then {second}");
+}
