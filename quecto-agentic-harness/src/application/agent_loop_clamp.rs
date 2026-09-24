@@ -17,6 +17,10 @@ impl ModelRuntime for AgentLoopImpl {
     fn apply_model(&mut self, model: String, limits: ModelLimits) {
         self.switch_model(model, limits.max_output_tokens, limits.context_window);
     }
+
+    fn route_check(&self, model: &str) -> crate::application::providers::ports::RouteCheck {
+        self.provider.route_check(model)
+    }
 }
 
 impl AgentLoopImpl {

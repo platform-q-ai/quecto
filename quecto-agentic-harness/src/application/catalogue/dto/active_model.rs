@@ -63,6 +63,14 @@ pub enum ModelSwitchError {
     /// Known-ness is decided from the catalogue entries, so the message
     /// says exactly that and names both remedies.
     UnknownProvider { model: String, provider: String },
+    /// The model names a provider this harness cannot route to (#2126):
+    /// switching would fail the next request, so the session keeps its
+    /// model. `configured` lists the providers it can reach.
+    Unroutable {
+        model: String,
+        provider: String,
+        configured: Vec<String>,
+    },
     /// The persistence adapter refused or failed; `reason` names the
     /// remedy.
     Persist {
@@ -86,6 +94,16 @@ impl std::fmt::Display for ModelSwitchError {
                 "cannot persist `{model}` as a default: the published catalogue lists no models \
                  for `{provider}`; configure the provider or refresh the catalogue first, or \
                  choose a listed provider/model"
+            ),
+            Self::Unroutable {
+                model,
+                provider,
+                configured,
+            } => write!(
+                f,
+                "cannot switch to `{model}`: provider `{provider}` is not configured in this \
+                 harness; configured providers: {}. Choose one of them as provider/model",
+                configured.join(", ")
             ),
             Self::Persist {
                 model,

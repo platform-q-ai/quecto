@@ -189,6 +189,10 @@ impl ModelRuntime for AmLoop<'_> {
         self.0.loop_model = model;
         self.0.loop_limits = limits;
     }
+    fn route_check(&self, _model: &str) -> quecto::application::providers::ports::RouteCheck {
+        // These scenarios switch among catalogue models on configured providers.
+        quecto::application::providers::ports::RouteCheck::Routable
+    }
 }
 
 fn am_store(state: &mut ActiveModelState) -> CatalogueSnapshotStore {
@@ -269,7 +273,10 @@ fn when_active_model_changed(world: &mut QuectoWorld, model: String) {
         effort,
         defaults,
     );
-    let switched = use_case.execute(&mut AmLoop(&mut world.active_model), &model);
+    // AmLoop routes every model, so these catalogue switches always apply.
+    let switched = use_case
+        .execute(&mut AmLoop(&mut world.active_model), &model)
+        .expect("a routable switch applies");
     world.active_model.switched = Some(switched);
 }
 

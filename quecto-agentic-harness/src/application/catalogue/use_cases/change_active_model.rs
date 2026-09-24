@@ -88,9 +88,14 @@ impl ChangeActiveModel {
     }
 
     /// Plan and apply: the loop runs on `model` with its limits from the
-    /// next turn on, and its effort is reset for the new model.
-    pub fn execute(&self, runtime: &mut dyn ModelRuntime, model: &str) -> ModelSwitched {
-        self.apply(runtime, self.plan(model), None)
+    /// next turn on, and its effort is reset for the new model. Refused, like
+    /// every switch, when no configured provider can route it (#2126).
+    pub fn execute(
+        &self,
+        runtime: &mut dyn ModelRuntime,
+        model: &str,
+    ) -> Result<ModelSwitched, ModelSwitchError> {
+        self.execute_with_default(runtime, model, None)
     }
 
     /// Plan, record the model as the configured default of `persist` when
@@ -112,6 +117,19 @@ impl ChangeActiveModel {
         persist: Option<DefaultScope>,
     ) -> Result<ModelSwitched, ModelSwitchError> {
         let plan = self.plan(model);
+        // Every switch, persisted or not, must land on a provider this
+        // harness can reach, or the next request fails (#2126).
+        if let crate::application::providers::ports::RouteCheck::UnknownProvider {
+            provider,
+            configured,
+        } = runtime.route_check(&plan.model)
+        {
+            return Err(ModelSwitchError::Unroutable {
+                model: plan.model.clone(),
+                provider,
+                configured,
+            });
+        }
         let persisted = match persist {
             None => None,
             Some(scope) => {

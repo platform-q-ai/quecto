@@ -16,6 +16,7 @@ mod agent_deadline;
 mod flag_parse;
 mod startup_effort;
 mod startup_prompt;
+mod startup_route;
 mod swarm_runtime;
 pub(crate) use agent_deadline::{DeadlineResult, run_with_deadline};
 mod flag_private;
@@ -461,6 +462,7 @@ pub(crate) fn build_agent_from_config(
         }
     };
     let effort = startup_effort::admit(&catalogue.effort, flags.effort, &config, &model, stderr)?;
+    startup_route::admit(provider.route_check(&model), &model, flags.spawned, stderr)?;
     // #1113: an explicit `--workflow` session arms the idle-boundary template
     // selector nudge — the selector reaches the model through the nudge
     // channel and the workflow tool description, never through the system
@@ -731,6 +733,9 @@ mod issue_926_tests;
 mod no_session_tests;
 #[path = "agent/parent_control_startup.rs"]
 mod parent_control_startup;
+#[cfg(test)]
+#[path = "agent_2126_route_tests.rs"]
+mod route_2126_tests;
 #[cfg(test)]
 #[path = "agent_startup_identity_tests.rs"]
 mod startup_identity_tests;

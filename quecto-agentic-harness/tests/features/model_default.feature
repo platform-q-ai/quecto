@@ -141,7 +141,7 @@ Feature: Default model and effort per repository
     When a production UDS agent is started in the current directory
     And the production agent is sent set_model "nobody/some-model" with persist "local"
     Then the production agent's reply should fail
-    And the production agent's reply error should contain "the published catalogue lists no models for `nobody`"
+    And the production agent's reply error should contain "provider `nobody` is not configured"
     And the production agent's state should report model "openai-api/gpt-5.6-sol"
     And the current directory's ".quecto/config.json" should not exist
     When the production agent is sent set_model "openai-api/not-listed-yet" with persist "local"

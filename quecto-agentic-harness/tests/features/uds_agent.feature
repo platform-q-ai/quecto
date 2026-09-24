@@ -392,11 +392,11 @@ Feature: UDS mode for headless agent operation
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "ok"
     When I start the UDS agent with no [session]
-    And I send set_model provider "openai-codex" modelId "gpt-5.3-codex"
+    And I send set_model provider "openai-api" modelId "gpt-5.3-codex"
     And I send command "get_state" with id "sm-3"
     And I close the UDS connection
     Then the agent output should contain a response command "set_model" with success true
-    And the get_state response model should be "openai-codex/gpt-5.3-codex"
+    And the get_state response model should be "openai-api/gpt-5.3-codex"
 
   # ─── set_effort command (#1067) ─────────────────────────────────────────────
 
@@ -421,6 +421,7 @@ Feature: UDS mode for headless agent operation
     # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
     # pin a reasoning model whose vocabulary is the OpenAI scale.
     And the config default model is "openai-api/gpt-5.6-sol"
+    And the config also has an OpenAI-compatible provider "anthropic-api"
     When I start the UDS agent with no [session]
     And I send set_effort "xhigh"
     And I send set_model "anthropic-api/claude-sonnet-4-6"

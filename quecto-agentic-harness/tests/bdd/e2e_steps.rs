@@ -768,7 +768,22 @@ fn responses_for_prompt(prompt: &str) -> Vec<serde_json::Value> {
 }
 
 pub(crate) fn mount_auto_mock_responses_for_messages(world: &mut QuectoWorld, messages: &[String]) {
-    if !world.auto_mock_manual_llm || messages.is_empty() {
+    if !world.auto_mock_manual_llm {
+        return;
+    }
+    if messages.is_empty() {
+        // #2126: a switch to `anthropic/...` is refused unless a configured
+        // provider routes it. Scenarios that only switch and read state send
+        // no prompt, so configure the mock-mode Anthropic provider here too.
+        let config_path = base_path(world).join("config.json");
+        let config: serde_json::Value = std::fs::read_to_string(&config_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        if let Some(base) = config["providers"]["openai"]["api_base"].as_str() {
+            let base = base.to_string();
+            rewrite_config_to_provider_uri(world, "anthropic", &base);
+        }
         return;
     }
 
@@ -3715,4 +3730,33 @@ fn find_response_by_id(world: &QuectoWorld, id: &str) -> Option<serde_json::Valu
             None
         }
     })
+}
+
+/// #2126: a model switch is refused unless a configured provider routes it,
+/// so a scenario that switches to another provider configures it first, the
+/// way owners add providers: an OpenAI-compatible endpoint. The scenario never
+/// prompts it; the endpoint only has to exist.
+#[given(expr = "the config also has an OpenAI-compatible provider {string}")]
+fn given_config_openai_compatible_provider(world: &mut QuectoWorld, prefix: String) {
+    ensure_temp_dir(world);
+    let config_path = base_path(world).join("config.json");
+    let mut config: serde_json::Value = std::fs::read_to_string(&config_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let endpoints = &mut config["providers"]["openai_compatible"]["endpoints"];
+    if !endpoints.is_array() {
+        *endpoints = serde_json::json!([]);
+    }
+    endpoints
+        .as_array_mut()
+        .expect("endpoints array")
+        .push(serde_json::json!({
+            "prefix": prefix,
+            "api_key": "sk-test-key",
+            "api_base": "http://127.0.0.1:9/v1",
+            "allow_remote_http": false
+        }));
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())
+        .expect("write config");
 }

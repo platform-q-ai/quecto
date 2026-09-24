@@ -545,3 +545,64 @@ async fn slice_ptr_provider_trait_surface_defaults_are_exercised() {
     }
     assert!(rx.recv().await.is_none());
 }
+
+// ── #2126: which models the router can reach ──────────────────────────────
+
+#[test]
+fn route_check_names_the_configured_providers_for_an_unknown_one() {
+    use crate::application::providers::ports::RouteCheck;
+    let router = ProviderRouter::new(vec![
+        TestProvider::succeeding("fireworks", "x") as Arc<dyn LlmProvider>,
+        TestProvider::succeeding("openai-oauth", "x"),
+    ]);
+    assert_eq!(router.route_check("fireworks/glm"), RouteCheck::Routable);
+    assert_eq!(router.route_check("FIREWORKS/glm"), RouteCheck::Routable);
+    assert_eq!(router.route_check("glm-bare"), RouteCheck::Routable);
+    assert_eq!(
+        router.route_check("openai/gpt-5.2"),
+        RouteCheck::UnknownProvider {
+            provider: "openai".into(),
+            configured: vec!["fireworks".into(), "openai-oauth".into()],
+        }
+    );
+}
+
+#[test]
+fn the_retry_decorator_forwards_the_route_check_to_the_router() {
+    // Production wraps the router in RetryingProvider; a default "routable"
+    // there would hide every unconfigured provider.
+    use crate::application::providers::ports::RouteCheck;
+    use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
+    let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::new(vec![
+        TestProvider::succeeding("fireworks", "x") as Arc<dyn LlmProvider>,
+    ]));
+    let wrapped = RetryingProvider::new(router, RetryConfig::no_delay(1));
+    assert!(matches!(
+        wrapped.route_check("openai/gpt-5.2"),
+        RouteCheck::UnknownProvider { .. }
+    ));
+}
+
+#[tokio::test]
+async fn an_unconfigured_provider_is_refused_naming_the_configured_ones_and_never_as_auth() {
+    // #2126: `openai-oauth` in the list must not make the refusal an Auth
+    // error (which would tell the owner to log in again).
+    use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+    let router = ProviderRouter::new(vec![
+        TestProvider::succeeding("fireworks", "x") as Arc<dyn LlmProvider>,
+        TestProvider::succeeding("openai-oauth", "x"),
+    ]);
+    let messages = test_messages();
+    let error = router
+        .chat(make_request(&messages, "openai/gpt-5.2"))
+        .await
+        .unwrap_err();
+    let text = error.to_string();
+    assert!(
+        text.contains("no configured provider 'openai'")
+            && text.contains("configured providers: fireworks, openai-oauth")
+            && text.contains("as provider/model"),
+        "{text}"
+    );
+    assert_eq!(classify_provider_error(&error), ProviderErrorClass::Unknown);
+}
