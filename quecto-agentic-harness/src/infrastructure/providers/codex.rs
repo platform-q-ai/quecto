@@ -692,6 +692,10 @@ mod test_support;
 mod tests;
 
 #[cfg(test)]
+#[path = "codex_args_tests.rs"]
+mod args_tests;
+
+#[cfg(test)]
 #[path = "codex_effort_1066_tests.rs"]
 mod effort_1066_tests;
 
