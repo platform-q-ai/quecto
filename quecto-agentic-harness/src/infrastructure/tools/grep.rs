@@ -197,9 +197,10 @@ impl Tool for GrepTool {
             }
             let usable = matches!(rg.exit_code, Some(0 | 1)) || found > 0;
             let Some(stdout) = usable.then_some(stdout) else {
-                let msg = match stderr.trim() {
-                    "" => "rg exited unexpectedly".to_string(),
-                    reported => format!("grep error: {reported}"),
+                let msg = match (stderr.trim(), rg.exit_code) {
+                    ("", Some(code)) => format!("rg failed with exit status {code} and no message"),
+                    ("", None) => "rg exited unexpectedly".to_string(),
+                    (reported, _) => format!("grep error: {reported}"),
                 };
                 return Ok(ToolResult {
                     content: msg,
@@ -218,6 +219,12 @@ impl Tool for GrepTool {
                 ));
             }
             // Stopped by a signal other than the tool's own at the cap.
+            if rg.held_open {
+                incomplete.push(
+                    "rg's output was still held open after it exited; results may be incomplete"
+                        .to_string(),
+                );
+            }
             if let (None, false) = (rg.exit_code, rg.capped) {
                 incomplete.push("rg was stopped by a signal; results are incomplete".to_string());
             }

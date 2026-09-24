@@ -623,3 +623,55 @@ fn rg_runs_without_a_users_config() {
         "{args:?}"
     );
 }
+
+/// PR #2137 review: stdout still held open after rg exits (a wrapper's
+/// background child) is abandoned after a grace: the results found stand,
+/// with a notice; a failure whose stderr was abandoned keeps its status.
+#[tokio::test]
+async fn a_pipe_held_open_after_rg_exits_is_abandoned_after_a_grace() {
+    let tmp = TempDir::new().unwrap();
+    let held = format!("sleep 6 & printf '%s\\0' '{}/a.rs'", tmp.path().display());
+    let tool = GrepTool::with_rg_binary(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(None)),
+        fake_rg(tmp.path(), &held, 0),
+    )
+    .with_rg_timeout(std::time::Duration::from_secs(30));
+    let started = std::time::Instant::now();
+    let result = execute_fake(&tool, r#"{"pattern": "x", "output": "files"}"#)
+        .await
+        .unwrap();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(result.content.starts_with("a.rs"), "{}", result.content);
+    assert!(
+        result.content.contains("still held open after it exited"),
+        "{}",
+        result.content
+    );
+
+    let failed = GrepTool::with_rg_binary(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(None)),
+        fake_rg(
+            tmp.path(),
+            "sleep 6 & exec 2>&-; exec 2>/dev/null; exit 2",
+            2,
+        ),
+    )
+    .with_rg_timeout(std::time::Duration::from_secs(30));
+    let result = execute_fake(&failed, r#"{"pattern": "x", "output": "files"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error, "{}", result.content);
+    assert!(
+        result
+            .content
+            .contains("rg failed with exit status 2 and no message"),
+        "{}",
+        result.content
+    );
+}
