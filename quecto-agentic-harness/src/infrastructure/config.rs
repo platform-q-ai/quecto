@@ -206,6 +206,8 @@ impl std::fmt::Debug for OpenAiCompatibleEndpoint {
 pub struct ToolsConfig {
     #[serde(default)]
     pub web: WebToolConfig,
+    #[serde(default)]
+    pub rust_ast_graph: RustAstGraphConfig,
     #[serde(default, alias = "python_lab")]
     pub swarm: crate::infrastructure::tools::swarm::SwarmToolConfig,
     /// Durable catalogue-backed user policy preferences, keyed by stable tool id.
@@ -226,6 +228,12 @@ pub struct ToolPolicyConfig {
 #[serde(rename_all = "camelCase")]
 pub struct ToolPolicyEntryConfig {
     pub scope: crate::domain::tool_descriptor::ProfileAvailabilityScope,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RustAstGraphConfig {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

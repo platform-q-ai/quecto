@@ -62,7 +62,16 @@ async fn build_official_tool_registry_registers_common_bundled_native_surface() 
         .map(|definition| definition.name.as_ref())
         .collect();
     let expected_names = std::collections::BTreeSet::from([
-        "bash", "docs", "edit", "find", "grep", "ls", "swarm", "read", "write",
+        "bash",
+        "docs",
+        "edit",
+        "find",
+        "grep",
+        "ls",
+        "swarm",
+        "read",
+        "rust_ast_graph",
+        "write",
     ]);
     assert_eq!(
         names, expected_names,
