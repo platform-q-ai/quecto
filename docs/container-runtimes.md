@@ -41,8 +41,31 @@ targets fail without guessing.
 
 A successful spawn returns a durable environment reference
 (`environment_ref=C1`, `C2`, ...). Refs are allocated in the base
-directory's registry, unique across every session sharing it, and never
-reused — a stopped environment stays listed and its ref is retired.
+directory's registry. A stopped environment stays listed, and its ref
+taken, until a restore — every session start and every `quecto container
+ls|kill|gc` — finds nothing of it left: its state directory absent (with
+its state root present) and its container reported gone by its own
+retained `inspect` (the standard inspect asks whether `quecto-<id>` still
+runs, so an exited container counts as gone: `quecto container gc` removes
+leftover containers carrying the config's state-root label). The restore
+then forgets it: the CLI prints each forgotten ref, a session start logs
+them, and `gc --dry-run` only reports what it would forget. One restore
+spends at most 15 seconds of inspect time on such records (plus the last
+inspect's own 5-second bound), and an inspect that takes 4 seconds or more
+marks its config's inspect command as hanging: that config's other records
+wait for a later restore while other configs' records are still judged.
+Several configs on one hanging runtime (each repo's standard container is
+its own config) can spend the budget between them, and later records then
+wait until the runtime answers again. A `gc` judges once
+in its restore and again for what that restore kept, so it may take twice
+as long.
+A record whose state root itself is missing is kept (an unmounted disk
+says nothing about what it held): if you deleted a state root on purpose,
+recreate it empty and the next restore forgets its records. Once nothing is left, refs restart at
+C1. A session never reuses a ref it holds, but a ref names a box only
+within the sessions that saw it: after a stopped C5 is forgotten, a later
+session may create a different C5, so check the name or repository before
+killing a ref you remember from another session.
 The child then behaves like any other subagent: drive it with normal
 `agent_cmd` operations over its direct or proxy endpoint. Every member of an
 environment shares its reported workspace; each agent keeps its own agent

@@ -24,6 +24,11 @@
 //! while it was retained — recognisable by its `metadata.retained` under a
 //! `stopped` status with the restore's own last error — is restored to
 //! `retained`, so an explicit kill can end it (round 4 L3).
+//! A plain `stopped` record whose environment directory is gone from disk
+//! and whose container the runtime reports gone is forgotten (#2134): its
+//! box was torn down and nothing is left to collect, so its number is free
+//! again and refs restart at C1 once no record is left. A session still
+//! never reuses a number it holds.
 //! The restored records arrive without members and are never torn down
 //! by a joiner's exit. A correction is written **conditionally** — only
 //! while the record on file still has the status that was loaded — so a
@@ -38,13 +43,15 @@
 use std::sync::Arc;
 
 use crate::domain::environment_registry::{
-    EnvironmentJournal, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, JournalWrite,
+    EnvironmentJournal, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, GONE_AT_RESTORE,
+    JournalWrite,
 };
 
 use crate::domain::environment_retention::{HostedSwarmRun, SwarmRunObservation};
 
 use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, RestoreMode, RestoredRegistry};
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore, HostedSwarmRunInspection};
+use super::box_residue::{Residue, ResidueProbe};
 
 #[derive(Clone)]
 pub struct RestoreRegistry {
@@ -58,9 +65,6 @@ impl std::fmt::Debug for RestoreRegistry {
         f.debug_struct("RestoreRegistry").finish_non_exhaustive()
     }
 }
-
-/// The last error a record gone at restore carries.
-pub const GONE_AT_RESTORE: &str = "container not found at restore: the runtime reports it gone";
 
 /// The reason a `killing` record is reported unverified at restore.
 pub const KILL_IN_FLIGHT: &str =
@@ -134,6 +138,7 @@ impl RestoreRegistry {
                 tracing::info!(
                     restored = report.restored.len(),
                     stopped = report.stopped.len(),
+                    forgotten = report.forgotten.len(),
                     retained = report.retained.len(),
                     unverified = report.unverified.len(),
                     "durable environment registry readable again; seeded"
@@ -249,7 +254,12 @@ impl RestoreRegistry {
         report: &mut RestoredRegistry,
     ) -> Vec<EnvironmentRecord> {
         let mut restored = Vec::with_capacity(records.len());
+        let mut probe = ResidueProbe::new(self.process.as_ref());
         for record in records {
+            if Self::left_nothing(&record, &mut probe, report) {
+                self.forget(record, mode, report, &mut restored);
+                continue;
+            }
             let loaded_status = record.status.clone();
             let mut judged = record;
             let corrected = self.judge(&mut judged, report);
@@ -297,6 +307,58 @@ impl RestoreRegistry {
         restored
     }
 
+    /// A plain `stopped` record whose box left nothing behind (#2134): its
+    /// number is held for nothing. Anything else is kept: another status,
+    /// an older build's relabel (restored below), a box that left its
+    /// state or could not be judged. A kept stopped record with a reason
+    /// worth saying is reported.
+    fn left_nothing(
+        record: &EnvironmentRecord,
+        probe: &mut ResidueProbe<'_>,
+        report: &mut RestoredRegistry,
+    ) -> bool {
+        record.is_plain_stopped()
+            && match probe.residue(record) {
+                Residue::Nothing => true,
+                Residue::StateOnDisk | Residue::Deferred => false,
+                Residue::Kept(reason) => {
+                    report
+                        .kept_stopped
+                        .push((record.environment_ref.clone(), reason));
+                    false
+                }
+            }
+    }
+
+    /// Forget a record [`Self::left_nothing`] found, as `mode` says: an
+    /// observing restore only reports it (and, like the real run, seeds
+    /// nothing of it); a failed forget keeps it seeded and says so.
+    fn forget(
+        &self,
+        record: EnvironmentRecord,
+        mode: RestoreMode,
+        report: &mut RestoredRegistry,
+        restored: &mut Vec<EnvironmentRecord>,
+    ) {
+        if mode == RestoreMode::Observe {
+            report.diagnostics.push(format!(
+                "{} would be forgotten (stopped; nothing left on disk or in the runtime); not written: this restore only observes",
+                record.environment_ref
+            ));
+            return;
+        }
+        match self.store.forget(&record) {
+            Ok(()) => report.forgotten.push(record.environment_ref),
+            Err(error) => {
+                report.diagnostics.push(format!(
+                    "{} could not be forgotten in the durable registry: {error}",
+                    record.environment_ref
+                ));
+                restored.push(record);
+            }
+        }
+    }
+
     /// Correct one record against the runtime. Terminal records need no
     /// check; a live-looking one is believed only when its container is.
     /// `true` when the record was changed and must be written.
@@ -308,7 +370,7 @@ impl RestoreRegistry {
             // `stopped` status with this restore's last error is that
             // build's signature and nothing else's (an explicit kill
             // clears the last error). Restored, so a kill can end it.
-            EnvironmentStatus::Stopped if relabelled_by_older_build(record) => {
+            EnvironmentStatus::Stopped if record.relabelled_while_retained() => {
                 record.status = EnvironmentStatus::Retained;
                 record.last_error = None;
                 report
@@ -402,17 +464,6 @@ impl RestoreRegistry {
             SwarmRunObservation::Unreadable(error) => Some(unreadable_store_reason(&error)),
         }
     }
-}
-
-/// An older build's restore relabelled this record `stopped` while it was
-/// retained (round 4 L3, #2033).
-fn relabelled_by_older_build(record: &EnvironmentRecord) -> bool {
-    record.status == EnvironmentStatus::Stopped
-        && record
-            .metadata
-            .get("retained")
-            .is_some_and(|v| v.is_string())
-        && record.last_error.as_deref() == Some(GONE_AT_RESTORE)
 }
 
 /// How a store that could not be read is reported.

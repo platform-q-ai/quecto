@@ -15,7 +15,7 @@ use crate::application::environments::dto::{
     AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue, ContainerConfigDocument,
     ContainerConfigEntry, ContainerRuntimeTarget, CorrectionOutcome, DiagnosableContainerConfig,
     EnvironmentLiveness, EnvironmentStateDir, PersistedContainerConfig, PreflightCheck,
-    RuntimeContainer,
+    RuntimeContainer, StateOnDisk,
 };
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentStatus};
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
@@ -218,20 +218,27 @@ pub trait EnvironmentRegistryStore: Send + Sync {
         record: &EnvironmentRecord,
         expected: &EnvironmentStatus,
     ) -> Result<CorrectionOutcome, String>;
-    /// Remove `record` from the file (a rolled-back create) — only while
+    /// Remove `record` from the file (a rolled-back create, or a stopped
+    /// record whose box left nothing behind, #2134) — only while
     /// its ref still names this environment (#2070): a ref another session
     /// has since taken is left as that session recorded it.
     fn forget(&self, record: &EnvironmentRecord) -> Result<(), String>;
 }
 
 /// The runtime reality behind a record: its container's liveness through
-/// the retained `inspect` argv, and its retained `cleanup`. Synchronous
+/// the retained `inspect` argv, its retained `cleanup`, and whether its
+/// state directory is still on disk (the host filesystem, #2134). Synchronous
 /// (bounded scripts) so a startup restore and the CLI collector can ask
 /// without a runtime.
 pub trait EnvironmentProcess: Send + Sync {
     fn observe(&self, record: &EnvironmentRecord) -> EnvironmentLiveness;
     /// Run the retained `cleanup` once; `Err` carries the script's account.
     fn cleanup(&self, record: &EnvironmentRecord) -> Result<(), String>;
+    /// Whether an environment's state directory is still on disk (#2134).
+    fn state_on_disk(&self, environment_dir: &Path) -> StateOnDisk;
+    /// Monotonic milliseconds, so a caller can bound how long it spends
+    /// inspecting (#2134); only differences are meaningful.
+    fn inspect_clock_millis(&self) -> u64;
 }
 
 /// The host's inventory of environments outside any registry, through a

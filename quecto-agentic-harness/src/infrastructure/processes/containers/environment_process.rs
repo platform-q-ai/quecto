@@ -2,9 +2,12 @@
 //! record's own retained scripts (#2024 S4d): liveness through the
 //! retained `inspect` argv (the same bounded run the post-mortem uses,
 //! judged by the script's `status` word), cleanup through the retained
-//! `cleanup` argv. Synchronous, so the startup restore and the CLI
-//! collector need no runtime.
-use crate::application::environments::dto::EnvironmentLiveness;
+//! `cleanup` argv, and whether a state directory is still on disk (#2134)
+//! through the host filesystem. Synchronous, so the startup restore and
+//! the CLI collector need no runtime.
+use std::path::Path;
+
+use crate::application::environments::dto::{EnvironmentLiveness, StateOnDisk};
 use crate::application::environments::ports::EnvironmentProcess;
 use crate::domain::environment_registry::EnvironmentRecord;
 
@@ -55,6 +58,35 @@ impl EnvironmentProcess for ScriptEnvironmentProcess {
 
     fn cleanup(&self, record: &EnvironmentRecord) -> Result<(), String> {
         run_cleanup_sync(&record.environment_id, &record.retained_cleanup_argv)
+    }
+
+    /// Anything under the directory's name counts as present, a dangling
+    /// symlink included. A missing name is absent only while its state
+    /// root is a directory: a root that is itself missing (an unmounted
+    /// disk) says nothing about what the environment left.
+    fn state_on_disk(&self, environment_dir: &Path) -> StateOnDisk {
+        match std::fs::symlink_metadata(environment_dir) {
+            Ok(_) => StateOnDisk::Present,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match environment_dir.parent().map(std::fs::metadata) {
+                    Some(Ok(root)) if root.is_dir() => StateOnDisk::Absent,
+                    _ => StateOnDisk::Unknown(format!(
+                        "{} is gone with its state root: is the disk mounted?",
+                        environment_dir.display()
+                    )),
+                }
+            }
+            Err(error) => StateOnDisk::Unknown(format!(
+                "{} could not be examined: {error}",
+                environment_dir.display()
+            )),
+        }
+    }
+
+    fn inspect_clock_millis(&self) -> u64 {
+        static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let elapsed = ORIGIN.get_or_init(std::time::Instant::now).elapsed();
+        u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
     }
 }
 

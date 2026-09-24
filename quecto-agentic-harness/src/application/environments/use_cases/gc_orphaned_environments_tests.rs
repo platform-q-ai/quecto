@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use super::super::dto::{
     ContainerRuntimeTarget, DiagnosableContainerConfig, EnvironmentLiveness, EnvironmentStateDir,
-    GcRemoval, GcRequest, RuntimeContainer,
+    GcRemoval, GcRequest, RuntimeContainer, StateOnDisk,
 };
 use super::super::ports::{ContainerConfigLookup, ContainerRuntimeInventory, EnvironmentProcess};
 use super::{CREATE_GRACE_SECS, GcOrphanedEnvironments, implied_state_root};
@@ -137,6 +137,24 @@ impl EnvironmentProcess for FakeProcess {
                 .retain(|c| c.environment_id != record.environment_id);
         }
         Ok(())
+    }
+    /// On disk exactly when the host inventory lists the directory's
+    /// environment (#2134); with no host, nothing is.
+    fn state_on_disk(&self, environment_dir: &std::path::Path) -> StateOnDisk {
+        let listed = self.host.as_ref().is_some_and(|host| {
+            host.dirs
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|d| environment_dir.file_name() == Some(d.environment_id.as_ref()))
+        });
+        match listed {
+            true => StateOnDisk::Present,
+            false => StateOnDisk::Absent,
+        }
+    }
+    fn inspect_clock_millis(&self) -> u64 {
+        0
     }
 }
 
@@ -422,6 +440,11 @@ fn a_real_run_removes_through_the_right_cleanup_forgets_collected_records_and_re
     // Stopped with nothing left anywhere: the record alone is forgotten.
     rig.registry
         .commit(record("C5", "env-memory", EnvironmentStatus::Stopped));
+    rig.process
+        .liveness
+        .lock()
+        .unwrap()
+        .push(("C5".into(), EnvironmentLiveness::Gone));
     *rig.host.dirs.lock().unwrap() = vec![
         dir("env-stopped", Some("quecto-env-stopped")),
         dir("env-bare", None),

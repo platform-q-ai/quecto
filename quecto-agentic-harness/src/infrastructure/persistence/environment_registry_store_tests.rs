@@ -165,7 +165,7 @@ fn the_store_names_its_document_under_the_base_dir() {
 /// later kill (a real transition from what is now on file) still lands.
 #[test]
 fn a_joiners_write_on_a_restored_record_never_reverts_the_creators_status() {
-    use crate::application::environments::dto::EnvironmentLiveness;
+    use crate::application::environments::dto::{EnvironmentLiveness, StateOnDisk};
     use crate::application::environments::ports::EnvironmentProcess;
     use crate::application::environments::use_cases::RestoreRegistry;
     use std::sync::Arc;
@@ -177,6 +177,12 @@ fn a_joiners_write_on_a_restored_record_never_reverts_the_creators_status() {
         }
         fn cleanup(&self, _: &EnvironmentRecord) -> Result<(), String> {
             Ok(())
+        }
+        fn state_on_disk(&self, _: &std::path::Path) -> StateOnDisk {
+            StateOnDisk::Present
+        }
+        fn inspect_clock_millis(&self) -> u64 {
+            0
         }
     }
     let dir = tempfile::TempDir::new().unwrap();

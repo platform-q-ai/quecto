@@ -13,7 +13,7 @@ use crate::application::environments::dto::{
     AbandonedRuns, GcCandidate, GcRemoval, GcReport, GcRequest, RestoreMode,
 };
 use crate::domain::environment_registry::{
-    EnvironmentRecord, EnvironmentStatus, EnvironmentTarget, ref_number,
+    EnvironmentLookupError, EnvironmentRecord, EnvironmentStatus, EnvironmentTarget, ref_number,
 };
 
 fn inventory(ctx: &CliContext, mode: RestoreMode) -> Result<ContainerInventoryHandles, String> {
@@ -43,6 +43,11 @@ fn present_restore_notes(handles: &ContainerInventoryHandles, stderr: &mut Strin
     for line in &handles.restore.diagnostics {
         stderr.push_str(line);
         stderr.push('\n');
+    }
+    for environment_ref in &handles.restore.forgotten {
+        stderr.push_str(&format!(
+            "{environment_ref} forgotten (stopped; nothing left on disk or in the runtime)\n"
+        ));
     }
 }
 
@@ -94,6 +99,12 @@ pub(crate) fn cmd_ls(
                 stderr.push_str(&format!(
                     "note: {environment_ref} could not be verified against the runtime: {reason}\n"
                 ));
+            }
+            // Stopped records are the listing's only with --all (#2134).
+            if all {
+                for (environment_ref, reason) in &handles.restore.kept_stopped {
+                    stderr.push_str(&format!("note: stopped {environment_ref} kept: {reason}\n"));
+                }
             }
             0
         }
@@ -221,9 +232,21 @@ pub(crate) fn cmd_kill(
             .build()
             .map_err(|error| format!("runtime: {error}"))?;
         present_restore_notes(&handles, stderr);
-        runtime
-            .block_on(handles.kill.kill_container(&target))
-            .map_err(|error| error.to_string())
+        match &target {
+            // The restore this command ran just forgot it (#2134): it was
+            // stopped, which is what a kill of it has always answered.
+            EnvironmentTarget::Ref(environment_ref)
+                if handles.restore.forgotten.contains(environment_ref) =>
+            {
+                Err(format!(
+                    "{}; nothing of it was left, so it was forgotten",
+                    EnvironmentLookupError::Stopped(environment_ref.clone())
+                ))
+            }
+            EnvironmentTarget::Ref(_) | EnvironmentTarget::Name(_) => runtime
+                .block_on(handles.kill.kill_container(&target))
+                .map_err(|error| error.to_string()),
+        }
     });
     match outcome {
         Ok(killed) => {

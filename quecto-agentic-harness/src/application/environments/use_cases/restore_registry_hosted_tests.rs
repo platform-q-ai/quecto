@@ -8,10 +8,11 @@
 use std::sync::{Arc, Mutex};
 
 use super::restore_registry_tests::{FakeHosted, process, record, store_with};
-use super::{GONE_AT_RESTORE, RELABELLED_BY_OLDER_BUILD, RestoreRegistry, unfinished_run_reason};
+use super::{RELABELLED_BY_OLDER_BUILD, RestoreRegistry, unfinished_run_reason};
 use crate::application::environments::dto::EnvironmentLiveness;
 use crate::application::environments::ports::EnvironmentRegistryStore;
 use crate::domain::environment_registry::EnvironmentStatus;
+use crate::domain::environment_registry::GONE_AT_RESTORE;
 use crate::domain::environment_retention::{HostedSwarmRun, SwarmRunObservation};
 use crate::domain::swarm::RunStatus;
 
