@@ -1,5 +1,18 @@
 use super::*;
 
+/// Retries for a reply cut off at the output limit with nothing visible.
+pub(super) const MAX_CUT_OFF_RETRIES: u32 = 2;
+
+/// What the loop does after a provider response or failure.
+pub(super) enum AfterResponse {
+    /// Continue the turn with this response.
+    Proceed(LlmResponse),
+    /// Feedback was added: ask the provider again.
+    Retry,
+    /// The turn ends with this result.
+    Finish(Result<AgentResult, DomainError>),
+}
+
 impl AgentLoopImpl {
     pub(super) async fn request_provider_response(
         &self,
@@ -211,6 +224,69 @@ impl AgentLoopImpl {
                 },
             )
             .await;
+        }
+    }
+
+    /// What follows a provider failure: re-prompt a model-malformed request
+    /// while retries remain, otherwise fail the turn.
+    pub(super) async fn after_provider_failure(
+        &mut self,
+        messages: &mut Vec<Message>,
+        error: DomainError,
+        current_turn: u32,
+        (malformed_retries, appended_messages): (&mut u32, &mut Vec<Message>),
+    ) -> AfterResponse {
+        let transition =
+            classify_provider_failure(&error, *malformed_retries, MAX_MALFORMED_REQUEST_RETRIES);
+        let _state = state_for_provider_failure_transition(&transition);
+        match transition {
+            ProviderFailureTransition::RecoverMalformedRequest => {
+                let _state = TurnState::RecoverMalformedResponse;
+                self.recover_malformed_response(
+                    messages,
+                    &error,
+                    current_turn,
+                    malformed_retries,
+                    appended_messages,
+                )
+                .await;
+                AfterResponse::Retry
+            }
+            ProviderFailureTransition::Terminal(_class) => {
+                let _state = TurnState::FailProviderRequest;
+                self.drain_tool_policy_mutations_at_boundary();
+                AfterResponse::Finish(self.fail_provider_request(current_turn, error).await)
+            }
+        }
+    }
+
+    /// A reply cut off at the output limit with nothing visible (#2124): the
+    /// model is asked again, concisely, and the reply is not recorded; once
+    /// the retries are spent the turn fails instead of ending empty.
+    pub(super) async fn after_cut_off_answer(
+        &mut self,
+        messages: &mut Vec<Message>,
+        response: &LlmResponse,
+        current_turn: u32,
+        (retries, appended_messages, feedback): (&mut u32, &mut Vec<Message>, String),
+    ) -> AfterResponse {
+        if *retries < MAX_CUT_OFF_RETRIES {
+            *retries += 1;
+            tracing::warn!(
+                target: "provider_retry",
+                attempt = *retries,
+                max = MAX_CUT_OFF_RETRIES,
+                "reply hit the output limit with nothing visible — asking again, concisely"
+            );
+            append_feedback(messages, feedback, current_turn);
+            if let Some(last) = messages.last() {
+                appended_messages.push(last.clone());
+            }
+            AfterResponse::Retry
+        } else {
+            self.drain_tool_policy_mutations_at_boundary();
+            let error = DomainError::Provider(empty_stream_error_message(response));
+            AfterResponse::Finish(self.fail_provider_request(current_turn, error).await)
         }
     }
 

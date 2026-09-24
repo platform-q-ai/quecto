@@ -61,6 +61,22 @@ pub(super) fn append_malformed_feedback(
     let feedback = format!(
         "Your previous request was rejected by the provider as malformed (not retryable): {err}\n\nPlease correct the request — for example fix any malformed tool call arguments or invalid fields — and try again.",
     );
+    append_feedback(messages, feedback, current_turn);
+}
+
+/// Feedback for a reply that hit the output limit before anything visible
+/// (#2124): typically all reasoning, or a tool call cut off mid-arguments.
+pub(super) fn output_limit_feedback(max_tokens: u32) -> String {
+    format!(
+        "Your previous reply hit the output limit ({max_tokens} tokens) before any answer or \
+         complete tool call. Reply concisely: either one complete tool call or a short final \
+         answer, and keep any reasoning brief."
+    )
+}
+
+/// Adds `feedback` for the model, merged into a trailing user message so two
+/// user turns never follow each other (some providers reject that).
+pub(super) fn append_feedback(messages: &mut Vec<Message>, feedback: String, current_turn: u32) {
     match messages.last_mut() {
         Some(last) if last.role == Role::User => {
             last.content.push_str("\n\n");

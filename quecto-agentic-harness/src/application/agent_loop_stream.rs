@@ -20,6 +20,19 @@ pub(super) fn is_empty_streamed_response(response: &LlmResponse) -> bool {
         && response.thinking_blocks.is_empty()
 }
 
+/// A reply that hit the output limit with nothing visible: no text and no
+/// tool call, only reasoning (#2124). It is no answer, never a final one.
+pub(super) fn is_cut_off_without_answer(response: &LlmResponse) -> bool {
+    response.stop_reason == Some(StopReason::MaxTokens)
+        && response
+            .content
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        && response.tool_calls.is_empty()
+}
+
 pub(super) fn empty_stream_error_message(response: &LlmResponse) -> String {
     match response.stop_reason {
         Some(StopReason::MaxTokens) => {
