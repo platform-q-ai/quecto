@@ -996,7 +996,7 @@ Feature: UDS mode for headless agent operation
     And the agent output should contain a response command "get_tool_catalogue" with success true
     And the get_tool_catalogue response should list tool "bash"
 
-  @done @tools
+  @done @tools @catalogue-count
   Scenario: get_tool_catalogue accepts omitted control-client ids
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -1007,9 +1007,10 @@ Feature: UDS mode for headless agent operation
     And the agent output should contain a response command "get_tool_catalogue" with success true
     And the get_tool_catalogue response should list tool "bash"
     And the get_tool_catalogue response should not list tool "mock_ext_tool"
-    And the get_tool_catalogue response should have 9 tools
+    And the get_tool_catalogue response should have 10 tools
+    And the get_tool_catalogue response for "rust_ast_graph" should be disabled
 
-  @done @tools
+  @done @tools @catalogue-count
   Scenario: list_tools alias accepts omitted control-client ids
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -1020,7 +1021,8 @@ Feature: UDS mode for headless agent operation
     And the agent output should contain a response command "get_tool_catalogue" with success true
     And the get_tool_catalogue response should list tool "bash"
     And the get_tool_catalogue response should not list tool "mock_ext_tool"
-    And the get_tool_catalogue response should have 9 tools
+    And the get_tool_catalogue response should have 10 tools
+    And the get_tool_catalogue response for "rust_ast_graph" should be disabled
 
   # ─── --persist flag (#348) ───────────────────────────────────────────────────
 

@@ -515,12 +515,41 @@ fn impl_target(masked: &str, after_impl: usize) -> Option<(&str, usize)> {
 }
 
 fn split_impl_target(target: &str) -> Option<(&str, &str)> {
-    let parts: Vec<&str> = target.split(" for ").collect();
-    if parts.len() == 2 {
-        Some((parts[0].trim(), parts[1].trim()))
-    } else {
-        None
+    let mut angle_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    for (offset, ch) in target.char_indices() {
+        match ch {
+            '<' => angle_depth += 1,
+            '>' => angle_depth = angle_depth.saturating_sub(1),
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            'f' if angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 => {
+                let remaining = &target[offset..];
+                if remaining.starts_with("for")
+                    && target[..offset]
+                        .chars()
+                        .last()
+                        .is_some_and(char::is_whitespace)
+                    && remaining[3..]
+                        .chars()
+                        .next()
+                        .is_some_and(char::is_whitespace)
+                {
+                    let trait_name = target[..offset].trim();
+                    let for_type = remaining[3..].trim();
+                    if let (Some(_), Some(_)) = (trait_name.chars().next(), for_type.chars().next())
+                    {
+                        return Some((trait_name, for_type));
+                    }
+                }
+            }
+            _ => {}
+        }
     }
+    None
 }
 
 fn make_symbol(parts: SymbolParts<'_>) -> Symbol {
@@ -585,6 +614,35 @@ mod parser_review_tests {
             );
         }
         assert!(!syms.iter().any(|s| s.name == "fn"));
+    }
+
+    #[test]
+    fn trait_impl_headers_accept_multiline_whitespace_around_for() {
+        let syms = symbols(
+            "trait Build {}\nstruct Widget<T>(T);\nimpl<T> Build\n    for\n    Widget<T> {}\nimpl Build\tfor\nWidget<u8> {}\nimpl Widget<u16> {}\n",
+        );
+        let impls: Vec<_> = syms.iter().filter(|s| s.kind == "impl").collect();
+        assert_eq!(impls.len(), 3);
+        assert_eq!(impls[0].trait_name.as_deref(), Some("Build"));
+        assert_eq!(impls[0].for_type.as_deref(), Some("Widget<T>"));
+        assert_eq!(impls[1].trait_name.as_deref(), Some("Build"));
+        assert_eq!(impls[1].for_type.as_deref(), Some("Widget<u8>"));
+        assert_eq!(impls[2].trait_name, None);
+        assert_eq!(impls[2].for_type.as_deref(), Some("Widget<u16>"));
+    }
+
+    #[test]
+    fn trait_impl_separator_must_be_top_level_and_have_whitespace_boundaries() {
+        assert_eq!(
+            split_impl_target("Borrow<for<'a> fn(&'a str)>\nfor\nWidget"),
+            Some(("Borrow<for<'a> fn(&'a str)>", "Widget"))
+        );
+        assert_eq!(
+            split_impl_target("Before for Widget"),
+            Some(("Before", "Widget"))
+        );
+        assert_eq!(split_impl_target("Before format Widget"), None);
+        assert_eq!(split_impl_target("Before for "), None);
     }
 
     #[test]

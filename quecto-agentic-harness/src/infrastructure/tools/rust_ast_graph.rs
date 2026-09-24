@@ -6,7 +6,11 @@ use std::sync::Arc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use self::impl_paths::local_impl_path_matches;
 use super::rust_ast_graph_hits::{RefHit, UseHit, hit_for};
+
+#[path = "rust_ast_graph_impl_paths.rs"]
+mod impl_paths;
 use super::rust_ast_graph_parse::build_graph;
 use super::rust_ast_graph_text::{line_col, to_json, workspace_crates};
 use crate::application::tools::ports::Tool;
@@ -267,15 +271,6 @@ fn crate_directory(file: &str) -> &str {
     file.rsplit_once("/src/").map(|(dir, _)| dir).unwrap_or("")
 }
 
-// Compare an impl self-type/trait path at a Rust identifier boundary, never as a substring.
-fn type_ident_matches(path: &str, name: &str) -> bool {
-    let path = path.trim();
-    let path = path.strip_prefix('&').unwrap_or(path).trim();
-    let path = path.strip_prefix("mut ").unwrap_or(path).trim();
-    let base = path.split('<').next().unwrap_or(path).trim();
-    base.rsplit("::").next() == Some(name)
-}
-
 fn signature_has_async_qualifier(signature: &str) -> bool {
     let Some((prefix, _)) = signature.split_once("fn ") else {
         return false;
@@ -418,7 +413,7 @@ impl Graph {
                     && s.kind == "impl"
                     && s.for_type
                         .as_deref()
-                        .is_some_and(|ty| type_ident_matches(ty, &target.name))
+                        .is_some_and(|ty| local_impl_path_matches(s, ty, target))
             })
             .take(limit)
             .collect();
@@ -429,11 +424,11 @@ impl Graph {
                 s.kind == "impl"
                     && s.trait_name.as_deref().is_some_and(|tr| {
                         if target.kind == "trait" {
-                            type_ident_matches(tr, &target.name)
+                            local_impl_path_matches(s, tr, target)
                         } else {
                             s.for_type
                                 .as_deref()
-                                .is_some_and(|ty| type_ident_matches(ty, &target.name))
+                                .is_some_and(|ty| local_impl_path_matches(s, ty, target))
                         }
                     })
             })

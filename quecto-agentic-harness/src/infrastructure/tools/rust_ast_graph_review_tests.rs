@@ -209,3 +209,111 @@ async fn neighbors_external_module_children_match_exact_path() {
         "{v}"
     );
 }
+
+#[tokio::test]
+async fn neighbors_do_not_link_same_named_types_or_traits_across_modules_and_crates() {
+    let (tool, tmp) = tool_with_workspace();
+    std::fs::write(
+        tmp.path().join("src/lib.rs"),
+        r#"
+pub mod alpha {
+    pub struct Item;
+    pub trait Render {}
+    impl Item {}
+    impl Render for Item {}
+}
+pub mod beta {
+    pub struct Item;
+    pub trait Render {}
+    impl Item {}
+    impl Render for Item {}
+}
+impl alpha::Item {}
+impl alpha::Render for alpha::Item {}
+"#,
+    )
+    .unwrap();
+    let other = tmp.path().join("other/src");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(
+        tmp.path().join("other/Cargo.toml"),
+        "[package]\nname = \"other\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        other.join("lib.rs"),
+        "pub struct Item;\npub trait Render {}\nimpl Item {}\nimpl Render for Item {}\n",
+    )
+    .unwrap();
+
+    for (target_file, module, wanted_impls, wanted_trait_impls) in [
+        ("src/lib.rs", "alpha", 4, 2),
+        ("src/lib.rs", "beta", 2, 1),
+        ("other/src/lib.rs", "crate", 2, 1),
+    ] {
+        for (kind, expected) in [("struct", wanted_impls), ("trait", wanted_trait_impls)] {
+            let name = if kind == "struct" { "Item" } else { "Render" };
+            let query = if module == "crate" {
+                name.to_string()
+            } else {
+                format!("{module}::{name}")
+            };
+            let found = call(
+                &tool,
+                &serde_json::json!({"action":"find_symbol","symbol":query}).to_string(),
+            )
+            .await;
+            let symbol = found["matches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["kind"] == kind && s["location"]["file"] == target_file)
+                .unwrap();
+            let id = symbol["id"].as_str().unwrap();
+            let neighbors = call(
+                &tool,
+                &serde_json::json!({"action":"neighbors","symbol":id}).to_string(),
+            )
+            .await;
+            let edges = if kind == "struct" {
+                "implementations"
+            } else {
+                "trait_relationships"
+            };
+            let impls = neighbors[edges].as_array().unwrap();
+            assert_eq!(
+                impls.len(),
+                expected,
+                "unexpected {edges} for {module} in {target_file}: {impls:?}"
+            );
+            assert!(impls.iter().all(|s| s["location"]["file"] == target_file));
+        }
+    }
+}
+
+#[tokio::test]
+async fn multiline_trait_impl_is_visible_in_query_and_local_neighbors() {
+    let (tool, tmp) = tool_with_workspace();
+    std::fs::write(
+        tmp.path().join("src/lib.rs"),
+        "pub trait Build {}\npub struct Widget<T>(T);\nimpl<T> Build\n for\n Widget<T> {}\n",
+    )
+    .unwrap();
+    let query = call(&tool, r#"{"action":"query","query":"trait_impls"}"#).await;
+    let implementations = query["results"].as_array().unwrap();
+    assert_eq!(implementations.len(), 1);
+    assert_eq!(implementations[0]["trait_name"], "Build");
+    assert_eq!(implementations[0]["for_type"], "Widget<T>");
+    for name in ["Widget", "Build"] {
+        let neighbors = call(
+            &tool,
+            &serde_json::json!({"action":"neighbors", "symbol":name}).to_string(),
+        )
+        .await;
+        assert_eq!(
+            neighbors["trait_relationships"].as_array().unwrap().len(),
+            1,
+            "{name}"
+        );
+    }
+}
