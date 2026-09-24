@@ -3,11 +3,14 @@
 //! (with its state root present) and its container reported gone by its
 //! own retained `inspect` is nothing left, and the record may be
 //! forgotten. The disk is asked first, so a box that left its state is
-//! never inspected. Inspects share a time budget per probe
-//! ([`RESIDUE_INSPECT_BUDGET_MILLIS`]), so a hanging runtime cannot hold a
-//! session start, while a record whose inspect fails fast (no argv, an
-//! unrecognised status) costs next to nothing and holds back no other.
-//! What is not inspected is kept, to be judged by a later restore.
+//! never inspected. A probe counts only the time inside its own inspects
+//! against a budget ([`RESIDUE_INSPECT_BUDGET_MILLIS`]), and an inspect
+//! that answers slowly ([`SLOW_INSPECT_MILLIS`]) marks its runtime as
+//! hanging: the other records inspected the same way wait, while other
+//! runtimes' records are still judged. So a hanging runtime cannot hold a
+//! session start, and a record whose inspect fails fast (no argv, an
+//! unrecognised status) holds back no other. What is not inspected is
+//! kept, to be judged by a later restore.
 use crate::domain::environment_registry::EnvironmentRecord;
 
 use super::super::dto::{EnvironmentLiveness, StateOnDisk};
@@ -16,6 +19,10 @@ use super::super::ports::EnvironmentProcess;
 /// How long, in milliseconds, one restore or collection spends inspecting
 /// stopped records (one inspect started within it may run to its bound).
 pub const RESIDUE_INSPECT_BUDGET_MILLIS: u64 = 15_000;
+
+/// An inspect this slow (the script bound is 5 s) marks its runtime as
+/// hanging for the rest of the probe.
+pub const SLOW_INSPECT_MILLIS: u64 = 4_000;
 
 /// Why a stopped record whose workspace names no environment directory is
 /// kept.
@@ -43,8 +50,14 @@ pub(super) enum Residue {
 /// One restore's (or collection's) judge of stopped records' boxes.
 pub(super) struct ResidueProbe<'a> {
     process: &'a dyn EnvironmentProcess,
-    began_millis: u64,
+    /// Time spent inside this probe's own inspects: what else the caller
+    /// inspects (live records) is not the probe's to count.
+    spent_millis: u64,
     budget_millis: u64,
+    /// Inspect argvs that answered slowly: their runtime is taken as
+    /// hanging (a circuit breaker), and its other records wait for a later
+    /// restore.
+    hanging: Vec<Vec<String>>,
 }
 
 impl<'a> ResidueProbe<'a> {
@@ -55,8 +68,9 @@ impl<'a> ResidueProbe<'a> {
     pub fn with_budget(process: &'a dyn EnvironmentProcess, budget_millis: u64) -> Self {
         Self {
             process,
-            began_millis: process.inspect_clock_millis(),
+            spent_millis: 0,
             budget_millis,
+            hanging: Vec::new(),
         }
     }
 
@@ -74,20 +88,28 @@ impl<'a> ResidueProbe<'a> {
     }
 
     fn runtime_residue(&mut self, record: &EnvironmentRecord) -> Residue {
-        let spent = self
-            .process
-            .inspect_clock_millis()
-            .saturating_sub(self.began_millis);
-        if spent < self.budget_millis {
-            match self.process.observe(record) {
-                EnvironmentLiveness::Gone => Residue::Nothing,
-                EnvironmentLiveness::Running => {
-                    Residue::Kept(STATE_GONE_CONTAINER_RUNNING.to_string())
-                }
-                EnvironmentLiveness::Unknown(reason) => Residue::Kept(reason),
-            }
-        } else {
-            Residue::Deferred
+        let within_budget = self.spent_millis < self.budget_millis;
+        let runtime_hangs = self.hanging.contains(&record.retained_inspect_argv);
+        match (within_budget, runtime_hangs) {
+            (true, false) => self.inspect(record),
+            (false, _) | (true, true) => Residue::Deferred,
+        }
+    }
+
+    /// Run the record's own inspect, counting its time and tripping the
+    /// breaker for its runtime when it answered slowly.
+    fn inspect(&mut self, record: &EnvironmentRecord) -> Residue {
+        let started = self.process.inspect_clock_millis();
+        let liveness = self.process.observe(record);
+        let took = self.process.inspect_clock_millis().saturating_sub(started);
+        self.spent_millis = self.spent_millis.saturating_add(took);
+        if took >= SLOW_INSPECT_MILLIS {
+            self.hanging.push(record.retained_inspect_argv.clone());
+        }
+        match liveness {
+            EnvironmentLiveness::Gone => Residue::Nothing,
+            EnvironmentLiveness::Running => Residue::Kept(STATE_GONE_CONTAINER_RUNNING.to_string()),
+            EnvironmentLiveness::Unknown(reason) => Residue::Kept(reason),
         }
     }
 }
