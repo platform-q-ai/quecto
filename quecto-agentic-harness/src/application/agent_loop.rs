@@ -51,6 +51,7 @@ mod agent_loop_uds_tools;
 use agent_loop_errors::{
     append_feedback, append_malformed_feedback, enhance_provider_error,
     is_context_or_output_limit_error, output_limit_feedback, provider_failure_audit_event,
+    record_feedback,
 };
 use agent_loop_spill::ToolMessageArgs;
 use agent_loop_turn::{
@@ -112,6 +113,8 @@ pub struct AgentLoopImpl {
     max_tokens: u32,
     /// Per-model registry output cap, if known; see `agent_loop_clamp` (#935).
     model_max_tokens: Option<u32>,
+    /// One request after an output-limit cut-off may use the model's cap (#2124).
+    output_boost: std::sync::atomic::AtomicBool,
     temperature: f32,
     max_tool_iterations: u32,
     /// Whether the loop retains context (D9 #1978): the spill manifest is
@@ -178,6 +181,7 @@ impl AgentLoopImpl {
             model: config.model.clone(),
             max_tokens: config.max_tokens,
             model_max_tokens: None,
+            output_boost: std::sync::atomic::AtomicBool::new(false),
             temperature: config.temperature,
             max_tool_iterations: DEFAULT_MAX_TOOL_ITERATIONS,
             retains_context: config.retention.is_some(),
@@ -443,7 +447,7 @@ impl AgentLoopImpl {
             messages,
             tools: tool_defs,
             model: &self.model,
-            max_tokens: self.effective_max_tokens(),
+            max_tokens: self.request_max_tokens(),
             temperature: self.temperature,
             session_id,
             tool_choice: None,
@@ -616,9 +620,15 @@ impl AgentLoopImpl {
                 .await;
 
             let llm_duration_ms = llm_start.elapsed().as_millis() as u64;
+            // Every response is audited and counted, including one dropped below.
+            let timing = (current_turn, estimated_context_tokens, llm_duration_ms);
+            self.account_response(&response, timing, &mut usage_totals)
+                .await;
             let after = match response {
                 // #2124: nothing visible before the output limit is no answer.
-                Ok(response) if is_cut_off_without_answer(&response) => {
+                Ok(response)
+                    if is_cut_off_without_answer(&response, self.effective_max_tokens()) =>
+                {
                     let feedback = output_limit_feedback(self.effective_max_tokens());
                     let recovery = (&mut cut_off_retries, &mut appended_messages, feedback);
                     self.after_cut_off_answer(messages, &response, current_turn, recovery)
@@ -632,25 +642,16 @@ impl AgentLoopImpl {
                 }
             };
             let response = match after {
-                AfterResponse::Proceed(response) => response,
+                AfterResponse::Proceed(response) => {
+                    cut_off_retries = 0;
+                    response
+                }
                 AfterResponse::Retry => {
                     current_turn += 1;
                     continue;
                 }
                 AfterResponse::Finish(result) => return result,
             };
-
-            self.audit_provider_response_end(
-                current_turn,
-                &response,
-                estimated_context_tokens,
-                llm_duration_ms,
-            )
-            .await;
-
-            if let Some(ref usage) = response.usage {
-                usage_totals.record(usage);
-            }
 
             match next_state_after_provider_response(&response) {
                 TurnState::FinalizeAssistantResponse => {

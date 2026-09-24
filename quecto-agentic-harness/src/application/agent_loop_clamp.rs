@@ -55,6 +55,20 @@ impl AgentLoopImpl {
 
     /// The effective per-request output cap: configured `max_tokens` clamped
     /// down to the model's registry cap when one is known.
+    /// The output limit for the next request: after an output-limit cut-off
+    /// (#2124) one request may use the model's declared cap, when that is
+    /// above the configured limit, so the retry is not a repeat of the same
+    /// budget; otherwise the effective limit.
+    pub(super) fn request_max_tokens(&self) -> u32 {
+        let boosted = self
+            .output_boost
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
+        match (boosted, self.model_max_tokens) {
+            (true, Some(cap)) if cap > self.max_tokens => cap,
+            _ => self.effective_max_tokens(),
+        }
+    }
+
     pub fn effective_max_tokens(&self) -> u32 {
         match self.model_max_tokens {
             Some(cap) => self.max_tokens.min(cap),

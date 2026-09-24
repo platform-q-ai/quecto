@@ -1,7 +1,7 @@
 use super::*;
 
 /// Retries for a reply cut off at the output limit with nothing visible.
-pub(super) const MAX_CUT_OFF_RETRIES: u32 = 2;
+pub(super) const MAX_CUT_OFF_RETRIES: u32 = 1;
 
 /// What the loop does after a provider response or failure.
 pub(super) enum AfterResponse {
@@ -227,6 +227,23 @@ impl AgentLoopImpl {
         }
     }
 
+    /// Audits a provider response and counts its usage, whether the loop then
+    /// proceeds with it or drops it (#2124): its tokens were spent either way.
+    pub(super) async fn account_response(
+        &self,
+        response: &Result<LlmResponse, DomainError>,
+        (current_turn, context_tokens, duration_ms): (u32, usize, u64),
+        usage_totals: &mut UsageTotals,
+    ) {
+        if let Ok(response) = response {
+            self.audit_provider_response_end(current_turn, response, context_tokens, duration_ms)
+                .await;
+            if let Some(ref usage) = response.usage {
+                usage_totals.record(usage);
+            }
+        }
+    }
+
     /// What follows a provider failure: re-prompt a model-malformed request
     /// while retries remain, otherwise fail the turn.
     pub(super) async fn after_provider_failure(
@@ -278,10 +295,11 @@ impl AgentLoopImpl {
                 max = MAX_CUT_OFF_RETRIES,
                 "reply hit the output limit with nothing visible — asking again, concisely"
             );
-            append_feedback(messages, feedback, current_turn);
-            if let Some(last) = messages.last() {
-                appended_messages.push(last.clone());
-            }
+            let how = append_feedback(messages, feedback, current_turn);
+            record_feedback(messages, appended_messages, how);
+            // The retry may use the model's cap, not repeat the same budget.
+            self.output_boost
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             AfterResponse::Retry
         } else {
             self.drain_tool_policy_mutations_at_boundary();
@@ -306,12 +324,9 @@ impl AgentLoopImpl {
             error = %error,
             "provider rejected request as malformed — re-prompting with addressable feedback"
         );
-        append_malformed_feedback(messages, error, current_turn);
-        // The feedback user message was appended by this run, so it belongs in
-        // the ledger (#1072 review).
-        if let Some(feedback) = messages.last() {
-            appended_messages.push(feedback.clone());
-        }
+        let how = append_malformed_feedback(messages, error, current_turn);
+        // Feedback the run added belongs in the ledger (#1072 review), once.
+        record_feedback(messages, appended_messages, how);
     }
 
     pub(super) async fn fail_provider_request(

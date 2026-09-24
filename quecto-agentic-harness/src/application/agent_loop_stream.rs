@@ -22,7 +22,13 @@ pub(super) fn is_empty_streamed_response(response: &LlmResponse) -> bool {
 
 /// A reply that hit the output limit with nothing visible: no text and no
 /// tool call, only reasoning (#2124). It is no answer, never a final one.
-pub(super) fn is_cut_off_without_answer(response: &LlmResponse) -> bool {
+/// Some providers also report a full context window as `max_tokens`; a reply
+/// that used under half of its output budget did not hit the output limit.
+pub(super) fn is_cut_off_without_answer(response: &LlmResponse, max_tokens: u32) -> bool {
+    let used_the_budget = response
+        .usage
+        .as_ref()
+        .is_none_or(|usage| u64::from(usage.completion_tokens) * 2 >= u64::from(max_tokens));
     response.stop_reason == Some(StopReason::MaxTokens)
         && response
             .content
@@ -31,6 +37,7 @@ pub(super) fn is_cut_off_without_answer(response: &LlmResponse) -> bool {
             .trim()
             .is_empty()
         && response.tool_calls.is_empty()
+        && used_the_budget
 }
 
 pub(super) fn empty_stream_error_message(response: &LlmResponse) -> String {
