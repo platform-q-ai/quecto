@@ -197,7 +197,12 @@ pub async fn settle(context: SwarmContext) -> Result<Value, DomainError> {
         .map_err(|e| DomainError::Tool(e.to_string()))??;
     context
         .lifecycle
-        .settle(&snapshot, &context.member, &RuntimeProcesses(&context))
+        .settle(
+            &snapshot,
+            &context.member,
+            &RuntimeProcesses(&context),
+            &LinuxProcesses,
+        )
         .await?;
     tokio::task::spawn_blocking(move || reconcile(&context))
         .await
@@ -265,13 +270,122 @@ pub fn supervise(
                     &snapshot,
                     &context.member,
                     &RuntimeProcesses(&context),
+                    &LinuxProcesses,
                 )) {
                     tracing::error!(%error, "swarm terminal settlement failed");
                 }
+                watch_until_ended(&context, &runtime);
             }
             Err(error) => tracing::error!(%error, "swarm settlement runtime failed"),
         }
     });
+}
+
+/// How long a member waits after settling for its launcher to end it: the
+/// launcher's teardown may take one conclusion bound per level of nesting
+/// (a launcher ends its own launchees before it exits), with room for three.
+const SELF_END_GRACE: std::time::Duration = std::time::Duration::from_secs(
+    crate::infrastructure::processes::direct_child_routing::PER_HOP_CONCLUSION_BOUND.as_secs() * 3,
+);
+/// Attempts after which a member stops trying to end itself: it cannot reach
+/// its own endpoint, or its harness accepted the shutdown but does not exit.
+const SELF_END_ATTEMPTS: u32 = 5;
+/// Consecutive unreadable snapshots (a contended store at close) tolerated
+/// before the watch gives up.
+const SNAPSHOT_ATTEMPTS: u32 = 10;
+
+/// How long the settlement watch keeps trying before it gives up.
+#[derive(Debug, Default)]
+struct WatchBudget {
+    unreadable: u32,
+    self_end_attempts: u32,
+}
+
+impl WatchBudget {
+    fn readable(&mut self) {
+        self.unreadable = 0;
+    }
+    /// Records an unreadable snapshot; true once too many came in a row.
+    fn unreadable_exhausted(&mut self) -> bool {
+        self.unreadable += 1;
+        self.unreadable >= SNAPSHOT_ATTEMPTS
+    }
+    /// Records an attempt to end itself; true once none is left.
+    fn self_end_exhausted(&mut self) -> bool {
+        self.self_end_attempts += 1;
+        self.self_end_attempts >= SELF_END_ATTEMPTS
+    }
+}
+
+/// After settling, a member waits to be ended by its launcher (#2121). Each
+/// tick settles again on a fresh snapshot, so a coordinator lost meanwhile
+/// hands the ending to the members; a member still alive after the grace
+/// ends itself instead of keeping the environment alive. What to do each
+/// tick is the application's decision (`settlement_step`).
+fn watch_until_ended(context: &SwarmContext, runtime: &tokio::runtime::Runtime) {
+    use crate::application::swarm::ports::SettlementStep;
+    let started = std::time::Instant::now();
+    let mut retry_logged = false;
+    let mut budget = WatchBudget::default();
+    loop {
+        let snapshot = match context.snapshot() {
+            Ok(snapshot) => {
+                budget.readable();
+                snapshot
+            }
+            Err(error) => {
+                if budget.unreadable_exhausted() {
+                    tracing::error!(%error, "swarm settlement watch lost coordination");
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                continue;
+            }
+        };
+        let step = context.lifecycle.settlement_step(
+            &snapshot,
+            &context.member,
+            started.elapsed(),
+            SELF_END_GRACE,
+        );
+        let outcome = match step {
+            SettlementStep::Done => return,
+            SettlementStep::Wait => runtime.block_on(context.lifecycle.settle(
+                &snapshot,
+                &context.member,
+                &RuntimeProcesses(context),
+                &LinuxProcesses,
+            )),
+            SettlementStep::EndSelf => runtime.block_on(context.lifecycle.settle_overdue(
+                &snapshot,
+                &context.member,
+                &RuntimeProcesses(context),
+            )),
+        };
+        match (outcome, step) {
+            (outcome, SettlementStep::EndSelf) => {
+                // Every attempt counts, accepted or not: a harness that took
+                // the shutdown but is still here is as stuck as one that
+                // refused it.
+                if budget.self_end_exhausted() {
+                    let reason = outcome.err().map_or_else(
+                        || "shutdown accepted but still running".into(),
+                        |e| e.to_string(),
+                    );
+                    tracing::error!(%reason, "swarm member could not end itself; giving up");
+                    return;
+                }
+            }
+            (Ok(()), _) => {}
+            (Err(error), _) => {
+                if !retry_logged {
+                    tracing::warn!(%error, "swarm settlement retry failed; still waiting");
+                    retry_logged = true;
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
 }
 
 struct SystemClock;
@@ -411,6 +525,7 @@ fn settle_observed_snapshot(
                 snapshot,
                 &context.member,
                 &RuntimeProcesses(context),
+                &LinuxProcesses,
             )) {
                 tracing::error!(%error, "swarm suspension failed");
             }

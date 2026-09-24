@@ -76,6 +76,7 @@ fn member(id: &str, endpoint: Option<&std::path::Path>, pid: Option<u32>) -> Mem
             started: "identity".into(),
         }),
         endpoint: endpoint.map(|p| p.to_string_lossy().into_owned()),
+        launcher: None,
     }
 }
 

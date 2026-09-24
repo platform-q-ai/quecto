@@ -105,6 +105,9 @@ pub struct Member {
     pub status: MemberStatus,
     pub process: Option<ProcessIdentity>,
     pub endpoint: Option<String>,
+    /// The member whose harness launched this one (#2121); `None` for the
+    /// bootstrapped coordinator and legacy stores.
+    pub launcher: Option<String>,
 }
 
 #[derive(Clone, Debug)]

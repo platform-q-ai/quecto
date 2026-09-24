@@ -59,6 +59,7 @@ fn snapshot(status: RunStatus) -> Snapshot {
                     started: "identity".into(),
                 }),
                 endpoint: Some(id.into()),
+                launcher: None,
             })
             .collect(),
     }
@@ -77,7 +78,7 @@ async fn terminal_settlement_cancels_jobs_before_any_abort_and_preserves_reporti
             accepts: true,
             fail_terminate: false,
         };
-        settle(&snapshot(status), "parent", &processes)
+        settle(&snapshot(status), "parent", &processes, &AllAlive)
             .await
             .unwrap();
         let mut expected = vec!["cancel-jobs", "abort:worker", "terminate:worker"];
@@ -94,9 +95,14 @@ async fn failed_worker_abort_still_terminates_worker_and_suspends_local_coordina
         accepts: false,
         fail_terminate: false,
     };
-    settle(&snapshot(RunStatus::Failed), "parent", &processes)
-        .await
-        .unwrap();
+    settle(
+        &snapshot(RunStatus::Failed),
+        "parent",
+        &processes,
+        &AllAlive,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         *processes.events.lock().unwrap(),
         [
@@ -115,7 +121,7 @@ async fn active_runs_have_no_settlement_effects() {
             accepts: false,
             fail_terminate: false,
         };
-        settle(&snapshot(status), "parent", &processes)
+        settle(&snapshot(status), "parent", &processes, &AllAlive)
             .await
             .unwrap();
         assert!(processes.events.lock().unwrap().is_empty());
@@ -188,9 +194,14 @@ async fn suspension_cancels_only_local_work_without_terminating_members() {
         accepts: false,
         fail_terminate: false,
     };
-    settle(&snapshot(RunStatus::Paused), "parent", &processes)
-        .await
-        .unwrap();
+    settle(
+        &snapshot(RunStatus::Paused),
+        "parent",
+        &processes,
+        &AllAlive,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         *processes.events.lock().unwrap(),
         ["suspend-jobs", "suspend-local"]
@@ -205,7 +216,7 @@ async fn failed_or_expired_run_retains_coordinator_when_abort_delivery_fails() {
             accepts: false,
             fail_terminate: false,
         };
-        settle(&snapshot(status), "parent", &processes)
+        settle(&snapshot(status), "parent", &processes, &AllAlive)
             .await
             .unwrap();
         let events = processes.events.lock().unwrap();
@@ -235,7 +246,9 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
         accepts: true,
         fail_terminate: false,
     };
-    settle(&ended, "parent", &coordinator).await.unwrap();
+    settle(&ended, "parent", &coordinator, &AllAlive)
+        .await
+        .unwrap();
     assert_eq!(
         *coordinator.events.lock().unwrap(),
         ["suspend-jobs"],
@@ -246,7 +259,7 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
         accepts: true,
         fail_terminate: false,
     };
-    settle(&ended, "worker", &worker).await.unwrap();
+    settle(&ended, "worker", &worker, &AllAlive).await.unwrap();
     assert_eq!(
         *worker.events.lock().unwrap(),
         ["suspend-jobs", "suspend-local"]
@@ -259,7 +272,9 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
         accepts: true,
         fail_terminate: false,
     };
-    settle(&plain, "parent", &processes).await.unwrap();
+    settle(&plain, "parent", &processes, &AllAlive)
+        .await
+        .unwrap();
     assert_eq!(
         *processes.events.lock().unwrap(),
         ["suspend-jobs", "suspend-local"]
@@ -286,8 +301,9 @@ async fn an_unreachable_member_is_reported_after_the_others_were_asked() {
         status: MemberStatus::Live,
         process: None,
         endpoint: None,
+        launcher: None,
     });
-    let error = settle(&snapshot, "parent", &processes)
+    let error = settle(&snapshot, "parent", &processes, &AllAlive)
         .await
         .expect_err("an unreachable member is a truthful failure");
     let text = error.to_string();
@@ -395,4 +411,231 @@ fn a_socket_loss_without_an_observed_exit_never_confirms_death() {
     // confirmed death.
     reconcile(&board, &Observations).unwrap();
     assert_eq!(*board.log.lock().unwrap(), ["quarantine:worker"]);
+}
+
+/// The coordinator's harness (pid 1) is gone; every other harness is alive.
+struct CoordinatorGone;
+impl ProcessObservation for CoordinatorGone {
+    fn harness_dead(&self, process: &ProcessIdentity) -> bool {
+        process.pid == 1
+    }
+}
+
+fn recording() -> Processes {
+    Processes {
+        events: Mutex::new(vec![]),
+        accepts: true,
+        fail_terminate: false,
+    }
+}
+
+#[tokio::test]
+async fn a_member_settling_a_closed_run_ends_nobody_and_leaves_ending_to_the_coordinator() {
+    // #2121: members that ended each other (and themselves) over their
+    // sockets bypassed the launcher, which then reported every exit as
+    // unexpected. Only the coordinator, whose harness launched them, ends
+    // members; a member stops only its own work.
+    for status in [
+        RunStatus::Succeeded,
+        RunStatus::Cancelled,
+        RunStatus::Failed,
+    ] {
+        let processes = recording();
+        settle(&snapshot(status), "worker", &processes, &AllAlive)
+            .await
+            .unwrap();
+        assert_eq!(
+            *processes.events.lock().unwrap(),
+            ["cancel-jobs", "suspend-local"],
+            "{status:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn members_end_the_run_themselves_once_the_coordinator_is_gone() {
+    let processes = recording();
+    settle(
+        &snapshot(RunStatus::Failed),
+        "worker",
+        &processes,
+        &CoordinatorGone,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        *processes.events.lock().unwrap(),
+        ["cancel-jobs", "abort:worker", "terminate:worker"]
+    );
+
+    let mut dead = snapshot(RunStatus::Failed);
+    dead.members[0].status = MemberStatus::Dead;
+    let processes = recording();
+    settle(&dead, "worker", &processes, &AllAlive)
+        .await
+        .unwrap();
+    assert_eq!(
+        *processes.events.lock().unwrap(),
+        ["cancel-jobs", "abort:worker", "terminate:worker"]
+    );
+}
+
+/// parent (coordinator, pid 1) launched a (2) and b (3); a launched c (4);
+/// r is reserved but never launched.
+fn tree(status: RunStatus) -> Snapshot {
+    let member = |id: &str, pid: Option<u32>, launcher: Option<&str>, status| Member {
+        id: id.into(),
+        status,
+        process: pid.map(|pid| ProcessIdentity {
+            pid,
+            started: "identity".into(),
+        }),
+        endpoint: Some(id.into()),
+        launcher: launcher.map(str::to_string),
+    };
+    Snapshot {
+        control_generation: 0,
+        status,
+        outcome: None,
+        coordinator: "parent".into(),
+        deadline: 100.,
+        members: vec![
+            member("parent", Some(1), None, MemberStatus::Live),
+            member("a", Some(2), Some("parent"), MemberStatus::Live),
+            member("b", Some(3), Some("parent"), MemberStatus::Live),
+            member("c", Some(4), Some("a"), MemberStatus::Live),
+            member("r", None, Some("parent"), MemberStatus::Reserved),
+        ],
+    }
+}
+
+fn ended_by(
+    snapshot: &Snapshot,
+    actor: &str,
+    observation: &impl ProcessObservation,
+) -> Vec<String> {
+    let processes = recording();
+    futures::executor::block_on(settle(snapshot, actor, &processes, observation)).unwrap();
+    let events = processes.events.lock().unwrap().clone();
+    events
+        .into_iter()
+        .filter_map(|e| e.strip_prefix("terminate:").map(str::to_string))
+        .collect()
+}
+
+#[test]
+fn each_harness_ends_the_members_it_launched_and_never_a_reserved_row() {
+    let run = tree(RunStatus::Succeeded);
+    assert_eq!(ended_by(&run, "parent", &AllAlive), ["a", "b"]);
+    assert_eq!(ended_by(&run, "a", &AllAlive), ["c"]);
+    assert!(ended_by(&run, "b", &AllAlive).is_empty());
+    assert!(ended_by(&run, "c", &AllAlive).is_empty());
+}
+
+#[test]
+fn the_coordinator_ends_members_whose_launcher_is_gone() {
+    let mut run = tree(RunStatus::Succeeded);
+    run.members[1].status = MemberStatus::Dead;
+    assert_eq!(ended_by(&run, "parent", &AllAlive), ["b", "c"]);
+}
+
+#[test]
+fn without_a_coordinator_members_end_their_launchees_and_orphans_themselves_last() {
+    // c's launcher a is alive, so only a ends c: b ending it would bypass a's
+    // registry and post the note #2121 removes.
+    let run = tree(RunStatus::Failed);
+    assert_eq!(ended_by(&run, "b", &CoordinatorGone), ["a", "b"]);
+    assert_eq!(ended_by(&run, "a", &CoordinatorGone), ["b", "c", "a"]);
+    let mut missing = tree(RunStatus::Failed);
+    missing.members.remove(0);
+    assert_eq!(ended_by(&missing, "b", &AllAlive), ["a", "b"]);
+}
+
+#[test]
+fn a_coordinator_that_cannot_be_observed_is_treated_as_present() {
+    let mut run = tree(RunStatus::Failed);
+    run.members[0].process = None;
+    assert!(ended_by(&run, "b", &AllAlive).is_empty());
+}
+
+#[tokio::test]
+async fn an_overdue_member_ends_only_itself_and_the_coordinator_never_does() {
+    let run = tree(RunStatus::Succeeded);
+    let processes = recording();
+    settle_overdue(&run, "b", &processes).await.unwrap();
+    assert_eq!(
+        *processes.events.lock().unwrap(),
+        ["abort:b", "terminate:b"]
+    );
+    let processes = recording();
+    settle_overdue(&run, "parent", &processes).await.unwrap();
+    assert!(processes.events.lock().unwrap().is_empty());
+    let processes = recording();
+    settle_overdue(&tree(RunStatus::Running), "b", &processes)
+        .await
+        .unwrap();
+    assert!(
+        processes.events.lock().unwrap().is_empty(),
+        "only a settled run"
+    );
+}
+
+#[test]
+fn a_member_waits_for_its_launcher_until_the_grace_then_ends_itself() {
+    use std::time::Duration;
+    let grace = Duration::from_secs(90);
+    let run = tree(RunStatus::Succeeded);
+    let step = |snapshot: &Snapshot, actor, elapsed| {
+        settlement_step(snapshot, actor, Duration::from_secs(elapsed), grace)
+    };
+    assert_eq!(step(&run, "b", 0), SettlementStep::Wait);
+    assert_eq!(step(&run, "b", 89), SettlementStep::Wait);
+    assert_eq!(step(&run, "b", 90), SettlementStep::EndSelf);
+    assert_eq!(
+        step(&run, "parent", 500),
+        SettlementStep::Done,
+        "the coordinator reports"
+    );
+    let mut ended = tree(RunStatus::Succeeded);
+    ended.members[2].status = MemberStatus::Dead;
+    assert_eq!(step(&ended, "b", 500), SettlementStep::Done);
+    assert_eq!(
+        step(&tree(RunStatus::Running), "b", 500),
+        SettlementStep::Done
+    );
+    assert_eq!(step(&run, "stranger", 500), SettlementStep::Done);
+}
+
+/// Records when each member's end starts and finishes; `a` is slow to end.
+struct SlowFirst(Mutex<Vec<String>>);
+impl ProcessControl for SlowFirst {
+    fn suspend_local_executions(&self, _: &Snapshot) {}
+    fn suspend_local_inference(&self, _: &Snapshot) {}
+    fn cancel_local_executions(&self) {}
+    fn abort<'a>(&'a self, member: &'a Member) -> PortFuture<'a, bool> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push(format!("abort:{}", member.id));
+            true
+        })
+    }
+    fn terminate<'a>(&'a self, member: &'a Member) -> PortFuture<'a, Result<(), DomainError>> {
+        Box::pin(async move {
+            if member.id == "a" {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            self.0.lock().unwrap().push(format!("ended:{}", member.id));
+            Ok(())
+        })
+    }
+}
+
+#[tokio::test]
+async fn the_coordinator_ends_members_at_once_so_a_slow_one_holds_up_nobody() {
+    let processes = SlowFirst(Mutex::new(vec![]));
+    settle(&tree(RunStatus::Succeeded), "parent", &processes, &AllAlive)
+        .await
+        .unwrap();
+    let events = processes.0.lock().unwrap().clone();
+    let at = |e: &str| events.iter().position(|x| x == e).unwrap();
+    assert!(at("ended:b") < at("ended:a"), "{events:?}");
 }

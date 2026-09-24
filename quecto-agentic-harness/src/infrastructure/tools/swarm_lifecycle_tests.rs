@@ -123,3 +123,30 @@ async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
     assert_eq!(receipt.wake_warnings.len(), 1, "{receipt:?}");
     assert!(receipt.wake_warnings[0].contains("worker"), "{receipt:?}");
 }
+
+#[test]
+fn the_settlement_watch_tolerates_a_busy_store_but_not_forever() {
+    // #2121: a contended store at close must not end the watch at once, or
+    // the member never reaches its self-end and strands the environment.
+    let mut budget = super::WatchBudget::default();
+    for _ in 1..super::SNAPSHOT_ATTEMPTS {
+        assert!(!budget.unreadable_exhausted());
+    }
+    budget.readable();
+    for _ in 1..super::SNAPSHOT_ATTEMPTS {
+        assert!(
+            !budget.unreadable_exhausted(),
+            "a good read resets the count"
+        );
+    }
+    assert!(budget.unreadable_exhausted());
+}
+
+#[test]
+fn a_member_that_cannot_end_itself_stops_trying_after_a_bounded_number_of_attempts() {
+    let mut budget = super::WatchBudget::default();
+    for _ in 1..super::SELF_END_ATTEMPTS {
+        assert!(!budget.self_end_exhausted());
+    }
+    assert!(budget.self_end_exhausted());
+}

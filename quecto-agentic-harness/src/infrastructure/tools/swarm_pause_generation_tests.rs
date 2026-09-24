@@ -21,9 +21,14 @@ async fn stale_pause_settlement_preserves_resumed_python_job() {
     context.resume_external().unwrap();
     let started = tool.execute(r#"{"op":"run","code":"import time; time.sleep(0.1); print('resumed')","background":true}"#).await.unwrap();
     let started: Value = serde_json::from_str(&started.content).unwrap();
-    crate::application::swarm::settle(&old, &context.member, &RuntimeProcesses(&context))
-        .await
-        .unwrap();
+    crate::application::swarm::settle(
+        &old,
+        &context.member,
+        &RuntimeProcesses(&context),
+        &super::LinuxProcesses,
+    )
+    .await
+    .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
         let result = tool
@@ -65,6 +70,7 @@ async fn runtime_never_signals_a_member_by_pid_when_it_is_neither_reachable_nor_
         status: MemberStatus::Live,
         process: Some(identity.clone()),
         endpoint: None,
+        launcher: None,
     };
     assert!(!processes.abort(&member).await);
     let error = processes

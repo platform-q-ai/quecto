@@ -14,6 +14,8 @@ struct WireMember {
     pid: Option<u32>,
     started: Option<String>,
     socket: Option<String>,
+    #[serde(default)]
+    launcher: Option<String>,
 }
 #[derive(Deserialize)]
 struct WireSnapshot {
@@ -81,6 +83,7 @@ fn decode_member(m: WireMember) -> Result<Member, DomainError> {
         status,
         process,
         endpoint: m.socket,
+        launcher: m.launcher,
     })
 }
 impl CoordinationPort for SwarmContext {
