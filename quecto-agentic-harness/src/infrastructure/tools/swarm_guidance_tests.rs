@@ -18,16 +18,14 @@ fn a_run_refused_during_setup_names_op_create_with_a_relative_deadline() {
 #[test]
 fn a_run_refused_when_paused_names_every_allowed_op_and_the_supervisor() {
     let message = run_refused(Some("paused"));
-    for op in [
-        "summary",
-        "events",
-        "usage",
-        "usage_budget",
-        "reconcile",
-        "cancel_run",
-    ] {
+    for op in ["summary", "events", "usage", "reconcile"] {
         assert!(message.contains(op), "{op}: {message}");
     }
+    // A worker told to cancel_run would only be refused: it is coordinator-only.
+    assert!(
+        message.contains("the coordinator may also usage_budget and cancel_run"),
+        "{message}"
+    );
     assert!(message.contains("supervisor"), "{message}");
 }
 

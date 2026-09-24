@@ -30,8 +30,9 @@ pub(super) fn run_refused(status: Option<&str>) -> String {
              events, usage, usage_budget, reconcile."
             .to_string(),
         Some("paused") => "the swarm run is paused, so op=run is unavailable. Allowed: \
-             summary, events, usage, usage_budget, reconcile, cancel_run; the supervisor \
-             outside the swarm resumes or closes it (agent_cmd swarm_control)."
+             summary, events, usage, reconcile; the coordinator may also usage_budget and \
+             cancel_run; the supervisor outside the swarm resumes or closes it (agent_cmd \
+             swarm_control)."
             .to_string(),
         Some(ended) => format!(
             "the swarm run is {ended}, so op=run is unavailable. Allowed: summary, events, \

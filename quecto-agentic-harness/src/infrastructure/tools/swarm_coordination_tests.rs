@@ -66,21 +66,40 @@ fn each_member_carries_its_launcher_so_settlement_knows_who_ends_it() {
 }
 
 #[test]
-fn a_relative_deadline_becomes_now_plus_the_seconds_and_an_absolute_one_wins() {
+fn a_relative_deadline_becomes_now_plus_the_seconds_and_wins_over_an_absolute_one() {
     // #2125: a model need not know the current Unix time to create a run.
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs_f64();
-    let relative = absolute_deadline(&json!({"deadline_in_seconds": 3600}));
-    let at = relative.as_f64().expect("a number");
-    assert!((now + 3590.0..now + 3610.0).contains(&at), "{at}");
+    for input in [
+        json!({"deadline_in_seconds": 3600}),
+        json!({"deadline": 0, "deadline_in_seconds": 3600}),
+        json!({"deadline": null, "deadline_in_seconds": 3600}),
+    ] {
+        let at = absolute_deadline(&input)
+            .unwrap()
+            .as_f64()
+            .expect("a number");
+        assert!((now + 3590.0..now + 3610.0).contains(&at), "{input}: {at}");
+    }
     assert_eq!(
-        absolute_deadline(&json!({"deadline": 42, "deadline_in_seconds": 3600})),
+        absolute_deadline(&json!({"deadline": 42})).unwrap(),
         json!(42)
     );
     assert!(
-        absolute_deadline(&json!({})).is_null(),
-        "the store refuses a missing deadline"
+        absolute_deadline(&json!({})).unwrap().is_null(),
+        "the store refuses it"
     );
+}
+
+#[test]
+fn a_relative_deadline_outside_one_second_to_seven_days_is_refused_by_name() {
+    for bad in [json!(0), json!(-5), json!(604_801), json!("3600")] {
+        let error = absolute_deadline(&json!({"deadline_in_seconds": bad})).unwrap_err();
+        assert!(
+            error.to_string().contains("deadline_in_seconds"),
+            "{bad}: {error}"
+        );
+    }
 }
