@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 
+#[path = "swarm_guidance.rs"]
+mod swarm_guidance;
 #[path = "swarm_process.rs"]
 mod swarm_process;
 #[path = "swarm_result.rs"]
@@ -216,7 +218,7 @@ impl Tool for SwarmTool {
                 "output" => output_op(&v, workspace, jobs).await,
                 "cancel" => cancel_op(&v, jobs).await,
                 op => ok_json(
-                    json!({"status":"error","message":format!("unknown op {op}")}),
+                    json!({"status":"error","message":swarm_guidance::unknown_op(op)}),
                     true,
                 ),
             }
@@ -251,8 +253,9 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
         Ok(summary) => summary,
         Err(error) => return tool_err(error.to_string()),
     };
-    if summary["status"] != "running" {
-        return tool_err(format!("swarm is {}; inspect summary", summary["status"]));
+    let status = summary["status"].as_str().unwrap_or("unknown");
+    if status != "running" {
+        return tool_err(swarm_guidance::run_refused(status));
     }
     let mut spec = match parse_run(&v, &workspace, &sandbox, &cfg) {
         Ok(s) => s,

@@ -105,7 +105,7 @@ class Coordination:
                 if run['status'] == 'cancelled':
                     return self._receipt(tx)
                 if run['status'] == 'setup':
-                    raise SwarmError('run not created yet; nothing to cancel')
+                    raise SwarmError('run not created yet; nothing to cancel. To start one: swarm op=create')
                 if run['status'] not in ('running', 'paused'):
                     raise SwarmError(f"run already {describe(run)}")
                 tx.clear_outcome()
