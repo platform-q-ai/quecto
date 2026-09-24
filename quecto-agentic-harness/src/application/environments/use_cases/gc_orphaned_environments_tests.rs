@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use super::super::dto::{
     ContainerRuntimeTarget, DiagnosableContainerConfig, EnvironmentLiveness, EnvironmentStateDir,
-    GcRemoval, GcRequest, RuntimeContainer,
+    GcRemoval, GcRequest, RuntimeContainer, StateOnDisk,
 };
 use super::super::ports::{ContainerConfigLookup, ContainerRuntimeInventory, EnvironmentProcess};
 use super::{CREATE_GRACE_SECS, GcOrphanedEnvironments, implied_state_root};
@@ -137,6 +137,11 @@ impl EnvironmentProcess for FakeProcess {
                 .retain(|c| c.environment_id != record.environment_id);
         }
         Ok(())
+    }
+    // The collector's own judgement is under test: the restore keeps every
+    // stopped record for it (#2134 forgetting is the restore's, tested there).
+    fn state_on_disk(&self, _environment_dir: &std::path::Path) -> StateOnDisk {
+        StateOnDisk::Present
     }
 }
 

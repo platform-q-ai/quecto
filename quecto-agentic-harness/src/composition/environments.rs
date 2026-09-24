@@ -164,12 +164,14 @@ fn report_restore(report: &RestoredRegistry) {
     }
     if !report.restored.is_empty()
         || !report.stopped.is_empty()
+        || !report.forgotten.is_empty()
         || !report.retained.is_empty()
         || !report.unverified.is_empty()
     {
         tracing::info!(
             restored = report.restored.len(),
             stopped = report.stopped.len(),
+            forgotten = report.forgotten.len(),
             retained = report.retained.len(),
             unverified = report.unverified.len(),
             "environment registry restored"

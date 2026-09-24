@@ -44,6 +44,11 @@ fn present_restore_notes(handles: &ContainerInventoryHandles, stderr: &mut Strin
         stderr.push_str(line);
         stderr.push('\n');
     }
+    for environment_ref in &handles.restore.forgotten {
+        stderr.push_str(&format!(
+            "{environment_ref} forgotten (stopped; nothing left on disk)\n"
+        ));
+    }
 }
 
 fn fail(stderr: &mut String, error: &str) -> i32 {

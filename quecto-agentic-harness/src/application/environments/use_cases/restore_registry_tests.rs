@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use super::super::dto::{CorrectionOutcome, EnvironmentLiveness};
+use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, StateOnDisk};
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore, HostedSwarmRunInspection};
 use super::{GONE_AT_RESTORE, KILL_IN_FLIGHT, RETAINED_EXITED, RestoreRegistry};
 use crate::domain::environment_registry::{
@@ -128,7 +128,10 @@ impl EnvironmentRegistryStore for FakeStore {
     }
 }
 
-struct FakeProcess(Box<dyn Fn(&EnvironmentRecord) -> EnvironmentLiveness + Send + Sync>);
+type Liveness = Box<dyn Fn(&EnvironmentRecord) -> EnvironmentLiveness + Send + Sync>;
+type Disk = Box<dyn Fn(&std::path::Path) -> StateOnDisk + Send + Sync>;
+
+struct FakeProcess(Liveness, Disk);
 
 impl EnvironmentProcess for FakeProcess {
     fn observe(&self, record: &EnvironmentRecord) -> EnvironmentLiveness {
@@ -136,6 +139,9 @@ impl EnvironmentProcess for FakeProcess {
     }
     fn cleanup(&self, _record: &EnvironmentRecord) -> Result<(), String> {
         Ok(())
+    }
+    fn state_on_disk(&self, environment_dir: &std::path::Path) -> StateOnDisk {
+        (self.1)(environment_dir)
     }
 }
 
@@ -162,16 +168,34 @@ pub(super) fn record(reference: &str, status: EnvironmentStatus) -> EnvironmentR
     }
 }
 
+/// A store holding `records` whose every write fails.
+pub(super) fn failing_store_with(records: Vec<EnvironmentRecord>) -> Arc<FakeStore> {
+    let store = FakeStore {
+        fail_writes: true,
+        ..FakeStore::default()
+    };
+    *store.records.lock().unwrap() = records;
+    Arc::new(store)
+}
+
 pub(super) fn store_with(records: Vec<EnvironmentRecord>) -> Arc<FakeStore> {
     let store = FakeStore::default();
     *store.records.lock().unwrap() = records;
     Arc::new(store)
 }
 
+/// A process whose every environment directory is still on disk.
 pub(super) fn process(
     f: impl Fn(&EnvironmentRecord) -> EnvironmentLiveness + Send + Sync + 'static,
 ) -> Arc<dyn EnvironmentProcess> {
-    Arc::new(FakeProcess(Box::new(f)))
+    process_with_disk(f, |_| StateOnDisk::Present)
+}
+
+pub(super) fn process_with_disk(
+    f: impl Fn(&EnvironmentRecord) -> EnvironmentLiveness + Send + Sync + 'static,
+    disk: impl Fn(&std::path::Path) -> StateOnDisk + Send + Sync + 'static,
+) -> Arc<dyn EnvironmentProcess> {
+    Arc::new(FakeProcess(Box::new(f), Box::new(disk)))
 }
 
 #[test]

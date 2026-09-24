@@ -82,7 +82,10 @@ fn composed() -> (tempfile::TempDir, CliContext, std::path::PathBuf) {
 
 #[test]
 fn ls_lists_live_environments_in_a_table_and_all_includes_stopped_ones() {
-    let (_dir, ctx, _) = composed();
+    let (dir, ctx, _) = composed();
+    // The stopped C2 left its state behind: a stopped record with nothing
+    // left on disk is forgotten by the restore every command runs (#2134).
+    std::fs::create_dir_all(dir.path().join("state/env-two/workspace")).unwrap();
     let output = run(&["container", "ls"], &ctx);
     assert_eq!(output.exit_code, 0, "{output:?}");
     let lines: Vec<&str> = output.stdout.lines().collect();
@@ -484,6 +487,14 @@ fn gc_dry_run_leaves_the_registry_document_untouched_and_a_real_gc_corrects_it()
         "{}",
         output.stderr
     );
+    // #2134: the stopped C2 has nothing left on disk; the restore says so.
+    assert!(
+        output
+            .stderr
+            .contains("C2 would be forgotten (stopped; nothing left on disk)"),
+        "{}",
+        output.stderr
+    );
     assert_eq!(
         std::fs::read(&document).unwrap(),
         before,
@@ -492,6 +503,13 @@ fn gc_dry_run_leaves_the_registry_document_untouched_and_a_real_gc_corrects_it()
     assert!(!cleanup_log.exists(), "a dry run removes nothing");
     let output = run(&["container", "gc"], &ctx);
     assert_eq!(output.exit_code, 0, "{output:?}");
+    assert!(
+        output
+            .stderr
+            .contains("C2 forgotten (stopped; nothing left on disk)"),
+        "{}",
+        output.stderr
+    );
     assert_eq!(
         std::fs::read_to_string(&cleanup_log).unwrap().trim(),
         "env-three"

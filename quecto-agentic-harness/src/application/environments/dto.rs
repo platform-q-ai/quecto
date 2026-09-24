@@ -146,6 +146,18 @@ pub enum EnvironmentLiveness {
     Unknown(String),
 }
 
+/// Whether an environment's state directory is still on disk (#2134): a
+/// `stopped` record whose directory is gone has nothing left to collect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StateOnDisk {
+    /// The directory (or something under its name) exists.
+    Present,
+    /// Nothing exists under the directory's name.
+    Absent,
+    /// The host could not tell (permissions, I/O): treated as present.
+    Unknown(String),
+}
+
 /// How a restore treats the corrections it finds (round 3 H1, #2033).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RestoreMode {
@@ -165,6 +177,9 @@ pub struct RestoredRegistry {
     pub restored: Vec<String>,
     /// Refs whose container was gone and that were marked stopped.
     pub stopped: Vec<String>,
+    /// Refs of `stopped` records with nothing left on disk, forgotten so
+    /// their numbers are free again (#2134).
+    pub forgotten: Vec<String>,
     /// Refs relabelled `retained` (round 4 M1/L3, #2033), each with the
     /// reason now on its `metadata.retained`: a gone container whose
     /// checkout hosts an unfinished swarm run, or an older build's

@@ -9,7 +9,8 @@ pub enum EnvironmentStatus {
     /// A kill claim is outstanding; not joinable, not yet stopped.
     Killing,
     /// Kill succeeded; terminal. The record stays listed; its ref is not
-    /// reused while it is (#2070).
+    /// reused while it is (#2070). A restore forgets it once nothing of it
+    /// is left on disk (#2134).
     Stopped,
     /// Kill failed; retryable via another kill, with `last_error` retained.
     CleanupFailed,

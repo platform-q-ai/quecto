@@ -41,8 +41,11 @@ targets fail without guessing.
 
 A successful spawn returns a durable environment reference
 (`environment_ref=C1`, `C2`, ...). Refs are allocated in the base
-directory's registry, unique across every session sharing it, and never
-reused — a stopped environment stays listed and its ref is retired.
+directory's registry and unique across every session sharing it. A stopped
+environment stays listed, and its ref taken, until the next session start
+(or `quecto container ls|gc`) finds nothing of it left on disk and forgets
+it; a session never reuses a ref it holds. Once nothing is left, refs
+restart at C1.
 The child then behaves like any other subagent: drive it with normal
 `agent_cmd` operations over its direct or proxy endpoint. Every member of an
 environment shares its reported workspace; each agent keeps its own agent

@@ -24,6 +24,10 @@
 //! while it was retained — recognisable by its `metadata.retained` under a
 //! `stopped` status with the restore's own last error — is restored to
 //! `retained`, so an explicit kill can end it (round 4 L3).
+//! A `stopped` record whose environment directory is gone from disk is
+//! forgotten (#2134): its box was torn down and nothing is left to
+//! collect, so its number is free again and refs restart at C1 once no
+//! record is left. A session still never reuses a number it holds.
 //! The restored records arrive without members and are never torn down
 //! by a joiner's exit. A correction is written **conditionally** — only
 //! while the record on file still has the status that was loaded — so a
@@ -43,8 +47,11 @@ use crate::domain::environment_registry::{
 
 use crate::domain::environment_retention::{HostedSwarmRun, SwarmRunObservation};
 
-use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, RestoreMode, RestoredRegistry};
+use super::super::dto::{
+    CorrectionOutcome, EnvironmentLiveness, RestoreMode, RestoredRegistry, StateOnDisk,
+};
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore, HostedSwarmRunInspection};
+use super::gc_orphaned_environments::implied_state_root;
 
 #[derive(Clone)]
 pub struct RestoreRegistry {
@@ -134,6 +141,7 @@ impl RestoreRegistry {
                 tracing::info!(
                     restored = report.restored.len(),
                     stopped = report.stopped.len(),
+                    forgotten = report.forgotten.len(),
                     retained = report.retained.len(),
                     unverified = report.unverified.len(),
                     "durable environment registry readable again; seeded"
@@ -250,6 +258,10 @@ impl RestoreRegistry {
     ) -> Vec<EnvironmentRecord> {
         let mut restored = Vec::with_capacity(records.len());
         for record in records {
+            if self.left_nothing(&record) {
+                self.forget(record, mode, report, &mut restored);
+                continue;
+            }
             let loaded_status = record.status.clone();
             let mut judged = record;
             let corrected = self.judge(&mut judged, report);
@@ -295,6 +307,48 @@ impl RestoreRegistry {
             }
         }
         restored
+    }
+
+    /// A `stopped` record whose environment directory is gone from disk
+    /// (#2134): its box was torn down and nothing is left to collect, so
+    /// keeping it would only hold its number. A record whose workspace
+    /// names no environment directory, or whose directory cannot be
+    /// examined, is kept; so is an older build's relabel, restored below.
+    fn left_nothing(&self, record: &EnvironmentRecord) -> bool {
+        record.status == EnvironmentStatus::Stopped
+            && !relabelled_by_older_build(record)
+            && implied_state_root(record)
+                .map(|root| root.join(&record.environment_id))
+                .is_some_and(|dir| self.process.state_on_disk(&dir) == StateOnDisk::Absent)
+    }
+
+    /// Forget a record [`Self::left_nothing`] found, as `mode` says: an
+    /// observing restore only reports it (and, like the real run, seeds
+    /// nothing of it); a failed forget keeps it seeded and says so.
+    fn forget(
+        &self,
+        record: EnvironmentRecord,
+        mode: RestoreMode,
+        report: &mut RestoredRegistry,
+        restored: &mut Vec<EnvironmentRecord>,
+    ) {
+        if mode == RestoreMode::Observe {
+            report.diagnostics.push(format!(
+                "{} would be forgotten (stopped; nothing left on disk); not written: this restore only observes",
+                record.environment_ref
+            ));
+            return;
+        }
+        match self.store.forget(&record) {
+            Ok(()) => report.forgotten.push(record.environment_ref),
+            Err(error) => {
+                report.diagnostics.push(format!(
+                    "{} could not be forgotten in the durable registry: {error}",
+                    record.environment_ref
+                ));
+                restored.push(record);
+            }
+        }
     }
 
     /// Correct one record against the runtime. Terminal records need no

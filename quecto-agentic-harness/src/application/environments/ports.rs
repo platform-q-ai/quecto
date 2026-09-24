@@ -15,7 +15,7 @@ use crate::application::environments::dto::{
     AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue, ContainerConfigDocument,
     ContainerConfigEntry, ContainerRuntimeTarget, CorrectionOutcome, DiagnosableContainerConfig,
     EnvironmentLiveness, EnvironmentStateDir, PersistedContainerConfig, PreflightCheck,
-    RuntimeContainer,
+    RuntimeContainer, StateOnDisk,
 };
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentStatus};
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
@@ -232,6 +232,8 @@ pub trait EnvironmentProcess: Send + Sync {
     fn observe(&self, record: &EnvironmentRecord) -> EnvironmentLiveness;
     /// Run the retained `cleanup` once; `Err` carries the script's account.
     fn cleanup(&self, record: &EnvironmentRecord) -> Result<(), String>;
+    /// Whether an environment's state directory is still on disk (#2134).
+    fn state_on_disk(&self, environment_dir: &Path) -> StateOnDisk;
 }
 
 /// The host's inventory of environments outside any registry, through a

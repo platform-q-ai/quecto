@@ -111,3 +111,27 @@ fn cleanup_reports_success_and_failure_truthfully() {
         .unwrap_err();
     assert!(error.contains("no retained cleanup argv"), "{error}");
 }
+
+#[test]
+fn state_on_disk_is_absent_only_when_nothing_exists_under_the_name() {
+    // #2134: a stopped record is forgotten only on `Absent`, so every
+    // other outcome must keep it.
+    let dir = tempfile::TempDir::new().unwrap();
+    let process = ScriptEnvironmentProcess;
+    let present = dir.path().join("env-1");
+    std::fs::create_dir(&present).unwrap();
+    assert_eq!(process.state_on_disk(&present), StateOnDisk::Present);
+    assert_eq!(
+        process.state_on_disk(&dir.path().join("env-2")),
+        StateOnDisk::Absent
+    );
+    let dangling = dir.path().join("env-3");
+    std::os::unix::fs::symlink(dir.path().join("nowhere"), &dangling).unwrap();
+    assert_eq!(process.state_on_disk(&dangling), StateOnDisk::Present);
+    let file = dir.path().join("a-file");
+    std::fs::write(&file, "").unwrap();
+    assert!(matches!(
+        process.state_on_disk(&file.join("env-4")),
+        StateOnDisk::Unknown(reason) if reason.contains("could not be examined")
+    ));
+}

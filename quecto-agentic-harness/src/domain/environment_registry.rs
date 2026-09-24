@@ -435,7 +435,8 @@ impl EnvironmentRegistry {
     /// CREATED the environment rolls back (before or after registration):
     /// the environment never became usable, so no stopped record is listed.
     /// A stopped environment stays listed and its ref is not reused while it
-    /// is.
+    /// is; the next restore forgets it once nothing of it is left on disk
+    /// (#2134).
     pub fn remove(&self, environment_ref: &str) -> Option<EnvironmentRecord> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         // Prune the removed environment's inspect bookkeeping with it: the

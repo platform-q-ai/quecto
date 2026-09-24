@@ -2,9 +2,12 @@
 //! record's own retained scripts (#2024 S4d): liveness through the
 //! retained `inspect` argv (the same bounded run the post-mortem uses,
 //! judged by the script's `status` word), cleanup through the retained
-//! `cleanup` argv. Synchronous, so the startup restore and the CLI
-//! collector need no runtime.
-use crate::application::environments::dto::EnvironmentLiveness;
+//! `cleanup` argv, and whether a state directory is still on disk (#2134)
+//! through the host filesystem. Synchronous, so the startup restore and
+//! the CLI collector need no runtime.
+use std::path::Path;
+
+use crate::application::environments::dto::{EnvironmentLiveness, StateOnDisk};
 use crate::application::environments::ports::EnvironmentProcess;
 use crate::domain::environment_registry::EnvironmentRecord;
 
@@ -55,6 +58,19 @@ impl EnvironmentProcess for ScriptEnvironmentProcess {
 
     fn cleanup(&self, record: &EnvironmentRecord) -> Result<(), String> {
         run_cleanup_sync(&record.environment_id, &record.retained_cleanup_argv)
+    }
+
+    /// Anything under the directory's name counts as present, a dangling
+    /// symlink included: only a name that does not exist is absent.
+    fn state_on_disk(&self, environment_dir: &Path) -> StateOnDisk {
+        match std::fs::symlink_metadata(environment_dir) {
+            Ok(_) => StateOnDisk::Present,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => StateOnDisk::Absent,
+            Err(error) => StateOnDisk::Unknown(format!(
+                "{} could not be examined: {error}",
+                environment_dir.display()
+            )),
+        }
     }
 }
 
