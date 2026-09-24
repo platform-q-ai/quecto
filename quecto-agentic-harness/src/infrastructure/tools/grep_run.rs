@@ -67,10 +67,12 @@ pub(super) async fn run_rg(
             capped,
         }),
         Err(_) => {
-            let _ = child.kill().await;
+            // Signal only: an rg stuck in uninterruptible I/O (a hung mount)
+            // must not hold the tool; tokio reaps the dropped Child.
+            let _ = child.start_kill();
             Err(DomainError::Tool(format!(
-                "rg did not finish within {} s: narrow the search with path, glob or type",
-                timeout.as_secs()
+                "rg did not finish within {}: narrow the search with path, glob or type",
+                human_duration(timeout)
             )))
         }
     }
@@ -116,5 +118,14 @@ async fn read_head(pipe: Option<tokio::process::ChildStderr>, keep: usize) -> Ve
         }
         let take = n.min(keep.saturating_sub(kept.len()));
         kept.extend_from_slice(&buf[..take]);
+    }
+}
+
+/// `60 s`, or `300 ms` below a second.
+fn human_duration(duration: std::time::Duration) -> String {
+    if duration.as_secs() >= 1 {
+        format!("{} s", duration.as_secs())
+    } else {
+        format!("{} ms", duration.as_millis())
     }
 }

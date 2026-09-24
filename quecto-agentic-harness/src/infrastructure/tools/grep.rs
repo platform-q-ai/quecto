@@ -181,6 +181,20 @@ impl Tool for GrepTool {
             // follow partial results (an unreadable file) or nothing but a
             // summary (a mistyped path); no code means killed, here at the
             // output cap. Results stand when rg finished, or found something.
+            // Capped before one whole match was read: its line alone is
+            // larger than the cap (a minified file) — say so, not an error.
+            if rg.capped && found == 0 {
+                return Ok(ToolResult {
+                    content: format!(
+                        "A matching line is larger than {}, so no match could be shown: \
+                         narrow the search with glob or type, or read the file directly",
+                        format_size(RG_STDOUT_CAP)
+                    ),
+                    is_error: false,
+                    image_blocks: vec![],
+                    delivery_metadata: None,
+                });
+            }
             let usable = matches!(rg.exit_code, Some(0 | 1)) || found > 0;
             let Some(stdout) = usable.then_some(stdout) else {
                 let msg = match stderr.trim() {
@@ -202,6 +216,10 @@ impl Tool for GrepTool {
                     "rg printed more than {}; results are incomplete: narrow with path, glob or type",
                     format_size(RG_STDOUT_CAP)
                 ));
+            }
+            // Stopped by a signal other than the tool's own at the cap.
+            if let (None, false) = (rg.exit_code, rg.capped) {
+                incomplete.push("rg was stopped by a signal; results are incomplete".to_string());
             }
             if rg.exit_code == Some(2) {
                 let first = stderr.lines().next().unwrap_or("").trim();

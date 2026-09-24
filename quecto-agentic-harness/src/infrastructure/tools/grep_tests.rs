@@ -482,7 +482,7 @@ async fn a_flood_of_rg_errors_never_blocks_and_a_slow_rg_is_stopped() {
     let tool = GrepTool::with_rg_binary(
         ws,
         Arc::new(Sandbox::new(None)),
-        fake_rg(tmp.path(), "sleep 30", 0),
+        fake_rg(tmp.path(), "exec sleep 30", 0),
     )
     .with_rg_timeout(std::time::Duration::from_millis(300));
     let started = std::time::Instant::now();
@@ -496,5 +496,55 @@ async fn a_flood_of_rg_errors_never_blocks_and_a_slow_rg_is_stopped() {
         started.elapsed() < std::time::Duration::from_secs(10),
         "{:?}",
         started.elapsed()
+    );
+}
+
+/// #2136 round 3: a single matching line larger than the read cap is said
+/// to be so, not reported as an rg failure.
+#[tokio::test]
+async fn a_matching_line_larger_than_the_cap_is_explained() {
+    let tmp = TempDir::new().unwrap();
+    let huge = format!(
+        "printf '%s' '{{\"type\":\"match\",\"data\":{{\"path\":{{\"text\":\"{}/a.js\"}},\"lines\":{{\"text\":\"'; head -c 300000 /dev/zero | tr '\\0' a; printf '%s\\n' '\"}},\"line_number\":1}}}}'",
+        tmp.path().display()
+    );
+    let tool = GrepTool::with_rg_binary(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(None)),
+        fake_rg(tmp.path(), &huge, 0),
+    );
+    let result = tool.execute(r#"{"pattern": "a"}"#).await.unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains("A matching line is larger than"),
+        "{}",
+        result.content
+    );
+}
+
+/// #2136 round 3: rg stopped by a signal (not the tool's cap) returns what
+/// it found with a notice that it is incomplete.
+#[tokio::test]
+async fn rg_stopped_by_a_signal_is_reported_incomplete() {
+    let tmp = TempDir::new().unwrap();
+    let listing = format!(
+        "printf '%s\\0' '{}/a.rs'; kill -TERM $$",
+        tmp.path().display()
+    );
+    let tool = GrepTool::with_rg_binary(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(None)),
+        fake_rg(tmp.path(), &listing, 0),
+    );
+    let result = tool
+        .execute(r#"{"pattern": "x", "output": "files"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    assert!(result.content.starts_with("a.rs"), "{}", result.content);
+    assert!(
+        result.content.contains("rg was stopped by a signal"),
+        "{}",
+        result.content
     );
 }
