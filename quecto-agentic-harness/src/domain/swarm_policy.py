@@ -101,15 +101,16 @@ WORK_HOLDING_STATUSES = ('claimed', 'blocked', 'submitted')
 
 
 def notification_targets(run, actor, members, events, state):
-    """Coalesce actionable changes; reads/acks/ownership bookkeeping never wake peers."""
+    """Coalesce actionable changes; reads/acks never wake peers, and ownership
+    bookkeeping (a claim) does only while it leaves ready work behind."""
     if run['status'] != 'running':
         return []
     targets = set()
     tasks = {task['id']: task for task in state['tasks']}
     unread = {message['id'] for message in state['messages']}
-    ready_count = sum(1 for task in tasks.values() if task['status'] == 'ready' and all(
-        tasks.get(dep, {}).get('status') == 'completed' for dep in task['dependencies']))
-    ready = ready_count > 0
+    ready = any(task['status'] == 'ready' and all(
+        tasks.get(dep, {}).get('status') == 'completed' for dep in task['dependencies'])
+        for task in tasks.values())
     live = {m['id']: m for m in members if m['status'] == 'live' and m['id'] != actor}
     # A member holding a claimed, blocked or submitted task has its work
     # (#2127): new ready work is for members free to take it, so a parked
@@ -121,15 +122,13 @@ def notification_targets(run, actor, members, events, state):
     holding = {task.get('owner') for task in tasks.values()
                if task['status'] in WORK_HOLDING_STATUSES and task.get('owner')}
     free = {identity for identity in everyone if identity not in holding}
-    # When no worker is free (the coordinator never claims), members that only
-    # wait for review take new work after all, so it is never left idle: one
-    # per ready task, lowest identity first, so one task starts one turn.
+    # When no worker is free (the coordinator never claims), every member that
+    # only waits for review is woken after all, so new work is never left idle
+    # behind one unavailable member. The actor is never woken by its own event.
     if not free - {run['coordinator']}:
         working = {task.get('owner') for task in tasks.values()
                    if task['status'] in ('claimed', 'blocked') and task.get('owner')}
-        parked = sorted(identity for identity in everyone
-                        if identity not in working and identity not in free)
-        free |= set(parked[:ready_count])
+        free |= {identity for identity in live if identity not in working}
     for event in events:
         action, detail = event['action'], event['detail']
         if action == 'message_accepted' and detail['message'] in unread:
@@ -142,7 +141,7 @@ def notification_targets(run, actor, members, events, state):
         elif action == 'amended':
             targets.update(live)
         elif ready and action in (
-                'task_created', 'dependencies', 'released', 'verified', 'revalidated', 'recovered', 'revoked'):
+                'claimed', 'task_created', 'dependencies', 'released', 'verified', 'revalidated', 'recovered', 'revoked'):
             targets.update(free)
     return [live[identity] for identity in sorted(targets) if identity in live]
 

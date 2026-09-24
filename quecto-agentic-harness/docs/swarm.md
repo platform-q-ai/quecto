@@ -464,8 +464,9 @@ recipient; submissions/blockers/evidence target the coordinator; changes that
 make work available notify only peers free to take it: a member holding a
 claimed, blocked or submitted task is not woken for them (#2127). A member
 waiting for review stays parked until a message reaches it or the contract is
-amended. When no worker is free, parked members are woken for new work after
-all, one per ready task, lowest identity first. A member that cannot reserve a file releases and
+amended. When no worker is free, every parked member is woken for new work
+after all, and a claim that leaves ready work behind wakes those free to take
+it. A member is never woken by its own event. A member that cannot reserve a file releases and
 retries later rather than holding its claim and yielding: freed files do not
 wake it. The cursor advances atomically before external
 notification, so a failed hint is reported but not endlessly retried; the durable
