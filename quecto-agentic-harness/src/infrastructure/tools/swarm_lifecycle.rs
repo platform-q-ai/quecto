@@ -281,48 +281,68 @@ pub fn supervise(
     });
 }
 
-/// How long a member waits after settlement for its launcher to end it.
-const SELF_END_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+/// How long a member waits after settling for its launcher to end it: the
+/// launcher's teardown may take one conclusion bound per level of nesting
+/// (a launcher ends its own launchees before it exits), with room for three.
+const SELF_END_GRACE: std::time::Duration = std::time::Duration::from_secs(
+    crate::infrastructure::processes::direct_child_routing::PER_HOP_CONCLUSION_BOUND.as_secs() * 3,
+);
+/// Consecutive failed attempts after which a member stops trying to end
+/// itself (it cannot reach its own endpoint); the failure is logged once.
+const SELF_END_ATTEMPTS: u32 = 5;
 
 /// After settling, a member waits to be ended by its launcher (#2121). Each
 /// tick settles again on a fresh snapshot, so a coordinator lost meanwhile
 /// hands the ending to the members; a member still alive after the grace
-/// ends itself instead of keeping the environment alive. The coordinator's
-/// harness stays for reporting, so it stops watching at once.
+/// ends itself instead of keeping the environment alive. What to do each
+/// tick is the application's decision (`settlement_step`).
 fn watch_until_ended(context: &SwarmContext, runtime: &tokio::runtime::Runtime) {
+    use crate::application::swarm::SettlementStep;
     let started = std::time::Instant::now();
+    let mut retry_logged = false;
+    let mut self_end_failures = 0;
     loop {
         let Ok(snapshot) = context.snapshot() else {
             tracing::error!("swarm settlement watch lost coordination");
             return;
         };
-        let waiting = snapshot.members.iter().any(|m| {
-            m.id == context.member
-                && m.id != snapshot.coordinator
-                && m.status == crate::domain::swarm::MemberStatus::Live
-        });
-        if waiting {
-            let outcome = if started.elapsed() >= SELF_END_GRACE {
-                runtime.block_on(context.lifecycle.settle_overdue(
-                    &snapshot,
-                    &context.member,
-                    &RuntimeProcesses(context),
-                ))
-            } else {
-                runtime.block_on(context.lifecycle.settle(
-                    &snapshot,
-                    &context.member,
-                    &RuntimeProcesses(context),
-                    &LinuxProcesses,
-                ))
-            };
-            if let Err(error) = outcome {
-                tracing::error!(%error, "swarm settlement retry failed");
+        let step = context.lifecycle.settlement_step(
+            &snapshot,
+            &context.member,
+            started.elapsed(),
+            SELF_END_GRACE,
+        );
+        let outcome = match step {
+            SettlementStep::Done => return,
+            SettlementStep::Wait => runtime.block_on(context.lifecycle.settle(
+                &snapshot,
+                &context.member,
+                &RuntimeProcesses(context),
+                &LinuxProcesses,
+            )),
+            SettlementStep::EndSelf => runtime.block_on(context.lifecycle.settle_overdue(
+                &snapshot,
+                &context.member,
+                &RuntimeProcesses(context),
+            )),
+        };
+        match (outcome, step) {
+            (Ok(()), _) => {}
+            (Err(error), SettlementStep::EndSelf) => {
+                self_end_failures += 1;
+                if self_end_failures >= SELF_END_ATTEMPTS {
+                    tracing::error!(%error, "swarm member could not end itself; giving up");
+                    return;
+                }
             }
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        } else {
-            return;
+            (Err(error), _) => {
+                if !retry_logged {
+                    tracing::warn!(%error, "swarm settlement retry failed; still waiting");
+                    retry_logged = true;
+                }
+            }
         }
+        std::thread::sleep(std::time::Duration::from_secs(1));
     }
 }
 

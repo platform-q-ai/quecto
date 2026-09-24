@@ -73,25 +73,73 @@ fn gone(
     }
 }
 
-/// Whether `actor` ends `member` when the run settles (#2121). A member is
-/// ended by the harness that launched it, which records the end as
-/// deliberate before the process exits, so no "exited unexpectedly" note is
-/// posted. The coordinator also ends members nobody else will: launched by
-/// no member, or by one that is gone. Once the coordinator is gone, any
-/// member ends the rest so the run is never stranded.
+/// How the settling harness takes part in ending a terminal run (#2121).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettlingAs {
+    /// Ends the members it launched and those whose launcher is gone; its
+    /// own harness stays for reporting.
+    Coordinator,
+    /// Ends only the members it launched, then waits to be ended.
+    Member,
+    /// A member of a run whose coordinator is gone: ends its launchees and
+    /// the members nobody else will end, itself last.
+    Orphan,
+}
+
+/// Whether `actor` ends `member` when the run settles. A member is ended by
+/// the harness that launched it, which records the end as deliberate before
+/// the process exits, so no "exited unexpectedly" note is posted. Members
+/// whose launcher is gone are ended by the coordinator, or by every member
+/// once the coordinator is gone too, so the run is never stranded.
 fn ends(
     snapshot: &Snapshot,
     actor: &str,
     member: &Member,
-    coordinator_gone: bool,
+    role: SettlingAs,
     observation: &(impl ProcessObservation + ?Sized),
 ) -> bool {
-    let coordinating = actor == snapshot.coordinator;
-    match member.launcher.as_deref() {
-        _ if coordinator_gone => true,
-        Some(launcher) if launcher == actor => true,
-        Some(launcher) => coordinating && gone(snapshot, launcher, observation),
-        None => coordinating,
+    match (member.launcher.as_deref(), role) {
+        (Some(launcher), _) if launcher == actor => true,
+        (_, SettlingAs::Orphan) if member.id == actor => true,
+        (Some(launcher), SettlingAs::Coordinator | SettlingAs::Orphan) => {
+            gone(snapshot, launcher, observation)
+        }
+        (None, SettlingAs::Coordinator | SettlingAs::Orphan) => true,
+        _ => false,
+    }
+}
+
+/// What a harness does next once its run has settled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettlementStep {
+    /// Nothing is left for this harness: it is the coordinator, or its own
+    /// row is no longer live, or the run is not terminal.
+    Done,
+    /// Still live: settle again on a fresh snapshot and wait for the launcher.
+    Wait,
+    /// Still live past the grace its launcher's teardown needs: end itself.
+    EndSelf,
+}
+
+/// The next step for `actor` `elapsed` after it first settled (#2121).
+/// `grace` is how long the harness's own teardown ladder may take to end a
+/// member, so a member only ends itself once its launcher had time to.
+pub fn settlement_step(
+    snapshot: &Snapshot,
+    actor: &str,
+    elapsed: std::time::Duration,
+    grace: std::time::Duration,
+) -> SettlementStep {
+    let awaiting_end = snapshot.status.terminal()
+        && actor != snapshot.coordinator
+        && snapshot
+            .members
+            .iter()
+            .any(|m| m.id == actor && m.status == MemberStatus::Live);
+    match (awaiting_end, elapsed >= grace) {
+        (true, true) => SettlementStep::EndSelf,
+        (true, false) => SettlementStep::Wait,
+        (false, _) => SettlementStep::Done,
     }
 }
 
@@ -129,21 +177,33 @@ pub async fn settle(
     if coordinating && snapshot.status.abort_coordinator() {
         processes.suspend_local_inference(snapshot);
     }
-    let coordinator_gone = gone(snapshot, &snapshot.coordinator, observation);
-    // A member stops its own work and waits for its launcher to end it. The
-    // coordinator's harness stays for reporting; a member of a
-    // coordinator-less run is aborted with the rest below.
-    if let (false, false) = (coordinating, coordinator_gone) {
+    let role = match (
+        coordinating,
+        gone(snapshot, &snapshot.coordinator, observation),
+    ) {
+        (true, _) => SettlingAs::Coordinator,
+        (false, true) => SettlingAs::Orphan,
+        (false, false) => SettlingAs::Member,
+    };
+    if role == SettlingAs::Member {
+        // It stops its own work and waits for its launcher to end it.
         processes.suspend_local_inference(snapshot);
     }
-    let mut members: Vec<_> = snapshot
+    let (itself, others): (Vec<_>, Vec<_>) = snapshot
         .members
         .iter()
         .filter(|m| m.status == MemberStatus::Live && m.id != snapshot.coordinator)
-        .filter(|m| ends(snapshot, actor, m, coordinator_gone, observation))
-        .collect();
-    members.sort_by_key(|m| m.id == actor);
-    end_members(&members, processes).await
+        .filter(|m| ends(snapshot, actor, m, role, observation))
+        .partition(|m| m.id == actor);
+    debug_assert!(
+        itself.is_empty() || role == SettlingAs::Orphan,
+        "only a member of a coordinator-less run ends itself at settlement"
+    );
+    // The others end at once, not one after another, so no member outlives
+    // its grace waiting in a queue; the actor ends last.
+    let others = end_members(&others, processes).await;
+    let itself = end_members(&itself, processes).await;
+    others.and(itself)
 }
 
 /// A member still alive well after its run settled (#2121): its launcher
@@ -155,32 +215,31 @@ pub async fn settle_overdue(
     actor: &str,
     processes: &(impl ProcessControl + ?Sized),
 ) -> Result<(), DomainError> {
+    let settled_member = snapshot.status.terminal() && actor != snapshot.coordinator;
     let stranded: Vec<_> = snapshot
         .members
         .iter()
-        .filter(|m| {
-            snapshot.status.terminal()
-                && m.id == actor
-                && m.id != snapshot.coordinator
-                && m.status == MemberStatus::Live
-        })
+        .filter(|m| settled_member && m.id == actor && m.status == MemberStatus::Live)
         .collect();
     end_members(&stranded, processes).await
 }
 
-/// Abort and terminate each member in order; one unreachable member never
-/// leaves the rest running.
+/// Abort and terminate the members concurrently; one unreachable or slow
+/// member never holds up or leaves the rest running.
 async fn end_members(
     members: &[&Member],
     processes: &(impl ProcessControl + ?Sized),
 ) -> Result<(), DomainError> {
-    let mut failures = Vec::new();
-    for member in members {
+    let outcomes = futures::future::join_all(members.iter().map(|member| async move {
         processes.abort(member).await;
-        if let Err(error) = processes.terminate(member).await {
-            failures.push(error.to_string());
-        }
-    }
+        processes.terminate(member).await
+    }))
+    .await;
+    let failures: Vec<_> = outcomes
+        .into_iter()
+        .filter_map(Result::err)
+        .map(|error| error.to_string())
+        .collect();
     if failures.is_empty() {
         Ok(())
     } else {
@@ -244,6 +303,15 @@ impl SwarmLifecycle for LifecycleService {
         processes: &'a dyn ProcessControl,
     ) -> PortFuture<'a, Result<(), DomainError>> {
         Box::pin(settle_overdue(snapshot, actor, processes))
+    }
+    fn settlement_step(
+        &self,
+        snapshot: &Snapshot,
+        actor: &str,
+        elapsed: std::time::Duration,
+        grace: std::time::Duration,
+    ) -> SettlementStep {
+        settlement_step(snapshot, actor, elapsed, grace)
     }
     fn observed_outcome(
         &self,

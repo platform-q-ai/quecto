@@ -82,6 +82,14 @@ pub trait SwarmLifecycle: std::fmt::Debug + Send + Sync {
         processes: &'a dyn ProcessControl,
         observation: &'a (dyn ProcessObservation + Sync),
     ) -> PortFuture<'a, Result<(), DomainError>>;
+    /// What a harness does next, `elapsed` after it first settled its run.
+    fn settlement_step(
+        &self,
+        snapshot: &Snapshot,
+        actor: &str,
+        elapsed: std::time::Duration,
+        grace: std::time::Duration,
+    ) -> super::SettlementStep;
     /// A member still alive a grace after its run settled ends itself.
     fn settle_overdue<'a>(
         &'a self,

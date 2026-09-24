@@ -540,12 +540,15 @@ fn the_coordinator_ends_members_whose_launcher_is_gone() {
 }
 
 #[test]
-fn without_a_coordinator_every_member_ends_the_rest_itself_last() {
+fn without_a_coordinator_members_end_their_launchees_and_orphans_themselves_last() {
+    // c's launcher a is alive, so only a ends c: b ending it would bypass a's
+    // registry and post the note #2121 removes.
     let run = tree(RunStatus::Failed);
-    assert_eq!(ended_by(&run, "b", &CoordinatorGone), ["a", "c", "b"]);
+    assert_eq!(ended_by(&run, "b", &CoordinatorGone), ["a", "b"]);
+    assert_eq!(ended_by(&run, "a", &CoordinatorGone), ["b", "c", "a"]);
     let mut missing = tree(RunStatus::Failed);
     missing.members.remove(0);
-    assert_eq!(ended_by(&missing, "b", &AllAlive), ["a", "c", "b"]);
+    assert_eq!(ended_by(&missing, "b", &AllAlive), ["a", "b"]);
 }
 
 #[test]
@@ -575,4 +578,64 @@ async fn an_overdue_member_ends_only_itself_and_the_coordinator_never_does() {
         processes.events.lock().unwrap().is_empty(),
         "only a settled run"
     );
+}
+
+#[test]
+fn a_member_waits_for_its_launcher_until_the_grace_then_ends_itself() {
+    use std::time::Duration;
+    let grace = Duration::from_secs(90);
+    let run = tree(RunStatus::Succeeded);
+    let step = |snapshot: &Snapshot, actor, elapsed| {
+        settlement_step(snapshot, actor, Duration::from_secs(elapsed), grace)
+    };
+    assert_eq!(step(&run, "b", 0), SettlementStep::Wait);
+    assert_eq!(step(&run, "b", 89), SettlementStep::Wait);
+    assert_eq!(step(&run, "b", 90), SettlementStep::EndSelf);
+    assert_eq!(
+        step(&run, "parent", 500),
+        SettlementStep::Done,
+        "the coordinator reports"
+    );
+    let mut ended = tree(RunStatus::Succeeded);
+    ended.members[2].status = MemberStatus::Dead;
+    assert_eq!(step(&ended, "b", 500), SettlementStep::Done);
+    assert_eq!(
+        step(&tree(RunStatus::Running), "b", 500),
+        SettlementStep::Done
+    );
+    assert_eq!(step(&run, "stranger", 500), SettlementStep::Done);
+}
+
+/// Records when each member's end starts and finishes; `a` is slow to end.
+struct SlowFirst(Mutex<Vec<String>>);
+impl ProcessControl for SlowFirst {
+    fn suspend_local_executions(&self, _: &Snapshot) {}
+    fn suspend_local_inference(&self, _: &Snapshot) {}
+    fn cancel_local_executions(&self) {}
+    fn abort<'a>(&'a self, member: &'a Member) -> PortFuture<'a, bool> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push(format!("abort:{}", member.id));
+            true
+        })
+    }
+    fn terminate<'a>(&'a self, member: &'a Member) -> PortFuture<'a, Result<(), DomainError>> {
+        Box::pin(async move {
+            if member.id == "a" {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            self.0.lock().unwrap().push(format!("ended:{}", member.id));
+            Ok(())
+        })
+    }
+}
+
+#[tokio::test]
+async fn the_coordinator_ends_members_at_once_so_a_slow_one_holds_up_nobody() {
+    let processes = SlowFirst(Mutex::new(vec![]));
+    settle(&tree(RunStatus::Succeeded), "parent", &processes, &AllAlive)
+        .await
+        .unwrap();
+    let events = processes.0.lock().unwrap().clone();
+    let at = |e: &str| events.iter().position(|x| x == e).unwrap();
+    assert!(at("ended:b") < at("ended:a"), "{events:?}");
 }
