@@ -206,3 +206,19 @@ fn only_a_json_object_goes_on_the_wire_so_a_bad_call_never_poisons_history() {
         assert_eq!(call_with(other).wire_arguments(), "{}", "{other}");
     }
 }
+
+#[test]
+fn only_json_whitespace_is_ignored_around_an_object() {
+    // A non-breaking space would survive to the provider and poison history.
+    let nbsp = "\u{00A0}{\"a\":1}";
+    assert_eq!(
+        call_with(nbsp).argument_shape(),
+        ToolArguments::Invalid(nbsp)
+    );
+    assert_eq!(call_with(nbsp).wire_arguments(), "{}");
+    let spaced = " \n{\"a\":1}\t";
+    assert_eq!(
+        call_with(spaced).argument_shape(),
+        ToolArguments::Object(spaced)
+    );
+}

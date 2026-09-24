@@ -770,3 +770,14 @@ fn parse_response_keeps_arguments_sent_as_an_object() {
     let parsed: serde_json::Value = serde_json::from_str(&resp.tool_calls[0].arguments).unwrap();
     assert_eq!(parsed, serde_json::json!({"path": "a.rs"}));
 }
+
+#[test]
+fn parse_sse_the_done_arguments_win_over_differing_deltas() {
+    let sse = r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"c1","name":"read","arguments":""}}
+data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\":\"a"}
+data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"path\":\"a.rs\"}"}
+data: [DONE]
+"#;
+    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    assert_eq!(resp.tool_calls[0].arguments, r#"{"path":"a.rs"}"#);
+}

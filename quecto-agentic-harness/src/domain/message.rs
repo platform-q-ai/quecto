@@ -318,7 +318,9 @@ impl ToolCall {
     /// building a value tree. Objects serde_json cannot read (nesting deeper
     /// than 128, unpaired surrogate escapes) count as invalid.
     pub fn argument_shape(&self) -> ToolArguments<'_> {
-        let text = self.arguments.trim();
+        // Only JSON whitespace: other Unicode spaces around the object would
+        // pass here yet still be rejected when the text is replayed.
+        let text = self.arguments.trim_matches([' ', '\t', '\n', '\r']);
         if text.is_empty() {
             return ToolArguments::Empty;
         }

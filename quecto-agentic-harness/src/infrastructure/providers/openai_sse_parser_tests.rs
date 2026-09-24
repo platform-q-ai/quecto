@@ -103,3 +103,26 @@ data: [DONE]\n";
     let parsed: serde_json::Value = serde_json::from_str(&result.tool_calls[0].arguments).unwrap();
     assert_eq!(parsed, serde_json::json!({"path": "a.rs"}));
 }
+
+#[test]
+fn parse_sse_an_object_then_string_chunks_keeps_only_the_streamed_arguments() {
+    // A provider that sends `{}` with the name chunk and then streams the real
+    // arguments must not end up with `{}{"path":…}`.
+    let sse = "\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"read\",\"arguments\":{}}}]}}]}\n\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\"\"}}]}}]}\n\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\":\\\"a.rs\\\"}\"}}]}}]}\n\
+data: [DONE]\n";
+    let result = parse_sse_response(sse).unwrap();
+    assert_eq!(result.tool_calls[0].arguments, r#"{"path":"a.rs"}"#);
+}
+
+#[test]
+fn parse_sse_an_empty_trailing_chunk_keeps_complete_arguments() {
+    let sse = "\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}}]}}]}\n\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\"}}]}}]}\n\
+data: [DONE]\n";
+    let result = parse_sse_response(sse).unwrap();
+    assert_eq!(result.tool_calls[0].arguments, r#"{"path":"a.rs"}"#);
+}
