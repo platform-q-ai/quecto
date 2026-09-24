@@ -33,7 +33,8 @@ impl AgentLoopImpl {
         for idx in 0..tool_call_count {
             let tc = &messages[assistant_index].tool_calls[idx];
             let delivered_tool_name = tc.name.clone();
-            let delivered_tool_arguments = tc.arguments.clone();
+            // The text the tool actually ran with (#2123).
+            let delivered_tool_arguments = tc.wire_arguments().into_owned();
             // Audit: ToolCall (guarded — avoid clones when audit is disabled)
             if self.audit_log.is_some() {
                 self.audit(
@@ -126,21 +127,38 @@ impl AgentLoopImpl {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .blocks_execution(tc.name.as_str(), self.tool_profile_context);
-        let admission = match &self.tool_admission {
-            Some(policy) => policy.check(&tc.name, &tc.arguments).await,
-            None => Ok(()),
+        let disabled = || crate::domain::tool::ToolResult {
+            content: format!("tool '{}' is disabled by runtime policy", tc.name),
+            image_blocks: vec![],
+            delivery_metadata: None,
+            is_error: true,
         };
-        let tool_result = if let Err(error) = admission {
-            Err(error)
-        } else if disabled_by_runtime_policy {
-            Ok(crate::domain::tool::ToolResult {
-                content: format!("tool '{}' is disabled by runtime policy", tc.name),
-                image_blocks: vec![],
-                delivery_metadata: None,
-                is_error: true,
-            })
-        } else {
-            self.tool_executor().execute(&tc.name, &tc.arguments).await
+        let tool_result = match tc.argument_shape() {
+            // A disabled tool is reported as disabled, never as "resend it".
+            crate::domain::message::ToolArguments::Invalid(_) if disabled_by_runtime_policy => {
+                Ok(disabled())
+            }
+            // #2123: never run a call whose arguments are not a JSON object;
+            // tell the model what it sent so it can resend a whole call.
+            crate::domain::message::ToolArguments::Invalid(raw) => {
+                Ok(invalid_arguments(&tc.name, raw))
+            }
+            crate::domain::message::ToolArguments::Object(_)
+            | crate::domain::message::ToolArguments::Empty => {
+                let admission = match &self.tool_admission {
+                    Some(policy) => policy.check(&tc.name, &tc.wire_arguments()).await,
+                    None => Ok(()),
+                };
+                if let Err(error) = admission {
+                    Err(error)
+                } else if disabled_by_runtime_policy {
+                    Ok(disabled())
+                } else {
+                    self.tool_executor()
+                        .execute(&tc.name, &tc.wire_arguments())
+                        .await
+                }
+            }
         };
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -173,5 +191,31 @@ impl AgentLoopImpl {
             "tool executed"
         );
         (content, image_blocks, delivery_metadata, is_err)
+    }
+}
+
+/// The error returned for a call whose arguments are not a JSON object
+/// (#2123). It shows both ends of what was received: for a call cut off at
+/// the output limit, the end is where it broke.
+fn invalid_arguments(tool: &str, raw: &str) -> crate::domain::tool::ToolResult {
+    const HEAD: usize = 200;
+    const TAIL: usize = 300;
+    let count = raw.chars().count();
+    let received = if count <= HEAD + TAIL {
+        raw.to_string()
+    } else {
+        let head: String = raw.chars().take(HEAD).collect();
+        let tail: String = raw.chars().skip(count - TAIL).collect();
+        format!("{head} … {tail}")
+    };
+    crate::domain::tool::ToolResult {
+        content: format!(
+            "the arguments for tool '{tool}' were not a JSON object, so it was not run (they \
+             may have been cut off at the output limit). Resend the call with one complete JSON \
+             object of arguments. Received: {received}"
+        ),
+        image_blocks: vec![],
+        delivery_metadata: None,
+        is_error: true,
     }
 }

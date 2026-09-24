@@ -127,13 +127,40 @@ pub(crate) fn apply_delta(
             if let Some(name) = tc["function"]["name"].as_str() {
                 tool_calls[idx].name = name.to_string();
             }
-            if let Some(args) = tc["function"]["arguments"].as_str() {
-                append_with_limit(
-                    &mut tool_calls[idx].arguments,
-                    args,
-                    MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES,
-                    "tool-call arguments",
-                )?;
+            // Arguments stream as string chunks; some OpenAI-compatible
+            // providers send the whole object at once instead (#2123). An
+            // object replaces what came before, and a string chunk after a
+            // complete object starts over: appending either would join two
+            // values into text no provider accepts.
+            match &tc["function"]["arguments"] {
+                serde_json::Value::Object(_) => {
+                    tool_calls[idx].arguments.clear();
+                    append_with_limit(
+                        &mut tool_calls[idx].arguments,
+                        &tc["function"]["arguments"].to_string(),
+                        MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES,
+                        "tool-call arguments",
+                    )?;
+                }
+                serde_json::Value::String(chunk) => {
+                    // Only a chunk that itself begins a new object restarts;
+                    // an empty or trailing chunk never wipes a complete one.
+                    if chunk.trim_start().starts_with('{')
+                        && matches!(
+                            tool_calls[idx].argument_shape(),
+                            crate::domain::message::ToolArguments::Object(_)
+                        )
+                    {
+                        tool_calls[idx].arguments.clear();
+                    }
+                    append_with_limit(
+                        &mut tool_calls[idx].arguments,
+                        chunk,
+                        MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES,
+                        "tool-call arguments",
+                    )?;
+                }
+                _ => {}
             }
         }
     }

@@ -638,6 +638,8 @@ async fn test_progress_callback_done_fired_on_text_response() {
 mod clamp_max_tokens_tests;
 #[path = "agent_loop_context_tokens_tests.rs"]
 mod context_tokens_tests;
+#[path = "agent_loop_2123_tests.rs"]
+mod invalid_tool_arguments_tests;
 #[path = "agent_loop_progress_tests.rs"]
 mod progress_tests;
 #[path = "agent_loop_931_tests.rs"]

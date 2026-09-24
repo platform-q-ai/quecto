@@ -583,3 +583,51 @@ async fn abort_on_drop_cancels_pump_task_when_chat_stream_is_dropped() {
         .expect("dropping chat_stream's pump guard should abort the pump task")
         .expect("pump task should drop its owned response/resources when aborted");
 }
+
+// --- #2123: a tool call whose stored arguments are not a JSON object ---
+
+#[test]
+fn build_request_body_sends_an_object_for_a_call_with_invalid_arguments() {
+    // A call truncated at the output limit (or otherwise not a JSON object)
+    // must never be sent back as-is: OpenAI-compatible providers reject the
+    // whole request, so every later turn and every resume would fail.
+    let mut assistant = Message::assistant("", vec![]);
+    assistant.tool_calls = vec![
+        ToolCall {
+            id: "call_1".into(),
+            name: "bash".into(),
+            arguments: r#"{"command":"cat /very/lo"#.into(),
+        },
+        ToolCall {
+            id: "call_2".into(),
+            name: "ls".into(),
+            arguments: String::new(),
+        },
+    ];
+    let messages = vec![
+        Message::user("hi"),
+        assistant,
+        Message::tool("call_1", "invalid"),
+        Message::tool("call_2", "ok"),
+    ];
+    let body =
+        OpenAiProvider::build_chat_completions_body_for_test("openai", &req(&messages, &[], "m"));
+    let calls = &body["messages"][1]["tool_calls"];
+    assert_eq!(calls[0]["function"]["arguments"], "{}");
+    assert_eq!(calls[1]["function"]["arguments"], "{}");
+}
+
+#[test]
+fn parse_response_keeps_arguments_sent_as_an_object() {
+    // #2123: some OpenAI-compatible providers send `arguments` as a JSON
+    // object rather than a string; it must not become "".
+    let body = serde_json::json!({
+        "choices": [{"message": {"role": "assistant", "content": null, "tool_calls": [{
+            "id": "c1",
+            "function": {"name": "read", "arguments": {"path": "a"}}
+        }]}}]
+    });
+    let resp = OpenAiProvider::parse_response(&body).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&resp.tool_calls[0].arguments).unwrap();
+    assert_eq!(parsed, serde_json::json!({"path": "a"}));
+}

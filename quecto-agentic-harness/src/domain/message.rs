@@ -299,6 +299,50 @@ pub struct ToolCall {
     pub arguments: String,
 }
 
+/// What a tool call's argument text holds (#2123). Only a JSON object is a
+/// valid argument set: providers reject anything else when it is replayed in
+/// the conversation, which would fail every later request.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ToolArguments<'a> {
+    /// A JSON object, as the model wrote it.
+    Object(&'a str),
+    /// No arguments at all (a streamed call with no argument chunks).
+    Empty,
+    /// Anything else: text cut off at an output limit, or a non-object value.
+    Invalid(&'a str),
+}
+
+impl ToolCall {
+    /// Classifies the argument text as an object, empty, or invalid. This
+    /// runs for every stored call on every request, so it validates without
+    /// building a value tree. Objects serde_json cannot read (nesting deeper
+    /// than 128, unpaired surrogate escapes) count as invalid.
+    pub fn argument_shape(&self) -> ToolArguments<'_> {
+        // Only JSON whitespace: other Unicode spaces around the object would
+        // pass here yet still be rejected when the text is replayed.
+        let text = self.arguments.trim_matches([' ', '\t', '\n', '\r']);
+        if text.is_empty() {
+            return ToolArguments::Empty;
+        }
+        let object_like = text.starts_with('{') && text.ends_with('}');
+        if object_like && serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok() {
+            ToolArguments::Object(&self.arguments)
+        } else {
+            ToolArguments::Invalid(&self.arguments)
+        }
+    }
+
+    /// The argument text to replay to a provider: the model's object as
+    /// written, and `{}` for anything else, so one bad call never poisons
+    /// the conversation (including sessions saved before this rule).
+    pub fn wire_arguments(&self) -> std::borrow::Cow<'_, str> {
+        match self.argument_shape() {
+            ToolArguments::Object(text) => std::borrow::Cow::Borrowed(text),
+            ToolArguments::Empty | ToolArguments::Invalid(_) => std::borrow::Cow::Borrowed("{}"),
+        }
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 static TOOL_CALL_CLONE_COUNTS_FOR_TESTS: LazyLock<Mutex<HashMap<String, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));

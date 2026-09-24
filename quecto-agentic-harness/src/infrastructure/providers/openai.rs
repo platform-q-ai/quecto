@@ -168,7 +168,7 @@ impl OpenAiProvider {
                                 "type": "function",
                                 "function": {
                                     "name": tc.name,
-                                    "arguments": tc.arguments,
+                                    "arguments": tc.wire_arguments(),
                                 }
                             })
                         })
@@ -271,10 +271,13 @@ impl OpenAiProvider {
                     .as_str()
                     .unwrap_or_default()
                     .to_string();
-                let arguments = tc["function"]["arguments"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string();
+                // Most providers send the arguments as a JSON string; some
+                // OpenAI-compatible ones send the object itself (#2123).
+                let arguments = match &tc["function"]["arguments"] {
+                    serde_json::Value::String(text) => text.clone(),
+                    serde_json::Value::Object(_) => tc["function"]["arguments"].to_string(),
+                    _ => String::new(),
+                };
                 tool_calls.push(ToolCall {
                     id,
                     name,
