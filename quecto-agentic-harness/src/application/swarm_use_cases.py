@@ -105,7 +105,7 @@ class Coordination:
                 if run['status'] == 'cancelled':
                     return self._receipt(tx)
                 if run['status'] == 'setup':
-                    raise SwarmError('run not created yet; nothing to cancel')
+                    raise SwarmError('run not created yet; nothing to cancel. To start one: swarm op=create')
                 if run['status'] not in ('running', 'paused'):
                     raise SwarmError(f"run already {describe(run)}")
                 tx.clear_outcome()
@@ -115,7 +115,7 @@ class Coordination:
             if run['status'] == 'paused' and run.get('outcome') == status:
                 return self._receipt(tx)
             if run['status'] != 'running':
-                raise SwarmError(f"run already {describe(run)}; only the supervisor can resume or close it")
+                raise SwarmError(f"run already {describe(run)}; only the supervisor can resume or close it, and op=cancel_run cancels it")
             self._end(tx, status, reason)
             return self._receipt(tx)
 

@@ -6,6 +6,10 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 
+#[path = "swarm_guidance.rs"]
+mod swarm_guidance;
+#[path = "swarm_job_output.rs"]
+mod swarm_job_output;
 #[path = "swarm_process.rs"]
 mod swarm_process;
 #[path = "swarm_result.rs"]
@@ -213,10 +217,10 @@ impl Tool for SwarmTool {
                     .await
                 }
                 "status" => status_op(&v, workspace, jobs).await,
-                "output" => output_op(&v, workspace, jobs).await,
+                "output" => swarm_job_output::output_op(&v, workspace, jobs).await,
                 "cancel" => cancel_op(&v, jobs).await,
                 op => ok_json(
-                    json!({"status":"error","message":format!("unknown op {op}")}),
+                    json!({"status":"error","message":swarm_guidance::unknown_op(op)}),
                     true,
                 ),
             }
@@ -251,8 +255,8 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
         Ok(summary) => summary,
         Err(error) => return tool_err(error.to_string()),
     };
-    if summary["status"] != "running" {
-        return tool_err(format!("swarm is {}; inspect summary", summary["status"]));
+    if summary["status"].as_str() != Some("running") {
+        return tool_err(swarm_guidance::run_refused(summary["status"].as_str()));
     }
     let mut spec = match parse_run(&v, &workspace, &sandbox, &cfg) {
         Ok(s) => s,
@@ -260,7 +264,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
     };
     let remaining = summary["deadline"].as_f64().unwrap_or(0.0) - now_ms() as f64 / 1000.0;
     if remaining <= 0.0 {
-        return tool_err("swarm budget-exhausted".into());
+        return tool_err(swarm_guidance::deadline_passed());
     }
     spec.timeout_secs = spec.timeout_secs.min(remaining.ceil() as u64);
     spec.bootstrap = Some(context.bootstrap());
@@ -674,41 +678,7 @@ async fn status_op(
         false,
     )
 }
-async fn output_op(
-    v: &serde_json::Value,
-    workspace: Arc<PathBuf>,
-    jobs: JobRegistry,
-) -> Result<ToolResult, DomainError> {
-    let id = job_id(v)?;
-    let offset = bounded_u64(v, "offset", 0, u64::MAX).map_err(DomainError::Other)? as usize;
-    let limit = bounded_u64(v, "limit", 200_000, 1_000_000).map_err(DomainError::Other)? as usize;
-    let Some(job) = jobs.lock().unwrap().get(id).cloned() else {
-        return ok_json(json!({"status":"not_found","job_id":id}), true);
-    };
-    let (status, exit_code, outp, errp, result) = {
-        let s = job.lock().unwrap();
-        (
-            s.status.clone(),
-            s.exit_code,
-            s.stdout_path.clone(),
-            s.stderr_path.clone(),
-            s.result.clone(),
-        )
-    };
-    let stdout = read_slice(&outp, offset, limit).await?;
-    let stderr = read_slice(&errp, offset, limit).await?;
-    // Paging reads the artifacts back off disk so callers can walk output far
-    // larger than the inline preview. Nothing stops a later program from
-    // rewriting those files, so the sizes captured at completion are compared
-    // against what is on disk now and any divergence is surfaced.
-    let artifacts_modified = artifacts_diverged(result.as_ref(), &outp, &errp).await;
-    let is_err = (status != "running" && status != "cancelling" && status != "completed")
-        || (status == "completed" && exit_code.unwrap_or(0) != 0);
-    ok_json(
-        json!({"status":status,"job_id":id,"stdout":stdout.0,"stderr":stderr.0,"offset":offset,"limit":limit,"stdout_more":stdout.1,"stderr_more":stderr.1,"result":result,"artifacts_modified":artifacts_modified,"artifact_namespace":"workspace-relative","artifact_base":workspace.as_ref(),"artifact_paths":[rel(&workspace,&outp),rel(&workspace,&errp)]}),
-        is_err,
-    )
-}
+
 async fn cancel_op(v: &serde_json::Value, jobs: JobRegistry) -> Result<ToolResult, DomainError> {
     let id = job_id(v)?;
     let Some(job) = jobs.lock().unwrap().get(id).cloned() else {

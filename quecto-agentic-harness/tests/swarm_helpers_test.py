@@ -754,7 +754,8 @@ class WorkbenchBehavior(unittest.TestCase):
             placeholder.stop('cancelled', 'not a member')
         fresh = Workbench(str(self.root / 'fresh.sqlite'), str(self.root), 'boot')
         fresh._bootstrap(1, 'start-b', '/tmp/b.sock')
-        with self.assertRaisesRegex(SwarmError, 'not created yet'):
+        # #2125: the refusal names the step that starts a run.
+        with self.assertRaisesRegex(SwarmError, r'not created yet.*op=create'):
             fresh.stop('cancelled', 'nothing to cancel')
         self.assertEqual(fresh._status()['status'], 'setup')
 

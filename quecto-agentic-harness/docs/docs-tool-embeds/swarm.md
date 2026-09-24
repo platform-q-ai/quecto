@@ -68,9 +68,14 @@ Call `swarm` with `op=create` and these fields:
 | `constraints` | `list[str]` |
 | `criteria` | Nonempty list of objects: `id`, `description`, `kind` (`command` or `review`) |
 | `member_limit` | Integer 1–25; coordinator and idle/reserved workers count |
-| `deadline` | Unix timestamp in seconds, in the future and within seven days |
+| `deadline_in_seconds` | Seconds from now, at most seven days; use this instead of `deadline` when you do not know the current Unix time |
+| `deadline` | Unix timestamp in seconds, in the future and within seven days (`date +%s` gives now) |
 
 Example criteria: `[{"id":"tests","kind":"command","description":"Acceptance tests pass"},{"id":"review","kind":"review","description":"Independent reviewer accepts the final revision"}]`.
+
+Example: `swarm {"op":"create","goal":"Review PR 1400","constraints":["read-only"],"criteria":[{"id":"tests","kind":"command","description":"Acceptance tests pass"}],"member_limit":3,"deadline_in_seconds":3600}`.
+Until a run is created it is in `setup`: `op=run` (Python, including `board`) is
+refused, so `board.create` is not the way to start one.
 
 ## Python calls
 
