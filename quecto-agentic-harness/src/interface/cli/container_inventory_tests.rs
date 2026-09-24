@@ -589,3 +589,27 @@ fn gc_parses_the_abandoned_policy_and_refuses_a_bad_duration() {
         assert!(twice.contains("may be given once"), "{order:?}: {twice}");
     }
 }
+
+/// #2134: a kill of a ref the command's own restore just forgot answers as
+/// a kill of a stopped environment always has, and says why it is gone.
+#[test]
+fn killing_a_ref_the_restore_just_forgot_says_it_is_stopped() {
+    let (_dir, ctx, cleanup_log) = composed_with_exited_containers();
+    let output = run(&["container", "kill", "C2"], &ctx);
+    assert_eq!(output.exit_code, 1, "{output:?}");
+    assert!(
+        output
+            .stderr
+            .contains("C2 forgotten (stopped; nothing left on disk or in the runtime)"),
+        "{}",
+        output.stderr
+    );
+    assert!(
+        output
+            .stderr
+            .contains("environment 'C2' is stopped; nothing of it was left, so it was forgotten"),
+        "{}",
+        output.stderr
+    );
+    assert!(!cleanup_log.exists(), "nothing is run for it");
+}

@@ -13,7 +13,7 @@ use crate::application::environments::dto::{
     AbandonedRuns, GcCandidate, GcRemoval, GcReport, GcRequest, RestoreMode,
 };
 use crate::domain::environment_registry::{
-    EnvironmentRecord, EnvironmentStatus, EnvironmentTarget, ref_number,
+    EnvironmentLookupError, EnvironmentRecord, EnvironmentStatus, EnvironmentTarget, ref_number,
 };
 
 fn inventory(ctx: &CliContext, mode: RestoreMode) -> Result<ContainerInventoryHandles, String> {
@@ -232,9 +232,21 @@ pub(crate) fn cmd_kill(
             .build()
             .map_err(|error| format!("runtime: {error}"))?;
         present_restore_notes(&handles, stderr);
-        runtime
-            .block_on(handles.kill.kill_container(&target))
-            .map_err(|error| error.to_string())
+        match &target {
+            // The restore this command ran just forgot it (#2134): it was
+            // stopped, which is what a kill of it has always answered.
+            EnvironmentTarget::Ref(environment_ref)
+                if handles.restore.forgotten.contains(environment_ref) =>
+            {
+                Err(format!(
+                    "{}; nothing of it was left, so it was forgotten",
+                    EnvironmentLookupError::Stopped(environment_ref.clone())
+                ))
+            }
+            EnvironmentTarget::Ref(_) | EnvironmentTarget::Name(_) => runtime
+                .block_on(handles.kill.kill_container(&target))
+                .map_err(|error| error.to_string()),
+        }
     });
     match outcome {
         Ok(killed) => {
