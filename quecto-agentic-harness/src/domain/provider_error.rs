@@ -78,6 +78,13 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
         return class;
     }
 
+    // The router's own refusal (#2126) lists the configured providers, whose
+    // names (`openai-oauth`) must not make it read as a credential failure:
+    // it is a model choice, never retried, never re-authenticated.
+    if msg.starts_with("no configured provider '") {
+        return ProviderErrorClass::Unknown;
+    }
+
     let lowered = msg.to_ascii_lowercase();
 
     if declares_billing_or_quota_error(&lowered) {

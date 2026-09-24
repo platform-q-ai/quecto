@@ -3716,3 +3716,32 @@ fn find_response_by_id(world: &QuectoWorld, id: &str) -> Option<serde_json::Valu
         }
     })
 }
+
+/// #2126: a model switch is refused unless a configured provider routes it,
+/// so a scenario that switches to another provider configures it first, the
+/// way owners add providers: an OpenAI-compatible endpoint. The scenario never
+/// prompts it; the endpoint only has to exist.
+#[given(expr = "the config also has an OpenAI-compatible provider {string}")]
+fn given_config_openai_compatible_provider(world: &mut QuectoWorld, prefix: String) {
+    ensure_temp_dir(world);
+    let config_path = base_path(world).join("config.json");
+    let mut config: serde_json::Value = std::fs::read_to_string(&config_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let endpoints = &mut config["providers"]["openai_compatible"]["endpoints"];
+    if !endpoints.is_array() {
+        *endpoints = serde_json::json!([]);
+    }
+    endpoints
+        .as_array_mut()
+        .expect("endpoints array")
+        .push(serde_json::json!({
+            "prefix": prefix,
+            "api_key": "sk-test-key",
+            "api_base": "http://127.0.0.1:9/v1",
+            "allow_remote_http": false
+        }));
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())
+        .expect("write config");
+}

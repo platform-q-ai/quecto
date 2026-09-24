@@ -39,6 +39,14 @@ impl ProviderRouter {
         self.providers.iter().map(|p| p.name()).collect()
     }
 
+    /// The configured provider a `provider/` prefix names, if any: the one
+    /// rule `resolve` and `route_check` share, so they cannot drift apart.
+    fn provider_for(&self, prefix: &str) -> Option<&Arc<dyn LlmProvider>> {
+        self.providers
+            .iter()
+            .find(|p| provider_prefix_matches(prefix, p.name()))
+    }
+
     /// Resolve which provider and effective model to use for a request.
     ///
     /// - `provider/model` syntax → match by provider name, strip prefix
@@ -51,15 +59,13 @@ impl ProviderRouter {
         model: &'b str,
     ) -> Result<(&'a Arc<dyn LlmProvider>, &'b str), DomainError> {
         if let Some((prefix, bare_model)) = parse_qualified_model(model) {
-            for p in &self.providers {
-                if provider_prefix_matches(prefix, p.name()) {
-                    return Ok((p, bare_model));
-                }
+            if let Some(p) = self.provider_for(prefix) {
+                return Ok((p, bare_model));
             }
             let truncated = truncate_prefix(prefix, MAX_PREFIX_IN_ERROR);
             return Err(DomainError::Provider(format!(
-                "no configured provider '{}'; configured providers: {}. Switch with \
-                 /model <provider>/<model>",
+                "no configured provider '{}'; configured providers: {}. Switch the model \
+                 to one of them as provider/model",
                 truncated,
                 self.provider_names().join(", ")
             )));
@@ -105,14 +111,7 @@ impl LlmProvider for ProviderRouter {
     fn route_check(&self, model: &str) -> crate::application::providers::ports::RouteCheck {
         use crate::application::providers::ports::RouteCheck;
         match parse_qualified_model(model) {
-            Some((prefix, _))
-                if self
-                    .providers
-                    .iter()
-                    .any(|p| provider_prefix_matches(prefix, p.name())) =>
-            {
-                RouteCheck::Routable
-            }
+            Some((prefix, _)) if self.provider_for(prefix).is_some() => RouteCheck::Routable,
             Some((prefix, _)) => RouteCheck::UnknownProvider {
                 provider: truncate_prefix(prefix, MAX_PREFIX_IN_ERROR).to_string(),
                 configured: self

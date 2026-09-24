@@ -36,9 +36,10 @@ pub(super) fn startup_route(check: RouteCheck, model: &str, spawned: bool) -> St
     }
 }
 
-/// Applies the verdict: `None` stops the startup (a spawned child), a
-/// warning is shown at once (the buffer is only returned when the harness
-/// exits) and kept for the exit report.
+/// Applies the verdict: `None` stops the startup (a spawned child); a
+/// warning joins the startup report. The owner also sees the router's
+/// actionable refusal on the first prompt, which names the configured
+/// providers.
 pub(super) fn admit(
     check: RouteCheck,
     model: &str,
@@ -48,7 +49,6 @@ pub(super) fn admit(
     match startup_route(check, model, spawned) {
         StartupRoute::Proceed => Some(()),
         StartupRoute::Warn(message) => {
-            eprintln!("{message}");
             stderr.push_str(&format!("{message}\n"));
             Some(())
         }
