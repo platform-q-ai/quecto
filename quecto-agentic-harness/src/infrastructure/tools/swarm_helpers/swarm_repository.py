@@ -116,7 +116,7 @@ class Transaction:
         cursor = self.connection.execute('SELECT event FROM notification_cursors WHERE actor=?', (actor,)).fetchone()
         for row in self.connection.execute('SELECT action,detail FROM events WHERE actor=? AND id>? ORDER BY id',
                                            (actor, cursor[0] if cursor else 0)):
-            yield {'action': row['action'], 'detail': json.loads(row['detail'])}
+            yield {'action': row['action'], 'detail': json.loads(row['detail']), 'actor': actor}
 
     def advance_notifications(self, actor):
         self.connection.execute('INSERT OR REPLACE INTO notification_cursors VALUES(?,(SELECT coalesce(max(id),0) FROM events))', (actor,))
@@ -137,8 +137,9 @@ class Transaction:
         previous = cursor[0] if cursor else 0
         if generation <= previous:
             return []
-        events = [{'action': row['action'], 'detail': json.loads(row['detail'])} for row in self.connection.execute(
-            'SELECT action,detail FROM events WHERE id>? AND id<=? AND actor<>? ORDER BY id',
+        events = [{'action': row['action'], 'detail': json.loads(row['detail']), 'actor': row['actor']}
+                  for row in self.connection.execute(
+            'SELECT action,detail,actor FROM events WHERE id>? AND id<=? AND actor<>? ORDER BY id',
             (previous, generation, actor))]
         self.connection.execute('INSERT OR REPLACE INTO wake_cursors VALUES(?,?)', (actor, generation))
         return events

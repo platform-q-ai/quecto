@@ -351,6 +351,23 @@ class WorkbenchBehavior(unittest.TestCase):
         self.parent.task_create('only you can take this', 'implement', ['tests pass'], [])
         self.assertEqual([m['id'] for m in self.parent._notifications()], ['worker'])
 
+    def test_a_release_wakes_the_parked_member_and_its_own_check_agrees(self):
+        # #2127: the releasing worker yields to retry later, so its event hands
+        # the work to the parked worker; the receiver judges the event from the
+        # releaser's view and accepts.
+        self.parent._admit('other', 'reservation-o')
+        self.parent._activate('other', 'reservation-o', 12346, 'start-o', '/tmp/o.sock')
+        self.submit_one()
+        other = self.client('other')
+        task = self.task('conflicting files')
+        claim = other.claim(task['id'])
+        self.parent._notifications()
+        other._notifications()
+        other.release(task['id'], claim['token'])
+        batch = other._notifications(True)
+        self.assertEqual([m['id'] for m in batch['members']], ['coordinator', 'worker'])
+        self.assertTrue(self.worker._accept_wake(batch['generation']))
+
     def test_claimed_work_does_not_wake_idle_peers(self):
         self.parent._notifications()
         self.worker._notifications()

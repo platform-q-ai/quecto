@@ -461,14 +461,17 @@ Wake hints are selected from the invoking member's actionable events and coalesc
 using a durable per-actor cursor. Reading the board, acknowledging messages and
 reservation bookkeeping do not broadcast more work. Message hints target their
 recipient; submissions/blockers/evidence target the coordinator; changes that
-make work available notify only peers free to take it: a member holding a
-claimed, blocked or submitted task is not woken for them (#2127). A member
-waiting for review stays parked until a message reaches it or the contract is
-amended. When no worker is free, every parked member is woken for new work
-after all, and a claim that leaves ready work behind wakes those free to take
-it. A member is never woken by its own event. A member that cannot reserve a file releases and
-retries later rather than holding its claim and yielding: freed files do not
-wake it. The cursor advances atomically before external
+make work available notify only peers free to take it (#2127). Any task event
+that leaves claimable work (created, released, verified, claimed, submitted,
+blocked, ...) wakes the members other than its actor that hold no claimed,
+blocked or submitted task, plus the coordinator unless the event is a worker's
+own claim, submission or block. When none of them but the coordinator is free,
+members waiting only for review (parked) are woken instead, so ready work is
+never left idle. Otherwise a parked member stays parked until a message reaches
+it or the contract is amended. Each event is judged from its actor's view, by
+the sender and again by the receiver's wake check, so both agree. A member
+that cannot reserve a file releases the task and yields rather than holding
+its claim: its release hands the task on. The cursor advances atomically before external
 notification, so a failed hint is reported but not endlessly retried; the durable
 board/inbox remains authoritative. Terminal runs generate no new actionable hints.
 Already queued hints instruct the recipient to inspect `op=summary` first and,
