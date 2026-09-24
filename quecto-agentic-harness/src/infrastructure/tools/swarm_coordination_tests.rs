@@ -64,3 +64,23 @@ fn each_member_carries_its_launcher_so_settlement_knows_who_ends_it() {
         .collect();
     assert_eq!(launchers, [None, Some("p"), None]);
 }
+
+#[test]
+fn a_relative_deadline_becomes_now_plus_the_seconds_and_an_absolute_one_wins() {
+    // #2125: a model need not know the current Unix time to create a run.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    let relative = absolute_deadline(&json!({"deadline_in_seconds": 3600}));
+    let at = relative.as_f64().expect("a number");
+    assert!((now + 3590.0..now + 3610.0).contains(&at), "{at}");
+    assert_eq!(
+        absolute_deadline(&json!({"deadline": 42, "deadline_in_seconds": 3600})),
+        json!(42)
+    );
+    assert!(
+        absolute_deadline(&json!({})).is_null(),
+        "the store refuses a missing deadline"
+    );
+}

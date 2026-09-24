@@ -115,7 +115,7 @@ class Coordination:
             if run['status'] == 'paused' and run.get('outcome') == status:
                 return self._receipt(tx)
             if run['status'] != 'running':
-                raise SwarmError(f"run already {describe(run)}; only the supervisor can resume or close it")
+                raise SwarmError(f"run already {describe(run)}; only the supervisor can resume or close it, and op=cancel_run cancels it")
             self._end(tx, status, reason)
             return self._receipt(tx)
 

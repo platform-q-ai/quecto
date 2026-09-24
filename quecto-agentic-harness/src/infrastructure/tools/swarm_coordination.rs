@@ -206,7 +206,7 @@ impl SwarmContext {
                 input["constraints"],
                 input["criteria"],
                 input["member_limit"],
-                input["deadline"]
+                absolute_deadline(input)
             ]),
         )?;
         let member = result["members"]
@@ -257,5 +257,21 @@ impl crate::application::providers::ports::RequestAccounting for SwarmContext {
             .await
             .map_err(invalid)?
         })
+    }
+}
+
+/// The run's deadline as Unix seconds (#2125): `deadline`, or now plus
+/// `deadline_in_seconds`, so a model need not know the current time. The
+/// store validates the result (within the next seven days).
+fn absolute_deadline(input: &Value) -> Value {
+    match (input.get("deadline"), input["deadline_in_seconds"].as_f64()) {
+        (Some(deadline), _) if !deadline.is_null() => deadline.clone(),
+        (_, Some(seconds)) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0.0, |d| d.as_secs_f64());
+            json!(now + seconds)
+        }
+        _ => Value::Null,
     }
 }

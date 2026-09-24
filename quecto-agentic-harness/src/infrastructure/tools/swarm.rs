@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 
+#[path = "swarm_cancel.rs"]
+mod swarm_cancel;
 #[path = "swarm_guidance.rs"]
 mod swarm_guidance;
 #[path = "swarm_process.rs"]
@@ -216,7 +218,7 @@ impl Tool for SwarmTool {
                 }
                 "status" => status_op(&v, workspace, jobs).await,
                 "output" => output_op(&v, workspace, jobs).await,
-                "cancel" => cancel_op(&v, jobs).await,
+                "cancel" => swarm_cancel::cancel_op(&v, jobs).await,
                 op => ok_json(
                     json!({"status":"error","message":swarm_guidance::unknown_op(op)}),
                     true,
@@ -253,9 +255,8 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
         Ok(summary) => summary,
         Err(error) => return tool_err(error.to_string()),
     };
-    let status = summary["status"].as_str().unwrap_or("unknown");
-    if status != "running" {
-        return tool_err(swarm_guidance::run_refused(status));
+    if summary["status"].as_str() != Some("running") {
+        return tool_err(swarm_guidance::run_refused(summary["status"].as_str()));
     }
     let mut spec = match parse_run(&v, &workspace, &sandbox, &cfg) {
         Ok(s) => s,
@@ -263,7 +264,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
     };
     let remaining = summary["deadline"].as_f64().unwrap_or(0.0) - now_ms() as f64 / 1000.0;
     if remaining <= 0.0 {
-        return tool_err("swarm budget-exhausted".into());
+        return tool_err(swarm_guidance::deadline_passed());
     }
     spec.timeout_secs = spec.timeout_secs.min(remaining.ceil() as u64);
     spec.bootstrap = Some(context.bootstrap());
@@ -710,29 +711,6 @@ async fn output_op(
     ok_json(
         json!({"status":status,"job_id":id,"stdout":stdout.0,"stderr":stderr.0,"offset":offset,"limit":limit,"stdout_more":stdout.1,"stderr_more":stderr.1,"result":result,"artifacts_modified":artifacts_modified,"artifact_namespace":"workspace-relative","artifact_base":workspace.as_ref(),"artifact_paths":[rel(&workspace,&outp),rel(&workspace,&errp)]}),
         is_err,
-    )
-}
-async fn cancel_op(v: &serde_json::Value, jobs: JobRegistry) -> Result<ToolResult, DomainError> {
-    let id = job_id(v)?;
-    let Some(job) = jobs.lock().unwrap().get(id).cloned() else {
-        return ok_json(json!({"status":"not_found","job_id":id}), true);
-    };
-    let mut s = job.lock().unwrap();
-    if s.status != "running" {
-        return ok_json(
-            json!({"status":s.status,"job_id":id,"execution_id":s.execution_id,"message":"job is already terminal"}),
-            false,
-        );
-    }
-    s.cancel_requested = true;
-    if let Some(pid) = s.pid {
-        kill_pid(pid);
-        kill_pid_tree_best_effort(pid);
-    }
-    s.status = "cancelling".into();
-    ok_json(
-        json!({"status":"cancelling","job_id":id,"execution_id":s.execution_id}),
-        false,
     )
 }
 
