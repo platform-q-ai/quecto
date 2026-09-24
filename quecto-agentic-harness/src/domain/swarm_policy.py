@@ -118,6 +118,12 @@ def notification_targets(run, actor, members, events, state):
     holding = {task.get('owner') for task in tasks.values()
                if task['status'] in WORK_HOLDING_STATUSES and task.get('owner')}
     free = {identity for identity in live if identity not in holding}
+    # When no worker is free (the coordinator never claims), members that only
+    # wait for review are woken after all, so new work is never left idle.
+    if not free - {run['coordinator']}:
+        working = {task.get('owner') for task in tasks.values()
+                   if task['status'] in ('claimed', 'blocked') and task.get('owner')}
+        free |= {identity for identity in live if identity not in working}
     for event in events:
         action, detail = event['action'], event['detail']
         if action == 'message_accepted' and detail['message'] in unread:

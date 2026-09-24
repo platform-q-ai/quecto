@@ -462,9 +462,12 @@ using a durable per-actor cursor. Reading the board, acknowledging messages and
 reservation bookkeeping do not broadcast more work. Message hints target their
 recipient; submissions/blockers/evidence target the coordinator; changes that
 make work available notify only peers free to take it: a member holding a
-claimed, blocked or submitted task is not woken for them (#2127), so a member
-waiting for review stays parked until a message or an amended contract reaches
-it. The cursor advances atomically before external
+claimed, blocked or submitted task is not woken for them (#2127). A member
+waiting for review stays parked until its task is verified, a message reaches
+it, or the contract is amended; when no worker is free, parked members are
+woken for new work after all. A member that cannot reserve a file releases and
+retries later rather than holding its claim and yielding: freed files do not
+wake it. The cursor advances atomically before external
 notification, so a failed hint is reported but not endlessly retried; the durable
 board/inbox remains authoritative. Terminal runs generate no new actionable hints.
 Already queued hints instruct the recipient to inspect `op=summary` first and,

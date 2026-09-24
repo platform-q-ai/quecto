@@ -96,6 +96,34 @@ class PolicyContract(unittest.TestCase):
         woken = [m['id'] for m in notification_targets(run, 'parent', members, message, state)]
         self.assertEqual(woken, ['parked'])
 
+    def test_parked_members_take_new_work_when_no_worker_is_free(self):
+        # Every worker has submitted: ready work would otherwise wake nobody
+        # until a review lands, so the parked ones are woken; busy ones not.
+        run = MemoryRepository().run()
+        run['coordinator'] = 'parent'
+        members = [{'id': m, 'status': 'live'} for m in ('parent', 'parked', 'busy')]
+        state = {'tasks': [
+            {'id': 1, 'status': 'ready', 'dependencies': [], 'owner': None},
+            {'id': 2, 'status': 'submitted', 'dependencies': [], 'owner': 'parked'},
+            {'id': 3, 'status': 'claimed', 'dependencies': [], 'owner': 'busy'},
+        ], 'messages': []}
+        created = [{'action': 'task_created', 'detail': {'task': 1}}]
+        woken = [m['id'] for m in notification_targets(run, 'parent', members, created, state)]
+        self.assertEqual(woken, ['parked'])
+
+    def test_no_ready_work_wakes_nobody_and_a_member_holding_two_tasks_stays_busy(self):
+        run = MemoryRepository().run()
+        members = [{'id': m, 'status': 'live'} for m in ('parent', 'free', 'double')]
+        tasks = [{'id': 1, 'status': 'completed', 'dependencies': [], 'owner': 'free'},
+                 {'id': 2, 'status': 'submitted', 'dependencies': [], 'owner': 'double'},
+                 {'id': 3, 'status': 'claimed', 'dependencies': [], 'owner': 'double'}]
+        verified = [{'action': 'verified', 'detail': {'task': 1}}]
+        state = {'tasks': tasks, 'messages': []}
+        self.assertEqual(notification_targets(run, 'parent', members, verified, state), [])
+        state['tasks'] = tasks + [{'id': 4, 'status': 'ready', 'dependencies': [], 'owner': None}]
+        woken = [m['id'] for m in notification_targets(run, 'parent', members, verified, state)]
+        self.assertEqual(woken, ['free'])
+
     def test_an_amended_contract_wakes_every_live_member_including_parked(self):
         run = MemoryRepository().run()
         members = [{'id': m, 'status': 'live'} for m in ('parent', 'free', 'parked')]

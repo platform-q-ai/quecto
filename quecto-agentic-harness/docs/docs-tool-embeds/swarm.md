@@ -172,7 +172,9 @@ Workers may call `evidence`; their proposals never authorize completion.
 Wake hints are coalesced from actionable changes, not read/ack traffic. They are
 best-effort; durable inbox/task state is authoritative. New ready work wakes only
 members free to take it: while you hold a claimed, blocked or submitted task you
-are woken by messages to you and contract amendments, not by others' work. **First use op=summary**
+are woken by messages to you, contract amendments and your task's verification,
+not by others' work (unless no worker is free). Submit, then yield. On a file
+reservation conflict, release and retry later instead of holding and yielding. **First use op=summary**
 when receiving a hint. If running, inspect inbox/ready tasks and acknowledge read
 messages. If terminal, do not call `op=run` for inbox/ack: Python execution is
 closed. Report the final summary and remain available for supervisor requests,

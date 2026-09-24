@@ -324,17 +324,31 @@ class WorkbenchBehavior(unittest.TestCase):
         self.parent.ack(message['id'])
         self.assertEqual(self.worker._notifications(), [])
 
-    def test_a_member_that_submitted_is_parked_until_spoken_to(self):
-        # #2127: a worker waiting for review is not woken because the
-        # coordinator created other work; a message addressed to it still is.
+    def submit_one(self):
         submitted = self.task('reviewed later')
         claim = self.worker.claim(submitted['id'])
         self.worker.submit(submitted['id'], claim['token'], [{'artifact': 'tests.log', 'revision': 'R1'}])
         self.parent._notifications()
         self.worker._notifications()
+
+    def test_a_member_that_submitted_is_parked_while_another_worker_is_free(self):
+        # #2127: the worker waiting for review is not woken because the
+        # coordinator created other work; the free worker is, and the parked
+        # worker's own check on current state agrees. A message still wakes it.
+        self.parent._admit('other', 'reservation-o')
+        self.parent._activate('other', 'reservation-o', 12346, 'start-o', '/tmp/o.sock')
+        self.submit_one()
         self.parent.task_create('someone else can take this', 'implement', ['tests pass'], [])
-        self.assertEqual(self.parent._notifications(), [], 'a parked member is not woken')
+        batch = self.parent._notifications(True)
+        self.assertEqual([m['id'] for m in batch['members']], ['other'])
+        self.assertFalse(self.worker._accept_wake(batch['generation']))
+        self.assertTrue(self.client('other')._accept_wake(batch['generation']))
         self.parent.send('please-rework', 'worker', 'Rework the evidence')
+        self.assertEqual([m['id'] for m in self.parent._notifications()], ['worker'])
+
+    def test_a_parked_member_takes_new_work_when_no_worker_is_free(self):
+        self.submit_one()
+        self.parent.task_create('only you can take this', 'implement', ['tests pass'], [])
         self.assertEqual([m['id'] for m in self.parent._notifications()], ['worker'])
 
     def test_claimed_work_does_not_wake_idle_peers(self):
