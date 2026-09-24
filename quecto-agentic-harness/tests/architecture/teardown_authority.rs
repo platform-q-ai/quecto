@@ -292,7 +292,7 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
     ),
     (
         "src/infrastructure/tools/grep_run.rs",
-        &["kill(", "start_kill", "kill_on_drop"],
+        &["start_kill", "kill_on_drop"],
         "tool invocation containment: the grep tool's own `rg` Child at its \
          output cap, on its timeout, and when the tool call is dropped (#2136)",
     ),
