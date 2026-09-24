@@ -26,6 +26,14 @@ fn agent_with(
     responses: Vec<Result<LlmResponse, DomainError>>,
     streaming: bool,
 ) -> (AgentLoopImpl, Arc<MockProvider>) {
+    agent_sized(responses, streaming, 190_000)
+}
+
+fn agent_sized(
+    responses: Vec<Result<LlmResponse, DomainError>>,
+    streaming: bool,
+    max_context_tokens: usize,
+) -> (AgentLoopImpl, Arc<MockProvider>) {
     let provider = Arc::new(MockProvider::new_results(responses));
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
@@ -36,7 +44,7 @@ fn agent_with(
         retention: None,
         session_key: String::new(),
         context_collapse_after_tool_calls: u32::MAX,
-        max_context_tokens: 190_000,
+        max_context_tokens,
         progress_callback: None,
         streaming,
         effort: None,
@@ -146,11 +154,12 @@ async fn the_retry_may_use_the_model_cap_and_later_requests_do_not() {
         Ok(reasoning_only_at_the_limit()),
         Ok(text_response("the answer")),
     ]);
-    // Configured 8192, the model declares 32768: the retry may use it.
+    // Configured 8192, the model declares 32768: the retry may go up to
+    // twice the configured limit (a cost ceiling), not the full cap.
     let mut agent = agent.with_model_max_tokens(Some(32_768));
     let mut messages = vec![Message::user("question")];
     agent.run_loop(&mut messages).await.unwrap();
-    assert_eq!(provider.seen_max_tokens(), [8192, 32_768]);
+    assert_eq!(provider.seen_max_tokens(), [8192, 16_384]);
 }
 
 #[tokio::test]
@@ -290,4 +299,68 @@ async fn feedback_merged_into_run_added_feedback_updates_that_ledger_entry() {
         feedback[0].contains("output limit") && feedback[0].contains("malformed"),
         "the entry carries the merged text: {feedback:?}"
     );
+}
+
+#[tokio::test]
+async fn the_raised_limit_fits_what_the_context_window_leaves() {
+    let (agent, provider) = agent_sized(
+        vec![
+            Ok(reasoning_only_at_the_limit()),
+            Ok(text_response("the answer")),
+        ],
+        false,
+        12_000,
+    );
+    let mut agent = agent.with_model_max_tokens(Some(32_768));
+    let mut messages = vec![Message::user("question")];
+    agent.run_loop(&mut messages).await.unwrap();
+    let sent = provider.seen_max_tokens();
+    assert_eq!(sent[0], 8192);
+    assert!(sent[1] > 8192 && sent[1] < 12_000 - 1024, "{sent:?}");
+}
+
+#[tokio::test]
+async fn the_dropped_replys_tokens_are_still_counted() {
+    let (mut agent, _) = agent(vec![
+        Ok(reasoning_only_at_the_limit()),
+        Ok(text_response("the answer")),
+    ]);
+    let mut messages = vec![Message::user("question")];
+    let result = agent.run_loop(&mut messages).await.unwrap();
+    assert!(
+        result.output_tokens >= 8192 + 20,
+        "{}",
+        result.output_tokens
+    );
+}
+
+#[tokio::test]
+async fn an_unreported_output_count_is_treated_as_a_cut_off() {
+    let mut unreported = reasoning_only_at_the_limit();
+    if let Some(usage) = unreported.usage.as_mut() {
+        usage.completion_tokens = 0;
+    }
+    let (mut agent, provider) = agent(vec![Ok(unreported), Ok(text_response("the answer"))]);
+    let mut messages = vec![Message::user("question")];
+    let result = agent.run_loop(&mut messages).await.unwrap();
+    assert_eq!(result.response, "the answer");
+    assert_eq!(provider.request_count(), 2);
+}
+
+#[tokio::test]
+async fn a_retry_reply_is_judged_against_the_limit_that_retry_was_sent_with() {
+    // The retry asked for 16384; 5000 output tokens is under half of that,
+    // so it is not an output cut-off (a full context reported as max_tokens).
+    let mut context_full = reasoning_only_at_the_limit();
+    if let Some(usage) = context_full.usage.as_mut() {
+        usage.completion_tokens = 5000;
+    }
+    let (agent, provider) = agent(vec![Ok(reasoning_only_at_the_limit()), Ok(context_full)]);
+    let mut agent = agent.with_model_max_tokens(Some(32_768));
+    let mut messages = vec![Message::user("question")];
+    agent
+        .run_loop(&mut messages)
+        .await
+        .expect("not failed as a cut-off");
+    assert_eq!(provider.request_count(), 2);
 }

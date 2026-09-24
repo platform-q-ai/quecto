@@ -168,7 +168,9 @@ impl AgentLoopImpl {
             model: self.model.clone(),
         });
 
-        self.build_chat_request(messages, tool_defs)
+        let mut request = self.build_chat_request(messages, tool_defs);
+        request.max_tokens = self.request_max_tokens(estimated_context_tokens);
+        request
     }
 
     pub(super) async fn audit_provider_request_start(
@@ -299,7 +301,7 @@ impl AgentLoopImpl {
             record_feedback(messages, appended_messages, how);
             // The retry may use the model's cap, not repeat the same budget.
             self.output_boost
-                .store(true, std::sync::atomic::Ordering::SeqCst);
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             AfterResponse::Retry
         } else {
             self.drain_tool_policy_mutations_at_boundary();

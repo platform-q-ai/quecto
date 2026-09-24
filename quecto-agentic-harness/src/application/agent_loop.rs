@@ -113,8 +113,9 @@ pub struct AgentLoopImpl {
     max_tokens: u32,
     /// Per-model registry output cap, if known; see `agent_loop_clamp` (#935).
     model_max_tokens: Option<u32>,
-    /// One request after an output-limit cut-off may use the model's cap (#2124).
+    /// One request after an output-limit cut-off may go above the limit (#2124).
     output_boost: std::sync::atomic::AtomicBool,
+    last_request_max_tokens: std::sync::atomic::AtomicU32,
     temperature: f32,
     max_tool_iterations: u32,
     /// Whether the loop retains context (D9 #1978): the spill manifest is
@@ -182,6 +183,7 @@ impl AgentLoopImpl {
             max_tokens: config.max_tokens,
             model_max_tokens: None,
             output_boost: std::sync::atomic::AtomicBool::new(false),
+            last_request_max_tokens: std::sync::atomic::AtomicU32::new(0),
             temperature: config.temperature,
             max_tool_iterations: DEFAULT_MAX_TOOL_ITERATIONS,
             retains_context: config.retention.is_some(),
@@ -447,7 +449,7 @@ impl AgentLoopImpl {
             messages,
             tools: tool_defs,
             model: &self.model,
-            max_tokens: self.request_max_tokens(),
+            max_tokens: self.effective_max_tokens(),
             temperature: self.temperature,
             session_id,
             tool_choice: None,
@@ -627,9 +629,9 @@ impl AgentLoopImpl {
             let after = match response {
                 // #2124: nothing visible before the output limit is no answer.
                 Ok(response)
-                    if is_cut_off_without_answer(&response, self.effective_max_tokens()) =>
+                    if is_cut_off_without_answer(&response, self.last_request_max_tokens()) =>
                 {
-                    let feedback = output_limit_feedback(self.effective_max_tokens());
+                    let feedback = output_limit_feedback(self.last_request_max_tokens());
                     let recovery = (&mut cut_off_retries, &mut appended_messages, feedback);
                     self.after_cut_off_answer(messages, &response, current_turn, recovery)
                         .await
