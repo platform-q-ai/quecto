@@ -100,7 +100,6 @@ class PolicyContract(unittest.TestCase):
         # Every worker has submitted: ready work would otherwise wake nobody
         # until a review lands, so the parked ones are woken; busy ones not.
         run = MemoryRepository().run()
-        run['coordinator'] = 'parent'
         members = [{'id': m, 'status': 'live'} for m in ('parent', 'parked', 'busy')]
         state = {'tasks': [
             {'id': 1, 'status': 'ready', 'dependencies': [], 'owner': None},
@@ -123,6 +122,45 @@ class PolicyContract(unittest.TestCase):
         state['tasks'] = tasks + [{'id': 4, 'status': 'ready', 'dependencies': [], 'owner': None}]
         woken = [m['id'] for m in notification_targets(run, 'parent', members, verified, state)]
         self.assertEqual(woken, ['free'])
+
+    def test_sender_and_receiver_agree_a_releasing_worker_is_free(self):
+        # A worker that releases its task is free to retry it: the sender does
+        # not fall back to parked members, and neither does the receiver's
+        # accept_wake re-check, which evaluates with actor ''.
+        run = MemoryRepository().run()
+        members = [{'id': m, 'status': 'live'} for m in ('parent', 'releaser', 'parked')]
+        state = {'tasks': [
+            {'id': 1, 'status': 'ready', 'dependencies': [], 'owner': None},
+            {'id': 2, 'status': 'submitted', 'dependencies': [], 'owner': 'parked'},
+        ], 'messages': []}
+        released = [{'action': 'released', 'detail': {'task': 1}}]
+        sender = [m['id'] for m in notification_targets(run, 'releaser', members, released, state)]
+        receiver = [m['id'] for m in notification_targets(run, '', members, released, state)]
+        self.assertEqual(sender, ['parent'])
+        self.assertEqual(receiver, ['parent', 'releaser'])
+        self.assertNotIn('parked', sender + receiver)
+
+    def test_the_fallback_wakes_one_parked_member_per_ready_task(self):
+        run = MemoryRepository().run()
+        members = [{'id': m, 'status': 'live'} for m in ('parent', 'p1', 'p2', 'p3')]
+        tasks = [{'id': 1, 'status': 'ready', 'dependencies': [], 'owner': None}] + [
+            {'id': 10 + n, 'status': 'submitted', 'dependencies': [], 'owner': f'p{n}'} for n in (1, 2, 3)]
+        created = [{'action': 'task_created', 'detail': {'task': 1}}]
+        woken = [m['id'] for m in notification_targets(run, 'parent', members, created, {'tasks': tasks, 'messages': []})]
+        self.assertEqual(woken, ['p1'])
+        tasks.append({'id': 2, 'status': 'ready', 'dependencies': [], 'owner': None})
+        woken = [m['id'] for m in notification_targets(run, 'parent', members, created, {'tasks': tasks, 'messages': []})]
+        self.assertEqual(woken, ['p1', 'p2'])
+
+    def test_the_fallback_never_wakes_a_busy_worker(self):
+        run = MemoryRepository().run()
+        members = [{'id': m, 'status': 'live'} for m in ('parent', 'busy')]
+        state = {'tasks': [
+            {'id': 1, 'status': 'ready', 'dependencies': [], 'owner': None},
+            {'id': 2, 'status': 'claimed', 'dependencies': [], 'owner': 'busy'},
+        ], 'messages': []}
+        created = [{'action': 'task_created', 'detail': {'task': 1}}]
+        self.assertEqual(notification_targets(run, 'parent', members, created, state), [])
 
     def test_an_amended_contract_wakes_every_live_member_including_parked(self):
         run = MemoryRepository().run()

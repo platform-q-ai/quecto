@@ -107,23 +107,29 @@ def notification_targets(run, actor, members, events, state):
     targets = set()
     tasks = {task['id']: task for task in state['tasks']}
     unread = {message['id'] for message in state['messages']}
-    ready = any(task['status'] == 'ready' and all(
-        tasks.get(dep, {}).get('status') == 'completed' for dep in task['dependencies'])
-        for task in tasks.values())
+    ready_count = sum(1 for task in tasks.values() if task['status'] == 'ready' and all(
+        tasks.get(dep, {}).get('status') == 'completed' for dep in task['dependencies']))
+    ready = ready_count > 0
     live = {m['id']: m for m in members if m['status'] == 'live' and m['id'] != actor}
     # A member holding a claimed, blocked or submitted task has its work
     # (#2127): new ready work is for members free to take it, so a parked
     # (submitted) or busy member is not woken for it. Messages still wake
-    # their recipient, and an amended contract wakes everyone.
+    # their recipient, and an amended contract wakes everyone. Freedom is
+    # judged over every live member, the actor included, so the sender and a
+    # receiver's accept_wake re-check (actor '') agree on who is free.
+    everyone = {m['id'] for m in members if m['status'] == 'live'}
     holding = {task.get('owner') for task in tasks.values()
                if task['status'] in WORK_HOLDING_STATUSES and task.get('owner')}
-    free = {identity for identity in live if identity not in holding}
+    free = {identity for identity in everyone if identity not in holding}
     # When no worker is free (the coordinator never claims), members that only
-    # wait for review are woken after all, so new work is never left idle.
+    # wait for review take new work after all, so it is never left idle: one
+    # per ready task, lowest identity first, so one task starts one turn.
     if not free - {run['coordinator']}:
         working = {task.get('owner') for task in tasks.values()
                    if task['status'] in ('claimed', 'blocked') and task.get('owner')}
-        free |= {identity for identity in live if identity not in working}
+        parked = sorted(identity for identity in everyone
+                        if identity not in working and identity not in free)
+        free |= set(parked[:ready_count])
     for event in events:
         action, detail = event['action'], event['detail']
         if action == 'message_accepted' and detail['message'] in unread:
