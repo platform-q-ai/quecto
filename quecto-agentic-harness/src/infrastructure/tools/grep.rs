@@ -20,9 +20,12 @@ use crate::infrastructure::tools::truncate::format_size;
 mod grep_listing;
 #[path = "grep_request.rs"]
 mod grep_request;
+#[path = "grep_run.rs"]
+mod grep_run;
 
 use grep_listing::{ListingFormat, format_listing, parse_listing};
 use grep_request::{DEFAULT_MATCH_LIMIT, GrepRequest, OutputMode, parse_request};
+use grep_run::{RG_STDOUT_CAP, RG_TIMEOUT, run_rg};
 
 /// Maximum line length before truncation (chars); matches Quecto's GREP_MAX_LINE_LENGTH.
 const MAX_LINE_BYTES: usize = 500;
@@ -39,6 +42,8 @@ pub struct GrepTool {
     sandbox: Arc<Sandbox>,
     /// Override the `rg` binary path (for testing with a dummy binary).
     rg_binary: Option<String>,
+    /// How long one rg run may take.
+    rg_timeout: std::time::Duration,
 }
 
 impl GrepTool {
@@ -47,6 +52,7 @@ impl GrepTool {
             workspace,
             sandbox,
             rg_binary: None,
+            rg_timeout: RG_TIMEOUT,
         }
     }
 
@@ -61,7 +67,15 @@ impl GrepTool {
             workspace,
             sandbox,
             rg_binary: Some(rg_binary),
+            rg_timeout: RG_TIMEOUT,
         }
+    }
+
+    /// For tests: a shorter rg timeout.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_rg_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.rg_timeout = timeout;
+        self
     }
 
     fn rg_cmd(&self) -> String {
@@ -93,13 +107,13 @@ impl Tool for GrepTool {
                                         "pattern":    {"type":"string","description":"Search pattern (regex, or literal with literal=true). Required unless patterns is given"},
                     "patterns":   {"type":"array","items":{"type":"string"},"description":"Several patterns; a line matching any of them matches (with or instead of pattern)"},
                     "path":       {"type":"string","description":"Directory or file to search (defaults to '.')"},
-                    "glob":       {"type":"array","items":{"type":"string"},"description":"Globs to include, e.g. ['*.rs']; prefix with ! to exclude, e.g. '!*_tests.rs' (a single string is accepted too)"},
+                    "glob":       {"type":"array","items":{"type":"string"},"description":"Globs to include, e.g. ['*.rs']; prefix with ! to exclude, e.g. '!*_tests.rs' (a single string is accepted too). .git internals are always skipped; search them with path='.git'"},
                     "type":       {"type":"array","items":{"type":"string"},"description":"ripgrep file types, e.g. ['rust'], ['py', 'ts'] (a single string is accepted too)"},
                     "ignoreCase": {"type":"boolean","description":"Case-insensitive search"},
                     "literal":    {"type":"boolean","description":"Treat patterns as literal strings"},
                     "wordRegexp": {"type":"boolean","description":"Match whole words only"},
                     "multiline":  {"type":"boolean","description":"Let patterns span lines (use \\n in the pattern)"},
-                    "maxPerFile": {"type":"number","description":"At most this many matches per file"},
+                    "maxPerFile": {"type":"number","description":"At most this many matching lines per file"},
                     "output":     {"type":"string","enum":["content","files","count"],"description":"content (default): matching lines; files: each matching file once; count: number of matches per file, busiest first"},
                     "context":    {"type":"number","description":"Context lines before and after each match (content output)"},
                     "limit":      {"type":"number","description":"Maximum matches (or files) to return (default 100)"}
@@ -117,6 +131,7 @@ impl Tool for GrepTool {
         let workspace = self.workspace.clone();
         let sandbox = self.sandbox.clone();
         let rg_cmd = self.rg_cmd();
+        let rg_timeout = self.rg_timeout;
 
         Box::pin(async move {
             // LLM-addressable: malformed JSON → Ok(is_error=true). Tool contract.
@@ -153,18 +168,24 @@ impl Tool for GrepTool {
                 .map_err(|e| DomainError::Security(e.to_string()))?;
 
             let cmd = build_rg_command(&rg_cmd, &workspace, &full_path, &request);
-            let rg = run_rg(cmd).await?;
-            let stderr = String::from_utf8_lossy(&rg.stderr);
-            // rg exits 0 (matches) or 1 (none); 2 is an error, which may come
-            // after partial results (an unreadable file); no code means the
-            // process was killed, here by the output cap once it was reached.
-            let complete = matches!(rg.exit_code, Some(0 | 1));
-            let partial = matches!(rg.exit_code, Some(2) | None) && !rg.stdout.is_empty();
-            if !complete && !partial {
-                let msg = if stderr.trim().is_empty() {
-                    "rg exited unexpectedly".to_string()
-                } else {
-                    format!("grep error: {}", stderr.trim())
+            let rg = run_rg(cmd, rg_timeout).await?;
+            let stderr = String::from_utf8_lossy(&rg.stderr).into_owned();
+            let stdout = String::from_utf8_lossy(&rg.stdout).into_owned();
+            let found = match request.output {
+                OutputMode::Content => parse_rg_matches(&stdout).len(),
+                OutputMode::Files | OutputMode::Count => {
+                    parse_listing(&stdout, request.output).len()
+                }
+            };
+            // rg exits 0 (matches) or 1 (none). Exit 2 is an error, which may
+            // follow partial results (an unreadable file) or nothing but a
+            // summary (a mistyped path); no code means killed, here at the
+            // output cap. Results stand when rg finished, or found something.
+            let usable = matches!(rg.exit_code, Some(0 | 1)) || found > 0;
+            let Some(stdout) = usable.then_some(stdout) else {
+                let msg = match stderr.trim() {
+                    "" => "rg exited unexpectedly".to_string(),
+                    reported => format!("grep error: {reported}"),
                 };
                 return Ok(ToolResult {
                     content: msg,
@@ -172,9 +193,11 @@ impl Tool for GrepTool {
                     image_blocks: vec![],
                     delivery_metadata: None,
                 });
-            }
+            };
             let mut incomplete = Vec::new();
-            if rg.capped {
+            // At the cap more exists than was read; say so unless the match
+            // limit already cut the result shorter (its own notice says so).
+            if rg.capped && found <= request.limit {
                 incomplete.push(format!(
                     "rg printed more than {}; results are incomplete: narrow with path, glob or type",
                     format_size(RG_STDOUT_CAP)
@@ -186,8 +209,6 @@ impl Tool for GrepTool {
                     "rg reported errors, results may be incomplete: {first}"
                 ));
             }
-            let stdout_bytes = rg.stdout;
-            let stdout = String::from_utf8_lossy(&stdout_bytes);
             let result = match request.output {
                 OutputMode::Content => {
                     format_grep_output(GrepFormatArgs {
@@ -208,14 +229,14 @@ impl Tool for GrepTool {
                         sandbox: &sandbox,
                         limit: request.limit,
                         max_output_bytes: MAX_OUTPUT_BYTES,
+                        total_is_partial: rg.capped,
                     },
                 ),
             };
 
-            let result = if incomplete.is_empty() {
-                result
-            } else {
-                format!("{result}\n\n[{}]", incomplete.join(". "))
+            let result = match incomplete.as_slice() {
+                [] => result,
+                notices => format!("{result}\n\n[{}]", notices.join(". ")),
             };
             Ok(ToolResult {
                 content: result,
@@ -284,72 +305,6 @@ fn build_rg_command(
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     cmd
-}
-
-/// Spawn rg, read capped stdout/stderr, reap child.
-/// What one rg run printed: stdout up to [`RG_STDOUT_CAP`] (`capped` when
-/// more was cut off), the start of stderr, and the exit code (`None` when
-/// the process was killed).
-#[derive(Debug)]
-struct RgRun {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    exit_code: Option<i32>,
-    capped: bool,
-}
-
-/// How much rg output is read (JSON is larger than the plain text shown).
-const RG_STDOUT_CAP: usize = MAX_OUTPUT_BYTES * 4;
-
-async fn run_rg(mut cmd: tokio::process::Command) -> Result<RgRun, DomainError> {
-    use tokio::io::AsyncReadExt;
-
-    let cap = RG_STDOUT_CAP;
-    let mut child = cmd.spawn().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            DomainError::Tool(
-                "rg not found on PATH — install ripgrep: https://github.com/BurntSushi/ripgrep#installation".to_string()
-            )
-        } else {
-            DomainError::Tool(format!("grep failed to spawn rg: {}", e))
-        }
-    })?;
-
-    let mut stdout_bytes = Vec::with_capacity(cap.min(64 * 1024));
-    let mut capped = false;
-    if let Some(mut out) = child.stdout.take() {
-        let mut buf = vec![0u8; 8192];
-        loop {
-            let n = out.read(&mut buf).await.unwrap_or(0);
-            if n == 0 {
-                break;
-            }
-            let remaining = cap.saturating_sub(stdout_bytes.len());
-            let take = n.min(remaining);
-            stdout_bytes.extend_from_slice(&buf[..take]);
-            if take < n || stdout_bytes.len() >= cap {
-                capped = take < n || out.read(&mut buf).await.map_or(false, |more| more > 0);
-                break;
-            }
-        }
-    }
-
-    let mut stderr_bytes = Vec::new();
-    if let Some(mut err) = child.stderr.take() {
-        let mut tmp = vec![0u8; 4096];
-        let n = err.read(&mut tmp).await.unwrap_or(0);
-        stderr_bytes.extend_from_slice(&tmp[..n]);
-    }
-
-    let _ = child.kill().await;
-    let status = child.wait().await;
-    let exit_code = status.ok().and_then(|s| s.code());
-    Ok(RgRun {
-        stdout: stdout_bytes,
-        stderr: stderr_bytes,
-        exit_code,
-        capped,
-    })
 }
 
 // ---------------------------------------------------------------------------

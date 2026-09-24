@@ -87,7 +87,7 @@ fn format_match_block_stops_at_byte_cap() {
 #[tokio::test]
 async fn run_rg_reports_missing_binary_as_domain_tool_error() {
     let cmd = tokio::process::Command::new("/definitely/missing/rg-wave3");
-    let err = run_rg(cmd).await.unwrap_err().to_string();
+    let err = run_rg(cmd, RG_TIMEOUT).await.unwrap_err().to_string();
     assert!(
         err.contains("rg not found") || err.contains("grep failed to spawn"),
         "{err}"

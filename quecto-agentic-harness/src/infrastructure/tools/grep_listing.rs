@@ -28,7 +28,7 @@ pub(super) fn parse_listing(stdout: &str, mode: OutputMode) -> Vec<ListedFile> {
             records.pop();
             records
                 .into_iter()
-                .filter(|path| !path.is_empty())
+                .filter(|path| path.chars().next().is_some())
                 .map(|path| ListedFile {
                     path: path.to_string(),
                     count: None,
@@ -62,6 +62,8 @@ pub(super) struct ListingFormat<'a> {
     pub sandbox: &'a Sandbox,
     pub limit: usize,
     pub max_output_bytes: usize,
+    /// rg's output was cut at the read cap: the count seen is a floor.
+    pub total_is_partial: bool,
 }
 
 /// Format a listing: workspace-relative paths, sandbox-checked, ordered,
@@ -99,6 +101,11 @@ pub(super) fn format_listing(mut files: Vec<ListedFile>, f: &ListingFormat<'_>) 
     let mut output = lines.join("\n");
     let mut notices = Vec::new();
     if total > f.limit {
+        let total = if f.total_is_partial {
+            format!("at least {total}")
+        } else {
+            total.to_string()
+        };
         notices.push(format!(
             "{} of {total} files shown. Use limit={} for more, or refine pattern",
             f.limit,

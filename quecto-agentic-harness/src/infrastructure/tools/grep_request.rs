@@ -78,7 +78,8 @@ fn patterns(args: &Value) -> Result<Vec<String>, String> {
         Value::Array(items) => strings(items, "patterns")?,
         _ => return Err(format!("patterns must be an array of strings. {EXAMPLE}")),
     });
-    if !all.is_empty() && all.iter().all(|p| !p.is_empty()) {
+    let searchable = |p: &String| p.chars().next().is_some();
+    if all.iter().any(searchable) && all.iter().all(searchable) {
         Ok(all)
     } else {
         Err(format!(

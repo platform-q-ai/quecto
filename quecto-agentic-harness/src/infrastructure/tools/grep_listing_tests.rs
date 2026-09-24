@@ -48,6 +48,7 @@ fn format(listing: Vec<ListedFile>, limit: usize, max_output_bytes: usize) -> St
             sandbox: &Sandbox::new(None),
             limit,
             max_output_bytes,
+            total_is_partial: false,
         },
     )
 }

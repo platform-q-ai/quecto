@@ -380,33 +380,121 @@ async fn partial_results_before_an_rg_error_are_returned_with_a_notice() {
 }
 
 /// #2136: output past the read cap is reported, and a listing it cut off
-/// keeps only complete records.
+/// keeps only complete records. When the match limit bound first, its own
+/// notice (with the total read as a floor) is the only one.
 #[tokio::test]
 async fn output_past_the_cap_is_reported_as_incomplete() {
     let tmp = TempDir::new().unwrap();
-    let ws = Arc::new(tmp.path().to_path_buf());
     let flood = format!(
         "i=0; while [ $i -lt 20000 ]; do printf '%s/f%05d.rs\\0' '{}' $i; i=$((i+1)); done",
         tmp.path().display()
     );
+    let tool = |limit: usize| {
+        let tool = GrepTool::with_rg_binary(
+            Arc::new(tmp.path().to_path_buf()),
+            Arc::new(Sandbox::new(None)),
+            fake_rg(tmp.path(), &flood, 0),
+        );
+        async move {
+            tool.execute(&format!(
+                r#"{{"pattern": "x", "output": "files", "limit": {limit}}}"#
+            ))
+            .await
+            .unwrap()
+        }
+    };
+    let bound = tool(5).await;
+    assert!(!bound.is_error, "{}", bound.content);
+    assert!(
+        bound.content.starts_with("f00000.rs\n"),
+        "{}",
+        bound.content
+    );
+    assert!(
+        bound.content.contains("5 of at least "),
+        "{}",
+        bound.content
+    );
+    assert!(
+        !bound.content.contains("results are incomplete"),
+        "{}",
+        bound.content
+    );
+    let unbound = tool(100_000).await;
+    assert!(
+        unbound.content.contains("results are incomplete"),
+        "{}",
+        unbound.content
+    );
+}
+
+/// #2136: a mistyped path under --json prints only a summary before exit 2:
+/// that is an error, not "No matches found".
+#[tokio::test]
+async fn an_rg_error_with_only_a_summary_is_an_error() {
+    let tmp = TempDir::new().unwrap();
+    let summary =
+        r#"printf '%s\n' '{"type":"summary","data":{"elapsed_total":{"secs":0,"nanos":1}}}'"#;
+    let tool = GrepTool::with_rg_binary(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(None)),
+        fake_rg(tmp.path(), summary, 2),
+    );
+    let result = tool.execute(r#"{"pattern": "needle"}"#).await.unwrap();
+    assert!(result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains("Permission denied"),
+        "{}",
+        result.content
+    );
+}
+
+/// #2136 round 2: rg writing far more stderr than a pipe holds never blocks
+/// the tool, and a run past the timeout is killed and reported.
+#[tokio::test]
+async fn a_flood_of_rg_errors_never_blocks_and_a_slow_rg_is_stopped() {
+    let tmp = TempDir::new().unwrap();
+    let ws = Arc::new(tmp.path().to_path_buf());
+    std::fs::write(tmp.path().join("a.rs"), "needle\n").unwrap();
+    let flood = format!(
+        "printf '%s\\0' '{}/a.rs'; i=0; while [ $i -lt 4000 ]; do echo \"rg: ./locked$i: Permission denied (os error 13)\" >&2; i=$((i+1)); done",
+        tmp.path().display()
+    );
+    let tool = GrepTool::with_rg_binary(
+        ws.clone(),
+        Arc::new(Sandbox::new(None)),
+        fake_rg(tmp.path(), &flood, 2),
+    )
+    .with_rg_timeout(std::time::Duration::from_secs(20));
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        tool.execute(r#"{"pattern": "needle", "output": "files"}"#),
+    )
+    .await
+    .expect("the tool must not block on rg's stderr")
+    .unwrap();
+    assert!(result.content.starts_with("a.rs"), "{}", result.content);
+    assert!(
+        result.content.contains("rg: ./locked0: Permission denied"),
+        "{}",
+        result.content
+    );
     let tool = GrepTool::with_rg_binary(
         ws,
         Arc::new(Sandbox::new(None)),
-        fake_rg(tmp.path(), &flood, 0),
-    );
-    let result = tool
-        .execute(r#"{"pattern": "x", "output": "files", "limit": 5}"#)
+        fake_rg(tmp.path(), "sleep 30", 0),
+    )
+    .with_rg_timeout(std::time::Duration::from_millis(300));
+    let started = std::time::Instant::now();
+    let error = tool
+        .execute(r#"{"pattern": "needle"}"#)
         .await
-        .unwrap();
-    assert!(!result.is_error, "{}", result.content);
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("rg did not finish within"), "{error}");
     assert!(
-        result.content.contains("results are incomplete"),
-        "{}",
-        result.content
-    );
-    assert!(
-        result.content.starts_with("f00000.rs\n"),
-        "{}",
-        result.content
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
     );
 }
