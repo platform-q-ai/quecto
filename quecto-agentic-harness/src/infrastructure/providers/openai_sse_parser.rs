@@ -127,10 +127,19 @@ pub(crate) fn apply_delta(
             if let Some(name) = tc["function"]["name"].as_str() {
                 tool_calls[idx].name = name.to_string();
             }
-            if let Some(args) = tc["function"]["arguments"].as_str() {
+            // Arguments stream as string chunks; some OpenAI-compatible
+            // providers send the whole object at once instead (#2123).
+            let chunk = match &tc["function"]["arguments"] {
+                serde_json::Value::String(text) => Some(std::borrow::Cow::Borrowed(text.as_str())),
+                serde_json::Value::Object(_) => Some(std::borrow::Cow::Owned(
+                    tc["function"]["arguments"].to_string(),
+                )),
+                _ => None,
+            };
+            if let Some(args) = chunk {
                 append_with_limit(
                     &mut tool_calls[idx].arguments,
-                    args,
+                    &args,
                     MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES,
                     "tool-call arguments",
                 )?;

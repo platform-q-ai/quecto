@@ -198,6 +198,18 @@ impl SseAccumulator {
                     }
                 }
             }
+            Some("response.function_call_arguments.done") => {
+                // The complete argument text: authoritative even when no
+                // deltas arrived, so a call's arguments are never lost (#2123).
+                if let Some(arguments) = event["arguments"].as_str() {
+                    let output_idx = event["output_index"].as_u64().unwrap_or(0) as usize;
+                    if let Some(&tc_idx) = self.output_index_to_tool.get(&output_idx) {
+                        if let Some(tc) = self.tool_calls.get_mut(tc_idx) {
+                            tc.arguments = arguments.to_string();
+                        }
+                    }
+                }
+            }
             Some("response.completed") => {
                 if let Some(resp) = event.get("response") {
                     self.usage = resp["usage"]

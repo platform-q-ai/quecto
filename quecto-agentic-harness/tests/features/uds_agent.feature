@@ -1222,7 +1222,7 @@ Feature: UDS mode for headless agent operation
   Scenario: execute_tool round-trip dispatches and completes the turn
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    And the mock LLM returns a tool call for tool "weather" with arguments "city=Edinburgh" then text "done"
+    And the mock LLM returns a tool call for tool "weather" with arguments '{"city":"Edinburgh"}' then text "done"
     When I start the multi-client UDS agent
     And client 1 connects
     And client 1 sends register_tools with tool "weather" described as "Get weather"
@@ -1238,7 +1238,7 @@ Feature: UDS mode for headless agent operation
   Scenario: tool_result with isError still unblocks the agent turn
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    And the mock LLM returns a tool call for tool "weather" with arguments "city=Edinburgh" then text "recovered"
+    And the mock LLM returns a tool call for tool "weather" with arguments '{"city":"Edinburgh"}' then text "recovered"
     When I start the multi-client UDS agent
     And client 1 connects
     And client 1 sends register_tools with tool "weather" described as "Get weather"
@@ -1253,7 +1253,7 @@ Feature: UDS mode for headless agent operation
   Scenario: execute_tool is delivered only to the client that registered the tool
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    And the mock LLM returns a tool call for tool "weather" with arguments "city=Edinburgh" then text "done"
+    And the mock LLM returns a tool call for tool "weather" with arguments '{"city":"Edinburgh"}' then text "done"
     When I start the multi-client UDS agent
     And client 1 connects
     And client 2 connects

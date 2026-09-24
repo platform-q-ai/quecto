@@ -91,3 +91,15 @@ fn parse_sse_tool_arguments_accept_exact_limit_and_reject_over_limit() {
     let err = parse_sse_response(&over).unwrap_err().to_string();
     assert!(err.contains("tool-call arguments exceeds"));
 }
+
+#[test]
+fn parse_sse_keeps_arguments_streamed_as_an_object() {
+    // #2123: some OpenAI-compatible providers send the arguments object
+    // itself rather than string chunks; it must not be dropped to "".
+    let sse = "\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read\",\"arguments\":{\"path\":\"a.rs\"}}}]}}]}\n\
+data: [DONE]\n";
+    let result = parse_sse_response(sse).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&result.tool_calls[0].arguments).unwrap();
+    assert_eq!(parsed, serde_json::json!({"path": "a.rs"}));
+}

@@ -44,6 +44,10 @@ fn call_then_done(arguments: &str) -> Vec<Result<LlmResponse, DomainError>> {
 }
 
 async fn run(arguments: &str) -> (Vec<String>, Vec<Message>) {
+    run_with(arguments, false).await
+}
+
+async fn run_with(arguments: &str, bash_disabled: bool) -> (Vec<String>, Vec<Message>) {
     let received = Arc::new(Mutex::new(Vec::new()));
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(RecordingTool {
@@ -69,6 +73,14 @@ async fn run(arguments: &str) -> (Vec<String>, Vec<Message>) {
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
+    if bash_disabled {
+        agent
+            .tool_policy_state
+            .lock()
+            .unwrap()
+            .disabled_tools
+            .insert("bash".to_string());
+    }
     let mut messages = vec![Message::user("run it")];
     let result = agent
         .run_loop(&mut messages)
@@ -89,7 +101,7 @@ async fn a_call_with_invalid_json_arguments_is_answered_with_an_error_and_not_ru
         .find(|m| m.role == Role::Tool)
         .expect("the call gets a tool result");
     assert!(
-        answer.content.contains("not valid JSON") && answer.content.contains(truncated),
+        answer.content.contains("not a JSON object") && answer.content.contains(truncated),
         "{}",
         answer.content
     );
@@ -105,4 +117,47 @@ async fn a_call_with_empty_arguments_runs_with_an_empty_object() {
 async fn a_call_with_object_arguments_runs_unchanged() {
     let (received, _) = run(r#"{"command":"ls"}"#).await;
     assert_eq!(received, [r#"{"command":"ls"}"#]);
+}
+
+fn tool_answer(messages: &[Message]) -> String {
+    messages
+        .iter()
+        .find(|m| m.role == Role::Tool)
+        .expect("the call gets a tool result")
+        .content
+        .clone()
+}
+
+#[tokio::test]
+async fn valid_json_that_is_not_an_object_is_refused_with_accurate_wording() {
+    for value in ["[1,2]", r#""ls""#, "null"] {
+        let (received, messages) = run(value).await;
+        assert!(received.is_empty(), "{value}");
+        assert!(
+            tool_answer(&messages).contains("not a JSON object"),
+            "{value}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_long_cut_off_call_shows_both_ends_of_what_was_received() {
+    let raw = format!(r#"{{"command":"echo {}BREAKS-HERE"#, "x".repeat(2000));
+    let (_, messages) = run(&raw).await;
+    let answer = tool_answer(&messages);
+    assert!(answer.contains(r#"{"command":"echo"#), "keeps the start");
+    assert!(
+        answer.contains("BREAKS-HERE"),
+        "keeps the end, where it broke"
+    );
+    assert!(answer.len() < 1500, "bounded: {}", answer.len());
+}
+
+#[tokio::test]
+async fn a_disabled_tool_is_reported_as_disabled_not_as_resend_it() {
+    let (received, messages) = run_with(r#"{"command":"cat /very/lo"#, true).await;
+    assert!(received.is_empty());
+    let answer = tool_answer(&messages);
+    assert!(answer.contains("disabled by runtime policy"), "{answer}");
+    assert!(!answer.contains("Resend"), "{answer}");
 }

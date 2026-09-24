@@ -375,7 +375,11 @@ impl CodexProvider {
                 Some("function_call") => {
                     let call_id = item["call_id"].as_str().unwrap_or_default().to_string();
                     let name = item["name"].as_str().unwrap_or_default().to_string();
-                    let arguments = item["arguments"].as_str().unwrap_or_default().to_string();
+                    let arguments = match &item["arguments"] {
+                        serde_json::Value::String(text) => text.clone(),
+                        serde_json::Value::Object(_) => item["arguments"].to_string(),
+                        _ => String::new(),
+                    };
                     tool_calls.push(crate::domain::message::ToolCall {
                         id: call_id,
                         name,

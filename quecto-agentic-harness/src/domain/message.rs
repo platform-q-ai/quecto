@@ -313,15 +313,20 @@ pub enum ToolArguments<'a> {
 }
 
 impl ToolCall {
-    /// Classifies the argument text as an object, empty, or invalid.
+    /// Classifies the argument text as an object, empty, or invalid. This
+    /// runs for every stored call on every request, so it validates without
+    /// building a value tree. Objects serde_json cannot read (nesting deeper
+    /// than 128, unpaired surrogate escapes) count as invalid.
     pub fn argument_shape(&self) -> ToolArguments<'_> {
         let text = self.arguments.trim();
         if text.is_empty() {
             return ToolArguments::Empty;
         }
-        match serde_json::from_str::<serde_json::Value>(text) {
-            Ok(value) if value.is_object() => ToolArguments::Object(&self.arguments),
-            _ => ToolArguments::Invalid(&self.arguments),
+        let object_like = text.starts_with('{') && text.ends_with('}');
+        if object_like && serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok() {
+            ToolArguments::Object(&self.arguments)
+        } else {
+            ToolArguments::Invalid(&self.arguments)
         }
     }
 
