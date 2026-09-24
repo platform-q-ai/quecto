@@ -144,7 +144,7 @@ class Transaction:
         return events
 
     def notification_state(self):
-        return {'tasks': [dict(row, dependencies=json.loads(row['dependencies'])) for row in self.connection.execute('SELECT id,status,dependencies FROM tasks')],
+        return {'tasks': [dict(row, dependencies=json.loads(row['dependencies'])) for row in self.connection.execute('SELECT id,status,dependencies,owner FROM tasks')],
                 'messages': [dict(row) for row in self.connection.execute("SELECT id,recipient FROM messages WHERE status='accepted'")]}
 
     def _usage_schema(self):

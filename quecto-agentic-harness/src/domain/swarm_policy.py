@@ -96,6 +96,10 @@ def revalidation(task, revision, evidence):
     return evidence
 
 
+# Task statuses in which the owner is working on, or waiting on, its own task.
+WORK_HOLDING_STATUSES = ('claimed', 'blocked', 'submitted')
+
+
 def notification_targets(run, actor, members, events, state):
     """Coalesce actionable changes; reads/acks/ownership bookkeeping never wake peers."""
     if run['status'] != 'running':
@@ -107,6 +111,13 @@ def notification_targets(run, actor, members, events, state):
         tasks.get(dep, {}).get('status') == 'completed' for dep in task['dependencies'])
         for task in tasks.values())
     live = {m['id']: m for m in members if m['status'] == 'live' and m['id'] != actor}
+    # A member holding a claimed, blocked or submitted task has its work
+    # (#2127): new ready work is for members free to take it, so a parked
+    # (submitted) or busy member is not woken for it. Messages still wake
+    # their recipient, and an amended contract wakes everyone.
+    holding = {task.get('owner') for task in tasks.values()
+               if task['status'] in WORK_HOLDING_STATUSES and task.get('owner')}
+    free = {identity for identity in live if identity not in holding}
     for event in events:
         action, detail = event['action'], event['detail']
         if action == 'message_accepted' and detail['message'] in unread:
@@ -116,9 +127,11 @@ def notification_targets(run, actor, members, events, state):
                 targets.add(run['coordinator'])
         elif action in ('evidence', 'death_confirmed'):
             targets.add(run['coordinator'])
-        elif action == 'amended' or (ready and action in (
-                'task_created', 'dependencies', 'released', 'verified', 'revalidated', 'recovered', 'revoked')):
+        elif action == 'amended':
             targets.update(live)
+        elif ready and action in (
+                'task_created', 'dependencies', 'released', 'verified', 'revalidated', 'recovered', 'revoked'):
+            targets.update(free)
     return [live[identity] for identity in sorted(targets) if identity in live]
 
 

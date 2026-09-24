@@ -461,7 +461,10 @@ Wake hints are selected from the invoking member's actionable events and coalesc
 using a durable per-actor cursor. Reading the board, acknowledging messages and
 reservation bookkeeping do not broadcast more work. Message hints target their
 recipient; submissions/blockers/evidence target the coordinator; changes that
-make work available notify peers. The cursor advances atomically before external
+make work available notify only peers free to take it: a member holding a
+claimed, blocked or submitted task is not woken for them (#2127), so a member
+waiting for review stays parked until a message or an amended contract reaches
+it. The cursor advances atomically before external
 notification, so a failed hint is reported but not endlessly retried; the durable
 board/inbox remains authoritative. Terminal runs generate no new actionable hints.
 Already queued hints instruct the recipient to inspect `op=summary` first and,

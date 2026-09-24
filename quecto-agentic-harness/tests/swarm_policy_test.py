@@ -77,6 +77,34 @@ class PolicyContract(unittest.TestCase):
         run['status'] = 'succeeded'
         self.assertEqual(notification_targets(run, 'worker', members, events, state), [])
 
+    def test_ready_work_wakes_only_members_free_to_take_it(self):
+        # #2127: a member that submitted its task (parked), or is busy with a
+        # claimed or blocked one, is not woken because other work changed; a
+        # free member is. A message addressed to anyone always wakes them.
+        run = MemoryRepository().run()
+        members = [{'id': m, 'status': 'live'} for m in ('parent', 'free', 'parked', 'busy', 'stuck')]
+        state = {'tasks': [
+            {'id': 1, 'status': 'ready', 'dependencies': [], 'owner': None},
+            {'id': 2, 'status': 'submitted', 'dependencies': [], 'owner': 'parked'},
+            {'id': 3, 'status': 'claimed', 'dependencies': [], 'owner': 'busy'},
+            {'id': 4, 'status': 'blocked', 'dependencies': [], 'owner': 'stuck'},
+        ], 'messages': [{'id': 9}]}
+        verified_other = [{'action': 'verified', 'detail': {'task': 5}}]
+        woken = [m['id'] for m in notification_targets(run, 'parent', members, verified_other, state)]
+        self.assertEqual(woken, ['free'])
+        message = [{'action': 'message_accepted', 'detail': {'message': 9, 'recipient': 'parked'}}]
+        woken = [m['id'] for m in notification_targets(run, 'parent', members, message, state)]
+        self.assertEqual(woken, ['parked'])
+
+    def test_an_amended_contract_wakes_every_live_member_including_parked(self):
+        run = MemoryRepository().run()
+        members = [{'id': m, 'status': 'live'} for m in ('parent', 'free', 'parked')]
+        state = {'tasks': [{'id': 2, 'status': 'submitted', 'dependencies': [], 'owner': 'parked'}],
+                 'messages': []}
+        amended = [{'action': 'amended', 'detail': {}}]
+        woken = [m['id'] for m in notification_targets(run, 'parent', members, amended, state)]
+        self.assertEqual(woken, ['free', 'parked'])
+
     def test_completion_revalidation_and_transition_without_storage(self):
         repo = MemoryRepository()
         service = Coordination(repo, 'parent', lambda: 50)

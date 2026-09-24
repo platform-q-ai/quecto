@@ -324,6 +324,19 @@ class WorkbenchBehavior(unittest.TestCase):
         self.parent.ack(message['id'])
         self.assertEqual(self.worker._notifications(), [])
 
+    def test_a_member_that_submitted_is_parked_until_spoken_to(self):
+        # #2127: a worker waiting for review is not woken because the
+        # coordinator created other work; a message addressed to it still is.
+        submitted = self.task('reviewed later')
+        claim = self.worker.claim(submitted['id'])
+        self.worker.submit(submitted['id'], claim['token'], [{'artifact': 'tests.log', 'revision': 'R1'}])
+        self.parent._notifications()
+        self.worker._notifications()
+        self.parent.task_create('someone else can take this', 'implement', ['tests pass'], [])
+        self.assertEqual(self.parent._notifications(), [], 'a parked member is not woken')
+        self.parent.send('please-rework', 'worker', 'Rework the evidence')
+        self.assertEqual([m['id'] for m in self.parent._notifications()], ['worker'])
+
     def test_claimed_work_does_not_wake_idle_peers(self):
         self.parent._notifications()
         self.worker._notifications()
