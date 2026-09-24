@@ -130,18 +130,36 @@ impl AgentLoopImpl {
             Some(policy) => policy.check(&tc.name, &tc.arguments).await,
             None => Ok(()),
         };
-        let tool_result = if let Err(error) = admission {
-            Err(error)
-        } else if disabled_by_runtime_policy {
-            Ok(crate::domain::tool::ToolResult {
-                content: format!("tool '{}' is disabled by runtime policy", tc.name),
-                image_blocks: vec![],
-                delivery_metadata: None,
-                is_error: true,
-            })
-        } else {
-            self.tool_executor().execute(&tc.name, &tc.arguments).await
-        };
+        let tool_result =
+            if let crate::domain::message::ToolArguments::Invalid(raw) = tc.argument_shape() {
+                // #2123: never run a call whose arguments are not a JSON object;
+                // tell the model what it sent so it can resend a whole call.
+                Ok(crate::domain::tool::ToolResult {
+                    content: format!(
+                        "the arguments for tool '{}' were not valid JSON, so it was not run \
+                     (they may have been cut off at the output limit). Resend the call with \
+                     a complete JSON object of arguments. Received: {}",
+                        tc.name,
+                        crate::domain::text::truncate_chars(raw, 500, 500, "…")
+                    ),
+                    image_blocks: vec![],
+                    delivery_metadata: None,
+                    is_error: true,
+                })
+            } else if let Err(error) = admission {
+                Err(error)
+            } else if disabled_by_runtime_policy {
+                Ok(crate::domain::tool::ToolResult {
+                    content: format!("tool '{}' is disabled by runtime policy", tc.name),
+                    image_blocks: vec![],
+                    delivery_metadata: None,
+                    is_error: true,
+                })
+            } else {
+                self.tool_executor()
+                    .execute(&tc.name, &tc.wire_arguments())
+                    .await
+            };
         let duration_ms = start.elapsed().as_millis() as u64;
 
         let (content, image_blocks, delivery_metadata, is_err) = match tool_result {

@@ -729,3 +729,22 @@ mod issue1567_tests;
 
 #[path = "codex_1632_tests.rs"]
 mod issue_1632_tests;
+
+#[test]
+fn build_input_sends_an_object_for_a_call_with_invalid_arguments() {
+    // #2123: arguments truncated at the output limit must not be replayed.
+    let mut assistant_msg = Message::assistant("", vec![]);
+    assistant_msg.tool_calls = vec![ToolCall {
+        id: "call_1".to_string(),
+        name: "bash".into(),
+        arguments: r#"{"command":"cat /very/lo"#.to_string(),
+    }];
+    let messages = vec![
+        Message::user("go"),
+        assistant_msg,
+        Message::tool("call_1", "invalid"),
+    ];
+    let (_, input) = CodexProvider::build_input(&messages);
+    assert_eq!(input[1]["type"], "function_call");
+    assert_eq!(input[1]["arguments"], "{}");
+}

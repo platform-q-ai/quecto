@@ -159,3 +159,50 @@ fn openai_finish_reasons_map_to_stop_reasons() {
         assert_eq!(StopReason::parse(live.as_str()), live, "{raw} round-trip");
     }
 }
+
+// ── #2123: only a JSON object is a valid argument set ─────────────────────
+
+fn call_with(arguments: &str) -> ToolCall {
+    ToolCall {
+        id: "c1".into(),
+        name: "bash".into(),
+        arguments: arguments.into(),
+    }
+}
+
+#[test]
+fn tool_call_arguments_are_classified_as_object_empty_or_invalid() {
+    assert_eq!(
+        call_with(r#"{"command":"ls"}"#).argument_shape(),
+        ToolArguments::Object(r#"{"command":"ls"}"#)
+    );
+    for empty in ["", "   ", "\n"] {
+        assert_eq!(call_with(empty).argument_shape(), ToolArguments::Empty);
+    }
+    // Truncated at an output limit, a bare array, string or number: invalid.
+    for invalid in [
+        r#"{"command":"ls -la /very/lo"#,
+        "[1,2]",
+        r#""ls""#,
+        "42",
+        "null",
+        "{,}",
+    ] {
+        assert_eq!(
+            call_with(invalid).argument_shape(),
+            ToolArguments::Invalid(invalid),
+            "{invalid}"
+        );
+    }
+}
+
+#[test]
+fn only_a_json_object_goes_on_the_wire_so_a_bad_call_never_poisons_history() {
+    assert_eq!(
+        call_with(r#"{"command":"ls"}"#).wire_arguments(),
+        r#"{"command":"ls"}"#
+    );
+    for other in ["", r#"{"command":"ls -la /very/lo"#, "[1,2]", "null"] {
+        assert_eq!(call_with(other).wire_arguments(), "{}", "{other}");
+    }
+}

@@ -176,7 +176,7 @@ impl CodexProvider {
                                     "type": "function_call",
                                     "call_id": tc.id,
                                     "name": tc.name,
-                                    "arguments": tc.arguments,
+                                    "arguments": tc.wire_arguments(),
                                 }));
                                 emitted += 1;
                             }
