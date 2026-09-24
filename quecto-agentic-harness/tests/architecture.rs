@@ -1277,6 +1277,8 @@ fn application_path_allowed(path: &str) -> bool {
             // The liveness and inventory adapters (#2024 S4d)
             // answer in the capability's own records.
             | "EnvironmentLiveness"
+            // … whether a state directory is still on disk (#2134).
+            | "StateOnDisk"
             | "EnvironmentStateDir"
             | "RuntimeContainer"
             // … and the registry store's conditional correction.

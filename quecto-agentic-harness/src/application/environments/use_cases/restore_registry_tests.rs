@@ -151,7 +151,8 @@ pub(super) fn record(reference: &str, status: EnvironmentStatus) -> EnvironmentR
         environment_id: format!("env-{reference}"),
         environment_uuid: format!("uuid-{reference}"),
         name: None,
-        workspace_path: "/w".into(),
+        // The standard layout: <root>/<environment_id>/workspace.
+        workspace_path: format!("/state/env-{reference}/workspace").into(),
         repository: String::new(),
         script_name: "default".into(),
         retained_exec_argv: vec!["exec".into()],

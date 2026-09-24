@@ -21,8 +21,8 @@ pub use kill_environment::{KillEnvironment, KillEnvironmentError, KilledEnvironm
 pub use list_container_configs::ListContainerConfigs;
 pub use list_environments::ListEnvironmentsQuery;
 pub use restore_registry::{
-    GONE_AT_RESTORE, KILL_IN_FLIGHT, RELABELLED_BY_OLDER_BUILD, RETAINED_EXITED, RestoreRegistry,
-    unfinished_run_reason,
+    GONE_AT_RESTORE, KILL_IN_FLIGHT, NO_ENVIRONMENT_DIR, RELABELLED_BY_OLDER_BUILD,
+    RETAINED_EXITED, RestoreRegistry, STATE_GONE_CONTAINER_RUNNING, unfinished_run_reason,
 };
 
 #[cfg(test)]

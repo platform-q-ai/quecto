@@ -61,11 +61,21 @@ impl EnvironmentProcess for ScriptEnvironmentProcess {
     }
 
     /// Anything under the directory's name counts as present, a dangling
-    /// symlink included: only a name that does not exist is absent.
+    /// symlink included. A missing name is absent only while its state
+    /// root is a directory: a root that is itself missing (an unmounted
+    /// disk) says nothing about what the environment left.
     fn state_on_disk(&self, environment_dir: &Path) -> StateOnDisk {
         match std::fs::symlink_metadata(environment_dir) {
             Ok(_) => StateOnDisk::Present,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => StateOnDisk::Absent,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match environment_dir.parent().map(std::fs::metadata) {
+                    Some(Ok(root)) if root.is_dir() => StateOnDisk::Absent,
+                    _ => StateOnDisk::Unknown(format!(
+                        "{} is gone with its state root: is the disk mounted?",
+                        environment_dir.display()
+                    )),
+                }
+            }
             Err(error) => StateOnDisk::Unknown(format!(
                 "{} could not be examined: {error}",
                 environment_dir.display()

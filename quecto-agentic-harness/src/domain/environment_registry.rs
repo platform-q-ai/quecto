@@ -22,7 +22,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 mod record_lookup;
+mod record_residue;
 pub use record_lookup::{EnvironmentLookupError, EnvironmentStatus, EnvironmentTarget};
+pub use record_residue::GONE_AT_RESTORE;
 
 /// One committed script-managed environment known to this session.
 #[derive(Debug, Clone, PartialEq, Eq)]

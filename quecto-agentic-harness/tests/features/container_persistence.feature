@@ -70,9 +70,13 @@ Feature: Environments outlive sessions
     And the fake runtime loses the container of "C1" behind the harness's back
     When the harness is restarted as session "session-two"
     And I run container command "get_containers"
-    Then the container listing should include "C1" with status "stopped" and a last error
+        Then the container listing should include "C1" with status "stopped" and a last error
     And the container listing should include "C1" with a last error mentioning "not found at restore"
     And the durable environment registry should record "C1" with status "stopped" created by "session-one"
+    # Its state directory is still on disk (#2134): the next restore keeps it
+    # for gc rather than forgetting it.
+    When the harness is restarted as session "session-three"
+    Then the durable environment registry should record "C1" with status "stopped" created by "session-one"
 
   @done @issue-2024 @container-env
   Scenario: A new session joins a restored environment and kills it

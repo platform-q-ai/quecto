@@ -134,4 +134,9 @@ fn state_on_disk_is_absent_only_when_nothing_exists_under_the_name() {
         process.state_on_disk(&file.join("env-4")),
         StateOnDisk::Unknown(reason) if reason.contains("could not be examined")
     ));
+    // A root that is itself gone (an unmounted disk) is not "nothing left".
+    assert!(matches!(
+        process.state_on_disk(&dir.path().join("unmounted/env-5")),
+        StateOnDisk::Unknown(reason) if reason.contains("is the disk mounted?")
+    ));
 }

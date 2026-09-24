@@ -51,7 +51,6 @@ use super::super::dto::{
 use super::super::ports::{
     ContainerConfigLookup, ContainerRuntimeInventory, EnvironmentProcess, HostedSwarmRunInspection,
 };
-use super::restore_registry::GONE_AT_RESTORE;
 
 /// A directory without a container younger than this is a create that may
 /// still be running its clone: kept, never collected.
@@ -122,13 +121,8 @@ impl std::fmt::Debug for GcOrphanedEnvironments {
 /// environment id (`<root>/<environment_id>/workspace[/repo]`).
 pub fn implied_state_root(record: &EnvironmentRecord) -> Option<PathBuf> {
     record
-        .workspace_path
-        .ancestors()
-        .find(|ancestor| {
-            ancestor
-                .file_name()
-                .is_some_and(|name| name == record.environment_id.as_str())
-        })
+        .environment_dir()
+        .as_deref()
         .and_then(Path::parent)
         .map(Path::to_path_buf)
 }
@@ -515,7 +509,7 @@ impl GcOrphanedEnvironments {
             // status with the restore's last error is the signature; this
             // build's restore puts it back, and the collector never takes
             // it meanwhile.
-            Some(record) if relabelled_while_retained(record) => {
+            Some(record) if record.relabelled_while_retained() => {
                 keep(
                     report,
                     format!(
@@ -717,17 +711,6 @@ impl GcOrphanedEnvironments {
             .map(|dirs| dirs.iter().any(|listed| listed.path == dir))
             .unwrap_or(false)
     }
-}
-
-/// An older build's restore relabelled this record `stopped` while it was
-/// retained (round 4 L3, #2033): the same signature the restore undoes.
-fn relabelled_while_retained(record: &EnvironmentRecord) -> bool {
-    record.status == EnvironmentStatus::Stopped
-        && record
-            .metadata
-            .get("retained")
-            .is_some_and(|v| v.is_string())
-        && record.last_error.as_deref() == Some(GONE_AT_RESTORE)
 }
 
 /// Why a record outside the collector's scope is kept.

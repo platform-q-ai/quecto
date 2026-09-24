@@ -6,18 +6,16 @@ use std::sync::{Arc, Mutex};
 
 use super::super::dto::{EnvironmentLiveness, StateOnDisk};
 use super::super::ports::EnvironmentRegistryStore;
-use super::RestoreRegistry;
 use super::restore_registry_tests::{
     failing_store_with, no_hosted, process_with_disk, record, store_with,
 };
+use super::{NO_ENVIRONMENT_DIR, RestoreRegistry, STATE_GONE_CONTAINER_RUNNING};
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentStatus};
 
-/// A record laid out as the standard scripts lay one out:
-/// `<root>/<environment_id>/workspace`.
+/// `record` lays its workspace out as the standard scripts do:
+/// `/state/<environment_id>/workspace`.
 fn laid_out(reference: &str, status: EnvironmentStatus) -> EnvironmentRecord {
-    let mut record = record(reference, status);
-    record.workspace_path = PathBuf::from(format!("/state/env-{reference}/workspace"));
-    record
+    record(reference, status)
 }
 
 fn refs(records: &[EnvironmentRecord]) -> Vec<String> {
@@ -40,11 +38,17 @@ fn disk(
     }
 }
 
+/// For records whose state is present (or unknown): the runtime is never
+/// asked about a box that left something behind.
 fn never_inspected(record: &EnvironmentRecord) -> EnvironmentLiveness {
     panic!(
-        "stopped records are never inspected: {}",
+        "{} left state behind: never inspected",
         record.environment_ref
     )
+}
+
+fn gone(_: &EnvironmentRecord) -> EnvironmentLiveness {
+    EnvironmentLiveness::Gone
 }
 
 #[test]
@@ -54,7 +58,7 @@ fn stopped_records_with_nothing_on_disk_are_forgotten_and_refs_restart_at_c1() {
         laid_out("C9", EnvironmentStatus::Stopped),
     ]);
     let asked = Arc::new(Mutex::new(vec![]));
-    let process = process_with_disk(never_inspected, disk(&[], asked.clone()));
+    let process = process_with_disk(gone, disk(&[], asked.clone()));
     let (registry, report) =
         RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:two");
     assert_eq!(report.forgotten, ["C4", "C9"]);
@@ -113,9 +117,11 @@ fn only_stopped_records_are_forgotten() {
 
 #[test]
 fn a_record_whose_workspace_names_no_environment_dir_is_kept_unasked() {
-    // `record` lays its workspace at `/w`: no ancestor is named after the
-    // environment id, so where its state lived cannot be told.
-    let store = store_with(vec![record("C1", EnvironmentStatus::Stopped)]);
+    // A workspace at `/w`: no ancestor is named after the environment id,
+    // so where its state lived cannot be told.
+    let mut elsewhere = record("C1", EnvironmentStatus::Stopped);
+    elsewhere.workspace_path = PathBuf::from("/w");
+    let store = store_with(vec![elsewhere]);
     let asked = Arc::new(Mutex::new(vec![]));
     let process = process_with_disk(never_inspected, disk(&[], asked.clone()));
     let (registry, report) =
@@ -123,12 +129,43 @@ fn a_record_whose_workspace_names_no_environment_dir_is_kept_unasked() {
     assert!(report.forgotten.is_empty());
     assert!(asked.lock().unwrap().is_empty());
     assert_eq!(refs(&registry.entries()), ["C1"]);
+    assert_eq!(
+        report.unverified,
+        [("C1".to_string(), NO_ENVIRONMENT_DIR.to_string())]
+    );
+}
+
+#[test]
+fn a_stopped_record_whose_container_still_runs_or_cannot_be_asked_is_kept() {
+    // The state directory is gone, but the runtime is the other half of
+    // "nothing left": a running container, or no answer, keeps the record.
+    let store = store_with(vec![
+        laid_out("C1", EnvironmentStatus::Stopped),
+        laid_out("C2", EnvironmentStatus::Stopped),
+    ]);
+    let liveness = |record: &EnvironmentRecord| match record.environment_ref.as_str() {
+        "C1" => EnvironmentLiveness::Running,
+        _ => EnvironmentLiveness::Unknown("inspect timed out".into()),
+    };
+    let process = process_with_disk(liveness, disk(&[], Arc::default()));
+    let (registry, report) =
+        RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:two");
+    assert!(report.forgotten.is_empty());
+    assert_eq!(refs(&registry.entries()), ["C1", "C2"]);
+    assert_eq!(refs(&store.load().unwrap()), ["C1", "C2"]);
+    assert_eq!(
+        report.unverified,
+        [
+            ("C1".to_string(), STATE_GONE_CONTAINER_RUNNING.to_string()),
+            ("C2".to_string(), "inspect timed out".to_string()),
+        ]
+    );
 }
 
 #[test]
 fn an_observing_restore_writes_nothing_and_says_what_it_would_forget() {
     let store = store_with(vec![laid_out("C4", EnvironmentStatus::Stopped)]);
-    let process = process_with_disk(never_inspected, disk(&[], Arc::default()));
+    let process = process_with_disk(gone, disk(&[], Arc::default()));
     let (registry, report) =
         RestoreRegistry::new(store.clone(), process, no_hosted()).observe("cli:two");
     assert!(report.forgotten.is_empty());
@@ -148,7 +185,7 @@ fn an_observing_restore_writes_nothing_and_says_what_it_would_forget() {
 #[test]
 fn a_record_that_cannot_be_forgotten_is_kept_and_said_so() {
     let store = failing_store_with(vec![laid_out("C4", EnvironmentStatus::Stopped)]);
-    let process = process_with_disk(never_inspected, disk(&[], Arc::default()));
+    let process = process_with_disk(gone, disk(&[], Arc::default()));
     let (registry, report) =
         RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:two");
     assert!(report.forgotten.is_empty());
