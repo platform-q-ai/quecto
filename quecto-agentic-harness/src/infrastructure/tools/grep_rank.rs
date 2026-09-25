@@ -106,15 +106,12 @@ pub(super) async fn rank(
         for ((index, _), score) in sendable.iter().zip(answered) {
             scores[*index] = score;
         }
-        ranked(
-            matches,
-            &scores,
-            &locations,
-            query,
+        let verdict = Verdict {
+            scores,
             unjudged_reason,
-            read_whole,
             elapsed_ms,
-        )
+        };
+        ranked(matches, verdict, &locations, query, read_whole)
     } else {
         unavailable(
             matches,
@@ -129,16 +126,28 @@ pub(super) async fn rank(
     }
 }
 
+/// What the judge made of the first `scores.len()` matches.
+struct Verdict {
+    scores: Vec<Option<f64>>,
+    unjudged_reason: Option<String>,
+    elapsed_ms: u64,
+}
+
 /// The judged matches in relevance order, then the rest in rg order.
+/// `read_whole` is false when rg stopped at its read cap.
 fn ranked(
     matches: Vec<RgMatch>,
-    scores: &[Option<f64>],
+    verdict: Verdict,
     locations: &[String],
     query: &str,
-    unjudged_reason: Option<String>,
     read_whole: bool,
-    elapsed_ms: u64,
 ) -> Ranked {
+    let Verdict {
+        scores,
+        unjudged_reason,
+        elapsed_ms,
+    } = verdict;
+    let scores = scores.as_slice();
     let judged = scores.len();
     let total = matches.len();
     let mut matches: Vec<Option<RgMatch>> = matches.into_iter().map(Some).collect();
