@@ -146,9 +146,10 @@ pub(super) async fn search(
     facts.found = found;
     // rg exits 0 (matches) or 1 (none). Exit 2 is an error, which may
     // follow partial results (an unreadable file) or nothing but a
-    // summary (a mistyped path); no code means killed, here at a read
-    // limit or the timeout. Results stand when rg finished, or found
-    // something. Cut before one whole match was kept:
+    // summary (a mistyped path); no code means killed (at a read limit or
+    // the timeout) or not yet exited when the timeout came. Results stand
+    // when rg finished, or found something. Cut before one whole match was
+    // kept:
     match (rg.cut, found) {
         // its line alone is larger than the cap (a minified file): say so,
         // not an error;
@@ -199,10 +200,15 @@ pub(super) async fn search(
         notices.push("rg was stopped by a signal; results are incomplete".to_string());
     }
     if rg.exit_code == Some(2) {
-        let first = stderr.lines().next().unwrap_or("").trim();
-        notices.push(format!(
-            "rg reported errors, results may be incomplete: {first}"
-        ));
+        match stderr.lines().next().map(str::trim) {
+            Some(first) if !first.is_empty() => notices.push(format!(
+                "rg reported errors, results may be incomplete: {first}"
+            )),
+            Some(_) | None => notices.push(
+                "rg exited with status 2 (its message was not kept); results may be incomplete"
+                    .to_string(),
+            ),
+        }
     }
     facts.incomplete = rg.cut.is_some() || !notices.is_empty();
     let complete = searched_whole(rg.exit_code, rg.cut, rg.held_open);

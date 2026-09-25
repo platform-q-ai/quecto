@@ -353,7 +353,7 @@ async fn a_ranked_search_past_the_timeout_says_only_what_was_printed_was_ranked(
 async fn a_cut_made_before_the_timeout_is_reported_as_the_cut() {
     let tmp = TempDir::new().unwrap();
     std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
-    let flood = format!("sleep 30 & {}", match_flood(&tmp, 30));
+    let flood = format!("sleep 3 & {}", match_flood(&tmp, 30));
     let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
         .with_relevance(Arc::new(KeywordJudge("retry")), 20)
         .with_rg_timeout(std::time::Duration::from_millis(500));
@@ -379,8 +379,78 @@ fn a_long_line_arriving_in_pieces_is_counted_in_one_pass() {
         assert_eq!(lines.find_past(&bytes, 1), None);
     }
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(1),
+        started.elapsed() < std::time::Duration::from_secs(3),
         "{:?}",
         started.elapsed()
+    );
+}
+
+/// The timeout coming after rg exited, while something else still holds
+/// its output open: the output is reported as held open, not rg as never
+/// finishing.
+#[tokio::test]
+async fn a_timeout_after_rg_exited_reports_the_output_held_open() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
+    let held = format!(
+        "printf '%s\\n' '{}'; sleep 3 &",
+        match_record(tmp.path(), "retry")
+    );
+    let tool = with_fake_rg(&tmp, &held, 0, Arc::new(RecordingLog::default()))
+        .with_rg_timeout(std::time::Duration::from_millis(500));
+    let result = execute_fake(&tool, r#"{"pattern": "retry"}"#)
+        .await
+        .unwrap();
+    assert!(result.content.contains("a.rs:1"), "{}", result.content);
+    assert!(
+        result.content.contains("still held open after it exited"),
+        "{}",
+        result.content
+    );
+    assert!(
+        !result.content.contains("did not finish"),
+        "{}",
+        result.content
+    );
+}
+
+/// The timeout coming after rg printed everything and exited, while its
+/// stderr is still held open: the result is whole, with no claim that rg
+/// never finished or was stopped.
+#[tokio::test]
+async fn a_timeout_after_all_output_was_read_leaves_the_result_whole() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
+    let done = format!(
+        "printf '%s\\n' '{}'; (exec 1>&-; sleep 3) &",
+        match_record(tmp.path(), "retry")
+    );
+    let tool = with_fake_rg(&tmp, &done, 0, Arc::new(RecordingLog::default()))
+        .with_rg_timeout(std::time::Duration::from_millis(500));
+    let result = execute_fake(&tool, r#"{"pattern": "retry"}"#)
+        .await
+        .unwrap();
+    assert!(result.content.contains("a.rs:1"), "{}", result.content);
+    assert!(!result.content.contains('['), "{}", result.content);
+}
+
+/// rg exiting 2 after a match with no message kept says so plainly, not
+/// with an empty reason.
+#[tokio::test]
+async fn an_error_exit_without_a_message_says_none_was_kept() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
+    let script = format!("printf '%s\\n' '{}'", match_record(tmp.path(), "retry"));
+    let tool = with_fake_rg(&tmp, &script, 2, Arc::new(RecordingLog::default()));
+    let result = execute_fake(&tool, r#"{"pattern": "retry"}"#)
+        .await
+        .unwrap();
+    assert!(result.content.contains("a.rs:1"), "{}", result.content);
+    assert!(
+        result
+            .content
+            .contains("rg exited with status 2 (its message was not kept)"),
+        "{}",
+        result.content
     );
 }

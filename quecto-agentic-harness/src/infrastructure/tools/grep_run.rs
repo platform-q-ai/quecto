@@ -11,8 +11,9 @@ use crate::domain::error::DomainError;
 use super::MAX_OUTPUT_BYTES;
 
 /// What one rg run printed: stdout up to the run's [`ReadLimit`] (`cut`
-/// says why when more was left unread), the start of stderr, and the exit
-/// code (`None` when the process was killed).
+/// says why when more was left unread), the start of stderr (none when the
+/// timeout ended the run), and the exit code (`None` when rg was killed, or
+/// had not exited by the timeout).
 #[derive(Debug)]
 pub(super) struct RgRun {
     pub stdout: Vec<u8>,
@@ -63,8 +64,10 @@ pub(super) const RG_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 
 /// Run rg, reading stdout (up to `limit`) and stderr at the same time, so
 /// rg can never block on a full stderr pipe. At the limit rg is killed;
-/// past `timeout` it is killed too, and what it printed stands (`Cut::Timeout`)
-/// or, with nothing printed, the search is reported as too slow.
+/// past `timeout` it is killed too, and what was learned stands: a cut
+/// already made, output read to its end, an exit, or else `Cut::Timeout`
+/// over what it printed; with nothing printed, the search is reported as
+/// too slow.
 pub(super) async fn run_rg(
     mut cmd: tokio::process::Command,
     timeout: std::time::Duration,
@@ -112,6 +115,9 @@ pub(super) async fn run_rg(
             }
         };
         seen.cut = cut;
+        // stdout was read to its end or a cut, unless abandoned held open.
+        seen.held_open = matches!(exited, Some((_, true)));
+        seen.stdout_done = !seen.held_open;
         if cut.is_some() {
             // Nothing more will be read: end rg.
             let _ = child.start_kill();
@@ -136,24 +142,36 @@ pub(super) async fn run_rg(
             held_open,
         }),
         Err(_) => {
+            // rg may have exited unnoticed (its stdout done, stderr still
+            // draining): its status is asked for before it is ended.
+            let exited = child.try_wait().ok().flatten().and_then(|s| s.code());
             // Signal only: an rg stuck in uninterruptible I/O (a hung mount)
             // must not hold the tool; tokio reaps the dropped Child.
             let _ = child.start_kill();
-            match out.is_empty() {
-                // What was printed before the timeout stands, marked cut:
-                // by a cut already made (then only ending rg hung), else
-                // by the timeout.
-                false => Ok(RgRun {
-                    stdout: out,
-                    stderr: Vec::new(),
-                    exit_code: seen.exit_code,
-                    cut: Some(seen.cut.unwrap_or(Cut::Timeout)),
-                    held_open: false,
-                }),
-                true => Err(DomainError::Tool(format!(
+            let exit_code = seen.exit_code.or(exited);
+            let (cut, held_open) = match (seen.cut, seen.stdout_done, exit_code) {
+                // A cut already made: only ending rg outlasted the timeout.
+                (Some(cut), _, _) => (Some(cut), seen.held_open),
+                // Everything rg printed was read.
+                (None, true, _) => (None, seen.held_open),
+                // rg exited; whatever held its output open outlasted it.
+                (None, false, Some(_)) => (None, true),
+                (None, false, None) => (Some(Cut::Timeout), false),
+            };
+            match (cut, out.is_empty()) {
+                (Some(Cut::Timeout), true) => Err(DomainError::Tool(format!(
                     "rg did not finish within {}: narrow the search with path, glob or type",
                     human_duration(timeout)
                 ))),
+                (Some(Cut::Timeout), false)
+                | (Some(Cut::Bytes | Cut::Matches(_)), _)
+                | (None, _) => Ok(RgRun {
+                    stdout: out,
+                    stderr: Vec::new(),
+                    exit_code,
+                    cut,
+                    held_open,
+                }),
             }
         }
     }
@@ -198,6 +216,10 @@ async fn read_limited(
 struct Seen {
     cut: Option<Cut>,
     exit_code: Option<i32>,
+    /// stdout was read to its end or a cut.
+    stdout_done: bool,
+    /// stdout was abandoned, held open after rg exited.
+    held_open: bool,
 }
 
 /// Counts the match records among the whole lines read so far. Each byte is
@@ -216,6 +238,7 @@ impl MatchLines {
     /// first match record past `max`, if one has been read.
     pub(super) fn find_past(&mut self, bytes: &[u8], max: usize) -> Option<usize> {
         loop {
+            assert!(self.scanned <= bytes.len(), "bytes only grow between calls");
             debug_assert!(
                 self.scanned >= self.next,
                 "the scan starts in the current line"
