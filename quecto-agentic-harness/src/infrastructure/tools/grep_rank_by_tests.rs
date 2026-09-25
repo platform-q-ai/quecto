@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use tempfile::TempDir;
 
 /// Scores each candidate by a keyword in its text.
-struct KeywordJudge(&'static str);
+pub(super) struct KeywordJudge(pub &'static str);
 
 impl RelevanceJudge for KeywordJudge {
     fn judge<'a>(
@@ -26,12 +26,12 @@ impl RelevanceJudge for KeywordJudge {
 }
 
 #[derive(Default)]
-struct RecordingLog(Mutex<Vec<SearchRecord>>);
+pub(super) struct RecordingLog(Mutex<Vec<SearchRecord>>);
 
 impl RecordingLog {
     /// The records, without the retried spawns of a just-written fake rg
     /// (ETXTBSY, see `execute_fake`): each retry is a search of its own.
-    fn searches(&self) -> Vec<SearchRecord> {
+    pub(super) fn searches(&self) -> Vec<SearchRecord> {
         self.0
             .lock()
             .unwrap()
@@ -205,7 +205,12 @@ async fn recorded_arguments_are_capped() {
     );
 }
 
-fn with_fake_rg(tmp: &TempDir, script: &str, code: i32, log: Arc<RecordingLog>) -> GrepTool {
+pub(super) fn with_fake_rg(
+    tmp: &TempDir,
+    script: &str,
+    code: i32,
+    log: Arc<RecordingLog>,
+) -> GrepTool {
     GrepTool::with_rg_binary(
         Arc::new(tmp.path().to_path_buf()),
         Arc::new(Sandbox::new(None)),
@@ -363,114 +368,6 @@ fn a_panicking_search_is_recorded_as_failed() {
         records[0].error.as_deref(),
         Some("the search ended while a panic unwound")
     );
-}
-
-/// A fake rg script printing `lines` JSON match records for `a.rs:1`
-/// (about 230 bytes each).
-fn match_flood(tmp: &TempDir, lines: usize) -> String {
-    let record = format!(
-        r#"{{"type":"match","data":{{"path":{{"text":"{}/a.rs"}},"lines":{{"text":"retry\\n"}},"line_number":1,"absolute_offset":0,"submatches":[{{"match":{{"text":"retry"}},"start":0,"end":5}}]}}}}"#,
-        tmp.path().display()
-    );
-    format!("yes '{record}' | head -n {lines}")
-}
-
-/// #2142: a ranked search reads rg's output well past the plain-results
-/// cap (200 KB), so every match is judged, not just those rg printed
-/// first.
-#[tokio::test]
-async fn a_ranked_search_reads_past_the_plain_results_cap() {
-    let tmp = TempDir::new().unwrap();
-    std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
-    // About 700 KB of rg output.
-    let flood = match_flood(&tmp, 3000);
-    let log = Arc::new(RecordingLog::default());
-    let tool = with_fake_rg(&tmp, &flood, 0, log.clone())
-        .with_relevance(Arc::new(KeywordJudge("retry")), 5000);
-    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
-        .await
-        .unwrap();
-    assert!(
-        !result.content.contains("rg printed more than"),
-        "{}",
-        result.content
-    );
-    let records = log.searches();
-    assert_eq!(records[0].found, 3000);
-    assert!(!records[0].incomplete);
-    match &records[0].ranking {
-        Some(RankingRecord::Ranked { candidates, .. }) => assert_eq!(*candidates, 3000),
-        other => panic!("{other:?}"),
-    }
-}
-
-/// With a judge configured, a plain search (no `rank_by`) still reads only
-/// up to the plain-results cap.
-#[tokio::test]
-async fn a_plain_search_keeps_the_plain_results_cap() {
-    let tmp = TempDir::new().unwrap();
-    std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
-    let flood = match_flood(&tmp, 3000);
-    let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
-        .with_relevance(Arc::new(KeywordJudge("retry")), 5000);
-    let result = execute_fake(&tool, r#"{"pattern": "retry", "limit": 100000}"#)
-        .await
-        .unwrap();
-    let tail = &result.content[result.content.len().saturating_sub(600)..];
-    assert!(tail.contains("rg printed more than 200.0KB"), "{tail}");
-    assert!(tail.contains("results are incomplete"), "{tail}");
-}
-
-/// A ranked search cut at rg's read cap says so even when the match limit
-/// also applies: what was never read was never ranked.
-#[tokio::test]
-async fn a_ranked_search_cut_at_the_read_cap_says_so() {
-    let tmp = TempDir::new().unwrap();
-    std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
-    // About 23 MB of rg output: past even a ranked search's read cap.
-    let flood = match_flood(&tmp, 100_000);
-    let log = Arc::new(RecordingLog::default());
-    let tool = with_fake_rg(&tmp, &flood, 0, log.clone())
-        .with_relevance(Arc::new(KeywordJudge("retry")), 1000);
-    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
-        .await
-        .unwrap();
-    assert!(
-        result
-            .content
-            .contains("rg printed more than 16.0MB: only the matches read before it were ranked"),
-        "{}",
-        &result.content[result.content.len().saturating_sub(400)..]
-    );
-    // Every match read was judged and none looks relevant, but the unread
-    // rest may hold the one sought: no claim that none is relevant.
-    let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
-        .with_relevance(Arc::new(KeywordJudge("nowhere")), 5000);
-    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
-        .await
-        .unwrap();
-    let tail = &result.content[result.content.len().saturating_sub(600)..];
-    assert!(tail.contains("were ranked"), "{tail}");
-    assert!(!tail.contains("looks relevant"), "{tail}");
-}
-
-/// Without a judge nothing was ranked: a search cut at the read cap says its
-/// results are incomplete, never that the matches read were ranked.
-#[tokio::test]
-async fn an_unranked_search_cut_at_the_read_cap_claims_no_ranking() {
-    let tmp = TempDir::new().unwrap();
-    std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
-    let flood = match_flood(&tmp, 3000);
-    let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()));
-    let result = execute_fake(
-        &tool,
-        r#"{"pattern": "retry", "rank_by": "the retry", "limit": 100000}"#,
-    )
-    .await
-    .unwrap();
-    let tail = &result.content[result.content.len().saturating_sub(600)..];
-    assert!(!tail.contains("were ranked"), "{tail}");
-    assert!(tail.contains("results are incomplete"), "{tail}");
 }
 
 /// A search rg did not finish normally (an error after partial results, a

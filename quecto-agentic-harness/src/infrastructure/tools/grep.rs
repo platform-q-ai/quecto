@@ -641,6 +641,10 @@ mod cov_tests;
 mod rank_by_tests;
 
 #[cfg(test)]
+#[path = "grep_read_limit_tests.rs"]
+mod read_limit_tests;
+
+#[cfg(test)]
 mod install_guidance_tests {
     use super::*;
 
