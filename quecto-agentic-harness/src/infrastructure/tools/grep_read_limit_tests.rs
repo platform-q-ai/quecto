@@ -440,21 +440,24 @@ async fn a_timeout_after_all_output_was_read_leaves_the_result_whole() {
 async fn an_error_exit_without_a_message_says_none_was_kept() {
     let tmp = TempDir::new().unwrap();
     std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
-    // The script exits itself, before the helper's own stderr line.
-    let script = format!(
-        "printf '%s\\n' '{}'; exit 2",
-        match_record(tmp.path(), "retry")
-    );
-    let tool = with_fake_rg(&tmp, &script, 0, Arc::new(RecordingLog::default()));
-    let result = execute_fake(&tool, r#"{"pattern": "retry"}"#)
-        .await
-        .unwrap();
-    assert!(result.content.contains("a.rs:1"), "{}", result.content);
-    assert!(
-        result
-            .content
-            .contains("rg exited with status 2 (its message was not kept)"),
-        "{}",
-        result.content
-    );
+    // Each script exits itself, before the helper's own stderr line: once
+    // with no stderr, once with a blank first line.
+    for stderr in ["", "echo >&2; "] {
+        let script = format!(
+            "printf '%s\\n' '{}'; {stderr}exit 2",
+            match_record(tmp.path(), "retry")
+        );
+        let tool = with_fake_rg(&tmp, &script, 0, Arc::new(RecordingLog::default()));
+        let result = execute_fake(&tool, r#"{"pattern": "retry"}"#)
+            .await
+            .unwrap();
+        assert!(result.content.contains("a.rs:1"), "{}", result.content);
+        assert!(
+            result
+                .content
+                .contains("rg exited with status 2 (its message was not kept)"),
+            "{stderr:?}: {}",
+            result.content
+        );
+    }
 }
