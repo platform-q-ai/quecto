@@ -201,6 +201,8 @@ fn ranked(
             "{unscored} of {judged} matches could not be judged{why} and follow the ranked ones"
         ));
     }
+    // grep reads no more matches than it may judge (#2142), so this is a
+    // guard for other callers and a changed read limit.
     if total > judged {
         notes.push(format!(
             "ranked the first {judged} of {total} matches; the rest follow in rg order: narrow the search to rank them"

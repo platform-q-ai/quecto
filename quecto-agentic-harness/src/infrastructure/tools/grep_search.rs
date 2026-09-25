@@ -160,12 +160,14 @@ pub(super) async fn search(
                 format_size(limit.bytes)
             ));
         }
-        // every match read was in the search log, which is never searched;
+        // none of the matches read can be shown (the search log's own, or
+        // paths that are not UTF-8);
         (Some(Cut::Matches(max)), 0) => {
             facts.incomplete = true;
             return answered(format!(
-                "The first {max} matches rg found were all in the search log, which is never \
-                 searched: narrow the search with path, glob or type"
+                "None of the first {max} matches rg found can be shown (they are in the search \
+                 log, which is never searched, or their paths are not UTF-8): narrow the search \
+                 with path, glob or type"
             ));
         }
         // too slow to print one: as slow as printing nothing.
@@ -192,16 +194,9 @@ pub(super) async fn search(
                 .to_string(),
         );
     }
-    match (rg.exit_code, rg.cut) {
-        // Stopped by a signal other than the tool's own.
-        (None, None) => {
-            notices.push("rg was stopped by a signal; results are incomplete".to_string());
-        }
-        (_, Some(Cut::Timeout)) => notices.push(format!(
-            "rg did not finish within {}; results are incomplete: narrow with path, glob or type",
-            human_duration(ctx.rg_timeout)
-        )),
-        (Some(_), None) | (_, Some(Cut::Bytes | Cut::Matches(_))) => {}
+    // Stopped by a signal other than the tool's own.
+    if let (None, None) = (rg.exit_code, rg.cut) {
+        notices.push("rg was stopped by a signal; results are incomplete".to_string());
     }
     if rg.exit_code == Some(2) {
         let first = stderr.lines().next().unwrap_or("").trim();
@@ -252,12 +247,19 @@ pub(super) async fn search(
     // At a read limit more exists than was read. A ranked search always
     // says so (what was never read was never ranked, so the best match may
     // be among it); otherwise only when the match limit did not already
-    // cut the result shorter (its own notice says so). A timeout has said
-    // so above.
+    // cut the result shorter (its own notice says so). A timeout always
+    // says so: nothing else tells the agent rg was too slow.
     let ranked = matches!(facts.ranking, Some(RankingRecord::Ranked { .. }));
+    let waited = human_duration(ctx.rg_timeout);
     match (rg.cut, ranked, found <= request.limit) {
         (Some(Cut::Matches(max)), true, _) => notices.push(format!(
-            "rg found more than {max} matches: the first {max} it found were ranked; narrow with path, glob or type to rank the rest"
+            "rg found more than {max} matches: only the first {max} were read, so only those were ranked; narrow with path, glob or type to rank the rest"
+        )),
+        (Some(Cut::Timeout), true, _) => notices.push(format!(
+            "rg did not finish within {waited}: only the matches it printed were ranked; narrow with path, glob or type to rank the rest"
+        )),
+        (Some(Cut::Timeout), false, _) => notices.push(format!(
+            "rg did not finish within {waited}; results are incomplete: narrow with path, glob or type"
         )),
         (Some(Cut::Bytes), true, _) => notices.push(format!(
             "rg printed more than {}: only the matches read before it were ranked; narrow with path, glob or type to rank the rest",
@@ -270,9 +272,7 @@ pub(super) async fn search(
             "rg printed more than {}; results are incomplete: narrow with path, glob or type",
             format_size(limit.bytes)
         )),
-        (Some(Cut::Matches(_) | Cut::Bytes), false, false)
-        | (Some(Cut::Timeout), _, _)
-        | (None, _, _) => {}
+        (Some(Cut::Matches(_) | Cut::Bytes), false, false) | (None, _, _) => {}
     }
     answered(match notices.as_slice() {
         [] => result,

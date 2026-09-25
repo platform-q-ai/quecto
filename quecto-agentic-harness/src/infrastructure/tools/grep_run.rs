@@ -91,6 +91,9 @@ pub(super) async fn run_rg(
     let stderr_task = tokio::spawn(read_head(child.stderr.take(), RG_STDERR_KEEP));
     let _abort_stderr = AbortOnDrop(stderr_task.abort_handle());
     let mut out = Vec::with_capacity(limit.bytes.min(64 * 1024));
+    // What is known before the timeout may fire: kept if it does, so a cut
+    // (or an exit) already seen is not reported as rg never finishing.
+    let mut seen = Seen::default();
     let run = async {
         let (cut, exited) = {
             let read = read_limited(stdout, limit, &mut out);
@@ -100,6 +103,7 @@ pub(super) async fn run_rg(
                 // rg exited while stdout is still open: whatever holds it
                 // (not rg, which starts nothing) gets a grace, no more.
                 status = child.wait() => {
+                    seen.exit_code = status.as_ref().ok().and_then(|s| s.code());
                     match tokio::time::timeout(PIPE_GRACE, &mut read).await {
                         Ok(cut) => (cut, Some((status, false))),
                         Err(_) => (None, Some((status, true))),
@@ -107,6 +111,7 @@ pub(super) async fn run_rg(
                 }
             }
         };
+        seen.cut = cut;
         if cut.is_some() {
             // Nothing more will be read: end rg.
             let _ = child.start_kill();
@@ -135,12 +140,14 @@ pub(super) async fn run_rg(
             // must not hold the tool; tokio reaps the dropped Child.
             let _ = child.start_kill();
             match out.is_empty() {
-                // What was printed before the timeout stands, marked cut.
+                // What was printed before the timeout stands, marked cut:
+                // by a cut already made (then only ending rg hung), else
+                // by the timeout.
                 false => Ok(RgRun {
                     stdout: out,
                     stderr: Vec::new(),
-                    exit_code: None,
-                    cut: Some(Cut::Timeout),
+                    exit_code: seen.exit_code,
+                    cut: Some(seen.cut.unwrap_or(Cut::Timeout)),
                     held_open: false,
                 }),
                 true => Err(DomainError::Tool(format!(
@@ -186,21 +193,37 @@ async fn read_limited(
     }
 }
 
-/// Counts the match records among the whole lines read so far.
+/// What a run learned before a timeout could end it.
 #[derive(Debug, Default)]
-struct MatchLines {
+struct Seen {
+    cut: Option<Cut>,
+    exit_code: Option<i32>,
+}
+
+/// Counts the match records among the whole lines read so far. Each byte is
+/// looked at once, however many reads a long line takes to arrive.
+#[derive(Debug, Default)]
+pub(super) struct MatchLines {
     /// Where the first line not yet counted starts.
     next: usize,
+    /// How far the search for that line's end has looked.
+    scanned: usize,
     matches: usize,
 }
 
 impl MatchLines {
     /// Count the whole lines added since the last call; the start of the
     /// first match record past `max`, if one has been read.
-    fn find_past(&mut self, bytes: &[u8], max: usize) -> Option<usize> {
-        while let Some(end) = bytes[self.next..].iter().position(|b| *b == b'\n') {
+    pub(super) fn find_past(&mut self, bytes: &[u8], max: usize) -> Option<usize> {
+        loop {
+            let from = self.scanned.max(self.next);
+            let Some(offset) = bytes[from..].iter().position(|b| *b == b'\n') else {
+                self.scanned = bytes.len();
+                return None;
+            };
             let start = self.next;
-            self.next = start + end + 1;
+            self.next = from + offset + 1;
+            self.scanned = self.next;
             if bytes[start..].starts_with(MATCH_RECORD) {
                 self.matches += 1;
                 if self.matches > max {
@@ -208,7 +231,11 @@ impl MatchLines {
                 }
             }
         }
-        None
+    }
+
+    /// How far the search for the current line's end has looked.
+    pub(super) fn scanned(&self) -> usize {
+        self.scanned
     }
 }
 

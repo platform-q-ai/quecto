@@ -117,7 +117,9 @@ async fn a_ranked_search_stops_at_the_matches_it_may_judge() {
         .unwrap();
     let tail = &result.content[result.content.len().saturating_sub(600)..];
     assert!(
-        tail.contains("rg found more than 1000 matches: the first 1000 it found were ranked"),
+        tail.contains(
+            "rg found more than 1000 matches: only the first 1000 were read, so only those were ranked"
+        ),
         "{tail}"
     );
     assert!(!tail.contains("looks relevant"), "{tail}");
@@ -217,7 +219,7 @@ async fn a_match_cap_filled_by_the_search_log_says_so() {
     assert!(
         result
             .content
-            .contains("The first 20 matches rg found were all in the search log"),
+            .contains("None of the first 20 matches rg found can be shown"),
         "{}",
         result.content
     );
@@ -290,4 +292,75 @@ fn a_search_is_whole_only_when_rg_finished_and_nothing_cut_it() {
     assert!(!searched_whole(Some(2), None, false));
     assert!(!searched_whole(None, None, false));
     assert!(!searched_whole(Some(0), None, true));
+}
+
+/// A long line arriving over many reads is scanned once, not again from its
+/// start on every read; a match split across reads is counted once, when
+/// its line ends.
+#[test]
+fn the_match_counter_scans_each_byte_once() {
+    use super::grep_run::MatchLines;
+    let record = br#"{"type":"match","data":{}}"#;
+    let mut lines = MatchLines::default();
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&record[..10]);
+    assert_eq!(lines.find_past(&bytes, 1), None);
+    assert_eq!(lines.scanned(), bytes.len());
+    bytes.extend_from_slice(&record[10..]);
+    bytes.push(b'\n');
+    assert_eq!(lines.find_past(&bytes, 1), None);
+    assert_eq!(lines.scanned(), bytes.len());
+    let second = bytes.len();
+    bytes.extend_from_slice(br#"{"type":"context"}"#);
+    bytes.push(b'\n');
+    bytes.extend_from_slice(record);
+    assert_eq!(lines.find_past(&bytes, 1), None, "a line not yet ended");
+    assert_eq!(lines.scanned(), bytes.len());
+    bytes.push(b'\n');
+    let past = second + br#"{"type":"context"}"#.len() + 1;
+    assert_eq!(lines.find_past(&bytes, 1), Some(past));
+}
+
+/// A ranked search past its rg timeout says only what rg printed was
+/// ranked.
+#[tokio::test]
+async fn a_ranked_search_past_the_timeout_says_only_what_was_printed_was_ranked() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
+    let slow = format!(
+        "printf '%s\\n' '{}'; exec sleep 30",
+        match_record(tmp.path(), "retry")
+    );
+    let tool = with_fake_rg(&tmp, &slow, 0, Arc::new(RecordingLog::default()))
+        .with_relevance(Arc::new(KeywordJudge("retry")), 1000)
+        .with_rg_timeout(std::time::Duration::from_millis(500));
+    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+        .await
+        .unwrap();
+    assert!(
+        result
+            .content
+            .contains("rg did not finish within 500 ms: only the matches it printed were ranked"),
+        "{}",
+        result.content
+    );
+}
+
+/// A cut already made stands when only ending rg then outlasts the timeout
+/// (here a background child keeps stderr open): the search says what cut
+/// it, not that rg never finished.
+#[tokio::test]
+async fn a_cut_made_before_the_timeout_is_reported_as_the_cut() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
+    let flood = format!("sleep 30 & {}", match_flood(&tmp, 30));
+    let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
+        .with_relevance(Arc::new(KeywordJudge("retry")), 20)
+        .with_rg_timeout(std::time::Duration::from_millis(500));
+    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+        .await
+        .unwrap();
+    let tail = &result.content[result.content.len().saturating_sub(600)..];
+    assert!(tail.contains("rg found more than 20 matches"), "{tail}");
+    assert!(!tail.contains("did not finish"), "{tail}");
 }
