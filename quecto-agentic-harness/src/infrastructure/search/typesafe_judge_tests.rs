@@ -11,6 +11,7 @@ fn candidate(location: &str) -> RelevanceCandidate {
 
 fn judge(server: &MockServer, timeout: Duration) -> TypeSafeJudge {
     TypeSafeJudge::new(&server.uri(), "test-key".into(), "jev-latest", timeout)
+        .expect("the client builds")
 }
 
 fn noul(score: f64) -> ResponseTemplate {
@@ -136,4 +137,33 @@ async fn a_score_outside_zero_to_one_is_refused() {
             .await,
         Relevance::Unavailable("TypeSafe answered without a relevance score".into())
     );
+}
+
+/// Scores that arrive before the deadline are kept; only the late hits are
+/// left unscored.
+#[tokio::test]
+async fn at_the_deadline_the_scores_already_judged_are_kept() {
+    let server = MockServer::start().await;
+    Mock::given(body_partial_json(
+        json!({"state": {"candidate": {"location": "fast.rs:1"}}}),
+    ))
+    .respond_with(noul(0.8))
+    .mount(&server)
+    .await;
+    Mock::given(body_partial_json(
+        json!({"state": {"candidate": {"location": "slow.rs:1"}}}),
+    ))
+    .respond_with(noul(0.2).set_delay(Duration::from_secs(10)))
+    .mount(&server)
+    .await;
+    let started = std::time::Instant::now();
+    let answer = judge(&server, Duration::from_millis(700))
+        .judge("q", &[candidate("fast.rs:1"), candidate("slow.rs:1")])
+        .await;
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(answer, Relevance::Scored(vec![Some(0.8), None]));
 }

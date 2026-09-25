@@ -6,7 +6,6 @@ pub mod typesafe_judge;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::application::tools::ports::Tool;
 use crate::infrastructure::config::GrepToolConfig;
@@ -36,26 +35,32 @@ pub fn build_grep_tool(
     let mut tool = GrepTool::new(workspace, sandbox);
     let relevance = &wiring.config.relevance;
     if relevance.enabled {
-        match typesafe_key() {
-            Some(key) => {
-                let judge = TypeSafeJudge::new(
-                    TYPESAFE_ENDPOINT,
-                    key,
-                    &relevance.model,
-                    Duration::from_secs(relevance.timeout_secs.max(1)),
-                );
-                tool = tool.with_relevance(Arc::new(judge), relevance.max_candidates);
+        match ranking_judge(relevance) {
+            Ok((judge, max_candidates)) => {
+                tool = tool.with_relevance(Arc::new(judge), max_candidates);
             }
-            None => tracing::warn!(
-                "tools.grep.relevance is enabled but no TypeSafe key was found (TYPESAFE_API_KEY or ~/.config/typesafe/api_key): rank_by is not offered"
-            ),
+            Err(reason) => tracing::warn!(%reason, "grep ranking is not offered"),
         }
     }
     if wiring.config.log.enabled {
-        tool = tool.with_search_log(Arc::new(JsonlSearchLog::new(
-            Path::new(&wiring.base_dir),
-            &wiring.session_key,
-        )));
+        let log = JsonlSearchLog::new(Path::new(&wiring.base_dir), &wiring.session_key);
+        // The log must never be searched: its lines hold past patterns.
+        tool = tool
+            .excluding(log.dir().to_path_buf())
+            .with_search_log(Arc::new(log));
     }
     Arc::new(tool)
+}
+
+/// The judge for enabled ranking: settings in range, a TypeSafe key, and a
+/// client; otherwise why ranking is not offered.
+fn ranking_judge(
+    relevance: &crate::infrastructure::config::grep_tool::GrepRelevanceConfig,
+) -> Result<(TypeSafeJudge, usize), String> {
+    let (max_candidates, timeout) = relevance.limits()?;
+    let key = typesafe_key().ok_or(
+        "no TypeSafe key was found (TYPESAFE_API_KEY or ~/.config/typesafe/api_key)".to_string(),
+    )?;
+    let judge = TypeSafeJudge::new(TYPESAFE_ENDPOINT, key, &relevance.model, timeout)?;
+    Ok((judge, max_candidates))
 }

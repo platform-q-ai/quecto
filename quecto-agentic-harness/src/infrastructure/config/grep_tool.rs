@@ -30,6 +30,39 @@ pub struct GrepRelevanceConfig {
     pub timeout_secs: u64,
 }
 
+/// The judged matches per search a config may ask for.
+pub const MAX_CANDIDATES: std::ops::RangeInclusive<usize> = 1..=100;
+/// The judging time a config may allow, in seconds.
+pub const TIMEOUT_SECS: std::ops::RangeInclusive<u64> = 1..=60;
+
+impl GrepRelevanceConfig {
+    /// The candidate cap and judging timeout, when both are in range; a
+    /// setting outside its range is refused, never clamped.
+    pub fn limits(&self) -> Result<(usize, std::time::Duration), String> {
+        match (
+            MAX_CANDIDATES.contains(&self.max_candidates),
+            TIMEOUT_SECS.contains(&self.timeout_secs),
+        ) {
+            (true, true) => Ok((
+                self.max_candidates,
+                std::time::Duration::from_secs(self.timeout_secs),
+            )),
+            (false, _) => Err(format!(
+                "tools.grep.relevance.max_candidates must be {}..={} (got {})",
+                MAX_CANDIDATES.start(),
+                MAX_CANDIDATES.end(),
+                self.max_candidates
+            )),
+            (true, false) => Err(format!(
+                "tools.grep.relevance.timeout_secs must be {}..={} (got {})",
+                TIMEOUT_SECS.start(),
+                TIMEOUT_SECS.end(),
+                self.timeout_secs
+            )),
+        }
+    }
+}
+
 impl Default for GrepRelevanceConfig {
     fn default() -> Self {
         Self {

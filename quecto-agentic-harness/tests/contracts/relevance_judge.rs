@@ -24,12 +24,15 @@ fn scored(noul: f64) -> ResponseTemplate {
 }
 
 async fn judge(server: &MockServer) -> Box<dyn RelevanceJudge> {
-    Box::new(TypeSafeJudge::new(
-        &server.uri(),
-        "contract-key".into(),
-        "jev-latest",
-        Duration::from_secs(5),
-    ))
+    Box::new(
+        TypeSafeJudge::new(
+            &server.uri(),
+            "contract-key".into(),
+            "jev-latest",
+            Duration::from_secs(5),
+        )
+        .expect("the client builds"),
+    )
 }
 
 #[tokio::test]

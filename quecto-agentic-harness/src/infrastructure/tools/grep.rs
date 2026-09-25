@@ -56,6 +56,8 @@ pub struct GrepTool {
     ranking: Option<Arc<Ranking>>,
     /// Where every search is recorded, when configured.
     search_log: Option<Arc<dyn SearchLog>>,
+    /// Directories never searched (the search log's own).
+    excluded: Vec<PathBuf>,
 }
 
 impl GrepTool {
@@ -67,16 +69,24 @@ impl GrepTool {
             rg_timeout: RG_TIMEOUT,
             ranking: None,
             search_log: None,
+            excluded: Vec::new(),
         }
     }
 
     /// Rank matches by relevance to `rank_by` through `judge`, judging at
     /// most `max_candidates` per search.
     pub fn with_relevance(mut self, judge: Arc<dyn RelevanceJudge>, max_candidates: usize) -> Self {
+        assert!(max_candidates >= 1, "ranking judges at least one match");
         self.ranking = Some(Arc::new(Ranking {
             judge,
-            max_candidates: max_candidates.max(1),
+            max_candidates,
         }));
+        self
+    }
+
+    /// Never search `dir` (an absolute path; the search log's own).
+    pub fn excluding(mut self, dir: PathBuf) -> Self {
+        self.excluded.push(dir);
         self
     }
 
@@ -100,6 +110,7 @@ impl GrepTool {
             rg_timeout: RG_TIMEOUT,
             ranking: None,
             search_log: None,
+            excluded: Vec::new(),
         }
     }
 
@@ -135,6 +146,7 @@ impl Tool for GrepTool {
             rg_cmd: self.rg_cmd(),
             rg_timeout: self.rg_timeout,
             ranking: self.ranking.clone(),
+            excluded: self.excluded.clone(),
         };
         let log = self.search_log.clone();
 
@@ -256,6 +268,16 @@ fn search_record(
 // rg invocation
 // ---------------------------------------------------------------------------
 
+/// `text` with glob metacharacters escaped, so a path matches literally.
+fn glob_literal(text: &str) -> String {
+    text.chars()
+        .flat_map(|c| match c {
+            '*' | '?' | '[' | ']' | '{' | '}' | '\\' | '!' => vec!['\\', c],
+            c => vec![c],
+        })
+        .collect()
+}
+
 /// Build the ripgrep command for `request`: `--json` for matching lines
 /// (context comes from a file cache, not `--context`), `--null` listings
 /// for files and counts. Patterns always go through `-e` and the path
@@ -265,6 +287,7 @@ fn build_rg_command(
     workspace: &Path,
     full_path: &Path,
     request: &GrepRequest,
+    excluded: &[PathBuf],
 ) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(rg_cmd);
     cmd.current_dir(workspace)
@@ -285,6 +308,17 @@ fn build_rg_command(
     // --hidden searches dotfiles, but a repository's .git internals are
     // never what a content search means (bash rg skips them too).
     cmd.arg("--glob").arg("!.git");
+    // Excluded directories inside the workspace (rg runs there): a glob
+    // anchored at the workspace root, so a same-named directory elsewhere
+    // is still searched.
+    for dir in excluded {
+        if let Ok(relative) = dir.strip_prefix(workspace) {
+            cmd.arg("--glob").arg(format!(
+                "!/{}/**",
+                glob_literal(&relative.to_string_lossy())
+            ));
+        }
+    }
     let flags = [
         (request.ignore_case, "--ignore-case"),
         (request.literal, "--fixed-strings"),

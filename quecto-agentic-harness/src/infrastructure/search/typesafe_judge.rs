@@ -22,15 +22,16 @@ const CONCURRENCY: usize = 8;
 /// The TypeSafe key: `TYPESAFE_API_KEY`, else `~/.config/typesafe/api_key`.
 /// `None` when neither holds one. Never logged.
 pub fn typesafe_key() -> Option<String> {
-    let from_env = std::env::var("TYPESAFE_API_KEY").ok();
-    let from_file = || {
-        let path = dirs::home_dir()?.join(".config/typesafe/api_key");
-        std::fs::read_to_string(path).ok()
+    let usable = |key: String| {
+        let key = key.trim().to_string();
+        key.chars().next().is_some().then_some(key)
     };
-    from_env
-        .or_else(from_file)
-        .map(|key| key.trim().to_string())
-        .filter(|key| key.chars().next().is_some())
+    // An empty variable does not hide the file.
+    let from_env = std::env::var("TYPESAFE_API_KEY").ok().and_then(usable);
+    from_env.or_else(|| {
+        let path = dirs::home_dir()?.join(".config/typesafe/api_key");
+        std::fs::read_to_string(path).ok().and_then(usable)
+    })
 }
 
 pub struct TypeSafeJudge {
@@ -42,17 +43,25 @@ pub struct TypeSafeJudge {
 }
 
 impl TypeSafeJudge {
-    pub fn new(endpoint: &str, key: String, model: &str, timeout: Duration) -> Self {
-        Self {
-            client: reqwest::Client::builder()
-                .timeout(timeout)
-                .build()
-                .unwrap_or_default(),
+    /// A judge over `endpoint`; `Err` when the HTTP client cannot be built
+    /// (its timeout is part of what bounds a search).
+    pub fn new(
+        endpoint: &str,
+        key: String,
+        model: &str,
+        timeout: Duration,
+    ) -> Result<Self, String> {
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|e| format!("the TypeSafe HTTP client could not be built: {e}"))?;
+        Ok(Self {
+            client,
             endpoint: endpoint.to_string(),
             key,
             model: model.to_string(),
             timeout,
-        }
+        })
     }
 
     /// The question asked of each hit.
@@ -117,15 +126,22 @@ impl RelevanceJudge for TypeSafeJudge {
                     async move { (index, scored.await) }
                 })
                 .collect();
-            let judged = futures::stream::iter(requests)
-                .buffer_unordered(CONCURRENCY)
-                .collect::<Vec<_>>();
-            let Ok(judged) = tokio::time::timeout(self.timeout, judged).await else {
-                return Relevance::Unavailable(format!(
-                    "TypeSafe did not answer within {} s",
-                    self.timeout.as_secs()
-                ));
-            };
+            // Scores are kept as they arrive; at the deadline the rest
+            // stay unscored rather than discarding what was judged.
+            let mut pending = futures::stream::iter(requests).buffer_unordered(CONCURRENCY);
+            let deadline = tokio::time::Instant::now() + self.timeout;
+            let mut judged = Vec::with_capacity(candidates.len());
+            let mut timed_out = false;
+            loop {
+                match tokio::time::timeout_at(deadline, pending.next()).await {
+                    Ok(Some(outcome)) => judged.push(outcome),
+                    Ok(None) => break,
+                    Err(_) => {
+                        timed_out = true;
+                        break;
+                    }
+                }
+            }
             let mut scores = vec![None; candidates.len()];
             let mut first_error = None;
             for (index, outcome) in judged {
@@ -136,9 +152,16 @@ impl RelevanceJudge for TypeSafeJudge {
                     }
                 }
             }
-            match (scores.iter().any(Option::is_some), first_error) {
-                (true, _) | (false, None) => Relevance::Scored(scores),
-                (false, Some(error)) => Relevance::Unavailable(error),
+            let timeout = || {
+                format!(
+                    "TypeSafe did not answer within {} s",
+                    self.timeout.as_secs()
+                )
+            };
+            match (scores.iter().any(Option::is_some), first_error, timed_out) {
+                (true, _, _) | (false, None, false) => Relevance::Scored(scores),
+                (false, Some(error), false) => Relevance::Unavailable(error),
+                (false, _, true) => Relevance::Unavailable(timeout()),
             }
         })
     }

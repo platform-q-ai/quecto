@@ -27,6 +27,11 @@ impl JsonlSearchLog {
         }
     }
 
+    /// Where the log files are.
+    pub fn dir(&self) -> &std::path::Path {
+        &self.dir
+    }
+
     fn append(&self, record: &SearchRecord) -> std::io::Result<()> {
         let now = humantime::format_rfc3339_seconds(std::time::SystemTime::now()).to_string();
         let mut line = json!({"ts": now, "session": self.session, "tool": "grep"});

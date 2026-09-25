@@ -606,7 +606,7 @@ async fn a_descendant_holding_the_pipes_cannot_hold_the_results() {
 #[test]
 fn rg_runs_without_a_users_config() {
     let request = grep_request::parse_request(&serde_json::json!({"pattern": "x"})).unwrap();
-    let cmd = build_rg_command("rg", Path::new("/ws"), Path::new("/ws"), &request);
+    let cmd = build_rg_command("rg", Path::new("/ws"), Path::new("/ws"), &request, &[]);
     let args: Vec<String> = cmd
         .as_std()
         .get_args()

@@ -27,6 +27,8 @@ pub(super) struct SearchContext {
     pub rg_cmd: String,
     pub rg_timeout: std::time::Duration,
     pub ranking: Option<Arc<Ranking>>,
+    /// Directories never searched (the search log's own).
+    pub excluded: Vec<PathBuf>,
 }
 
 /// What the search log records of one search, filled in as it runs.
@@ -77,7 +79,13 @@ pub(super) async fn search(
         .validate_path(&full_path.to_string_lossy())
         .map_err(|e| DomainError::Security(e.to_string()))?;
 
-    let cmd = build_rg_command(&ctx.rg_cmd, &ctx.workspace, &full_path, &request);
+    let cmd = build_rg_command(
+        &ctx.rg_cmd,
+        &ctx.workspace,
+        &full_path,
+        &request,
+        &ctx.excluded,
+    );
     let rg = run_rg(cmd, ctx.rg_timeout).await?;
     let stderr = String::from_utf8_lossy(&rg.stderr).into_owned();
     let stdout = String::from_utf8_lossy(&rg.stdout).into_owned();
