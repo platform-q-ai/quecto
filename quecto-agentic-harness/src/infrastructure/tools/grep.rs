@@ -31,9 +31,9 @@ use grep_request::{DEFAULT_MATCH_LIMIT, GrepRequest, OutputMode};
 use grep_run::RG_TIMEOUT;
 #[cfg(test)]
 use grep_run::run_rg;
-use grep_search::{SearchContext, SearchFacts, search};
+use grep_search::{PendingRecord, SearchContext, SearchFacts, search};
 
-use crate::application::search::ports::{RelevanceJudge, SearchLog, SearchRecord};
+use crate::application::search::ports::{RelevanceJudge, SearchLog};
 
 /// Maximum line length before truncation (chars); matches Quecto's GREP_MAX_LINE_LENGTH.
 const MAX_LINE_BYTES: usize = 500;
@@ -151,31 +151,22 @@ impl Tool for GrepTool {
         let log = self.search_log.clone();
 
         Box::pin(async move {
-            let started = std::time::Instant::now();
+            // Recorded once however the call ends, a cancelled one included.
+            let pending = PendingRecord::new(log, &raw);
             let mut facts = SearchFacts::default();
-            let (outcome, arguments) = match serde_json::from_str::<serde_json::Value>(&raw) {
-                Ok(args) => (search(&ctx, &args, &mut facts).await, args),
+            let outcome = match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(args) => search(&ctx, &args, &mut facts).await,
                 // LLM-addressable: malformed JSON → Ok(is_error=true). Tool contract.
-                Err(e) => (
-                    Ok(ToolResult {
-                        content: format!(
-                            "invalid JSON arguments: {e}. Example: {{\"pattern\": \"search_term\"}}"
-                        ),
-                        is_error: true,
-                        image_blocks: vec![],
-                        delivery_metadata: None,
-                    }),
-                    serde_json::Value::String(raw),
-                ),
+                Err(e) => Ok(ToolResult {
+                    content: format!(
+                        "invalid JSON arguments: {e}. Example: {{\"pattern\": \"search_term\"}}"
+                    ),
+                    is_error: true,
+                    image_blocks: vec![],
+                    delivery_metadata: None,
+                }),
             };
-            if let Some(log) = &log {
-                log.record(&search_record(
-                    arguments,
-                    facts,
-                    &outcome,
-                    started.elapsed(),
-                ));
-            }
+            pending.finish(facts, &outcome);
             outcome
         })
     }
@@ -241,42 +232,9 @@ fn with_rank_by(mut definition: ToolDefinition) -> ToolDefinition {
     definition
 }
 
-/// What the search log records of one call.
-fn search_record(
-    arguments: serde_json::Value,
-    facts: SearchFacts,
-    outcome: &Result<ToolResult, DomainError>,
-    elapsed: std::time::Duration,
-) -> SearchRecord {
-    let error = match outcome {
-        Ok(result) if result.is_error => Some(result.content.chars().take(500).collect()),
-        Ok(_) => None,
-        Err(e) => Some(e.to_string()),
-    };
-    SearchRecord {
-        arguments,
-        output: facts.output.unwrap_or("refused").to_string(),
-        found: facts.found,
-        incomplete: facts.incomplete,
-        error,
-        elapsed_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
-        ranking: facts.ranking,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // rg invocation
 // ---------------------------------------------------------------------------
-
-/// `text` with glob metacharacters escaped, so a path matches literally.
-fn glob_literal(text: &str) -> String {
-    text.chars()
-        .flat_map(|c| match c {
-            '*' | '?' | '[' | ']' | '{' | '}' | '\\' | '!' => vec!['\\', c],
-            c => vec![c],
-        })
-        .collect()
-}
 
 /// Build the ripgrep command for `request`: `--json` for matching lines
 /// (context comes from a file cache, not `--context`), `--null` listings
@@ -287,7 +245,6 @@ fn build_rg_command(
     workspace: &Path,
     full_path: &Path,
     request: &GrepRequest,
-    excluded: &[PathBuf],
 ) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(rg_cmd);
     cmd.current_dir(workspace)
@@ -308,17 +265,6 @@ fn build_rg_command(
     // --hidden searches dotfiles, but a repository's .git internals are
     // never what a content search means (bash rg skips them too).
     cmd.arg("--glob").arg("!.git");
-    // Excluded directories inside the workspace (rg runs there): a glob
-    // anchored at the workspace root, so a same-named directory elsewhere
-    // is still searched.
-    for dir in excluded {
-        if let Ok(relative) = dir.strip_prefix(workspace) {
-            cmd.arg("--glob").arg(format!(
-                "!/{}/**",
-                glob_literal(&relative.to_string_lossy())
-            ));
-        }
-    }
     let flags = [
         (request.ignore_case, "--ignore-case"),
         (request.literal, "--fixed-strings"),

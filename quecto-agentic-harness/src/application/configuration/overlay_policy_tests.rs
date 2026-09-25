@@ -183,18 +183,14 @@ fn remove_path_takes_the_value_out_and_reports_what_is_not_there() {
 }
 
 /// #2136: `tools.grep` merges field-wise per section, so an overlay turning
-/// the search log off keeps the global ranking settings, and an overlay
-/// field replaces only that field.
+/// the search log off keeps the global ranking settings.
 #[test]
 fn tools_grep_merges_field_wise_per_section() {
     let global = serde_json::json!({"tools": {"grep": {
         "relevance": {"enabled": true, "max_candidates": 20},
         "log": {"enabled": true}
     }}});
-    let overlay = serde_json::json!({"tools": {"grep": {
-        "relevance": {"max_candidates": 5},
-        "log": {"enabled": false}
-    }}});
+    let overlay = serde_json::json!({"tools": {"grep": {"log": {"enabled": false}}}});
     let merged = merge_overlay(
         global.as_object().unwrap().clone(),
         overlay.as_object().unwrap().clone(),
@@ -202,8 +198,34 @@ fn tools_grep_merges_field_wise_per_section() {
     assert_eq!(
         serde_json::Value::Object(merged)["tools"]["grep"],
         serde_json::json!({
-            "relevance": {"enabled": true, "max_candidates": 5},
+            "relevance": {"enabled": true, "max_candidates": 20},
             "log": {"enabled": false}
         })
+    );
+}
+
+/// #2136: ranking sends matching code to TypeSafe, so a repository overlay
+/// may not carry `tools.grep.relevance`; its search-log setting is fine.
+#[test]
+fn tools_grep_relevance_is_global_only() {
+    let carrying = json!({"tools": {"grep": {"relevance": {"enabled": true}}}});
+    assert_eq!(
+        global_only_key(carrying.as_object().unwrap()),
+        Some("tools.grep.relevance")
+    );
+    let log_only = json!({"tools": {"grep": {"log": {"enabled": false}}}});
+    assert_eq!(global_only_key(log_only.as_object().unwrap()), None);
+    assert_eq!(
+        global_only_path(&["tools", "grep", "relevance", "enabled"]),
+        Some("tools.grep.relevance")
+    );
+    assert_eq!(
+        global_only_path(&["tools", "grep", "relevance"]),
+        Some("tools.grep.relevance")
+    );
+    assert_eq!(global_only_path(&["tools", "grep", "log", "enabled"]), None);
+    assert_eq!(
+        global_only_path(&["providers", "openai"]),
+        Some("providers")
     );
 }

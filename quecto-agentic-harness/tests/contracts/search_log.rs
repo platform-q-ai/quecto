@@ -4,11 +4,10 @@
 
 use quecto::application::search::ports::{SearchLog, SearchRecord};
 use quecto::infrastructure::search::search_log::JsonlSearchLog;
-use serde_json::json;
 
 fn record() -> SearchRecord {
     SearchRecord {
-        arguments: json!({"pattern": "retry"}),
+        arguments: r#"{"pattern": "retry"}"#.into(),
         output: "content".into(),
         found: 4,
         incomplete: false,

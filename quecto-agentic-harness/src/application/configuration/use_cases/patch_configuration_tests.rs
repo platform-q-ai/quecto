@@ -636,3 +636,38 @@ fn unset_shares_the_patch_refusals() {
         ConfigPatchError::InvalidKeyPath(_)
     ));
 }
+
+/// #2136: an overlay may not switch on grep ranking, directly or through a
+/// parent object written whole; its search log setting is its own.
+#[test]
+fn an_overlay_patch_refuses_grep_ranking_directly_or_inside_a_parent() {
+    let store = MemoryStore::with(&[]);
+    let refused = |key: &str, value: serde_json::Value| {
+        use_case(store.clone(), Arc::new(FakeTrust::default()))
+            .execute(patch(ConfigLayer::Overlay, OVERLAY, key, value))
+            .unwrap_err()
+    };
+    let expected = ConfigPatchError::GlobalOnlyKey {
+        path: PathBuf::from(OVERLAY),
+        key: "tools.grep.relevance".into(),
+    };
+    assert_eq!(
+        refused("tools.grep.relevance.enabled", json!(true)),
+        expected
+    );
+    assert_eq!(
+        refused("tools.grep", json!({"relevance": {"enabled": true}})),
+        expected
+    );
+    assert_eq!(store.content(OVERLAY), None);
+    assert!(
+        use_case(store.clone(), Arc::new(FakeTrust::default()))
+            .execute(patch(
+                ConfigLayer::Overlay,
+                OVERLAY,
+                "tools.grep.log.enabled",
+                json!(false)
+            ))
+            .is_ok()
+    );
+}

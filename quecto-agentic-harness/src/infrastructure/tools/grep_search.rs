@@ -1,10 +1,12 @@
 //! One grep search (#2136): validate, run rg, read its outcome, rank when
 //! asked, format — noting as it goes what the search log records.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::application::search::ports::RankingRecord;
+use crate::application::search::ports::{
+    MAX_RECORDED_ARGUMENTS, RankingRecord, SearchLog, SearchRecord,
+};
 use crate::domain::error::DomainError;
 use crate::domain::tool::ToolResult;
 use crate::infrastructure::security::sandbox::Sandbox;
@@ -79,19 +81,22 @@ pub(super) async fn search(
         .validate_path(&full_path.to_string_lossy())
         .map_err(|e| DomainError::Security(e.to_string()))?;
 
-    let cmd = build_rg_command(
-        &ctx.rg_cmd,
-        &ctx.workspace,
-        &full_path,
-        &request,
-        &ctx.excluded,
-    );
+    let cmd = build_rg_command(&ctx.rg_cmd, &ctx.workspace, &full_path, &request);
     let rg = run_rg(cmd, ctx.rg_timeout).await?;
     let stderr = String::from_utf8_lossy(&rg.stderr).into_owned();
     let stdout = String::from_utf8_lossy(&rg.stdout).into_owned();
+    // What rg found outside the excluded directories (the search log's
+    // own), which are never shown or counted.
+    let kept = |path: &Path| searchable(path, &ctx.excluded);
     let found = match request.output {
-        OutputMode::Content => parse_rg_matches(&stdout).len(),
-        OutputMode::Files | OutputMode::Count => parse_listing(&stdout, request.output).len(),
+        OutputMode::Content => parse_rg_matches(&stdout)
+            .iter()
+            .filter(|m| kept(&m.file_path))
+            .count(),
+        OutputMode::Files | OutputMode::Count => parse_listing(&stdout, request.output)
+            .iter()
+            .filter(|f| kept(Path::new(&f.path)))
+            .count(),
     };
     facts.found = found;
     // rg exits 0 (matches) or 1 (none). Exit 2 is an error, which may
@@ -154,6 +159,7 @@ pub(super) async fn search(
                 max_output_bytes: MAX_OUTPUT_BYTES,
             };
             let mut matches = parse_rg_matches(&stdout);
+            matches.retain(|m| kept(&m.file_path));
             if let Some(query) = &request.rank_by {
                 let ranked = rank(
                     ctx.ranking.as_deref(),
@@ -170,7 +176,10 @@ pub(super) async fn search(
             format_matches(matches, &format).await
         }
         OutputMode::Files | OutputMode::Count => format_listing(
-            parse_listing(&stdout, request.output),
+            parse_listing(&stdout, request.output)
+                .into_iter()
+                .filter(|f| kept(Path::new(&f.path)))
+                .collect(),
             &ListingFormat {
                 workspace: &ctx.workspace,
                 sandbox: &ctx.sandbox,
@@ -184,4 +193,68 @@ pub(super) async fn search(
         [] => result,
         notices => format!("{result}\n\n[{}]", notices.join(". ")),
     })
+}
+
+/// A search's log record, written exactly once: by [`Self::finish`] with
+/// what the search did, or, when the call is dropped before it finishes
+/// (the turn was aborted), as a cancelled search.
+pub(super) struct PendingRecord {
+    log: Option<Arc<dyn SearchLog>>,
+    arguments: String,
+    started: std::time::Instant,
+}
+
+impl PendingRecord {
+    pub(super) fn new(log: Option<Arc<dyn SearchLog>>, arguments: &str) -> Self {
+        Self {
+            log,
+            arguments: arguments.chars().take(MAX_RECORDED_ARGUMENTS).collect(),
+            started: std::time::Instant::now(),
+        }
+    }
+
+    pub(super) fn finish(mut self, facts: SearchFacts, outcome: &Result<ToolResult, DomainError>) {
+        let error = match outcome {
+            Ok(result) if result.is_error => Some(result.content.chars().take(500).collect()),
+            Ok(_) => None,
+            Err(e) => Some(e.to_string()),
+        };
+        if let Some(log) = self.log.take() {
+            log.record(&SearchRecord {
+                arguments: std::mem::take(&mut self.arguments),
+                output: facts.output.unwrap_or("refused").to_string(),
+                found: facts.found,
+                incomplete: facts.incomplete,
+                error,
+                elapsed_ms: elapsed_ms(self.started),
+                ranking: facts.ranking,
+            });
+        }
+    }
+}
+
+impl Drop for PendingRecord {
+    fn drop(&mut self) {
+        if let Some(log) = self.log.take() {
+            log.record(&SearchRecord {
+                arguments: std::mem::take(&mut self.arguments),
+                output: "cancelled".to_string(),
+                found: 0,
+                incomplete: true,
+                error: Some("the search was cancelled before it finished".to_string()),
+                elapsed_ms: elapsed_ms(self.started),
+                ranking: None,
+            });
+        }
+    }
+}
+
+fn elapsed_ms(started: std::time::Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// A path outside every excluded directory. Paths compare by component,
+/// so rg's `<workspace>/./x` is inside `<workspace>/x`'s parents too.
+fn searchable(path: &Path, excluded: &[PathBuf]) -> bool {
+    excluded.iter().all(|dir| !path.starts_with(dir))
 }

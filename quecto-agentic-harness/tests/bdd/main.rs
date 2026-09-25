@@ -736,6 +736,8 @@ pub struct QuectoWorld {
     pub grep_result: Option<quecto::domain::tool::ToolResult>,
     /// A stand-in relevance judge favouring text with this word (#2136).
     pub grep_favours: Option<String>,
+    /// A stand-in relevance judge that cannot answer (#2136).
+    pub grep_judge_down: bool,
     /// Where the grep tool's search log is written (#2136): a base dir
     /// outside the searched workspace, as `~/.quecto` is.
     pub grep_log_dir: Option<PathBuf>,

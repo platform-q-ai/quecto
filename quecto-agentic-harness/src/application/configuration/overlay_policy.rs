@@ -13,7 +13,7 @@
 //!   `"default": true` un-defaults every global entry;
 //! - `workflow` — field-wise (`templates` replaced whole);
 //! - `providers`, `admission` — global-only: an overlay carrying them is
-//!   refused naming the key;
+//!   refused naming the key; so is `tools.grep.relevance` (#2136);
 //! - any other key — replaced whole (unknown keys pass through both files).
 
 use serde_json::{Map, Value};
@@ -47,12 +47,39 @@ pub fn looks_like_config(document: &Value) -> bool {
     })
 }
 
-/// The first global-only key an overlay document carries, if any.
+/// Settings below a section that only the global file may define, as
+/// dotted paths (#2136: turning on ranking sends matching code to TypeSafe,
+/// so a repository cannot switch it on).
+pub const GLOBAL_ONLY_PATHS: &[&str] = &["tools.grep.relevance"];
+
+/// The first global-only key or path an overlay document carries, if any.
 pub fn global_only_key(document: &Map<String, Value>) -> Option<&'static str> {
+    let object = Value::Object(document.clone());
     GLOBAL_ONLY_KEYS
         .iter()
         .copied()
         .find(|key| document.contains_key(*key))
+        .or_else(|| {
+            GLOBAL_ONLY_PATHS
+                .iter()
+                .copied()
+                .find(|path| get_path(&object, path).is_some())
+        })
+}
+
+/// The global-only key or path a dotted key path writes at or under, if
+/// any: an overlay may not write there.
+pub fn global_only_path(segments: &[&str]) -> Option<&'static str> {
+    GLOBAL_ONLY_KEYS
+        .iter()
+        .copied()
+        .find(|key| segments.first() == Some(key))
+        .or_else(|| {
+            GLOBAL_ONLY_PATHS
+                .iter()
+                .copied()
+                .find(|path| segments.starts_with(&path.split('.').collect::<Vec<_>>()))
+        })
 }
 
 /// Merge `overlay` over `global` by the section rules above. Both must be

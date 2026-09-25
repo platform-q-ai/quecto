@@ -335,7 +335,7 @@ fn a_multiline_match_prints_every_line_it_spans() {
 /// Run a tool backed by a freshly written fake rg. Executing a script just
 /// written can fail with ETXTBSY while another test thread's fork briefly
 /// holds its write handle: retry that, and only that.
-async fn execute_fake(
+pub(super) async fn execute_fake(
     tool: &GrepTool,
     args: &str,
 ) -> Result<ToolResult, crate::domain::error::DomainError> {
@@ -351,7 +351,7 @@ async fn execute_fake(
 }
 
 /// A stand-in rg that prints `stdout` then exits with `code`.
-fn fake_rg(dir: &std::path::Path, stdout_command: &str, code: i32) -> String {
+pub(super) fn fake_rg(dir: &std::path::Path, stdout_command: &str, code: i32) -> String {
     use std::os::unix::fs::PermissionsExt;
     let path = dir.join("fake-rg.sh");
     std::fs::write(&path, format!("#!/bin/sh\n{stdout_command}\necho 'rg: ./locked: Permission denied (os error 13)' >&2\nexit {code}\n")).unwrap();
@@ -606,7 +606,7 @@ async fn a_descendant_holding_the_pipes_cannot_hold_the_results() {
 #[test]
 fn rg_runs_without_a_users_config() {
     let request = grep_request::parse_request(&serde_json::json!({"pattern": "x"})).unwrap();
-    let cmd = build_rg_command("rg", Path::new("/ws"), Path::new("/ws"), &request, &[]);
+    let cmd = build_rg_command("rg", Path::new("/ws"), Path::new("/ws"), &request);
     let args: Vec<String> = cmd
         .as_std()
         .get_args()

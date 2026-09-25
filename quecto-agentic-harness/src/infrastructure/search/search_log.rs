@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{Value, json};
 
-use crate::application::search::ports::{SearchLog, SearchRecord};
+use crate::application::search::ports::{RankingRecord, SearchLog, SearchRecord};
 
 pub struct JsonlSearchLog {
     dir: PathBuf,
@@ -34,13 +34,9 @@ impl JsonlSearchLog {
 
     fn append(&self, record: &SearchRecord) -> std::io::Result<()> {
         let now = humantime::format_rfc3339_seconds(std::time::SystemTime::now()).to_string();
-        let mut line = json!({"ts": now, "session": self.session, "tool": "grep"});
-        if let (Value::Object(line), Ok(Value::Object(fields))) =
-            (&mut line, serde_json::to_value(record))
-        {
-            line.extend(fields);
-        }
-        std::fs::create_dir_all(&self.dir)?;
+        let mut line = serde_json::to_vec(&line(&now, &self.session, record))?;
+        line.push(b'\n');
+        create_private_dir(&self.dir)?;
         let date = now.get(..10).unwrap_or("undated");
         let mut options = std::fs::OpenOptions::new();
         options.create(true).append(true);
@@ -50,7 +46,79 @@ impl JsonlSearchLog {
             options.mode(0o600);
         }
         let mut file = options.open(self.dir.join(format!("{date}.jsonl")))?;
-        writeln!(file, "{line}")
+        #[cfg(unix)]
+        {
+            // A file that already existed keeps no looser mode.
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        // One write per record: with O_APPEND, concurrent searches (and
+        // sessions) never interleave within a line.
+        file.write_all(&line)
+    }
+}
+
+/// The directory, private to the user.
+fn create_private_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir)
+}
+
+/// One log line: the record's fields, with its time and session. The
+/// arguments are embedded as JSON when they are JSON, else as text.
+fn line(now: &str, session: &str, record: &SearchRecord) -> Value {
+    let arguments = serde_json::from_str::<Value>(&record.arguments)
+        .unwrap_or_else(|_| Value::String(record.arguments.clone()));
+    json!({
+        "ts": now,
+        "session": session,
+        "tool": "grep",
+        "arguments": arguments,
+        "output": record.output,
+        "found": record.found,
+        "incomplete": record.incomplete,
+        "error": record.error,
+        "elapsed_ms": record.elapsed_ms,
+        "ranking": record.ranking.as_ref().map(ranking),
+    })
+}
+
+fn ranking(record: &RankingRecord) -> Value {
+    match record {
+        RankingRecord::Ranked {
+            query,
+            candidates,
+            scores,
+            elapsed_ms,
+        } => json!({
+            "status": "ranked",
+            "query": query,
+            "candidates": candidates,
+            "scores": scores
+                .iter()
+                .map(|s| json!({"location": s.location, "score": s.score}))
+                .collect::<Vec<_>>(),
+            "elapsed_ms": elapsed_ms,
+        }),
+        RankingRecord::Unavailable {
+            query,
+            reason,
+            elapsed_ms,
+        } => json!({
+            "status": "unavailable",
+            "query": query,
+            "reason": reason,
+            "elapsed_ms": elapsed_ms,
+        }),
+        RankingRecord::NotConfigured { query } => {
+            json!({"status": "not_configured", "query": query})
+        }
     }
 }
 

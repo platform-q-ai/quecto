@@ -32,7 +32,7 @@ use crate::application::configuration::dto::{
     ConfigLayer, ConfigPatch, ConfigPatchError, ConfigPatchReceipt, ConfigSelection, ConfigUnset,
 };
 use crate::application::configuration::overlay_policy::{
-    GLOBAL_ONLY_KEYS, key_segments, remove_path, set_path,
+    global_only_key, global_only_path, key_segments, remove_path, set_path,
 };
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, OverlayDocument, OverlayTrust,
@@ -117,10 +117,10 @@ impl PatchConfiguration {
         let path = path.as_path();
         let segments = key_segments(key_path)
             .ok_or_else(|| ConfigPatchError::InvalidKeyPath(key_path.to_string()))?;
-        if layer == ConfigLayer::Overlay && GLOBAL_ONLY_KEYS.contains(&segments[0]) {
+        if let (ConfigLayer::Overlay, Some(key)) = (layer, global_only_path(&segments)) {
             return Err(ConfigPatchError::GlobalOnlyKey {
                 path: path.to_path_buf(),
-                key: segments[0].to_string(),
+                key: key.to_string(),
             });
         }
         // Held until the write has landed (or the patch is refused): what
@@ -151,6 +151,15 @@ impl PatchConfiguration {
             None => Value::Object(Map::new()),
         };
         mutate(&mut document, path)?;
+        // A parent written whole may carry a global-only setting too.
+        if let (ConfigLayer::Overlay, Some(key)) =
+            (layer, document.as_object().and_then(global_only_key))
+        {
+            return Err(ConfigPatchError::GlobalOnlyKey {
+                path: path.to_path_buf(),
+                key: key.to_string(),
+            });
+        }
         self.check(selection, layer, path, &document)?;
         let written =
             self.writer

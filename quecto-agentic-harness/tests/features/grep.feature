@@ -253,6 +253,21 @@ Feature: Grep Tool
     And the grep result should not be an error
 
   @done @issue-2136
+  Scenario: rank_by when the judge cannot answer still searches, in rg order, and says why
+    Given grep ranks matches with a judge that cannot answer
+    And a grep workspace file "b.rs" with content:
+      """
+      fn retry_delay() {}
+      """
+    When I grep with arguments:
+      """
+      {"pattern": "retry", "rank_by": "the retry delay"}
+      """
+    Then the grep result should contain "b.rs:1: fn retry_delay() {}"
+    And the grep result should contain "rank_by unavailable: TypeSafe answered HTTP 529; results are in rg order"
+    And the grep result should not be an error
+
+  @done @issue-2136
   Scenario: rank_by where ranking is not configured still searches and says so
     Given a grep workspace file "b.rs" with content:
       """

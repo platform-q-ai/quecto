@@ -3,7 +3,7 @@ use crate::application::search::ports::{RankingRecord, ScoredLocation};
 
 fn record(found: usize, ranking: Option<RankingRecord>) -> SearchRecord {
     SearchRecord {
-        arguments: json!({"pattern": "retry", "rank_by": "backoff"}),
+        arguments: r#"{"pattern": "retry", "rank_by": "backoff"}"#.into(),
         output: "content".into(),
         found,
         incomplete: false,
@@ -73,4 +73,38 @@ fn an_unwritable_log_is_skipped() {
     let log = JsonlSearchLog::new(base.path(), "chat-1");
     log.record(&record(1, None));
     log.record(&record(1, None));
+}
+
+/// Arguments that were not JSON are kept as text; a file that already
+/// existed with a looser mode is made private.
+#[cfg(unix)]
+#[test]
+fn raw_arguments_are_text_and_an_existing_file_is_made_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let base = tempfile::TempDir::new().unwrap();
+    let log = JsonlSearchLog::new(base.path(), "chat-1");
+    log.record(&record(0, None));
+    let file = std::fs::read_dir(base.path().join("search-log"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let mut raw = record(0, None);
+    raw.arguments = "{not json".into();
+    log.record(&raw);
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let last: Value = serde_json::from_str(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(last["arguments"], "{not json");
 }

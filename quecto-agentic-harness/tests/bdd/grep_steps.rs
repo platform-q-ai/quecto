@@ -34,6 +34,9 @@ fn make_grep_tool(world: &mut QuectoWorld) -> GrepTool {
     if let Some(word) = world.grep_favours.clone() {
         tool = tool.with_relevance(Arc::new(FavouringJudge(word)), 30);
     }
+    if world.grep_judge_down {
+        tool = tool.with_relevance(Arc::new(DownJudge), 30);
+    }
     if let Some(dir) = world.grep_log_dir.clone() {
         tool = tool.with_search_log(Arc::new(JsonlSearchLog::new(&dir, "bdd-session")));
     }
@@ -55,6 +58,19 @@ impl RelevanceJudge for FavouringJudge {
             .map(|c| Some(if c.text.contains(&self.0) { 0.9 } else { 0.1 }))
             .collect();
         Box::pin(async move { Relevance::Scored(scores) })
+    }
+}
+
+/// A stand-in for TypeSafe when it cannot answer.
+struct DownJudge;
+
+impl RelevanceJudge for DownJudge {
+    fn judge<'a>(
+        &'a self,
+        _query: &'a str,
+        _candidates: &'a [RelevanceCandidate],
+    ) -> PortFuture<'a, Relevance> {
+        Box::pin(async { Relevance::Unavailable("TypeSafe answered HTTP 529".to_string()) })
     }
 }
 
@@ -271,6 +287,11 @@ fn then_grep_lists_before(world: &mut QuectoWorld, first: String, second: String
 #[given(regex = r#"^grep ranks matches with a stand-in judge that favours "([^"]+)"$"#)]
 fn given_grep_judge(world: &mut QuectoWorld, word: String) {
     world.grep_favours = Some(word);
+}
+
+#[given("grep ranks matches with a judge that cannot answer")]
+fn given_grep_judge_down(world: &mut QuectoWorld) {
+    world.grep_judge_down = true;
 }
 
 #[given("grep records its searches in a local search log")]

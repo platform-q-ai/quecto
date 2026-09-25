@@ -41,8 +41,7 @@ pub trait RelevanceJudge: Send + Sync {
 }
 
 /// How ranking went for one search.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[serde(rename_all = "snake_case", tag = "status")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RankingRecord {
     /// Hits were scored; the scores as judged, by location.
     Ranked {
@@ -62,17 +61,18 @@ pub enum RankingRecord {
 }
 
 /// One judged hit.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ScoredLocation {
     pub location: String,
     pub score: Option<f64>,
 }
 
 /// One search, as recorded.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SearchRecord {
-    /// The tool's arguments, as the model sent them.
-    pub arguments: serde_json::Value,
+    /// The tool's arguments as the model sent them (JSON text, or whatever
+    /// it sent when that was not JSON), cut at [`MAX_RECORDED_ARGUMENTS`].
+    pub arguments: String,
     /// `content`, `files`, `count`, or `refused` for arguments the tool
     /// could not honour.
     pub output: String,
@@ -86,6 +86,9 @@ pub struct SearchRecord {
     pub elapsed_ms: u64,
     pub ranking: Option<RankingRecord>,
 }
+
+/// The most characters of a search's arguments a record keeps.
+pub const MAX_RECORDED_ARGUMENTS: usize = 2000;
 
 /// Records searches. Best effort: recording never fails a search.
 pub trait SearchLog: Send + Sync {
