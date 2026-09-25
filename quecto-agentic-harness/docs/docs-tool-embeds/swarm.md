@@ -193,6 +193,10 @@ names the execution workspace inside the container; join it with each
 output paging and synchronous spills use the same namespace. These are not host
 paths. The SQLite board is `.quecto/swarm.sqlite`; old execution directories may
 be pruned, so copy important evidence to durable report files before cleanup.
+Never run `git clean -x` (or delete `.quecto/`) in a swarm checkout: it deletes
+the board, the run cannot continue, and every call fails with
+`coordination store missing at <path>`. `git stash -u` and `git clean -fd` are
+safe: the board is in the checkout's `.git/info/exclude`.
 
 ## Workflow exclusion and awaiting approval
 

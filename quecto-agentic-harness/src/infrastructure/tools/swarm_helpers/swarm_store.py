@@ -66,10 +66,17 @@ class Store:
     @contextlib.contextmanager
     def transaction(self, create=False):
         db = None
+        import pathlib
+        path = pathlib.Path(self.path).absolute()
+        # A store removed from under a run (#2145) says where and why, not
+        # "unavailable or contended": mode=rw below never recreates it.
+        if not create and not path.exists():
+            raise SwarmError(
+                f'coordination store missing at {path}: it was removed from the checkout '
+                '(`git clean` or `git stash -u` remove it), so this run\'s board is lost')
         try:
             # mode=rw avoids fabricating a fresh board when the store is lost.
-            import pathlib
-            uri = pathlib.Path(self.path).absolute().as_uri() + ('?mode=rwc' if create else '?mode=rw')
+            uri = path.as_uri() + ('?mode=rwc' if create else '?mode=rw')
             db = sqlite3.connect(uri, uri=True, timeout=0.5, isolation_level=None)
             db.row_factory = sqlite3.Row
             db.execute('PRAGMA foreign_keys=ON')

@@ -152,6 +152,13 @@ helper sources directly and binds the invoking member; neither `PYTHONPATH` nor
 an importable file in the checkout controls the helper. Python variables do not
 persist. The SQLite database at `.quecto/swarm.sqlite` does.
 
+The board is a file in the checkout, so every container agent lists it (with its
+journal files and `.quecto/swarm/`) in the checkout's local `.git/info/exclude`:
+`git stash -u`, `git clean -fd` and `git add -A` leave it alone. `git clean -x`
+still deletes it; never run that on a swarm checkout. A board removed from under
+a run cannot be recreated, and every call then fails with
+`coordination store missing at <path>` (#2145).
+
 ```python
 from swarm import board
 

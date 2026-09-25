@@ -72,6 +72,7 @@ mod swarm_board_worker;
 pub mod swarm_bridge;
 mod swarm_config;
 pub mod swarm_control;
+mod swarm_git_exclude;
 #[cfg(test)]
 mod swarm_job_tests;
 pub mod swarm_lifecycle;

@@ -24,6 +24,12 @@ pub fn join_current_process(
     }
     std::fs::create_dir_all(context.checkout.join(".quecto"))
         .map_err(|e| DomainError::Tool(format!("swarm storage: {e}")))?;
+    // #2145: an agent's `git stash -u` or `git clean -fd` must not delete
+    // the store. Failing to say so to git leaves the store as it was: the
+    // join goes on, with the reason logged.
+    if let Err(error) = super::swarm_git_exclude::exclude_from_git(&context.checkout) {
+        tracing::warn!(%error, "swarm store could not be excluded from git");
+    }
     let pid = std::process::id();
     let started = process_start(pid)
         .ok_or_else(|| DomainError::Tool("swarm requires Linux procfs process identity".into()))?;
