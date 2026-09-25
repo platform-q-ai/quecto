@@ -216,7 +216,11 @@ impl MatchLines {
     /// first match record past `max`, if one has been read.
     pub(super) fn find_past(&mut self, bytes: &[u8], max: usize) -> Option<usize> {
         loop {
-            let from = self.scanned.max(self.next);
+            debug_assert!(
+                self.scanned >= self.next,
+                "the scan starts in the current line"
+            );
+            let from = self.scanned;
             let Some(offset) = bytes[from..].iter().position(|b| *b == b'\n') else {
                 self.scanned = bytes.len();
                 return None;

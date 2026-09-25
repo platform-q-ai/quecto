@@ -364,3 +364,23 @@ async fn a_cut_made_before_the_timeout_is_reported_as_the_cut() {
     assert!(tail.contains("rg found more than 20 matches"), "{tail}");
     assert!(!tail.contains("did not finish"), "{tail}");
 }
+
+/// An 8 MiB line arriving 8 KiB at a time costs one pass: rescanning it
+/// from its start on every read would take seconds (#2142 review).
+#[test]
+fn a_long_line_arriving_in_pieces_is_counted_in_one_pass() {
+    use super::grep_run::MatchLines;
+    let mut lines = MatchLines::default();
+    let mut bytes = Vec::with_capacity(8 * 1024 * 1024);
+    let piece = [b'x'; 8192];
+    let started = std::time::Instant::now();
+    for _ in 0..1024 {
+        bytes.extend_from_slice(&piece);
+        assert_eq!(lines.find_past(&bytes, 1), None);
+    }
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+}
