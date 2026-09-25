@@ -184,6 +184,18 @@ fn a_board_found_is_pinned_and_a_later_layout_change_fails_closed() {
         plain.path().join(".quecto/swarm.sqlite")
     );
     assert_eq!(run_id(&context), id);
+    // However the checkout is spelled, the pin holds.
+    let links = tempfile::tempdir().unwrap();
+    let spelled = links.path().join("checkout");
+    std::os::unix::fs::symlink(plain.path(), &spelled).unwrap();
+    let respelled = SwarmContext {
+        checkout: spelled,
+        ..context.clone()
+    };
+    assert_eq!(
+        respelled.database(),
+        plain.path().join(".quecto/swarm.sqlite")
+    );
     forget_pin(plain.path());
     let newcomer = SwarmContext {
         member: "late".into(),
@@ -385,4 +397,22 @@ fn the_host_finds_no_run_where_there_is_no_store_file() {
     assert!(hosted.hosted_run().unwrap().is_none());
     std::fs::create_dir_all(repo.path().join(".quecto/swarm.sqlite")).unwrap();
     assert!(hosted.hosted_run().unwrap().is_none());
+}
+
+/// The host pins nothing: once a checkout's layout places a new board (here
+/// a checkout that gained a git directory and a new run), the host reads
+/// that board, not the one it read before.
+#[test]
+fn the_host_follows_the_layout_on_every_read() {
+    let plain = tempfile::tempdir().unwrap();
+    let (_, first) = created_run(plain.path());
+    let hosted = super::super::swarm_bridge::HostedStore::at(plain.path().to_path_buf());
+    let run = hosted.hosted_run().unwrap().expect("the first board");
+    assert_eq!(serde_json::Value::from(run.id).to_string(), first);
+    git(plain.path(), &["init", "-q"]);
+    forget_pin(plain.path());
+    let (_, second) = created_run(plain.path());
+    assert_ne!(first, second);
+    let run = hosted.hosted_run().unwrap().expect("the second board");
+    assert_eq!(serde_json::Value::from(run.id).to_string(), second);
 }
