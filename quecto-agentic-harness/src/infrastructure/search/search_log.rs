@@ -95,11 +95,13 @@ fn ranking(record: &RankingRecord) -> Value {
             query,
             candidates,
             scores,
+            unjudged_reason,
             elapsed_ms,
         } => json!({
             "status": "ranked",
             "query": query,
             "candidates": candidates,
+            "unjudged_reason": unjudged_reason,
             "scores": scores
                 .iter()
                 .map(|s| json!({"location": s.location, "score": s.score}))

@@ -51,8 +51,10 @@ impl TypeSafeJudge {
         model: &str,
         timeout: Duration,
     ) -> Result<Self, String> {
+        // The client's own bound sits past the judging deadline, so the
+        // deadline decides (keeping the scores already judged).
         let client = reqwest::Client::builder()
-            .timeout(timeout)
+            .timeout(timeout + Duration::from_secs(1))
             .build()
             .map_err(|e| format!("the TypeSafe HTTP client could not be built: {e}"))?;
         Ok(Self {
@@ -152,18 +154,30 @@ impl RelevanceJudge for TypeSafeJudge {
                     }
                 }
             }
-            let timeout = || {
-                format!(
-                    "TypeSafe did not answer within {} s",
-                    self.timeout.as_secs()
-                )
+            // Why some were not judged: the deadline, the first error, or
+            // both (a timeout never hides a rejected key).
+            let deadline = timed_out
+                .then(|| format!("TypeSafe did not answer within {}", human(self.timeout)));
+            let reason = match (deadline, first_error) {
+                (Some(deadline), Some(error)) => Some(format!("{deadline}; first error: {error}")),
+                (Some(only), None) | (None, Some(only)) => Some(only),
+                (None, None) => None,
             };
-            match (scores.iter().any(Option::is_some), first_error, timed_out) {
-                (true, _, _) | (false, None, false) => Relevance::Scored(scores),
-                (false, Some(error), false) => Relevance::Unavailable(error),
-                (false, _, true) => Relevance::Unavailable(timeout()),
+            match (scores.iter().any(Option::is_some), reason) {
+                (_, None) => Relevance::Scored(scores),
+                (true, Some(reason)) => Relevance::Partial(scores, reason),
+                (false, Some(reason)) => Relevance::Unavailable(reason),
             }
         })
+    }
+}
+
+/// `10 s`, or `700 ms` below a second.
+fn human(duration: Duration) -> String {
+    if duration.as_secs() >= 1 {
+        format!("{} s", duration.as_secs())
+    } else {
+        format!("{} ms", duration.as_millis())
     }
 }
 

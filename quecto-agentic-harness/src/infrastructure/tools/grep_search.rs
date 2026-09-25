@@ -86,8 +86,21 @@ pub(super) async fn search(
     let stderr = String::from_utf8_lossy(&rg.stderr).into_owned();
     let stdout = String::from_utf8_lossy(&rg.stdout).into_owned();
     // What rg found outside the excluded directories (the search log's
-    // own), which are never shown or counted.
-    let kept = |path: &Path| searchable(path, &ctx.excluded);
+    // own), which are never shown or counted. Both sides are resolved, so
+    // `..`, a symlink or an aliased home cannot bring the log back.
+    let excluded: Vec<PathBuf> = ctx
+        .excluded
+        .iter()
+        .filter_map(|dir| std::fs::canonicalize(dir).ok())
+        .collect();
+    let mut verdicts: std::collections::HashMap<PathBuf, bool> = Default::default();
+    let mut kept = |path: &Path| match excluded.as_slice() {
+        [] => true,
+        dirs => *verdicts.entry(path.to_path_buf()).or_insert_with(|| {
+            let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+            searchable(&real, dirs)
+        }),
+    };
     let found = match request.output {
         OutputMode::Content => parse_rg_matches(&stdout)
             .iter()
@@ -236,12 +249,17 @@ impl PendingRecord {
 impl Drop for PendingRecord {
     fn drop(&mut self) {
         if let Some(log) = self.log.take() {
+            let (output, error) = if std::thread::panicking() {
+                ("failed", "the search panicked")
+            } else {
+                ("cancelled", "the search was cancelled before it finished")
+            };
             log.record(&SearchRecord {
                 arguments: std::mem::take(&mut self.arguments),
-                output: "cancelled".to_string(),
+                output: output.to_string(),
                 found: 0,
                 incomplete: true,
-                error: Some("the search was cancelled before it finished".to_string()),
+                error: Some(error.to_string()),
                 elapsed_ms: elapsed_ms(self.started),
                 ranking: None,
             });
@@ -253,8 +271,7 @@ fn elapsed_ms(started: std::time::Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
-/// A path outside every excluded directory. Paths compare by component,
-/// so rg's `<workspace>/./x` is inside `<workspace>/x`'s parents too.
+/// A resolved path outside every (resolved) excluded directory.
 fn searchable(path: &Path, excluded: &[PathBuf]) -> bool {
     excluded.iter().all(|dir| !path.starts_with(dir))
 }

@@ -32,7 +32,7 @@ use crate::application::configuration::dto::{
     ConfigLayer, ConfigPatch, ConfigPatchError, ConfigPatchReceipt, ConfigSelection, ConfigUnset,
 };
 use crate::application::configuration::overlay_policy::{
-    global_only_key, global_only_path, key_segments, remove_path, set_path,
+    global_only_path, global_only_values, key_segments, remove_path, set_path,
 };
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, OverlayDocument, OverlayTrust,
@@ -150,11 +150,22 @@ impl PatchConfiguration {
             }
             None => Value::Object(Map::new()),
         };
+        let refused_before = document
+            .as_object()
+            .map(global_only_values)
+            .unwrap_or_default();
         mutate(&mut document, path)?;
-        // A parent written whole may carry a global-only setting too.
-        if let (ConfigLayer::Overlay, Some(key)) =
-            (layer, document.as_object().and_then(global_only_key))
-        {
+        // The write may not bring in or change a global-only setting
+        // (directly or in a parent written whole); an overlay already
+        // carrying one can still be repaired, or patched elsewhere.
+        let introduced = document
+            .as_object()
+            .map(global_only_values)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|violation| !refused_before.contains(violation))
+            .map(|(key, _)| key);
+        if let (ConfigLayer::Overlay, Some(key)) = (layer, introduced) {
             return Err(ConfigPatchError::GlobalOnlyKey {
                 path: path.to_path_buf(),
                 key: key.to_string(),

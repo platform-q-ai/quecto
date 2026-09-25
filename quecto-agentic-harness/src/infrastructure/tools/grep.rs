@@ -84,8 +84,14 @@ impl GrepTool {
         self
     }
 
-    /// Never search `dir` (an absolute path; the search log's own).
+    /// Never show results from under `dir` (an absolute path; the search
+    /// log's own).
     pub fn excluding(mut self, dir: PathBuf) -> Self {
+        assert!(
+            dir.is_absolute(),
+            "an excluded directory is absolute: {}",
+            dir.display()
+        );
         self.excluded.push(dir);
         self
     }
@@ -148,11 +154,11 @@ impl Tool for GrepTool {
             ranking: self.ranking.clone(),
             excluded: self.excluded.clone(),
         };
-        let log = self.search_log.clone();
+        // Recorded once however the call ends: made before the future so a
+        // call dropped before its first poll is recorded too.
+        let pending = PendingRecord::new(self.search_log.clone(), &raw);
 
         Box::pin(async move {
-            // Recorded once however the call ends, a cancelled one included.
-            let pending = PendingRecord::new(log, &raw);
             let mut facts = SearchFacts::default();
             let outcome = match serde_json::from_str::<serde_json::Value>(&raw) {
                 Ok(args) => search(&ctx, &args, &mut facts).await,

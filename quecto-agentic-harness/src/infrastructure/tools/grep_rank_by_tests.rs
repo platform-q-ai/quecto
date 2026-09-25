@@ -28,6 +28,24 @@ impl RelevanceJudge for KeywordJudge {
 #[derive(Default)]
 struct RecordingLog(Mutex<Vec<SearchRecord>>);
 
+impl RecordingLog {
+    /// The records, without the retried spawns of a just-written fake rg
+    /// (ETXTBSY, see `execute_fake`): each retry is a search of its own.
+    fn searches(&self) -> Vec<SearchRecord> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| {
+                !r.error
+                    .as_deref()
+                    .is_some_and(|e| e.contains("Text file busy"))
+            })
+            .cloned()
+            .collect()
+    }
+}
+
 impl SearchLog for RecordingLog {
     fn record(&self, record: &SearchRecord) {
         self.0.lock().unwrap().push(record.clone());
@@ -206,7 +224,7 @@ async fn a_cancelled_search_is_recorded_as_cancelled() {
     let call = execute_fake(&tool, r#"{"pattern": "x"}"#);
     let dropped = tokio::time::timeout(std::time::Duration::from_millis(300), call).await;
     assert!(dropped.is_err(), "the search was still running");
-    let records = log.0.lock().unwrap();
+    let records = log.searches();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].output, "cancelled");
     assert!(records[0].incomplete);
@@ -226,7 +244,7 @@ async fn failed_searches_are_recorded_with_their_error() {
     execute_fake(&slow, r#"{"pattern": "x"}"#)
         .await
         .unwrap_err();
-    let records = log.0.lock().unwrap();
+    let records = log.searches();
     assert_eq!(records.len(), 2);
     assert!(
         records[0]
@@ -261,7 +279,7 @@ async fn a_capped_search_is_recorded_as_incomplete() {
     execute_fake(&tool, r#"{"pattern": "x", "output": "files"}"#)
         .await
         .unwrap();
-    let records = log.0.lock().unwrap();
+    let records = log.searches();
     assert!(records[0].incomplete, "{:?}", records[0]);
     assert!(records[0].found > 0);
 }
@@ -287,4 +305,59 @@ async fn the_search_log_is_never_searched() {
         "{}",
         result.content
     );
+}
+
+/// The log stays out of results however it is reached: through `..` or
+/// through a symlink.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_search_log_stays_out_through_dot_dot_and_symlinks() {
+    let root = TempDir::new().unwrap();
+    let ws = root.path().join("ws");
+    let log_dir = root.path().join("base/search-log");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("2026-09-25.jsonl"), r#"{"pattern":"retry"}"#).unwrap();
+    std::os::unix::fs::symlink(root.path().join("base"), ws.join("link")).unwrap();
+    let tool = GrepTool::new(Arc::new(ws.clone()), Arc::new(Sandbox::new(None))).excluding(log_dir);
+    for path in ["../base", "link"] {
+        let result = tool
+            .execute(&format!(
+                r#"{{"pattern": "retry", "path": "{path}", "output": "files"}}"#
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            result.content, "No matches found",
+            "{path}: {}",
+            result.content
+        );
+    }
+}
+
+/// A call dropped before it is ever polled is still recorded, as cancelled.
+#[tokio::test]
+async fn a_call_dropped_before_it_runs_is_recorded() {
+    let tmp = workspace();
+    let log = Arc::new(RecordingLog::default());
+    let tool = tool(&tmp).with_search_log(log.clone());
+    drop(tool.execute(r#"{"pattern": "retry"}"#));
+    let records = log.0.lock().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].output, "cancelled");
+}
+
+/// A search that panics is recorded as failed, not as cancelled.
+#[test]
+fn a_panicking_search_is_recorded_as_failed() {
+    let log = Arc::new(RecordingLog::default());
+    let pending = grep_search::PendingRecord::new(Some(log.clone()), r#"{"pattern":"x"}"#);
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let _held = pending;
+        panic!("a bug in the search");
+    }));
+    assert!(outcome.is_err());
+    let records = log.0.lock().unwrap();
+    assert_eq!(records[0].output, "failed");
+    assert_eq!(records[0].error.as_deref(), Some("the search panicked"));
 }

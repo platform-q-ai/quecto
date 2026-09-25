@@ -29,6 +29,7 @@ fn each_search_is_one_json_line_in_the_days_file() {
                 location: "a.rs:1".into(),
                 score: Some(0.9),
             }],
+            unjudged_reason: None,
             elapsed_ms: 40,
         }),
     ));

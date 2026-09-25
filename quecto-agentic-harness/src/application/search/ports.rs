@@ -26,6 +26,9 @@ pub enum Relevance {
     /// what the query describes; `None` for a candidate that could not be
     /// judged.
     Scored(Vec<Option<f64>>),
+    /// Like `Scored`, but some candidates could not be judged, and why (a
+    /// deadline, or the first error).
+    Partial(Vec<Option<f64>>, String),
     /// No candidate could be judged, and why (for the agent and the log).
     Unavailable(String),
 }
@@ -48,6 +51,8 @@ pub enum RankingRecord {
         query: String,
         candidates: usize,
         scores: Vec<ScoredLocation>,
+        /// Why some were not judged, when some were not.
+        unjudged_reason: Option<String>,
         elapsed_ms: u64,
     },
     /// Ranking was asked for but could not be done.

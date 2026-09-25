@@ -44,10 +44,15 @@ pub fn build_grep_tool(
     }
     if wiring.config.log.enabled {
         let log = JsonlSearchLog::new(Path::new(&wiring.base_dir), &wiring.session_key);
-        // The log must never be searched: its lines hold past patterns.
-        tool = tool
-            .excluding(log.dir().to_path_buf())
-            .with_search_log(Arc::new(log));
+        // Results from the log are never shown: its lines hold past
+        // patterns. A relative base dir is taken from the working directory.
+        match std::path::absolute(log.dir()) {
+            Ok(dir) => tool = tool.excluding(dir),
+            Err(error) => {
+                tracing::warn!(%error, "the search log's directory could not be resolved; its results are not filtered")
+            }
+        }
+        tool = tool.with_search_log(Arc::new(log));
     }
     Arc::new(tool)
 }

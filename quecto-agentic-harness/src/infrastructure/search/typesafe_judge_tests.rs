@@ -67,7 +67,10 @@ async fn failures_leave_hits_unscored_and_all_failing_is_unavailable() {
     let judged = judge(&server, Duration::from_secs(5))
         .judge("q", &[candidate("ok.rs:1"), candidate("bad.rs:1")])
         .await;
-    assert_eq!(judged, Relevance::Scored(vec![Some(0.7), None]));
+    assert_eq!(
+        judged,
+        Relevance::Partial(vec![Some(0.7), None], "TypeSafe answered HTTP 529".into())
+    );
 
     let rejected = MockServer::start().await;
     Mock::given(method("POST"))
@@ -165,5 +168,11 @@ async fn at_the_deadline_the_scores_already_judged_are_kept() {
         "{:?}",
         started.elapsed()
     );
-    assert_eq!(answer, Relevance::Scored(vec![Some(0.8), None]));
+    assert_eq!(
+        answer,
+        Relevance::Partial(
+            vec![Some(0.8), None],
+            "TypeSafe did not answer within 700 ms".into()
+        )
+    );
 }

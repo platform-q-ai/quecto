@@ -13,7 +13,8 @@
 //!   `"default": true` un-defaults every global entry;
 //! - `workflow` — field-wise (`templates` replaced whole);
 //! - `providers`, `admission` — global-only: an overlay carrying them is
-//!   refused naming the key; so is `tools.grep.relevance` (#2136);
+//!   refused naming the key; so is an overlay turning `tools.grep.relevance`
+//!   on or `tools.grep.log` off (#2136; see [`GLOBAL_ONLY_PATHS`]);
 //! - any other key — replaced whole (unknown keys pass through both files).
 
 use serde_json::{Map, Value};
@@ -47,14 +48,28 @@ pub fn looks_like_config(document: &Value) -> bool {
     })
 }
 
-/// Settings below a section that only the global file may define, as
-/// dotted paths (#2136: turning on ranking sends matching code to TypeSafe,
-/// so a repository cannot switch it on).
-pub const GLOBAL_ONLY_PATHS: &[&str] = &["tools.grep.relevance"];
+/// Settings a repository overlay may only narrow (#2136): what it may set
+/// there is allowlisted, anything else is global-only. Ranking sends
+/// matching code to TypeSafe, so an overlay may turn it off but never on;
+/// the search log is the owner's, so an overlay may not turn it off.
+pub const GLOBAL_ONLY_PATHS: &[(&str, fn(&Value) -> bool)] = &[
+    ("tools.grep.relevance", ranking_off),
+    ("tools.grep.log", logging_on),
+];
 
-/// The first global-only key or path an overlay document carries, if any.
+/// `{"enabled": false}`: ranking switched off.
+fn ranking_off(value: &Value) -> bool {
+    *value == serde_json::json!({"enabled": false})
+}
+
+/// `{"enabled": true}`: the search log kept on.
+fn logging_on(value: &Value) -> bool {
+    *value == serde_json::json!({"enabled": true})
+}
+
+/// The first global-only key, or global-only path set to a value an overlay
+/// may not carry, in an overlay document.
 pub fn global_only_key(document: &Map<String, Value>) -> Option<&'static str> {
-    let object = Value::Object(document.clone());
     GLOBAL_ONLY_KEYS
         .iter()
         .copied()
@@ -62,24 +77,41 @@ pub fn global_only_key(document: &Map<String, Value>) -> Option<&'static str> {
         .or_else(|| {
             GLOBAL_ONLY_PATHS
                 .iter()
-                .copied()
-                .find(|path| get_path(&object, path).is_some())
+                .find(|(path, allowed)| {
+                    path_in(document, path).is_some_and(|value| !allowed(value))
+                })
+                .map(|(path, _)| *path)
         })
 }
 
-/// The global-only key or path a dotted key path writes at or under, if
-/// any: an overlay may not write there.
+/// Each global-only path an overlay document sets to a value an overlay may
+/// not carry, with that value.
+pub fn global_only_values(document: &Map<String, Value>) -> Vec<(&'static str, Value)> {
+    GLOBAL_ONLY_PATHS
+        .iter()
+        .filter_map(|(path, allowed)| {
+            path_in(document, path)
+                .filter(|value| !allowed(value))
+                .map(|value| (*path, value.clone()))
+        })
+        .collect()
+}
+
+/// The value at a dotted path of `document`, walking its objects.
+fn path_in<'a>(document: &'a Map<String, Value>, path: &str) -> Option<&'a Value> {
+    let mut segments = path.split('.');
+    let first = document.get(segments.next()?)?;
+    segments.try_fold(first, |value, segment| value.get(segment))
+}
+
+/// A top-level global-only key a dotted key path writes under, if any: an
+/// overlay may not write there at all. (Global-only paths are judged by the
+/// value written, after the write: see [`global_only_key`].)
 pub fn global_only_path(segments: &[&str]) -> Option<&'static str> {
     GLOBAL_ONLY_KEYS
         .iter()
         .copied()
         .find(|key| segments.first() == Some(key))
-        .or_else(|| {
-            GLOBAL_ONLY_PATHS
-                .iter()
-                .copied()
-                .find(|path| segments.starts_with(&path.split('.').collect::<Vec<_>>()))
-        })
 }
 
 /// Merge `overlay` over `global` by the section rules above. Both must be

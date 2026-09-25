@@ -73,7 +73,7 @@ async fn a_failed_candidate_is_unscored_and_all_failing_is_unavailable() {
             .await
             .judge("q", &[candidate("a.rs:1"), candidate("b.rs:1")])
             .await,
-        Relevance::Scored(vec![Some(0.5), None])
+        Relevance::Partial(vec![Some(0.5), None], "TypeSafe answered HTTP 500".into())
     );
     let down = MockServer::start().await;
     Mock::given(method("POST"))

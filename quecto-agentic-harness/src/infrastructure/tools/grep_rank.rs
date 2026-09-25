@@ -91,15 +91,26 @@ pub(super) async fn rank(
         candidates => ranking.judge.judge(query, candidates).await,
     };
     let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    match relevance {
-        Relevance::Scored(answered) if answered.len() == sendable.len() => {
-            let mut scores = vec![None; judged];
-            for ((index, _), score) in sendable.iter().zip(answered) {
-                scores[*index] = score;
-            }
-            ranked(matches, &scores, &locations, query, elapsed_ms)
+    let (answered, unjudged_reason) = match relevance {
+        Relevance::Scored(answered) => (answered, None),
+        Relevance::Partial(answered, reason) => (answered, Some(reason)),
+        Relevance::Unavailable(reason) => return unavailable(matches, query, reason, elapsed_ms),
+    };
+    if answered.len() == sendable.len() {
+        let mut scores = vec![None; judged];
+        for ((index, _), score) in sendable.iter().zip(answered) {
+            scores[*index] = score;
         }
-        Relevance::Scored(answered) => unavailable(
+        ranked(
+            matches,
+            &scores,
+            &locations,
+            query,
+            unjudged_reason,
+            elapsed_ms,
+        )
+    } else {
+        unavailable(
             matches,
             query,
             format!(
@@ -108,8 +119,7 @@ pub(super) async fn rank(
                 sendable.len()
             ),
             elapsed_ms,
-        ),
-        Relevance::Unavailable(reason) => unavailable(matches, query, reason, elapsed_ms),
+        )
     }
 }
 
@@ -119,6 +129,7 @@ fn ranked(
     scores: &[Option<f64>],
     locations: &[String],
     query: &str,
+    unjudged_reason: Option<String>,
     elapsed_ms: u64,
 ) -> Ranked {
     let judged = scores.len();
@@ -147,8 +158,12 @@ fn ranked(
     let unscored = scores.iter().filter(|score| score.is_none()).count();
     let mut notes = Vec::new();
     if unscored > 0 {
+        let why = unjudged_reason
+            .as_deref()
+            .map(|reason| format!(" ({reason})"))
+            .unwrap_or_default();
         notes.push(format!(
-            "{unscored} of {judged} matches could not be judged and follow the ranked ones"
+            "{unscored} of {judged} matches could not be judged{why} and follow the ranked ones"
         ));
     }
     if total > judged {
@@ -166,6 +181,7 @@ fn ranked(
             query: query.to_string(),
             candidates: judged,
             scores: record,
+            unjudged_reason,
             elapsed_ms,
         },
     }
