@@ -184,7 +184,7 @@ fn a_board_found_is_pinned_and_a_later_layout_change_fails_closed() {
         plain.path().join(".quecto/swarm.sqlite")
     );
     assert_eq!(run_id(&context), id);
-    forget_pins();
+    forget_pin(plain.path());
     let newcomer = SwarmContext {
         member: "late".into(),
         ..context.clone()
@@ -222,19 +222,25 @@ fn a_removed_board_fails_as_missing_where_it_was() {
     );
 }
 
-/// The host still reads a container started before #2145, whose board is in
-/// the work tree and whose git directory holds no store directory; once the
-/// git directory holds one, the work-tree file is not the board.
+/// In a git checkout the host reads only the board in the git directory: a
+/// work-tree `.quecto/swarm.sqlite` (committed, left from before #2145, or
+/// planted) is never taken for a run, and a board removed from the git
+/// directory is no run, not a fall back to another file.
 #[test]
-fn the_host_reads_a_board_from_before_2145() {
+fn the_host_never_reads_a_work_tree_board_in_a_git_checkout() {
     let repo = repository();
     let elsewhere = tempfile::tempdir().unwrap();
-    let (board, id) = created_run(elsewhere.path());
+    let (board, _) = created_run(elsewhere.path());
     std::fs::copy(board.database(), repo.path().join(".quecto/swarm.sqlite")).unwrap();
     let hosted = super::super::swarm_bridge::HostedStore::at(repo.path().to_path_buf());
-    let run = hosted.hosted_run().unwrap().expect("the old board is read");
+    assert!(hosted.hosted_run().unwrap().is_none());
+    let (_, id) = created_run(repo.path());
+    let run = hosted
+        .hosted_run()
+        .unwrap()
+        .expect("the git directory's board");
     assert_eq!(serde_json::Value::from(run.id).to_string(), id);
-    std::fs::create_dir_all(repo.path().join(".git/quecto")).unwrap();
+    std::fs::remove_dir_all(repo.path().join(".git/quecto")).unwrap();
     assert!(hosted.hosted_run().unwrap().is_none());
 }
 

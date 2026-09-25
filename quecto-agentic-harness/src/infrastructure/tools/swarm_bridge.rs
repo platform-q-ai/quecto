@@ -38,7 +38,7 @@ impl SwarmContext {
     }
 
     pub fn database(&self) -> PathBuf {
-        store_database(&self.checkout)
+        super::swarm_store_location::member_store_path(&self.checkout)
     }
 
     pub fn bootstrap(&self) -> String {
@@ -126,10 +126,11 @@ impl SwarmContext {
     }
 }
 
-/// The coordination store every member of a container shares, by checkout
-/// (in its git directory when the run's creator claimed it, #2145).
+/// Where the coordination store of the container checked out at `checkout`
+/// is, by the checkout's layout (its git directory, #2145). Members pin what
+/// they find (`SwarmContext::database`); host reads follow this each time.
 pub fn store_database(checkout: &Path) -> PathBuf {
-    super::swarm_store_location::store_path(checkout)
+    super::swarm_store_location::located(checkout)
 }
 
 fn bootstrap_source(database: &Path, checkout: &Path, member: &str) -> String {
@@ -261,15 +262,15 @@ enum Found {
 }
 
 impl HostedStore {
-    /// The board the host reads: where it is located, or where a container
-    /// started before #2145 keeps it.
+    /// The board the host reads: where the checkout's layout places it.
     fn database(&self) -> PathBuf {
-        super::swarm_store_location::hosted_store_path(&self.checkout)
+        store_database(&self.checkout)
     }
 
     /// The host opens the store only where it really is inside the checkout:
-    /// a link planted in the container (`.git/quecto` or `.quecto` pointing
-    /// elsewhere) is refused.
+    /// a link or a `.git` pointer planted in the container is refused. (A
+    /// linked worktree's git directory is outside its checkout, so the host
+    /// cannot read that board and keeps the environment.)
     fn contained(&self) -> Result<Found, DomainError> {
         let database = self.database();
         let store = match std::fs::canonicalize(&database) {

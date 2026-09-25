@@ -10,19 +10,19 @@
 //!
 //! The location follows from the checkout's layout alone, never from which
 //! files happen to exist, so a stale board an agent once committed at the old
-//! path is never adopted. And once a process has found its board the path is
-//! pinned for that process: a layout that changes mid-run (a `git init` in a
-//! checkout that had none, a git directory created or removed) never moves a
-//! live board; a board that disappears fails as missing, and a member joining
-//! after such a change finds no store and is refused.
+//! path is never adopted. A member pins the path once it has found its board:
+//! a layout that changes mid-run (a `git init` in a checkout that had none, a
+//! git directory created or removed) never moves a live board; a board that
+//! disappears fails as missing, and a member joining after such a change finds
+//! no store and is refused. The host pins nothing: each read follows the
+//! layout, and one that finds no board sees no run.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// The store's directory inside a git directory.
 const GIT_STORE_DIR: &str = "quecto";
-/// The store's directory in a checkout with no git directory; also where a
-/// run started before #2145 keeps it.
+/// The store's directory in a checkout with no git directory.
 const WORK_TREE_STORE_DIR: &str = ".quecto";
 const STORE_FILE: &str = "swarm.sqlite";
 
@@ -31,7 +31,8 @@ const STORE_FILE: &str = "swarm.sqlite";
 /// never stages them and `git stash -u` / `git clean -fd` leave them.
 pub(super) const WORK_TREE_ENTRIES: [&str; 1] = ["/.quecto/swarm/"];
 
-/// Boards this process has found, by checkout: never re-decided.
+/// Boards this member process has found, by canonical checkout: never
+/// re-decided.
 static PINNED: Mutex<BTreeMap<PathBuf, PathBuf>> = Mutex::new(BTreeMap::new());
 
 /// Where the store of the container checked out at `checkout` lives, by the
@@ -43,38 +44,26 @@ pub(super) fn located(checkout: &Path) -> PathBuf {
     }
 }
 
-/// The coordination store of the container checked out at `checkout`: the
-/// board this process found there, or where it will be.
-pub(super) fn store_path(checkout: &Path) -> PathBuf {
+/// A member's coordination store in the container checked out at
+/// `checkout`: the board it found there, or where it will be.
+pub(super) fn member_store_path(checkout: &Path) -> PathBuf {
+    let key = pin_key(checkout);
     let mut pinned = PINNED
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(board) = pinned.get(checkout) {
+    if let Some(board) = pinned.get(&key) {
         return board.clone();
     }
     let board = located(checkout);
     if board.is_file() {
-        pinned.insert(checkout.to_path_buf(), board.clone());
+        pinned.insert(key, board.clone());
     }
     board
 }
 
-/// The board the host reads for a container: where it is located, or, for a
-/// container started before #2145 (a git checkout whose git directory holds
-/// no store directory), where that container keeps it. Host reads only: an
-/// old container still runs the binary it was created with.
-pub(super) fn hosted_store_path(checkout: &Path) -> PathBuf {
-    let board = store_path(checkout);
-    let before_2145 = checkout.join(WORK_TREE_STORE_DIR).join(STORE_FILE);
-    let store_dir = board.parent().expect("the store has a directory");
-    match (
-        board.starts_with(checkout.join(WORK_TREE_STORE_DIR)),
-        store_dir.is_dir(),
-        before_2145.is_file(),
-    ) {
-        (false, false, true) => before_2145,
-        (true, _, _) | (false, true, _) | (false, false, false) => board,
-    }
+/// One key per checkout however it is spelled.
+fn pin_key(checkout: &Path) -> PathBuf {
+    std::fs::canonicalize(checkout).unwrap_or_else(|_| checkout.to_path_buf())
 }
 
 /// The git directory of the repository or worktree rooted at `checkout`:
@@ -92,12 +81,12 @@ fn own_git_dir(checkout: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-/// As a new process would: forget the boards found so far.
-pub(super) fn forget_pins() {
+/// As a new process would: forget the board found at `checkout`.
+pub(super) fn forget_pin(checkout: &Path) {
     PINNED
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clear();
+        .remove(&pin_key(checkout));
 }
 
 /// What excluding the work-tree entries did.
