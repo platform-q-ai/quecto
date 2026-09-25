@@ -425,3 +425,39 @@ async fn an_unranked_search_cut_at_the_read_cap_claims_no_ranking() {
     assert!(!tail.contains("were ranked"), "{tail}");
     assert!(tail.contains("results are incomplete"), "{tail}");
 }
+
+/// A search rg did not finish normally (an error after partial results, a
+/// signal) may have missed the match sought: poor scores then make no claim
+/// that none is relevant. A finished search does.
+#[tokio::test]
+async fn only_a_complete_search_says_no_match_looks_relevant() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
+    let record = format!(
+        r#"{{"type":"match","data":{{"path":{{"text":"{}/a.rs"}},"lines":{{"text":"retry\\n"}},"line_number":1,"absolute_offset":0,"submatches":[{{"match":{{"text":"retry"}},"start":0,"end":5}}]}}}}"#,
+        tmp.path().display()
+    );
+    let emit = format!("printf '%s\\n' '{record}'");
+    for (script, code, claims) in [
+        (emit.clone(), 0, true),
+        (
+            format!("{emit}; echo 'a.rs: Permission denied' >&2"),
+            2,
+            false,
+        ),
+        (format!("{emit}; kill -TERM $$"), 0, false),
+    ] {
+        let tool = with_fake_rg(&tmp, &script, code, Arc::new(RecordingLog::default()))
+            .with_relevance(Arc::new(KeywordJudge("nowhere")), 1000);
+        let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+            .await
+            .unwrap();
+        assert!(result.content.contains("a.rs:1"), "{}", result.content);
+        assert_eq!(
+            result.content.contains("no judged match looks relevant"),
+            claims,
+            "{script}: {}",
+            result.content
+        );
+    }
+}

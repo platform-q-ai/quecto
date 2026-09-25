@@ -51,7 +51,7 @@ pub(super) async fn rank(
     matches: Vec<RgMatch>,
     workspace: &Path,
     sandbox: &Sandbox,
-    read_whole: bool,
+    complete: bool,
 ) -> Ranked {
     let Some(ranking) = ranking else {
         return Ranked {
@@ -111,7 +111,7 @@ pub(super) async fn rank(
             unjudged_reason,
             elapsed_ms,
         };
-        ranked(matches, verdict, &locations, query, read_whole)
+        ranked(matches, verdict, &locations, query, complete)
     } else {
         unavailable(
             matches,
@@ -134,13 +134,14 @@ struct Verdict {
 }
 
 /// The judged matches in relevance order, then the rest in rg order.
-/// `read_whole` is false when rg stopped at its read cap.
+/// `complete` is false when rg did not see every match: stopped at its
+/// read cap, by a signal or an error, or with its output held open.
 fn ranked(
     matches: Vec<RgMatch>,
     verdict: Verdict,
     locations: &[String],
     query: &str,
-    read_whole: bool,
+    complete: bool,
 ) -> Ranked {
     let Verdict {
         scores,
@@ -182,10 +183,10 @@ fn ranked(
         .fold(None, |best: Option<f64>, score| {
             Some(best.map_or(score, |best| best.max(score)))
         });
-    // Only when every match was read and judged: with some unread (rg's
-    // read cap), past the candidate cap, or unjudged (a deadline, a rate
-    // limit), the relevant one may be among those.
-    let every_match_judged = read_whole && unscored == 0 && total == judged;
+    // Only when every match was read and judged: with some unread (an
+    // incomplete search), past the candidate cap, or unjudged (a deadline,
+    // a rate limit), the relevant one may be among those.
+    let every_match_judged = complete && unscored == 0 && total == judged;
     if let (Some(best), true) = (best.filter(|best| *best < RELEVANT), every_match_judged) {
         notes.push(format!(
             "no judged match looks relevant (best {best:.2}): try a different pattern, path or type"

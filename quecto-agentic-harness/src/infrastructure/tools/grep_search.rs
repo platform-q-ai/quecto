@@ -135,10 +135,6 @@ pub(super) async fn search(
         });
     };
     let mut notices = Vec::new();
-    // At the cap more exists than was read; say so unless the match
-    // limit already cut the result shorter (its own notice says so). A
-    // ranked search always says so: what was never read was never ranked,
-    // so the best match may be among it.
     if rg.held_open {
         notices.push(
             "rg's output was still held open after it exited; results may be incomplete"
@@ -156,6 +152,9 @@ pub(super) async fn search(
         ));
     }
     facts.incomplete = rg.capped || !notices.is_empty();
+    // Only a search rg finished normally, whole and with nothing held open,
+    // saw every match: a ranking of fewer cannot say none is relevant.
+    let complete = matches!(rg.exit_code, Some(0 | 1)) && !rg.capped && !rg.held_open;
 
     let result = match request.output {
         OutputMode::Content => {
@@ -176,7 +175,7 @@ pub(super) async fn search(
                     matches,
                     &ctx.workspace,
                     &ctx.sandbox,
-                    !rg.capped,
+                    complete,
                 )
                 .await;
                 notices.extend(ranked.notice);
