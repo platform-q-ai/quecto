@@ -531,6 +531,9 @@ async fn a_line_ending_just_past_the_cache_cap_is_kept() {
     std::fs::write(dir.path().join("exact.rs"), exact).unwrap();
     let running = format!("{first}{}\n", "y".repeat(cap));
     std::fs::write(dir.path().join("running.rs"), running).unwrap();
+    // The second line's break is the cap's last byte; more follows.
+    let boundary = format!("{first}{}\nmore\n", "y".repeat(cap - first.len() - 1));
+    std::fs::write(dir.path().join("boundary.rs"), boundary).unwrap();
     let at = |file: &str| RgMatch {
         file_path: dir.path().join(file),
         line_number: 1,
@@ -538,11 +541,11 @@ async fn a_line_ending_just_past_the_cache_cap_is_kept() {
         score: None,
         column: None,
     };
-    let (judged, judge) = ranking(Relevance::Scored(vec![None, None]), 30);
+    let (judged, judge) = ranking(Relevance::Scored(vec![None, None, None]), 30);
     rank(
         Some(&judged),
         "q",
-        vec![at("exact.rs"), at("running.rs")],
+        vec![at("exact.rs"), at("running.rs"), at("boundary.rs")],
         dir.path(),
         &Sandbox::new(None),
         true,
@@ -551,4 +554,9 @@ async fn a_line_ending_just_past_the_cache_cap_is_kept() {
     let seen = judge.seen.lock().unwrap();
     assert_eq!(seen[0].1[0].after.chars().count(), 400, "kept, cut to 400");
     assert_eq!(seen[0].1[1].after, "", "cut part-way, dropped");
+    assert_eq!(
+        seen[0].1[2].after.chars().count(),
+        400,
+        "ends at the cap, kept"
+    );
 }
