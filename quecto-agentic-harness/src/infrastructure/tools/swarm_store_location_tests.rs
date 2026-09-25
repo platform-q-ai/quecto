@@ -392,3 +392,84 @@ async fn all_swarm_state_survives_every_git_command_agents_run() {
         }
     }
 }
+
+fn git_checkout_tool(
+    repo: &Path,
+    retention: super::super::swarm::Retention,
+) -> super::super::swarm::SwarmTool {
+    super::super::swarm_test_support::tool(
+        std::sync::Arc::new(repo.to_path_buf()),
+        std::sync::Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
+            Some(repo.to_path_buf()),
+        )),
+        super::super::swarm::SwarmConfig {
+            retention,
+            ..Default::default()
+        },
+    )
+}
+
+/// A board write during a run (the program uses the swarm API) is the
+/// swarm's state, never reported as a file the program wrote.
+#[tokio::test]
+async fn a_board_written_during_a_run_is_not_reported_as_the_programs() {
+    use crate::application::tools::ports::Tool;
+    let repo = repository();
+    let tool = git_checkout_tool(repo.path(), Default::default());
+    let result = tool
+        .execute(
+            r#"{"op":"run","code":"import os, time; time.sleep(0.05); os.utime('.git/quecto/swarm.sqlite')"}"#,
+        )
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    let answer: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert!(!answer.to_string().contains("swarm.sqlite"), "{answer}");
+}
+
+/// In a git checkout the artifact directory beside the board is reserved:
+/// a script staged there is refused.
+#[tokio::test]
+async fn a_script_staged_in_the_artifact_directory_is_refused() {
+    use crate::application::tools::ports::Tool;
+    let repo = repository();
+    let tool = git_checkout_tool(repo.path(), Default::default());
+    let planted = artifact_root(repo.path()).join("planted.py");
+    std::fs::create_dir_all(planted.parent().unwrap()).unwrap();
+    std::fs::write(&planted, "print('planted')").unwrap();
+    let refused = tool
+        .execute(&serde_json::json!({"op":"run","path":".git/quecto/swarm/planted.py"}).to_string())
+        .await
+        .unwrap();
+    assert!(refused.is_error, "{}", refused.content);
+    assert!(
+        refused.content.contains("reserved for swarm artifacts"),
+        "{}",
+        refused.content
+    );
+}
+
+/// Old executions are pruned where the artifacts live, in the git directory.
+#[tokio::test]
+async fn old_executions_are_pruned_beside_the_board() {
+    use crate::application::tools::ports::Tool;
+    let repo = repository();
+    let tool = git_checkout_tool(
+        repo.path(),
+        super::super::swarm::Retention {
+            jobs: 2,
+            artifact_dirs: 2,
+        },
+    );
+    for _ in 0..5 {
+        let result = tool
+            .execute(r#"{"op":"run","code":"print('x')"}"#)
+            .await
+            .unwrap();
+        assert!(!result.is_error, "{}", result.content);
+    }
+    let kept = std::fs::read_dir(artifact_root(repo.path()))
+        .unwrap()
+        .count();
+    assert!(kept <= 3, "{kept} execution directories kept");
+}
