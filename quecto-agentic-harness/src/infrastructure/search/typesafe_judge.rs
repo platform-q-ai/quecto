@@ -125,10 +125,10 @@ impl TypeSafeJudge {
             "questions": {
                 "relevant": {
                     "type": "noul",
-                    "instructions": "Is `candidate` what the searcher is looking for? `query` says, in their words, what they want to find in a codebase. `candidate.matched` is one search hit: the line(s) that matched, found at `candidate.location`. Judge those lines. `candidate.before` and `candidate.after` are the lines just around them, for context only: they show what the matched lines belong to, such as the function a matched comment documents or the code a matched call sits in.",
+                    "instructions": "Is `candidate` what the searcher is looking for? `query` says, in their words, what they want to find in a codebase. `candidate.matched` is one search hit: the line(s) that matched, found at `candidate.location`. Judge those lines. `candidate.before` and `candidate.after` are the lines just around them (`after` may also continue a long match): they show what the matched lines belong to, such as the function a matched comment documents or the code a matched call sits in.",
                     "criteria": {
-                        "true": "The matched lines are, or define, implement, configure or document, what `query` describes",
-                        "false": "The matched lines only share words with `query`, are about something else, or only their context is relevant"
+                        "true": "The matched lines are, or define, implement, configure or document what `query` describes, including a comment or attribute on the code shown around them",
+                        "false": "The matched lines only share words with `query`, or are about something else; a relevant line nearby does not make them relevant"
                     }
                 }
             }

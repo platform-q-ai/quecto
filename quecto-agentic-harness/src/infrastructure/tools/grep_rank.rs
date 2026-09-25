@@ -15,7 +15,7 @@ use crate::application::search::ports::{
 use crate::domain::search_ranking::relevance_order;
 use crate::infrastructure::security::sandbox::Sandbox;
 
-use super::{MAX_FILE_CACHE_BYTES, RgMatch, read_file_for_cache};
+use super::{RgMatch, read_capped_lines};
 
 /// A score below this for every judged match means none looks relevant.
 const RELEVANT: f64 = 0.3;
@@ -294,11 +294,10 @@ async fn candidate_texts(matches: &[RgMatch], sandbox: &Sandbox) -> Vec<Option<E
 }
 
 /// A file's lines as the context cache reads them, less the last when the
-/// cache stopped inside the file: it may be cut part-way, and a judge must
-/// not take a cut line for a whole one.
+/// cache's cap cut it part-way: a judge must not take a cut line for a
+/// whole one.
 fn whole_lines(path: &Path) -> Vec<String> {
-    let mut lines = read_file_for_cache(path);
-    let cut = std::fs::metadata(path).is_ok_and(|meta| meta.len() > MAX_FILE_CACHE_BYTES as u64);
+    let (mut lines, cut) = read_capped_lines(path);
     if cut {
         lines.pop();
     }

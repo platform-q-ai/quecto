@@ -591,23 +591,39 @@ async fn format_matches(all_matches: Vec<RgMatch>, a: &MatchFormat<'_>) -> Strin
 /// Read a file into a line vector for the context cache.
 /// Caps at `MAX_FILE_CACHE_BYTES` to prevent OOM from large files.
 fn read_file_for_cache(path: &Path) -> Vec<String> {
+    read_capped_lines(path).0
+}
+
+/// A file's lines up to `MAX_FILE_CACHE_BYTES`, and whether the last of
+/// them was cut part-way by that cap: decided from the bytes read (one past
+/// the cap), never from a second look at a file that may have changed.
+fn read_capped_lines(path: &Path) -> (Vec<String>, bool) {
     use std::io::Read;
     let Ok(f) = std::fs::File::open(path) else {
-        return Vec::new();
+        return (Vec::new(), false);
     };
     let mut buf = Vec::with_capacity(MAX_FILE_CACHE_BYTES.min(64 * 1024));
-    if f.take(MAX_FILE_CACHE_BYTES as u64)
+    if f.take(MAX_FILE_CACHE_BYTES as u64 + 1)
         .read_to_end(&mut buf)
         .is_err()
     {
-        return Vec::new();
+        return (Vec::new(), false);
     }
-    String::from_utf8_lossy(&buf)
+    // Past the cap, the last line kept is whole only when a line break ends
+    // it: at the cap's last byte, or just after it.
+    let cut = match buf.get(MAX_FILE_CACHE_BYTES) {
+        Some(b'\n' | b'\r') => false,
+        Some(_) => buf[MAX_FILE_CACHE_BYTES - 1] != b'\n',
+        None => false,
+    };
+    buf.truncate(MAX_FILE_CACHE_BYTES);
+    let lines = String::from_utf8_lossy(&buf)
         .replace("\r\n", "\n")
         .replace('\r', "\n")
         .lines()
         .map(str::to_string)
-        .collect()
+        .collect();
+    (lines, cut)
 }
 
 /// Truncate a line to max_bytes, appending a size hint if truncated.

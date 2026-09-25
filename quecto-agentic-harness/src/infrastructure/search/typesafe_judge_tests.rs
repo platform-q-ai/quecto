@@ -386,5 +386,8 @@ async fn the_matched_lines_and_their_context_are_sent_apart() {
         .as_str()
         .unwrap();
     assert!(instructions.contains("Judge those lines"), "{instructions}");
-    assert!(instructions.contains("for context only"), "{instructions}");
+    assert!(
+        instructions.contains("what the matched lines belong to"),
+        "{instructions}"
+    );
 }

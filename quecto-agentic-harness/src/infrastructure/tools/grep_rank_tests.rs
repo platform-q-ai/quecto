@@ -517,3 +517,38 @@ async fn a_line_cut_by_the_file_cache_is_never_shown() {
     assert_eq!(seen[0].1[0].matched, "retry");
     assert_eq!(seen[0].1[0].after, "next");
 }
+
+/// Whether the cache's cap cut the last line is decided from the bytes
+/// read: a line whose break falls just past the cap is whole and kept; one
+/// running on past it is cut and dropped.
+#[tokio::test]
+async fn a_line_ending_just_past_the_cache_cap_is_kept() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let cap = 1024 * 1024;
+    let first = "retry\n";
+    // The second line fills the cap exactly; its break is the byte after.
+    let exact = format!("{first}{}\n", "y".repeat(cap - first.len()));
+    std::fs::write(dir.path().join("exact.rs"), exact).unwrap();
+    let running = format!("{first}{}\n", "y".repeat(cap));
+    std::fs::write(dir.path().join("running.rs"), running).unwrap();
+    let at = |file: &str| RgMatch {
+        file_path: dir.path().join(file),
+        line_number: 1,
+        line_count: 1,
+        score: None,
+        column: None,
+    };
+    let (judged, judge) = ranking(Relevance::Scored(vec![None, None]), 30);
+    rank(
+        Some(&judged),
+        "q",
+        vec![at("exact.rs"), at("running.rs")],
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
+    let seen = judge.seen.lock().unwrap();
+    assert_eq!(seen[0].1[0].after.chars().count(), 400, "kept, cut to 400");
+    assert_eq!(seen[0].1[1].after, "", "cut part-way, dropped");
+}
