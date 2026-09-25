@@ -16,7 +16,7 @@ use crate::infrastructure::tools::truncate::format_size;
 use super::grep_listing::{ListingFormat, format_listing, parse_listing};
 use super::grep_rank::{Ranking, rank};
 use super::grep_request::{OutputMode, parse_request};
-use super::grep_run::{RG_STDOUT_CAP, run_rg};
+use super::grep_run::{RANKED_STDOUT_CAP, RG_STDOUT_CAP, run_rg};
 use super::{
     MAX_LINE_BYTES, MAX_OUTPUT_BYTES, MatchFormat, build_rg_command, format_matches,
     parse_rg_matches,
@@ -82,7 +82,16 @@ pub(super) async fn search(
         .map_err(|e| DomainError::Security(e.to_string()))?;
 
     let cmd = build_rg_command(&ctx.rg_cmd, &ctx.workspace, &full_path, &request);
-    let rg = run_rg(cmd, ctx.rg_timeout).await?;
+    // A ranked search judges every match, so it reads far more of rg's
+    // output than a plain one shows (#2142); only one that will be ranked:
+    // a judge configured and matches, not a listing, asked for.
+    let read_cap = match (&request.rank_by, &ctx.ranking, request.output) {
+        (Some(_), Some(_), OutputMode::Content) => RANKED_STDOUT_CAP,
+        (Some(_), Some(_), OutputMode::Files | OutputMode::Count)
+        | (Some(_), None, _)
+        | (None, _, _) => RG_STDOUT_CAP,
+    };
+    let rg = run_rg(cmd, ctx.rg_timeout, read_cap).await?;
     let stderr = String::from_utf8_lossy(&rg.stderr).into_owned();
     let stdout = String::from_utf8_lossy(&rg.stdout).into_owned();
     // What rg found outside the excluded directories (the search log's
@@ -123,7 +132,7 @@ pub(super) async fn search(
         return answered(format!(
             "A matching line is larger than {}, so no match could be shown: \
              narrow the search with glob or type, or read the file directly",
-            format_size(RG_STDOUT_CAP)
+            format_size(read_cap)
         ));
     }
     let usable = matches!(rg.exit_code, Some(0 | 1)) || found > 0;
@@ -206,11 +215,11 @@ pub(super) async fn search(
     match (rg.capped, ranked, found <= request.limit) {
         (true, true, _) => notices.push(format!(
             "rg printed more than {}: only the matches read before it were ranked; narrow with path, glob or type to rank the rest",
-            format_size(RG_STDOUT_CAP)
+            format_size(read_cap)
         )),
         (true, false, true) => notices.push(format!(
             "rg printed more than {}; results are incomplete: narrow with path, glob or type",
-            format_size(RG_STDOUT_CAP)
+            format_size(read_cap)
         )),
         (true, false, false) | (false, _, _) => {}
     }

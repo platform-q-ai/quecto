@@ -10,7 +10,7 @@ use crate::domain::error::DomainError;
 
 use super::MAX_OUTPUT_BYTES;
 
-/// What one rg run printed: stdout up to [`RG_STDOUT_CAP`] (`capped` when
+/// What one rg run printed: stdout up to the run's read cap (`capped` when
 /// more was cut off), the start of stderr, and the exit code (`None` when
 /// the process was killed).
 #[derive(Debug)]
@@ -23,8 +23,12 @@ pub(super) struct RgRun {
     pub held_open: bool,
 }
 
-/// How much rg output is read (JSON is larger than the plain text shown).
+/// How much rg output a plain search reads (JSON is larger than the plain
+/// text shown).
 pub(super) const RG_STDOUT_CAP: usize = MAX_OUTPUT_BYTES * 4;
+/// How much rg output a ranked search reads (#2142): every match is judged,
+/// so it reads far past what is shown; about 70,000 matches of rg's JSON.
+pub(super) const RANKED_STDOUT_CAP: usize = 16 * 1024 * 1024;
 
 /// How much of rg's stderr is kept (the rest is read and discarded).
 const RG_STDERR_KEEP: usize = 4096;
@@ -34,13 +38,15 @@ const PIPE_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 /// How long one rg run may take before it is killed.
 pub(super) const RG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// Run rg, reading stdout (up to the cap) and stderr at the same time, so
-/// rg can never block on a full stderr pipe. At the cap rg is killed; past
-/// `timeout` it is killed and the search reported as too slow.
+/// Run rg, reading stdout (up to `read_cap` bytes) and stderr at the same
+/// time, so rg can never block on a full stderr pipe. At the cap rg is
+/// killed; past `timeout` it is killed and the search reported as too slow.
 pub(super) async fn run_rg(
     mut cmd: tokio::process::Command,
     timeout: std::time::Duration,
+    read_cap: usize,
 ) -> Result<RgRun, DomainError> {
+    assert!(read_cap > 0, "rg's output is read up to a positive cap");
     cmd.kill_on_drop(true);
     let mut child = cmd.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
@@ -57,9 +63,9 @@ pub(super) async fn run_rg(
     let stderr_task = tokio::spawn(read_head(child.stderr.take(), RG_STDERR_KEEP));
     let _abort_stderr = AbortOnDrop(stderr_task.abort_handle());
     let run = async {
-        let mut out = Vec::with_capacity(RG_STDOUT_CAP.min(64 * 1024));
+        let mut out = Vec::with_capacity(read_cap.min(64 * 1024));
         let (capped, exited) = {
-            let read = read_capped(stdout, RG_STDOUT_CAP, &mut out);
+            let read = read_capped(stdout, read_cap, &mut out);
             tokio::pin!(read);
             tokio::select! {
                 capped = &mut read => (capped, None),
