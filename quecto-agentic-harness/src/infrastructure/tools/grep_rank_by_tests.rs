@@ -438,7 +438,7 @@ async fn a_ranked_search_cut_at_the_read_cap_says_so() {
     assert!(
         result
             .content
-            .contains("only the matches read before it were ranked"),
+            .contains("rg printed more than 16.0MB: only the matches read before it were ranked"),
         "{}",
         &result.content[result.content.len().saturating_sub(400)..]
     );
