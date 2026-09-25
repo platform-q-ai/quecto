@@ -121,3 +121,19 @@ async fn nothing_to_judge_is_an_empty_ranking() {
         Relevance::Scored(vec![])
     );
 }
+
+/// A score outside 0–1 is not a probability: the hit is left unscored.
+#[tokio::test]
+async fn a_score_outside_zero_to_one_is_refused() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(noul(1.7))
+        .mount(&server)
+        .await;
+    assert_eq!(
+        judge(&server, Duration::from_secs(5))
+            .judge("q", &[candidate("a.rs:1")])
+            .await,
+        Relevance::Unavailable("TypeSafe answered without a relevance score".into())
+    );
+}
