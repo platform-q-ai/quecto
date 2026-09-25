@@ -62,7 +62,11 @@ fn given_grep_file_with_docstring(
         .as_deref()
         .unwrap_or("")
         .trim_start_matches('\n');
-    std::fs::write(ws.join(&filename), content).expect("failed to write grep file");
+    let path = ws.join(&filename);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).expect("failed to create the grep file's directory");
+    }
+    std::fs::write(path, content).expect("failed to write grep file");
 }
 
 #[given(regex = r#"^a grep workspace file "([^"]+)" with 200 lines containing "([^"]+)"$"#)]
@@ -123,6 +127,19 @@ fn when_grep_literal(world: &mut QuectoWorld, pattern: String, flag: String) {
 fn when_grep_glob(world: &mut QuectoWorld, pattern: String, glob: String) {
     let tool = make_grep_tool(world);
     let args = serde_json::json!({ "pattern": pattern, "glob": glob });
+    world.grep_result = Some(run_tool(tool, args));
+}
+
+/// Any arguments, as the model sends them (#2136).
+#[when(regex = r#"^I grep with arguments:$"#)]
+fn when_grep_with_arguments(world: &mut QuectoWorld, step: &cucumber::gherkin::Step) {
+    let tool = make_grep_tool(world);
+    let text = step
+        .docstring
+        .as_deref()
+        .expect("the grep arguments follow as a docstring");
+    let args: serde_json::Value = serde_json::from_str(text)
+        .unwrap_or_else(|e| panic!("grep arguments are JSON: {e}: {text}"));
     world.grep_result = Some(run_tool(tool, args));
 }
 
@@ -190,6 +207,20 @@ fn then_grep_result_not_contains(world: &mut QuectoWorld, expected: String) {
         "grep result should NOT contain {:?}, got:\n{}",
         expected,
         result.content
+    );
+}
+
+#[then(regex = r#"^the grep result should list "([^"]+)" before "([^"]+)"$"#)]
+fn then_grep_lists_before(world: &mut QuectoWorld, first: String, second: String) {
+    let result = world.grep_result.as_ref().expect("grep result");
+    let text = &result.content;
+    let at = |needle: &str| {
+        text.find(needle)
+            .unwrap_or_else(|| panic!("grep result lacks {needle:?}: {text}"))
+    };
+    assert!(
+        at(&first) < at(&second),
+        "{first:?} should come before {second:?}: {text}"
     );
 }
 

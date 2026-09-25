@@ -115,3 +115,117 @@ Feature: Grep Tool
     When I grep for pattern "timezone"
     Then the grep result should contain "time:zone.rs"
     And the grep result should not be an error
+
+  # ─── rg parity (#2136): what agents otherwise reach for rg in bash for ───
+
+  @done @issue-2136
+  Scenario: Files mode lists each matching file once
+    Given a grep workspace file "src/a.rs" with content:
+      """
+      fn needle() {}
+      let x = needle();
+      """
+    And a grep workspace file "src/b.rs" with content:
+      """
+      needle
+      """
+        And a grep workspace file "src/c.rs" with content:
+      """
+      nothing here
+      """
+    And a grep workspace file ".git/COMMIT_EDITMSG" with content:
+      """
+      add needle
+      """
+    When I grep with arguments:
+      """
+      {"pattern": "needle", "output": "files"}
+      """
+    Then the grep result should contain "src/a.rs"
+    And the grep result should contain "src/b.rs"
+    And the grep result should list "src/a.rs" before "src/b.rs"
+    And the grep result should not contain "src/c.rs"
+    And the grep result should not contain "fn needle"
+    And the grep result should not contain ".git"
+    And the grep result should not contain "./"
+    And the grep result should not be an error
+
+  @done @issue-2136
+    Scenario: Count mode reports each file's matches, busiest first
+    Given a grep workspace file "one.rs" with content:
+      """
+      needle
+      """
+    And a grep workspace file "three.rs" with content:
+      """
+      needle needle
+      needle
+      """
+    When I grep with arguments:
+      """
+      {"pattern": "needle", "output": "count"}
+      """
+        Then the grep result should contain "three.rs: 3"
+    And the grep result should contain "one.rs: 1"
+    And the grep result should list "three.rs" before "one.rs"
+    And the grep result should not be an error
+
+  @done @issue-2136
+  Scenario: File types, several globs, whole words and several patterns narrow the search
+    Given a grep workspace file "lib.rs" with content:
+      """
+      fn retry_backoff() {}
+      fn backoffice() {}
+      """
+    And a grep workspace file "tool.py" with content:
+      """
+      def retry_backoff(): pass
+      """
+    And a grep workspace file "notes.md" with content:
+      """
+      jitter matters
+      """
+    When I grep with arguments:
+      """
+            {"patterns": ["backoff", "jitter"], "type": "rust"}
+      """
+    Then the grep result should contain "lib.rs:1:"
+    And the grep result should contain "lib.rs:2:"
+    And the grep result should not contain "tool.py"
+    And the grep result should not contain "notes.md"
+    When I grep with arguments:
+      """
+      {"patterns": ["backoff", "jitter"], "wordRegexp": true, "glob": ["*.rs", "*.md"]}
+      """
+    Then the grep result should contain "notes.md:1:"
+    And the grep result should not contain "lib.rs"
+    And the grep result should not contain "tool.py"
+
+  @done @issue-2136
+  Scenario: A multiline pattern shows every line it spans, and matches can be capped per file
+    Given a grep workspace file "chain.rs" with content:
+      """
+      let a = builder()
+          .retries(3)
+          .build();
+      let b = builder()
+          .retries(5)
+          .build();
+      """
+    When I grep with arguments:
+      """
+      {"pattern": "builder\\(\\)\\n\\s+\\.retries", "multiline": true, "maxPerFile": 1}
+      """
+    Then the grep result should contain "chain.rs:1: let a = builder()"
+    And the grep result should contain "chain.rs:2:     .retries(3)"
+    And the grep result should not contain "retries(5)"
+    And the grep result should not be an error
+
+  @done @issue-2136
+  Scenario: An argument the tool cannot honour is refused with the valid choices
+    When I grep with arguments:
+      """
+      {"pattern": "x", "output": "lines"}
+      """
+    Then the grep result should be an error
+    And the grep result should contain "output must be one of content, files, count"
