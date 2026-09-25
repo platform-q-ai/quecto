@@ -247,8 +247,8 @@ async fn a_timed_out_search_keeps_what_rg_printed() {
         result.content
     );
     // Something printed but no whole match: as slow as printing nothing.
-    let partial = format!("printf '%s' '{{\"type\":\"begin\"'; exec sleep 30");
-    let tool = with_fake_rg(&tmp, &partial, 0, Arc::new(RecordingLog::default()))
+    let partial = r#"printf '%s' '{"type":"begin"'; exec sleep 30"#;
+    let tool = with_fake_rg(&tmp, partial, 0, Arc::new(RecordingLog::default()))
         .with_rg_timeout(std::time::Duration::from_millis(500));
     let error = execute_fake(&tool, r#"{"pattern": "retry"}"#)
         .await
