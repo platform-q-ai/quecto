@@ -55,6 +55,7 @@ fn workspace() -> (tempfile::TempDir, Vec<RgMatch>) {
             line_number,
             line_count: 1,
             score: None,
+            column: None,
         })
         .collect();
     (dir, matches)
@@ -184,6 +185,7 @@ async fn a_long_neighbouring_line_never_hides_the_match() {
         line_number: 2,
         line_count: 1,
         score: None,
+        column: Some(0),
     }];
     let (ranking, judge) = ranking(Relevance::Scored(vec![Some(0.5)]), 30);
     rank(
@@ -231,5 +233,51 @@ async fn an_unreadable_match_is_not_sent_and_stays_unscored() {
             .notice
             .unwrap()
             .contains("1 of 3 matches could not be judged")
+    );
+}
+
+/// PR #2138 review: a match past column 400 is still what the judge sees:
+/// a long matched line is cut to a window around the match.
+#[tokio::test]
+async fn a_match_far_along_a_long_line_is_what_the_judge_sees() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let filler = "x".repeat(450);
+    std::fs::write(
+        dir.path().join("m.js"),
+        format!("{filler}retry_delay=5;{filler}\n"),
+    )
+    .unwrap();
+    let matches = vec![RgMatch {
+        file_path: dir.path().join("m.js"),
+        line_number: 1,
+        line_count: 1,
+        score: None,
+        column: Some(450),
+    }];
+    let (ranking, judge) = ranking(Relevance::Scored(vec![Some(0.5)]), 30);
+    rank(
+        Some(&ranking),
+        "q",
+        matches,
+        dir.path(),
+        &Sandbox::new(None),
+    )
+    .await;
+    let text = judge.seen.lock().unwrap()[0].1[0].text.clone();
+    assert!(text.contains("retry_delay=5"), "{text}");
+    assert!(text.starts_with('…'), "the cut is marked: {text:.20}");
+    assert!(text.chars().count() <= 402, "{}", text.chars().count());
+}
+
+/// rg's first submatch start is where the match sits in its line.
+#[test]
+fn the_match_column_comes_from_rgs_first_submatch() {
+    let json = r#"{"type":"match","data":{"path":{"text":"/ws/a.rs"},"line_number":3,"lines":{"text":"let retry_delay = 5;\n"},"absolute_offset":0,"submatches":[{"match":{"text":"retry_delay"},"start":4,"end":15}]}}"#;
+    let matches = super::super::parse_rg_matches(json);
+    assert_eq!(matches[0].column, Some(4));
+    assert_eq!(
+        super::around(&"x".repeat(10), 4),
+        "xxxxxxxxxx",
+        "a short line is whole"
     );
 }

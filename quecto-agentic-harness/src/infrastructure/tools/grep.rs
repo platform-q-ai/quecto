@@ -314,6 +314,9 @@ struct RgMatch {
     line_count: usize,
     /// Its relevance to `rank_by`, when judged (#2136 slice B).
     score: Option<f64>,
+    /// Where the match starts in its first line (a byte offset), as rg
+    /// reports it: a long line is shown to the judge around this.
+    column: Option<usize>,
 }
 
 /// Parse `rg --json` output: extract only `"match"` type events.
@@ -344,6 +347,9 @@ fn parse_rg_matches(json_output: &str) -> Vec<RgMatch> {
             line_number: line_number as usize,
             line_count,
             score: None,
+            column: event["data"]["submatches"][0]["start"]
+                .as_u64()
+                .and_then(|start| usize::try_from(start).ok()),
         });
     }
     matches

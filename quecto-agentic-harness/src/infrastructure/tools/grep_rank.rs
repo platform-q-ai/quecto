@@ -24,6 +24,8 @@ const CANDIDATE_MATCH_LINES: usize = 10;
 /// The most characters of any one line a judge sees: each line is cut on
 /// its own, so a long neighbour never pushes the match out.
 const CANDIDATE_LINE_CHARS: usize = 400;
+/// Characters kept before a match when a long line is cut around it.
+const CANDIDATE_LEAD_CHARS: usize = 100;
 
 /// Ranking as configured: the judge and how many matches it sees.
 pub(super) struct Ranking {
@@ -232,13 +234,47 @@ async fn candidate_texts(matches: &[RgMatch], sandbox: &Sandbox) -> Vec<Option<S
             let first = m.line_number.saturating_sub(CANDIDATE_CONTEXT).max(1);
             let last = matched_last + CANDIDATE_CONTEXT;
             let text = (first..=last)
-                .filter_map(|n| lines.get(n - 1))
-                .map(|line| line.chars().take(CANDIDATE_LINE_CHARS).collect::<String>())
-                .collect::<Vec<_>>()
+                .filter_map(|n| {
+                    let line = lines.get(n - 1)?;
+                    Some(match (n == m.line_number, m.column) {
+                        // The match's own line: a window around the match.
+                        (true, Some(column)) => around(line, column),
+                        (true, None) | (false, _) => {
+                            line.chars().take(CANDIDATE_LINE_CHARS).collect()
+                        }
+                    })
+                })
+                .collect::<Vec<String>>()
                 .join("\n");
             Some(text)
         })
         .collect()
+}
+
+/// At most [`CANDIDATE_LINE_CHARS`] of `line` around the match starting at
+/// byte `column` (PR #2138 review: a match past the cut must still be what
+/// the judge sees), with `…` marking text cut before it.
+fn around(line: &str, column: usize) -> String {
+    if line.chars().count() <= CANDIDATE_LINE_CHARS {
+        return line.to_string();
+    }
+    let mut at = column.min(line.len());
+    while !line.is_char_boundary(at) {
+        at -= 1;
+    }
+    let begin = line[..at]
+        .chars()
+        .count()
+        .saturating_sub(CANDIDATE_LEAD_CHARS);
+    let window: String = line
+        .chars()
+        .skip(begin)
+        .take(CANDIDATE_LINE_CHARS)
+        .collect();
+    match begin {
+        0 => window,
+        _ => format!("…{window}"),
+    }
 }
 
 /// A match's location as the tool shows it: `path:line`, relative to the
