@@ -287,7 +287,10 @@ fn the_match_column_comes_from_rgs_first_submatch() {
 #[tokio::test]
 async fn no_relevant_match_is_said_so() {
     let (dir, matches) = workspace();
-    let (poor, _) = ranking(Relevance::Scored(vec![Some(0.2), Some(0.12), None]), 30);
+    let (poor, _) = ranking(
+        Relevance::Scored(vec![Some(0.2), Some(0.12), Some(0.1)]),
+        30,
+    );
     let ranked = rank(Some(&poor), "q", matches, dir.path(), &Sandbox::new(None)).await;
     let notice = ranked.notice.unwrap();
     assert!(
@@ -298,4 +301,25 @@ async fn no_relevant_match_is_said_so() {
     let (good, _) = ranking(Relevance::Scored(vec![Some(0.2), Some(0.8), Some(0.1)]), 30);
     let ranked = rank(Some(&good), "q", matches, dir.path(), &Sandbox::new(None)).await;
     assert_eq!(ranked.notice, None);
+}
+
+/// With some matches unjudged, the relevant one may be among them: no
+/// "none looks relevant" claim, only the unjudged note.
+#[tokio::test]
+async fn no_relevance_claim_while_some_matches_are_unjudged() {
+    let (dir, matches) = workspace();
+    let (partly, _) = ranking(
+        Relevance::Partial(
+            vec![Some(0.2), None, None],
+            "TypeSafe did not answer within 30 s".into(),
+        ),
+        30,
+    );
+    let ranked = rank(Some(&partly), "q", matches, dir.path(), &Sandbox::new(None)).await;
+    let notice = ranked.notice.unwrap();
+    assert!(!notice.contains("looks relevant"), "{notice}");
+    assert!(
+        notice.contains("2 of 3 matches could not be judged (TypeSafe did not answer within 30 s)"),
+        "{notice}"
+    );
 }

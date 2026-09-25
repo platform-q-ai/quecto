@@ -364,3 +364,30 @@ fn a_panicking_search_is_recorded_as_failed() {
         Some("the search ended while a panic unwound")
     );
 }
+
+/// A ranked search cut at rg's read cap says so even when the match limit
+/// also applies: what was never read was never ranked.
+#[tokio::test]
+async fn a_ranked_search_cut_at_the_read_cap_says_so() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
+    let record = format!(
+        r#"{{"type":"match","data":{{"path":{{"text":"{}/a.rs"}},"lines":{{"text":"retry\\n"}},"line_number":1,"absolute_offset":0,"submatches":[{{"match":{{"text":"retry"}},"start":0,"end":5}}]}}}}"#,
+        tmp.path().display()
+    );
+    let flood =
+        format!("i=0; while [ $i -lt 3000 ]; do printf '%s\\n' '{record}'; i=$((i+1)); done");
+    let log = Arc::new(RecordingLog::default());
+    let tool = with_fake_rg(&tmp, &flood, 0, log.clone())
+        .with_relevance(Arc::new(KeywordJudge("retry")), 1000);
+    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+        .await
+        .unwrap();
+    assert!(
+        result
+            .content
+            .contains("only the matches read before it were ranked"),
+        "{}",
+        &result.content[result.content.len().saturating_sub(400)..]
+    );
+}

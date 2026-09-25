@@ -35,7 +35,7 @@ pub fn build_grep_tool(
     let mut tool = GrepTool::new(workspace, sandbox);
     let relevance = &wiring.config.relevance;
     if relevance.enabled {
-        match ranking_judge(relevance) {
+        match ranking_judge(relevance, typesafe_key()) {
             Ok((judge, max_candidates)) => {
                 tool = tool.with_relevance(Arc::new(judge), max_candidates);
             }
@@ -61,12 +61,17 @@ pub fn build_grep_tool(
 /// client; otherwise why ranking is not offered.
 fn ranking_judge(
     relevance: &crate::infrastructure::config::grep_tool::GrepRelevanceConfig,
+    key: Option<String>,
 ) -> Result<(TypeSafeJudge, usize), String> {
     let limits = relevance.limits()?;
-    let key = typesafe_key().ok_or(
+    let key = key.ok_or(
         "no TypeSafe key was found (TYPESAFE_API_KEY or ~/.config/typesafe/api_key)".to_string(),
     )?;
     let judge = TypeSafeJudge::new(TYPESAFE_ENDPOINT, key, &relevance.model, limits.timeout)?
         .with_concurrency(limits.concurrency);
     Ok((judge, limits.max_candidates))
 }
+
+#[cfg(test)]
+#[path = "wiring_tests.rs"]
+mod tests;

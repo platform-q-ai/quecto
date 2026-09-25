@@ -136,12 +136,19 @@ pub(super) async fn search(
     };
     let mut notices = Vec::new();
     // At the cap more exists than was read; say so unless the match
-    // limit already cut the result shorter (its own notice says so).
-    if rg.capped && found <= request.limit {
-        notices.push(format!(
+    // limit already cut the result shorter (its own notice says so). A
+    // ranked search always says so: what was never read was never ranked,
+    // so the best match may be among it.
+    match (rg.capped, request.rank_by.is_some(), found <= request.limit) {
+        (true, true, _) => notices.push(format!(
+            "rg printed more than {}: only the matches read before it were ranked; narrow with path, glob or type to rank the rest",
+            format_size(RG_STDOUT_CAP)
+        )),
+        (true, false, true) => notices.push(format!(
             "rg printed more than {}; results are incomplete: narrow with path, glob or type",
             format_size(RG_STDOUT_CAP)
-        ));
+        )),
+        (true, false, false) | (false, _, _) => {}
     }
     if rg.held_open {
         notices.push(
