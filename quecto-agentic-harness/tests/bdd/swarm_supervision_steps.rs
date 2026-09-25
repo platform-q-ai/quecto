@@ -194,3 +194,64 @@ fn resumed_without_prompt(world: &mut QuectoWorld) {
     assert_eq!(evidence["restored"], false, "{evidence}");
     assert!(evidence["requests"].as_u64().unwrap() >= 4, "{evidence}");
 }
+
+/// git in the scenario's checkout, isolated from the user's configuration.
+fn git(dir: &std::path::Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .status()
+        .expect("git runs");
+    assert!(status.success(), "git {args:?}");
+}
+
+#[when("a container's creator starts a swarm in a checkout that is a git repository")]
+fn creator_in_git_checkout(world: &mut QuectoWorld) {
+    let workspace = world.swarm_workspace.clone().unwrap();
+    git(&workspace, &["init", "-q"]);
+    std::fs::write(workspace.join("app.py"), "code\n").unwrap();
+    git(&workspace, &["add", "app.py"]);
+    git(&workspace, &["commit", "-q", "-m", "base"]);
+    let evidence =
+        std::thread::spawn(move || {
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(async move {
+                    let runtime = fixture::Runtime::start(&workspace).await;
+                    runtime
+                .command(json!({"type":"prompt","message":"Initialise the swarm","ack":"accept"}))
+                .await;
+                    runtime.wait_report("READY").await;
+                    let board = workspace.join(".git/quecto/swarm.sqlite");
+                    let in_git_dir = board.is_file();
+                    let in_work_tree = workspace.join(".quecto/swarm.sqlite").exists();
+                    std::fs::write(workspace.join("app.py"), "changed\n").unwrap();
+                    git(&workspace, &["stash", "-u"]);
+                    git(&workspace, &["clean", "-fdx"]);
+                    json!({"in_git_dir": in_git_dir, "in_work_tree": in_work_tree,
+                   "survived": board.is_file()})
+                })
+        })
+        .join()
+        .unwrap();
+    world.swarm_result = Some(quecto::domain::tool::ToolResult {
+        content: evidence.to_string(),
+        is_error: false,
+        image_blocks: vec![],
+        delivery_metadata: None,
+    });
+}
+
+#[then("the board lives in the checkout's git directory and survives git stash and git clean")]
+fn board_in_git_dir(world: &mut QuectoWorld) {
+    let evidence = result_json(world);
+    assert_eq!(evidence["in_git_dir"], true, "{evidence}");
+    assert_eq!(evidence["in_work_tree"], false, "{evidence}");
+    assert_eq!(evidence["survived"], true, "{evidence}");
+}
