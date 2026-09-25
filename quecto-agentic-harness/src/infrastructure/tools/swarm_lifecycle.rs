@@ -17,9 +17,9 @@ pub fn join_current_process(
     context: &SwarmContext,
     socket: Option<&std::path::Path>,
     participation: super::swarm_bridge::Participation,
+    creator: bool,
 ) -> Result<bool, DomainError> {
-    if !context.database().exists() && std::env::var("QUECTO_SWARM_BOOTSTRAP").as_deref() != Ok("1")
-    {
+    if !context.database().exists() && !creator {
         return Err(DomainError::Tool("swarm coordination store missing; only the container creator may initialize it; do not reset admission".into()));
     }
     prepare_checkout(context)?;
@@ -39,6 +39,13 @@ pub fn join_current_process(
     Ok(participates)
 }
 
+/// Whether this process is its container's creator: the one process the
+/// container runtime starts with `QUECTO_SWARM_BOOTSTRAP=1` (every member it
+/// adds later gets `0`).
+pub fn is_creator() -> bool {
+    std::env::var("QUECTO_SWARM_BOOTSTRAP").as_deref() == Ok("1")
+}
+
 /// The run's creator decides, before anything reads the store, that it
 /// lives in the checkout's git directory (#2145); for anyone else this does
 /// nothing.
@@ -47,15 +54,15 @@ pub fn claim_store_location(context: &SwarmContext, creator: bool) -> Result<(),
         .map_err(|error| DomainError::Tool(format!("swarm storage: {error}")))
 }
 
-/// Make the store's directory, and tell git to leave swarm artifacts alone
-/// (#2145). Failing to tell git leaves things as they were: the join goes
+/// Make the store's directory, and tell git to leave what stays in the work
+/// tree alone (#2145). Failing to tell git leaves things as they were: the join goes
 /// on, with the reason logged.
 pub(super) fn prepare_checkout(context: &SwarmContext) -> Result<(), DomainError> {
     let database = context.database();
     let dir = database.parent().expect("the store has a directory");
     std::fs::create_dir_all(dir).map_err(|e| DomainError::Tool(format!("swarm storage: {e}")))?;
-    if let Err(error) = super::swarm_store_location::exclude_artifacts(&context.checkout) {
-        tracing::warn!(%error, "swarm artifacts could not be excluded from git");
+    if let Err(error) = super::swarm_store_location::exclude_work_tree(&context.checkout) {
+        tracing::warn!(%error, "swarm work-tree files could not be excluded from git");
     }
     Ok(())
 }

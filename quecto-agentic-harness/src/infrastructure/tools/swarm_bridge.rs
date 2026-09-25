@@ -206,6 +206,7 @@ impl HostedStore {
         if !store_database(&self.checkout).is_file() {
             return Ok(None);
         }
+        self.contained()?;
         let status = store_rpc(&self.checkout, "supervisor", "_status", json!([]))?;
         decode_hosted_run(&status).map(Some)
     }
@@ -219,6 +220,7 @@ impl HostedStore {
         &self,
         coordinator: &str,
     ) -> Result<crate::domain::environment_retention::CoordinatorLoss, DomainError> {
+        self.contained()?;
         let value = store_rpc(&self.checkout, coordinator, "_lose_coordinator", json!([]))?;
         Ok(crate::domain::environment_retention::CoordinatorLoss {
             run: decode_hosted_run(&value)?,
@@ -226,6 +228,28 @@ impl HostedStore {
                 .as_bool()
                 .ok_or_else(|| DomainError::Tool("swarm loss receipt carries no verdict".into()))?,
         })
+    }
+}
+
+impl HostedStore {
+    /// The host opens the store only where it really is inside the checkout:
+    /// a link planted in the container (`.git/quecto` or `.quecto` pointing
+    /// elsewhere) is refused.
+    fn contained(&self) -> Result<(), DomainError> {
+        let resolve = |path: &Path| {
+            std::fs::canonicalize(path)
+                .map_err(|e| DomainError::Tool(format!("swarm store {}: {e}", path.display())))
+        };
+        let checkout = resolve(&self.checkout)?;
+        let store = resolve(&store_database(&self.checkout))?;
+        match store.starts_with(&checkout) {
+            true => Ok(()),
+            false => Err(DomainError::Tool(format!(
+                "swarm store {} is outside its checkout {}",
+                store.display(),
+                checkout.display()
+            ))),
+        }
     }
 }
 

@@ -153,12 +153,16 @@ an importable file in the checkout controls the helper. Python variables do not
 persist. The SQLite board does.
 
 The board lives in the checkout's git directory, `.git/quecto/swarm.sqlite`,
-where no git command reaches it (`stash -u`, `clean -fdx`, `checkout`, `merge`,
-`reset --hard`). The run's creator claims that place before the board is first
-read; a checkout with no repository (or a run started before #2145) keeps it at
-`.quecto/swarm.sqlite`. Swarm artifacts (`.quecto/swarm/`) are listed in the
-checkout's local `.git/info/exclude`, so `git add -A` never stages them. A board
-deleted from under a run cannot be recreated: every call then fails with
+which git's work-tree commands never touch (`stash -u`, `clean -fdx`,
+`checkout`, `merge`, `reset --hard`). The run's creator claims that place before
+the board is first read; a board an agent once committed at the old path is
+never adopted. A checkout whose `.git` is not a directory (no repository, or a
+linked worktree), or a run started before #2145, keeps the board at
+`.quecto/swarm.sqlite`. That file and the swarm artifacts (`.quecto/swarm/`) are
+listed in the checkout's local `.git/info/exclude`, so `git add -A` never stages
+them and `git stash -u` / `git clean -fd` leave them; `git clean -x` does not. A
+board deleted from under a run (or moved, by re-initialising the repository with
+a separate git directory) cannot be recreated: every call then fails with
 `coordination store missing at <path>`.
 
 ```python

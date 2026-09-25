@@ -7,7 +7,7 @@ use crate::infrastructure::tools::{swarm_bridge, swarm_lifecycle};
 pub(super) fn admit(flags: &mut AgentFlags, stderr: &mut String) -> bool {
     admit_with(
         crate::interface::tool_runtime::swarm_context(),
-        std::env::var("QUECTO_SWARM_BOOTSTRAP").as_deref() == Ok("1"),
+        swarm_lifecycle::is_creator(),
         flags,
         stderr,
     )
@@ -52,6 +52,7 @@ pub(super) fn admit_with(
         &context,
         flags.socket_path.as_deref(),
         flags.swarm_participation.clone(),
+        creator,
     ) {
         stderr.push_str(&format!("swarm admission rejected: {error}\n"));
         return false;

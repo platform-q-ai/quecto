@@ -149,24 +149,31 @@ fn admit_without_a_container_context_changes_nothing() {
 }
 
 /// #2145: the creator claims the store's place in the checkout's git
-/// directory before anything reads the store; a later member does not.
+/// directory before anything reads the store, and its join creates the store
+/// there; a later member neither claims nor, without a store, joins.
 #[test]
 fn the_creator_claims_the_store_location_before_it_is_read() {
     let checkout = tempfile::tempdir().unwrap();
     std::fs::create_dir(checkout.path().join(".git")).unwrap();
     let mut flags = flags_with(&[]);
-    admit_with(
+    let mut stderr = String::new();
+    assert!(!admit_with(
         Some(member(checkout.path(), "late")),
         false,
         &mut flags,
-        &mut String::new(),
-    );
+        &mut stderr,
+    ));
+    assert!(stderr.contains("store missing"), "{stderr}");
     assert!(!checkout.path().join(".git/quecto").exists());
-    admit_with(
-        Some(member(checkout.path(), "creator")),
-        true,
-        &mut flags,
-        &mut String::new(),
+    let creator = member(checkout.path(), "creator");
+    let mut stderr = String::new();
+    assert!(
+        admit_with(Some(creator.clone()), true, &mut flags, &mut stderr),
+        "{stderr}"
     );
-    assert!(checkout.path().join(".git/quecto").is_dir());
+    assert_eq!(
+        creator.database(),
+        checkout.path().join(".git/quecto/swarm.sqlite")
+    );
+    assert!(creator.database().is_file());
 }

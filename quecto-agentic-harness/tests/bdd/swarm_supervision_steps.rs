@@ -206,15 +206,46 @@ fn git(dir: &std::path::Path, args: &[&str]) {
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_OBJECT_DIRECTORY")
         .status()
         .expect("git runs");
     assert!(status.success(), "git {args:?}");
 }
 
+/// The run id the board holds, read as the parent would (read-only).
+fn board_run_id(board: &std::path::Path) -> String {
+    let output = std::process::Command::new("python3")
+        .args([
+            "-c",
+            "import sqlite3,sys; print(sqlite3.connect('file:'+sys.argv[1]+'?mode=ro', uri=True).execute('SELECT id FROM run').fetchone()[0])",
+        ])
+        .arg(board)
+        .output()
+        .expect("python3 runs");
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// The fixture's own files in the checkout (its runtime base, log, config
+/// and socket): kept out of the git commands the scenario runs, which are
+/// about the board.
+const FIXTURE_FILES: [&str; 4] = [
+    "runtime",
+    "supervisor.stderr",
+    "supervision-config.json",
+    "supervisor.sock",
+];
+
 #[when("a container's creator starts a swarm in a checkout that is a git repository")]
 fn creator_in_git_checkout(world: &mut QuectoWorld) {
     let workspace = world.swarm_workspace.clone().unwrap();
     git(&workspace, &["init", "-q"]);
+    std::fs::write(
+        workspace.join(".git/info/exclude"),
+        FIXTURE_FILES.map(|file| format!("/{file}\n")).concat(),
+    )
+    .unwrap();
     std::fs::write(workspace.join("app.py"), "code\n").unwrap();
     git(&workspace, &["add", "app.py"]);
     git(&workspace, &["commit", "-q", "-m", "base"]);
@@ -231,11 +262,18 @@ fn creator_in_git_checkout(world: &mut QuectoWorld) {
                     let board = workspace.join(".git/quecto/swarm.sqlite");
                     let in_git_dir = board.is_file();
                     let in_work_tree = workspace.join(".quecto/swarm.sqlite").exists();
+                    let before = board_run_id(&board);
                     std::fs::write(workspace.join("app.py"), "changed\n").unwrap();
                     git(&workspace, &["stash", "-u"]);
-                    git(&workspace, &["clean", "-fdx"]);
+                    let mut clean = vec!["clean", "-fdx"];
+                    for file in FIXTURE_FILES {
+                        clean.extend(["-e", file]);
+                    }
+                    git(&workspace, &clean);
+                    let after = board_run_id(&board);
+                    runtime.finish().await;
                     json!({"in_git_dir": in_git_dir, "in_work_tree": in_work_tree,
-                   "survived": board.is_file()})
+                   "before": before, "after": after})
                 })
         })
         .join()
@@ -253,5 +291,9 @@ fn board_in_git_dir(world: &mut QuectoWorld) {
     let evidence = result_json(world);
     assert_eq!(evidence["in_git_dir"], true, "{evidence}");
     assert_eq!(evidence["in_work_tree"], false, "{evidence}");
-    assert_eq!(evidence["survived"], true, "{evidence}");
+    assert!(
+        !evidence["before"].as_str().unwrap().is_empty(),
+        "{evidence}"
+    );
+    assert_eq!(evidence["after"], evidence["before"], "{evidence}");
 }

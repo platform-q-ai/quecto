@@ -70,7 +70,11 @@ class Store:
         path = pathlib.Path(self.path).absolute()
         # A store removed from under a run (#2145) says where and why, not
         # "unavailable or contended": mode=rw below never recreates it.
-        if not create and not path.exists():
+        # Opened only to create it, or where it is; anything else is a store
+        # deleted from under its run.
+        if create or path.exists():
+            pass
+        else:
             raise SwarmError(
                 f'coordination store missing at {path}: it was deleted while the run was live, '
                 'so this run\'s board is lost')

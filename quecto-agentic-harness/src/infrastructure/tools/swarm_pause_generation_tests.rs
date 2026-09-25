@@ -117,6 +117,7 @@ fn paused_coordinator_reattaches_without_reopening_admission() {
         &context,
         Some(std::path::Path::new("/test-supervisor.sock")),
         super::super::swarm_bridge::Participation::none(),
+        false,
     )
     .unwrap();
     let snapshot = context.snapshot().unwrap();

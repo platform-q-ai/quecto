@@ -131,6 +131,59 @@ fn a_claimed_store_survives_every_git_command_agents_run() {
     }
 }
 
+/// A creator never claims the git directory over a board already in the
+/// work tree: a run started before this layout keeps its board.
+#[test]
+fn a_creator_never_moves_a_board_already_in_the_work_tree() {
+    let repo = repository();
+    std::fs::write(repo.path().join(".quecto/swarm.sqlite"), "live board").unwrap();
+    claim(repo.path(), true).unwrap();
+    assert!(!repo.path().join(".git/quecto").exists());
+    assert_eq!(
+        store_path(repo.path()),
+        repo.path().join(".quecto/swarm.sqlite")
+    );
+}
+
+/// A board left in the work tree (nothing claimed the git directory) is
+/// excluded: `git stash -u` and `git clean -fd` leave it, `git add -A`
+/// never stages it.
+#[test]
+fn a_board_left_in_the_work_tree_is_excluded_from_git() {
+    let repo = repository();
+    assert_eq!(exclude_work_tree(repo.path()), Ok(Exclusion::Added));
+    std::fs::write(repo.path().join(".quecto/swarm.sqlite"), "board").unwrap();
+    std::fs::write(repo.path().join(".quecto/swarm.sqlite-journal"), "journal").unwrap();
+    std::fs::write(repo.path().join("app.py"), "changed\n").unwrap();
+    git(repo.path(), &["add", "-A"]);
+    assert_eq!(
+        git(repo.path(), &["diff", "--cached", "--name-only"]),
+        "app.py\n"
+    );
+    git(repo.path(), &["stash", "-u"]);
+    git(repo.path(), &["clean", "-fd"]);
+    assert!(repo.path().join(".quecto/swarm.sqlite").exists());
+    assert!(repo.path().join(".quecto/swarm.sqlite-journal").exists());
+}
+
+/// The host opens a store only where it really is inside the checkout: a
+/// `.git/quecto` linked elsewhere is refused.
+#[test]
+fn the_host_refuses_a_store_linked_outside_its_checkout() {
+    let repo = repository();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let (planted, _) = created_run(elsewhere.path());
+    assert!(planted.database().is_file());
+    std::os::unix::fs::symlink(
+        planted.database().parent().unwrap(),
+        repo.path().join(".git/quecto"),
+    )
+    .unwrap();
+    let hosted = super::super::swarm_bridge::HostedStore::at(repo.path().to_path_buf());
+    let error = hosted.hosted_run().unwrap_err().to_string();
+    assert!(error.contains("is outside its checkout"), "{error}");
+}
+
 /// A fresh clone of a repository that tracks a stale board: the creator
 /// claims the git directory first, so the stale board is never adopted.
 #[test]
@@ -163,7 +216,7 @@ fn a_repository_initialised_mid_run_leaves_the_store_where_it_is() {
 #[test]
 fn swarm_artifacts_are_left_alone_by_git() {
     let repo = repository();
-    assert_eq!(exclude_artifacts(repo.path()), Ok(Exclusion::Added));
+    assert_eq!(exclude_work_tree(repo.path()), Ok(Exclusion::Added));
     std::fs::create_dir_all(repo.path().join(".quecto/swarm/exec-1")).unwrap();
     std::fs::write(repo.path().join(".quecto/swarm/exec-1/out.txt"), "artifact").unwrap();
     std::fs::write(repo.path().join("app.py"), "changed\n").unwrap();
@@ -183,14 +236,14 @@ fn excluding_again_adds_nothing_and_keeps_existing_entries() {
     let repo = repository();
     let exclude = repo.path().join(".git/info/exclude");
     std::fs::write(&exclude, "# mine\n*.log").unwrap();
-    assert_eq!(exclude_artifacts(repo.path()), Ok(Exclusion::Added));
+    assert_eq!(exclude_work_tree(repo.path()), Ok(Exclusion::Added));
     assert_eq!(
-        exclude_artifacts(repo.path()),
+        exclude_work_tree(repo.path()),
         Ok(Exclusion::AlreadyPresent)
     );
     let text = std::fs::read_to_string(&exclude).unwrap();
     assert!(text.starts_with("# mine\n*.log\n"), "{text}");
-    for entry in ARTIFACT_ENTRIES {
+    for entry in WORK_TREE_ENTRIES {
         assert_eq!(
             text.lines().filter(|line| *line == entry).count(),
             1,
@@ -215,7 +268,7 @@ fn a_worktree_checkout_is_excluded_in_the_shared_git_directory() {
         &["worktree", "add", "-q", checkout.to_str().unwrap()],
     );
     assert!(checkout.join(".git").is_file());
-    assert_eq!(exclude_artifacts(&checkout), Ok(Exclusion::Added));
+    assert_eq!(exclude_work_tree(&checkout), Ok(Exclusion::Added));
     let shared = std::fs::read_to_string(repo.path().join(".git/info/exclude")).unwrap();
     assert!(shared.contains("/.quecto/swarm/\n"), "{shared}");
 }
@@ -225,20 +278,20 @@ fn a_worktree_checkout_is_excluded_in_the_shared_git_directory() {
 fn a_checkout_that_is_no_repository_root_is_left_alone() {
     let plain = tempfile::tempdir().unwrap();
     assert_eq!(
-        exclude_artifacts(plain.path()),
+        exclude_work_tree(plain.path()),
         Ok(Exclusion::NotARepositoryRoot)
     );
     let repo = repository();
     let nested = repo.path().join("sub");
     std::fs::create_dir(&nested).unwrap();
     assert_eq!(
-        exclude_artifacts(&nested),
+        exclude_work_tree(&nested),
         Ok(Exclusion::NotARepositoryRoot)
     );
     let broken = tempfile::tempdir().unwrap();
     std::fs::write(broken.path().join(".git"), "not a pointer\n").unwrap();
     assert!(
-        exclude_artifacts(broken.path())
+        exclude_work_tree(broken.path())
             .unwrap_err()
             .contains("gitdir")
     );
