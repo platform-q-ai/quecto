@@ -176,6 +176,7 @@ fn store_rpc(
 ) -> Result<Value, DomainError> {
     super::swarm_board_worker::call(
         checkout,
+        database,
         member,
         &bootstrap_source(database, checkout, member),
         method,

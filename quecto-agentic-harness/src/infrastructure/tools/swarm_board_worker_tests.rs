@@ -14,7 +14,16 @@ fn call(
     thread_local! {
         static REGISTRY: Registry = Registry::default();
     }
-    REGISTRY.with(|r| r.call(checkout, member, bootstrap, method, args))
+    REGISTRY.with(|r| {
+        r.call(
+            checkout,
+            &checkout.join("board"),
+            member,
+            bootstrap,
+            method,
+            args,
+        )
+    })
 }
 
 /// A stand-in board: `echo` returns its arguments, `boom` raises, `quit`
@@ -103,7 +112,14 @@ fn the_registry_is_bounded_and_evicts_the_least_recently_used() {
     for dir in &dirs {
         assert_eq!(
             registry
-                .call(dir.path(), "m", STUB, "echo", json!([]))
+                .call(
+                    dir.path(),
+                    &dir.path().join("board"),
+                    "m",
+                    STUB,
+                    "echo",
+                    json!([])
+                )
                 .unwrap()["calls"],
             1
         );
@@ -113,13 +129,27 @@ fn the_registry_is_bounded_and_evicts_the_least_recently_used() {
     // restarts. The second is still resident and keeps counting.
     assert_eq!(
         registry
-            .call(dirs[0].path(), "m", STUB, "echo", json!([]))
+            .call(
+                dirs[0].path(),
+                &dirs[0].path().join("board"),
+                "m",
+                STUB,
+                "echo",
+                json!([])
+            )
             .unwrap()["calls"],
         1
     );
     assert_eq!(
         registry
-            .call(dirs[2].path(), "m", STUB, "echo", json!([]))
+            .call(
+                dirs[2].path(),
+                &dirs[2].path().join("board"),
+                "m",
+                STUB,
+                "echo",
+                json!([])
+            )
             .unwrap()["calls"],
         2
     );

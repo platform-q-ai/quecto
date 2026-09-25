@@ -140,10 +140,13 @@ fn spawn_on_resident_thread(source: String) -> std::io::Result<Child> {
         .map_err(|_| std::io::Error::other("swarm board spawner thread is gone"))?
 }
 
-type Key = (PathBuf, String);
+/// (checkout, database, member): a checkout whose board moved (the host
+/// reads by layout, #2145) gets its own interpreter, never the old one's.
+type Key = (PathBuf, PathBuf, String);
 type Slot = Arc<Mutex<Option<Worker>>>;
 
-/// The interpreters one process keeps, keyed by (checkout, member).
+/// The interpreters one process keeps, keyed by (checkout, database,
+/// member).
 #[derive(Default)]
 pub(super) struct Registry {
     inner: Mutex<RegistryInner>,
@@ -162,15 +165,19 @@ fn global() -> &'static Registry {
 }
 
 impl Registry {
-    /// The slot for `(checkout, member)`, evicting the least recently used
+    /// The slot for `(checkout, database, member)`, evicting the least recently used
     /// worker when full. Slots are created empty; the caller spawns into
     /// one under the slot's own lock, so the registry lock is never held
     /// across a spawn.
-    fn slot(&self, checkout: &Path, member: &str) -> Slot {
+    fn slot(&self, checkout: &Path, database: &Path, member: &str) -> Slot {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         inner.tick += 1;
         let tick = inner.tick;
-        let key = (checkout.to_path_buf(), member.to_string());
+        let key = (
+            checkout.to_path_buf(),
+            database.to_path_buf(),
+            member.to_string(),
+        );
         if let Some((slot, used)) = inner.workers.get_mut(&key) {
             *used = tick;
             return slot.clone();
@@ -185,7 +192,7 @@ impl Registry {
                 let evicted = inner.workers.remove(&oldest);
                 drop(inner);
                 drop(evicted);
-                return self.slot(checkout, member);
+                return self.slot(checkout, database, member);
             }
         }
         let created: Slot = Arc::new(Mutex::new(None));
@@ -200,6 +207,7 @@ impl Registry {
     pub(super) fn call(
         &self,
         checkout: &Path,
+        database: &Path,
         member: &str,
         bootstrap: &str,
         method: &str,
@@ -207,7 +215,7 @@ impl Registry {
     ) -> Result<Value, DomainError> {
         let request = serde_json::to_string(&serde_json::json!([method, args]))
             .map_err(|e| DomainError::Tool(format!("swarm coordination request: {e}")))?;
-        let slot = self.slot(checkout, member);
+        let slot = self.slot(checkout, database, member);
         let mut guard = slot.lock().unwrap_or_else(|p| p.into_inner());
         // An interpreter that already left (its checkout vanished) is reaped
         // and replaced before the request is written, so the write never
@@ -247,12 +255,13 @@ impl Registry {
 /// One board call through the process-wide registry.
 pub(super) fn call(
     checkout: &Path,
+    database: &Path,
     member: &str,
     bootstrap: &str,
     method: &str,
     args: Value,
 ) -> Result<Value, DomainError> {
-    global().call(checkout, member, bootstrap, method, args)
+    global().call(checkout, database, member, bootstrap, method, args)
 }
 
 fn decode(line: &str) -> Result<Value, DomainError> {
