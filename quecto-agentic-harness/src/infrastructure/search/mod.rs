@@ -62,10 +62,11 @@ pub fn build_grep_tool(
 fn ranking_judge(
     relevance: &crate::infrastructure::config::grep_tool::GrepRelevanceConfig,
 ) -> Result<(TypeSafeJudge, usize), String> {
-    let (max_candidates, timeout) = relevance.limits()?;
+    let limits = relevance.limits()?;
     let key = typesafe_key().ok_or(
         "no TypeSafe key was found (TYPESAFE_API_KEY or ~/.config/typesafe/api_key)".to_string(),
     )?;
-    let judge = TypeSafeJudge::new(TYPESAFE_ENDPOINT, key, &relevance.model, timeout)?;
-    Ok((judge, max_candidates))
+    let judge = TypeSafeJudge::new(TYPESAFE_ENDPOINT, key, &relevance.model, limits.timeout)?
+        .with_concurrency(limits.concurrency);
+    Ok((judge, limits.max_candidates))
 }

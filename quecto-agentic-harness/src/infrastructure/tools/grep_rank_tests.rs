@@ -281,3 +281,21 @@ fn the_match_column_comes_from_rgs_first_submatch() {
         "a short line is whole"
     );
 }
+
+/// When no judged match looks relevant, the agent is told so rather than
+/// reading the best of poor matches as the answer.
+#[tokio::test]
+async fn no_relevant_match_is_said_so() {
+    let (dir, matches) = workspace();
+    let (poor, _) = ranking(Relevance::Scored(vec![Some(0.2), Some(0.12), None]), 30);
+    let ranked = rank(Some(&poor), "q", matches, dir.path(), &Sandbox::new(None)).await;
+    let notice = ranked.notice.unwrap();
+    assert!(
+        notice.contains("no judged match looks relevant (best 0.20)"),
+        "{notice}"
+    );
+    let (dir, matches) = workspace();
+    let (good, _) = ranking(Relevance::Scored(vec![Some(0.2), Some(0.8), Some(0.1)]), 30);
+    let ranked = rank(Some(&good), "q", matches, dir.path(), &Sandbox::new(None)).await;
+    assert_eq!(ranked.notice, None);
+}

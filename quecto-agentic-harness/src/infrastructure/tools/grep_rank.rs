@@ -17,6 +17,8 @@ use crate::infrastructure::security::sandbox::Sandbox;
 
 use super::{RgMatch, read_file_for_cache};
 
+/// A score below this for every judged match means none looks relevant.
+const RELEVANT: f64 = 0.3;
 /// Context lines either side of a match in the text a judge sees.
 const CANDIDATE_CONTEXT: usize = 1;
 /// The most matched lines of one match a judge sees.
@@ -159,6 +161,20 @@ fn ranked(
     );
     let unscored = scores.iter().filter(|score| score.is_none()).count();
     let mut notes = Vec::new();
+    // The best of poor matches is not an answer: say so, so the agent
+    // searches differently instead of reading the top line as it.
+    let best = scores
+        .iter()
+        .flatten()
+        .copied()
+        .fold(None, |best: Option<f64>, score| {
+            Some(best.map_or(score, |best| best.max(score)))
+        });
+    if let Some(best) = best.filter(|best| *best < RELEVANT) {
+        notes.push(format!(
+            "no judged match looks relevant (best {best:.2}): try a different pattern, path or type"
+        ));
+    }
     if unscored > 0 {
         let why = unjudged_reason
             .as_deref()

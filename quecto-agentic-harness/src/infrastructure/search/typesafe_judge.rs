@@ -16,8 +16,8 @@ use crate::application::search::ports::{
 
 /// TypeSafe's System One endpoint.
 pub const TYPESAFE_ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
-/// Concurrent requests per search.
-const CONCURRENCY: usize = 8;
+/// Requests in flight per search unless configured.
+const DEFAULT_CONCURRENCY: usize = 8;
 
 /// The TypeSafe key: `TYPESAFE_API_KEY`, else `~/.config/typesafe/api_key`.
 /// `None` when neither holds one. Never logged.
@@ -40,6 +40,7 @@ pub struct TypeSafeJudge {
     key: String,
     model: String,
     timeout: Duration,
+    concurrency: usize,
 }
 
 impl TypeSafeJudge {
@@ -63,7 +64,15 @@ impl TypeSafeJudge {
             key,
             model: model.to_string(),
             timeout,
+            concurrency: DEFAULT_CONCURRENCY,
         })
+    }
+
+    /// At most `concurrency` requests in flight (at least one).
+    pub fn with_concurrency(mut self, concurrency: usize) -> Self {
+        assert!(concurrency >= 1, "at least one request in flight");
+        self.concurrency = concurrency;
+        self
     }
 
     /// The question asked of each hit.
@@ -130,7 +139,7 @@ impl RelevanceJudge for TypeSafeJudge {
                 .collect();
             // Scores are kept as they arrive; at the deadline the rest
             // stay unscored rather than discarding what was judged.
-            let mut pending = futures::stream::iter(requests).buffer_unordered(CONCURRENCY);
+            let mut pending = futures::stream::iter(requests).buffer_unordered(self.concurrency);
             let deadline = tokio::time::Instant::now() + self.timeout;
             let mut judged = Vec::with_capacity(candidates.len());
             let mut timed_out = false;

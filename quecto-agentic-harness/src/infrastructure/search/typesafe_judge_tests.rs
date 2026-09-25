@@ -176,3 +176,27 @@ async fn at_the_deadline_the_scores_already_judged_are_kept() {
         )
     );
 }
+
+/// Requests run `concurrency` at a time: 32 slow answers at 32 in flight
+/// take about one answer's time, not four (the old fixed 8).
+#[tokio::test]
+async fn requests_run_concurrency_at_a_time() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(noul(0.5).set_delay(Duration::from_millis(400)))
+        .mount(&server)
+        .await;
+    let candidates: Vec<RelevanceCandidate> =
+        (0..32).map(|n| candidate(&format!("f{n}.rs:1"))).collect();
+    let started = std::time::Instant::now();
+    let answer = judge(&server, Duration::from_secs(10))
+        .with_concurrency(32)
+        .judge("q", &candidates)
+        .await;
+    assert!(
+        started.elapsed() < Duration::from_millis(1200),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(matches!(answer, Relevance::Scored(ref scores) if scores.len() == 32));
+}

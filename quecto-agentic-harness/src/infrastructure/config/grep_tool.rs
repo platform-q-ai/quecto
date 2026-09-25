@@ -25,40 +25,75 @@ pub struct GrepRelevanceConfig {
     /// order.
     #[serde(default = "default_max_candidates")]
     pub max_candidates: usize,
-    /// Judging stops after this long; the search then returns rg's order.
+    /// Judging stops after this long; the matches judged by then are
+    /// ranked, the rest follow in rg's order.
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
+    /// Requests to TypeSafe in flight at once.
+    #[serde(default = "default_concurrency")]
+    pub concurrency: usize,
 }
 
-/// The judged matches per search a config may ask for.
-pub const MAX_CANDIDATES: std::ops::RangeInclusive<usize> = 1..=100;
+/// The judged matches per search a config may ask for: calls cost next to
+/// nothing, so every match is judged up to a guard against runaway fan-out.
+pub const MAX_CANDIDATES: std::ops::RangeInclusive<usize> = 1..=5000;
 /// The judging time a config may allow, in seconds.
-pub const TIMEOUT_SECS: std::ops::RangeInclusive<u64> = 1..=60;
+pub const TIMEOUT_SECS: std::ops::RangeInclusive<u64> = 1..=120;
+/// The requests in flight a config may allow.
+pub const CONCURRENCY: std::ops::RangeInclusive<usize> = 1..=64;
+
+/// Ranking's bounds for one search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RankingLimits {
+    pub max_candidates: usize,
+    pub timeout: std::time::Duration,
+    pub concurrency: usize,
+}
 
 impl GrepRelevanceConfig {
-    /// The candidate cap and judging timeout, when both are in range; a
-    /// setting outside its range is refused, never clamped.
-    pub fn limits(&self) -> Result<(usize, std::time::Duration), String> {
+    /// Ranking's bounds, when every setting is in range; a setting outside
+    /// its range is refused, never clamped.
+    pub fn limits(&self) -> Result<RankingLimits, String> {
+        let refused = |key: &str, range: String, got: String| {
+            Err(format!(
+                "tools.grep.relevance.{key} must be {range} (got {got})"
+            ))
+        };
+        let span = |start: String, end: String| format!("{start}..={end}");
         match (
             MAX_CANDIDATES.contains(&self.max_candidates),
             TIMEOUT_SECS.contains(&self.timeout_secs),
+            CONCURRENCY.contains(&self.concurrency),
         ) {
-            (true, true) => Ok((
-                self.max_candidates,
-                std::time::Duration::from_secs(self.timeout_secs),
-            )),
-            (false, _) => Err(format!(
-                "tools.grep.relevance.max_candidates must be {}..={} (got {})",
-                MAX_CANDIDATES.start(),
-                MAX_CANDIDATES.end(),
-                self.max_candidates
-            )),
-            (true, false) => Err(format!(
-                "tools.grep.relevance.timeout_secs must be {}..={} (got {})",
-                TIMEOUT_SECS.start(),
-                TIMEOUT_SECS.end(),
-                self.timeout_secs
-            )),
+            (true, true, true) => Ok(RankingLimits {
+                max_candidates: self.max_candidates,
+                timeout: std::time::Duration::from_secs(self.timeout_secs),
+                concurrency: self.concurrency,
+            }),
+            (false, _, _) => refused(
+                "max_candidates",
+                span(
+                    MAX_CANDIDATES.start().to_string(),
+                    MAX_CANDIDATES.end().to_string(),
+                ),
+                self.max_candidates.to_string(),
+            ),
+            (true, false, _) => refused(
+                "timeout_secs",
+                span(
+                    TIMEOUT_SECS.start().to_string(),
+                    TIMEOUT_SECS.end().to_string(),
+                ),
+                self.timeout_secs.to_string(),
+            ),
+            (true, true, false) => refused(
+                "concurrency",
+                span(
+                    CONCURRENCY.start().to_string(),
+                    CONCURRENCY.end().to_string(),
+                ),
+                self.concurrency.to_string(),
+            ),
         }
     }
 }
@@ -70,6 +105,7 @@ impl Default for GrepRelevanceConfig {
             model: default_model(),
             max_candidates: default_max_candidates(),
             timeout_secs: default_timeout_secs(),
+            concurrency: default_concurrency(),
         }
     }
 }
@@ -94,11 +130,15 @@ fn default_model() -> String {
 }
 
 fn default_max_candidates() -> usize {
-    30
+    1000
 }
 
 fn default_timeout_secs() -> u64 {
-    10
+    30
+}
+
+fn default_concurrency() -> usize {
+    32
 }
 
 fn default_log_enabled() -> bool {
