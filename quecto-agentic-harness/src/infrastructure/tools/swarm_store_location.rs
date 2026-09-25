@@ -1,109 +1,103 @@
 //! Where a container's swarm coordination store lives (#2145).
 //!
-//! In a checkout that is a git repository the store lives in its git
-//! directory, `.git/quecto/swarm.sqlite`, which git's work-tree commands
-//! never touch: an agent's `git stash -u`, `git clean -fdx`, `checkout`,
-//! `merge` or `reset --hard` deleted or replaced it when it lived in the work
-//! tree. (Re-initialising the repository with a separate git directory moves
-//! it; the store then reports itself missing.)
-//! Otherwise (a checkout whose `.git` is not a directory, or a run started
-//! before this layout) it stays at `.quecto/swarm.sqlite`, listed in the
-//! local exclude file where there is one.
+//! The board belongs to the checkout's git directory whenever it has one:
+//! `.git/quecto/swarm.sqlite`, or, in a linked worktree (`.git` is a file),
+//! that worktree's own git directory. Git's work-tree commands never touch a
+//! git directory: an agent's `git stash -u`, `git clean -fdx`, `checkout`,
+//! `merge` or `reset --hard` deleted or replaced the board when it lived in
+//! the work tree. Only a checkout with no git directory at all keeps it at
+//! `.quecto/swarm.sqlite`, where no git command reaches either.
 //!
-//! The location is decided once, by the run's creator, before anything reads
-//! the store: it creates `.git/quecto/`, and every process after it finds the
-//! store there. Nothing else creates that directory, so a repository an agent
-//! initialises mid-run never moves a live store, and (where `.git` is a
-//! directory) a stale board committed at the old path is never adopted. An
-//! untracked board already in the work tree is taken for a live run's and
-//! kept: a container script that reuses a checkout must remove a leftover
-//! board itself.
+//! The location follows from the checkout's layout alone, never from which
+//! files happen to exist, so a stale board an agent once committed at the old
+//! path is never adopted. And once a process has found its board the path is
+//! pinned for that process: a layout that changes mid-run (a `git init` in a
+//! checkout that had none, a git directory created or removed) never moves a
+//! live board; a board that disappears fails as missing, and a member joining
+//! after such a change finds no store and is refused.
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
-/// The store's directory inside a repository's git directory.
-const GIT_STORE_DIR: &str = ".git/quecto";
-/// The store's directory in the work tree, where no git directory claimed it
-/// (no repository, a `.git` that is a file, or a run started before #2145).
+/// The store's directory inside a git directory.
+const GIT_STORE_DIR: &str = "quecto";
+/// The store's directory in a checkout with no git directory; also where a
+/// run started before #2145 keeps it.
 const WORK_TREE_STORE_DIR: &str = ".quecto";
 const STORE_FILE: &str = "swarm.sqlite";
 
-/// What stays in the work tree is listed in the checkout's local exclude
-/// file, so `git add -A` never stages it and `git stash -u` / `git clean -fd`
-/// leave it: swarm artifacts (their paths are part of the tool's answers),
-/// and a store that no creator could move into the git directory.
-pub(super) const WORK_TREE_ENTRIES: [&str; 3] = [
-    "/.quecto/swarm/",
-    "/.quecto/swarm.sqlite",
-    "/.quecto/swarm.sqlite-*",
-];
+/// Swarm artifacts stay in the work tree (their paths are part of the tool's
+/// answers), listed in the checkout's local exclude file so `git add -A`
+/// never stages them and `git stash -u` / `git clean -fd` leave them.
+pub(super) const WORK_TREE_ENTRIES: [&str; 1] = ["/.quecto/swarm/"];
 
-/// The coordination store of the container whose checkout is `checkout`.
+/// Boards this process has found, by checkout: never re-decided.
+static PINNED: Mutex<BTreeMap<PathBuf, PathBuf>> = Mutex::new(BTreeMap::new());
+
+/// Where the store of the container checked out at `checkout` lives, by the
+/// checkout's layout.
+pub(super) fn located(checkout: &Path) -> PathBuf {
+    match own_git_dir(checkout) {
+        Some(git_dir) => git_dir.join(GIT_STORE_DIR).join(STORE_FILE),
+        None => checkout.join(WORK_TREE_STORE_DIR).join(STORE_FILE),
+    }
+}
+
+/// The coordination store of the container checked out at `checkout`: the
+/// board this process found there, or where it will be.
 pub(super) fn store_path(checkout: &Path) -> PathBuf {
-    let in_git = checkout.join(GIT_STORE_DIR);
-    match in_git.is_dir() {
-        true => in_git.join(STORE_FILE),
-        false => checkout.join(WORK_TREE_STORE_DIR).join(STORE_FILE),
+    let mut pinned = PINNED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(board) = pinned.get(checkout) {
+        return board.clone();
+    }
+    let board = located(checkout);
+    if board.is_file() {
+        pinned.insert(checkout.to_path_buf(), board.clone());
+    }
+    board
+}
+
+/// The board the host reads for a container: where it is located, or, for a
+/// container started before #2145 (a git checkout whose git directory holds
+/// no store directory), where that container keeps it. Host reads only: an
+/// old container still runs the binary it was created with.
+pub(super) fn hosted_store_path(checkout: &Path) -> PathBuf {
+    let board = store_path(checkout);
+    let before_2145 = checkout.join(WORK_TREE_STORE_DIR).join(STORE_FILE);
+    let store_dir = board.parent().expect("the store has a directory");
+    match (
+        board.starts_with(checkout.join(WORK_TREE_STORE_DIR)),
+        store_dir.is_dir(),
+        before_2145.is_file(),
+    ) {
+        (false, false, true) => before_2145,
+        (true, _, _) | (false, true, _) | (false, false, false) => board,
     }
 }
 
-/// A store file in the work tree, as the creator finds it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WorkTreeStore {
-    Absent,
-    /// Committed to the repository: a stale board an agent once staged,
-    /// never this container's.
-    Tracked,
-    /// A live board of a run started before this layout.
-    Untracked,
+/// The git directory of the repository or worktree rooted at `checkout`:
+/// `.git` itself, or the directory a `.git` file names. `None` when there is
+/// none (no repository, or a pointer to a directory that is not there).
+fn own_git_dir(checkout: &Path) -> Option<PathBuf> {
+    let dot_git = checkout.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    let pointer = std::fs::read_to_string(&dot_git).ok()?;
+    let named = pointer.trim().strip_prefix("gitdir:")?.trim();
+    let git_dir = checkout.join(named);
+    git_dir.is_dir().then_some(git_dir)
 }
 
-fn work_tree_store(checkout: &Path) -> WorkTreeStore {
-    let relative = Path::new(WORK_TREE_STORE_DIR).join(STORE_FILE);
-    if !checkout.join(&relative).exists() {
-        return WorkTreeStore::Absent;
-    }
-    let mut git = std::process::Command::new("git");
-    // Only explicit ambient inputs: an inherited GIT_DIR, GIT_COMMON_DIR or
-    // config must not redefine which repository answers.
-    git.env_clear();
-    if let Some(path) = std::env::var_os("PATH") {
-        git.env("PATH", path);
-    }
-    let listed = git
-        .env("LC_ALL", "C")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .arg("-C")
-        .arg(checkout)
-        .args(["ls-files", "--error-unmatch", "--"])
-        .arg(&relative)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    match listed {
-        Ok(status) if status.code() == Some(1) => WorkTreeStore::Untracked,
-        // Tracked, or git could not say: a stale board is the case that
-        // happens (an agent's `git add -A`), so it is never adopted.
-        Ok(_) | Err(_) => WorkTreeStore::Tracked,
-    }
-}
-
-/// The creator's one decision: in a checkout whose `.git` is a directory,
-/// the store will live in it. Only a run's creator may make it, before the
-/// store is read, and never over a live board already in the work tree (a
-/// run started before this layout keeps it); a board committed to the
-/// repository is stale and never adopted. Any other process leaves the
-/// location as it finds it.
-pub(super) fn claim(checkout: &Path, creator: bool) -> Result<(), String> {
-    let git_dir = checkout.join(".git");
-    match (creator, git_dir.is_dir(), work_tree_store(checkout)) {
-        (true, true, WorkTreeStore::Absent | WorkTreeStore::Tracked) => {
-            let dir = checkout.join(GIT_STORE_DIR);
-            std::fs::create_dir_all(&dir).map_err(|error| format!("{}: {error}", dir.display()))
-        }
-        (true, true, WorkTreeStore::Untracked) | (true, false, _) | (false, _, _) => Ok(()),
-    }
+#[cfg(test)]
+/// As a new process would: forget the boards found so far.
+pub(super) fn forget_pins() {
+    PINNED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
 }
 
 /// What excluding the work-tree entries did.

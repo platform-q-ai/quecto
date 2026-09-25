@@ -753,8 +753,9 @@ empty repository). A script set that can host a swarm should also report
 `metadata.checkout`: the members' working directory and swarm checkout root
 (`QUECTO_SWARM_CHECKOUT`), identity-mounted so the session that launched the
 container can read the coordination store at
-`<checkout>/.git/quecto/swarm.sqlite` (`<checkout>/.quecto/swarm.sqlite` when
-the checkout has no git directory) after the members' sockets are gone and
+`<checkout>/.git/quecto/swarm.sqlite` (the checkout's own git directory;
+`<checkout>/.quecto/swarm.sqlite` when it has none, or for a container started
+before #2145) after the members' sockets are gone and
 keep the environment instead of destroying a resumable run (#1924).
 
 ### `exec`

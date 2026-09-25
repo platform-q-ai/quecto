@@ -148,11 +148,11 @@ fn admit_without_a_container_context_changes_nothing() {
     assert!(!flags.workflow_disabled && !flags.swarm_participation.participating());
 }
 
-/// #2145: the creator claims the store's place in the checkout's git
-/// directory before anything reads the store, and its join creates the store
-/// there; a later member neither claims nor, without a store, joins.
+/// #2145: the creator's join creates the store in the checkout's git
+/// directory; a member arriving before any store exists is refused and
+/// creates nothing.
 #[test]
-fn the_creator_claims_the_store_location_before_it_is_read() {
+fn the_creator_creates_the_store_in_the_git_directory() {
     let checkout = tempfile::tempdir().unwrap();
     std::fs::create_dir(checkout.path().join(".git")).unwrap();
     let mut flags = flags_with(&[]);

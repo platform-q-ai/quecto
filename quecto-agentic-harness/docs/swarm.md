@@ -152,18 +152,18 @@ helper sources directly and binds the invoking member; neither `PYTHONPATH` nor
 an importable file in the checkout controls the helper. Python variables do not
 persist. The SQLite board does.
 
-The board lives in the checkout's git directory, `.git/quecto/swarm.sqlite`,
-which git's work-tree commands never touch (`stash -u`, `clean -fdx`,
-`checkout`, `merge`, `reset --hard`). The run's creator claims that place before
-the board is first read; there, a board an agent once committed at the old path
-is never adopted. A checkout whose `.git` is not a directory (no repository, or a
-linked worktree), or a run started before #2145, keeps the board at
-`.quecto/swarm.sqlite`. That file and the swarm artifacts (`.quecto/swarm/`) are
-listed in the checkout's local `.git/info/exclude`, so `git add -A` never stages
-them and `git stash -u` / `git clean -fd` leave them; `git clean -x` does not. A
-board deleted from under a run (or moved, by re-initialising the repository with
-a separate git directory) cannot be recreated: every call then fails with
-`coordination store missing at <path>`.
+The board lives in the checkout's own git directory: `.git/quecto/swarm.sqlite`,
+or a linked worktree's git directory. Git's work-tree commands never touch it
+(`stash -u`, `clean -fdx`, `checkout`, `merge`, `reset --hard`), and a board an
+agent once committed at the old path is never taken for this run's. Only a
+checkout with no git directory keeps it at `.quecto/swarm.sqlite`, out of reach
+of git too. The location follows from the checkout's layout, and once a process
+has found its board it keeps that path: a layout changed mid-run (`git init`, a
+git directory created or removed) never moves a live board. A board deleted
+from under a run cannot be recreated: every call then fails with
+`coordination store missing at <path>`, and a member joining later is refused.
+Swarm artifacts (`.quecto/swarm/`) are listed in the checkout's local
+`.git/info/exclude`, so `git add -A` never stages them.
 
 ```python
 from swarm import board

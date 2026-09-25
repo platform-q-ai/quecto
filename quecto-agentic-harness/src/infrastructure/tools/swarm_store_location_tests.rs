@@ -49,10 +49,10 @@ fn context(checkout: &Path) -> SwarmContext {
     }
 }
 
-/// Create a run as the container's creator does: claim, then create.
+/// Create a run as the container's creator does: make the store's directory,
+/// then create the run there.
 fn created_run(checkout: &Path) -> (SwarmContext, String) {
     let context = context(checkout);
-    claim(checkout, true).unwrap();
     std::fs::create_dir_all(context.database().parent().unwrap()).unwrap();
     let deadline = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -70,40 +70,55 @@ fn created_run(checkout: &Path) -> (SwarmContext, String) {
             None,
         )
         .unwrap();
-    let id = context.control_status().unwrap()["id"].to_string();
+    let id = run_id(&context);
+    assert_ne!(id, "null", "the run has an id");
     (context, id)
 }
 
-/// The store lives in the git directory only once the creator claimed it
-/// there; anyone else, or a checkout with no repository, leaves it in the
+/// The run's id, as the store reports it.
+fn run_id(context: &SwarmContext) -> String {
+    context.call("_status", serde_json::json!([])).unwrap()["id"].to_string()
+}
+
+/// The board belongs to the checkout's own git directory whenever it has
+/// one (a linked worktree's too); only a checkout with none keeps it in the
 /// work tree.
 #[test]
-fn only_the_creator_claims_the_git_directory_for_the_store() {
+fn the_board_lives_in_the_checkouts_own_git_directory() {
     let repo = repository();
-    let work_tree = repo.path().join(".quecto/swarm.sqlite");
-    assert_eq!(store_path(repo.path()), work_tree);
-    claim(repo.path(), false).unwrap();
-    assert_eq!(store_path(repo.path()), work_tree);
-    claim(repo.path(), true).unwrap();
     assert_eq!(
-        store_path(repo.path()),
+        located(repo.path()),
         repo.path().join(".git/quecto/swarm.sqlite")
     );
-    let plain = tempfile::tempdir().unwrap();
-    claim(plain.path(), true).unwrap();
+    let worktrees = tempfile::tempdir().unwrap();
+    let linked = worktrees.path().join("wt");
+    git(
+        repo.path(),
+        &["worktree", "add", "-q", linked.to_str().unwrap()],
+    );
+    let own = repo.path().join(".git/worktrees/wt");
     assert_eq!(
-        store_path(plain.path()),
+        std::fs::canonicalize(located(&linked).parent().unwrap().parent().unwrap()).unwrap(),
+        std::fs::canonicalize(own).unwrap()
+    );
+    let plain = tempfile::tempdir().unwrap();
+    assert_eq!(
+        located(plain.path()),
+        plain.path().join(".quecto/swarm.sqlite")
+    );
+    std::fs::write(plain.path().join(".git"), "gitdir: /nowhere\n").unwrap();
+    assert_eq!(
+        located(plain.path()),
         plain.path().join(".quecto/swarm.sqlite")
     );
 }
 
-/// #2145: with the store in the git directory, the git commands agents run
-/// on a checkout neither delete nor replace the live board, even where a
-/// branch tracks a stale `.quecto/swarm.sqlite`.
+/// #2145: the git commands agents run on a checkout neither delete nor
+/// replace the live board, even where a branch tracks a stale
+/// `.quecto/swarm.sqlite`.
 #[test]
-fn a_claimed_store_survives_every_git_command_agents_run() {
+fn the_board_survives_every_git_command_agents_run() {
     let repo = repository();
-    // A branch where an agent once committed a board.
     git(repo.path(), &["checkout", "-q", "-b", "stale"]);
     std::fs::write(repo.path().join(".quecto/swarm.sqlite"), "stale board").unwrap();
     git(repo.path(), &["add", "-A"]);
@@ -123,62 +138,104 @@ fn a_claimed_store_survives_every_git_command_agents_run() {
         git(repo.path(), command);
         let status = context.control_status();
         assert!(status.is_ok(), "after git {command:?}: {status:?}");
-        assert_eq!(
-            status.unwrap()["id"].to_string(),
-            id,
-            "after git {command:?}"
-        );
+        assert_eq!(run_id(&context), id, "after git {command:?}");
     }
 }
 
-/// A creator never claims the git directory over a board already in the
-/// work tree: a run started before this layout keeps its board.
+/// PR #2148 swarm review: in a linked worktree the board lives in that
+/// worktree's git directory, so `git clean -fdx` there leaves it.
 #[test]
-fn a_creator_never_moves_a_board_already_in_the_work_tree() {
+fn a_linked_worktrees_board_survives_git_clean() {
     let repo = repository();
-    std::fs::write(repo.path().join(".quecto/swarm.sqlite"), "live board").unwrap();
-    claim(repo.path(), true).unwrap();
-    assert!(!repo.path().join(".git/quecto").exists());
-    assert_eq!(
-        store_path(repo.path()),
-        repo.path().join(".quecto/swarm.sqlite")
+    let worktrees = tempfile::tempdir().unwrap();
+    let linked = worktrees.path().join("wt");
+    git(
+        repo.path(),
+        &["worktree", "add", "-q", linked.to_str().unwrap()],
     );
+    let (context, id) = created_run(&linked);
+    git(&linked, &["clean", "-fdx"]);
+    assert_eq!(run_id(&context), id);
 }
 
-/// When git cannot say whether a work-tree board is committed (here, a
-/// corrupt index), the creator claims the git directory: a stale committed
-/// board is the case that happens, and it is never adopted.
+/// A repository that tracks a stale board: the location follows the layout,
+/// so the stale file is never taken for this container's board.
 #[test]
-fn a_creator_claims_when_git_cannot_tell_a_board_is_committed() {
+fn a_stale_board_committed_in_the_repository_is_never_adopted() {
     let repo = repository();
-    std::fs::write(repo.path().join(".quecto/swarm.sqlite"), "board").unwrap();
-    std::fs::write(repo.path().join(".git/index"), "not an index").unwrap();
-    claim(repo.path(), true).unwrap();
-    assert_eq!(
-        store_path(repo.path()),
-        repo.path().join(".git/quecto/swarm.sqlite")
-    );
-}
-
-/// A board left in the work tree (nothing claimed the git directory) is
-/// excluded: `git stash -u` and `git clean -fd` leave it, `git add -A`
-/// never stages it.
-#[test]
-fn a_board_left_in_the_work_tree_is_excluded_from_git() {
-    let repo = repository();
-    assert_eq!(exclude_work_tree(repo.path()), Ok(Exclusion::Added));
-    std::fs::write(repo.path().join(".quecto/swarm.sqlite"), "board").unwrap();
-    std::fs::write(repo.path().join(".quecto/swarm.sqlite-journal"), "journal").unwrap();
-    std::fs::write(repo.path().join("app.py"), "changed\n").unwrap();
+    std::fs::write(repo.path().join(".quecto/swarm.sqlite"), "stale board").unwrap();
     git(repo.path(), &["add", "-A"]);
+    git(repo.path(), &["commit", "-q", "-m", "committed a board"]);
+    assert!(!context(repo.path()).run_created().unwrap());
+}
+
+/// PR #2148 swarm review: a layout that changes mid-run never moves a live
+/// board. A checkout with no git directory gains one (and a store directory
+/// in it): this process keeps its board; a new process finds no store there
+/// and its member is refused rather than given another board.
+#[test]
+fn a_board_found_is_pinned_and_a_later_layout_change_fails_closed() {
+    let plain = tempfile::tempdir().unwrap();
+    let (context, id) = created_run(plain.path());
+    git(plain.path(), &["init", "-q"]);
+    std::fs::create_dir_all(plain.path().join(".git/quecto")).unwrap();
     assert_eq!(
-        git(repo.path(), &["diff", "--cached", "--name-only"]),
-        "app.py\n"
+        context.database(),
+        plain.path().join(".quecto/swarm.sqlite")
     );
-    git(repo.path(), &["stash", "-u"]);
-    git(repo.path(), &["clean", "-fd"]);
-    assert!(repo.path().join(".quecto/swarm.sqlite").exists());
-    assert!(repo.path().join(".quecto/swarm.sqlite-journal").exists());
+    assert_eq!(run_id(&context), id);
+    forget_pins();
+    let newcomer = SwarmContext {
+        member: "late".into(),
+        ..context.clone()
+    };
+    assert_eq!(
+        newcomer.database(),
+        plain.path().join(".git/quecto/swarm.sqlite")
+    );
+    let refused = super::super::swarm_lifecycle::join_current_process(
+        &newcomer,
+        None,
+        super::super::swarm_bridge::Participation::none(),
+        false,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(refused.contains("store missing"), "{refused}");
+}
+
+/// A board removed from under a run fails as missing where it was: it is
+/// never replaced by another file that happens to exist.
+#[test]
+fn a_removed_board_fails_as_missing_where_it_was() {
+    let repo = repository();
+    let (context, _) = created_run(repo.path());
+    std::fs::write(repo.path().join(".quecto/swarm.sqlite"), "some other board").unwrap();
+    std::fs::remove_dir_all(repo.path().join(".git/quecto")).unwrap();
+    let error = context.control_status().unwrap_err().to_string();
+    assert!(
+        error.contains(&format!(
+            "coordination store missing at {}",
+            repo.path().join(".git/quecto/swarm.sqlite").display()
+        )),
+        "{error}"
+    );
+}
+
+/// The host still reads a container started before #2145, whose board is in
+/// the work tree and whose git directory holds no store directory; once the
+/// git directory holds one, the work-tree file is not the board.
+#[test]
+fn the_host_reads_a_board_from_before_2145() {
+    let repo = repository();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let (board, id) = created_run(elsewhere.path());
+    std::fs::copy(board.database(), repo.path().join(".quecto/swarm.sqlite")).unwrap();
+    let hosted = super::super::swarm_bridge::HostedStore::at(repo.path().to_path_buf());
+    let run = hosted.hosted_run().unwrap().expect("the old board is read");
+    assert_eq!(serde_json::Value::from(run.id).to_string(), id);
+    std::fs::create_dir_all(repo.path().join(".git/quecto")).unwrap();
+    assert!(hosted.hosted_run().unwrap().is_none());
 }
 
 /// The host opens a store only where it really is inside the checkout: a
@@ -188,7 +245,6 @@ fn the_host_refuses_a_store_linked_outside_its_checkout() {
     let repo = repository();
     let elsewhere = tempfile::tempdir().unwrap();
     let (planted, _) = created_run(elsewhere.path());
-    assert!(planted.database().is_file());
     std::os::unix::fs::symlink(
         planted.database().parent().unwrap(),
         repo.path().join(".git/quecto"),
@@ -197,33 +253,6 @@ fn the_host_refuses_a_store_linked_outside_its_checkout() {
     let hosted = super::super::swarm_bridge::HostedStore::at(repo.path().to_path_buf());
     let error = hosted.hosted_run().unwrap_err().to_string();
     assert!(error.contains("is outside its checkout"), "{error}");
-}
-
-/// A fresh clone of a repository that tracks a stale board: the creator
-/// claims the git directory first, so the stale board is never adopted.
-#[test]
-fn a_stale_board_committed_in_the_repository_is_never_adopted() {
-    let repo = repository();
-    std::fs::write(repo.path().join(".quecto/swarm.sqlite"), "stale board").unwrap();
-    git(repo.path(), &["add", "-A"]);
-    git(repo.path(), &["commit", "-q", "-m", "committed a board"]);
-    claim(repo.path(), true).unwrap();
-    let context = context(repo.path());
-    assert!(!context.run_created().unwrap());
-}
-
-/// A repository initialised mid-run in a checkout that had none does not
-/// move the live store.
-#[test]
-fn a_repository_initialised_mid_run_leaves_the_store_where_it_is() {
-    let plain = tempfile::tempdir().unwrap();
-    let (context, id) = created_run(plain.path());
-    git(plain.path(), &["init", "-q"]);
-    assert_eq!(
-        context.database(),
-        plain.path().join(".quecto/swarm.sqlite")
-    );
-    assert_eq!(context.control_status().unwrap()["id"].to_string(), id);
 }
 
 /// Swarm artifacts are excluded: `git add -A` never stages them and
@@ -312,16 +341,13 @@ fn a_checkout_that_is_no_repository_root_is_left_alone() {
     );
 }
 
-/// Preparing a checkout for a join makes the store's directory (here, one
-/// nobody claimed: the work tree's) and excludes the artifacts.
+/// Preparing a checkout for a join makes the store's directory (in the git
+/// directory) and excludes the artifacts.
 #[test]
 fn preparing_a_checkout_makes_the_store_directory_and_excludes_artifacts() {
     let repo = repository();
     super::super::swarm_lifecycle::prepare_checkout(&context(repo.path())).unwrap();
-    assert!(
-        repo.path().join(".quecto").is_dir(),
-        "the unclaimed store's directory"
-    );
+    assert!(repo.path().join(".git/quecto").is_dir());
     let text = std::fs::read_to_string(repo.path().join(".git/info/exclude")).unwrap();
     assert!(text.contains("/.quecto/swarm/\n"), "{text}");
 }

@@ -28,13 +28,6 @@ pub(super) fn admit_with(
     let Some(context) = context else {
         return true;
     };
-    // The creator settles where the store lives before it is first read
-    // (#2145): in the checkout's git directory, out of every git command's
-    // reach.
-    if let Err(error) = swarm_lifecycle::claim_store_location(&context, creator) {
-        stderr.push_str(&format!("swarm admission rejected: {error}\n"));
-        return false;
-    }
     let created = match context.run_created() {
         Ok(created) => created,
         Err(error) => {

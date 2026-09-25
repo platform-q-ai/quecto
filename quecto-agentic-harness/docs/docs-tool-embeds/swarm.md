@@ -191,12 +191,12 @@ Returned artifact paths use **workspace-relative** references. `artifact_base`
 names the execution workspace inside the container; join it with each
 `artifact_paths` entry, e.g. `.quecto/swarm/<execution_id>/stdout.txt`. Status,
 output paging and synchronous spills use the same namespace. These are not host
-paths. The SQLite board is `.git/quecto/swarm.sqlite` (`.quecto/swarm.sqlite` where
-the checkout's `.git` is not a directory); old execution directories may be
+paths. The SQLite board is in the checkout's git directory
+(`.git/quecto/swarm.sqlite`; `.quecto/swarm.sqlite` only where there is no git
+directory), out of reach of git commands; old execution directories may be
 pruned, so copy important evidence to durable report files before cleanup. Never
-delete the board or its directory, and never run `git clean -x` where the board is
-`.quecto/swarm.sqlite`: the run cannot continue, and every call fails with
-`coordination store missing at <path>`.
+delete the board or its directory: the run cannot continue, and every call fails
+with `coordination store missing at <path>`.
 
 ## Workflow exclusion and awaiting approval
 

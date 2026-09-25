@@ -42,11 +42,11 @@ impl SwarmContext {
     }
 
     pub fn bootstrap(&self) -> String {
-        bootstrap_source(&self.checkout, &self.member)
+        bootstrap_source(&self.database(), &self.checkout, &self.member)
     }
 
     fn rpc(&self, method: &str, args: Value) -> Result<Value, DomainError> {
-        store_rpc(&self.checkout, &self.member, method, args)
+        store_rpc(&self.database(), &self.checkout, &self.member, method, args)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -132,7 +132,7 @@ pub fn store_database(checkout: &Path) -> PathBuf {
     super::swarm_store_location::store_path(checkout)
 }
 
-fn bootstrap_source(checkout: &Path, member: &str) -> String {
+fn bootstrap_source(database: &Path, checkout: &Path, member: &str) -> String {
     let mut source = String::from("import sys, types, json\n");
     for (name, body) in [
         ("swarm_policy", include_str!("../../domain/swarm_policy.py")),
@@ -155,7 +155,7 @@ fn bootstrap_source(checkout: &Path, member: &str) -> String {
     }
     source.push_str(&format!(
         "import swarm\nswarm.board=swarm.Workbench({}, {}, {})\n",
-        json!(store_database(checkout).to_string_lossy()),
+        json!(database.to_string_lossy()),
         json!(checkout.to_string_lossy()),
         json!(member),
     ));
@@ -167,6 +167,7 @@ fn bootstrap_source(checkout: &Path, member: &str) -> String {
 /// Shared by in-swarm contexts and the supervising session's host-side
 /// handle (#1924).
 fn store_rpc(
+    database: &Path,
     checkout: &Path,
     member: &str,
     method: &str,
@@ -175,7 +176,7 @@ fn store_rpc(
     super::swarm_board_worker::call(
         checkout,
         member,
-        &bootstrap_source(checkout, member),
+        &bootstrap_source(database, checkout, member),
         method,
         args,
     )
@@ -207,7 +208,13 @@ impl HostedStore {
             Found::Store => {}
             Found::Nothing => return Ok(None),
         }
-        let status = store_rpc(&self.checkout, "supervisor", "_status", json!([]))?;
+        let status = store_rpc(
+            &self.database(),
+            &self.checkout,
+            "supervisor",
+            "_status",
+            json!([]),
+        )?;
         decode_hosted_run(&status).map(Some)
     }
 
@@ -225,11 +232,17 @@ impl HostedStore {
             Found::Nothing => {
                 return Err(DomainError::Tool(format!(
                     "no swarm store at {}",
-                    store_database(&self.checkout).display()
+                    self.database().display()
                 )));
             }
         }
-        let value = store_rpc(&self.checkout, coordinator, "_lose_coordinator", json!([]))?;
+        let value = store_rpc(
+            &self.database(),
+            &self.checkout,
+            coordinator,
+            "_lose_coordinator",
+            json!([]),
+        )?;
         Ok(crate::domain::environment_retention::CoordinatorLoss {
             run: decode_hosted_run(&value)?,
             lost: value["lost"]
@@ -248,11 +261,17 @@ enum Found {
 }
 
 impl HostedStore {
+    /// The board the host reads: where it is located, or where a container
+    /// started before #2145 keeps it.
+    fn database(&self) -> PathBuf {
+        super::swarm_store_location::hosted_store_path(&self.checkout)
+    }
+
     /// The host opens the store only where it really is inside the checkout:
     /// a link planted in the container (`.git/quecto` or `.quecto` pointing
     /// elsewhere) is refused.
     fn contained(&self) -> Result<Found, DomainError> {
-        let database = store_database(&self.checkout);
+        let database = self.database();
         let store = match std::fs::canonicalize(&database) {
             Ok(store) if store.is_file() => store,
             Ok(_) => return Ok(Found::Nothing),

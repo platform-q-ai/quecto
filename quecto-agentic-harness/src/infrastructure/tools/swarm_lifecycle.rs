@@ -46,14 +46,6 @@ pub fn is_creator() -> bool {
     std::env::var("QUECTO_SWARM_BOOTSTRAP").as_deref() == Ok("1")
 }
 
-/// The run's creator decides, before anything reads the store, that it
-/// lives in the checkout's git directory (#2145); for anyone else this does
-/// nothing.
-pub fn claim_store_location(context: &SwarmContext, creator: bool) -> Result<(), DomainError> {
-    super::swarm_store_location::claim(&context.checkout, creator)
-        .map_err(|error| DomainError::Tool(format!("swarm storage: {error}")))
-}
-
 /// Make the store's directory, and tell git to leave what stays in the work
 /// tree alone (#2145). Failing to tell git leaves things as they were: the join goes
 /// on, with the reason logged.
