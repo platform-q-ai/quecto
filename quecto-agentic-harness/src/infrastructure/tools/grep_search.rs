@@ -139,17 +139,6 @@ pub(super) async fn search(
     // limit already cut the result shorter (its own notice says so). A
     // ranked search always says so: what was never read was never ranked,
     // so the best match may be among it.
-    match (rg.capped, request.rank_by.is_some(), found <= request.limit) {
-        (true, true, _) => notices.push(format!(
-            "rg printed more than {}: only the matches read before it were ranked; narrow with path, glob or type to rank the rest",
-            format_size(RG_STDOUT_CAP)
-        )),
-        (true, false, true) => notices.push(format!(
-            "rg printed more than {}; results are incomplete: narrow with path, glob or type",
-            format_size(RG_STDOUT_CAP)
-        )),
-        (true, false, false) | (false, _, _) => {}
-    }
     if rg.held_open {
         notices.push(
             "rg's output was still held open after it exited; results may be incomplete"
@@ -187,6 +176,7 @@ pub(super) async fn search(
                     matches,
                     &ctx.workspace,
                     &ctx.sandbox,
+                    !rg.capped,
                 )
                 .await;
                 notices.extend(ranked.notice);
@@ -209,6 +199,22 @@ pub(super) async fn search(
             },
         ),
     };
+    // At the read cap more exists than was read. A ranked search always
+    // says so (what was never read was never ranked, so the best match may
+    // be among it); otherwise only when the match limit did not already
+    // cut the result shorter (its own notice says so).
+    let ranked = matches!(facts.ranking, Some(RankingRecord::Ranked { .. }));
+    match (rg.capped, ranked, found <= request.limit) {
+        (true, true, _) => notices.push(format!(
+            "rg printed more than {}: only the matches read before it were ranked; narrow with path, glob or type to rank the rest",
+            format_size(RG_STDOUT_CAP)
+        )),
+        (true, false, true) => notices.push(format!(
+            "rg printed more than {}; results are incomplete: narrow with path, glob or type",
+            format_size(RG_STDOUT_CAP)
+        )),
+        (true, false, false) | (false, _, _) => {}
+    }
     answered(match notices.as_slice() {
         [] => result,
         notices => format!("{result}\n\n[{}]", notices.join(". ")),

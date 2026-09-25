@@ -51,6 +51,7 @@ pub(super) async fn rank(
     matches: Vec<RgMatch>,
     workspace: &Path,
     sandbox: &Sandbox,
+    read_whole: bool,
 ) -> Ranked {
     let Some(ranking) = ranking else {
         return Ranked {
@@ -111,6 +112,7 @@ pub(super) async fn rank(
             &locations,
             query,
             unjudged_reason,
+            read_whole,
             elapsed_ms,
         )
     } else {
@@ -134,6 +136,7 @@ fn ranked(
     locations: &[String],
     query: &str,
     unjudged_reason: Option<String>,
+    read_whole: bool,
     elapsed_ms: u64,
 ) -> Ranked {
     let judged = scores.len();
@@ -170,9 +173,11 @@ fn ranked(
         .fold(None, |best: Option<f64>, score| {
             Some(best.map_or(score, |best| best.max(score)))
         });
-    // Only when every match was judged: with some unjudged (a deadline, a
-    // rate limit), the relevant one may be among those.
-    if let (Some(best), 0) = (best.filter(|best| *best < RELEVANT), unscored) {
+    // Only when every match was read and judged: with some unread (rg's
+    // read cap), past the candidate cap, or unjudged (a deadline, a rate
+    // limit), the relevant one may be among those.
+    let every_match_judged = read_whole && unscored == 0 && total == judged;
+    if let (Some(best), true) = (best.filter(|best| *best < RELEVANT), every_match_judged) {
         notes.push(format!(
             "no judged match looks relevant (best {best:.2}): try a different pattern, path or type"
         ));

@@ -155,16 +155,28 @@ impl TypeSafeJudge {
                     };
                 }
                 // No request with this key can succeed: stop asking.
-                401 | 403 => {
-                    return Err(Unjudged::Stop(format!(
-                        "TypeSafe rejected the API key ({code})"
-                    )));
+                401 => {
+                    return Err(Unjudged::Stop(
+                        "TypeSafe rejected the API key (401)".to_string(),
+                    ));
+                }
+                403 => {
+                    return Err(Unjudged::Stop(
+                        "TypeSafe refused the request (403)".to_string(),
+                    ));
                 }
                 // Rate-limited or overloaded: a short, bounded retry.
                 429 | 529 if retries < RATE_LIMIT_RETRIES => {
-                    let wait = retry_after(&response)
-                        .unwrap_or(RATE_LIMIT_BACKOFF * 2u32.pow(retries))
-                        .min(RATE_LIMIT_MAX_WAIT);
+                    let wait =
+                        retry_after(&response).unwrap_or(RATE_LIMIT_BACKOFF * 2u32.pow(retries));
+                    // Asked to wait longer than a search can: give up this
+                    // hit rather than retry early.
+                    if wait > RATE_LIMIT_MAX_WAIT {
+                        return Err(Unjudged::Skip(format!(
+                            "TypeSafe asked to retry after {} s (HTTP {code})",
+                            wait.as_secs()
+                        )));
+                    }
                     tokio::time::sleep(wait).await;
                     retries += 1;
                 }
@@ -221,7 +233,9 @@ impl RelevanceJudge for TypeSafeJudge {
             for (index, outcome) in judged {
                 match outcome {
                     Ok(score) => scores[index] = Some(score),
-                    Err(Unjudged::Stop(error) | Unjudged::Skip(error)) => {
+                    // A rejected key outranks other errors as the reason.
+                    Err(Unjudged::Stop(error)) => first_error = Some(error),
+                    Err(Unjudged::Skip(error)) => {
                         first_error.get_or_insert(error);
                     }
                 }

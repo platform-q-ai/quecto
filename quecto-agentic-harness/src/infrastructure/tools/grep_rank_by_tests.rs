@@ -391,3 +391,27 @@ async fn a_ranked_search_cut_at_the_read_cap_says_so() {
         &result.content[result.content.len().saturating_sub(400)..]
     );
 }
+
+/// Without a judge nothing was ranked: a search cut at the read cap says its
+/// results are incomplete, never that the matches read were ranked.
+#[tokio::test]
+async fn an_unranked_search_cut_at_the_read_cap_claims_no_ranking() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
+    let record = format!(
+        r#"{{"type":"match","data":{{"path":{{"text":"{}/a.rs"}},"lines":{{"text":"retry\\n"}},"line_number":1,"absolute_offset":0,"submatches":[{{"match":{{"text":"retry"}},"start":0,"end":5}}]}}}}"#,
+        tmp.path().display()
+    );
+    let flood =
+        format!("i=0; while [ $i -lt 3000 ]; do printf '%s\\n' '{record}'; i=$((i+1)); done");
+    let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()));
+    let result = execute_fake(
+        &tool,
+        r#"{"pattern": "retry", "rank_by": "the retry", "limit": 100000}"#,
+    )
+    .await
+    .unwrap();
+    let tail = &result.content[result.content.len().saturating_sub(600)..];
+    assert!(!tail.contains("were ranked"), "{tail}");
+    assert!(tail.contains("results are incomplete"), "{tail}");
+}

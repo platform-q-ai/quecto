@@ -227,6 +227,64 @@ async fn a_rejected_key_stops_judging_at_once() {
     assert!(asked <= 8, "{asked} of 200 were asked");
 }
 
+/// A rejected key is the reason given even when another error came first,
+/// and a 403 says the request was refused rather than blaming the key.
+#[tokio::test]
+async fn a_rejected_key_outranks_other_errors_and_a_403_is_a_refusal() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(401))
+        .with_priority(2)
+        .mount(&server)
+        .await;
+    let answer = judge(&server, Duration::from_secs(10))
+        .with_concurrency(1)
+        .judge("q", &[candidate("a.rs:1"), candidate("b.rs:1")])
+        .await;
+    assert_eq!(
+        answer,
+        Relevance::Unavailable("TypeSafe rejected the API key (401)".into())
+    );
+
+    let refused = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&refused)
+        .await;
+    assert_eq!(
+        judge(&refused, Duration::from_secs(10))
+            .judge("q", &[candidate("a.rs:1"), candidate("b.rs:1")])
+            .await,
+        Relevance::Unavailable("TypeSafe refused the request (403)".into())
+    );
+}
+
+/// Asked to wait longer than a search can, the hit is given up at once
+/// rather than retried early.
+#[tokio::test]
+async fn a_long_retry_after_gives_up_the_hit() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "30"))
+        .mount(&server)
+        .await;
+    let started = std::time::Instant::now();
+    assert_eq!(
+        judge(&server, Duration::from_secs(10))
+            .judge("q", &[candidate("a.rs:1")])
+            .await,
+        Relevance::Unavailable("TypeSafe asked to retry after 30 s (HTTP 429)".into())
+    );
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
 /// A rate-limited request is retried (honouring Retry-After) and then
 /// judged; one that stays rate-limited is left unscored with the reason.
 #[tokio::test]
