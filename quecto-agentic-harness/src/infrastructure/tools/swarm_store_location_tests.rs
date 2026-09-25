@@ -410,9 +410,16 @@ fn the_host_follows_the_layout_on_every_read() {
     let run = hosted.hosted_run().unwrap().expect("the first board");
     assert_eq!(serde_json::Value::from(run.id).to_string(), first);
     git(plain.path(), &["init", "-q"]);
-    forget_pin(plain.path());
-    let (_, second) = created_run(plain.path());
+    // The new board is put in place directly: nothing here touches a pin.
+    let elsewhere = tempfile::tempdir().unwrap();
+    let (board, second) = created_run(elsewhere.path());
     assert_ne!(first, second);
+    std::fs::create_dir_all(plain.path().join(".git/quecto")).unwrap();
+    std::fs::copy(
+        board.database(),
+        plain.path().join(".git/quecto/swarm.sqlite"),
+    )
+    .unwrap();
     let run = hosted.hosted_run().unwrap().expect("the second board");
     assert_eq!(serde_json::Value::from(run.id).to_string(), second);
 }
