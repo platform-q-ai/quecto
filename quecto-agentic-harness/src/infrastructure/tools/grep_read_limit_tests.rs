@@ -440,8 +440,12 @@ async fn a_timeout_after_all_output_was_read_leaves_the_result_whole() {
 async fn an_error_exit_without_a_message_says_none_was_kept() {
     let tmp = TempDir::new().unwrap();
     std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
-    let script = format!("printf '%s\\n' '{}'", match_record(tmp.path(), "retry"));
-    let tool = with_fake_rg(&tmp, &script, 2, Arc::new(RecordingLog::default()));
+    // The script exits itself, before the helper's own stderr line.
+    let script = format!(
+        "printf '%s\\n' '{}'; exit 2",
+        match_record(tmp.path(), "retry")
+    );
+    let tool = with_fake_rg(&tmp, &script, 0, Arc::new(RecordingLog::default()));
     let result = execute_fake(&tool, r#"{"pattern": "retry"}"#)
         .await
         .unwrap();
