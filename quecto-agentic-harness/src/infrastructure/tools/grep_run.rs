@@ -238,6 +238,7 @@ impl MatchLines {
     }
 
     /// How far the search for the current line's end has looked.
+    #[cfg(test)]
     pub(super) fn scanned(&self) -> usize {
         self.scanned
     }
