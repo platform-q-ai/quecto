@@ -115,15 +115,20 @@ impl TypeSafeJudge {
             "model": self.model,
             "state": {
                 "query": query,
-                "candidate": {"location": candidate.location, "text": candidate.text},
+                "candidate": {
+                    "location": candidate.location,
+                    "before": candidate.before,
+                    "matched": candidate.matched,
+                    "after": candidate.after,
+                },
             },
             "questions": {
                 "relevant": {
                     "type": "noul",
-                    "instructions": "Is `candidate` what the searcher is looking for? `query` says, in their words, what they want to find in a codebase. `candidate.text` is one search hit: the matching line with a little surrounding context, found at `candidate.location`.",
+                    "instructions": "Is `candidate` what the searcher is looking for? `query` says, in their words, what they want to find in a codebase. `candidate.matched` is one search hit: the line(s) that matched, found at `candidate.location`. Judge those lines. `candidate.before` and `candidate.after` are the lines just around them, for context only: they show what the matched lines belong to, such as the function a matched comment documents or the code a matched call sits in.",
                     "criteria": {
-                        "true": "This hit is, or defines, implements, configures or documents, what `query` describes",
-                        "false": "It only shares words with `query`, or is about something else"
+                        "true": "The matched lines are, or define, implement, configure or document, what `query` describes",
+                        "false": "The matched lines only share words with `query`, are about something else, or only their context is relevant"
                     }
                 }
             }

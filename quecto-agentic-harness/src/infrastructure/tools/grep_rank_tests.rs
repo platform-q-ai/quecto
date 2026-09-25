@@ -92,7 +92,9 @@ async fn judged_matches_come_best_first_with_their_scores() {
         seen[0].1[1],
         RelevanceCandidate {
             location: "src/lib.rs:4".into(),
-            text: "a\nfn retry() {}\nb\nlet retry_count = 3;\nc\n// retry later\nd".into(),
+            before: "a\nfn retry() {}\nb".into(),
+            matched: "let retry_count = 3;".into(),
+            after: "c\n// retry later\nd".into(),
         }
     );
     match &ranked.record {
@@ -217,9 +219,9 @@ async fn a_long_neighbouring_line_never_hides_the_match() {
     )
     .await;
     let seen = judge.seen.lock().unwrap();
-    let text = &seen[0].1[0].text;
-    assert!(text.ends_with("retry_delay()"), "{text:.60}");
-    assert_eq!(text.chars().count(), 400 + 1 + "retry_delay()".len());
+    let seen = &seen[0].1[0];
+    assert_eq!(seen.matched, "retry_delay()");
+    assert_eq!(seen.before.chars().count(), 400);
 }
 
 /// A match whose line cannot be read (past the file, or past the context
@@ -285,7 +287,7 @@ async fn a_match_far_along_a_long_line_is_what_the_judge_sees() {
         true,
     )
     .await;
-    let text = judge.seen.lock().unwrap()[0].1[0].text.clone();
+    let text = judge.seen.lock().unwrap()[0].1[0].matched.clone();
     assert!(text.contains("retry_delay=5"), "{text}");
     assert!(text.starts_with('…'), "the cut is marked: {text:.20}");
     assert!(text.chars().count() <= 402, "{}", text.chars().count());
@@ -441,9 +443,77 @@ async fn the_judge_sees_the_function_a_matched_comment_documents() {
     )
     .await;
     let seen = judge.seen.lock().unwrap();
-    // Lines 1..=7 around line 4: the signature two lines below is in view,
-    // line 8 is not.
-    assert_eq!(seen[0].1[0].text, source[0..7].join("\n"));
-    // Line 1 has nothing above it: lines 1..=4.
-    assert_eq!(seen[0].1[1].text, source[0..4].join("\n"));
+    // Lines 1..=7 around line 4: the signature two lines below is in view
+    // as context, line 8 is not.
+    assert_eq!(seen[0].1[0].before, source[0..3].join("\n"));
+    assert_eq!(seen[0].1[0].matched, source[3]);
+    assert_eq!(seen[0].1[0].after, source[4..7].join("\n"));
+    // Line 1 has nothing above it.
+    assert_eq!(seen[0].1[1].before, "");
+    assert_eq!(seen[0].1[1].after, source[1..4].join("\n"));
+}
+
+/// Context stops at the file's end; a match spanning more lines than a
+/// judge is shown has its first ten judged and the rest as context.
+#[tokio::test]
+async fn context_stops_at_the_end_and_long_matches_are_clamped() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let source: Vec<String> = (1..=16).map(|n| format!("line {n}")).collect();
+    std::fs::write(dir.path().join("f.rs"), source.join("\n") + "\n").unwrap();
+    let span = |line_number: usize, line_count: usize| RgMatch {
+        file_path: dir.path().join("f.rs"),
+        line_number,
+        line_count,
+        score: None,
+        column: None,
+    };
+    let (judged, judge) = ranking(Relevance::Scored(vec![None, None]), 30);
+    rank(
+        Some(&judged),
+        "q",
+        vec![span(15, 1), span(2, 12)],
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
+    let seen = judge.seen.lock().unwrap();
+    // Line 15 of 16: one line after it.
+    assert_eq!(seen[0].1[0].before, source[11..14].join("\n"));
+    assert_eq!(seen[0].1[0].after, source[15]);
+    // Lines 2..=13 matched: 2..=11 judged, 12..=14 context.
+    assert_eq!(seen[0].1[1].before, source[0]);
+    assert_eq!(seen[0].1[1].matched, source[1..11].join("\n"));
+    assert_eq!(seen[0].1[1].after, source[11..14].join("\n"));
+}
+
+/// A file past the 1 MiB context cache: the last line read may be cut, so
+/// it is never shown, as context or as a match.
+#[tokio::test]
+async fn a_line_cut_by_the_file_cache_is_never_shown() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let long = "x".repeat(2 * 1024 * 1024);
+    std::fs::write(dir.path().join("big.rs"), format!("retry\nnext\n{long}\n")).unwrap();
+    let at = |line_number: usize| RgMatch {
+        file_path: dir.path().join("big.rs"),
+        line_number,
+        line_count: 1,
+        score: None,
+        column: None,
+    };
+    let (judged, judge) = ranking(Relevance::Scored(vec![Some(0.5)]), 30);
+    rank(
+        Some(&judged),
+        "q",
+        vec![at(1), at(3)],
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
+    let seen = judge.seen.lock().unwrap();
+    // Only the first match is sent, and without the cut third line.
+    assert_eq!(seen[0].1.len(), 1);
+    assert_eq!(seen[0].1[0].matched, "retry");
+    assert_eq!(seen[0].1[0].after, "next");
 }

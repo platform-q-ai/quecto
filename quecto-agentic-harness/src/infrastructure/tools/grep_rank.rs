@@ -15,7 +15,7 @@ use crate::application::search::ports::{
 use crate::domain::search_ranking::relevance_order;
 use crate::infrastructure::security::sandbox::Sandbox;
 
-use super::{RgMatch, read_file_for_cache};
+use super::{MAX_FILE_CACHE_BYTES, RgMatch, read_file_for_cache};
 
 /// A score below this for every judged match means none looks relevant.
 const RELEVANT: f64 = 0.3;
@@ -29,6 +29,18 @@ const CANDIDATE_MATCH_LINES: usize = 10;
 const CANDIDATE_LINE_CHARS: usize = 400;
 /// Characters kept before a match when a long line is cut around it.
 const CANDIDATE_LEAD_CHARS: usize = 100;
+/// The most characters a judge sees of one match: every line it may see, at
+/// most [`CANDIDATE_LINE_CHARS`] each plus a `…` and a line break.
+const CANDIDATE_MAX_CHARS: usize =
+    (CANDIDATE_MATCH_LINES + 2 * CANDIDATE_CONTEXT) * (CANDIDATE_LINE_CHARS + 2);
+
+/// What the judge sees of one match, before it is given its location.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Excerpt {
+    before: String,
+    matched: String,
+    after: String,
+}
 
 /// Ranking as configured: the judge and how many matches it sees.
 pub(super) struct Ranking {
@@ -78,16 +90,24 @@ pub(super) async fn rank(
     let sendable: Vec<(usize, RelevanceCandidate)> = texts
         .into_iter()
         .enumerate()
-        .filter_map(|(index, text)| {
-            text.map(|text| {
-                (
-                    index,
-                    RelevanceCandidate {
-                        location: locations[index].clone(),
-                        text,
-                    },
-                )
-            })
+        .filter_map(|(index, excerpt)| {
+            excerpt.map(
+                |Excerpt {
+                     before,
+                     matched,
+                     after,
+                 }| {
+                    (
+                        index,
+                        RelevanceCandidate {
+                            location: locations[index].clone(),
+                            before,
+                            matched,
+                            after,
+                        },
+                    )
+                },
+            )
         })
         .collect();
     let candidates: Vec<RelevanceCandidate> = sendable.iter().map(|(_, c)| c.clone()).collect();
@@ -244,7 +264,7 @@ fn unavailable(matches: Vec<RgMatch>, query: &str, reason: String, elapsed_ms: u
 /// either side, each line cut on its own. `None` when the sandbox refuses
 /// the path or the matched line could not be read (past the file cache, or
 /// unreadable).
-async fn candidate_texts(matches: &[RgMatch], sandbox: &Sandbox) -> Vec<Option<String>> {
+async fn candidate_texts(matches: &[RgMatch], sandbox: &Sandbox) -> Vec<Option<Excerpt>> {
     // One file at a time, keeping only the texts: every match may be
     // judged, so every file's lines must not be held at once.
     let mut by_file: Vec<(PathBuf, Vec<usize>)> = Vec::new();
@@ -261,7 +281,7 @@ async fn candidate_texts(matches: &[RgMatch], sandbox: &Sandbox) -> Vec<Option<S
     let mut texts = vec![None; matches.len()];
     for (path, indices) in by_file {
         let lines = match sandbox.validate_path(&path.to_string_lossy()) {
-            Ok(_) => tokio::task::spawn_blocking(move || read_file_for_cache(&path))
+            Ok(_) => tokio::task::spawn_blocking(move || whole_lines(&path))
                 .await
                 .unwrap_or_default(),
             Err(_) => continue,
@@ -273,25 +293,52 @@ async fn candidate_texts(matches: &[RgMatch], sandbox: &Sandbox) -> Vec<Option<S
     texts
 }
 
-/// One match's text from its file's lines; `None` when its line is not
+/// A file's lines as the context cache reads them, less the last when the
+/// cache stopped inside the file: it may be cut part-way, and a judge must
+/// not take a cut line for a whole one.
+fn whole_lines(path: &Path) -> Vec<String> {
+    let mut lines = read_file_for_cache(path);
+    let cut = std::fs::metadata(path).is_ok_and(|meta| meta.len() > MAX_FILE_CACHE_BYTES as u64);
+    if cut {
+        lines.pop();
+    }
+    lines
+}
+
+/// One match's excerpt from its file's lines; `None` when its line is not
 /// among them (past the file, or past the context cache).
-fn candidate_text(lines: &[String], m: &RgMatch) -> Option<String> {
+fn candidate_text(lines: &[String], m: &RgMatch) -> Option<Excerpt> {
     lines.get(m.line_number.checked_sub(1)?)?;
     let matched_last = m.line_number + m.line_count.clamp(1, CANDIDATE_MATCH_LINES) - 1;
     let first = m.line_number.saturating_sub(CANDIDATE_CONTEXT).max(1);
     let last = matched_last + CANDIDATE_CONTEXT;
-    let text = (first..=last)
-        .filter_map(|n| {
-            let line = lines.get(n - 1)?;
-            Some(match (n == m.line_number, m.column) {
-                // The match's own line: a window around the match.
-                (true, Some(column)) => around(line, column),
-                (true, None) | (false, _) => line.chars().take(CANDIDATE_LINE_CHARS).collect(),
+    let shown = |range: std::ops::RangeInclusive<usize>| {
+        range
+            .filter_map(|n| {
+                let line = lines.get(n - 1)?;
+                Some(match (n == m.line_number, m.column) {
+                    // The match's own line: a window around the match.
+                    (true, Some(column)) => around(line, column),
+                    (true, None) | (false, _) => line.chars().take(CANDIDATE_LINE_CHARS).collect(),
+                })
             })
-        })
-        .collect::<Vec<String>>()
-        .join("\n");
-    Some(text)
+            .collect::<Vec<String>>()
+            .join("\n")
+    };
+    let excerpt = Excerpt {
+        before: shown(first..=m.line_number - 1),
+        matched: shown(m.line_number..=matched_last),
+        after: shown(matched_last + 1..=last),
+    };
+    let size = [&excerpt.before, &excerpt.matched, &excerpt.after]
+        .iter()
+        .map(|part| part.chars().count())
+        .sum::<usize>();
+    assert!(
+        size <= CANDIDATE_MAX_CHARS,
+        "a judge sees at most {CANDIDATE_MAX_CHARS} characters of a match (got {size})"
+    );
+    Some(excerpt)
 }
 
 /// At most [`CANDIDATE_LINE_CHARS`] of `line` around the match starting at

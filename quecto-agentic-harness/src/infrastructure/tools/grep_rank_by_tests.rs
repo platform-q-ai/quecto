@@ -19,7 +19,13 @@ impl RelevanceJudge for KeywordJudge {
     ) -> PortFuture<'a, Relevance> {
         let scores = candidates
             .iter()
-            .map(|c| Some(if c.text.contains(self.0) { 0.95 } else { 0.05 }))
+            .map(|c| {
+                Some(if c.matched.contains(self.0) {
+                    0.95
+                } else {
+                    0.05
+                })
+            })
             .collect();
         Box::pin(async move { Relevance::Scored(scores) })
     }
