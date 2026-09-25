@@ -1,5 +1,6 @@
 use super::*;
 use crate::application::search::ports::PortFuture;
+use crate::infrastructure::security::sandbox::Sandbox;
 use std::sync::Mutex;
 
 /// A judge answering from a script, remembering what it was shown.
@@ -74,6 +75,7 @@ async fn judged_matches_come_best_first_with_their_scores() {
         "how retries are counted",
         matches,
         dir.path(),
+        &Sandbox::new(None),
     )
     .await;
     assert_eq!(
@@ -108,7 +110,14 @@ async fn judged_matches_come_best_first_with_their_scores() {
 async fn beyond_the_candidate_cap_and_unscored_matches_follow_in_rg_order() {
     let (dir, matches) = workspace();
     let (ranking, judge) = ranking(Relevance::Scored(vec![None, Some(0.8)]), 2);
-    let ranked = rank(Some(&ranking), "q", matches, dir.path()).await;
+    let ranked = rank(
+        Some(&ranking),
+        "q",
+        matches,
+        dir.path(),
+        &Sandbox::new(None),
+    )
+    .await;
     assert_eq!(judge.seen.lock().unwrap()[0].1.len(), 2);
     assert_eq!(
         lines(&ranked.matches),
@@ -130,7 +139,7 @@ async fn beyond_the_candidate_cap_and_unscored_matches_follow_in_rg_order() {
 #[tokio::test]
 async fn without_a_ranking_the_matches_keep_rg_order_and_say_why() {
     let (dir, matches) = workspace();
-    let unranked = rank(None, "q", matches, dir.path()).await;
+    let unranked = rank(None, "q", matches, dir.path(), &Sandbox::new(None)).await;
     assert_eq!(lines(&unranked.matches), [(2, None), (4, None), (6, None)]);
     assert_eq!(unranked.notice.as_deref(), Some(NOT_CONFIGURED));
     assert!(matches!(
@@ -143,7 +152,7 @@ async fn without_a_ranking_the_matches_keep_rg_order_and_say_why() {
         Relevance::Unavailable("TypeSafe answered HTTP 529".into()),
         30,
     );
-    let unranked = rank(Some(&down), "q", matches, dir.path()).await;
+    let unranked = rank(Some(&down), "q", matches, dir.path(), &Sandbox::new(None)).await;
     assert_eq!(lines(&unranked.matches), [(2, None), (4, None), (6, None)]);
     assert_eq!(
         unranked.notice.as_deref(),
@@ -153,12 +162,74 @@ async fn without_a_ranking_the_matches_keep_rg_order_and_say_why() {
 
     let (dir, matches) = workspace();
     let (short, _) = ranking(Relevance::Scored(vec![Some(0.1)]), 30);
-    let unranked = rank(Some(&short), "q", matches, dir.path()).await;
+    let unranked = rank(Some(&short), "q", matches, dir.path(), &Sandbox::new(None)).await;
     assert_eq!(lines(&unranked.matches), [(2, None), (4, None), (6, None)]);
     assert!(
         unranked
             .notice
             .unwrap()
             .contains("the judge answered for 1 of 3 matches")
+    );
+}
+
+/// What the judge sees keeps the match: each line is cut on its own, so a
+/// long line before the match cannot push it out.
+#[tokio::test]
+async fn a_long_neighbouring_line_never_hides_the_match() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let long = "x".repeat(5000);
+    std::fs::write(dir.path().join("m.js"), format!("{long}\nretry_delay()\n")).unwrap();
+    let matches = vec![RgMatch {
+        file_path: dir.path().join("m.js"),
+        line_number: 2,
+        line_count: 1,
+        score: None,
+    }];
+    let (ranking, judge) = ranking(Relevance::Scored(vec![Some(0.5)]), 30);
+    rank(
+        Some(&ranking),
+        "q",
+        matches,
+        dir.path(),
+        &Sandbox::new(None),
+    )
+    .await;
+    let seen = judge.seen.lock().unwrap();
+    let text = &seen[0].1[0].text;
+    assert!(text.ends_with("retry_delay()"), "{text:.60}");
+    assert_eq!(text.chars().count(), 400 + 1 + "retry_delay()".len());
+}
+
+/// A match whose line cannot be read (past the file, or past the context
+/// cache) is never sent to the judge and stays unscored after the judged
+/// ones. (Paths also pass the sandbox's policy check before being read.)
+#[tokio::test]
+async fn an_unreadable_match_is_not_sent_and_stays_unscored() {
+    let (dir, mut matches) = workspace();
+    matches[1].line_number = 999; // past the end of the file
+    let (ranking, judge) = ranking(Relevance::Scored(vec![Some(0.3), Some(0.8)]), 30);
+    let ranked = rank(
+        Some(&ranking),
+        "q",
+        matches,
+        dir.path(),
+        &Sandbox::new(None),
+    )
+    .await;
+    let sent: Vec<String> = judge.seen.lock().unwrap()[0]
+        .1
+        .iter()
+        .map(|c| c.location.clone())
+        .collect();
+    assert_eq!(sent, ["src/lib.rs:2", "src/lib.rs:6"]);
+    assert_eq!(
+        lines(&ranked.matches),
+        [(6, Some(0.8)), (2, Some(0.3)), (999, None)]
+    );
+    assert!(
+        ranked
+            .notice
+            .unwrap()
+            .contains("1 of 3 matches could not be judged")
     );
 }

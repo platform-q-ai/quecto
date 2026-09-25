@@ -147,7 +147,14 @@ pub(super) async fn search(
             };
             let mut matches = parse_rg_matches(&stdout);
             if let Some(query) = &request.rank_by {
-                let ranked = rank(ctx.ranking.as_deref(), query, matches, &ctx.workspace).await;
+                let ranked = rank(
+                    ctx.ranking.as_deref(),
+                    query,
+                    matches,
+                    &ctx.workspace,
+                    &ctx.sandbox,
+                )
+                .await;
                 notices.extend(ranked.notice);
                 facts.ranking = Some(ranked.record);
                 matches = ranked.matches;
