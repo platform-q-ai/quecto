@@ -66,7 +66,8 @@ fn lines(matches: &[RgMatch]) -> Vec<(usize, Option<f64>)> {
 }
 
 /// The judged matches come best first with their scores; the judge saw each
-/// match's location and its line with a line of context either side.
+/// match's location and its line with three lines of context either side
+/// (here the whole file).
 #[tokio::test]
 async fn judged_matches_come_best_first_with_their_scores() {
     let (dir, matches) = workspace();
@@ -91,7 +92,7 @@ async fn judged_matches_come_best_first_with_their_scores() {
         seen[0].1[1],
         RelevanceCandidate {
             location: "src/lib.rs:4".into(),
-            text: "b\nlet retry_count = 3;\nc".into(),
+            text: "a\nfn retry() {}\nb\nlet retry_count = 3;\nc\n// retry later\nd".into(),
         }
     );
     match &ranked.record {
@@ -402,4 +403,47 @@ async fn no_relevance_claim_while_some_matches_are_unread_or_uncapped() {
     let notice = ranked.notice.unwrap();
     assert!(!notice.contains("looks relevant"), "{notice}");
     assert!(notice.contains("ranked the first 2 of 3"), "{notice}");
+}
+
+/// #2144: a doc comment matched two lines above the function it documents
+/// shows the judge that function's signature; the context stops at three
+/// lines either side and at the file's ends.
+#[tokio::test]
+async fn the_judge_sees_the_function_a_matched_comment_documents() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let source = [
+        "use std::time::Duration;",
+        "",
+        "impl Policy {",
+        "    /// The delay to wait before the next attempt. Honours a `Retry-After`",
+        "    /// hint when present; otherwise uses bounded exponential backoff.",
+        "    fn backoff_delay(&self, attempt: u32) -> Duration {",
+        "        self.base * 2u32.pow(attempt)",
+        "    }",
+        "}",
+    ];
+    std::fs::write(dir.path().join("retry.rs"), source.join("\n") + "\n").unwrap();
+    let at = |line_number: usize| RgMatch {
+        file_path: dir.path().join("retry.rs"),
+        line_number,
+        line_count: 1,
+        score: None,
+        column: None,
+    };
+    let (judged, judge) = ranking(Relevance::Scored(vec![Some(0.9), Some(0.1)]), 30);
+    rank(
+        Some(&judged),
+        "where the retry delay is computed",
+        vec![at(4), at(1)],
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
+    let seen = judge.seen.lock().unwrap();
+    // Lines 1..=7 around line 4: the signature two lines below is in view,
+    // line 8 is not.
+    assert_eq!(seen[0].1[0].text, source[0..7].join("\n"));
+    // Line 1 has nothing above it: lines 1..=4.
+    assert_eq!(seen[0].1[1].text, source[0..4].join("\n"));
 }

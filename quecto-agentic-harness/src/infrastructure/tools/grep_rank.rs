@@ -19,8 +19,9 @@ use super::{RgMatch, read_file_for_cache};
 
 /// A score below this for every judged match means none looks relevant.
 const RELEVANT: f64 = 0.3;
-/// Context lines either side of a match in the text a judge sees.
-const CANDIDATE_CONTEXT: usize = 1;
+/// Context lines either side of a match in the text a judge sees: enough to
+/// take in the function a matched comment or call sits in (#2144).
+const CANDIDATE_CONTEXT: usize = 3;
 /// The most matched lines of one match a judge sees.
 const CANDIDATE_MATCH_LINES: usize = 10;
 /// The most characters of any one line a judge sees: each line is cut on
@@ -239,9 +240,10 @@ fn unavailable(matches: Vec<RgMatch>, query: &str, reason: String, elapsed_ms: u
 }
 
 /// What the judge sees of each match: its matched line(s) (at most
-/// [`CANDIDATE_MATCH_LINES`]) with a line of context either side, each line
-/// cut on its own. `None` when the sandbox refuses the path or the matched
-/// line could not be read (past the file cache, or unreadable).
+/// [`CANDIDATE_MATCH_LINES`]) with [`CANDIDATE_CONTEXT`] lines of context
+/// either side, each line cut on its own. `None` when the sandbox refuses
+/// the path or the matched line could not be read (past the file cache, or
+/// unreadable).
 async fn candidate_texts(matches: &[RgMatch], sandbox: &Sandbox) -> Vec<Option<String>> {
     // One file at a time, keeping only the texts: every match may be
     // judged, so every file's lines must not be held at once.
