@@ -390,6 +390,16 @@ async fn a_ranked_search_cut_at_the_read_cap_says_so() {
         "{}",
         &result.content[result.content.len().saturating_sub(400)..]
     );
+    // Every match read was judged and none looks relevant, but the unread
+    // rest may hold the one sought: no claim that none is relevant.
+    let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
+        .with_relevance(Arc::new(KeywordJudge("nowhere")), 5000);
+    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+        .await
+        .unwrap();
+    let tail = &result.content[result.content.len().saturating_sub(600)..];
+    assert!(tail.contains("were ranked"), "{tail}");
+    assert!(!tail.contains("looks relevant"), "{tail}");
 }
 
 /// Without a judge nothing was ranked: a search cut at the read cap says its
