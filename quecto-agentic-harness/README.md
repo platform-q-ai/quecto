@@ -159,6 +159,8 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 **Find ownership:** `application/agent_turn/use_cases/find.rs` owns typed invocation and limit normalization; `interface/tools/find.rs` translates tool JSON/results; `infrastructure/tools/find_fd.rs` owns path resolution and fd processes; `composition/find.rs` alone assembles the graph. Native registration consumes the assembled tool. Incomplete discovery is reported explicitly; output hints remain outside the 50KiB payload cap.
 
+**Grep ranking and the search log** (#2136): with `tools.grep.relevance.enabled` set and a TypeSafe key (`TYPESAFE_API_KEY`, else `~/.config/typesafe/api_key`), the `grep` tool offers `rank_by`, a description of what the agent is looking for. The first `max_candidates` matches (default 30) are each judged by TypeSafe's Jev and returned best first with their scores. If ranking is not configured, times out (`timeout_secs`, default 10) or fails, the search still returns rg's order with a one-line note. Every search is recorded in `<base_dir>/search-log/<YYYY-MM-DD>.jsonl`, whether or not ranking is on: its arguments, output mode, matches found, completeness, error, time and any ranking with its scores. Set `tools.grep.log.enabled` to `false` to stop recording. Settings live in config as `"tools": {"grep": {"relevance": {"enabled": true, "model": "jev-latest", "max_candidates": 30, "timeout_secs": 10}, "log": {"enabled": true}}}`.
+
 **Tool binary resolution** (`rg`, `fd`): `grep` and `find` use binaries already available on `PATH` and report direct installation guidance when missing.
 
 ### interface/ — CLI (composition root)
@@ -439,6 +441,7 @@ small file and never duplicates your secrets or policy:
 |---|---|
 | `agents.defaults` | field-wise — an overlay field replaces the global field, other fields stay |
 | `tools.web` | field-wise per engine (`brave`, `duckduckgo`, `fetch`) |
+| `tools.grep` | field-wise per section (`relevance`, `log`) |
 | `tools.policy.entries` | entry-wise — an overlay entry replaces the global entry of the same stable id |
 | `container_configs` | entry-wise; an overlay entry with `"default": true` un-defaults every global entry |
 | `workflow` | field-wise (`templates` replaced whole) |

@@ -13,19 +13,27 @@ use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
-use crate::infrastructure::tools::path_utils::resolve_to_cwd;
 use crate::infrastructure::tools::truncate::format_size;
 
 #[path = "grep_listing.rs"]
 mod grep_listing;
+#[path = "grep_rank.rs"]
+mod grep_rank;
 #[path = "grep_request.rs"]
 mod grep_request;
 #[path = "grep_run.rs"]
 mod grep_run;
+#[path = "grep_search.rs"]
+mod grep_search;
 
-use grep_listing::{ListingFormat, format_listing, parse_listing};
-use grep_request::{DEFAULT_MATCH_LIMIT, GrepRequest, OutputMode, parse_request};
-use grep_run::{RG_STDOUT_CAP, RG_TIMEOUT, run_rg};
+use grep_rank::Ranking;
+use grep_request::{DEFAULT_MATCH_LIMIT, GrepRequest, OutputMode};
+use grep_run::RG_TIMEOUT;
+#[cfg(test)]
+use grep_run::run_rg;
+use grep_search::{SearchContext, SearchFacts, search};
+
+use crate::application::search::ports::{RelevanceJudge, SearchLog, SearchRecord};
 
 /// Maximum line length before truncation (chars); matches Quecto's GREP_MAX_LINE_LENGTH.
 const MAX_LINE_BYTES: usize = 500;
@@ -44,6 +52,10 @@ pub struct GrepTool {
     rg_binary: Option<String>,
     /// How long one rg run may take.
     rg_timeout: std::time::Duration,
+    /// `rank_by` relevance ranking, when configured (#2136 slice B).
+    ranking: Option<Arc<Ranking>>,
+    /// Where every search is recorded, when configured.
+    search_log: Option<Arc<dyn SearchLog>>,
 }
 
 impl GrepTool {
@@ -53,7 +65,25 @@ impl GrepTool {
             sandbox,
             rg_binary: None,
             rg_timeout: RG_TIMEOUT,
+            ranking: None,
+            search_log: None,
         }
+    }
+
+    /// Rank matches by relevance to `rank_by` through `judge`, judging at
+    /// most `max_candidates` per search.
+    pub fn with_relevance(mut self, judge: Arc<dyn RelevanceJudge>, max_candidates: usize) -> Self {
+        self.ranking = Some(Arc::new(Ranking {
+            judge,
+            max_candidates: max_candidates.max(1),
+        }));
+        self
+    }
+
+    /// Record every search in `log`.
+    pub fn with_search_log(mut self, log: Arc<dyn SearchLog>) -> Self {
+        self.search_log = Some(log);
+        self
     }
 
     /// Constructor for tests: use a custom rg binary path.
@@ -68,6 +98,8 @@ impl GrepTool {
             sandbox,
             rg_binary: Some(rg_binary),
             rg_timeout: RG_TIMEOUT,
+            ranking: None,
+            search_log: None,
         }
     }
 
@@ -85,7 +117,62 @@ impl GrepTool {
 
 impl Tool for GrepTool {
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
+        let definition = base_definition();
+        match &self.ranking {
+            Some(_) => with_rank_by(definition),
+            None => definition,
+        }
+    }
+
+    fn execute(
+        &self,
+        arguments: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+        let raw = arguments.to_string();
+        let ctx = SearchContext {
+            workspace: self.workspace.clone(),
+            sandbox: self.sandbox.clone(),
+            rg_cmd: self.rg_cmd(),
+            rg_timeout: self.rg_timeout,
+            ranking: self.ranking.clone(),
+        };
+        let log = self.search_log.clone();
+
+        Box::pin(async move {
+            let started = std::time::Instant::now();
+            let mut facts = SearchFacts::default();
+            let (outcome, arguments) = match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(args) => (search(&ctx, &args, &mut facts).await, args),
+                // LLM-addressable: malformed JSON → Ok(is_error=true). Tool contract.
+                Err(e) => (
+                    Ok(ToolResult {
+                        content: format!(
+                            "invalid JSON arguments: {e}. Example: {{\"pattern\": \"search_term\"}}"
+                        ),
+                        is_error: true,
+                        image_blocks: vec![],
+                        delivery_metadata: None,
+                    }),
+                    serde_json::Value::String(raw),
+                ),
+            };
+            if let Some(log) = &log {
+                log.record(&search_record(
+                    arguments,
+                    facts,
+                    &outcome,
+                    started.elapsed(),
+                ));
+            }
+            outcome
+        })
+    }
+}
+
+/// The grep tool's definition without `rank_by`.
+fn base_definition() -> ToolDefinition {
+    ToolDefinition {
+
             name: "grep".into(),
             description: format!(
                 "Search file contents with ripgrep. USE THIS TOOL FOR ALL CONTENT SEARCH: do not \
@@ -121,155 +208,47 @@ impl Tool for GrepTool {
             }"#
             .into(),
         }
-    }
+}
 
-    fn execute(
-        &self,
-        arguments: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
-        let args: Result<serde_json::Value, _> = serde_json::from_str(arguments);
-        let workspace = self.workspace.clone();
-        let sandbox = self.sandbox.clone();
-        let rg_cmd = self.rg_cmd();
-        let rg_timeout = self.rg_timeout;
+/// How the description introduces `rank_by`, when ranking is configured.
+const RANK_BY_SENTENCE: &str = " When your words may match more than you mean, add rank_by: what you are \
+     looking for, in words (e.g. \"where the retry delay is computed\"). Matches are then judged for \
+     relevance and returned best first, each with its score; if ranking is unavailable you get the \
+     plain results and a note.";
 
-        Box::pin(async move {
-            // LLM-addressable: malformed JSON → Ok(is_error=true). Tool contract.
-            let args = match args {
-                Ok(v) => v,
-                Err(e) => {
-                    return Ok(ToolResult {
-                        content: format!(
-                            "invalid JSON arguments: {e}. Example: {{\"pattern\": \"search_term\"}}"
-                        ),
-                        is_error: true,
-                        image_blocks: vec![],
-                        delivery_metadata: None,
-                    });
-                }
-            };
+/// The definition with `rank_by` offered.
+fn with_rank_by(mut definition: ToolDefinition) -> ToolDefinition {
+    definition.description = format!("{}{RANK_BY_SENTENCE}", definition.description).into();
+    let mut schema: serde_json::Value =
+        serde_json::from_str(&definition.parameters_schema).expect("the grep schema is JSON");
+    schema["properties"]["rank_by"] = serde_json::json!({
+        "type": "string",
+        "description": "What you are looking for, in words: matches are judged for relevance and returned best first (content output only)"
+    });
+    definition.parameters_schema = schema.to_string().into();
+    definition
+}
 
-            let request = match parse_request(&args) {
-                Ok(request) => request,
-                Err(problem) => {
-                    return Ok(ToolResult {
-                        content: problem,
-                        is_error: true,
-                        image_blocks: vec![],
-                        delivery_metadata: None,
-                    });
-                }
-            };
-
-            let full_path = resolve_to_cwd(&request.path, &workspace);
-            let full_str = full_path.to_string_lossy().to_string();
-            sandbox
-                .validate_path(&full_str)
-                .map_err(|e| DomainError::Security(e.to_string()))?;
-
-            let cmd = build_rg_command(&rg_cmd, &workspace, &full_path, &request);
-            let rg = run_rg(cmd, rg_timeout).await?;
-            let stderr = String::from_utf8_lossy(&rg.stderr).into_owned();
-            let stdout = String::from_utf8_lossy(&rg.stdout).into_owned();
-            let found = match request.output {
-                OutputMode::Content => parse_rg_matches(&stdout).len(),
-                OutputMode::Files | OutputMode::Count => {
-                    parse_listing(&stdout, request.output).len()
-                }
-            };
-            // rg exits 0 (matches) or 1 (none). Exit 2 is an error, which may
-            // follow partial results (an unreadable file) or nothing but a
-            // summary (a mistyped path); no code means killed, here at the
-            // output cap. Results stand when rg finished, or found something.
-            // Capped before one whole match was read: its line alone is
-            // larger than the cap (a minified file) — say so, not an error.
-            if rg.capped && found == 0 {
-                return Ok(ToolResult {
-                    content: format!(
-                        "A matching line is larger than {}, so no match could be shown: \
-                         narrow the search with glob or type, or read the file directly",
-                        format_size(RG_STDOUT_CAP)
-                    ),
-                    is_error: false,
-                    image_blocks: vec![],
-                    delivery_metadata: None,
-                });
-            }
-            let usable = matches!(rg.exit_code, Some(0 | 1)) || found > 0;
-            let Some(stdout) = usable.then_some(stdout) else {
-                let msg = match (stderr.trim(), rg.exit_code) {
-                    ("", Some(code)) => format!("rg failed with exit status {code} and no message"),
-                    ("", None) => "rg exited unexpectedly".to_string(),
-                    (reported, _) => format!("grep error: {reported}"),
-                };
-                return Ok(ToolResult {
-                    content: msg,
-                    is_error: true,
-                    image_blocks: vec![],
-                    delivery_metadata: None,
-                });
-            };
-            let mut incomplete = Vec::new();
-            // At the cap more exists than was read; say so unless the match
-            // limit already cut the result shorter (its own notice says so).
-            if rg.capped && found <= request.limit {
-                incomplete.push(format!(
-                    "rg printed more than {}; results are incomplete: narrow with path, glob or type",
-                    format_size(RG_STDOUT_CAP)
-                ));
-            }
-            // Stopped by a signal other than the tool's own at the cap.
-            if rg.held_open {
-                incomplete.push(
-                    "rg's output was still held open after it exited; results may be incomplete"
-                        .to_string(),
-                );
-            }
-            if let (None, false) = (rg.exit_code, rg.capped) {
-                incomplete.push("rg was stopped by a signal; results are incomplete".to_string());
-            }
-            if rg.exit_code == Some(2) {
-                let first = stderr.lines().next().unwrap_or("").trim();
-                incomplete.push(format!(
-                    "rg reported errors, results may be incomplete: {first}"
-                ));
-            }
-            let result = match request.output {
-                OutputMode::Content => {
-                    format_grep_output(GrepFormatArgs {
-                        json_output: &stdout,
-                        workspace: &workspace,
-                        sandbox: &sandbox,
-                        match_limit: request.limit,
-                        context_lines: request.context_lines,
-                        max_line_bytes: MAX_LINE_BYTES,
-                        max_output_bytes: MAX_OUTPUT_BYTES,
-                    })
-                    .await
-                }
-                OutputMode::Files | OutputMode::Count => format_listing(
-                    parse_listing(&stdout, request.output),
-                    &ListingFormat {
-                        workspace: &workspace,
-                        sandbox: &sandbox,
-                        limit: request.limit,
-                        max_output_bytes: MAX_OUTPUT_BYTES,
-                        total_is_partial: rg.capped,
-                    },
-                ),
-            };
-
-            let result = match incomplete.as_slice() {
-                [] => result,
-                notices => format!("{result}\n\n[{}]", notices.join(". ")),
-            };
-            Ok(ToolResult {
-                content: result,
-                is_error: false,
-                image_blocks: vec![],
-                delivery_metadata: None,
-            })
-        })
+/// What the search log records of one call.
+fn search_record(
+    arguments: serde_json::Value,
+    facts: SearchFacts,
+    outcome: &Result<ToolResult, DomainError>,
+    elapsed: std::time::Duration,
+) -> SearchRecord {
+    let error = match outcome {
+        Ok(result) if result.is_error => Some(result.content.chars().take(500).collect()),
+        Ok(_) => None,
+        Err(e) => Some(e.to_string()),
+    };
+    SearchRecord {
+        arguments,
+        output: facts.output.unwrap_or("refused").to_string(),
+        found: facts.found,
+        incomplete: facts.incomplete,
+        error,
+        elapsed_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+        ranking: facts.ranking,
     }
 }
 
@@ -347,6 +326,8 @@ struct RgMatch {
     line_number: usize,
     /// Lines the match spans (more than one only for a multiline pattern).
     line_count: usize,
+    /// Its relevance to `rank_by`, when judged (#2136 slice B).
+    score: Option<f64>,
 }
 
 /// Parse `rg --json` output: extract only `"match"` type events.
@@ -376,6 +357,7 @@ fn parse_rg_matches(json_output: &str) -> Vec<RgMatch> {
             file_path: PathBuf::from(file_path),
             line_number: line_number as usize,
             line_count,
+            score: None,
         });
     }
     matches
@@ -398,6 +380,18 @@ fn spanned_lines(lines: &serde_json::Value) -> usize {
     newlines + 1
 }
 
+/// How matches are formatted: bounds and where paths are relative to.
+struct MatchFormat<'a> {
+    workspace: &'a Path,
+    sandbox: &'a Sandbox,
+    match_limit: usize,
+    context_lines: usize,
+    max_line_bytes: usize,
+    max_output_bytes: usize,
+}
+
+/// Tests format raw `rg --json` output directly.
+#[cfg(test)]
 struct GrepFormatArgs<'a> {
     json_output: &'a str,
     workspace: &'a Path,
@@ -472,7 +466,11 @@ fn format_match_block(
         }
 
         let formatted = if matched {
-            format!("{}:{}: {}", rel_path, current, display_text)
+            let score = match (m.score, current == m.line_number) {
+                (Some(score), true) => format!("[{score:.2}] "),
+                (Some(_), false) | (None, _) => String::new(),
+            };
+            format!("{score}{}:{}: {}", rel_path, current, display_text)
         } else {
             format!("{}-{}- {}", rel_path, current, display_text)
         };
@@ -487,8 +485,21 @@ fn format_match_block(
     true
 }
 
+#[cfg(test)]
 async fn format_grep_output(a: GrepFormatArgs<'_>) -> String {
-    let all_matches = parse_rg_matches(a.json_output);
+    let format = MatchFormat {
+        workspace: a.workspace,
+        sandbox: a.sandbox,
+        match_limit: a.match_limit,
+        context_lines: a.context_lines,
+        max_line_bytes: a.max_line_bytes,
+        max_output_bytes: a.max_output_bytes,
+    };
+    format_matches(parse_rg_matches(a.json_output), &format).await
+}
+
+/// Format matches in the order given (rg's, or relevance order).
+async fn format_matches(all_matches: Vec<RgMatch>, a: &MatchFormat<'_>) -> String {
     // Detect limit exceeded: true only when rg returned MORE than the limit.
     // When rg returns exactly `match_limit` matches with no more available, we
     // do NOT show the limit notice (avoid false-positive "limit reached").
@@ -632,6 +643,10 @@ mod tests;
 #[cfg(test)]
 #[path = "grep_cov_tests.rs"]
 mod cov_tests;
+
+#[cfg(test)]
+#[path = "grep_rank_by_tests.rs"]
+mod rank_by_tests;
 
 #[cfg(test)]
 mod install_guidance_tests {

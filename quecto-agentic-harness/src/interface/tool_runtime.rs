@@ -272,6 +272,11 @@ pub(crate) fn build_tool_runtime(
                 std::sync::Arc::new(workspace.clone()),
                 std::sync::Arc::new(sandbox.clone()),
             ),
+            grep: Some(crate::infrastructure::search::GrepWiring {
+                config: config.tools.grep.clone(),
+                base_dir: base_dir.to_path_buf(),
+                session_key: session_key.clone(),
+            }),
             swarm_context: swarm_context.clone(),
             swarm_participation: swarm_participation.clone(),
             workflow_engine: workflow_engine.clone(),

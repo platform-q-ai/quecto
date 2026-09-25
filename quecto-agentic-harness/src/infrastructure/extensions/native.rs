@@ -93,6 +93,9 @@ impl Extension for NativeExtension {
 /// descriptor/policy registry path used by runtime UDS tools.
 pub struct OfficialToolDeps {
     pub find_tool: Arc<dyn crate::application::tools::ports::Tool>,
+    /// The grep tool's ranking and search-log wiring (#2136); `None` for a
+    /// plain grep tool.
+    pub grep: Option<crate::infrastructure::search::GrepWiring>,
     pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
     /// Shared swarm participation of this composition (#1715).
     pub swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
@@ -135,10 +138,17 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
                 workspace.clone(),
                 sandbox.clone(),
             )),
-            Arc::new(crate::infrastructure::tools::grep::GrepTool::new(
-                workspace.clone(),
-                sandbox.clone(),
-            )),
+            match &deps.grep {
+                Some(wiring) => crate::infrastructure::search::build_grep_tool(
+                    workspace.clone(),
+                    sandbox.clone(),
+                    wiring,
+                ),
+                None => Arc::new(crate::infrastructure::tools::grep::GrepTool::new(
+                    workspace.clone(),
+                    sandbox.clone(),
+                )),
+            },
             Arc::new(
                 crate::infrastructure::tools::swarm::SwarmTool::new(
                     workspace.clone(),
@@ -362,6 +372,7 @@ pub fn build_official_tool_registry_with_context(
     register_bundled_native_tools(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
+            grep: None,
             find_tool,
             swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
             workflow_engine: Default::default(),

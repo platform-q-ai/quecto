@@ -5,7 +5,8 @@
 //! Merge rules, per top-level section of the overlay:
 //! - `agents` — `agents.defaults` field-wise: an overlay field replaces the
 //!   global field, other global fields stay;
-//! - `tools` — `tools.web` field-wise per engine, `tools.policy.entries`
+//! - `tools` — `tools.web` field-wise per engine, `tools.grep` field-wise
+//!   per section (`relevance`, `log`; #2136), `tools.policy.entries`
 //!   entry-wise (an overlay entry replaces the global entry of the same
 //!   stable id), anything else under `tools` replaced whole;
 //! - `container_configs` — entry-wise; an overlay entry labelled
@@ -95,7 +96,7 @@ fn merge_tools(base: &mut Value, overlay: Value) {
             for (key, value) in overlay_map {
                 let slot = base_map.entry(key.as_str()).or_insert(Value::Null);
                 match key.as_str() {
-                    "web" => merge_depth(slot, value, 2),
+                    "web" | "grep" => merge_depth(slot, value, 2),
                     "policy" => merge_depth(slot, value, 2),
                     _ => *slot = value,
                 }

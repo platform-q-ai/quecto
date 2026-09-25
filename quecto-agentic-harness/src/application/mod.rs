@@ -18,6 +18,7 @@ pub mod ports;
 pub mod provider_runtime;
 pub mod providers;
 mod request_observation;
+pub mod search;
 pub mod sessions;
 pub mod subagent;
 pub mod subagent_launch;

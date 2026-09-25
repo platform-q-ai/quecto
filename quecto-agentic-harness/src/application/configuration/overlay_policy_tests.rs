@@ -181,3 +181,29 @@ fn remove_path_takes_the_value_out_and_reports_what_is_not_there() {
     let mut scalar = json!("nope");
     assert_eq!(remove_path(&mut scalar, "a"), Err(String::new()));
 }
+
+/// #2136: `tools.grep` merges field-wise per section, so an overlay turning
+/// the search log off keeps the global ranking settings, and an overlay
+/// field replaces only that field.
+#[test]
+fn tools_grep_merges_field_wise_per_section() {
+    let global = serde_json::json!({"tools": {"grep": {
+        "relevance": {"enabled": true, "max_candidates": 20},
+        "log": {"enabled": true}
+    }}});
+    let overlay = serde_json::json!({"tools": {"grep": {
+        "relevance": {"max_candidates": 5},
+        "log": {"enabled": false}
+    }}});
+    let merged = merge_overlay(
+        global.as_object().unwrap().clone(),
+        overlay.as_object().unwrap().clone(),
+    );
+    assert_eq!(
+        serde_json::Value::Object(merged)["tools"]["grep"],
+        serde_json::json!({
+            "relevance": {"enabled": true, "max_candidates": 5},
+            "log": {"enabled": false}
+        })
+    );
+}

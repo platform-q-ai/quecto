@@ -1,6 +1,10 @@
 use crate::QuectoWorld;
 use cucumber::{given, then, when};
+use quecto::application::search::ports::{
+    PortFuture, Relevance, RelevanceCandidate, RelevanceJudge,
+};
 use quecto::application::tools::ports::Tool;
+use quecto::infrastructure::search::search_log::JsonlSearchLog;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::grep::GrepTool;
 use std::path::PathBuf;
@@ -26,7 +30,47 @@ fn make_grep_tool(world: &mut QuectoWorld) -> GrepTool {
     let ws_arc = Arc::new(ws.clone());
     // validate_path is not a filesystem jail.
     let sandbox = Arc::new(Sandbox::new(Some(ws.clone())));
-    GrepTool::new(ws_arc, sandbox)
+    let mut tool = GrepTool::new(ws_arc, sandbox);
+    if let Some(word) = world.grep_favours.clone() {
+        tool = tool.with_relevance(Arc::new(FavouringJudge(word)), 30);
+    }
+    if let Some(dir) = world.grep_log_dir.clone() {
+        tool = tool.with_search_log(Arc::new(JsonlSearchLog::new(&dir, "bdd-session")));
+    }
+    tool
+}
+
+/// A stand-in for TypeSafe's judge (#2136): hits whose text holds its word
+/// are relevant, others are not.
+struct FavouringJudge(String);
+
+impl RelevanceJudge for FavouringJudge {
+    fn judge<'a>(
+        &'a self,
+        _query: &'a str,
+        candidates: &'a [RelevanceCandidate],
+    ) -> PortFuture<'a, Relevance> {
+        let scores = candidates
+            .iter()
+            .map(|c| Some(if c.text.contains(&self.0) { 0.9 } else { 0.1 }))
+            .collect();
+        Box::pin(async move { Relevance::Scored(scores) })
+    }
+}
+
+/// The search log's records, oldest first.
+fn search_log_records(world: &QuectoWorld) -> Vec<serde_json::Value> {
+    let dir = world
+        .grep_log_dir
+        .as_ref()
+        .expect("the grep search log was set up")
+        .join("search-log");
+    let mut records = Vec::new();
+    for entry in std::fs::read_dir(&dir).expect("the search log directory exists") {
+        let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+        records.extend(text.lines().map(|line| serde_json::from_str(line).unwrap()));
+    }
+    records
 }
 
 fn run_tool(tool: GrepTool, args: serde_json::Value) -> quecto::domain::tool::ToolResult {
@@ -221,6 +265,44 @@ fn then_grep_lists_before(world: &mut QuectoWorld, first: String, second: String
     assert!(
         at(&first) < at(&second),
         "{first:?} should come before {second:?}: {text}"
+    );
+}
+
+#[given(regex = r#"^grep ranks matches with a stand-in judge that favours "([^"]+)"$"#)]
+fn given_grep_judge(world: &mut QuectoWorld, word: String) {
+    world.grep_favours = Some(word);
+}
+
+#[given("grep records its searches in a local search log")]
+fn given_grep_search_log(world: &mut QuectoWorld) {
+    let base = TempDir::new().expect("a base dir for the search log");
+    world.grep_log_dir = Some(base.path().to_path_buf());
+    world._grep_log_temp_dir = Some(base);
+}
+
+#[then(regex = r#"^the search log should hold (\d+) searches?$"#)]
+fn then_search_log_holds(world: &mut QuectoWorld, count: usize) {
+    let records = search_log_records(world);
+    assert_eq!(records.len(), count, "{records:?}");
+}
+
+#[then(regex = r#"^search (\d+) in the search log should be "([^"]+)" output that found (\d+)$"#)]
+fn then_search_logged(world: &mut QuectoWorld, index: usize, output: String, found: u64) {
+    let records = search_log_records(world);
+    let record = &records[index - 1];
+    assert_eq!(record["output"], output.as_str(), "{record}");
+    assert_eq!(record["found"], found, "{record}");
+    assert_eq!(record["session"], "bdd-session", "{record}");
+}
+
+#[then(regex = r#"^search (\d+) in the search log should record ranking "([^"]+)"$"#)]
+fn then_search_ranking_logged(world: &mut QuectoWorld, index: usize, status: String) {
+    let records = search_log_records(world);
+    assert_eq!(
+        records[index - 1]["ranking"]["status"],
+        status.as_str(),
+        "{}",
+        records[index - 1]
     );
 }
 
