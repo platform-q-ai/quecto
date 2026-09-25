@@ -342,3 +342,15 @@ fn a_missing_store_names_its_path() {
     );
     assert!(!error.contains("contended"), "{error}");
 }
+
+/// Where the store should be there is no store file (none yet, or a
+/// directory in its place): the host finds no run, and does not try to
+/// open one.
+#[test]
+fn the_host_finds_no_run_where_there_is_no_store_file() {
+    let repo = repository();
+    let hosted = super::super::swarm_bridge::HostedStore::at(repo.path().to_path_buf());
+    assert!(hosted.hosted_run().unwrap().is_none());
+    std::fs::create_dir_all(repo.path().join(".quecto/swarm.sqlite")).unwrap();
+    assert!(hosted.hosted_run().unwrap().is_none());
+}
