@@ -150,14 +150,16 @@ Neither idle time nor a worker's completion message frees a slot.
 Each `op=run` starts a fresh `python3 -I` process. The harness loads compiled-in
 helper sources directly and binds the invoking member; neither `PYTHONPATH` nor
 an importable file in the checkout controls the helper. Python variables do not
-persist. The SQLite database at `.quecto/swarm.sqlite` does.
+persist. The SQLite board does.
 
-The board is a file in the checkout, so every container agent lists it (with its
-journal files and `.quecto/swarm/`) in the checkout's local `.git/info/exclude`:
-`git stash -u`, `git clean -fd` and `git add -A` leave it alone. `git clean -x`
-still deletes it; never run that on a swarm checkout. A board removed from under
-a run cannot be recreated, and every call then fails with
-`coordination store missing at <path>` (#2145).
+The board lives in the checkout's git directory, `.git/quecto/swarm.sqlite`,
+where no git command reaches it (`stash -u`, `clean -fdx`, `checkout`, `merge`,
+`reset --hard`). The run's creator claims that place before the board is first
+read; a checkout with no repository (or a run started before #2145) keeps it at
+`.quecto/swarm.sqlite`. Swarm artifacts (`.quecto/swarm/`) are listed in the
+checkout's local `.git/info/exclude`, so `git add -A` never stages them. A board
+deleted from under a run cannot be recreated: every call then fails with
+`coordination store missing at <path>`.
 
 ```python
 from swarm import board
