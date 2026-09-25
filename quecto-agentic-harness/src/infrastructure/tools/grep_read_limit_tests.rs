@@ -256,3 +256,21 @@ async fn a_timed_out_search_keeps_what_rg_printed() {
         .to_string();
     assert!(error.contains("rg did not finish within 500 ms"), "{error}");
 }
+
+/// rg may print everything and exit 0 before the match cap is noticed (the
+/// output fits the pipe): the search is still cut, so it makes no claim
+/// that none is relevant.
+#[tokio::test]
+async fn a_match_cut_after_rg_exited_is_still_incomplete() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
+    let flood = match_flood(&tmp, 30);
+    let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
+        .with_relevance(Arc::new(KeywordJudge("nowhere")), 20);
+    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+        .await
+        .unwrap();
+    let tail = &result.content[result.content.len().saturating_sub(600)..];
+    assert!(tail.contains("rg found more than 20 matches"), "{tail}");
+    assert!(!tail.contains("looks relevant"), "{tail}");
+}
