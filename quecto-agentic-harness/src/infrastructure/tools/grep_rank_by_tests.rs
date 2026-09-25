@@ -427,7 +427,7 @@ async fn an_unranked_search_cut_at_the_read_cap_claims_no_ranking() {
 }
 
 /// A search rg did not finish normally (an error after partial results, a
-/// signal) may have missed the match sought: poor scores then make no claim
+/// signal, output held open past it) may have missed the match sought: poor scores then make no claim
 /// that none is relevant. A finished search does.
 #[tokio::test]
 async fn only_a_complete_search_says_no_match_looks_relevant() {
@@ -446,6 +446,7 @@ async fn only_a_complete_search_says_no_match_looks_relevant() {
             false,
         ),
         (format!("{emit}; kill -TERM $$"), 0, false),
+        (format!("sleep 6 & {emit}"), 0, false),
     ] {
         let tool = with_fake_rg(&tmp, &script, code, Arc::new(RecordingLog::default()))
             .with_relevance(Arc::new(KeywordJudge("nowhere")), 1000);
