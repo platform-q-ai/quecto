@@ -92,6 +92,7 @@ fn startup_workflow_follows_swarm_participation_not_containerization() {
     assert!(
         admit_with(
             Some(member(ordinary.path(), "newcomer")),
+            false,
             &mut flags,
             &mut stderr
         ),
@@ -110,6 +111,7 @@ fn startup_workflow_follows_swarm_participation_not_containerization() {
     let mut stderr = String::new();
     assert!(!admit_with(
         Some(member(swarm.path(), "late-with-workflow")),
+        false,
         &mut flags,
         &mut stderr
     ));
@@ -121,14 +123,19 @@ fn startup_workflow_follows_swarm_participation_not_containerization() {
     let mut flags = flags_with(&[]);
     let mut stderr = String::new();
     assert!(
-        admit_with(Some(member(swarm.path(), "late")), &mut flags, &mut stderr),
+        admit_with(
+            Some(member(swarm.path(), "late")),
+            false,
+            &mut flags,
+            &mut stderr
+        ),
         "{stderr}"
     );
     assert!(flags.workflow_disabled);
     assert!(flags.swarm_participation.participating());
     // No container context at all: nothing changes.
     let mut flags = flags_with(&["--workflow"]);
-    assert!(admit_with(None, &mut flags, &mut String::new()));
+    assert!(admit_with(None, false, &mut flags, &mut String::new()));
     assert!(!flags.workflow_disabled);
 }
 
@@ -139,4 +146,27 @@ fn admit_without_a_container_context_changes_nothing() {
     let mut stderr = String::new();
     assert!(admit(&mut flags, &mut stderr), "{stderr}");
     assert!(!flags.workflow_disabled && !flags.swarm_participation.participating());
+}
+
+/// #2145: the creator claims the store's place in the checkout's git
+/// directory before anything reads the store; a later member does not.
+#[test]
+fn the_creator_claims_the_store_location_before_it_is_read() {
+    let checkout = tempfile::tempdir().unwrap();
+    std::fs::create_dir(checkout.path().join(".git")).unwrap();
+    let mut flags = flags_with(&[]);
+    admit_with(
+        Some(member(checkout.path(), "late")),
+        false,
+        &mut flags,
+        &mut String::new(),
+    );
+    assert!(!checkout.path().join(".git/quecto").exists());
+    admit_with(
+        Some(member(checkout.path(), "creator")),
+        true,
+        &mut flags,
+        &mut String::new(),
+    );
+    assert!(checkout.path().join(".git/quecto").is_dir());
 }

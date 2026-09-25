@@ -22,14 +22,7 @@ pub fn join_current_process(
     {
         return Err(DomainError::Tool("swarm coordination store missing; only the container creator may initialize it; do not reset admission".into()));
     }
-    std::fs::create_dir_all(context.checkout.join(".quecto"))
-        .map_err(|e| DomainError::Tool(format!("swarm storage: {e}")))?;
-    // #2145: an agent's `git stash -u` or `git clean -fd` must not delete
-    // the store. Failing to say so to git leaves the store as it was: the
-    // join goes on, with the reason logged.
-    if let Err(error) = super::swarm_git_exclude::exclude_from_git(&context.checkout) {
-        tracing::warn!(%error, "swarm store could not be excluded from git");
-    }
+    prepare_checkout(context)?;
     let pid = std::process::id();
     let started = process_start(pid)
         .ok_or_else(|| DomainError::Tool("swarm requires Linux procfs process identity".into()))?;
@@ -44,6 +37,27 @@ pub fn join_current_process(
         supervise(context.clone(), snapshot, participation);
     }
     Ok(participates)
+}
+
+/// The run's creator decides, before anything reads the store, that it
+/// lives in the checkout's git directory (#2145); for anyone else this does
+/// nothing.
+pub fn claim_store_location(context: &SwarmContext, creator: bool) -> Result<(), DomainError> {
+    super::swarm_store_location::claim(&context.checkout, creator)
+        .map_err(|error| DomainError::Tool(format!("swarm storage: {error}")))
+}
+
+/// Make the store's directory, and tell git to leave swarm artifacts alone
+/// (#2145). Failing to tell git leaves things as they were: the join goes
+/// on, with the reason logged.
+pub(super) fn prepare_checkout(context: &SwarmContext) -> Result<(), DomainError> {
+    let database = context.database();
+    let dir = database.parent().expect("the store has a directory");
+    std::fs::create_dir_all(dir).map_err(|e| DomainError::Tool(format!("swarm storage: {e}")))?;
+    if let Err(error) = super::swarm_store_location::exclude_artifacts(&context.checkout) {
+        tracing::warn!(%error, "swarm artifacts could not be excluded from git");
+    }
+    Ok(())
 }
 
 /// Every non-terminal run needs a watcher: a member joining while the run is

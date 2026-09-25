@@ -126,9 +126,10 @@ impl SwarmContext {
     }
 }
 
-/// The coordination store every member of a container shares, by checkout.
+/// The coordination store every member of a container shares, by checkout
+/// (in its git directory when the run's creator claimed it, #2145).
 pub fn store_database(checkout: &Path) -> PathBuf {
-    checkout.join(".quecto/swarm.sqlite")
+    super::swarm_store_location::store_path(checkout)
 }
 
 fn bootstrap_source(checkout: &Path, member: &str) -> String {

@@ -7,6 +7,7 @@ use crate::infrastructure::tools::{swarm_bridge, swarm_lifecycle};
 pub(super) fn admit(flags: &mut AgentFlags, stderr: &mut String) -> bool {
     admit_with(
         crate::interface::tool_runtime::swarm_context(),
+        std::env::var("QUECTO_SWARM_BOOTSTRAP").as_deref() == Ok("1"),
         flags,
         stderr,
     )
@@ -20,12 +21,20 @@ pub(super) fn admit(flags: &mut AgentFlags, stderr: &mut String) -> bool {
 /// workflow disabled, an ordinary container keeps it.
 pub(super) fn admit_with(
     context: Option<SwarmContext>,
+    creator: bool,
     flags: &mut AgentFlags,
     stderr: &mut String,
 ) -> bool {
     let Some(context) = context else {
         return true;
     };
+    // The creator settles where the store lives before it is first read
+    // (#2145): in the checkout's git directory, out of every git command's
+    // reach.
+    if let Err(error) = swarm_lifecycle::claim_store_location(&context, creator) {
+        stderr.push_str(&format!("swarm admission rejected: {error}\n"));
+        return false;
+    }
     let created = match context.run_created() {
         Ok(created) => created,
         Err(error) => {

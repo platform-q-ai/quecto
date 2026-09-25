@@ -12,7 +12,7 @@ pub fn tool(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>, config: SwarmConfig)
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
     };
-    std::fs::create_dir_all(workspace.join(".quecto")).unwrap();
+    std::fs::create_dir_all(context.database().parent().unwrap()).unwrap();
     if !context.database().exists() {
         let deadline = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

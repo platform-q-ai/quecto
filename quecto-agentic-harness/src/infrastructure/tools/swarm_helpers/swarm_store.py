@@ -72,8 +72,8 @@ class Store:
         # "unavailable or contended": mode=rw below never recreates it.
         if not create and not path.exists():
             raise SwarmError(
-                f'coordination store missing at {path}: it was removed from the checkout '
-                '(`git clean` or `git stash -u` remove it), so this run\'s board is lost')
+                f'coordination store missing at {path}: it was deleted while the run was live, '
+                'so this run\'s board is lost')
         try:
             # mode=rw avoids fabricating a fresh board when the store is lost.
             uri = path.as_uri() + ('?mode=rwc' if create else '?mode=rw')
