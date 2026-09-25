@@ -274,3 +274,20 @@ async fn a_match_cut_after_rg_exited_is_still_incomplete() {
     assert!(tail.contains("rg found more than 20 matches"), "{tail}");
     assert!(!tail.contains("looks relevant"), "{tail}");
 }
+
+/// Only a normal exit with nothing cut and nothing held open is a whole
+/// search; a cut counts even when rg exited 0 before it was acted on.
+#[test]
+fn a_search_is_whole_only_when_rg_finished_and_nothing_cut_it() {
+    use super::grep_run::Cut;
+    use super::grep_search::searched_whole;
+    assert!(searched_whole(Some(0), None, false));
+    assert!(searched_whole(Some(1), None, false));
+    for cut in [Cut::Bytes, Cut::Matches(20), Cut::Timeout] {
+        assert!(!searched_whole(Some(0), Some(cut), false), "{cut:?}");
+        assert!(!searched_whole(None, Some(cut), false), "{cut:?}");
+    }
+    assert!(!searched_whole(Some(2), None, false));
+    assert!(!searched_whole(None, None, false));
+    assert!(!searched_whole(Some(0), None, true));
+}

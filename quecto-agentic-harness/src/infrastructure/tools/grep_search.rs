@@ -210,9 +210,7 @@ pub(super) async fn search(
         ));
     }
     facts.incomplete = rg.cut.is_some() || !notices.is_empty();
-    // Only a search rg finished normally, whole and with nothing held open,
-    // saw every match: a ranking of fewer cannot say none is relevant.
-    let complete = matches!(rg.exit_code, Some(0 | 1)) && rg.cut.is_none() && !rg.held_open;
+    let complete = searched_whole(rg.exit_code, rg.cut, rg.held_open);
 
     let result = match parsed {
         Found::Matches(mut matches) => {
@@ -280,6 +278,14 @@ pub(super) async fn search(
         [] => result,
         notices => format!("{result}\n\n[{}]", notices.join(". ")),
     })
+}
+
+/// Whether rg saw every match: it finished normally (0: matches, 1: none),
+/// nothing cut its output short, and nothing held that output open. A
+/// ranking of fewer cannot say none is relevant. rg may exit 0 before a cut
+/// is acted on, so a cut counts even with a clean exit.
+pub(super) fn searched_whole(exit_code: Option<i32>, cut: Option<Cut>, held_open: bool) -> bool {
+    matches!(exit_code, Some(0 | 1)) && cut.is_none() && !held_open
 }
 
 /// A search's log record, written exactly once: by [`Self::finish`] with
