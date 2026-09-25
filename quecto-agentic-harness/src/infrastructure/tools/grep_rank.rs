@@ -17,6 +17,8 @@ use crate::infrastructure::security::sandbox::Sandbox;
 
 use super::{RgMatch, read_file_for_cache};
 
+/// A score below this for every judged match means none looks relevant.
+const RELEVANT: f64 = 0.3;
 /// Context lines either side of a match in the text a judge sees.
 const CANDIDATE_CONTEXT: usize = 1;
 /// The most matched lines of one match a judge sees.
@@ -49,6 +51,7 @@ pub(super) async fn rank(
     matches: Vec<RgMatch>,
     workspace: &Path,
     sandbox: &Sandbox,
+    complete: bool,
 ) -> Ranked {
     let Some(ranking) = ranking else {
         return Ranked {
@@ -103,14 +106,12 @@ pub(super) async fn rank(
         for ((index, _), score) in sendable.iter().zip(answered) {
             scores[*index] = score;
         }
-        ranked(
-            matches,
-            &scores,
-            &locations,
-            query,
+        let verdict = Verdict {
+            scores,
             unjudged_reason,
             elapsed_ms,
-        )
+        };
+        ranked(matches, verdict, &locations, query, complete)
     } else {
         unavailable(
             matches,
@@ -125,15 +126,29 @@ pub(super) async fn rank(
     }
 }
 
-/// The judged matches in relevance order, then the rest in rg order.
-fn ranked(
-    matches: Vec<RgMatch>,
-    scores: &[Option<f64>],
-    locations: &[String],
-    query: &str,
+/// What the judge made of the first `scores.len()` matches.
+struct Verdict {
+    scores: Vec<Option<f64>>,
     unjudged_reason: Option<String>,
     elapsed_ms: u64,
+}
+
+/// The judged matches in relevance order, then the rest in rg order.
+/// `complete` is false when rg did not see every match: stopped at its
+/// read cap, by a signal or an error, or with its output held open.
+fn ranked(
+    matches: Vec<RgMatch>,
+    verdict: Verdict,
+    locations: &[String],
+    query: &str,
+    complete: bool,
 ) -> Ranked {
+    let Verdict {
+        scores,
+        unjudged_reason,
+        elapsed_ms,
+    } = verdict;
+    let scores = scores.as_slice();
     let judged = scores.len();
     let total = matches.len();
     let mut matches: Vec<Option<RgMatch>> = matches.into_iter().map(Some).collect();
@@ -159,6 +174,24 @@ fn ranked(
     );
     let unscored = scores.iter().filter(|score| score.is_none()).count();
     let mut notes = Vec::new();
+    // The best of poor matches is not an answer: say so, so the agent
+    // searches differently instead of reading the top line as it.
+    let best = scores
+        .iter()
+        .flatten()
+        .copied()
+        .fold(None, |best: Option<f64>, score| {
+            Some(best.map_or(score, |best| best.max(score)))
+        });
+    // Only when every match was read and judged: with some unread (an
+    // incomplete search), past the candidate cap, or unjudged (a deadline,
+    // a rate limit), the relevant one may be among those.
+    let every_match_judged = complete && unscored == 0 && total == judged;
+    if let (Some(best), true) = (best.filter(|best| *best < RELEVANT), every_match_judged) {
+        notes.push(format!(
+            "no judged match looks relevant (best {best:.2}): try a different pattern, path or type"
+        ));
+    }
     if unscored > 0 {
         let why = unjudged_reason
             .as_deref()
@@ -208,47 +241,53 @@ fn unavailable(matches: Vec<RgMatch>, query: &str, reason: String, elapsed_ms: u
 /// cut on its own. `None` when the sandbox refuses the path or the matched
 /// line could not be read (past the file cache, or unreadable).
 async fn candidate_texts(matches: &[RgMatch], sandbox: &Sandbox) -> Vec<Option<String>> {
-    let mut files: std::collections::HashMap<PathBuf, Option<Vec<String>>> = Default::default();
-    for m in matches {
-        if let std::collections::hash_map::Entry::Vacant(slot) = files.entry(m.file_path.clone()) {
-            let lines = match sandbox.validate_path(&m.file_path.to_string_lossy()) {
-                Ok(_) => {
-                    let path = m.file_path.clone();
-                    Some(
-                        tokio::task::spawn_blocking(move || read_file_for_cache(&path))
-                            .await
-                            .unwrap_or_default(),
-                    )
-                }
-                Err(_) => None,
-            };
-            slot.insert(lines);
+    // One file at a time, keeping only the texts: every match may be
+    // judged, so every file's lines must not be held at once.
+    let mut by_file: Vec<(PathBuf, Vec<usize>)> = Vec::new();
+    let mut position: std::collections::HashMap<PathBuf, usize> = Default::default();
+    for (index, m) in matches.iter().enumerate() {
+        match position.get(&m.file_path) {
+            Some(&at) => by_file[at].1.push(index),
+            None => {
+                position.insert(m.file_path.clone(), by_file.len());
+                by_file.push((m.file_path.clone(), vec![index]));
+            }
         }
     }
-    matches
-        .iter()
-        .map(|m| {
-            let lines = files.get(&m.file_path)?.as_deref()?;
-            lines.get(m.line_number.checked_sub(1)?)?;
-            let matched_last = m.line_number + m.line_count.clamp(1, CANDIDATE_MATCH_LINES) - 1;
-            let first = m.line_number.saturating_sub(CANDIDATE_CONTEXT).max(1);
-            let last = matched_last + CANDIDATE_CONTEXT;
-            let text = (first..=last)
-                .filter_map(|n| {
-                    let line = lines.get(n - 1)?;
-                    Some(match (n == m.line_number, m.column) {
-                        // The match's own line: a window around the match.
-                        (true, Some(column)) => around(line, column),
-                        (true, None) | (false, _) => {
-                            line.chars().take(CANDIDATE_LINE_CHARS).collect()
-                        }
-                    })
-                })
-                .collect::<Vec<String>>()
-                .join("\n");
-            Some(text)
+    let mut texts = vec![None; matches.len()];
+    for (path, indices) in by_file {
+        let lines = match sandbox.validate_path(&path.to_string_lossy()) {
+            Ok(_) => tokio::task::spawn_blocking(move || read_file_for_cache(&path))
+                .await
+                .unwrap_or_default(),
+            Err(_) => continue,
+        };
+        for index in indices {
+            texts[index] = candidate_text(&lines, &matches[index]);
+        }
+    }
+    texts
+}
+
+/// One match's text from its file's lines; `None` when its line is not
+/// among them (past the file, or past the context cache).
+fn candidate_text(lines: &[String], m: &RgMatch) -> Option<String> {
+    lines.get(m.line_number.checked_sub(1)?)?;
+    let matched_last = m.line_number + m.line_count.clamp(1, CANDIDATE_MATCH_LINES) - 1;
+    let first = m.line_number.saturating_sub(CANDIDATE_CONTEXT).max(1);
+    let last = matched_last + CANDIDATE_CONTEXT;
+    let text = (first..=last)
+        .filter_map(|n| {
+            let line = lines.get(n - 1)?;
+            Some(match (n == m.line_number, m.column) {
+                // The match's own line: a window around the match.
+                (true, Some(column)) => around(line, column),
+                (true, None) | (false, _) => line.chars().take(CANDIDATE_LINE_CHARS).collect(),
+            })
         })
-        .collect()
+        .collect::<Vec<String>>()
+        .join("\n");
+    Some(text)
 }
 
 /// At most [`CANDIDATE_LINE_CHARS`] of `line` around the match starting at

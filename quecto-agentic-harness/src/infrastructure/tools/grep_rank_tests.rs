@@ -77,6 +77,7 @@ async fn judged_matches_come_best_first_with_their_scores() {
         matches,
         dir.path(),
         &Sandbox::new(None),
+        true,
     )
     .await;
     assert_eq!(
@@ -117,6 +118,7 @@ async fn beyond_the_candidate_cap_and_unscored_matches_follow_in_rg_order() {
         matches,
         dir.path(),
         &Sandbox::new(None),
+        true,
     )
     .await;
     assert_eq!(judge.seen.lock().unwrap()[0].1.len(), 2);
@@ -140,7 +142,7 @@ async fn beyond_the_candidate_cap_and_unscored_matches_follow_in_rg_order() {
 #[tokio::test]
 async fn without_a_ranking_the_matches_keep_rg_order_and_say_why() {
     let (dir, matches) = workspace();
-    let unranked = rank(None, "q", matches, dir.path(), &Sandbox::new(None)).await;
+    let unranked = rank(None, "q", matches, dir.path(), &Sandbox::new(None), true).await;
     assert_eq!(lines(&unranked.matches), [(2, None), (4, None), (6, None)]);
     assert_eq!(unranked.notice.as_deref(), Some(NOT_CONFIGURED));
     assert!(matches!(
@@ -153,7 +155,15 @@ async fn without_a_ranking_the_matches_keep_rg_order_and_say_why() {
         Relevance::Unavailable("TypeSafe answered HTTP 529".into()),
         30,
     );
-    let unranked = rank(Some(&down), "q", matches, dir.path(), &Sandbox::new(None)).await;
+    let unranked = rank(
+        Some(&down),
+        "q",
+        matches,
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
     assert_eq!(lines(&unranked.matches), [(2, None), (4, None), (6, None)]);
     assert_eq!(
         unranked.notice.as_deref(),
@@ -163,7 +173,15 @@ async fn without_a_ranking_the_matches_keep_rg_order_and_say_why() {
 
     let (dir, matches) = workspace();
     let (short, _) = ranking(Relevance::Scored(vec![Some(0.1)]), 30);
-    let unranked = rank(Some(&short), "q", matches, dir.path(), &Sandbox::new(None)).await;
+    let unranked = rank(
+        Some(&short),
+        "q",
+        matches,
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
     assert_eq!(lines(&unranked.matches), [(2, None), (4, None), (6, None)]);
     assert!(
         unranked
@@ -194,6 +212,7 @@ async fn a_long_neighbouring_line_never_hides_the_match() {
         matches,
         dir.path(),
         &Sandbox::new(None),
+        true,
     )
     .await;
     let seen = judge.seen.lock().unwrap();
@@ -216,6 +235,7 @@ async fn an_unreadable_match_is_not_sent_and_stays_unscored() {
         matches,
         dir.path(),
         &Sandbox::new(None),
+        true,
     )
     .await;
     let sent: Vec<String> = judge.seen.lock().unwrap()[0]
@@ -261,6 +281,7 @@ async fn a_match_far_along_a_long_line_is_what_the_judge_sees() {
         matches,
         dir.path(),
         &Sandbox::new(None),
+        true,
     )
     .await;
     let text = judge.seen.lock().unwrap()[0].1[0].text.clone();
@@ -280,4 +301,105 @@ fn the_match_column_comes_from_rgs_first_submatch() {
         "xxxxxxxxxx",
         "a short line is whole"
     );
+}
+
+/// When no judged match looks relevant, the agent is told so rather than
+/// reading the best of poor matches as the answer.
+#[tokio::test]
+async fn no_relevant_match_is_said_so() {
+    let (dir, matches) = workspace();
+    let (poor, _) = ranking(
+        Relevance::Scored(vec![Some(0.2), Some(0.12), Some(0.1)]),
+        30,
+    );
+    let ranked = rank(
+        Some(&poor),
+        "q",
+        matches,
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
+    let notice = ranked.notice.unwrap();
+    assert!(
+        notice.contains("no judged match looks relevant (best 0.20)"),
+        "{notice}"
+    );
+    let (dir, matches) = workspace();
+    let (good, _) = ranking(Relevance::Scored(vec![Some(0.2), Some(0.8), Some(0.1)]), 30);
+    let ranked = rank(
+        Some(&good),
+        "q",
+        matches,
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
+    assert_eq!(ranked.notice, None);
+}
+
+/// With some matches unjudged, the relevant one may be among them: no
+/// "none looks relevant" claim, only the unjudged note.
+#[tokio::test]
+async fn no_relevance_claim_while_some_matches_are_unjudged() {
+    let (dir, matches) = workspace();
+    let (partly, _) = ranking(
+        Relevance::Partial(
+            vec![Some(0.2), None, None],
+            "TypeSafe did not answer within 30 s".into(),
+        ),
+        30,
+    );
+    let ranked = rank(
+        Some(&partly),
+        "q",
+        matches,
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
+    let notice = ranked.notice.unwrap();
+    assert!(!notice.contains("looks relevant"), "{notice}");
+    assert!(
+        notice.contains("2 of 3 matches could not be judged (TypeSafe did not answer within 30 s)"),
+        "{notice}"
+    );
+}
+
+/// Unread matches (rg's read cap) or matches past the candidate cap may hold
+/// the relevant one: no "none looks relevant" claim for either.
+#[tokio::test]
+async fn no_relevance_claim_while_some_matches_are_unread_or_uncapped() {
+    let (dir, matches) = workspace();
+    let (poor, _) = ranking(
+        Relevance::Scored(vec![Some(0.2), Some(0.12), Some(0.1)]),
+        30,
+    );
+    let unread = rank(
+        Some(&poor),
+        "q",
+        matches,
+        dir.path(),
+        &Sandbox::new(None),
+        false,
+    )
+    .await;
+    assert_eq!(unread.notice, None);
+    let (dir, matches) = workspace();
+    let (capped, _) = ranking(Relevance::Scored(vec![Some(0.2), Some(0.1)]), 2);
+    let ranked = rank(
+        Some(&capped),
+        "q",
+        matches,
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
+    let notice = ranked.notice.unwrap();
+    assert!(!notice.contains("looks relevant"), "{notice}");
+    assert!(notice.contains("ranked the first 2 of 3"), "{notice}");
 }

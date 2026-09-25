@@ -135,14 +135,6 @@ pub(super) async fn search(
         });
     };
     let mut notices = Vec::new();
-    // At the cap more exists than was read; say so unless the match
-    // limit already cut the result shorter (its own notice says so).
-    if rg.capped && found <= request.limit {
-        notices.push(format!(
-            "rg printed more than {}; results are incomplete: narrow with path, glob or type",
-            format_size(RG_STDOUT_CAP)
-        ));
-    }
     if rg.held_open {
         notices.push(
             "rg's output was still held open after it exited; results may be incomplete"
@@ -160,6 +152,9 @@ pub(super) async fn search(
         ));
     }
     facts.incomplete = rg.capped || !notices.is_empty();
+    // Only a search rg finished normally, whole and with nothing held open,
+    // saw every match: a ranking of fewer cannot say none is relevant.
+    let complete = matches!(rg.exit_code, Some(0 | 1)) && !rg.capped && !rg.held_open;
 
     let result = match request.output {
         OutputMode::Content => {
@@ -180,6 +175,7 @@ pub(super) async fn search(
                     matches,
                     &ctx.workspace,
                     &ctx.sandbox,
+                    complete,
                 )
                 .await;
                 notices.extend(ranked.notice);
@@ -202,6 +198,22 @@ pub(super) async fn search(
             },
         ),
     };
+    // At the read cap more exists than was read. A ranked search always
+    // says so (what was never read was never ranked, so the best match may
+    // be among it); otherwise only when the match limit did not already
+    // cut the result shorter (its own notice says so).
+    let ranked = matches!(facts.ranking, Some(RankingRecord::Ranked { .. }));
+    match (rg.capped, ranked, found <= request.limit) {
+        (true, true, _) => notices.push(format!(
+            "rg printed more than {}: only the matches read before it were ranked; narrow with path, glob or type to rank the rest",
+            format_size(RG_STDOUT_CAP)
+        )),
+        (true, false, true) => notices.push(format!(
+            "rg printed more than {}; results are incomplete: narrow with path, glob or type",
+            format_size(RG_STDOUT_CAP)
+        )),
+        (true, false, false) | (false, _, _) => {}
+    }
     answered(match notices.as_slice() {
         [] => result,
         notices => format!("{result}\n\n[{}]", notices.join(". ")),

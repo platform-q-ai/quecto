@@ -69,7 +69,10 @@ async fn failures_leave_hits_unscored_and_all_failing_is_unavailable() {
         .await;
     assert_eq!(
         judged,
-        Relevance::Partial(vec![Some(0.7), None], "TypeSafe answered HTTP 529".into())
+        Relevance::Partial(
+            vec![Some(0.7), None],
+            "TypeSafe is rate-limiting or overloaded (HTTP 529)".into()
+        )
     );
 
     let rejected = MockServer::start().await;
@@ -174,5 +177,174 @@ async fn at_the_deadline_the_scores_already_judged_are_kept() {
             vec![Some(0.8), None],
             "TypeSafe did not answer within 700 ms".into()
         )
+    );
+}
+
+/// Requests run `concurrency` at a time: 32 slow answers at 32 in flight
+/// take about one answer's time, not four (the old fixed 8).
+#[tokio::test]
+async fn requests_run_concurrency_at_a_time() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(noul(0.5).set_delay(Duration::from_millis(400)))
+        .mount(&server)
+        .await;
+    let candidates: Vec<RelevanceCandidate> =
+        (0..32).map(|n| candidate(&format!("f{n}.rs:1"))).collect();
+    let started = std::time::Instant::now();
+    let answer = judge(&server, Duration::from_secs(10))
+        .with_concurrency(32)
+        .judge("q", &candidates)
+        .await;
+    assert!(
+        started.elapsed() < Duration::from_millis(1200),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(matches!(answer, Relevance::Scored(ref scores) if scores.len() == 32));
+}
+
+/// A rejected key stops judging: the rest are never asked (they would only
+/// upload code to be refused).
+#[tokio::test]
+async fn a_rejected_key_stops_judging_at_once() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&server)
+        .await;
+    let candidates: Vec<RelevanceCandidate> =
+        (0..200).map(|n| candidate(&format!("f{n}.rs:1"))).collect();
+    let answer = judge(&server, Duration::from_secs(10))
+        .with_concurrency(4)
+        .judge("q", &candidates)
+        .await;
+    assert_eq!(
+        answer,
+        Relevance::Unavailable("TypeSafe rejected the API key (401)".into())
+    );
+    let asked = server.received_requests().await.unwrap().len();
+    assert!(asked <= 8, "{asked} of 200 were asked");
+}
+
+/// A rejected key is the reason given even when another error came first,
+/// and a 403 says the request was refused rather than blaming the key.
+#[tokio::test]
+async fn a_rejected_key_outranks_other_errors_and_a_403_is_a_refusal() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(401))
+        .with_priority(2)
+        .mount(&server)
+        .await;
+    let answer = judge(&server, Duration::from_secs(10))
+        .with_concurrency(1)
+        .judge("q", &[candidate("a.rs:1"), candidate("b.rs:1")])
+        .await;
+    assert_eq!(
+        answer,
+        Relevance::Unavailable("TypeSafe rejected the API key (401)".into())
+    );
+
+    let refused = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&refused)
+        .await;
+    assert_eq!(
+        judge(&refused, Duration::from_secs(10))
+            .judge("q", &[candidate("a.rs:1"), candidate("b.rs:1")])
+            .await,
+        Relevance::Unavailable("TypeSafe refused the request (403)".into())
+    );
+}
+
+/// Asked to wait longer than a search can, the hit is given up at once
+/// rather than retried early.
+#[tokio::test]
+async fn a_long_retry_after_gives_up_the_hit() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "30"))
+        .mount(&server)
+        .await;
+    let started = std::time::Instant::now();
+    assert_eq!(
+        judge(&server, Duration::from_secs(10))
+            .judge("q", &[candidate("a.rs:1")])
+            .await,
+        Relevance::Unavailable("TypeSafe asked to retry after 30 s (HTTP 429)".into())
+    );
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+/// A rate-limited request is retried (honouring Retry-After) and then
+/// judged; one that stays rate-limited is left unscored with the reason.
+#[tokio::test]
+async fn rate_limits_are_retried_briefly() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "0"))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(noul(0.6))
+        .with_priority(2)
+        .mount(&server)
+        .await;
+    assert_eq!(
+        judge(&server, Duration::from_secs(10))
+            .judge("q", &[candidate("a.rs:1")])
+            .await,
+        Relevance::Scored(vec![Some(0.6)])
+    );
+
+    let limited = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(529).insert_header("retry-after", "0"))
+        .mount(&limited)
+        .await;
+    assert_eq!(
+        judge(&limited, Duration::from_secs(10))
+            .judge("q", &[candidate("a.rs:1")])
+            .await,
+        Relevance::Unavailable("TypeSafe is rate-limiting or overloaded (HTTP 529)".into())
+    );
+    assert_eq!(
+        limited.received_requests().await.unwrap().len(),
+        3,
+        "one request and two retries"
+    );
+}
+
+/// Never more than `concurrency` in flight: 8 slow answers two at a time
+/// take four rounds.
+#[tokio::test]
+async fn no_more_than_concurrency_requests_are_in_flight() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(noul(0.5).set_delay(Duration::from_millis(300)))
+        .mount(&server)
+        .await;
+    let candidates: Vec<RelevanceCandidate> =
+        (0..8).map(|n| candidate(&format!("f{n}.rs:1"))).collect();
+    let started = std::time::Instant::now();
+    judge(&server, Duration::from_secs(10))
+        .with_concurrency(2)
+        .judge("q", &candidates)
+        .await;
+    assert!(
+        started.elapsed() >= Duration::from_millis(1150),
+        "{:?}",
+        started.elapsed()
     );
 }

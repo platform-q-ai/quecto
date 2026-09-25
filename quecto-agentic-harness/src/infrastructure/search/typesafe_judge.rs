@@ -16,8 +16,36 @@ use crate::application::search::ports::{
 
 /// TypeSafe's System One endpoint.
 pub const TYPESAFE_ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
-/// Concurrent requests per search.
-const CONCURRENCY: usize = 8;
+/// Retries of a rate-limited (429) or overloaded (529) request.
+const RATE_LIMIT_RETRIES: u32 = 2;
+/// The first wait before such a retry, doubling, unless `Retry-After` says.
+const RATE_LIMIT_BACKOFF: Duration = Duration::from_millis(250);
+/// The longest wait before such a retry.
+const RATE_LIMIT_MAX_WAIT: Duration = Duration::from_secs(2);
+
+/// Why one hit could not be judged.
+enum Unjudged {
+    /// No request can succeed (a rejected key): stop judging.
+    Stop(String),
+    /// This hit could not be judged; others may.
+    Skip(String),
+}
+
+/// A `Retry-After` given in seconds.
+fn retry_after(response: &reqwest::Response) -> Option<Duration> {
+    response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(Duration::from_secs)
+}
+
+/// Requests in flight per search unless configured.
+const DEFAULT_CONCURRENCY: usize = 8;
 
 /// The TypeSafe key: `TYPESAFE_API_KEY`, else `~/.config/typesafe/api_key`.
 /// `None` when neither holds one. Never logged.
@@ -40,6 +68,7 @@ pub struct TypeSafeJudge {
     key: String,
     model: String,
     timeout: Duration,
+    concurrency: usize,
 }
 
 impl TypeSafeJudge {
@@ -63,7 +92,21 @@ impl TypeSafeJudge {
             key,
             model: model.to_string(),
             timeout,
+            concurrency: DEFAULT_CONCURRENCY,
         })
+    }
+
+    /// Requests in flight at most.
+    #[cfg(test)]
+    pub(crate) fn concurrency(&self) -> usize {
+        self.concurrency
+    }
+
+    /// At most `concurrency` requests in flight (at least one).
+    pub fn with_concurrency(mut self, concurrency: usize) -> Self {
+        assert!(concurrency >= 1, "at least one request in flight");
+        self.concurrency = concurrency;
+        self
     }
 
     /// The question asked of each hit.
@@ -87,28 +130,63 @@ impl TypeSafeJudge {
         })
     }
 
-    async fn score(&self, query: &str, candidate: &RelevanceCandidate) -> Result<f64, String> {
-        let response = self
-            .client
-            .post(&self.endpoint)
-            .bearer_auth(&self.key)
-            .json(&self.request(query, candidate))
-            .send()
-            .await
-            .map_err(|e| format!("TypeSafe could not be reached: {e}"))?;
-        let status = response.status();
-        match status.as_u16() {
-            200..=299 => {}
-            401 => return Err("TypeSafe rejected the API key (401)".to_string()),
-            code => return Err(format!("TypeSafe answered HTTP {code}")),
-        }
-        let body: Value = response
-            .json()
-            .await
-            .map_err(|e| format!("TypeSafe's answer was not JSON: {e}"))?;
-        match body["answers"]["relevant"]["noul"].as_f64() {
-            Some(noul) if (0.0..=1.0).contains(&noul) => Ok(noul),
-            _ => Err("TypeSafe answered without a relevance score".to_string()),
+    async fn score(&self, query: &str, candidate: &RelevanceCandidate) -> Result<f64, Unjudged> {
+        let mut retries = 0;
+        loop {
+            let response = self
+                .client
+                .post(&self.endpoint)
+                .bearer_auth(&self.key)
+                .json(&self.request(query, candidate))
+                .send()
+                .await
+                .map_err(|e| Unjudged::Skip(format!("TypeSafe could not be reached: {e}")))?;
+            let code = response.status().as_u16();
+            match code {
+                200..=299 => {
+                    let body: Value = response.json().await.map_err(|e| {
+                        Unjudged::Skip(format!("TypeSafe's answer was not JSON: {e}"))
+                    })?;
+                    return match body["answers"]["relevant"]["noul"].as_f64() {
+                        Some(noul) if (0.0..=1.0).contains(&noul) => Ok(noul),
+                        _ => Err(Unjudged::Skip(
+                            "TypeSafe answered without a relevance score".to_string(),
+                        )),
+                    };
+                }
+                // No request with this key can succeed: stop asking.
+                401 => {
+                    return Err(Unjudged::Stop(
+                        "TypeSafe rejected the API key (401)".to_string(),
+                    ));
+                }
+                403 => {
+                    return Err(Unjudged::Stop(
+                        "TypeSafe refused the request (403)".to_string(),
+                    ));
+                }
+                // Rate-limited or overloaded: a short, bounded retry.
+                429 | 529 if retries < RATE_LIMIT_RETRIES => {
+                    let wait =
+                        retry_after(&response).unwrap_or(RATE_LIMIT_BACKOFF * 2u32.pow(retries));
+                    // Asked to wait longer than a search can: give up this
+                    // hit rather than retry early.
+                    if wait > RATE_LIMIT_MAX_WAIT {
+                        return Err(Unjudged::Skip(format!(
+                            "TypeSafe asked to retry after {} s (HTTP {code})",
+                            wait.as_secs()
+                        )));
+                    }
+                    tokio::time::sleep(wait).await;
+                    retries += 1;
+                }
+                429 | 529 => {
+                    return Err(Unjudged::Skip(format!(
+                        "TypeSafe is rate-limiting or overloaded (HTTP {code})"
+                    )));
+                }
+                code => return Err(Unjudged::Skip(format!("TypeSafe answered HTTP {code}"))),
+            }
         }
     }
 }
@@ -130,12 +208,18 @@ impl RelevanceJudge for TypeSafeJudge {
                 .collect();
             // Scores are kept as they arrive; at the deadline the rest
             // stay unscored rather than discarding what was judged.
-            let mut pending = futures::stream::iter(requests).buffer_unordered(CONCURRENCY);
+            let mut pending = futures::stream::iter(requests).buffer_unordered(self.concurrency);
             let deadline = tokio::time::Instant::now() + self.timeout;
             let mut judged = Vec::with_capacity(candidates.len());
             let mut timed_out = false;
             loop {
                 match tokio::time::timeout_at(deadline, pending.next()).await {
+                    // A rejected key: stop, and dropping the stream cancels
+                    // the requests still in flight.
+                    Ok(Some((index, Err(Unjudged::Stop(error))))) => {
+                        judged.push((index, Err(Unjudged::Stop(error))));
+                        break;
+                    }
                     Ok(Some(outcome)) => judged.push(outcome),
                     Ok(None) => break,
                     Err(_) => {
@@ -149,7 +233,9 @@ impl RelevanceJudge for TypeSafeJudge {
             for (index, outcome) in judged {
                 match outcome {
                     Ok(score) => scores[index] = Some(score),
-                    Err(error) => {
+                    // A rejected key outranks other errors as the reason.
+                    Err(Unjudged::Stop(error)) => first_error = Some(error),
+                    Err(Unjudged::Skip(error)) => {
                         first_error.get_or_insert(error);
                     }
                 }
