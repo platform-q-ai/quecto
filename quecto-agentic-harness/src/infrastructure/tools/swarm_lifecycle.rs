@@ -46,17 +46,12 @@ pub fn is_creator() -> bool {
     std::env::var("QUECTO_SWARM_BOOTSTRAP").as_deref() == Ok("1")
 }
 
-/// Make the store's directory, and tell git to leave what stays in the work
-/// tree alone (#2145). Failing to tell git leaves things as they were: the join goes
-/// on, with the reason logged.
+/// Make the store's directory (#2145: the checkout's git directory where
+/// it has one).
 pub(super) fn prepare_checkout(context: &SwarmContext) -> Result<(), DomainError> {
     let database = context.database();
     let dir = database.parent().expect("the store has a directory");
-    std::fs::create_dir_all(dir).map_err(|e| DomainError::Tool(format!("swarm storage: {e}")))?;
-    if let Err(error) = super::swarm_store_location::exclude_work_tree(&context.checkout) {
-        tracing::warn!(%error, "swarm work-tree files could not be excluded from git");
-    }
-    Ok(())
+    std::fs::create_dir_all(dir).map_err(|e| DomainError::Tool(format!("swarm storage: {e}")))
 }
 
 /// Every non-terminal run needs a watcher: a member joining while the run is

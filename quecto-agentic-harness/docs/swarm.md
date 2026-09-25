@@ -162,8 +162,9 @@ has found its board it keeps that path: a layout changed mid-run (`git init`, a
 git directory created or removed) never moves a live board. A board deleted
 from under a run cannot be recreated: every call then fails with
 `coordination store missing at <path>`, and a member joining later is refused.
-Swarm artifacts (`.quecto/swarm/`) are listed in the checkout's local
-`.git/info/exclude`, so `git add -A` never stages them.
+Execution artifacts live beside the board (`.git/quecto/swarm/`, or
+`.quecto/swarm/` without a git directory), out of git's reach too: a live run's
+evidence survives `git clean -fdx`.
 
 ```python
 from swarm import board
@@ -419,7 +420,8 @@ notifications. SQLite uses short immediate transactions and a bounded contention
 timeout, on a suitable **local filesystem** only. Corrupt, missing or locked state
 fails explicitly; it never creates a replacement board or bypasses admission.
 
-Execution artifacts remain under `.quecto/swarm/<execution_id>/` with the existing
+Execution artifacts remain under `<board directory>/swarm/<execution_id>/` (e.g.
+`.git/quecto/swarm/<execution_id>/`) with the existing
 32-finished-directory retention limit per tool instance. Execution IDs carry an
 opaque owner prefix; pruning only touches that registry’s directories and excludes
 its live executions. Other members’ output and directories from previous tool

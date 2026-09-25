@@ -26,10 +26,8 @@ const GIT_STORE_DIR: &str = "quecto";
 const WORK_TREE_STORE_DIR: &str = ".quecto";
 const STORE_FILE: &str = "swarm.sqlite";
 
-/// Swarm artifacts stay in the work tree (their paths are part of the tool's
-/// answers), listed in the checkout's local exclude file so `git add -A`
-/// never stages them and `git stash -u` / `git clean -fd` leave them.
-pub(super) const WORK_TREE_ENTRIES: [&str; 1] = ["/.quecto/swarm/"];
+/// The artifacts' directory beside the board.
+const ARTIFACT_DIR: &str = "swarm";
 
 /// Boards this member process has found, by canonical checkout: never
 /// re-decided.
@@ -89,84 +87,34 @@ pub(super) fn forget_pin(checkout: &Path) {
         .remove(&pin_key(checkout));
 }
 
-/// What excluding the work-tree entries did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Exclusion {
-    Added,
-    AlreadyPresent,
-    /// The checkout is not the root of a git repository or worktree: the
-    /// anchored entries would not apply, so none are written.
-    NotARepositoryRoot,
+/// The directory, beside the board, where the swarm tool keeps each
+/// execution's artifacts (`<execution>/stdout.txt`, `stderr.txt`): out of
+/// git's reach like the board, so a live run's evidence survives
+/// `git clean -fdx`.
+pub(super) fn artifact_root(workspace: &Path) -> PathBuf {
+    board_dir(workspace).join(ARTIFACT_DIR)
 }
 
-/// List [`WORK_TREE_ENTRIES`] in the local exclude file of the repository
-/// whose root is `checkout`; entries already there are not repeated. The
-/// file is replaced whole (written aside, then renamed), so git never reads
-/// it part-written.
-pub(super) fn exclude_work_tree(checkout: &Path) -> Result<Exclusion, String> {
-    let Some(common) = common_git_dir(checkout)? else {
-        return Ok(Exclusion::NotARepositoryRoot);
+/// Whether `path` is the swarm's own state rather than a file a program
+/// wrote: the board, its journal files, or the artifacts.
+pub(super) fn is_swarm_state(workspace: &Path, path: &Path) -> bool {
+    let board = member_store_path(workspace);
+    let journal = |name: &std::ffi::OsStr| {
+        board
+            .file_name()
+            .and_then(|board| name.to_str().zip(board.to_str()))
+            .is_some_and(|(name, board)| name.starts_with(board))
     };
-    let exclude = common.join("info/exclude");
-    let existing = match std::fs::read_to_string(&exclude) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(format!("{}: {error}", exclude.display())),
-    };
-    let missing: Vec<&str> = WORK_TREE_ENTRIES
-        .iter()
-        .copied()
-        .filter(|entry| !existing.lines().any(|line| line.trim() == *entry))
-        .collect();
-    if missing.is_empty() {
-        return Ok(Exclusion::AlreadyPresent);
-    }
-    let mut text = existing;
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    text.push_str("# quecto swarm (#2145)\n");
-    for entry in missing {
-        text.push_str(entry);
-        text.push('\n');
-    }
-    let info = exclude.parent().expect("info/exclude has a parent");
-    std::fs::create_dir_all(info).map_err(|error| format!("{}: {error}", info.display()))?;
-    let aside = info.join(format!(".exclude.quecto-{}", std::process::id()));
-    std::fs::write(&aside, text).map_err(|error| format!("{}: {error}", aside.display()))?;
-    std::fs::rename(&aside, &exclude).map_err(|error| {
-        let _ = std::fs::remove_file(&aside);
-        format!("{}: {error}", exclude.display())
-    })?;
-    Ok(Exclusion::Added)
+    let beside_board = path.parent() == board.parent();
+    path.starts_with(artifact_root(workspace))
+        || (beside_board && path.file_name().is_some_and(journal))
 }
 
-/// The git directory holding `info/exclude` for the repository or worktree
-/// rooted at `checkout`; `None` when `checkout` is no such root.
-fn common_git_dir(checkout: &Path) -> Result<Option<PathBuf>, String> {
-    let dot_git = checkout.join(".git");
-    let metadata = match std::fs::metadata(&dot_git) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("{}: {error}", dot_git.display())),
-    };
-    if metadata.is_dir() {
-        return Ok(Some(dot_git));
-    }
-    // A linked worktree: `.git` names its git directory, whose `commondir`
-    // names the shared one that holds `info/exclude`.
-    let pointer = std::fs::read_to_string(&dot_git)
-        .map_err(|error| format!("{}: {error}", dot_git.display()))?;
-    let Some(named) = pointer.trim().strip_prefix("gitdir:") else {
-        return Err(format!("{} names no gitdir", dot_git.display()));
-    };
-    let git_dir = checkout.join(named.trim());
-    let common = match std::fs::read_to_string(git_dir.join("commondir")) {
-        Ok(relative) => git_dir.join(relative.trim()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => git_dir,
-        Err(error) => return Err(format!("{}: {error}", git_dir.join("commondir").display())),
-    };
-    Ok(Some(common))
+fn board_dir(workspace: &Path) -> PathBuf {
+    member_store_path(workspace)
+        .parent()
+        .expect("the store has a directory")
+        .to_path_buf()
 }
 
 #[cfg(test)]

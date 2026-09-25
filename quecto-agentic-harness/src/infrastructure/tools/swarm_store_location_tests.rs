@@ -273,103 +273,6 @@ fn the_host_refuses_a_store_linked_outside_its_checkout() {
     assert!(error.contains("is outside its checkout"), "{error}");
 }
 
-/// Swarm artifacts are excluded: `git add -A` never stages them and
-/// `git stash -u` / `git clean -fd` leave them.
-#[test]
-fn swarm_artifacts_are_left_alone_by_git() {
-    let repo = repository();
-    assert_eq!(exclude_work_tree(repo.path()), Ok(Exclusion::Added));
-    std::fs::create_dir_all(repo.path().join(".quecto/swarm/exec-1")).unwrap();
-    std::fs::write(repo.path().join(".quecto/swarm/exec-1/out.txt"), "artifact").unwrap();
-    std::fs::write(repo.path().join("app.py"), "changed\n").unwrap();
-    git(repo.path(), &["add", "-A"]);
-    assert_eq!(
-        git(repo.path(), &["diff", "--cached", "--name-only"]),
-        "app.py\n"
-    );
-    git(repo.path(), &["stash", "-u"]);
-    git(repo.path(), &["clean", "-fd"]);
-    assert!(repo.path().join(".quecto/swarm/exec-1/out.txt").exists());
-}
-
-/// Excluding again adds nothing, and what the exclude file held is kept.
-#[test]
-fn excluding_again_adds_nothing_and_keeps_existing_entries() {
-    let repo = repository();
-    let exclude = repo.path().join(".git/info/exclude");
-    std::fs::write(&exclude, "# mine\n*.log").unwrap();
-    assert_eq!(exclude_work_tree(repo.path()), Ok(Exclusion::Added));
-    assert_eq!(
-        exclude_work_tree(repo.path()),
-        Ok(Exclusion::AlreadyPresent)
-    );
-    let text = std::fs::read_to_string(&exclude).unwrap();
-    assert!(text.starts_with("# mine\n*.log\n"), "{text}");
-    for entry in WORK_TREE_ENTRIES {
-        assert_eq!(
-            text.lines().filter(|line| *line == entry).count(),
-            1,
-            "{entry}: {text}"
-        );
-    }
-    let leftovers: Vec<_> = std::fs::read_dir(repo.path().join(".git/info"))
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name())
-        .collect();
-    assert_eq!(leftovers, ["exclude"], "nothing is left aside");
-}
-
-/// A linked worktree keeps its exclusions in the shared git directory.
-#[test]
-fn a_worktree_checkout_is_excluded_in_the_shared_git_directory() {
-    let repo = repository();
-    let worktree = tempfile::tempdir().unwrap();
-    let checkout = worktree.path().join("wt");
-    git(
-        repo.path(),
-        &["worktree", "add", "-q", checkout.to_str().unwrap()],
-    );
-    assert!(checkout.join(".git").is_file());
-    assert_eq!(exclude_work_tree(&checkout), Ok(Exclusion::Added));
-    let shared = std::fs::read_to_string(repo.path().join(".git/info/exclude")).unwrap();
-    assert!(shared.contains("/.quecto/swarm/\n"), "{shared}");
-}
-
-/// No repository root, no entries; a `.git` file naming nothing is an error.
-#[test]
-fn a_checkout_that_is_no_repository_root_is_left_alone() {
-    let plain = tempfile::tempdir().unwrap();
-    assert_eq!(
-        exclude_work_tree(plain.path()),
-        Ok(Exclusion::NotARepositoryRoot)
-    );
-    let repo = repository();
-    let nested = repo.path().join("sub");
-    std::fs::create_dir(&nested).unwrap();
-    assert_eq!(
-        exclude_work_tree(&nested),
-        Ok(Exclusion::NotARepositoryRoot)
-    );
-    let broken = tempfile::tempdir().unwrap();
-    std::fs::write(broken.path().join(".git"), "not a pointer\n").unwrap();
-    assert!(
-        exclude_work_tree(broken.path())
-            .unwrap_err()
-            .contains("gitdir")
-    );
-}
-
-/// Preparing a checkout for a join makes the store's directory (in the git
-/// directory) and excludes the artifacts.
-#[test]
-fn preparing_a_checkout_makes_the_store_directory_and_excludes_artifacts() {
-    let repo = repository();
-    super::super::swarm_lifecycle::prepare_checkout(&context(repo.path())).unwrap();
-    assert!(repo.path().join(".git/quecto").is_dir());
-    let text = std::fs::read_to_string(repo.path().join(".git/info/exclude")).unwrap();
-    assert!(text.contains("/.quecto/swarm/\n"), "{text}");
-}
-
 /// A store removed from under a run names its path, not "unavailable or
 /// contended".
 #[test]
@@ -422,4 +325,70 @@ fn the_host_follows_the_layout_on_every_read() {
     .unwrap();
     let run = hosted.hosted_run().unwrap().expect("the second board");
     assert_eq!(serde_json::Value::from(run.id).to_string(), second);
+}
+
+/// Preparing a checkout for a join makes the store's directory, in the git
+/// directory.
+#[test]
+fn preparing_a_checkout_makes_the_store_directory() {
+    let repo = repository();
+    super::super::swarm_lifecycle::prepare_checkout(&context(repo.path())).unwrap();
+    assert!(repo.path().join(".git/quecto").is_dir());
+}
+
+/// PR #2148 review: everything the swarm keeps (the board, and each
+/// execution's artifacts beside it) survives every git command agents run,
+/// `git clean -fdx` included; the swarm's own files are never reported as
+/// files the program wrote.
+#[tokio::test]
+async fn all_swarm_state_survives_every_git_command_agents_run() {
+    let repo = repository();
+    let workspace = std::sync::Arc::new(repo.path().to_path_buf());
+    let tool = super::super::swarm_test_support::tool(
+        workspace.clone(),
+        std::sync::Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
+            Some(repo.path().to_path_buf()),
+        )),
+        super::super::swarm::SwarmConfig::default(),
+    );
+    use crate::application::tools::ports::Tool;
+    let result = tool
+        .execute(r#"{"op":"run","code":"open('made.txt','w').write('x'); print('evidence')"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    let answer: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    let execution = answer["execution_id"].as_str().unwrap();
+    let artifact_dir = artifact_root(repo.path()).join(execution);
+    assert_eq!(
+        artifact_dir,
+        repo.path().join(".git/quecto/swarm").join(execution)
+    );
+    let artifacts: Vec<std::path::PathBuf> = std::fs::read_dir(&artifact_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert!(
+        artifacts.iter().any(|path| path.ends_with("stdout.txt")),
+        "{artifacts:?}"
+    );
+    let written = answer["files_created_or_modified"].to_string();
+    assert!(written.contains("made.txt"), "{answer}");
+    assert!(!written.contains(".git/"), "{answer}");
+    let context = context(repo.path());
+    let id = run_id(&context);
+    for command in [
+        &["stash", "-u"][..],
+        &["clean", "-fdx"],
+        &["clean", "-fdX"],
+        &["checkout", "-q", "-b", "other"],
+        &["checkout", "-q", "main"],
+        &["reset", "-q", "--hard"],
+    ] {
+        git(repo.path(), command);
+        assert_eq!(run_id(&context), id, "board after git {command:?}");
+        for artifact in &artifacts {
+            assert!(artifact.is_file(), "{artifact:?} after git {command:?}");
+        }
+    }
 }
