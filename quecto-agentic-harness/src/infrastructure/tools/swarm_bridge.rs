@@ -203,14 +203,9 @@ impl HostedStore {
     pub fn hosted_run(
         &self,
     ) -> Result<Option<crate::domain::environment_retention::HostedSwarmRun>, DomainError> {
-        if !store_database(&self.checkout).is_file() {
-            return Ok(None);
-        }
-        match self.contained() {
-            Ok(()) => {}
-            // Gone since it was seen: as if there were none.
-            Err(_) if !store_database(&self.checkout).exists() => return Ok(None),
-            Err(error) => return Err(error),
+        match self.contained()? {
+            Found::Store => {}
+            Found::Nothing => return Ok(None),
         }
         let status = store_rpc(&self.checkout, "supervisor", "_status", json!([]))?;
         decode_hosted_run(&status).map(Some)
@@ -225,7 +220,15 @@ impl HostedStore {
         &self,
         coordinator: &str,
     ) -> Result<crate::domain::environment_retention::CoordinatorLoss, DomainError> {
-        self.contained()?;
+        match self.contained()? {
+            Found::Store => {}
+            Found::Nothing => {
+                return Err(DomainError::Tool(format!(
+                    "no swarm store at {}",
+                    store_database(&self.checkout).display()
+                )));
+            }
+        }
         let value = store_rpc(&self.checkout, coordinator, "_lose_coordinator", json!([]))?;
         Ok(crate::domain::environment_retention::CoordinatorLoss {
             run: decode_hosted_run(&value)?,
@@ -236,27 +239,46 @@ impl HostedStore {
     }
 }
 
+/// What the host finds where a container's store should be.
+enum Found {
+    /// A store file, really inside the checkout.
+    Store,
+    /// No store file there (never created, or gone since).
+    Nothing,
+}
+
 impl HostedStore {
     /// The host opens the store only where it really is inside the checkout:
     /// a link planted in the container (`.git/quecto` or `.quecto` pointing
     /// elsewhere) is refused.
-    fn contained(&self) -> Result<(), DomainError> {
-        let resolve = |path: &Path| {
-            std::fs::canonicalize(path)
-                .map_err(|e| DomainError::Tool(format!("swarm store {}: {e}", path.display())))
+    fn contained(&self) -> Result<Found, DomainError> {
+        let database = store_database(&self.checkout);
+        let store = match std::fs::canonicalize(&database) {
+            Ok(store) if store.is_file() => store,
+            Ok(_) => return Ok(Found::Nothing),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Found::Nothing);
+            }
+            Err(error) => {
+                return Err(DomainError::Tool(format!(
+                    "swarm store {}: {error}",
+                    database.display()
+                )));
+            }
         };
-        let checkout = resolve(&self.checkout)?;
-        let store = resolve(&store_database(&self.checkout))?;
+        let checkout = std::fs::canonicalize(&self.checkout).map_err(|e| {
+            DomainError::Tool(format!("swarm checkout {}: {e}", self.checkout.display()))
+        })?;
+        // (A link swapped in between this check and the open is not caught:
+        // pinning the directory is #2147.)
         match store.starts_with(&checkout) {
-            true => Ok(()),
+            true => Ok(Found::Store),
             false => Err(DomainError::Tool(format!(
                 "swarm store {} is outside its checkout {}",
                 store.display(),
                 checkout.display()
             ))),
         }
-        // (A link swapped in between this check and the open is not caught:
-        // pinning the directory is #2147.)
     }
 }
 
