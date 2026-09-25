@@ -77,6 +77,7 @@ mod swarm_job_tests;
 pub mod swarm_lifecycle;
 pub mod swarm_member_termination;
 mod swarm_output;
+mod swarm_store_location;
 #[cfg(any(test, feature = "test-support"))]
 pub mod swarm_test_support;
 #[cfg(test)]

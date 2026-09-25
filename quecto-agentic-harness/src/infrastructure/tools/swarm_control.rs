@@ -41,7 +41,8 @@ pub async fn control_with_workflow(
             crate::domain::swarm::validate_swarm_creation(super::swarm_bridge::workflow_engaged(
                 &workflow_engine,
             ))?;
-            std::fs::create_dir_all(ctx.checkout.join(".quecto"))
+            let database = ctx.database();
+            std::fs::create_dir_all(database.parent().expect("the store has a directory"))
                 .map_err(|e| DomainError::Tool(e.to_string()))?;
             let process = ProcessIdentity {
                 pid: std::process::id(),

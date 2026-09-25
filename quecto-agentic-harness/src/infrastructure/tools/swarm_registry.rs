@@ -41,7 +41,7 @@ pub(crate) fn prune_artifact_dirs(
     owner: &str,
     max_retained: usize,
 ) {
-    let root = workspace.join(".quecto/swarm");
+    let root = crate::infrastructure::tools::swarm_store_location::artifact_root(workspace);
     let mut live: Vec<String> = active
         .lock()
         .map(|set| set.iter().cloned().collect())

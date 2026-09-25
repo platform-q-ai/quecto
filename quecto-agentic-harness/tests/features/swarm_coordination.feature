@@ -158,6 +158,11 @@ Feature: Container swarm coordination
     Then the swarm approval has a completed receipt and a retained terminal report
     And the observed usage budget pauses the run and request accounting is available
 
+  @done @swarm-supervision
+  Scenario: A container's creator keeps the board out of reach of the agents' git commands
+    When a container's creator starts a swarm in a checkout that is a git repository
+    Then the board lives in the checkout's git directory and survives git stash and git clean
+
   Scenario: The coordinator revokes a claim its suspended owner will not finish
     When a suspended member holds a claimed task with a reserved file
     And the coordinator revokes that claim as "member suspended by provider"

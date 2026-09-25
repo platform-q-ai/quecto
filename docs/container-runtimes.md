@@ -753,8 +753,14 @@ empty repository). A script set that can host a swarm should also report
 `metadata.checkout`: the members' working directory and swarm checkout root
 (`QUECTO_SWARM_CHECKOUT`), identity-mounted so the session that launched the
 container can read the coordination store at
-`<checkout>/.quecto/swarm.sqlite` after the members' sockets are gone and
-keep the environment instead of destroying a resumable run (#1924).
+`<checkout>/.git/quecto/swarm.sqlite` (the checkout's own git directory;
+`<checkout>/.quecto/swarm.sqlite` when it has none) after the members' sockets
+are gone and
+keep the environment instead of destroying a resumable run (#1924). The
+host reads the board only where it really is inside the checkout: a linked
+worktree's git directory is outside it, so that board is unreadable and the
+environment is kept. A container created before #2145 keeps its board in the
+work tree, where the host no longer looks: end such runs before upgrading.
 
 ### `exec`
 

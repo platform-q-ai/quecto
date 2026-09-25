@@ -282,7 +282,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
             .await
             .map_err(|e| DomainError::Other(e.to_string()))?
     };
-    let artifact_dir = workspace.join(".quecto/swarm").join(&exec_id);
+    let artifact_dir = super::swarm_store_location::artifact_root(&workspace).join(&exec_id);
     tokio::fs::create_dir_all(&artifact_dir)
         .await
         .map_err(ioerr)?;
@@ -555,7 +555,7 @@ fn parse_run(
         // program cannot stage code inside another execution's directory.
         if is_reserved_artifact_path(workspace, Path::new(p)) {
             return Err(DomainError::Security(
-                ".quecto/swarm is reserved for swarm artifacts".into(),
+                "the swarm artifact directory is reserved for swarm artifacts".into(),
             ));
         }
         let p = workspace.join(p);
@@ -662,7 +662,8 @@ async fn status_op(
         }
     }
     if let Some(obj) = detail.as_object_mut() {
-        let artifact_root = workspace.join(format!(".quecto/swarm/{execution_id}"));
+        let artifact_root =
+            super::swarm_store_location::artifact_root(&workspace).join(&execution_id);
         obj.insert("artifact_namespace".into(), json!("workspace-relative"));
         obj.insert("artifact_base".into(), json!(workspace.as_ref()));
         obj.insert(

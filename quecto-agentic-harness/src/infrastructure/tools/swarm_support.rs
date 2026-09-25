@@ -47,9 +47,9 @@ pub(crate) fn snapshot_files_bounded(
                 return m;
             }
             let p = e.path();
-            // The tool's own stdout/stderr artifacts live here; reporting them
-            // as files the program wrote would be misleading.
-            if p.strip_prefix(root).is_ok_and(is_reserved_artifact_rel) {
+            // The swarm's own state (the board, its journals, the tool's
+            // stdout/stderr artifacts) is not what the program wrote.
+            if crate::infrastructure::tools::swarm_store_location::is_swarm_state(root, &p) {
                 continue;
             }
             match e.file_type() {
@@ -69,12 +69,6 @@ pub(crate) fn snapshot_files_bounded(
         }
     }
     m
-}
-
-/// Workspace-relative paths under the tool's own artifact directory.
-pub(crate) fn is_reserved_artifact_rel(rel: &Path) -> bool {
-    let mut parts = rel.components().map(|c| c.as_os_str());
-    parts.next().is_some_and(|c| c == ".quecto") && parts.next().is_some_and(|c| c == "swarm")
 }
 
 pub(crate) fn lexical_normalize(path: &Path) -> PathBuf {
@@ -97,7 +91,7 @@ pub(crate) fn is_reserved_artifact_path(workspace: &Path, path: &Path) -> bool {
     } else {
         workspace.join(path)
     };
-    let reserved = workspace.join(".quecto/swarm");
+    let reserved = crate::infrastructure::tools::swarm_store_location::artifact_root(workspace);
 
     let resolved_effective = effective
         .canonicalize()

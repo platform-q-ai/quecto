@@ -150,7 +150,21 @@ Neither idle time nor a worker's completion message frees a slot.
 Each `op=run` starts a fresh `python3 -I` process. The harness loads compiled-in
 helper sources directly and binds the invoking member; neither `PYTHONPATH` nor
 an importable file in the checkout controls the helper. Python variables do not
-persist. The SQLite database at `.quecto/swarm.sqlite` does.
+persist. The SQLite board does.
+
+The board lives in the checkout's own git directory: `.git/quecto/swarm.sqlite`,
+or a linked worktree's git directory. Git's work-tree commands never touch it
+(`stash -u`, `clean -fdx`, `checkout`, `merge`, `reset --hard`), and a board an
+agent once committed at the old path is never taken for this run's. Only a
+checkout with no git directory keeps it at `.quecto/swarm.sqlite`, out of reach
+of git too. The location follows from the checkout's layout, and once a process
+has found its board it keeps that path: a layout changed mid-run (`git init`, a
+git directory created or removed) never moves a live board. A board deleted
+from under a run cannot be recreated: every call then fails with
+`coordination store missing at <path>`, and a member joining later is refused.
+Execution artifacts live beside the board (`.git/quecto/swarm/`, or
+`.quecto/swarm/` without a git directory), out of git's reach too: a live run's
+evidence survives `git clean -fdx`.
 
 ```python
 from swarm import board
@@ -406,7 +420,8 @@ notifications. SQLite uses short immediate transactions and a bounded contention
 timeout, on a suitable **local filesystem** only. Corrupt, missing or locked state
 fails explicitly; it never creates a replacement board or bypasses admission.
 
-Execution artifacts remain under `.quecto/swarm/<execution_id>/` with the existing
+Execution artifacts remain under `<board directory>/swarm/<execution_id>/` (e.g.
+`.git/quecto/swarm/<execution_id>/`) with the existing
 32-finished-directory retention limit per tool instance. Execution IDs carry an
 opaque owner prefix; pruning only touches that registry’s directories and excludes
 its live executions. Other members’ output and directories from previous tool

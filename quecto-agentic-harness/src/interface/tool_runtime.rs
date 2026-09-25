@@ -240,6 +240,7 @@ pub(crate) fn build_tool_runtime(
             context,
             crate::infrastructure::tools::swarm_bridge::process_socket(),
             swarm_participation.clone(),
+            crate::infrastructure::tools::swarm_lifecycle::is_creator(),
         )
         .map_err(|e| e.to_string())?,
         None => false,

@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::Registry;
+use super::{Board, Registry};
 
 fn call(
     checkout: &std::path::Path,
@@ -14,7 +14,18 @@ fn call(
     thread_local! {
         static REGISTRY: Registry = Registry::default();
     }
-    REGISTRY.with(|r| r.call(checkout, member, bootstrap, method, args))
+    REGISTRY.with(|r| {
+        r.call(
+            &Board {
+                checkout,
+                database: &checkout.join("board"),
+                member,
+            },
+            bootstrap,
+            method,
+            args,
+        )
+    })
 }
 
 /// A stand-in board: `echo` returns its arguments, `boom` raises, `quit`
@@ -103,7 +114,16 @@ fn the_registry_is_bounded_and_evicts_the_least_recently_used() {
     for dir in &dirs {
         assert_eq!(
             registry
-                .call(dir.path(), "m", STUB, "echo", json!([]))
+                .call(
+                    &Board {
+                        checkout: dir.path(),
+                        database: &dir.path().join("board"),
+                        member: "m"
+                    },
+                    STUB,
+                    "echo",
+                    json!([])
+                )
                 .unwrap()["calls"],
             1
         );
@@ -113,13 +133,31 @@ fn the_registry_is_bounded_and_evicts_the_least_recently_used() {
     // restarts. The second is still resident and keeps counting.
     assert_eq!(
         registry
-            .call(dirs[0].path(), "m", STUB, "echo", json!([]))
+            .call(
+                &Board {
+                    checkout: dirs[0].path(),
+                    database: &dirs[0].path().join("board"),
+                    member: "m"
+                },
+                STUB,
+                "echo",
+                json!([])
+            )
             .unwrap()["calls"],
         1
     );
     assert_eq!(
         registry
-            .call(dirs[2].path(), "m", STUB, "echo", json!([]))
+            .call(
+                &Board {
+                    checkout: dirs[2].path(),
+                    database: &dirs[2].path().join("board"),
+                    member: "m"
+                },
+                STUB,
+                "echo",
+                json!([])
+            )
             .unwrap()["calls"],
         2
     );

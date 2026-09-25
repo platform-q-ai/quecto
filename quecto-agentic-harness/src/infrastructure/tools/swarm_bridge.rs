@@ -38,15 +38,15 @@ impl SwarmContext {
     }
 
     pub fn database(&self) -> PathBuf {
-        store_database(&self.checkout)
+        super::swarm_store_location::member_store_path(&self.checkout)
     }
 
     pub fn bootstrap(&self) -> String {
-        bootstrap_source(&self.checkout, &self.member)
+        bootstrap_source(&self.database(), &self.checkout, &self.member)
     }
 
     fn rpc(&self, method: &str, args: Value) -> Result<Value, DomainError> {
-        store_rpc(&self.checkout, &self.member, method, args)
+        store_rpc(&self.database(), &self.checkout, &self.member, method, args)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -126,12 +126,14 @@ impl SwarmContext {
     }
 }
 
-/// The coordination store every member of a container shares, by checkout.
+/// Where the coordination store of the container checked out at `checkout`
+/// is, by the checkout's layout (its git directory, #2145). Members pin what
+/// they find (`SwarmContext::database`); host reads follow this each time.
 pub fn store_database(checkout: &Path) -> PathBuf {
-    checkout.join(".quecto/swarm.sqlite")
+    super::swarm_store_location::located(checkout)
 }
 
-fn bootstrap_source(checkout: &Path, member: &str) -> String {
+fn bootstrap_source(database: &Path, checkout: &Path, member: &str) -> String {
     let mut source = String::from("import sys, types, json\n");
     for (name, body) in [
         ("swarm_policy", include_str!("../../domain/swarm_policy.py")),
@@ -154,7 +156,7 @@ fn bootstrap_source(checkout: &Path, member: &str) -> String {
     }
     source.push_str(&format!(
         "import swarm\nswarm.board=swarm.Workbench({}, {}, {})\n",
-        json!(store_database(checkout).to_string_lossy()),
+        json!(database.to_string_lossy()),
         json!(checkout.to_string_lossy()),
         json!(member),
     ));
@@ -166,15 +168,19 @@ fn bootstrap_source(checkout: &Path, member: &str) -> String {
 /// Shared by in-swarm contexts and the supervising session's host-side
 /// handle (#1924).
 fn store_rpc(
+    database: &Path,
     checkout: &Path,
     member: &str,
     method: &str,
     args: Value,
 ) -> Result<Value, DomainError> {
     super::swarm_board_worker::call(
-        checkout,
-        member,
-        &bootstrap_source(checkout, member),
+        &super::swarm_board_worker::Board {
+            checkout,
+            database,
+            member,
+        },
+        &bootstrap_source(database, checkout, member),
         method,
         args,
     )
@@ -202,10 +208,17 @@ impl HostedStore {
     pub fn hosted_run(
         &self,
     ) -> Result<Option<crate::domain::environment_retention::HostedSwarmRun>, DomainError> {
-        if !store_database(&self.checkout).is_file() {
-            return Ok(None);
+        match self.contained()? {
+            Found::Store => {}
+            Found::Nothing => return Ok(None),
         }
-        let status = store_rpc(&self.checkout, "supervisor", "_status", json!([]))?;
+        let status = store_rpc(
+            &self.database(),
+            &self.checkout,
+            "supervisor",
+            "_status",
+            json!([]),
+        )?;
         decode_hosted_run(&status).map(Some)
     }
 
@@ -218,13 +231,77 @@ impl HostedStore {
         &self,
         coordinator: &str,
     ) -> Result<crate::domain::environment_retention::CoordinatorLoss, DomainError> {
-        let value = store_rpc(&self.checkout, coordinator, "_lose_coordinator", json!([]))?;
+        match self.contained()? {
+            Found::Store => {}
+            Found::Nothing => {
+                return Err(DomainError::Tool(format!(
+                    "no swarm store at {}",
+                    self.database().display()
+                )));
+            }
+        }
+        let value = store_rpc(
+            &self.database(),
+            &self.checkout,
+            coordinator,
+            "_lose_coordinator",
+            json!([]),
+        )?;
         Ok(crate::domain::environment_retention::CoordinatorLoss {
             run: decode_hosted_run(&value)?,
             lost: value["lost"]
                 .as_bool()
                 .ok_or_else(|| DomainError::Tool("swarm loss receipt carries no verdict".into()))?,
         })
+    }
+}
+
+/// What the host finds where a container's store should be.
+enum Found {
+    /// A store file, really inside the checkout.
+    Store,
+    /// No store file there (never created, or gone since).
+    Nothing,
+}
+
+impl HostedStore {
+    /// The board the host reads: where the checkout's layout places it.
+    fn database(&self) -> PathBuf {
+        store_database(&self.checkout)
+    }
+
+    /// The host opens the store only where it really is inside the checkout:
+    /// a link or a `.git` pointer planted in the container is refused. (A
+    /// linked worktree's git directory is outside its checkout, so the host
+    /// cannot read that board and keeps the environment.)
+    fn contained(&self) -> Result<Found, DomainError> {
+        let database = self.database();
+        let store = match std::fs::canonicalize(&database) {
+            Ok(store) if store.is_file() => store,
+            Ok(_) => return Ok(Found::Nothing),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Found::Nothing);
+            }
+            Err(error) => {
+                return Err(DomainError::Tool(format!(
+                    "swarm store {}: {error}",
+                    database.display()
+                )));
+            }
+        };
+        let checkout = std::fs::canonicalize(&self.checkout).map_err(|e| {
+            DomainError::Tool(format!("swarm checkout {}: {e}", self.checkout.display()))
+        })?;
+        // (A link swapped in between this check and the open is not caught:
+        // pinning the directory is #2147.)
+        match store.starts_with(&checkout) {
+            true => Ok(Found::Store),
+            false => Err(DomainError::Tool(format!(
+                "swarm store {} is outside its checkout {}",
+                store.display(),
+                checkout.display()
+            ))),
+        }
     }
 }
 

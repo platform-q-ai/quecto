@@ -194,3 +194,110 @@ fn resumed_without_prompt(world: &mut QuectoWorld) {
     assert_eq!(evidence["restored"], false, "{evidence}");
     assert!(evidence["requests"].as_u64().unwrap() >= 4, "{evidence}");
 }
+
+/// git in the scenario's checkout, isolated from the user's configuration.
+fn git(dir: &std::path::Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .status()
+        .expect("git runs");
+    assert!(status.success(), "git {args:?}");
+}
+
+/// The run id the board holds, read as the parent would (read-only).
+fn board_run_id(board: &std::path::Path) -> String {
+    let output = std::process::Command::new("python3")
+        .args([
+            "-c",
+            "import sqlite3,sys; print(sqlite3.connect('file:'+sys.argv[1]+'?mode=ro', uri=True).execute('SELECT id FROM run').fetchone()[0])",
+        ])
+        .arg(board)
+        .output()
+        .expect("python3 runs");
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// The fixture's own files in the checkout (its runtime base, log, config
+/// and socket): kept out of the git commands the scenario runs, which are
+/// about the board.
+const FIXTURE_FILES: [&str; 4] = [
+    "runtime",
+    "supervisor.stderr",
+    "supervision-config.json",
+    "supervisor.sock",
+];
+
+#[when("a container's creator starts a swarm in a checkout that is a git repository")]
+fn creator_in_git_checkout(world: &mut QuectoWorld) {
+    let workspace = world.swarm_workspace.clone().unwrap();
+    git(&workspace, &["init", "-q"]);
+    std::fs::write(
+        workspace.join(".git/info/exclude"),
+        FIXTURE_FILES.map(|file| format!("/{file}\n")).concat(),
+    )
+    .unwrap();
+    std::fs::write(workspace.join("app.py"), "code\n").unwrap();
+    git(&workspace, &["add", "app.py"]);
+    git(&workspace, &["commit", "-q", "-m", "base"]);
+    let evidence =
+        std::thread::spawn(move || {
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(async move {
+                    let runtime = fixture::Runtime::start(&workspace).await;
+                    runtime
+                .command(json!({"type":"prompt","message":"Initialise the swarm","ack":"accept"}))
+                .await;
+                    runtime.wait_report("READY").await;
+                    let board = workspace.join(".git/quecto/swarm.sqlite");
+                    let in_git_dir = board.is_file();
+                    let in_work_tree = workspace.join(".quecto/swarm.sqlite").exists();
+                    if !in_git_dir {
+                        runtime.finish().await;
+                        return json!({"in_git_dir": false, "in_work_tree": in_work_tree});
+                    }
+                    let before = board_run_id(&board);
+                    std::fs::write(workspace.join("app.py"), "changed\n").unwrap();
+                    git(&workspace, &["stash", "-u"]);
+                    let mut clean = vec!["clean", "-fdx"];
+                    for file in FIXTURE_FILES {
+                        clean.extend(["-e", file]);
+                    }
+                    git(&workspace, &clean);
+                    let after = board_run_id(&board);
+                    runtime.finish().await;
+                    json!({"in_git_dir": in_git_dir, "in_work_tree": in_work_tree,
+                   "before": before, "after": after})
+                })
+        })
+        .join()
+        .unwrap();
+    world.swarm_result = Some(quecto::domain::tool::ToolResult {
+        content: evidence.to_string(),
+        is_error: false,
+        image_blocks: vec![],
+        delivery_metadata: None,
+    });
+}
+
+#[then("the board lives in the checkout's git directory and survives git stash and git clean")]
+fn board_in_git_dir(world: &mut QuectoWorld) {
+    let evidence = result_json(world);
+    assert_eq!(evidence["in_git_dir"], true, "{evidence}");
+    assert_eq!(evidence["in_work_tree"], false, "{evidence}");
+    assert!(
+        !evidence["before"].as_str().unwrap().is_empty(),
+        "{evidence}"
+    );
+    assert_eq!(evidence["after"], evidence["before"], "{evidence}");
+}
