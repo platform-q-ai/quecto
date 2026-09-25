@@ -13,8 +13,11 @@
 //! The location is decided once, by the run's creator, before anything reads
 //! the store: it creates `.git/quecto/`, and every process after it finds the
 //! store there. Nothing else creates that directory, so a repository an agent
-//! initialises mid-run never moves a live store, and a stale board committed
-//! at the old path is never adopted.
+//! initialises mid-run never moves a live store, and (where `.git` is a
+//! directory) a stale board committed at the old path is never adopted. An
+//! untracked board already in the work tree is taken for a live run's and
+//! kept: a container script that reuses a checkout must remove a leftover
+//! board itself.
 use std::path::{Path, PathBuf};
 
 /// The store's directory inside a repository's git directory.
@@ -59,14 +62,22 @@ fn work_tree_store(checkout: &Path) -> WorkTreeStore {
     if !checkout.join(&relative).exists() {
         return WorkTreeStore::Absent;
     }
-    let listed = std::process::Command::new("git")
+    let mut git = std::process::Command::new("git");
+    // Only explicit ambient inputs: an inherited GIT_DIR, GIT_COMMON_DIR or
+    // config must not redefine which repository answers.
+    git.env_clear();
+    if let Some(path) = std::env::var_os("PATH") {
+        git.env("PATH", path);
+    }
+    let listed = git
+        .env("LC_ALL", "C")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .arg("-C")
         .arg(checkout)
         .args(["ls-files", "--error-unmatch", "--"])
         .arg(&relative)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();

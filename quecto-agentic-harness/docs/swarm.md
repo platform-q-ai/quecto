@@ -155,8 +155,8 @@ persist. The SQLite board does.
 The board lives in the checkout's git directory, `.git/quecto/swarm.sqlite`,
 which git's work-tree commands never touch (`stash -u`, `clean -fdx`,
 `checkout`, `merge`, `reset --hard`). The run's creator claims that place before
-the board is first read; a board an agent once committed at the old path is
-never adopted. A checkout whose `.git` is not a directory (no repository, or a
+the board is first read; there, a board an agent once committed at the old path
+is never adopted. A checkout whose `.git` is not a directory (no repository, or a
 linked worktree), or a run started before #2145, keeps the board at
 `.quecto/swarm.sqlite`. That file and the swarm artifacts (`.quecto/swarm/`) are
 listed in the checkout's local `.git/info/exclude`, so `git add -A` never stages

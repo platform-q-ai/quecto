@@ -262,6 +262,10 @@ fn creator_in_git_checkout(world: &mut QuectoWorld) {
                     let board = workspace.join(".git/quecto/swarm.sqlite");
                     let in_git_dir = board.is_file();
                     let in_work_tree = workspace.join(".quecto/swarm.sqlite").exists();
+                    if !in_git_dir {
+                        runtime.finish().await;
+                        return json!({"in_git_dir": false, "in_work_tree": in_work_tree});
+                    }
                     let before = board_run_id(&board);
                     std::fs::write(workspace.join("app.py"), "changed\n").unwrap();
                     git(&workspace, &["stash", "-u"]);

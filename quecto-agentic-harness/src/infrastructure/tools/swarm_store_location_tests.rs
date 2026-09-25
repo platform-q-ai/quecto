@@ -145,6 +145,21 @@ fn a_creator_never_moves_a_board_already_in_the_work_tree() {
     );
 }
 
+/// When git cannot say whether a work-tree board is committed (here, a
+/// corrupt index), the creator claims the git directory: a stale committed
+/// board is the case that happens, and it is never adopted.
+#[test]
+fn a_creator_claims_when_git_cannot_tell_a_board_is_committed() {
+    let repo = repository();
+    std::fs::write(repo.path().join(".quecto/swarm.sqlite"), "board").unwrap();
+    std::fs::write(repo.path().join(".git/index"), "not an index").unwrap();
+    claim(repo.path(), true).unwrap();
+    assert_eq!(
+        store_path(repo.path()),
+        repo.path().join(".git/quecto/swarm.sqlite")
+    );
+}
+
 /// A board left in the work tree (nothing claimed the git directory) is
 /// excluded: `git stash -u` and `git clean -fd` leave it, `git add -A`
 /// never stages it.

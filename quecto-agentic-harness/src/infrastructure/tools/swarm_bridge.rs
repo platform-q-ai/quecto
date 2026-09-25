@@ -206,7 +206,12 @@ impl HostedStore {
         if !store_database(&self.checkout).is_file() {
             return Ok(None);
         }
-        self.contained()?;
+        match self.contained() {
+            Ok(()) => {}
+            // Gone since it was seen: as if there were none.
+            Err(_) if !store_database(&self.checkout).exists() => return Ok(None),
+            Err(error) => return Err(error),
+        }
         let status = store_rpc(&self.checkout, "supervisor", "_status", json!([]))?;
         decode_hosted_run(&status).map(Some)
     }
@@ -250,6 +255,8 @@ impl HostedStore {
                 checkout.display()
             ))),
         }
+        // (A link swapped in between this check and the open is not caught:
+        // pinning the directory is #2147.)
     }
 }
 
