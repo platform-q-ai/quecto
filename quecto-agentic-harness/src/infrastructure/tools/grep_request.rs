@@ -37,6 +37,9 @@ pub(super) struct GrepRequest {
     pub output: OutputMode,
     pub context_lines: usize,
     pub limit: usize,
+    /// What the agent is looking for, in words: judge the matches for
+    /// relevance and return the best first (#2136 slice B).
+    pub rank_by: Option<String>,
 }
 
 const EXAMPLE: &str = r#"Example: {"pattern": "search_term"}"#;
@@ -61,7 +64,13 @@ pub(super) fn parse_request(args: &Value) -> Result<GrepRequest, String> {
         limit: whole_number(args, "limit", 1)?.map_or(DEFAULT_MATCH_LIMIT, |n| {
             usize::try_from(n).unwrap_or(usize::MAX)
         }),
+        rank_by: rank_by(args)?,
     };
+    if let (Some(_), OutputMode::Files | OutputMode::Count) = (&request.rank_by, request.output) {
+        return Err(
+            "rank_by ranks matching lines: use it with output=content (the default)".to_string(),
+        );
+    }
     debug_assert!(
         !request.patterns.is_empty(),
         "a request always searches for something"
@@ -140,6 +149,17 @@ fn whole_number(args: &Value, key: &str, min: u64) -> Result<Option<u64>, String
             _ => Err(refused()),
         },
         _ => Err(refused()),
+    }
+}
+
+/// `rank_by`: a non-empty description of what the agent is looking for.
+fn rank_by(args: &Value) -> Result<Option<String>, String> {
+    match &args["rank_by"] {
+        Value::Null => Ok(None),
+        Value::String(query) if query.trim().chars().next().is_some() => {
+            Ok(Some(query.trim().to_string()))
+        }
+        _ => Err("rank_by must describe what you are looking for, in words".to_string()),
     }
 }
 

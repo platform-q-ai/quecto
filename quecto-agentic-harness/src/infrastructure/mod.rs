@@ -25,6 +25,7 @@ pub mod providers;
 pub mod reload;
 pub mod runtime_configuration;
 pub mod runtime_identity;
+pub mod search;
 pub mod security;
 pub mod time;
 pub mod tools;

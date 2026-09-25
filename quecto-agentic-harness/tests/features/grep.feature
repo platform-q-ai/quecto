@@ -229,3 +229,80 @@ Feature: Grep Tool
       """
     Then the grep result should be an error
     And the grep result should contain "output must be one of content, files, count"
+
+  # ─── rank_by and the search log (#2136 slice B) ───
+
+  @done @issue-2136
+  Scenario: rank_by returns the most relevant matches first with their scores
+    Given grep ranks matches with a stand-in judge that favours "BACKOFF"
+    And a grep workspace file "a.rs" with content:
+      """
+      // retry: see the docs
+      """
+    And a grep workspace file "b.rs" with content:
+      """
+      fn retry_delay() -> Duration { BACKOFF * 2 }
+      """
+    When I grep with arguments:
+      """
+      {"pattern": "retry", "rank_by": "where the retry delay is computed"}
+      """
+    Then the grep result should contain "[0.90] b.rs:1:"
+    And the grep result should contain "[0.10] a.rs:1:"
+    And the grep result should list "b.rs" before "a.rs"
+    And the grep result should not be an error
+
+  @done @issue-2136
+  Scenario: rank_by when the judge cannot answer still searches, in rg order, and says why
+    Given grep ranks matches with a judge that cannot answer
+    And a grep workspace file "b.rs" with content:
+      """
+      fn retry_delay() {}
+      """
+    When I grep with arguments:
+      """
+      {"pattern": "retry", "rank_by": "the retry delay"}
+      """
+    Then the grep result should contain "b.rs:1: fn retry_delay() {}"
+    And the grep result should contain "rank_by unavailable: TypeSafe answered HTTP 529; results are in rg order"
+    And the grep result should not be an error
+
+  @done @issue-2136
+  Scenario: rank_by where ranking is not configured still searches and says so
+    Given a grep workspace file "b.rs" with content:
+      """
+      fn retry_delay() {}
+      """
+    When I grep with arguments:
+      """
+      {"pattern": "retry", "rank_by": "the retry delay"}
+      """
+    Then the grep result should contain "b.rs:1:"
+    And the grep result should contain "rank_by is not configured here"
+    And the grep result should not be an error
+
+  @done @issue-2136
+  Scenario: Every search is recorded in the local search log
+    Given grep records its searches in a local search log
+    And grep ranks matches with a stand-in judge that favours "BACKOFF"
+    And a grep workspace file "b.rs" with content:
+      """
+      fn retry_delay() -> Duration { BACKOFF * 2 }
+      """
+    When I grep with arguments:
+      """
+      {"pattern": "retry", "rank_by": "the retry delay"}
+      """
+    And I grep with arguments:
+      """
+      {"pattern": "retry", "output": "files"}
+      """
+    And I grep with arguments:
+      """
+      {"pattern": "retry", "output": "lines"}
+      """
+    Then the search log should hold 3 searches
+    And search 1 in the search log should be "content" output that found 1
+    And search 1 in the search log should record ranking "ranked"
+    And search 2 in the search log should be "files" output that found 1
+    And search 3 in the search log should be "refused" output that found 0

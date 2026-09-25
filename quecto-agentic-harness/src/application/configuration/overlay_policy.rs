@@ -5,14 +5,16 @@
 //! Merge rules, per top-level section of the overlay:
 //! - `agents` — `agents.defaults` field-wise: an overlay field replaces the
 //!   global field, other global fields stay;
-//! - `tools` — `tools.web` field-wise per engine, `tools.policy.entries`
+//! - `tools` — `tools.web` field-wise per engine, `tools.grep` field-wise
+//!   per section (`relevance`, `log`; #2136), `tools.policy.entries`
 //!   entry-wise (an overlay entry replaces the global entry of the same
 //!   stable id), anything else under `tools` replaced whole;
 //! - `container_configs` — entry-wise; an overlay entry labelled
 //!   `"default": true` un-defaults every global entry;
 //! - `workflow` — field-wise (`templates` replaced whole);
 //! - `providers`, `admission` — global-only: an overlay carrying them is
-//!   refused naming the key;
+//!   refused naming the key; so is an overlay turning `tools.grep.relevance`
+//!   on or `tools.grep.log` off (#2136; see [`GLOBAL_ONLY_PATHS`]);
 //! - any other key — replaced whole (unknown keys pass through both files).
 
 use serde_json::{Map, Value};
@@ -46,12 +48,74 @@ pub fn looks_like_config(document: &Value) -> bool {
     })
 }
 
-/// The first global-only key an overlay document carries, if any.
+/// Whether a value may stand at a global-only path in an overlay.
+pub type AllowedInOverlay = fn(&Value) -> bool;
+
+/// Settings a repository overlay may only narrow (#2136): what it may set
+/// there is allowlisted, anything else is global-only. Ranking sends
+/// matching code to TypeSafe, so an overlay may turn it off but never on;
+/// the search log is the owner's, so an overlay may not turn it off.
+pub const GLOBAL_ONLY_PATHS: &[(&str, AllowedInOverlay)] = &[
+    ("tools.grep.relevance", ranking_off),
+    ("tools.grep.log", logging_on),
+];
+
+/// `{"enabled": false}` (ranking switched off), or `{}` (no effect: what
+/// unsetting `enabled` leaves).
+fn ranking_off(value: &Value) -> bool {
+    *value == serde_json::json!({"enabled": false}) || *value == serde_json::json!({})
+}
+
+/// `{"enabled": true}` (the search log kept on), or `{}` (no effect).
+fn logging_on(value: &Value) -> bool {
+    *value == serde_json::json!({"enabled": true}) || *value == serde_json::json!({})
+}
+
+/// The first global-only key, or global-only path set to a value an overlay
+/// may not carry, in an overlay document.
 pub fn global_only_key(document: &Map<String, Value>) -> Option<&'static str> {
     GLOBAL_ONLY_KEYS
         .iter()
         .copied()
         .find(|key| document.contains_key(*key))
+        .or_else(|| {
+            GLOBAL_ONLY_PATHS
+                .iter()
+                .find(|(path, allowed)| {
+                    path_in(document, path).is_some_and(|value| !allowed(value))
+                })
+                .map(|(path, _)| *path)
+        })
+}
+
+/// Each global-only path an overlay document sets to a value an overlay may
+/// not carry, with that value.
+pub fn global_only_values(document: &Map<String, Value>) -> Vec<(&'static str, Value)> {
+    GLOBAL_ONLY_PATHS
+        .iter()
+        .filter_map(|(path, allowed)| {
+            path_in(document, path)
+                .filter(|value| !allowed(value))
+                .map(|value| (*path, value.clone()))
+        })
+        .collect()
+}
+
+/// The value at a dotted path of `document`, walking its objects.
+fn path_in<'a>(document: &'a Map<String, Value>, path: &str) -> Option<&'a Value> {
+    let mut segments = path.split('.');
+    let first = document.get(segments.next()?)?;
+    segments.try_fold(first, |value, segment| value.get(segment))
+}
+
+/// A top-level global-only key a dotted key path writes under, if any: an
+/// overlay may not write there at all. (Global-only paths are judged by the
+/// value written, after the write: see [`global_only_key`].)
+pub fn global_only_path(segments: &[&str]) -> Option<&'static str> {
+    GLOBAL_ONLY_KEYS
+        .iter()
+        .copied()
+        .find(|key| segments.first() == Some(key))
 }
 
 /// Merge `overlay` over `global` by the section rules above. Both must be
@@ -95,7 +159,7 @@ fn merge_tools(base: &mut Value, overlay: Value) {
             for (key, value) in overlay_map {
                 let slot = base_map.entry(key.as_str()).or_insert(Value::Null);
                 match key.as_str() {
-                    "web" => merge_depth(slot, value, 2),
+                    "web" | "grep" => merge_depth(slot, value, 2),
                     "policy" => merge_depth(slot, value, 2),
                     _ => *slot = value,
                 }

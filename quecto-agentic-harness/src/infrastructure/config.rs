@@ -211,6 +211,9 @@ pub struct ToolsConfig {
     /// Durable catalogue-backed user policy preferences, keyed by stable tool id.
     #[serde(default)]
     pub policy: ToolPolicyConfig,
+    /// The grep tool's relevance ranking and search log (#2136).
+    #[serde(default)]
+    pub grep: GrepToolConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -674,6 +677,8 @@ pub use error::ConfigError;
 pub mod container_config_lookup;
 pub mod container_config_roster;
 pub mod container_configs;
+pub mod grep_tool;
+pub use grep_tool::GrepToolConfig;
 pub mod loaders;
 pub mod mapping;
 pub mod persistence;

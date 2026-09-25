@@ -26,6 +26,7 @@ fn a_bare_pattern_takes_every_default() {
             output: OutputMode::Content,
             context_lines: 0,
             limit: DEFAULT_MATCH_LIMIT,
+            rank_by: None,
         }
     );
 }
@@ -130,5 +131,26 @@ fn an_argument_of_the_wrong_shape_is_refused_by_name() {
     for (args, expected) in cases {
         let error = refused(args.clone());
         assert!(error.contains(expected), "{args}: {error}");
+    }
+}
+
+#[test]
+fn rank_by_describes_what_to_find_and_ranks_matching_lines_only() {
+    assert_eq!(
+        parsed(json!({"pattern": "retry", "rank_by": "  where backoff is computed "})).rank_by,
+        Some("where backoff is computed".to_string())
+    );
+    for bad in [json!(""), json!("   "), json!(3)] {
+        assert!(
+            refused(json!({"pattern": "x", "rank_by": bad})).contains("rank_by must describe"),
+            "{bad}"
+        );
+    }
+    for output in ["files", "count"] {
+        assert!(
+            refused(json!({"pattern": "x", "rank_by": "y", "output": output}))
+                .contains("use it with output=content"),
+            "{output}"
+        );
     }
 }

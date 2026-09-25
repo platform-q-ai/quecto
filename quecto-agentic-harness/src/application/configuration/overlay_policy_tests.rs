@@ -181,3 +181,72 @@ fn remove_path_takes_the_value_out_and_reports_what_is_not_there() {
     let mut scalar = json!("nope");
     assert_eq!(remove_path(&mut scalar, "a"), Err(String::new()));
 }
+
+/// #2136: `tools.grep` merges field-wise per section, so an overlay turning
+/// ranking off keeps the other global settings.
+#[test]
+fn tools_grep_merges_field_wise_per_section() {
+    let global = serde_json::json!({"tools": {"grep": {
+        "relevance": {"enabled": true, "max_candidates": 20},
+        "log": {"enabled": true}
+    }}});
+    let overlay = serde_json::json!({"tools": {"grep": {"relevance": {"enabled": false}}}});
+    let merged = merge_overlay(
+        global.as_object().unwrap().clone(),
+        overlay.as_object().unwrap().clone(),
+    );
+    assert_eq!(
+        serde_json::Value::Object(merged)["tools"]["grep"],
+        serde_json::json!({
+            "relevance": {"enabled": false, "max_candidates": 20},
+            "log": {"enabled": true}
+        })
+    );
+}
+
+/// #2136: an overlay may narrow grep's settings, never widen them: ranking
+/// (which sends matching code to TypeSafe) off but not on, the search log
+/// on but not off.
+#[test]
+fn an_overlay_may_narrow_grep_settings_but_not_widen_them() {
+    let refused = |document: serde_json::Value| global_only_key(document.as_object().unwrap());
+    assert_eq!(
+        refused(json!({"tools": {"grep": {"relevance": {"enabled": true}}}})),
+        Some("tools.grep.relevance")
+    );
+    assert_eq!(
+        refused(json!({"tools": {"grep": {"relevance": {"enabled": false, "max_candidates": 5}}}})),
+        Some("tools.grep.relevance"),
+        "only switching it off is allowed"
+    );
+    assert_eq!(
+        refused(json!({"tools": {"grep": {"relevance": null}}})),
+        Some("tools.grep.relevance")
+    );
+    assert_eq!(
+        refused(json!({"tools": {"grep": {"relevance": {"enabled": false}}}})),
+        None
+    );
+    assert_eq!(
+        refused(json!({"tools": {"grep": {"log": {"enabled": false}}}})),
+        Some("tools.grep.log")
+    );
+    assert_eq!(
+        refused(json!({"tools": {"grep": {"log": {"enabled": true}}}})),
+        None
+    );
+    assert_eq!(
+        refused(json!({"tools": {"grep": {"relevance": {}, "log": {}}}})),
+        None,
+        "no effect"
+    );
+    assert_eq!(refused(json!({"tools": {"web": {}}})), None);
+    assert_eq!(
+        global_only_path(&["providers", "openai"]),
+        Some("providers")
+    );
+    assert_eq!(
+        global_only_path(&["tools", "grep", "relevance", "enabled"]),
+        None
+    );
+}

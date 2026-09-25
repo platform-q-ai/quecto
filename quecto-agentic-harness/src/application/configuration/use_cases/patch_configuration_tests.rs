@@ -636,3 +636,68 @@ fn unset_shares_the_patch_refusals() {
         ConfigPatchError::InvalidKeyPath(_)
     ));
 }
+
+/// #2136: an overlay may not switch grep ranking on or its search log off,
+/// directly or through a parent written whole; it may narrow them.
+#[test]
+fn an_overlay_patch_refuses_widening_grep_directly_or_inside_a_parent() {
+    let store = MemoryStore::with(&[]);
+    let refused = |key: &str, value: serde_json::Value| {
+        use_case(store.clone(), Arc::new(FakeTrust::default()))
+            .execute(patch(ConfigLayer::Overlay, OVERLAY, key, value))
+            .unwrap_err()
+    };
+    let ranking = ConfigPatchError::GlobalOnlyKey {
+        path: PathBuf::from(OVERLAY),
+        key: "tools.grep.relevance".into(),
+    };
+    assert_eq!(
+        refused("tools.grep.relevance.enabled", json!(true)),
+        ranking
+    );
+    assert_eq!(
+        refused("tools.grep", json!({"relevance": {"enabled": true}})),
+        ranking
+    );
+    assert_eq!(
+        refused("tools.grep.log.enabled", json!(false)),
+        ConfigPatchError::GlobalOnlyKey {
+            path: PathBuf::from(OVERLAY),
+            key: "tools.grep.log".into(),
+        }
+    );
+    assert_eq!(store.content(OVERLAY), None);
+    use_case(store.clone(), Arc::new(FakeTrust::default()))
+        .execute(patch(
+            ConfigLayer::Overlay,
+            OVERLAY,
+            "tools.grep.relevance.enabled",
+            json!(false),
+        ))
+        .expect("an overlay may switch ranking off");
+}
+
+/// An overlay already carrying a refused grep setting stays invalid until
+/// repaired (an unrelated patch is refused by the merged-config check, as
+/// for any invalid overlay), and unset repairs it.
+#[test]
+fn an_overlay_carrying_a_refused_grep_setting_can_be_repaired() {
+    let content = r#"{"tools":{"grep":{"relevance":{"enabled":true}}}}"#;
+    let store = MemoryStore::with(&[(OVERLAY, content)]);
+    let unrelated = use_case(store.clone(), FakeTrust::trusting(OVERLAY, content))
+        .execute(patch(
+            ConfigLayer::Overlay,
+            OVERLAY,
+            "agents.defaults.model",
+            json!("m"),
+        ))
+        .unwrap_err();
+    assert!(
+        matches!(unrelated, ConfigPatchError::InvalidMerge { .. }),
+        "{unrelated:?}"
+    );
+    use_case(store.clone(), FakeTrust::trusting(OVERLAY, content))
+        .unset(unset(ConfigLayer::Overlay, "tools.grep.relevance"))
+        .expect("the refused setting can be removed");
+    assert_eq!(document(&store, OVERLAY), json!({"tools":{"grep":{}}}));
+}
