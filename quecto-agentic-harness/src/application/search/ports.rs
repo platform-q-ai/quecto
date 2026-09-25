@@ -10,13 +10,19 @@ use std::pin::Pin;
 /// The capability's port future.
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// One search hit offered for judging.
+/// One search hit offered for judging: its matched line(s), what is
+/// judged, apart from the lines around them, which only give context (what
+/// function a matched comment documents, what code a call sits in).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelevanceCandidate {
     /// Where it is, as the tool shows it (`path:line`).
     pub location: String,
-    /// The matching line(s) with a little surrounding context.
-    pub text: String,
+    /// The lines just before the match (may be empty).
+    pub before: String,
+    /// The matching line(s).
+    pub matched: String,
+    /// The lines just after the match (may be empty).
+    pub after: String,
 }
 
 /// A judge's answer for a set of candidates.

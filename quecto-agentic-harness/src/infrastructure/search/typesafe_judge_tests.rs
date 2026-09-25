@@ -5,7 +5,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 fn candidate(location: &str) -> RelevanceCandidate {
     RelevanceCandidate {
         location: location.into(),
-        text: format!("text at {location}"),
+        before: String::new(),
+        matched: format!("text at {location}"),
+        after: String::new(),
     }
 }
 
@@ -346,5 +348,46 @@ async fn no_more_than_concurrency_requests_are_in_flight() {
         started.elapsed() >= Duration::from_millis(1150),
         "{:?}",
         started.elapsed()
+    );
+}
+
+/// #2144: the matched lines and their context reach TypeSafe as separate
+/// fields, and the question says which is judged.
+#[tokio::test]
+async fn the_matched_lines_and_their_context_are_sent_apart() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(body_partial_json(json!({
+            "state": {"candidate": {
+                "location": "retry.rs:4",
+                "before": "impl Policy {",
+                "matched": "/// The delay before the next attempt.",
+                "after": "fn backoff_delay(&self) -> Duration {",
+            }}
+        })))
+        .respond_with(noul(0.9))
+        .mount(&server)
+        .await;
+    let candidate = RelevanceCandidate {
+        location: "retry.rs:4".into(),
+        before: "impl Policy {".into(),
+        matched: "/// The delay before the next attempt.".into(),
+        after: "fn backoff_delay(&self) -> Duration {".into(),
+    };
+    assert_eq!(
+        judge(&server, Duration::from_secs(10))
+            .judge("q", &[candidate])
+            .await,
+        Relevance::Scored(vec![Some(0.9)])
+    );
+    let body: Value =
+        serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
+    let instructions = body["questions"]["relevant"]["instructions"]
+        .as_str()
+        .unwrap();
+    assert!(instructions.contains("Judge those lines"), "{instructions}");
+    assert!(
+        instructions.contains("what the matched lines belong to"),
+        "{instructions}"
     );
 }

@@ -66,7 +66,8 @@ fn lines(matches: &[RgMatch]) -> Vec<(usize, Option<f64>)> {
 }
 
 /// The judged matches come best first with their scores; the judge saw each
-/// match's location and its line with a line of context either side.
+/// match's location and its line with three lines of context either side
+/// (here the whole file).
 #[tokio::test]
 async fn judged_matches_come_best_first_with_their_scores() {
     let (dir, matches) = workspace();
@@ -91,7 +92,9 @@ async fn judged_matches_come_best_first_with_their_scores() {
         seen[0].1[1],
         RelevanceCandidate {
             location: "src/lib.rs:4".into(),
-            text: "b\nlet retry_count = 3;\nc".into(),
+            before: "a\nfn retry() {}\nb".into(),
+            matched: "let retry_count = 3;".into(),
+            after: "c\n// retry later\nd".into(),
         }
     );
     match &ranked.record {
@@ -216,9 +219,9 @@ async fn a_long_neighbouring_line_never_hides_the_match() {
     )
     .await;
     let seen = judge.seen.lock().unwrap();
-    let text = &seen[0].1[0].text;
-    assert!(text.ends_with("retry_delay()"), "{text:.60}");
-    assert_eq!(text.chars().count(), 400 + 1 + "retry_delay()".len());
+    let seen = &seen[0].1[0];
+    assert_eq!(seen.matched, "retry_delay()");
+    assert_eq!(seen.before.chars().count(), 400);
 }
 
 /// A match whose line cannot be read (past the file, or past the context
@@ -284,7 +287,7 @@ async fn a_match_far_along_a_long_line_is_what_the_judge_sees() {
         true,
     )
     .await;
-    let text = judge.seen.lock().unwrap()[0].1[0].text.clone();
+    let text = judge.seen.lock().unwrap()[0].1[0].matched.clone();
     assert!(text.contains("retry_delay=5"), "{text}");
     assert!(text.starts_with('…'), "the cut is marked: {text:.20}");
     assert!(text.chars().count() <= 402, "{}", text.chars().count());
@@ -402,4 +405,158 @@ async fn no_relevance_claim_while_some_matches_are_unread_or_uncapped() {
     let notice = ranked.notice.unwrap();
     assert!(!notice.contains("looks relevant"), "{notice}");
     assert!(notice.contains("ranked the first 2 of 3"), "{notice}");
+}
+
+/// #2144: a doc comment matched two lines above the function it documents
+/// shows the judge that function's signature; the context stops at three
+/// lines either side and at the file's ends.
+#[tokio::test]
+async fn the_judge_sees_the_function_a_matched_comment_documents() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let source = [
+        "use std::time::Duration;",
+        "",
+        "impl Policy {",
+        "    /// The delay to wait before the next attempt. Honours a `Retry-After`",
+        "    /// hint when present; otherwise uses bounded exponential backoff.",
+        "    fn backoff_delay(&self, attempt: u32) -> Duration {",
+        "        self.base * 2u32.pow(attempt)",
+        "    }",
+        "}",
+    ];
+    std::fs::write(dir.path().join("retry.rs"), source.join("\n") + "\n").unwrap();
+    let at = |line_number: usize| RgMatch {
+        file_path: dir.path().join("retry.rs"),
+        line_number,
+        line_count: 1,
+        score: None,
+        column: None,
+    };
+    let (judged, judge) = ranking(Relevance::Scored(vec![Some(0.9), Some(0.1)]), 30);
+    rank(
+        Some(&judged),
+        "where the retry delay is computed",
+        vec![at(4), at(1)],
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
+    let seen = judge.seen.lock().unwrap();
+    // Lines 1..=7 around line 4: the signature two lines below is in view
+    // as context, line 8 is not.
+    assert_eq!(seen[0].1[0].before, source[0..3].join("\n"));
+    assert_eq!(seen[0].1[0].matched, source[3]);
+    assert_eq!(seen[0].1[0].after, source[4..7].join("\n"));
+    // Line 1 has nothing above it.
+    assert_eq!(seen[0].1[1].before, "");
+    assert_eq!(seen[0].1[1].after, source[1..4].join("\n"));
+}
+
+/// Context stops at the file's end; a match spanning more lines than a
+/// judge is shown has its first ten judged and the rest as context.
+#[tokio::test]
+async fn context_stops_at_the_end_and_long_matches_are_clamped() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let source: Vec<String> = (1..=16).map(|n| format!("line {n}")).collect();
+    std::fs::write(dir.path().join("f.rs"), source.join("\n") + "\n").unwrap();
+    let span = |line_number: usize, line_count: usize| RgMatch {
+        file_path: dir.path().join("f.rs"),
+        line_number,
+        line_count,
+        score: None,
+        column: None,
+    };
+    let (judged, judge) = ranking(Relevance::Scored(vec![None, None]), 30);
+    rank(
+        Some(&judged),
+        "q",
+        vec![span(15, 1), span(2, 12)],
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
+    let seen = judge.seen.lock().unwrap();
+    // Line 15 of 16: one line after it.
+    assert_eq!(seen[0].1[0].before, source[11..14].join("\n"));
+    assert_eq!(seen[0].1[0].after, source[15]);
+    // Lines 2..=13 matched: 2..=11 judged, 12..=14 context.
+    assert_eq!(seen[0].1[1].before, source[0]);
+    assert_eq!(seen[0].1[1].matched, source[1..11].join("\n"));
+    assert_eq!(seen[0].1[1].after, source[11..14].join("\n"));
+}
+
+/// A file past the 1 MiB context cache: the last line read may be cut, so
+/// it is never shown, as context or as a match.
+#[tokio::test]
+async fn a_line_cut_by_the_file_cache_is_never_shown() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let long = "x".repeat(2 * 1024 * 1024);
+    std::fs::write(dir.path().join("big.rs"), format!("retry\nnext\n{long}\n")).unwrap();
+    let at = |line_number: usize| RgMatch {
+        file_path: dir.path().join("big.rs"),
+        line_number,
+        line_count: 1,
+        score: None,
+        column: None,
+    };
+    let (judged, judge) = ranking(Relevance::Scored(vec![Some(0.5)]), 30);
+    rank(
+        Some(&judged),
+        "q",
+        vec![at(1), at(3)],
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
+    let seen = judge.seen.lock().unwrap();
+    // Only the first match is sent, and without the cut third line.
+    assert_eq!(seen[0].1.len(), 1);
+    assert_eq!(seen[0].1[0].matched, "retry");
+    assert_eq!(seen[0].1[0].after, "next");
+}
+
+/// Whether the cache's cap cut the last line is decided from the bytes
+/// read: a line whose break falls just past the cap is whole and kept; one
+/// running on past it is cut and dropped.
+#[tokio::test]
+async fn a_line_ending_just_past_the_cache_cap_is_kept() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let cap = 1024 * 1024;
+    let first = "retry\n";
+    // The second line fills the cap exactly; its break is the byte after.
+    let exact = format!("{first}{}\n", "y".repeat(cap - first.len()));
+    std::fs::write(dir.path().join("exact.rs"), exact).unwrap();
+    let running = format!("{first}{}\n", "y".repeat(cap));
+    std::fs::write(dir.path().join("running.rs"), running).unwrap();
+    // The second line's break is the cap's last byte; more follows.
+    let boundary = format!("{first}{}\nmore\n", "y".repeat(cap - first.len() - 1));
+    std::fs::write(dir.path().join("boundary.rs"), boundary).unwrap();
+    let at = |file: &str| RgMatch {
+        file_path: dir.path().join(file),
+        line_number: 1,
+        line_count: 1,
+        score: None,
+        column: None,
+    };
+    let (judged, judge) = ranking(Relevance::Scored(vec![None, None, None]), 30);
+    rank(
+        Some(&judged),
+        "q",
+        vec![at("exact.rs"), at("running.rs"), at("boundary.rs")],
+        dir.path(),
+        &Sandbox::new(None),
+        true,
+    )
+    .await;
+    let seen = judge.seen.lock().unwrap();
+    assert_eq!(seen[0].1[0].after.chars().count(), 400, "kept, cut to 400");
+    assert_eq!(seen[0].1[1].after, "", "cut part-way, dropped");
+    assert_eq!(
+        seen[0].1[2].after.chars().count(),
+        400,
+        "ends at the cap, kept"
+    );
 }

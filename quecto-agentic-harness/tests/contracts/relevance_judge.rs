@@ -14,7 +14,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 fn candidate(location: &str) -> RelevanceCandidate {
     RelevanceCandidate {
         location: location.into(),
-        text: "fn retry() {}".into(),
+        before: String::new(),
+        matched: "fn retry() {}".into(),
+        after: String::new(),
     }
 }
 
