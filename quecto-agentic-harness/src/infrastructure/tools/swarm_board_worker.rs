@@ -143,6 +143,13 @@ fn spawn_on_resident_thread(source: String) -> std::io::Result<Child> {
 /// (checkout, database, member): a checkout whose board moved (the host
 /// reads by layout, #2145) gets its own interpreter, never the old one's.
 type Key = (PathBuf, PathBuf, String);
+
+/// Which board a call is for, and as whom.
+pub(super) struct Board<'a> {
+    pub checkout: &'a Path,
+    pub database: &'a Path,
+    pub member: &'a str,
+}
 type Slot = Arc<Mutex<Option<Worker>>>;
 
 /// The interpreters one process keeps, keyed by (checkout, database,
@@ -169,14 +176,14 @@ impl Registry {
     /// worker when full. Slots are created empty; the caller spawns into
     /// one under the slot's own lock, so the registry lock is never held
     /// across a spawn.
-    fn slot(&self, checkout: &Path, database: &Path, member: &str) -> Slot {
+    fn slot(&self, board: &Board<'_>) -> Slot {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         inner.tick += 1;
         let tick = inner.tick;
         let key = (
-            checkout.to_path_buf(),
-            database.to_path_buf(),
-            member.to_string(),
+            board.checkout.to_path_buf(),
+            board.database.to_path_buf(),
+            board.member.to_string(),
         );
         if let Some((slot, used)) = inner.workers.get_mut(&key) {
             *used = tick;
@@ -192,7 +199,7 @@ impl Registry {
                 let evicted = inner.workers.remove(&oldest);
                 drop(inner);
                 drop(evicted);
-                return self.slot(checkout, database, member);
+                return self.slot(board);
             }
         }
         let created: Slot = Arc::new(Mutex::new(None));
@@ -206,16 +213,14 @@ impl Registry {
     /// retry (see the module doc); its stderr is the diagnostic.
     pub(super) fn call(
         &self,
-        checkout: &Path,
-        database: &Path,
-        member: &str,
+        board: &Board<'_>,
         bootstrap: &str,
         method: &str,
         args: Value,
     ) -> Result<Value, DomainError> {
         let request = serde_json::to_string(&serde_json::json!([method, args]))
             .map_err(|e| DomainError::Tool(format!("swarm coordination request: {e}")))?;
-        let slot = self.slot(checkout, database, member);
+        let slot = self.slot(board);
         let mut guard = slot.lock().unwrap_or_else(|p| p.into_inner());
         // An interpreter that already left (its checkout vanished) is reaped
         // and replaced before the request is written, so the write never
@@ -228,7 +233,7 @@ impl Registry {
         }
         let worker = match guard.as_mut() {
             Some(worker) => worker,
-            None => guard.insert(Worker::spawn(checkout, bootstrap)?),
+            None => guard.insert(Worker::spawn(board.checkout, bootstrap)?),
         };
         match worker.exchange(&request) {
             Some(line) => decode(&line),
@@ -254,14 +259,12 @@ impl Registry {
 
 /// One board call through the process-wide registry.
 pub(super) fn call(
-    checkout: &Path,
-    database: &Path,
-    member: &str,
+    board: &Board<'_>,
     bootstrap: &str,
     method: &str,
     args: Value,
 ) -> Result<Value, DomainError> {
-    global().call(checkout, database, member, bootstrap, method, args)
+    global().call(board, bootstrap, method, args)
 }
 
 fn decode(line: &str) -> Result<Value, DomainError> {

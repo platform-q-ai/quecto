@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::Registry;
+use super::{Board, Registry};
 
 fn call(
     checkout: &std::path::Path,
@@ -16,9 +16,11 @@ fn call(
     }
     REGISTRY.with(|r| {
         r.call(
-            checkout,
-            &checkout.join("board"),
-            member,
+            &Board {
+                checkout,
+                database: &checkout.join("board"),
+                member,
+            },
             bootstrap,
             method,
             args,
@@ -113,9 +115,11 @@ fn the_registry_is_bounded_and_evicts_the_least_recently_used() {
         assert_eq!(
             registry
                 .call(
-                    dir.path(),
-                    &dir.path().join("board"),
-                    "m",
+                    &Board {
+                        checkout: dir.path(),
+                        database: &dir.path().join("board"),
+                        member: "m"
+                    },
                     STUB,
                     "echo",
                     json!([])
@@ -130,9 +134,11 @@ fn the_registry_is_bounded_and_evicts_the_least_recently_used() {
     assert_eq!(
         registry
             .call(
-                dirs[0].path(),
-                &dirs[0].path().join("board"),
-                "m",
+                &Board {
+                    checkout: dirs[0].path(),
+                    database: &dirs[0].path().join("board"),
+                    member: "m"
+                },
                 STUB,
                 "echo",
                 json!([])
@@ -143,9 +149,11 @@ fn the_registry_is_bounded_and_evicts_the_least_recently_used() {
     assert_eq!(
         registry
             .call(
-                dirs[2].path(),
-                &dirs[2].path().join("board"),
-                "m",
+                &Board {
+                    checkout: dirs[2].path(),
+                    database: &dirs[2].path().join("board"),
+                    member: "m"
+                },
                 STUB,
                 "echo",
                 json!([])
