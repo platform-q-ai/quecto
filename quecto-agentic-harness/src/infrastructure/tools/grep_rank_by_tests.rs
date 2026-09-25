@@ -359,5 +359,8 @@ fn a_panicking_search_is_recorded_as_failed() {
     assert!(outcome.is_err());
     let records = log.0.lock().unwrap();
     assert_eq!(records[0].output, "failed");
-    assert_eq!(records[0].error.as_deref(), Some("the search panicked"));
+    assert_eq!(
+        records[0].error.as_deref(),
+        Some("the search ended while a panic unwound")
+    );
 }

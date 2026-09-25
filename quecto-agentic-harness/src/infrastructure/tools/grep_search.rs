@@ -250,7 +250,7 @@ impl Drop for PendingRecord {
     fn drop(&mut self) {
         if let Some(log) = self.log.take() {
             let (output, error) = if std::thread::panicking() {
-                ("failed", "the search panicked")
+                ("failed", "the search ended while a panic unwound")
             } else {
                 ("cancelled", "the search was cancelled before it finished")
             };

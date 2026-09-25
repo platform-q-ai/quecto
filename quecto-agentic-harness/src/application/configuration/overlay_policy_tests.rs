@@ -235,6 +235,11 @@ fn an_overlay_may_narrow_grep_settings_but_not_widen_them() {
         refused(json!({"tools": {"grep": {"log": {"enabled": true}}}})),
         None
     );
+    assert_eq!(
+        refused(json!({"tools": {"grep": {"relevance": {}, "log": {}}}})),
+        None,
+        "no effect"
+    );
     assert_eq!(refused(json!({"tools": {"web": {}}})), None);
     assert_eq!(
         global_only_path(&["providers", "openai"]),

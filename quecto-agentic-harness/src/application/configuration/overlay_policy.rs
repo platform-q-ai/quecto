@@ -48,23 +48,27 @@ pub fn looks_like_config(document: &Value) -> bool {
     })
 }
 
+/// Whether a value may stand at a global-only path in an overlay.
+pub type AllowedInOverlay = fn(&Value) -> bool;
+
 /// Settings a repository overlay may only narrow (#2136): what it may set
 /// there is allowlisted, anything else is global-only. Ranking sends
 /// matching code to TypeSafe, so an overlay may turn it off but never on;
 /// the search log is the owner's, so an overlay may not turn it off.
-pub const GLOBAL_ONLY_PATHS: &[(&str, fn(&Value) -> bool)] = &[
+pub const GLOBAL_ONLY_PATHS: &[(&str, AllowedInOverlay)] = &[
     ("tools.grep.relevance", ranking_off),
     ("tools.grep.log", logging_on),
 ];
 
-/// `{"enabled": false}`: ranking switched off.
+/// `{"enabled": false}` (ranking switched off), or `{}` (no effect: what
+/// unsetting `enabled` leaves).
 fn ranking_off(value: &Value) -> bool {
-    *value == serde_json::json!({"enabled": false})
+    *value == serde_json::json!({"enabled": false}) || *value == serde_json::json!({})
 }
 
-/// `{"enabled": true}`: the search log kept on.
+/// `{"enabled": true}` (the search log kept on), or `{}` (no effect).
 fn logging_on(value: &Value) -> bool {
-    *value == serde_json::json!({"enabled": true})
+    *value == serde_json::json!({"enabled": true}) || *value == serde_json::json!({})
 }
 
 /// The first global-only key, or global-only path set to a value an overlay
