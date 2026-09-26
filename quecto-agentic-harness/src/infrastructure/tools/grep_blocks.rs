@@ -86,6 +86,14 @@ pub(super) fn format_match_block(
         .min(total_lines.max(last_matched))
         .max(m.line_number);
     let matched_here = cfg.matched.get(&m.file_path);
+    // A match whose own lines were all shown in an earlier block (a better
+    // ranked one's context) adds nothing: its context alone would stand
+    // apart from it (#2174 review).
+    if let Some(shown) = state.shown.get(&m.file_path) {
+        if (m.line_number..=last_matched).all(|line| shown.contains(&line)) {
+            return true;
+        }
+    }
 
     for current in start..=end {
         // A line this file already showed is not shown again (#2163).

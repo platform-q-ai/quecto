@@ -169,3 +169,28 @@ async fn a_better_ranked_later_match_does_not_hide_an_earlier_one() {
         assert_eq!(shown.len(), all, "a line repeated: {out}");
     }
 }
+
+/// Review #2174 (round 2): a match already shown inside a better one's block
+/// prints nothing more, so no stray context appears away from its match.
+#[tokio::test]
+async fn a_match_shown_in_a_better_block_leaves_no_stray_context() {
+    use super::rank_by_tests::KeywordJudge;
+    let text: String = (1..=60)
+        .map(|i| match i {
+            10 => "hit mid\n".to_string(),
+            48 => "hit low\n".to_string(),
+            50 => "hit best\n".to_string(),
+            _ => format!("row {i}\n"),
+        })
+        .collect();
+    let (tool, _tmp) = grep_in(&[("r.txt", &text)]);
+    let tool = tool.with_relevance(Arc::new(KeywordJudge("best")), 100);
+    let out = search(
+        &tool,
+        serde_json::json!({"pattern": "hit", "path": "r.txt", "rank_by": "best", "context": 2}),
+    )
+    .await;
+    assert!(out.contains("r.txt:48: hit low"), "{out}");
+    assert!(!out.contains("r.txt-46-"), "stray context of 48: {out}");
+    assert!(!out.contains("r.txt-47-"), "stray context of 48: {out}");
+}
