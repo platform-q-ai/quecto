@@ -89,3 +89,16 @@ fn an_unclosed_block_keeps_the_rest_of_the_page() {
     assert!(text.contains("after"), "{text}");
     assert!(text.contains("end"), "{text}");
 }
+
+/// Untyped bytes that decode as UTF-8 but hold a NUL are binary.
+#[tokio::test]
+async fn untyped_bytes_with_a_nul_are_binary() {
+    let got = fetched(b"PK\x03\x04\x00\x00data", None, false).await;
+    assert_eq!(
+        got,
+        WebFetchResult::Binary {
+            content_type: None,
+            bytes: 10
+        }
+    );
+}
