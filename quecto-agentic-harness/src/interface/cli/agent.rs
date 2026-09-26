@@ -13,6 +13,7 @@ pub(crate) struct AgentOutput<'a> {
     pub(crate) stderr: &'a mut String,
 }
 mod agent_deadline;
+mod event_log;
 mod flag_parse;
 mod startup_effort;
 mod startup_prompt;
@@ -315,6 +316,8 @@ pub(crate) struct AgentBuildResult {
         Option<crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workspace: std::path::PathBuf,
+    /// `telemetry.event_log.enabled` (#2150).
+    pub event_log: bool,
 }
 pub(crate) fn build_agent_from_config(
     base_dir: &std::path::Path,
@@ -535,6 +538,7 @@ pub(crate) fn build_agent_from_config(
         environment_control,
         workflow_state,
         workspace,
+        event_log: config.telemetry.event_log.enabled,
     })
 }
 mod agent_tool_registry;
@@ -628,24 +632,9 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
 
     agent.set_session_key(session_identity.clone());
 
-    // Keep durable audit logging tied to explicit workflow-driven mode. Normal UDS
-    // makes workflow available, but should not add audit I/O/privacy overhead before
-    // the user opts into autonomous workflow behavior.
-    if flags.workflow && !ephemeral && !session_key.is_empty() {
-        match crate::infrastructure::persistence::audit_log::AuditLog::open_sync(
-            &base_dir,
-            &session_key,
-        ) {
-            Ok(log) => {
-                agent.set_audit_log(Some(
-                    Arc::new(log) as Arc<dyn crate::application::audit::ports::AuditSink>
-                ));
-            }
-            Err(e) => {
-                stderr.push_str(&format!("WARNING: failed to open audit log: {e}\n"));
-            }
-        }
-    }
+    // Workflow sessions keep a durable audit log; with the event log on, every agent does.
+    let key = event_log::log_key(flags.workflow, ephemeral, &session_key, build.event_log);
+    agent.set_audit_log(key.and_then(|key| event_log::open(&base_dir, &key, &flags, stderr)));
 
     let model = build.model.clone();
 

@@ -31,6 +31,7 @@ pub const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
     "workflow",
     "container_configs",
     "admission",
+    "telemetry",
 ];
 
 /// Whether `document` looks like a quecto configuration: a JSON object
@@ -58,6 +59,9 @@ pub type AllowedInOverlay = fn(&Value) -> bool;
 pub const GLOBAL_ONLY_PATHS: &[(&str, AllowedInOverlay)] = &[
     ("tools.grep.relevance", ranking_off),
     ("tools.grep.log", logging_on),
+    // #2150: the event log is the owner's too: an overlay may switch it on,
+    // never off.
+    ("telemetry.event_log", logging_on),
 ];
 
 /// `{"enabled": false}` (ranking switched off), or `{}` (no effect: what
@@ -66,7 +70,7 @@ fn ranking_off(value: &Value) -> bool {
     *value == serde_json::json!({"enabled": false}) || *value == serde_json::json!({})
 }
 
-/// `{"enabled": true}` (the search log kept on), or `{}` (no effect).
+/// `{"enabled": true}` (the log kept or switched on), or `{}` (no effect).
 fn logging_on(value: &Value) -> bool {
     *value == serde_json::json!({"enabled": true}) || *value == serde_json::json!({})
 }

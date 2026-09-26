@@ -13,13 +13,26 @@ use crate::domain::audit::{AuditEnvelope, AuditEvent};
 use crate::domain::error::DomainError;
 use crate::infrastructure::persistence::filename::sanitize_session_key;
 
+/// The most one session's log holds before it stops (#2150): a runaway
+/// session cannot fill the disk.
+pub const DEFAULT_CAP_BYTES: u64 = 256 * 1024 * 1024;
+
 /// Append-only audit log handle for a single session.
 ///
 /// Uses a raw `tokio::fs::File` (no `BufWriter`) because every `emit()` call
 /// flushes immediately for crash durability — buffering would be negated.
 pub struct AuditLog {
-    writer: Mutex<tokio::fs::File>,
+    writer: Mutex<Writer>,
     session_key: String,
+    parent: Option<String>,
+    cap_bytes: u64,
+}
+
+/// The open file and how much it holds.
+struct Writer {
+    file: tokio::fs::File,
+    written: u64,
+    capped: bool,
 }
 
 impl std::fmt::Debug for AuditLog {
@@ -36,69 +49,95 @@ impl AuditLog {
     /// Creates `<base_dir>/audit/` if it doesn't exist (lazy init).
     /// The file is opened in append mode so restarts continue the same log.
     pub async fn open(base_dir: &Path, session_key: &str) -> Result<Self, DomainError> {
-        let audit_dir = base_dir.join("audit");
-        tokio::fs::create_dir_all(&audit_dir)
+        let base_dir = base_dir.to_path_buf();
+        let key = session_key.to_string();
+        tokio::task::spawn_blocking(move || Self::open_sync(&base_dir, &key))
             .await
-            .map_err(|e| DomainError::Session(format!("failed to create audit dir: {e}")))?;
-
-        let filename = format!("{}.jsonl", sanitize_session_key(session_key));
-        let path = audit_dir.join(&filename);
-
-        let file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .await
-            .map_err(|e| DomainError::Session(format!("failed to open audit log: {e}")))?;
-
-        Ok(Self {
-            writer: Mutex::new(file),
-            session_key: session_key.to_string(),
-        })
+            .map_err(|e| DomainError::Session(format!("failed to open audit log: {e}")))?
     }
 
     /// Open (or create) the audit log file for the given session (sync).
     ///
-    /// Same as [`Self::open`] but uses blocking I/O. Suitable for use in
-    /// sync contexts (e.g. before the tokio runtime is entered).
+    /// The directory is private (0700) and the file too (0600), tightened
+    /// when an earlier version left them looser (#2150).
     pub fn open_sync(base_dir: &Path, session_key: &str) -> Result<Self, DomainError> {
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
         let audit_dir = base_dir.join("audit");
-        std::fs::create_dir_all(&audit_dir)
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&audit_dir)
             .map_err(|e| DomainError::Session(format!("failed to create audit dir: {e}")))?;
+        std::fs::set_permissions(&audit_dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| DomainError::Session(format!("failed to secure audit dir: {e}")))?;
 
-        let filename = format!("{}.jsonl", sanitize_session_key(session_key));
-        let path = audit_dir.join(&filename);
-
+        let path = Self::file_path(base_dir, session_key);
         let std_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
+            .mode(0o600)
             .open(&path)
             .map_err(|e| DomainError::Session(format!("failed to open audit log: {e}")))?;
-
-        let tokio_file = tokio::fs::File::from_std(std_file);
+        std_file
+            .set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| DomainError::Session(format!("failed to secure audit log: {e}")))?;
+        let written = std_file
+            .metadata()
+            .map_err(|e| DomainError::Session(format!("failed to read audit log: {e}")))?
+            .len();
 
         Ok(Self {
-            writer: Mutex::new(tokio_file),
+            writer: Mutex::new(Writer {
+                file: tokio::fs::File::from_std(std_file),
+                written,
+                capped: false,
+            }),
             session_key: session_key.to_string(),
+            parent: None,
+            cap_bytes: DEFAULT_CAP_BYTES,
         })
+    }
+
+    /// Name this session's parent in every record: it is a sub-agent.
+    pub fn with_parent(mut self, parent: Option<String>) -> Self {
+        self.parent = parent;
+        self
+    }
+
+    /// Stop at `cap_bytes` instead of [`DEFAULT_CAP_BYTES`].
+    pub fn with_cap(mut self, cap_bytes: u64) -> Self {
+        assert!(cap_bytes > 0, "an audit log holds something");
+        self.cap_bytes = cap_bytes;
+        self
+    }
+
+    fn line(&self, turn: u32, event: AuditEvent) -> Result<String, DomainError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let envelope = AuditEnvelope {
+            ts: now_utc_iso8601(),
+            unix_ms: u64::try_from(now.as_millis()).unwrap_or(u64::MAX),
+            pid: std::process::id(),
+            session: self.session_key.clone(),
+            parent: self.parent.clone(),
+            turn,
+            event,
+        };
+        let mut line =
+            serde_json::to_string(&envelope).map_err(|e| DomainError::Other(e.to_string()))?;
+        line.push('\n');
+        Ok(line)
     }
 
     /// Emit a single audit event.
     ///
     /// Serialises with envelope fields, writes one JSONL line, and flushes.
-    /// The flush is critical — the log must survive crashes.
+    /// The flush is critical — the log must survive crashes. A line that
+    /// would take the file past its cap is not written: one `log_capped`
+    /// record is, and nothing after it.
     pub async fn emit(&self, turn: u32, event: AuditEvent) -> Result<(), DomainError> {
-        let envelope = AuditEnvelope {
-            ts: now_utc_iso8601(),
-            session: self.session_key.clone(),
-            turn,
-            event,
-        };
-
-        let mut line =
-            serde_json::to_string(&envelope).map_err(|e| DomainError::Other(e.to_string()))?;
-        line.push('\n');
-
+        let line = self.line(turn, event)?;
         // Write directly — no BufWriter since we need every line flushed for
         // crash durability. On Linux, append-mode writes of < PIPE_BUF (4096)
         // bytes are atomic, and a typical JSONL line is 200-500 bytes.
@@ -109,14 +148,31 @@ impl AuditLog {
         // a drop of the File (or a process crash) can lose the last line —
         // exactly the case the contract test caught.
         let mut writer = self.writer.lock().await;
+        let fits = writer.written.saturating_add(line.len() as u64) <= self.cap_bytes;
+        let line = match (writer.capped, fits) {
+            (false, true) => line,
+            (false, false) => {
+                writer.capped = true;
+                self.line(
+                    turn,
+                    AuditEvent::LogCapped {
+                        cap_bytes: self.cap_bytes,
+                    },
+                )?
+            }
+            (true, _) => return Ok(()),
+        };
         writer
+            .file
             .write_all(line.as_bytes())
             .await
             .map_err(|e| DomainError::Session(format!("audit log write failed: {e}")))?;
         writer
+            .file
             .flush()
             .await
             .map_err(|e| DomainError::Session(format!("audit log flush failed: {e}")))?;
+        writer.written = writer.written.saturating_add(line.len() as u64);
 
         Ok(())
     }

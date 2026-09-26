@@ -68,6 +68,9 @@ async fn appends_multiple_events_in_order() {
             is_error: false,
             content_tokens: 100,
             content_preview: "ok".into(),
+            duration_ms: 0,
+            argument_bytes: 0,
+            content_bytes: 0,
         },
     )
     .await
@@ -175,6 +178,9 @@ async fn all_event_types_write_successfully() {
             is_error: false,
             content_tokens: 10,
             content_preview: "ok".into(),
+            duration_ms: 0,
+            argument_bytes: 0,
+            content_bytes: 0,
         },
         AuditEvent::LlmTurnStart {
             input_tokens_estimate: 1000,
@@ -294,4 +300,96 @@ fn now_utc_iso8601_format() {
     assert!(ts.ends_with('Z'));
     assert!(ts.contains('T'));
     assert_eq!(ts.len(), 24); // "YYYY-MM-DDTHH:MM:SS.mmmZ"
+}
+
+/// #2150: the log is private: its directory 0700 and its files 0600, a
+/// looser directory or file left by an earlier version tightened.
+#[tokio::test]
+async fn the_log_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = TempDir::new().unwrap();
+    let mode =
+        |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let _log = AuditLog::open(tmp.path(), "s1").await.unwrap();
+    assert_eq!(mode(&tmp.path().join("audit")), 0o700);
+    assert_eq!(mode(&AuditLog::file_path(tmp.path(), "s1")), 0o600);
+    let loose = AuditLog::file_path(tmp.path(), "s2");
+    std::fs::write(&loose, "").unwrap();
+    std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::set_permissions(
+        tmp.path().join("audit"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let _log = AuditLog::open_sync(tmp.path(), "s2").unwrap();
+    assert_eq!(mode(&tmp.path().join("audit")), 0o700);
+    assert_eq!(mode(&loose), 0o600);
+}
+
+/// #2150: every record says when (Unix milliseconds), which process, and
+/// for a sub-agent, its parent.
+#[tokio::test]
+async fn each_record_names_its_time_process_and_parent() {
+    let tmp = TempDir::new().unwrap();
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let log = AuditLog::open(tmp.path(), "child")
+        .await
+        .unwrap()
+        .with_parent(Some("chat-parent".into()));
+    log.emit(
+        1,
+        AuditEvent::SubagentCmd {
+            agent_id: "a".into(),
+            command: "c".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let text = std::fs::read_to_string(AuditLog::file_path(tmp.path(), "child")).unwrap();
+    let record: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    assert!(record["unix_ms"].as_u64().unwrap() >= before, "{record}");
+    assert_eq!(record["pid"], std::process::id());
+    assert_eq!(record["parent"], "chat-parent");
+}
+
+/// #2150: a log stops at its size cap with one final record saying so;
+/// nothing is written after it.
+#[tokio::test]
+async fn a_log_stops_at_its_cap_with_one_final_record() {
+    let tmp = TempDir::new().unwrap();
+    let log = AuditLog::open(tmp.path(), "big")
+        .await
+        .unwrap()
+        .with_cap(600);
+    for n in 0..20 {
+        log.emit(
+            n,
+            AuditEvent::SubagentCmd {
+                agent_id: "a".into(),
+                command: "x".repeat(40),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let text = std::fs::read_to_string(AuditLog::file_path(tmp.path(), "big")).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    assert_eq!(last["event"], "log_capped", "{text}");
+    assert_eq!(last["cap_bytes"], 600);
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.contains("log_capped"))
+            .count(),
+        1
+    );
+    let before_cap: usize = lines[..lines.len() - 1]
+        .iter()
+        .map(|line| line.len() + 1)
+        .sum();
+    assert!(before_cap <= 600, "{before_cap}");
 }

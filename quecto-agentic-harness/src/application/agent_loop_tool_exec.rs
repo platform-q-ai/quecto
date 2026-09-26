@@ -48,8 +48,10 @@ impl AgentLoopImpl {
                 .await;
             }
 
+            let tool_started = std::time::Instant::now();
             let (content, image_blocks, delivery_metadata, is_error) =
                 self.execute_single_tool_call(tc).await;
+            let tool_elapsed = tool_started.elapsed();
 
             // Audit: ToolResult (guarded — avoid estimate_tokens/preview when disabled)
             if self.audit_log.is_some() {
@@ -63,6 +65,9 @@ impl AgentLoopImpl {
                         is_error,
                         content_tokens,
                         content_preview: preview,
+                        duration_ms: u64::try_from(tool_elapsed.as_millis()).unwrap_or(u64::MAX),
+                        argument_bytes: delivered_tool_arguments.len(),
+                        content_bytes: content.len(),
                     },
                 )
                 .await;

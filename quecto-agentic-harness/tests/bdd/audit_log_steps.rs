@@ -62,6 +62,9 @@ fn given_tool_result(
         is_error,
         content_tokens,
         content_preview,
+        duration_ms: 0,
+        argument_bytes: 0,
+        content_bytes: 0,
     };
     world.audit_event = Some(event);
 }
@@ -599,6 +602,9 @@ fn when_tool_result_emitted(world: &mut QuectoWorld, turn: u32) {
             is_error: false,
             content_tokens: 100,
             content_preview: "ok".into(),
+            duration_ms: 0,
+            argument_bytes: 0,
+            content_bytes: 0,
         },
     );
 }

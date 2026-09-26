@@ -108,8 +108,14 @@ async fn audit_log_error_mapping_closures_surface_open_and_write_failures() {
             .open("/dev/full")
             .unwrap();
         let log = AuditLog {
-            writer: Mutex::new(tokio::fs::File::from_std(std_file)),
+            writer: Mutex::new(Writer {
+                file: tokio::fs::File::from_std(std_file),
+                written: 0,
+                capped: false,
+            }),
             session_key: "full".into(),
+            parent: None,
+            cap_bytes: DEFAULT_CAP_BYTES,
         };
         let err = log
             .emit(

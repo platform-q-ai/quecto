@@ -16,6 +16,9 @@ pub struct Config {
     pub tools: ToolsConfig,
     #[serde(default)]
     pub workflow: WorkflowConfig,
+    /// The switchable event log (#2150).
+    #[serde(default)]
+    pub telemetry: telemetry::TelemetryConfig,
     /// Named container configs (#1410): each entry is a complete,
     /// self-contained definition of a container working context (repository,
     /// auth, and runtime mechanics all live in the config's own argv).
@@ -678,6 +681,7 @@ pub mod container_config_lookup;
 pub mod container_config_roster;
 pub mod container_configs;
 pub mod grep_tool;
+pub mod telemetry;
 pub use grep_tool::GrepToolConfig;
 pub mod loaders;
 pub mod mapping;

@@ -250,3 +250,22 @@ fn an_overlay_may_narrow_grep_settings_but_not_widen_them() {
         None
     );
 }
+
+/// #2150: the event log is the owner's: a repository overlay may switch it
+/// on, never off; a document holding only `telemetry` is a configuration.
+#[test]
+fn an_overlay_may_switch_the_event_log_on_but_not_off() {
+    let refused = |document: serde_json::Value| global_only_key(document.as_object().unwrap());
+    assert_eq!(
+        refused(json!({"telemetry": {"event_log": {"enabled": false}}})),
+        Some("telemetry.event_log")
+    );
+    assert_eq!(
+        refused(json!({"telemetry": {"event_log": {"enabled": true}}})),
+        None
+    );
+    assert_eq!(refused(json!({"telemetry": {"event_log": {}}})), None);
+    assert!(looks_like_config(
+        &json!({"telemetry": {"event_log": {"enabled": true}}})
+    ));
+}
