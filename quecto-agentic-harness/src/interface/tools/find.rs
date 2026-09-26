@@ -17,6 +17,11 @@ impl FindTool {
     }
 }
 impl Tool for FindTool {
+    /// Reads only: calls may overlap (#2169).
+    fn overlaps_safely(&self) -> bool {
+        true
+    }
+
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "find".into(),

@@ -53,30 +53,15 @@ impl ToolExecutor for ToolRegistryImpl {
         }
     }
 
-    /// A bundled tool that changes nothing (#2169); every other tool, an
-    /// extension reusing one of these names included, runs one at a time.
+    /// A bundled tool that says its calls may overlap (#2169); every other
+    /// tool, an extension included whatever it claims, runs one at a time.
     fn overlaps_safely(&self, name: &str) -> bool {
-        OVERLAPPING_BUNDLED_TOOLS.contains(&name)
-            && self.metadata.get(name).is_some_and(|registration| {
-                registration.source == crate::domain::tool_descriptor::ToolSource::BundledNative
-            })
+        let bundled = self.metadata.get(name).is_some_and(|registration| {
+            registration.source == crate::domain::tool_descriptor::ToolSource::BundledNative
+        });
+        bundled && self.get(name).is_some_and(|tool| tool.overlaps_safely())
     }
 }
-
-/// The bundled tools whose calls may run at once: each reads (files, the
-/// web, the docs, recalled output) and changes nothing another call reads.
-/// grep's search log appends one whole record per write, so its entries
-/// never interleave.
-const OVERLAPPING_BUNDLED_TOOLS: &[&str] = &[
-    "read",
-    "grep",
-    "find",
-    "ls",
-    "web_fetch",
-    "web_search",
-    "docs",
-    "recall",
-];
 
 impl RuntimeToolLifecycleRegistry for ToolRegistryImpl {
     fn runtime_tool_names(&self) -> Vec<String> {

@@ -136,6 +136,11 @@ impl GrepTool {
 }
 
 impl Tool for GrepTool {
+    /// Reads only: calls may overlap (#2169).
+    fn overlaps_safely(&self) -> bool {
+        true
+    }
+
     fn definition(&self) -> ToolDefinition {
         let definition = base_definition();
         match &self.ranking {

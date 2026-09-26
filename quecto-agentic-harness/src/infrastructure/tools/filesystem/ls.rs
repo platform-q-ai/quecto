@@ -31,6 +31,11 @@ impl LsTool {
 }
 
 impl Tool for LsTool {
+    /// Reads only: calls may overlap (#2169).
+    fn overlaps_safely(&self) -> bool {
+        true
+    }
+
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "ls".into(),

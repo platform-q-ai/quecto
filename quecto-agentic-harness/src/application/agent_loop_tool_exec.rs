@@ -4,6 +4,29 @@
 
 use super::*;
 
+/// An overlapping batch in flight: its calls and the results finished so
+/// far. Dropped at the batch's end or by a cancellation, it gives the
+/// response its calls back and appends every finished result in call order,
+/// so a cancelled turn keeps what completed (#2175 review).
+struct OverlappingBatch<'a> {
+    agent: &'a AgentLoopImpl,
+    messages: &'a mut Vec<Message>,
+    run_ledger: &'a mut Vec<Message>,
+    assistant_index: usize,
+    calls: Vec<ToolCall>,
+    finished: Vec<Option<PreparedResult>>,
+}
+
+impl Drop for OverlappingBatch<'_> {
+    fn drop(&mut self) {
+        self.messages[self.assistant_index].tool_calls = std::mem::take(&mut self.calls);
+        for result in std::mem::take(&mut self.finished).into_iter().flatten() {
+            self.agent
+                .append_tool_result(self.messages, self.run_ledger, result);
+        }
+    }
+}
+
 /// A call's result, built and ready to append.
 struct PreparedResult {
     message: Message,
@@ -63,32 +86,43 @@ impl AgentLoopImpl {
                 .iter()
                 .all(|tc| self.tool_executor().overlaps_safely(&tc.name));
         if overlap {
-            let prepared = {
-                let calls = &messages[assistant_index].tool_calls;
-                for tc in calls {
-                    self.audit_tool_call(current_turn, tc).await;
-                }
-                let outcomes = futures::future::join_all(calls.iter().map(|tc| async move {
+            // The calls move into the batch (never cloned, #993). Each result
+            // is prepared (audited, spilled) as it finishes; when the batch
+            // ends, or is dropped by a cancellation, the calls go back and
+            // every finished result is appended in call order (#2175 review).
+            let calls = std::mem::take(&mut messages[assistant_index].tool_calls);
+            let mut batch = OverlappingBatch {
+                agent: self,
+                messages,
+                run_ledger,
+                assistant_index,
+                finished: (0..calls.len()).map(|_| None).collect(),
+                calls,
+            };
+            let calls = &batch.calls;
+            for tc in calls {
+                self.audit_tool_call(current_turn, tc).await;
+            }
+            let mut running: futures::stream::FuturesUnordered<_> = calls
+                .iter()
+                .enumerate()
+                .map(|(idx, tc)| async move {
                     let started = std::time::Instant::now();
                     let outcome = self.execute_single_tool_call(tc).await;
-                    (outcome, started.elapsed())
-                }))
-                .await;
-                debug_assert_eq!(outcomes.len(), calls.len());
-                let mut prepared = Vec::with_capacity(calls.len());
-                for (idx, (tc, (outcome, elapsed))) in calls.iter().zip(outcomes).enumerate() {
-                    let finished = FinishedCall {
-                        idx,
-                        tc,
-                        outcome,
-                        elapsed,
-                    };
-                    prepared.push(self.prepare_tool_result(current_turn, finished).await);
-                }
-                prepared
-            };
-            for result in prepared {
-                self.append_tool_result(messages, run_ledger, result);
+                    (idx, outcome, started.elapsed())
+                })
+                .collect();
+            while let Some((idx, outcome, elapsed)) = futures::StreamExt::next(&mut running).await {
+                let tc = &calls[idx];
+                let finished = FinishedCall {
+                    idx,
+                    tc,
+                    outcome,
+                    elapsed,
+                };
+                let prepared = self.prepare_tool_result(current_turn, finished).await;
+                debug_assert!(batch.finished[idx].is_none(), "each call finishes once");
+                batch.finished[idx] = Some(prepared);
             }
         } else {
             // One at a time, each result appended before the next call runs.

@@ -48,6 +48,14 @@ use crate::domain::tool_descriptor::{
 pub trait Tool: Send + Sync {
     /// Called after a non-error tool result has been appended to the parent conversation and run ledger.
     fn result_delivered(&self, _arguments: &str, _result: &ToolResult) {}
+
+    /// Whether calls of this tool may run at the same time as other calls
+    /// that may (#2169): the tool changes nothing another call reads and
+    /// needs no pacing against a rate-limited service. False unless the tool
+    /// says so.
+    fn overlaps_safely(&self) -> bool {
+        false
+    }
     /// Return the tool's definition for the LLM.
     fn definition(&self) -> ToolDefinition;
 

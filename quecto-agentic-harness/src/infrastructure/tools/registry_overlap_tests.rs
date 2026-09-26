@@ -29,22 +29,49 @@ fn bundled_tools_that_change_nothing_may_overlap() {
         assert!(registry.get(name).is_some(), "{name} is registered");
         assert!(registry.overlaps_safely(name), "{name} may overlap");
     }
-    for name in ["bash", "write", "edit"] {
-        assert!(registry.get(name).is_some(), "{name} is registered");
+    // Registered only in some compositions: when present, they may overlap.
+    for name in ["web_fetch", "docs", "recall"] {
+        if registry.get(name).is_some() {
+            assert!(registry.overlaps_safely(name), "{name} may overlap");
+        }
+    }
+    // web_search is paced by its provider's rate limit (#2175 review).
+    for name in ["bash", "write", "edit", "web_search"] {
         assert!(!registry.overlaps_safely(name), "{name} may not overlap");
     }
     assert!(!registry.overlaps_safely("not-a-tool"));
 }
 
-/// Only the bundled tool of that name: an extension reusing a read-only
-/// name decides nothing.
+/// A tool that says its calls may overlap.
+#[derive(Debug)]
+struct Overlapping(&'static str);
+
+impl Tool for Overlapping {
+    fn overlaps_safely(&self) -> bool {
+        true
+    }
+    fn definition(&self) -> crate::domain::tool::ToolDefinition {
+        Named(self.0).definition()
+    }
+    fn execute(
+        &self,
+        _arguments: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+        Box::pin(async { Err(DomainError::Tool("unused".into())) })
+    }
+}
+
+/// Only a bundled tool that says so: an extension claiming it, or a
+/// bundled tool that does not, runs one at a time.
 #[test]
-fn an_extension_tool_never_overlaps_whatever_its_name() {
+fn only_a_bundled_tool_that_says_so_overlaps() {
     let mut registry = ToolRegistryImpl::new();
-    assert!(registry.register_runtime_tool(Arc::new(Named("docs"))));
-    assert!(registry.register_uds_tool(Arc::new(Named("recall"))));
-    assert!(!registry.overlaps_safely("docs"));
-    assert!(!registry.overlaps_safely("recall"));
-    assert!(registry.register(Arc::new(Named("web_search"))));
-    assert!(registry.overlaps_safely("web_search"));
+    assert!(registry.register_runtime_tool(Arc::new(Overlapping("extension_read"))));
+    assert!(registry.register_uds_tool(Arc::new(Overlapping("uds_read"))));
+    assert!(registry.register(Arc::new(Named("bundled_quiet"))));
+    assert!(registry.register(Arc::new(Overlapping("bundled_read"))));
+    assert!(!registry.overlaps_safely("extension_read"));
+    assert!(!registry.overlaps_safely("uds_read"));
+    assert!(!registry.overlaps_safely("bundled_quiet"));
+    assert!(registry.overlaps_safely("bundled_read"));
 }

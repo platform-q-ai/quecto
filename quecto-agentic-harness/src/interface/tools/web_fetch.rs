@@ -26,6 +26,11 @@ fn result(content: String, is_error: bool) -> ToolResult {
     }
 }
 impl Tool for WebFetchTool {
+    /// Reads only: calls may overlap (#2169).
+    fn overlaps_safely(&self) -> bool {
+        true
+    }
+
     fn definition(&self) -> ToolDefinition {
         ToolDefinition{name:"web_fetch".into(),description:"Fetch a URL and return its content as readable text. Strips HTML tags by default to save tokens. Use raw mode for JSON APIs or markdown files.".into(),parameters_schema:Cow::Borrowed(r#"{"type":"object","properties":{"url":{"type":"string","description":"URL to fetch (http or https)"},"raw":{"type":"boolean","description":"Return raw body without HTML stripping (default: false)"}},"required":["url"]}"#)}
     }

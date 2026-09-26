@@ -153,7 +153,7 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 ### Tool isolation
 
-**Parallel tool calls** (#2169): when every call in one model response is to a bundled tool that changes nothing (`read`, `grep`, `find`, `ls`, `web_fetch`, `web_search`, `docs`, `recall`), the calls run at once; a response with any other call (`bash`, `write`, `edit`, `spawn`, `swarm`, `agent_cmd`, or any extension tool) runs its calls one at a time, as before. Results are always added to the conversation, the audit log and the event log in call order.
+**Parallel tool calls** (#2169): when every call in one model response is to a bundled tool that reads only and says its calls may overlap (`read`, `grep`, `find`, `ls`, `web_fetch`, `docs`, `recall`), the calls run at once; a response with any other call (`bash`, `write`, `edit`, `spawn`, `swarm`, `agent_cmd`, `web_search` (paced by its provider's rate limit), or any extension tool) runs its calls one at a time, as before. Results are added to the conversation in call order; the audit and event logs record each result as it finishes. A turn cancelled mid-batch keeps the results that finished.
 
 **Filesystem tools** (`read`, `write`, `edit`, `ls`): call `Sandbox::validate_path` as a shared path hook before I/O. It no longer confines paths to the workspace; filesystem tools can access any path the Quecto process user can access.
 

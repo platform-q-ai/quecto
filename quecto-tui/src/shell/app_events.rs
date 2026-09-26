@@ -369,6 +369,11 @@ impl App {
         if is_subagent_tool(&tool_name) {
             self.request_roster_refresh(None);
         }
+        // Calls that run at once end one by one (#2175): keep the tool
+        // label until the last of them has ended.
+        if self.ac().master_session.open_tool_calls > 0 {
+            return;
+        }
         // Back to the plain message, unless the master is still queued for
         // admission: that label outlives any single tool (#1679 P4).
         let message = self
