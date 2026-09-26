@@ -39,7 +39,7 @@ pub(super) const SAVED_OUTPUT_POLICY: PrunePolicy = PrunePolicy {
 pub(super) async fn save_to_temp_file(content: String) -> Option<String> {
     tokio::task::spawn_blocking(move || {
         let dir = std::env::temp_dir().join(DIR_NAME);
-        std::fs::create_dir_all(&dir).ok()?;
+        create_private_dir(&dir).ok()?;
         let path = save_output_in(&dir, &content, SAVED_OUTPUT_POLICY)?;
         Some(path.display().to_string())
     })
@@ -47,10 +47,40 @@ pub(super) async fn save_to_temp_file(content: String) -> Option<String> {
     .ok()?
 }
 
+/// Create the saved-output directory readable by its owner alone; an
+/// existing one is left as it is (and vetted before each save).
+pub(super) fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(dir)
+}
+
 /// Prune `dir`, then write `content` to a new saved-output file in it. The
 /// prune runs first, so the new file is never removed by its own save.
 pub(super) fn save_output_in(dir: &Path, content: &str, policy: PrunePolicy) -> Option<PathBuf> {
-    prune_saved_outputs(dir, current_uid(), SystemTime::now(), policy);
+    save_output_in_as(dir, content, policy, current_uid())
+}
+
+/// [`save_output_in`] for `owner`. Output is saved only into a real
+/// directory `owner` owns: the temp directory is shared, and a symlink or
+/// another user's directory there must never receive a command's output
+/// (#2167 review).
+pub(super) fn save_output_in_as(
+    dir: &Path,
+    content: &str,
+    policy: PrunePolicy,
+    owner: u32,
+) -> Option<PathBuf> {
+    if !is_owned_real_directory(dir, owner) {
+        tracing::warn!(
+            dir = %dir.display(),
+            "bash output not saved: the directory is not a real directory owned by this user"
+        );
+        return None;
+    }
+    prune_saved_outputs(dir, owner, SystemTime::now(), policy);
     let mut f = tempfile::Builder::new()
         .prefix(NAME_PREFIX)
         .suffix(NAME_SUFFIX)

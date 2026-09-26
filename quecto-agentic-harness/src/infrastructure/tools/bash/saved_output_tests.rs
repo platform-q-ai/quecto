@@ -256,3 +256,34 @@ fn only_files_the_owner_owns_are_candidates() {
         "another user's file is never a candidate"
     );
 }
+
+/// #2167 review: output is never saved through a symlinked directory or
+/// into another user's directory — the temp directory is shared.
+#[test]
+fn output_is_saved_only_into_a_real_directory_the_user_owns() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let target = tmp.path().join("target");
+    std::fs::create_dir(&target).unwrap();
+    let link = tmp.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    assert!(save_output_in(&link, "secret", small_policy(200)).is_none());
+    assert_eq!(
+        std::fs::read_dir(&target).unwrap().count(),
+        0,
+        "nothing written"
+    );
+    let stranger = owner().wrapping_add(1);
+    assert!(save_output_in_as(tmp.path(), "secret", small_policy(200), stranger).is_none());
+    assert!(save_output_in(tmp.path(), "fine", small_policy(200)).is_some());
+}
+
+/// #2167 review: a new saved-output directory is private to its owner.
+#[test]
+fn a_new_saved_output_directory_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::TempDir::new().unwrap();
+    let dir = tmp.path().join("a").join("saved");
+    create_private_dir(&dir).unwrap();
+    let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+}
