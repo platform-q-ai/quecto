@@ -26,6 +26,7 @@ async fn real_accounting_redelivery_counts_once_and_rejects_changed_measurements
         instrumented_attempts: 1,
         oauth_retries: 0,
         duration_ms: 1,
+        first_token_ms: None,
         harness_prefix_sha256: "prefix".into(),
         harness_prefix_bytes: 4,
         harness_prefix_unchanged: None,

@@ -448,3 +448,7 @@ pub(crate) fn create_codex_provider_with_client_and_admission(
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "attempt_observation_tests.rs"]
+mod attempt_observation_tests;

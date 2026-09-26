@@ -16,6 +16,10 @@ pub struct AttemptDiagnostics {
     pub generated_text: bool,
     pub generated_tool_call: bool,
     pub generated_thinking: bool,
+    /// When the first text, thinking or tool-call delta arrived, from the
+    /// attempt's start (#2151); `None` before any did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_token_ms: Option<u64>,
     pub oversized_lines: u32,
     pub parse_errors: u32,
     pub unknown_events: u32,

@@ -64,3 +64,16 @@ mod compatibility_tests {
         assert!(record.attempt_diagnostics.is_empty());
     }
 }
+
+/// #2151: the earliest first-token mark stays.
+#[test]
+fn the_earliest_first_token_mark_stays() {
+    let trace = super::RequestTrace::default();
+    assert_eq!(trace.first_token(), None);
+    let early = std::time::Instant::now();
+    let late = early + std::time::Duration::from_millis(5);
+    trace.mark_first_token(late);
+    trace.mark_first_token(early);
+    trace.mark_first_token(late);
+    assert_eq!(trace.first_token(), Some(early));
+}

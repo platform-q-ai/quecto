@@ -307,7 +307,13 @@ impl OpenAiProvider {
         body: serde_json::Value,
         url: &str,
         model: &str,
+        trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
     ) -> Result<LlmResponse, DomainError> {
+        // Observed beside the request, never altering it (#2151).
+        let attempt = super::attempt_transport::PassiveAttempt::begin(
+            trace,
+            Profile::new(Vendor::OpenAi, Surface::Assembled),
+        );
         let request_builder = self
             .client
             .post(url)
@@ -315,17 +321,25 @@ impl OpenAiProvider {
             .json(&body);
         let request_builder = self.apply_auth_headers(request_builder);
 
-        let response = request_builder.send().await.map_err(|e| {
-            DomainError::Provider(format!(
-                "HTTP error: {}",
-                super::sse_common::format_send_error(&e)
-            ))
-        })?;
+        let response = request_builder
+            .send()
+            .await
+            .inspect_err(|_| attempt.iter().for_each(|a| a.send_failed()))
+            .map_err(|e| {
+                DomainError::Provider(format!(
+                    "HTTP error: {}",
+                    super::sse_common::format_send_error(&e)
+                ))
+            })?;
 
+        if let Some(attempt) = &attempt {
+            attempt.response(&response);
+        }
         let status = response.status().as_u16();
         if status != 200 {
             let retry_after = super::sse_common::retry_after_suffix(response.headers());
             let text = response.text().await.unwrap_or_default();
+            attempt.iter().for_each(|a| a.http_error(status, &text));
             return Err(DomainError::Provider(format!(
                 "HTTP {} from OpenAI: {}{}",
                 status, text, retry_after
@@ -337,6 +351,7 @@ impl OpenAiProvider {
             response,
             tx,
             model.to_string(),
+            attempt,
         )));
         while let Some(event) = rx.recv().await {
             match event {
@@ -373,7 +388,13 @@ impl OpenAiProvider {
         url: &str,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
         model: &str,
+        trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
     ) {
+        // Observed beside the request, never altering it (#2151).
+        let attempt = super::attempt_transport::PassiveAttempt::begin(
+            trace,
+            Profile::new(Vendor::OpenAi, Surface::Incremental),
+        );
         let request_builder = self
             .client
             .post(url)
@@ -383,6 +404,7 @@ impl OpenAiProvider {
         let mut response = match request_builder.send().await {
             Ok(r) => r,
             Err(e) => {
+                attempt.iter().for_each(|a| a.send_failed());
                 let _ = tx
                     .send(StreamEvent::Error(format!(
                         "HTTP error: {}",
@@ -392,11 +414,15 @@ impl OpenAiProvider {
                 return;
             }
         };
+        if let Some(attempt) = &attempt {
+            attempt.response(&response);
+        }
         let status = response.status().as_u16();
         if status != 200 {
             let retry_after = super::sse_common::retry_after_suffix(response.headers());
             let text =
                 super::sse_common::truncate_error_body(response.text().await.unwrap_or_default());
+            attempt.iter().for_each(|a| a.http_error(status, &text));
             let _ = tx
                 .send(StreamEvent::Error(format!(
                     "HTTP {status} from OpenAI: {text}{retry_after}"
@@ -404,7 +430,7 @@ impl OpenAiProvider {
                 .await;
             return;
         }
-        openai_sse::pump_sse_bytes_for_model(&mut response, &tx, model).await;
+        openai_sse::pump_sse_bytes_for_model(&mut response, &tx, model, attempt).await;
     }
 
     fn apply_delta(
@@ -458,21 +484,38 @@ impl LlmProvider for OpenAiProvider {
                 .await;
             }
 
-            let response = request_builder.send().await.map_err(|e| {
-                DomainError::Provider(format!(
-                    "HTTP error: {}",
-                    super::sse_common::format_send_error(&e)
-                ))
-            })?;
+            // Observed beside the request, never altering it (#2151). A
+            // whole reply at once has no first token to time.
+            let attempt = super::attempt_transport::PassiveAttempt::begin(
+                trace,
+                Profile::new(Vendor::OpenAi, Surface::Chat),
+            );
+            let response = request_builder
+                .send()
+                .await
+                .inspect_err(|_| attempt.iter().for_each(|a| a.send_failed()))
+                .map_err(|e| {
+                    DomainError::Provider(format!(
+                        "HTTP error: {}",
+                        super::sse_common::format_send_error(&e)
+                    ))
+                })?;
+            if let Some(attempt) = &attempt {
+                attempt.response(&response);
+            }
 
             let status = response.status().as_u16();
             let retry_after = super::sse_common::retry_after_suffix(response.headers());
             let response_text = response
                 .text()
                 .await
+                .inspect_err(|_| attempt.iter().for_each(|a| a.read_failed()))
                 .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
 
             if status != 200 {
+                attempt
+                    .iter()
+                    .for_each(|a| a.http_error(status, &response_text));
                 return Err(DomainError::Provider(format!(
                     "HTTP {} from OpenAI: {}{}",
                     status, response_text, retry_after
@@ -486,6 +529,7 @@ impl LlmProvider for OpenAiProvider {
 
             let mut parsed = Self::parse_response(&response_json)?;
             crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
+            attempt.iter().for_each(|a| a.completed());
             Ok(parsed)
         })
     }
@@ -519,7 +563,7 @@ impl LlmProvider for OpenAiProvider {
                 let (_, result) = tokio::join!(pump, super::attempt_transport::collect(rx));
                 return result;
             }
-            self.stream_chat_with_body(body, &url, &model).await
+            self.stream_chat_with_body(body, &url, &model, trace).await
         })
     }
 
@@ -552,7 +596,9 @@ impl LlmProvider for OpenAiProvider {
                     )
                     .await;
                 } else {
-                    provider.pump_sse_incremental(body, &url, tx, &model).await;
+                    provider
+                        .pump_sse_incremental(body, &url, tx, &model, trace)
+                        .await;
                 }
             });
             rx

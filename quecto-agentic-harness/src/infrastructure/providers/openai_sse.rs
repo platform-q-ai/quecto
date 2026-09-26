@@ -164,8 +164,12 @@ pub(crate) async fn pump_sse_bytes_for_model(
     response: &mut reqwest::Response,
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     model: &str,
+    attempt: Option<super::super::attempt_transport::PassiveAttempt>,
 ) {
-    let mut handler = OpenAiSseHandler::with_model(model);
+    let mut handler = super::super::attempt_transport::Observed {
+        inner: OpenAiSseHandler::with_model(model),
+        attempt,
+    };
     pump_sse(response, tx, &mut handler).await;
 }
 
@@ -179,8 +183,9 @@ pub(crate) async fn pump_sse_response_for_model(
     mut response: reqwest::Response,
     tx: tokio::sync::mpsc::Sender<StreamEvent>,
     model: String,
+    attempt: Option<super::super::attempt_transport::PassiveAttempt>,
 ) {
-    pump_sse_bytes_for_model(&mut response, &tx, &model).await;
+    pump_sse_bytes_for_model(&mut response, &tx, &model, attempt).await;
 }
 
 #[cfg(test)]

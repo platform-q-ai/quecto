@@ -79,6 +79,7 @@ impl<'a> ObservationGuard<'a> {
                 instrumented_attempts: 0,
                 oauth_retries: 0,
                 duration_ms: 0,
+                first_token_ms: None,
                 harness_prefix_sha256: prefix.sha256,
                 harness_prefix_bytes: prefix.bytes,
                 harness_prefix_unchanged: prefix.unchanged,
@@ -124,6 +125,10 @@ impl<'a> ObservationGuard<'a> {
             .unwrap_or(u64::MAX);
         record.finished_unix_ms = unix_ms();
         record.attempt_diagnostics = self.trace.attempt_diagnostics();
+        record.first_token_ms = self.trace.first_token().map(|at| {
+            let since = at.saturating_duration_since(self.started).as_millis();
+            u64::try_from(since).unwrap_or(u64::MAX)
+        });
         record.instrumented_attempts = self.trace.attempts();
         record.oauth_retries = self.trace.oauth_retries();
         if let Some(outbox) = self.outbox {
@@ -151,3 +156,7 @@ fn unix_ms() -> Option<u64> {
         .ok()
         .and_then(|value| value.as_millis().try_into().ok())
 }
+
+#[cfg(test)]
+#[path = "request_observation_guard_tests.rs"]
+mod tests;
