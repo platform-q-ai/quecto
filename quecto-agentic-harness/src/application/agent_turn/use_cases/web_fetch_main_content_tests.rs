@@ -182,7 +182,7 @@ fn landmarks_are_tried_in_order() {
     let html = page(&format!(
         "{side}<main>{}<article>{}</article></main>",
         words(40, "m"),
-        words(40, "a")
+        words(80, "a")
     ));
     let text = readable_html(&html);
     assert!(
@@ -191,9 +191,17 @@ fn landmarks_are_tried_in_order() {
     );
 
     let html = page(&format!(
-        "{side}<section role=\"main\">{}</section><article>{}</article>",
+        "<main>{}</main><div role=\"main\">{}</div>",
+        words(60, "m"),
+        words(50, "r")
+    ));
+    let text = readable_html(&html);
+    assert!(text.contains(" m m") && !text.contains(" r r"), "{text}");
+
+    let html = page(&format!(
+        "<section role=\"main\">{}</section><article>{}</article>",
         words(100, "r"),
-        words(20, "a")
+        words(90, "a")
     ));
     let text = readable_html(&html);
     assert!(text.contains(" r r") && !text.contains(" a a"), "{text}");
@@ -208,6 +216,24 @@ fn landmarks_are_tried_in_order() {
         text.contains(" a a") && !text.contains(" m m") && !text.contains("side"),
         "{text}"
     );
+}
+
+/// A stray `<` in the text does not hide the landmark after it.
+#[test]
+fn a_stray_bracket_does_not_hide_a_landmark() {
+    let html = page(&format!(
+        "<p>1 < 2 {}<main>{}</main>",
+        words(20, "side"),
+        words(60, "in")
+    ));
+    let text = readable_html(&html);
+    assert!(text.contains(NOTE) && !text.contains("side"), "{text}");
+}
+
+/// A page with no text reads as empty: no note over nothing.
+#[test]
+fn an_empty_page_reads_as_empty() {
+    assert_eq!(readable_html("<main> </main>"), "");
 }
 
 /// `role="main"` on a `<div>` ends at its own close, past nested divs, in
@@ -273,11 +299,11 @@ fn unclosed_commented_or_scripted_landmarks_are_ignored() {
     }
 }
 
-/// Without a title, the note leads.
+/// Without a title in the head (an icon's title is none), the note leads.
 #[test]
 fn without_a_title_the_note_leads() {
     let html = format!(
-        "<body>{}<main>{}</main></body>",
+        "<body><svg><title>icon</title></svg>{}<main>{}</main></body>",
         words(20, "side"),
         words(60, "in")
     );
@@ -294,6 +320,7 @@ fn malformed_pages_read_in_linear_time() {
         format!("<main>{}", "<div>x".repeat(35_000)),
         format!("<main>x</main>{}", "<!--".repeat(50_000)),
         format!("<title>{}", "<p>x".repeat(50_000)),
+        "<title>x".repeat(30_000),
         "<".repeat(200_000),
     ] {
         assert!(page.len() >= 200_000, "{}", page.len());
