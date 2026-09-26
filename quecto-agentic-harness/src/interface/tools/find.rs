@@ -115,12 +115,14 @@ fn render(found: FindResult) -> String {
     assert!(content.len() <= CAP, "find payload cap invariant");
     if byte_limited {
         append_line(&mut content, "[50KB limit reached]");
-    } else if found.output.result_limit_reached {
+    }
+    // Said even under the byte cap: what is shown is still drawn from an
+    // arbitrary subset (#2176 review).
+    if found.output.result_limit_reached {
         append_line(
             &mut content,
             &format!(
-                "[{} results limit reached. Use limit={} for more, or refine pattern]",
-                found.limit,
+                "[Results limit reached: the search stops at its limit, so this listing is an arbitrary subset of the matches, not the first. Use limit={} for more, or refine pattern]",
                 found.limit.saturating_mul(2)
             ),
         );

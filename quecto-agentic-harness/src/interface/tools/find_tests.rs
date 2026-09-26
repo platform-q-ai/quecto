@@ -114,7 +114,7 @@ fn rendered(entries: Vec<String>, incomplete: bool, limited: bool) -> String {
 }
 
 #[test]
-fn renders_order_whitespace_directories_unicode_and_limit_heuristic() {
+fn renders_order_whitespace_directories_unicode_and_limit_notice() {
     assert_eq!(
         rendered(vec![], false, false),
         "No files found matching pattern"
@@ -124,7 +124,9 @@ fn renders_order_whitespace_directories_unicode_and_limit_heuristic() {
         "z/\n \n文�.rs"
     );
     assert!(
-        rendered(vec!["a".into()], false, true).contains("3 results limit reached. Use limit=6")
+        rendered(vec!["a".into()], false, true).contains(
+            "Results limit reached: the search stops at its limit, so this listing is an arbitrary subset of the matches, not the first. Use limit=6"
+        )
     );
 }
 
@@ -193,4 +195,15 @@ async fn successful_invocation_renders_metadata_without_changing_error_flag() {
     assert!(result.content.contains("partial search"));
     assert!(result.image_blocks.is_empty());
     assert!(result.delivery_metadata.is_none());
+}
+
+/// #2176 review: a listing cut by the byte cap still says it is drawn from
+/// an arbitrary subset when the limit was also reached.
+#[test]
+fn the_byte_cap_keeps_the_limit_notice() {
+    let long = "x".repeat(200);
+    let entries: Vec<String> = (0..400).map(|i| format!("{long}{i}")).collect();
+    let out = rendered(entries, false, true);
+    assert!(out.contains("[50KB limit reached]"), "{out}");
+    assert!(out.contains("an arbitrary subset of the matches"), "{out}");
 }

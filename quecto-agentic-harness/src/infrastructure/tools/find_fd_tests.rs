@@ -48,12 +48,14 @@ async fn natural_status_matrix() {
                 "import sys\nsys.stdout.write('{output}')\nsys.stderr.write('diagnostic')\nsys.exit({code})"
             ));
             let result = run(&effect).await;
+            // fd exits 1 on an error (#2164): like any other failure, it
+            // is an error, or an incomplete result when fd found some first.
             match (code, output.is_empty()) {
-                (0 | 1, _) => assert!(
+                (0, _) => assert!(
                     result.is_ok(),
                     "code={code} output={output:?} result={result:?}"
                 ),
-                (3, false) => assert!(result.unwrap().incomplete),
+                (1 | 3, false) => assert!(result.unwrap().incomplete),
                 _ => assert!(matches!(result, Err(FindError::Search(_)))),
             }
         }
@@ -154,7 +156,8 @@ async fn argv_cwd_and_glob_are_literal() {
             "--hidden",
             "--no-require-git",
             "--max-results",
-            "7",
+            // One past the limit (#2176 review).
+            "8",
             "--full-path",
             "--",
             "**/src/*.rs"
@@ -267,7 +270,7 @@ async fn concurrent_cancel_does_not_affect_other_call() {
 }
 
 #[tokio::test]
-async fn missing_binary_errors_and_fd_status_one_preserves_legacy_delivery() {
+async fn missing_binary_and_fd_status_one_are_errors() {
     let dir = TempDir::new().unwrap();
     let effect = FdFindPaths::with_fd_binary(
         Arc::new(dir.path().into()),
@@ -279,18 +282,21 @@ async fn missing_binary_errors_and_fd_status_one_preserves_legacy_delivery() {
     );
     let effect = FdFindPaths::new(Arc::new(dir.path().into()), Arc::new(Sandbox::new(None)));
     std::fs::write(dir.path().join("file"), "").unwrap();
-    for path in ["missing", "file"] {
-        let mut req = request("*");
+    // fd reports an invalid root or glob with status 1 (#2164): the agent is
+    // told what fd said, never "no files found".
+    for (path, pattern, said) in [
+        ("missing", "*", "is not a directory"),
+        ("file", "*", "is not a directory"),
+        (".", "[", "unclosed character class"),
+    ] {
+        let mut req = request(pattern);
         req.path = path.into();
-        let output = effect.find(req).await.unwrap();
-        assert!(output.entries.is_empty());
-        assert!(!output.incomplete);
+        let result = effect.find(req).await;
+        assert!(
+            matches!(&result, Err(FindError::Search(message)) if message.contains(said)),
+            "{path} {pattern}: {result:?}"
+        );
     }
-    // fd 10.2 emits diagnostics with status 1 for invalid roots/globs.
-    // Deliberately preserve the reviewed legacy status-1 delivery policy.
-    let output = effect.find(request("[")).await.unwrap();
-    assert!(output.entries.is_empty());
-    assert!(!output.incomplete);
 }
 
 #[tokio::test]
@@ -402,8 +408,10 @@ fn classification_complete_status_stdout_stderr_matrix() {
         for stdout in [b"".as_slice(), b"entry".as_slice()] {
             for stderr in [b"".as_slice(), b"diagnostic".as_slice()] {
                 let result = classify(code, stdout, stderr, Path::new("/ws"), 1000);
+                // fd exits 0 whether or not anything matched, and 1 on an
+                // error (#2164): never a clean empty result.
                 match (code, stdout) {
-                    (Some(0 | 1), _) => assert!(!result.unwrap().incomplete),
+                    (Some(0), _) => assert!(!result.unwrap().incomplete),
                     (Some(2), _) | (_, b"") => assert!(matches!(result, Err(FindError::Search(_)))),
                     _ => {
                         let result = result.unwrap();
@@ -587,7 +595,7 @@ async fn two_live_calls_keep_children_workspaces_and_arguments_isolated() {
             &std::fs::read_to_string(second_root.join("second.args")).unwrap(),
         )
         .unwrap();
-        assert_eq!(args[5], "7");
+        assert_eq!(args[5], "8", "one past the limit");
         assert_eq!(args[args.len() - 2], "second");
         assert_eq!(
             args.last().unwrap(),
@@ -620,4 +628,51 @@ async fn named_ready_pid(root: &Path, name: &str) -> u32 {
     })
     .await
     .expect("both invocations must signal readiness")
+}
+
+/// #2164: fd's own error (a malformed glob, exit 1) is reported, never
+/// taken for "no files found".
+#[test]
+fn an_fd_error_is_reported_not_taken_for_no_matches() {
+    let stderr = b"[fd error]: error parsing glob '[': unclosed character class; missing ']'";
+    let result = classify(Some(1), b"", stderr, Path::new("/ws"), 1000);
+    assert!(
+        matches!(&result, Err(FindError::Search(message)) if message.contains("unclosed character class")),
+        "{result:?}"
+    );
+}
+
+/// What fd returns is shown sorted, whatever order its threads found it in.
+#[test]
+fn entries_are_sorted() {
+    let result = classify(
+        Some(0),
+        b"/ws/b\n/ws/a/z\n/ws/a\n",
+        b"",
+        Path::new("/ws"),
+        1000,
+    )
+    .unwrap();
+    assert_eq!(result.entries, ["a", "a/z", "b"]);
+}
+
+/// #2176 review: exactly `limit` matches is complete; one past it (fd is
+/// asked for limit + 1) means more exist, and the listing keeps `limit`.
+#[test]
+fn the_limit_is_known_from_one_extra_entry() {
+    let exact = classify(Some(0), b"/ws/a\n/ws/b\n", b"", Path::new("/ws"), 2).unwrap();
+    assert!(!exact.result_limit_reached);
+    assert_eq!(exact.entries, ["a", "b"]);
+    let more = classify(Some(0), b"/ws/c\n/ws/a\n/ws/b\n", b"", Path::new("/ws"), 2).unwrap();
+    assert!(more.result_limit_reached);
+    assert_eq!(more.entries, ["a", "b"]);
+}
+
+/// #2176 review: output cut at the stdout cap is an arbitrary subset too.
+#[test]
+fn a_capped_read_is_an_arbitrary_subset() {
+    let capped = output(b"/ws/b\n/ws/a\n/ws/c", b"", Path::new("/ws"), 1000, true);
+    assert!(capped.incomplete);
+    assert!(capped.result_limit_reached);
+    assert_eq!(capped.entries, ["a", "b"], "the cut last line is dropped");
 }

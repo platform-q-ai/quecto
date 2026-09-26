@@ -32,8 +32,15 @@ Feature: Find Tool
   Scenario: Limit caps the number of results
     Given a find workspace with 1100 files named "file_NNN.txt"
     When I find files matching "*.txt" with limit 10
-    Then the find result should contain "limit"
+    Then the find result should contain "an arbitrary subset of the matches"
     And the find result should not be an error
+
+  Scenario: A malformed glob is reported, not taken for no matches
+    Given a find workspace file "hello.txt"
+    When I find files matching "["
+    Then the find result should be an error
+    And the find result should contain "unclosed character class"
+    And the find result should not contain "No files found"
 
   Scenario: Directory entries have trailing slash
     Given a find workspace directory "subdir"

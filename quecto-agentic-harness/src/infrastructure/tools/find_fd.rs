@@ -95,7 +95,9 @@ impl FdFindPaths {
                 "--no-require-git",
                 "--max-results",
             ])
-            .arg(request.limit.to_string());
+            // One past the limit: whether more exist is then known, not
+            // guessed (#2176 review).
+            .arg(request.limit.saturating_add(1).to_string());
         let pattern = if request.pattern.contains('/') {
             command.arg("--full-path");
             let normalized = request
@@ -281,8 +283,10 @@ fn classify(
     root: &Path,
     limit: usize,
 ) -> Result<FindOutput, FindError> {
+    // fd exits 0 whether or not anything matched and 1 on an error, such
+    // as a malformed glob (#2164): exit 1 is never a clean empty result.
     match code {
-        Some(0 | 1) => Ok(output(stdout, &[], root, limit, false)),
+        Some(0) => Ok(output(stdout, &[], root, limit, false)),
         Some(2) => Err(FindError::Search(diagnostic(stderr))),
         _ if stdout.is_empty() => Err(FindError::Search(diagnostic(stderr))),
         _ => {
@@ -294,9 +298,16 @@ fn classify(
     }
 }
 fn output(stdout: &[u8], stderr: &[u8], root: &Path, limit: usize, stopped: bool) -> FindOutput {
-    let entries = normalize_output(stdout, root, stopped);
+    // Sorted: fd's threads find entries in no fixed order (#2164). fd was
+    // asked for one past the limit, so an entry past it means more exist.
+    let mut entries = normalize_output(stdout, root, stopped);
+    entries.sort_unstable();
+    let more = entries.len() > limit;
+    entries.truncate(limit);
     FindOutput {
-        result_limit_reached: entries.len() >= limit,
+        // Output cut at the stdout cap is as arbitrary a subset as one cut
+        // at the limit (#2176 review).
+        result_limit_reached: more || stopped,
         entries,
         incomplete: stopped,
         diagnostic: if stopped && stderr.is_empty() {
