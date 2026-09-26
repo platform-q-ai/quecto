@@ -10,6 +10,8 @@ pub(super) struct CodexSseHandler {
     acc: SseAccumulator,
     saw_terminal: bool,
     model: Option<String>,
+    /// Where reasoning items are replayed to (#2162).
+    origin: String,
 }
 
 impl CodexSseHandler {
@@ -18,19 +20,21 @@ impl CodexSseHandler {
             acc: SseAccumulator::default(),
             saw_terminal: false,
             model: None,
+            origin: String::new(),
         }
     }
 
-    pub(super) fn with_model(model: impl Into<String>) -> Self {
+    pub(super) fn with_model(model: impl Into<String>, origin: impl Into<String>) -> Self {
         let mut handler = Self::new();
         handler.model = Some(model.into());
+        handler.origin = origin.into();
         handler
     }
 
     fn take_response(&mut self) -> LlmResponse {
         let mut response = std::mem::take(&mut self.acc).into_response();
         if let Some(model) = &self.model {
-            crate::domain::usage_accounting::attach_cost(&mut response, model);
+            CodexProvider::finish_response(&mut response, model, &self.origin);
         }
         response
     }

@@ -17,7 +17,7 @@ pub(super) struct TurnEnd {
 pub(super) fn is_empty_streamed_response(response: &LlmResponse) -> bool {
     response.content.as_deref().unwrap_or_default().is_empty()
         && response.tool_calls.is_empty()
-        && response.thinking_blocks.is_empty()
+        && !crate::domain::visible_thinking::has_visible_thinking(&response.thinking_blocks)
 }
 
 /// A reply that hit the output limit with nothing visible: no text and no

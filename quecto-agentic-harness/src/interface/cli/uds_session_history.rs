@@ -85,6 +85,7 @@ fn thinking_summary_json(msg: &Message, max_encoded_bytes: usize) -> serde_json:
                 value
             }
             ThinkingBlock::Redacted { .. } => serde_json::json!({ "kind": "redacted" }),
+            ThinkingBlock::EncryptedReasoning { .. } => continue, // never shown (#2162)
         };
         let value_len = serde_json::to_vec(&value)
             .map(|v| v.len())
@@ -117,8 +118,7 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         .chain(msg.tool_calls.iter().map(|call| call.arguments.len()));
     if payloads.max().unwrap_or(0) <= HISTORY_PAGE_JSON_BUDGET {
         let full = message_to_json(msg);
-        let encoded = serde_json::to_vec(&full).map(|v| v.len());
-        if encoded.unwrap_or(usize::MAX) <= HISTORY_PAGE_JSON_BUDGET {
+        if serde_json::to_vec(&full).map_or(usize::MAX, |v| v.len()) <= HISTORY_PAGE_JSON_BUDGET {
             return full;
         }
     }
@@ -143,7 +143,7 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         "truncated": true,
         "contentLength": msg.content.len(),
     });
-    if !msg.thinking_blocks.is_empty() {
+    if crate::domain::visible_thinking::has_visible_thinking(&msg.thinking_blocks) {
         let base_size = serde_json::to_vec(&summary)
             .map(|v| v.len())
             .unwrap_or(usize::MAX);

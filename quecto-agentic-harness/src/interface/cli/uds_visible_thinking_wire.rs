@@ -2,7 +2,13 @@ use crate::domain::message::ThinkingBlock;
 use crate::domain::visible_thinking::VisibleThinkingPageBlock;
 
 pub(super) fn visible_thinking_blocks_json(blocks: &[ThinkingBlock]) -> serde_json::Value {
-    serde_json::Value::Array(blocks.iter().map(visible_thinking_block_json).collect())
+    serde_json::Value::Array(
+        blocks
+            .iter()
+            .filter(|block| block.is_visible())
+            .map(visible_thinking_block_json)
+            .collect(),
+    )
 }
 
 fn visible_thinking_block_json(block: &ThinkingBlock) -> serde_json::Value {
@@ -12,6 +18,8 @@ fn visible_thinking_block_json(block: &ThinkingBlock) -> serde_json::Value {
             "text": thinking,
         }),
         ThinkingBlock::Redacted { .. } => serde_json::json!({ "kind": "redacted" }),
+        // Filtered out above (#2162).
+        ThinkingBlock::EncryptedReasoning { .. } => serde_json::json!({ "kind": "hidden" }),
     }
 }
 
@@ -36,3 +44,7 @@ pub(super) fn visible_thinking_page_json(
             .collect(),
     )
 }
+
+#[cfg(test)]
+#[path = "uds_visible_thinking_wire_tests.rs"]
+mod tests;

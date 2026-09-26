@@ -46,6 +46,8 @@ fn thinking_json(block: &ThinkingBlock) -> Value {
     match block {
         ThinkingBlock::Normal { thinking, .. } => json!({"kind":"text","text":thinking}),
         ThinkingBlock::Redacted { .. } => json!({"kind":"redacted"}),
+        // Opaque to people: named, never exported (#2162).
+        ThinkingBlock::EncryptedReasoning { .. } => json!({"kind":"encrypted_reasoning"}),
     }
 }
 

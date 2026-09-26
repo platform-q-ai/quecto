@@ -2,6 +2,7 @@ use super::protocol::{SessionState, SessionStats, TokenStats};
 use crate::application::agent_loop::UsageTotals;
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
 use crate::domain::message::{Message, Role};
+use crate::domain::visible_thinking::has_visible_thinking;
 // ─── Session state tracker ────────────────────────────────────────────────────
 /// In-memory state for an active UDS session.
 #[path = "uds_session_notify.rs"]
@@ -497,11 +498,8 @@ impl serde::Serialize for MessageView<'_> {
         // 8 base fields: stable id (#1060) + role/content/tools + isError + collapsed
         // (a demoted stub the client recalls by id; #1061 / ADR-0008 part 3).
         // Assistant thinking is an additive, display-safe recovery field (#1231).
-        let field_count = if msg.thinking_blocks.is_empty() {
-            9
-        } else {
-            10
-        };
+        let thinking = has_visible_thinking(&msg.thinking_blocks);
+        let field_count = if thinking { 10 } else { 9 };
         let mut s = serializer.serialize_struct("Message", field_count)?;
         // Domain UUID as a round-trippable string key (AC6).
         s.serialize_field("id", &msg.id().to_string())?;
@@ -514,7 +512,7 @@ impl serde::Serialize for MessageView<'_> {
         s.serialize_field("isError", &msg.is_error)?;
         // Ladder-collapsed stub: rendered in place, full body recallable by id.
         s.serialize_field("collapsed", &msg.is_collapsed)?;
-        if !msg.thinking_blocks.is_empty() {
+        if thinking {
             s.serialize_field(
                 "thinking",
                 &uds_visible_thinking_wire::visible_thinking_blocks_json(&msg.thinking_blocks),

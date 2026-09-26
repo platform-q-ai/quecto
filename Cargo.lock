@@ -1579,7 +1579,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-agentic-harness"
-version = "0.107.132"
+version = "0.107.133"
 dependencies = [
  "base64",
  "cucumber",

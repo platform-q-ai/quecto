@@ -1,4 +1,3 @@
-use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
 // OpenAI Responses API adapter: impl LlmProvider using the Responses wire
 // protocol under either auth mode (#1066).
 //
@@ -13,7 +12,9 @@ use std::pin::Pin;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role};
+#[cfg(any(test, feature = "test-support"))]
+use crate::domain::message::Message;
+use crate::domain::message::{LlmResponse, Role, ThinkingBlock};
 use crate::domain::provider::StreamEvent;
 
 #[path = "codex_sse_state.rs"]
@@ -45,6 +46,14 @@ pub struct CodexProvider {
     client: reqwest::Client,
     attempt_admission: Option<std::sync::Arc<dyn crate::application::ports::AttemptAdmission>>,
     auth: ResponsesAuth,
+    /// Set once the service refused replayed reasoning: this provider (and
+    /// its clones) replays no more (#2162 review).
+    replay_refused: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// A random identity minted when an API-key provider is built: the
+    /// origin its reasoning replays to. Nothing is derived from the key,
+    /// which must never reach a session file, not even as a digest (#2162
+    /// swarm review). Empty for ChatGPT OAuth, whose account identifies it.
+    key_origin: String,
 }
 
 impl CodexProvider {
@@ -82,6 +91,8 @@ impl CodexProvider {
             api_base: api_base.unwrap_or_else(|| CODEX_BASE_URL.to_string()),
             client,
             attempt_admission: None,
+            replay_refused: Default::default(),
+            key_origin: String::new(),
             auth: ResponsesAuth::ChatGptOAuth { account_id },
         }
     }
@@ -98,6 +109,8 @@ impl CodexProvider {
             api_base: api_base.unwrap_or_else(|| OPENAI_API_BASE_URL.to_string()),
             client,
             attempt_admission: None,
+            replay_refused: Default::default(),
+            key_origin: uuid::Uuid::new_v4().to_string(),
             auth: ResponsesAuth::ApiKey,
         }
     }
@@ -110,110 +123,63 @@ impl CodexProvider {
         }
     }
 
-    /// Build request headers for the active auth mode.
-    fn apply_headers(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    /// Build request headers for the active auth mode. A ChatGPT OAuth
+    /// request also names its session, as the official client does
+    /// (#2162): the same sanitised key as `prompt_cache_key`.
+    fn apply_headers(
+        &self,
+        builder: reqwest::RequestBuilder,
+        session: Option<&str>,
+    ) -> reqwest::RequestBuilder {
         let builder = builder
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("accept", "text/event-stream");
         match &self.auth {
-            ResponsesAuth::ChatGptOAuth { account_id } => builder
-                .header("chatgpt-account-id", account_id)
-                .header("OpenAI-Beta", "responses=experimental")
-                .header("originator", "codex_cli_rs"),
+            ResponsesAuth::ChatGptOAuth { account_id } => {
+                let builder = builder
+                    .header("chatgpt-account-id", account_id)
+                    .header("OpenAI-Beta", "responses=experimental")
+                    .header("originator", "codex_cli_rs");
+                match session {
+                    Some(session) => builder.header("session_id", session),
+                    None => builder,
+                }
+            }
             ResponsesAuth::ApiKey => builder,
         }
     }
 
-    /// Convert our domain messages into Responses API `input` array.
-    ///
-    /// Calls [`crate::domain::session::filter_orphan_tool_pairs`] to exclude
-    /// mismatched function_call/function_call_output pairs (which would cause
-    /// HTTP 400). Logs any orphaned pairs with Codex-specific context.
-    fn build_input(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
-        let (valid_pairs, diag) = crate::domain::session::filter_orphan_tool_pairs(messages);
-        let last_non_tool_assistant_idx = messages
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, m)| matches!(m.role, Role::Assistant) && m.tool_calls.is_empty())
-            .map(|(i, _)| i);
-        if diag.has_orphans() {
-            tracing::warn!(
-                orphaned_calls = ?diag.orphaned_calls,
-                orphaned_outputs = ?diag.orphaned_results,
-                "Codex: orphaned function_call/output pairs removed \
-                 (session corrupted mid-turn or by context pruning). \
-                 OpenAI and Anthropic have the same pairing constraint."
-            );
-        }
-        let mut instructions: Option<String> = None;
-        let mut input = Vec::new();
-
-        for (idx, msg) in messages.iter().enumerate() {
-            match msg.role {
-                Role::System => match &mut instructions {
-                    Some(existing) => {
-                        existing.push('\n');
-                        existing.push_str(&msg.content);
-                    }
-                    None => instructions = Some(msg.content.clone()),
-                },
-                Role::User => {
-                    input.push(serde_json::json!({ "role": "user", "content": msg.content }));
-                }
-                Role::Assistant => {
-                    let phase = if Some(idx) == last_non_tool_assistant_idx {
-                        "final_answer"
-                    } else {
-                        "commentary"
-                    };
-                    if !msg.tool_calls.is_empty() {
-                        // Emit only the valid (matched) tool calls.
-                        let mut emitted = 0usize;
-                        for tc in &msg.tool_calls {
-                            if valid_pairs.contains(&tc.id) {
-                                input.push(serde_json::json!({
-                                    "type": "function_call",
-                                    "call_id": tc.id,
-                                    "name": tc.name,
-                                    "arguments": tc.wire_arguments(),
-                                }));
-                                emitted += 1;
-                            }
-                        }
-                        // If every tool call was orphaned and dropped, fall back to
-                        // emitting the assistant text content (if any) so narrative
-                        // context is not silently lost.
-                        if emitted == 0 && !msg.content.is_empty() {
-                            input.push(serde_json::json!({
-                                "role": "assistant",
-                                "phase": phase,
-                                "content": msg.content,
-                            }));
-                        }
-                    } else {
-                        input.push(serde_json::json!({
-                            "role": "assistant",
-                            "phase": phase,
-                            "content": msg.content,
-                        }));
-                    }
-                }
-                Role::Tool => {
-                    if let Some(ref call_id) = msg.tool_call_id {
-                        if valid_pairs.contains(call_id) {
-                            input.push(serde_json::json!({
-                                "type": "function_call_output",
-                                "call_id": call_id,
-                                "output": msg.content,
-                            }));
-                        }
-                    }
-                }
+    /// Cost the response, and stamp its reasoning items with the origin
+    /// they are replayed to (#2162).
+    pub(super) fn finish_response(response: &mut LlmResponse, model: &str, origin: &str) {
+        crate::domain::usage_accounting::attach_cost(response, model);
+        for block in &mut response.thinking_blocks {
+            if let ThinkingBlock::EncryptedReasoning {
+                origin: stamped, ..
+            } = block
+            {
+                *stamped = origin.to_string();
             }
         }
+    }
 
-        (instructions, input)
+    /// Where a request's reasoning can be decrypted again (#2162 review):
+    /// the endpoint, who asked, and the model. A ChatGPT account is named by
+    /// a digest of its id (sent openly as a header, not a secret), so a
+    /// resumed session replays. An API-key provider is named by the random
+    /// identity it was built with — never by anything derived from the key
+    /// (#2162 swarm review) — so its reasoning replays only while it lives.
+    fn reasoning_origin(&self, model: &str) -> String {
+        let account = match &self.auth {
+            ResponsesAuth::ChatGptOAuth { account_id } => format!("{:08x}", fnv1a(account_id)),
+            ResponsesAuth::ApiKey => format!("key-{}", self.key_origin),
+        };
+        format!("{}|{account}|{model}", self.responses_url())
+    }
+
+    /// The session a request names, sanitised as its cache key is.
+    fn request_session(request: &ChatRequest<'_>) -> Option<String> {
+        request.session_id.map(Self::sanitize_cache_key)
     }
 
     /// Build the Responses API tool definitions.
@@ -272,8 +238,12 @@ impl CodexProvider {
     /// ChatGPT Codex backend rejects outright with HTTP 400 `{"detail":
     /// "Unsupported parameter: max_output_tokens"}` (#1233 regression), so
     /// it is emitted only on the API-key path.
-    fn build_request_body(request: &ChatRequest<'_>, auth: &ResponsesAuth) -> serde_json::Value {
-        let (instructions, input) = Self::build_input(request.messages);
+    fn build_request_body(
+        request: &ChatRequest<'_>,
+        auth: &ResponsesAuth,
+        origin: &str,
+    ) -> serde_json::Value {
+        let (instructions, input) = Self::build_input_for(request.messages, origin);
 
         let mut body = serde_json::json!({
             "model": request.model,
@@ -493,14 +463,23 @@ impl CodexProvider {
     /// Examples:
     /// - `"cli:default"` → `"cli:5e2b9f3a"` (no PII in original, prefix kept)
     /// - `"uds:agent-1"` → `"uds:7b3f1e9a"` (agent ID hidden)
+    ///
+    /// The prefix is kept only when it is plain (`[A-Za-z0-9_-]`, at most
+    /// 64 bytes, which every key the harness makes fits, so none changes),
+    /// so the key is always a valid `session_id` header value (#2162
+    /// review); any other prefix becomes `session`.
     fn sanitize_cache_key(key: &str) -> String {
-        // FNV-1a 32-bit hash — fast, no deps, deterministic.
-        let mut hash: u32 = 0x811c_9dc5;
-        for byte in key.bytes() {
-            hash ^= byte as u32;
-            hash = hash.wrapping_mul(0x0100_0193);
-        }
-        let prefix = key.split(':').next().unwrap_or("session");
+        let hash = fnv1a(key);
+        let prefix = key
+            .split(':')
+            .next()
+            .filter(|prefix| {
+                (1..=64).contains(&prefix.len())
+                    && prefix
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            })
+            .unwrap_or("session");
         format!("{prefix}:{hash:08x}")
     }
 
@@ -510,10 +489,11 @@ impl CodexProvider {
         url: &str,
         body: serde_json::Value,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
-        model: &str,
+        session: Option<&str>,
+        mut handler: CodexSseHandler,
     ) {
         let mut response = match self
-            .apply_headers(self.client.post(url))
+            .apply_headers(self.client.post(url), session)
             .json(&body)
             .send()
             .await
@@ -540,7 +520,6 @@ impl CodexProvider {
                 .await;
             return;
         }
-        let mut handler = CodexSseHandler::with_model(model);
         super::sse_common::pump_sse(&mut response, &tx, &mut handler).await;
     }
 
@@ -573,59 +552,8 @@ impl LlmProvider for CodexProvider {
             return Box::pin(async move { Err(err) });
         }
 
-        let cancel = request.cancel_flag.clone();
-        let trace = request.trace.clone();
-        let model = request.model.to_string();
-        let body = Self::build_request_body(&request, &self.auth);
-        let url = self.responses_url();
-
-        Box::pin(async move {
-            if let Some(gate) = &self.attempt_admission {
-                let builder = self.apply_headers(self.client.post(&url)).json(&body);
-                return super::attempt_transport::assembled(
-                    gate,
-                    trace.clone(),
-                    cancel.as_ref(),
-                    builder,
-                    Profile::new(Vendor::Codex, Surface::Assembled),
-                    |raw| {
-                        let mut parsed = Self::parse_sse_response(raw)?;
-                        crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
-                        Ok(parsed)
-                    },
-                )
-                .await;
-            }
-            let resp = self
-                .apply_headers(self.client.post(&url))
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| {
-                    DomainError::Provider(format!(
-                        "Codex request failed: {}",
-                        super::sse_common::format_send_error(&e)
-                    ))
-                })?;
-
-            let status = resp.status().as_u16();
-            if status != 200 {
-                let error_body = resp.text().await.unwrap_or_default();
-                return Err(DomainError::Provider(format!(
-                    "HTTP {} from Codex: {}",
-                    status, error_body
-                )));
-            }
-
-            let raw = resp
-                .text()
-                .await
-                .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
-
-            let mut parsed = Self::parse_sse_response(&raw)?;
-            crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
-            Ok(parsed)
-        })
+        let (call, bodies) = self.prepare(&request);
+        Box::pin(async move { self.assemble(&call, bodies).await })
     }
 
     fn chat_stream<'a>(
@@ -646,35 +574,28 @@ impl LlmProvider for CodexProvider {
                 rx
             });
         }
-        let cancel = request.cancel_flag.clone();
-        let trace = request.trace.clone();
-        let model = request.model.to_string();
-        let body = Self::build_request_body(&request, &self.auth);
-        let url = self.responses_url();
+        let (call, bodies) = self.prepare(&request);
         let provider = self.clone();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
-            tokio::spawn(async move {
-                if let Some(gate) = &provider.attempt_admission {
-                    let builder = provider
-                        .apply_headers(provider.client.post(&url))
-                        .json(&body);
-                    super::attempt_transport::stream(
-                        gate,
-                        (trace.clone(), cancel.as_ref()),
-                        builder,
-                        Profile::new(Vendor::Codex, Surface::Incremental),
-                        tx,
-                        CodexSseHandler::with_model(&model),
-                    )
-                    .await;
-                } else {
-                    provider.pump_codex_sse(&url, body, tx, &model).await;
-                }
-            });
+            tokio::spawn(provider.stream(call, bodies, tx));
             rx
         })
     }
+}
+
+#[path = "codex_input.rs"]
+mod codex_input;
+#[path = "codex_replay.rs"]
+mod codex_replay;
+/// FNV-1a 32-bit: fast, dependency-free, deterministic.
+fn fnv1a(text: &str) -> u32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in text.bytes() {
+        hash ^= byte as u32;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
 }
 
 #[path = "codex_sse_handler.rs"]
@@ -705,3 +626,7 @@ mod effort_1066_tests;
 #[cfg(test)]
 #[path = "codex_cov_tests.rs"]
 mod cov_tests;
+
+#[cfg(test)]
+#[path = "codex_2162_tests.rs"]
+mod issue_2162_tests;

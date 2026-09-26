@@ -354,3 +354,23 @@ async fn list_summaries_reports_an_unreadable_sessions_dir() {
         "expected the sessions-dir read error, got: {err}"
     );
 }
+
+/// #2162: an encrypted reasoning item survives a save and a load whole.
+#[tokio::test]
+async fn encrypted_reasoning_survives_save_and_load() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let mut session = Session::new(id("cov:reasoning"));
+    let mut reply = assistant("answer");
+    let block = ThinkingBlock::EncryptedReasoning {
+        origin: "gpt-6-sol".into(),
+        leads_to: Some("call_1".into()),
+        item: r#"{"type":"reasoning","summary":[],"encrypted_content":"gAAA"}"#.into(),
+    };
+    reply.thinking_blocks = vec![block.clone()];
+    session.messages.push(user("q"));
+    session.messages.push(reply);
+    store.save(&session).await.unwrap();
+    let loaded = store.load(&id("cov:reasoning")).await.unwrap().unwrap();
+    assert_eq!(loaded.messages[1].thinking_blocks, vec![block]);
+}

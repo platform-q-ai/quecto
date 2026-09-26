@@ -13,6 +13,33 @@ pub(super) struct SseAccumulator {
     pub(super) stop_reason: Option<StopReason>,
     pub(super) reasoning: String,
     pub(super) reasoning_summary_position: Option<(Option<u64>, u64)>,
+    /// Reasoning items returned with `encrypted_content`, each with its
+    /// output index, as they are sent back (#2162).
+    pub(super) encrypted_reasoning: Vec<(usize, Value)>,
+    /// Bytes of encrypted content kept so far in this response.
+    pub(super) encrypted_reasoning_bytes: usize,
+}
+
+/// Encrypted reasoning kept per response: replaying it is an optimisation,
+/// so items past this are dropped rather than carried turn after turn.
+pub(super) const MAX_ENCRYPTED_REASONING_BYTES: usize = 1024 * 1024;
+
+/// The reasoning item as it is replayed: its summary and encrypted
+/// content, without the id — with `store: false` an id names an item the
+/// service kept no copy of (#2162). `None` without encrypted content.
+fn replayable_reasoning(item: &Value) -> Option<Value> {
+    let encrypted = item["encrypted_content"]
+        .as_str()
+        .filter(|content| !content.is_empty())?;
+    let summary = match &item["summary"] {
+        Value::Array(parts) => Value::Array(parts.clone()),
+        _ => Value::Array(Vec::new()),
+    };
+    Some(serde_json::json!({
+        "type": "reasoning",
+        "summary": summary,
+        "encrypted_content": encrypted,
+    }))
 }
 
 fn collect_reasoning_summary(item: &Value) -> String {
@@ -106,7 +133,7 @@ impl SseAccumulator {
     }
 
     pub(super) fn into_response(self) -> LlmResponse {
-        let thinking_blocks = if self.reasoning.is_empty() {
+        let mut thinking_blocks = if self.reasoning.is_empty() {
             Vec::new()
         } else {
             vec![ThinkingBlock::Normal {
@@ -114,6 +141,30 @@ impl SseAccumulator {
                 signature: String::new(),
             }]
         };
+        // Each item led to the first call after it in the output (none:
+        // the reply's text). The origin is stamped by the provider, which
+        // knows where it sent the request; an unstamped item is never
+        // replayed.
+        let mut calls: Vec<(usize, &str)> = self
+            .output_index_to_tool
+            .iter()
+            .filter_map(|(output, tool)| {
+                self.tool_calls
+                    .get(*tool)
+                    .map(|call| (*output, call.id.as_str()))
+            })
+            .collect();
+        calls.sort_unstable();
+        thinking_blocks.extend(self.encrypted_reasoning.iter().map(|(output, item)| {
+            ThinkingBlock::EncryptedReasoning {
+                origin: String::new(),
+                leads_to: calls
+                    .iter()
+                    .find(|(call_output, _)| call_output > output)
+                    .map(|(_, id)| id.to_string()),
+                item: item.to_string(),
+            }
+        }));
         LlmResponse {
             content: if self.content.is_empty() {
                 None
@@ -173,6 +224,10 @@ impl SseAccumulator {
                     .get("item")
                     .filter(|i| i["type"].as_str() == Some("reasoning"))
                 {
+                    if let Some(replayable) = replayable_reasoning(item) {
+                        let output_index = event["output_index"].as_u64().unwrap_or(0) as usize;
+                        self.keep_encrypted_reasoning(output_index, replayable);
+                    }
                     let summary = collect_reasoning_summary(item);
                     if !summary.is_empty()
                         && !reasoning_ends_with_summary(&self.reasoning, &summary)
@@ -232,6 +287,21 @@ impl SseAccumulator {
             _ => {}
         }
         Ok(())
+    }
+
+    fn keep_encrypted_reasoning(&mut self, output_index: usize, item: Value) {
+        // The whole item as it is kept and sent again, summary included.
+        let bytes = item.to_string().len();
+        let total = self.encrypted_reasoning_bytes.saturating_add(bytes);
+        if total > MAX_ENCRYPTED_REASONING_BYTES {
+            tracing::warn!(
+                bytes,
+                "Codex: encrypted reasoning past its per-response cap is not kept for replay"
+            );
+            return;
+        }
+        self.encrypted_reasoning_bytes = total;
+        self.encrypted_reasoning.push((output_index, item));
     }
 
     fn handle_item_added(&mut self, event: &serde_json::Value) {

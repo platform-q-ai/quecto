@@ -1,3 +1,4 @@
+use crate::domain::message::ThinkingBlock;
 use crate::domain::session::PersistedSubagentRosterEntry;
 use crate::domain::workflow::WorkflowRunPersisted;
 use serde::Deserialize;
@@ -218,6 +219,14 @@ pub(super) enum ThinkingBlockRecord {
     /// Redacted thinking block (reasoning hidden by safety filters).
     #[serde(rename = "redacted")]
     Redacted { data: String },
+    /// A Responses API reasoning item, replayed to its model (#2162).
+    #[serde(rename = "encrypted_reasoning")]
+    EncryptedReasoning {
+        origin: String,
+        #[serde(default)]
+        leads_to: Option<String>,
+        item: String,
+    },
 }
 
 #[derive(serde::Serialize)]
@@ -230,4 +239,85 @@ pub(super) enum ThinkingBlockRecordRef<'a> {
     },
     #[serde(rename = "redacted")]
     Redacted { data: &'a str },
+    #[serde(rename = "encrypted_reasoning")]
+    EncryptedReasoning {
+        origin: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        leads_to: Option<&'a str>,
+        item: &'a str,
+    },
+}
+
+impl<'a> From<&'a ThinkingBlock> for ThinkingBlockRecordRef<'a> {
+    fn from(block: &'a ThinkingBlock) -> Self {
+        match block {
+            ThinkingBlock::Normal {
+                thinking,
+                signature,
+            } => Self::Normal {
+                thinking,
+                signature,
+            },
+            ThinkingBlock::Redacted { data } => Self::Redacted { data },
+            ThinkingBlock::EncryptedReasoning {
+                origin,
+                leads_to,
+                item,
+            } => Self::EncryptedReasoning {
+                origin,
+                leads_to: leads_to.as_deref(),
+                item,
+            },
+        }
+    }
+}
+
+impl From<&ThinkingBlock> for ThinkingBlockRecord {
+    fn from(block: &ThinkingBlock) -> Self {
+        match ThinkingBlockRecordRef::from(block) {
+            ThinkingBlockRecordRef::Normal {
+                thinking,
+                signature,
+            } => Self::Normal {
+                thinking: thinking.to_string(),
+                signature: signature.to_string(),
+            },
+            ThinkingBlockRecordRef::Redacted { data } => Self::Redacted {
+                data: data.to_string(),
+            },
+            ThinkingBlockRecordRef::EncryptedReasoning {
+                origin,
+                leads_to,
+                item,
+            } => Self::EncryptedReasoning {
+                origin: origin.to_string(),
+                leads_to: leads_to.map(str::to_string),
+                item: item.to_string(),
+            },
+        }
+    }
+}
+
+impl From<ThinkingBlockRecord> for ThinkingBlock {
+    fn from(record: ThinkingBlockRecord) -> Self {
+        match record {
+            ThinkingBlockRecord::Normal {
+                thinking,
+                signature,
+            } => Self::Normal {
+                thinking,
+                signature,
+            },
+            ThinkingBlockRecord::Redacted { data } => Self::Redacted { data },
+            ThinkingBlockRecord::EncryptedReasoning {
+                origin,
+                leads_to,
+                item,
+            } => Self::EncryptedReasoning {
+                origin,
+                leads_to,
+                item,
+            },
+        }
+    }
 }

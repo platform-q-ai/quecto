@@ -278,6 +278,24 @@ fn test_assistant_message_with_redacted_thinking_block() {
     assert_eq!(redacted["data"].as_str().unwrap(), "opaque_data_abc");
 }
 
+/// #2162: another provider's encrypted reasoning is never sent to Anthropic.
+#[test]
+fn test_encrypted_reasoning_is_not_sent_to_anthropic() {
+    use crate::domain::message::ThinkingBlock;
+    let mut msg = Message::assistant("response text", vec![]);
+    msg.thinking_blocks.push(ThinkingBlock::EncryptedReasoning {
+        origin: "gpt-6-sol".to_string(),
+        leads_to: None,
+        item: "SECRET".to_string(),
+    });
+    let json = AnthropicProvider::build_assistant_message(&msg, false);
+    assert!(!json.to_string().contains("SECRET"), "{json}");
+    assert_eq!(
+        json["content"],
+        serde_json::json!([{"type": "text", "text": "response text"}])
+    );
+}
+
 #[test]
 fn test_thinking_block_empty_signature_is_not_replayed_as_text() {
     use crate::domain::message::ThinkingBlock;

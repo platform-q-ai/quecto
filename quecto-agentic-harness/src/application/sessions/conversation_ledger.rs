@@ -68,6 +68,11 @@ fn thinking_block_bytes(tb: &ThinkingBlock) -> usize {
             signature,
         } => thinking.len() + signature.len(),
         ThinkingBlock::Redacted { data } => data.len(),
+        ThinkingBlock::EncryptedReasoning {
+            origin,
+            leads_to,
+            item,
+        } => origin.len() + leads_to.as_ref().map_or(0, String::len) + item.len(),
     }
 }
 

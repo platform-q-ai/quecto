@@ -562,16 +562,7 @@ fn message_to_record_ref(msg: &Message) -> MessageRecordRef<'_> {
         thinking_blocks: msg
             .thinking_blocks
             .iter()
-            .map(|tb| match tb {
-                ThinkingBlock::Normal {
-                    thinking,
-                    signature,
-                } => ThinkingBlockRecordRef::Normal {
-                    thinking,
-                    signature,
-                },
-                ThinkingBlock::Redacted { data } => ThinkingBlockRecordRef::Redacted { data },
-            })
+            .map(ThinkingBlockRecordRef::from)
             .collect(),
     }
 }
@@ -603,18 +594,7 @@ fn message_to_record(msg: &Message) -> MessageRecord {
         thinking_blocks: msg
             .thinking_blocks
             .iter()
-            .map(|tb| match tb {
-                ThinkingBlock::Normal {
-                    thinking,
-                    signature,
-                } => ThinkingBlockRecord::Normal {
-                    thinking: thinking.clone(),
-                    signature: signature.clone(),
-                },
-                ThinkingBlock::Redacted { data } => {
-                    ThinkingBlockRecord::Redacted { data: data.clone() }
-                }
-            })
+            .map(ThinkingBlockRecord::from)
             .collect(),
     }
 }
@@ -651,16 +631,7 @@ fn record_to_message(rec: MessageRecord) -> Message {
     msg.thinking_blocks = rec
         .thinking_blocks
         .into_iter()
-        .map(|tb| match tb {
-            ThinkingBlockRecord::Normal {
-                thinking,
-                signature,
-            } => ThinkingBlock::Normal {
-                thinking,
-                signature,
-            },
-            ThinkingBlockRecord::Redacted { data } => ThinkingBlock::Redacted { data },
-        })
+        .map(ThinkingBlock::from)
         .collect();
     msg
 }

@@ -37,12 +37,19 @@ pub enum VisibleThinkingPageBlock {
     Redacted,
 }
 
+/// Whether any block is thinking a person may see (#2162): encrypted
+/// reasoning alone is no visible output.
+pub fn has_visible_thinking(blocks: &[ThinkingBlock]) -> bool {
+    blocks.iter().any(ThinkingBlock::is_visible)
+}
+
 pub fn visible_thinking_len(blocks: &[ThinkingBlock]) -> usize {
     blocks
         .iter()
         .map(|b| match b {
             ThinkingBlock::Normal { thinking, .. } => thinking.len(),
             ThinkingBlock::Redacted { .. } => 1,
+            ThinkingBlock::EncryptedReasoning { .. } => 0,
         })
         .sum()
 }
@@ -82,6 +89,8 @@ pub fn visible_thinking_page(
                 }
                 cursor += 1;
             }
+            // Never shown (#2162).
+            ThinkingBlock::EncryptedReasoning { .. } => {}
         }
     }
     out
@@ -94,3 +103,7 @@ fn nearest_char_boundary_at_or_before(s: &str, mut idx: usize) -> usize {
     }
     idx
 }
+
+#[cfg(test)]
+#[path = "visible_thinking_tests.rs"]
+mod tests;

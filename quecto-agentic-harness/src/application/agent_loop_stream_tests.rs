@@ -86,3 +86,20 @@ fn empty_stream_has_no_wire_status_or_overload_claim() {
     assert_eq!(classify_provider_error(&error).as_str(), "empty_stream");
     assert!(classify_provider_error(&error).is_retryable());
 }
+
+/// #2162 review: encrypted reasoning alone is no output — a reply with only
+/// that is still an empty stream (retried), never a blank final answer.
+#[test]
+fn encrypted_reasoning_alone_is_an_empty_stream() {
+    let only_encrypted = vec![crate::domain::message::ThinkingBlock::EncryptedReasoning {
+        origin: "o".into(),
+        leads_to: None,
+        item: "{}".into(),
+    }];
+    assert!(is_empty_streamed_response(&response(
+        None,
+        vec![],
+        only_encrypted,
+        None
+    )));
+}
