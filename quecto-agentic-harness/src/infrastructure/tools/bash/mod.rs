@@ -305,15 +305,12 @@ fn build_shell_command(
     command: &str,
     source_env: Option<&HashMap<String, String>>,
 ) -> tokio::process::Command {
-    // The requested shell (an explicit override, else the parent's SHELL)
-    // goes through `shell::select_shell`: bash where installed (#2195).
-    let parent_shell = (source_env.is_none())
-        .then(|| std::env::var("SHELL").ok())
-        .flatten();
-    let requested = source_env
-        .and_then(|env| env.get("SHELL").map(String::as_str))
-        .or(parent_shell.as_deref());
-    let shell = shell::select_shell(requested, shell::is_installed);
+    // Bash where installed (#2195): the process's choice, made once, unless
+    // an explicit environment names its own SHELL.
+    let shell = match source_env {
+        Some(env) => shell::select_shell(env.get("SHELL").map(String::as_str), shell::is_installed),
+        None => shell::default_shell(),
+    };
 
     let mut cmd = tokio::process::Command::new(shell);
     cmd.arg("-c").arg(command).current_dir(workspace);
@@ -666,7 +663,7 @@ async fn await_stream_output_within(
 fn posix_note(shell: &str) -> String {
     match shell::runs_bash(shell) {
         true => String::new(),
-        false => format!(" Commands run under {shell} (POSIX sh; no bash syntax)."),
+        false => format!(" Commands run under {shell}, not bash: bash-only syntax may not work."),
     }
 }
 

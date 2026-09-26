@@ -42,8 +42,16 @@ fn a_requested_bash_is_kept_and_zsh_gives_way_to_bash() {
         "/usr/bin/zsh"
     );
     assert_eq!(
-        select_shell(Some("/usr/local/bin/bash"), only(&["/bin/bash"])),
+        select_shell(
+            Some("/usr/local/bin/bash"),
+            only(&["/usr/local/bin/bash", "/bin/bash"])
+        ),
         "/usr/local/bin/bash"
+    );
+    // A requested bash that is not installed gives way to one that is.
+    assert_eq!(
+        select_shell(Some("/usr/local/bin/bash"), only(&["/bin/bash"])),
+        "/bin/bash"
     );
 }
 

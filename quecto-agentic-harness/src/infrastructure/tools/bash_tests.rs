@@ -168,22 +168,20 @@ async fn test_exec_posix_shell_env_gives_way_to_bash() {
         "output should name the shell, got: {}",
         result.content
     );
-    if bash_is_installed() {
-        assert!(
-            result.content.trim().ends_with("bash"),
-            "{}",
-            result.content
-        );
-    }
+    assert!(bash_is_installed(), "these tests require bash on the host");
+    assert!(
+        result.content.trim().ends_with("bash"),
+        "{}",
+        result.content
+    );
 }
 
 /// #2195: bash syntax works with no `SHELL` in the environment (a
 /// container) and with the parent's own, wherever bash is installed.
 #[tokio::test]
 async fn bash_syntax_runs_in_a_container_like_environment() {
-    if !bash_is_installed() {
-        return;
-    }
+    // Test hosts have bash, as the CI images and the standard container do.
+    assert!(bash_is_installed(), "these tests require bash on the host");
     let (tool, _tmp) = test_exec();
     let command = r#"{"command": "[[ a == a ]] && echo {1..3}"}"#;
     let empty = HashMap::new();
@@ -708,9 +706,8 @@ fn a_command_without_shell_in_its_environment_runs_under_bash_when_installed() {
     let cmd = super::build_shell_command(&workspace, "true", Some(&env));
     let expected = super::shell::select_shell(None, super::shell::is_installed);
     assert_eq!(cmd.as_std().get_program(), std::ffi::OsStr::new(expected));
-    if super::shell::is_installed("/bin/bash") || super::shell::is_installed("/usr/bin/bash") {
-        assert!(expected.ends_with("/bash"), "{expected}");
-    }
+    assert!(bash_is_installed(), "these tests require bash on the host");
+    assert!(expected.ends_with("/bash"), "{expected}");
 }
 
 /// #2195 review: without bash the description says commands run under a
@@ -719,8 +716,14 @@ fn a_command_without_shell_in_its_environment_runs_under_bash_when_installed() {
 fn the_description_names_a_posix_shell_only_without_bash() {
     let note = super::posix_note("/bin/sh");
     assert!(
-        note.contains("/bin/sh") && note.contains("no bash syntax"),
+        note.contains("/bin/sh") && note.contains("not bash"),
         "{note}"
+    );
+    // zsh is not POSIX sh either: the note names it, and makes no such claim.
+    let zsh = super::posix_note("/usr/bin/zsh");
+    assert!(
+        zsh.contains("/usr/bin/zsh") && !zsh.contains("POSIX"),
+        "{zsh}"
     );
     assert_eq!(super::posix_note("/usr/bin/bash"), "");
 }

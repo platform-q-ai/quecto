@@ -35,7 +35,10 @@ pub(super) fn select_shell(
     installed: impl Fn(&str) -> bool,
 ) -> &'static str {
     let allowed = requested.and_then(|shell| ALLOWED_SHELLS.iter().copied().find(|s| *s == shell));
-    if let Some(kept) = allowed.filter(|shell| KEPT_AS_REQUESTED.contains(shell)) {
+    // A requested bash that is not there is no choice at all (#2195 review).
+    if let Some(kept) =
+        allowed.filter(|shell| KEPT_AS_REQUESTED.contains(shell) && installed(shell))
+    {
         return kept;
     }
     BASH_LOCATIONS
@@ -56,9 +59,11 @@ pub(super) fn runs_bash(shell: &str) -> bool {
     KEPT_AS_REQUESTED.contains(&shell)
 }
 
-/// The shell the tool picks when nothing in its environment asks otherwise.
+/// The shell for this process's commands, chosen once: the tool's
+/// description and every command then agree (#2195 review).
 pub(super) fn default_shell() -> &'static str {
-    select_shell(std::env::var("SHELL").ok().as_deref(), is_installed)
+    static CHOSEN: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+    CHOSEN.get_or_init(|| select_shell(std::env::var("SHELL").ok().as_deref(), is_installed))
 }
 
 #[cfg(test)]
