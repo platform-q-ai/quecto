@@ -320,8 +320,7 @@ pub(super) async fn text<T>(
             receipt.termination(Termination::ReadError);
             DomainError::Provider(format!("failed to read response: {e}"))
         })?;
-        receipt.termination(Termination::Completed);
-        parse(&body)
+        receipt.accepted(parse(&body), Termination::Completed)
     })
     .await
     .map_err(AttemptError::into_domain)
@@ -356,8 +355,7 @@ pub(super) async fn assembled<T>(
             body.extend_from_slice(&bytes);
         }
         observer.finish(&receipt);
-        receipt.termination(Termination::Eof);
-        parse(&String::from_utf8_lossy(&body))
+        receipt.accepted(parse(&String::from_utf8_lossy(&body)), Termination::Eof)
     })
     .await
     .map_err(AttemptError::into_domain)

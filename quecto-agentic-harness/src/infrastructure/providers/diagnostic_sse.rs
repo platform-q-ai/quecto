@@ -3,6 +3,20 @@ use super::*;
 use crate::infrastructure::providers::sse_common::line_within_limit;
 
 impl Receipt {
+    /// A whole reply was read: it ended as `read` when accepted, rejected
+    /// when it could not be (#2156 review).
+    pub(super) fn accepted<T>(
+        &self,
+        parsed: Result<T, DomainError>,
+        read: Termination,
+    ) -> Result<T, DomainError> {
+        self.termination(match parsed {
+            Ok(_) => read,
+            Err(_) => Termination::Rejected,
+        });
+        parsed
+    }
+
     /// The handler ended the stream: a terminal event already recorded how,
     /// so only an ending no event explains is the harness refusing the reply
     /// (#2156 review).
@@ -71,12 +85,12 @@ pub(super) async fn pump_sse<H: SseHandler>(
 }
 
 /// The common pump's refusal of a line over the limit, recorded as how the
-/// attempt ended.
+/// attempt ended: a limit the harness enforces, so rejected.
 async fn refuse_long_line(receipt: &Receipt, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
     {
         let mut state = receipt.0.lock().unwrap_or_else(|e| e.into_inner());
         state.diagnostics.oversized_lines = state.diagnostics.oversized_lines.saturating_add(1);
     }
-    receipt.termination(Termination::ReadError);
+    receipt.termination(Termination::Rejected);
     super::super::sse_common::refuse_long_line(tx).await;
 }

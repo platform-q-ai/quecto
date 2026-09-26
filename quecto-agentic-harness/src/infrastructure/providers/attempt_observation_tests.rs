@@ -301,9 +301,9 @@ async fn a_tool_call_alone_is_a_first_token() {
     assert!(attempts[0].first_token_ms.is_some(), "{attempts:?}");
 }
 
-/// Review #2156: a stream the transport cut short, and one whose line
-/// outgrew the pump's limit, end as read errors, never as dropped; and the
-/// events the caller sees are exactly as before.
+/// Review #2156: a stream the transport cut short ends as a read error, and
+/// one whose line outgrew the pump's limit as rejected, never as dropped;
+/// and the events the caller sees are exactly as before.
 #[tokio::test]
 async fn a_stream_that_fails_mid_body_ends_as_a_read_error() {
     use crate::domain::attempt_diagnostics::Termination;
@@ -354,7 +354,7 @@ async fn a_stream_that_fails_mid_body_ends_as_a_read_error() {
     let (events, attempts) = incremental(&provider).await;
     assert_eq!(
         attempts[0].termination,
-        Termination::ReadError,
+        Termination::Rejected,
         "{attempts:?}"
     );
     assert_eq!(attempts[0].oversized_lines, 1, "{attempts:?}");

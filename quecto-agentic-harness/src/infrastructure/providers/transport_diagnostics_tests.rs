@@ -106,6 +106,43 @@ mod transport_tests {
                 .contains("SECRET")
         );
     }
+    /// Review #2156: a whole reply the adapter cannot parse ends as rejected
+    /// through admission too, for both whole-body shapes; one it accepts, as
+    /// it did.
+    #[tokio::test]
+    async fn a_whole_reply_the_adapter_cannot_parse_ends_as_rejected() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+        let gate: Arc<dyn AttemptAdmission> = Arc::new(Gate);
+        let surface = crate::infrastructure::providers::attempt_profile::Surface::Assembled;
+        let profile = Profile::new(Vendor::OpenAi, surface);
+        let refuse =
+            |_: &str| -> Result<(), DomainError> { Err(DomainError::Provider("bad".into())) };
+        let accept = |_: &str| -> Result<(), DomainError> { Ok(()) };
+        for (parse_ok, whole) in [(false, true), (true, true), (false, false), (true, false)] {
+            let trace = Arc::new(RequestTrace::default());
+            let builder = reqwest::Client::new().get(server.uri());
+            let parse = if parse_ok { accept } else { refuse };
+            let result = match whole {
+                true => text(&gate, Some(trace.clone()), None, builder, profile, parse).await,
+                false => assembled(&gate, Some(trace.clone()), None, builder, profile, parse).await,
+            };
+            assert_eq!(result.is_ok(), parse_ok);
+            let expected = match (parse_ok, whole) {
+                (false, _) => Termination::Rejected,
+                (true, true) => Termination::Completed,
+                (true, false) => Termination::Eof,
+            };
+            assert_eq!(
+                trace.attempt_diagnostics()[0].termination,
+                expected,
+                "{parse_ok} {whole}"
+            );
+        }
+    }
     /// A handler that reads every line and ends nothing.
     struct ReadingHandler;
     impl SseHandler for ReadingHandler {
