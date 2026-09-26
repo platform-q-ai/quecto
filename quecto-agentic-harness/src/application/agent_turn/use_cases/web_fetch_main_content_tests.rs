@@ -146,25 +146,26 @@ fn a_landmark_holding_nearly_everything_changes_nothing() {
     }
 }
 
-/// More than one `<main>` or `<article>` is ambiguous: the whole page.
+/// More than one `<main>` or `<article>` is ambiguous: the whole page, even
+/// when the first alone would be substantial.
 #[test]
 fn ambiguous_landmarks_keep_the_whole_page() {
     for body in [
         format!(
             "<main>{}</main><main>{}</main>{}",
-            words(40, "a"),
+            words(80, "a"),
             words(40, "b"),
             words(40, "c")
         ),
         format!(
             "<article>{}</article><article>{}</article>{}",
-            words(40, "a"),
+            words(80, "a"),
             words(40, "b"),
             words(40, "c")
         ),
         format!(
             "<div role=\"main\">{}</div><div role=\"main\">{}</div>{}",
-            words(40, "a"),
+            words(80, "a"),
             words(40, "b"),
             words(40, "c")
         ),
@@ -222,7 +223,7 @@ fn landmarks_are_tried_in_order() {
 #[test]
 fn a_stray_bracket_does_not_hide_a_landmark() {
     let html = page(&format!(
-        "<p>1 < 2 {}<main>{}</main>",
+        "{}<p>1 < 2 <main>{}</main>",
         words(20, "side"),
         words(60, "in")
     ));
@@ -259,17 +260,19 @@ fn role_main_ends_at_its_own_close() {
     }
 }
 
-/// A `role` that is not `main`, or an attribute merely containing "role",
-/// is no landmark.
+/// A `role` that is not `main`, an attribute merely containing "role", or
+/// `role="main"` on an element that is not a container, is no landmark.
 #[test]
 fn only_role_main_is_a_landmark() {
     for open in [
         "<div role=\"navigation\">",
         "<div data-role=\"main\">",
         "<div role=\"mainly\">",
+        "<span role=\"main\">",
     ] {
+        let name = open[1..].split(' ').next().unwrap_or_default();
         let html = page(&format!(
-            "{open}{}</div>{}",
+            "{open}{}</{name}>{}",
             words(60, "in"),
             words(20, "out")
         ));
