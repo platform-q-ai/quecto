@@ -205,12 +205,17 @@ async fn tokens_sent_with_every_request_shrink_the_message_budget() {
     assert!(roomy.iter().any(|m| m.turn == Some(1)), "everything fits");
 
     let mut tight = conversation();
+    let budget = total + 10 - total / 2;
     let plan = manager
-        .prepare_provider_context(&mut tight, total + 10 - total / 2, false)
+        .prepare_provider_context(&mut tight, budget, false)
         .await;
     assert!(
         !tight.iter().any(|m| m.turn == Some(1)),
         "the oldest turn makes room for what every request carries"
     );
-    assert!(plan.total_tokens + total / 2 <= total + 10 || plan.over_budget);
+    // The ladder holds the messages to the budget (the spill manifest is
+    // added after it and is not part of this bound).
+    let messages: Vec<Message> = tight.iter().filter(|m| !m.is_manifest).cloned().collect();
+    assert!(!plan.over_budget);
+    assert!(context_pruning::estimate_total_tokens(&messages) <= budget);
 }

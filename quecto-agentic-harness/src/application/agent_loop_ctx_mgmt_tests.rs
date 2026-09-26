@@ -645,3 +645,35 @@ async fn the_tool_definitions_count_against_the_budget() {
         "the oldest turn makes room for the tool definitions"
     );
 }
+
+/// #2182 review: tool definitions larger than the budget leave the messages
+/// a quarter of it, never nothing.
+#[tokio::test]
+async fn oversized_tool_definitions_leave_the_messages_a_quarter() {
+    use crate::application::agent_loop::tests::{
+        MockProvider, MockRegistry, MockTool, test_config,
+    };
+    let mut registry = MockRegistry::new();
+    for i in 0..40 {
+        registry.register(std::sync::Arc::new(MockTool::new(
+            &format!("tool_{i}"),
+            "ok",
+        )));
+    }
+    let tool_tokens: usize = registry
+        .cached_definitions
+        .iter()
+        .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+        .sum();
+    let provider = std::sync::Arc::new(MockProvider::new(vec![]));
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        max_context_tokens: tool_tokens / 2,
+        ..test_config(provider, Box::new(registry))
+    });
+    let mut messages = vec![Message::user("hi")];
+    agent.apply_context_pruning(&mut messages, 1, false).await;
+    assert!(
+        messages.iter().any(|m| m.content == "hi"),
+        "the current prompt survives"
+    );
+}
