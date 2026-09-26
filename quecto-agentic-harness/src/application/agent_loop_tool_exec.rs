@@ -23,7 +23,7 @@ enum Slot {
     Running,
     /// Ran; not yet audited or spilled.
     Ran(CallOutcome, std::time::Duration),
-    Prepared(PreparedResult),
+    Prepared(Box<PreparedResult>),
 }
 
 type CallOutcome = (
@@ -39,7 +39,7 @@ impl Drop for OverlappingBatch<'_> {
         for (tc, slot) in calls.iter().zip(std::mem::take(&mut self.slots)) {
             let result = match slot {
                 Slot::Running => continue,
-                Slot::Prepared(result) => result,
+                Slot::Prepared(result) => *result,
                 // Cancelled before it was prepared: its message is built
                 // here, without the audit record or spill a finished batch
                 // gives it (neither can be awaited in a drop).
@@ -163,7 +163,7 @@ impl AgentLoopImpl {
                 batch.slots[idx] = Slot::Ran(outcome, elapsed);
             }
             drop(running);
-            for idx in 0..calls.len() {
+            for (idx, tc) in calls.iter().enumerate() {
                 let Slot::Ran(outcome, elapsed) =
                     std::mem::replace(&mut batch.slots[idx], Slot::Running)
                 else {
@@ -171,12 +171,12 @@ impl AgentLoopImpl {
                 };
                 let finished = FinishedCall {
                     idx,
-                    tc: &calls[idx],
+                    tc,
                     outcome,
                     elapsed,
                 };
-                batch.slots[idx] =
-                    Slot::Prepared(self.prepare_tool_result(current_turn, finished).await);
+                let prepared = self.prepare_tool_result(current_turn, finished).await;
+                batch.slots[idx] = Slot::Prepared(Box::new(prepared));
             }
         } else {
             // One at a time, each result appended before the next call runs.
