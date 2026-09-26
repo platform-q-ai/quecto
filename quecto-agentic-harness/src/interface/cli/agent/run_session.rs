@@ -2,10 +2,10 @@
 //! session through the composed store, run the prompt, persist the result.
 //! The store comes from composition's sessions builder (#1970); this module
 //! never constructs one.
+use super::run_session_save::TranscriptSave;
 use super::{AgentFlags, AgentOutput, DeadlineResult, run_with_deadline, settle_stopped_run};
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::agent_turn::ports::AgentLoop;
-use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::message::Message;
 use crate::domain::session_identity::SessionIdentity;
 
@@ -90,15 +90,9 @@ pub(crate) fn run_agent_session(
                 settle_stopped_run(&rt, &agent, secs);
                 out.stderr.push_str("max-time exceeded\n");
                 retention.recall.scrub_ephemeral(ephemeral);
-                // What the stopped run did stays on record (#2173): its
-                // files and sub-agents exist, so the session saves the
-                // transcript, each unfinished call answered as stopped.
                 if !ephemeral {
-                    crate::domain::session_stopped::answer_unfinished_tool_calls(
-                        &mut messages,
-                        &format!("max-time {secs}s stopped the run"),
-                    );
-                    save_transcript(&rt, &sessions, &mut messages, system_prompt_id, out);
+                    let saving = TranscriptSave::new(&rt, &sessions, system_prompt_id);
+                    saving.stopped(&mut messages, secs, out);
                 }
                 return 2;
             }
@@ -112,7 +106,7 @@ pub(crate) fn run_agent_session(
     match agent_result {
         Ok(result) => {
             if !ephemeral {
-                save_transcript(&rt, &sessions, &mut messages, system_prompt_id, out);
+                TranscriptSave::new(&rt, &sessions, system_prompt_id).save(&mut messages, out);
             }
             out.stdout.push_str(&result.response);
             out.stdout.push('\n');
@@ -122,30 +116,5 @@ pub(crate) fn run_agent_session(
             out.stderr.push_str(&format!("Error: {}\n", e));
             1
         }
-    }
-}
-
-/// Save the run's transcript without the call-time system prompt.
-fn save_transcript(
-    rt: &tokio::runtime::Runtime,
-    sessions: &crate::interface::cli::uds_session_handles::SessionHandles,
-    messages: &mut Vec<Message>,
-    system_prompt_id: Option<uuid::Uuid>,
-    out: &mut AgentOutput<'_>,
-) {
-    // Identity-based removal: immune to index shifts from mid-run pruning
-    // (a no-op if pruning dropped it).
-    if let Some(id) = system_prompt_id
-        && let Some(idx) = messages.iter().position(|m| m.id() == id)
-    {
-        messages.remove(idx);
-    }
-    if let Err(e) = rt.block_on(
-        sessions
-            .save_session
-            .save(messages, SaveTrigger::OrdinaryExit),
-    ) {
-        out.stderr
-            .push_str(&format!("warning: failed to save session: {}\n", e));
     }
 }

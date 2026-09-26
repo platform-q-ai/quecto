@@ -555,6 +555,8 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     },
                 );
             }
+            // The registered entry owns the cleanup now (#2173).
+            prepared.hand_over();
             Ok(RegisteredLaunch {
                 registry_key: identity.registry_key.clone(),
                 socket_path: runtime.socket_path,

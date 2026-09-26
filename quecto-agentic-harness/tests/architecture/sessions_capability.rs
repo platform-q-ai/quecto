@@ -525,7 +525,7 @@ const RAW_KEY_CONVERSION_SITES: &[&str] = &[];
 /// (D5 #1972): the interface's persistence triggers. Decrease-only (D8
 /// #1977 moved the resume's transition save into the application).
 const SAVE_REQUESTERS: &[&str] = &[
-    "src/interface/cli/agent/run_session.rs",
+    "src/interface/cli/agent/run_session_save.rs",
     "src/interface/cli/uds.rs",
     "src/interface/cli/uds_dispatch.rs",
     "src/interface/cli/uds_multi.rs",
@@ -550,7 +550,7 @@ const SAVE_TRIGGER_SITES: &[(&str, &str)] = &[
         "SaveTrigger::OrdinaryExit",
     ),
     (
-        "src/interface/cli/agent/run_session.rs",
+        "src/interface/cli/agent/run_session_save.rs",
         "SaveTrigger::OrdinaryExit",
     ),
 ];
@@ -816,7 +816,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/persistence/session_record_read.rs", 71),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),
-    ("src/interface/cli/agent/run_session.rs", 130),
+    ("src/interface/cli/agent/run_session.rs", 120),
     ("src/interface/cli/uds_dispatch.rs", 500),
     // D10 #1979 hands the presenters the active session's key (was 190).
     // #2009: the discovery presenter is its own owner; the query extraction

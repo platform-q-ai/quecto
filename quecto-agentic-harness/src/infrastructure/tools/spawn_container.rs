@@ -173,6 +173,7 @@ async fn join_script_managed_child(
         environments: None,
         stderr_tail: None,
         container_diagnostics: Vec::new(),
+        settled: false,
     })
 }
 
@@ -349,6 +350,7 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
         environments: None,
         stderr_tail,
         container_diagnostics: Vec::new(),
+        settled: false,
     })
 }
 
@@ -403,6 +405,58 @@ async fn spawn_script_managed_child(
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", &environment_ref);
     apply_common_child_env(&mut cmd, child.base_dir);
     apply_admission_env(&mut cmd, child.admission_dir);
+    // The create runs to its end even if this spawn is dropped meanwhile
+    // (#2173): its result then goes unclaimed and is rolled back, so no
+    // container or ref outlives a cancelled spawn.
+    let flight = super::launch_rollbacks::InFlight::enter();
+    let (claim, claimed) = tokio::sync::oneshot::channel();
+    let job = CreateJob {
+        environment_ref,
+        environments: environments.clone(),
+        selected: selected.clone(),
+        name: environment_name(config),
+        admission_dir: child.admission_dir.map(Path::to_path_buf),
+        supervisor: Arc::clone(child.supervisor),
+    };
+    tokio::spawn(async move {
+        let prepared = create_environment(cmd, job).await;
+        // Unclaimed, the prepared child is dropped here and rolls back.
+        let _ = claim.send(prepared);
+        drop(flight);
+    });
+    claimed.await.unwrap_or_else(|_| {
+        Err(DomainError::Tool(
+            "container create ended without a result".into(),
+        ))
+    })
+}
+
+/// What a detached container create needs, owned.
+struct CreateJob {
+    environment_ref: String,
+    environments: EnvironmentRegistry,
+    selected: SelectedContainerConfig,
+    name: Option<String>,
+    admission_dir: Option<std::path::PathBuf>,
+    supervisor: Arc<OwnedChildSupervisor>,
+}
+
+/// Run the create script, then commit the environment it made.
+async fn create_environment(
+    cmd: tokio::process::Command,
+    job: CreateJob,
+) -> Result<PreparedChild, DomainError> {
+    let CreateJob {
+        environment_ref,
+        environments,
+        selected,
+        name,
+        admission_dir,
+        supervisor,
+    } = job;
+    let container = &selected.config;
+    let config_name = container.name.as_str();
+    let environments = &environments;
     let output = match run_script(cmd, "create").await {
         Ok(output) => output,
         Err(e) => {
@@ -411,7 +465,7 @@ async fn spawn_script_managed_child(
             return Err(e);
         }
     };
-    let result = match parse_create_result(&output.stdout, child.admission_dir) {
+    let result = match parse_create_result(&output.stdout, admission_dir.as_deref()) {
         Ok(result) => result,
         Err(e) => {
             let mut cleanup_argv = container.cleanup.clone();
@@ -441,7 +495,7 @@ async fn spawn_script_managed_child(
         environment_ref: environment_ref.clone(),
         environment_id: result.environment_id.clone(),
         environment_uuid: crate::domain::environment_registry::mint_environment_uuid(),
-        name: environment_name(config),
+        name,
         workspace_path: result.workspace_path.clone(),
         // The config owns its source (#1410): the repository shown in
         // listings/TUI is whatever the create script truthfully reported in
@@ -467,7 +521,7 @@ async fn spawn_script_managed_child(
         swarm_reservation: None,
         owned_child: None,
         display_pid: 0,
-        supervisor: Arc::clone(child.supervisor),
+        supervisor,
         environment_ref: Some(environment_ref),
         endpoint: Some(result.endpoint),
         proxy_bridge: None,
@@ -476,7 +530,8 @@ async fn spawn_script_managed_child(
         cleanup_argv: container.cleanup.clone(),
         environments: Some(environments.clone()),
         stderr_tail: None,
-        container_diagnostics: selected.diagnostics.clone(),
+        container_diagnostics: selected.diagnostics,
+        settled: false,
     })
 }
 
@@ -652,3 +707,7 @@ mod slice3_tests;
 #[cfg(test)]
 #[path = "spawn_container_admission_tests.rs"]
 mod admission_tests;
+
+#[cfg(test)]
+#[path = "spawn_container_cancel_tests.rs"]
+mod cancel_tests;

@@ -38,10 +38,16 @@ pub(crate) fn run_with_deadline(
 /// How long settling a stopped run may take before the process exits.
 const SETTLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// How long a stopped run waits for launch rollbacks: a container create
+/// the stop interrupted finishes first, then its container is removed.
+const LAUNCH_ROLLBACK_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// After the deadline stopped the run: record its unfinished request and why
 /// it stopped, and flush pending request accounting (#2172 review). The wait
 /// is bounded by [`SETTLE_LIMIT`]; blocking work the flush already started
-/// (a swarm board write) may still finish before the process exits.
+/// (a swarm board write) may still finish before the process exits. Then
+/// the launches the stop cancelled roll back, within
+/// [`LAUNCH_ROLLBACK_LIMIT`].
 pub(crate) fn settle_stopped_run(
     rt: &tokio::runtime::Runtime,
     agent: &AgentLoopImpl,
@@ -55,6 +61,15 @@ pub(crate) fn settle_stopped_run(
         Ok(Ok(())) => {}
         Ok(Err(error)) => tracing::warn!(%error, "a stopped run's accounting remains pending"),
         Err(_) => tracing::warn!("settling a stopped run outlasted its limit"),
+    }
+    // Dropping the runtime would end them where they stand (#2173).
+    let rolled_back = rt.block_on(crate::infrastructure::tools::launch_rollbacks::settled(
+        LAUNCH_ROLLBACK_LIMIT,
+    ));
+    if !rolled_back {
+        tracing::warn!(
+            "a cancelled sub-agent launch was still rolling back at exit; `quecto container gc --abandoned` removes a container it left"
+        );
     }
 }
 

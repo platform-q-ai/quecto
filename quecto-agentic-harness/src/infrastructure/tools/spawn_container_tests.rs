@@ -231,6 +231,7 @@ async fn cleanup_plan_clones_environment_and_argv() {
         environments: None,
         stderr_tail: None,
         container_diagnostics: Vec::new(),
+        settled: false,
     };
     let (env_ref, argv) = prepared.cleanup_plan();
     assert_eq!(env_ref.as_deref(), Some("env-test"));

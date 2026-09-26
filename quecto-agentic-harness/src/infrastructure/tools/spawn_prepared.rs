@@ -58,6 +58,34 @@ pub(in crate::infrastructure::tools) struct PreparedChild {
     /// file. Empty for local children and joins; the launch adapter puts
     /// the lines in the spawn result so the model sees them.
     pub(in crate::infrastructure::tools) container_diagnostics: Vec<String>,
+    /// Rolled back, or handed to the registry, which then owns its
+    /// cleanup. Until then, dropping it rolls it back (#2173).
+    pub(in crate::infrastructure::tools) settled: bool,
+}
+
+impl Drop for PreparedChild {
+    fn drop(&mut self) {
+        if self.settled || !self.holds_launch_state() {
+            return;
+        }
+        // Dropped before registration, so the launch was cancelled: roll
+        // it back in a task of its own; a stopping run waits for it.
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(
+                environment_ref = self.environment_ref.as_deref().unwrap_or_default(),
+                "a cancelled launch could not be rolled back: no runtime"
+            );
+            return;
+        };
+        // Taken settled: a runtime shutting down drops the task unrun, and
+        // the pending launch must not spawn another rollback from its drop.
+        let mut pending = self.take_for_rollback();
+        let flight = super::super::launch_rollbacks::InFlight::enter();
+        runtime.spawn(async move {
+            pending.rollback_once_via(None).await;
+            drop(flight);
+        });
+    }
 }
 
 /// How long a launch failure report waits for the child's stderr to reach
@@ -101,6 +129,44 @@ impl PreparedChild {
             environments: None,
             stderr_tail,
             container_diagnostics: Vec::new(),
+            settled: false,
+        }
+    }
+
+    /// Hand the launch to the registry: the registered entry owns its
+    /// cleanup from here, so dropping this no longer rolls back.
+    pub(in crate::infrastructure::tools) fn hand_over(&mut self) {
+        self.settled = true;
+    }
+
+    /// Whether anything a rollback would undo is still held.
+    fn holds_launch_state(&self) -> bool {
+        self.owned_child.is_some()
+            || self.proxy_bridge.is_some()
+            || !self.cleanup_argv.is_empty()
+            || (self.environments.is_some() && self.environment_ref.is_some())
+    }
+
+    /// Everything a rollback undoes, moved into a new prepared child that
+    /// is rolled back explicitly, never by its drop; this one is left
+    /// settled and empty.
+    fn take_for_rollback(&mut self) -> Self {
+        self.settled = true;
+        Self {
+            swarm_reservation: self.swarm_reservation.take(),
+            owned_child: self.owned_child.take(),
+            display_pid: self.display_pid,
+            supervisor: Arc::clone(&self.supervisor),
+            environment_ref: self.environment_ref.take(),
+            endpoint: self.endpoint.take(),
+            proxy_bridge: self.proxy_bridge.take(),
+            process_owner: self.process_owner,
+            cleanup_environment_id: self.cleanup_environment_id.take(),
+            cleanup_argv: std::mem::take(&mut self.cleanup_argv),
+            environments: self.environments.take(),
+            stderr_tail: self.stderr_tail.take(),
+            container_diagnostics: Vec::new(),
+            settled: true,
         }
     }
 
@@ -201,6 +267,7 @@ impl PreparedChild {
         if let (Some(environments), Some(env_ref)) = (&self.environments, &self.environment_ref) {
             environments.remove(env_ref);
         }
+        self.settled = true;
     }
 }
 

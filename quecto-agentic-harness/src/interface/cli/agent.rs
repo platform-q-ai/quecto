@@ -536,6 +536,8 @@ mod agent_tool_registry;
 use agent_tool_registry::{ToolRegistryArgs, ToolRegistryBuild, build_tool_registry};
 #[path = "agent/run_session.rs"]
 mod run_session;
+#[path = "agent/run_session_save.rs"]
+mod run_session_save;
 pub(crate) use run_session::run_agent_session;
 
 #[path = "agent/startup_identity.rs"]
