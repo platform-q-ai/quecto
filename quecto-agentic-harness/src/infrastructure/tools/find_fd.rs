@@ -281,8 +281,10 @@ fn classify(
     root: &Path,
     limit: usize,
 ) -> Result<FindOutput, FindError> {
+    // fd exits 0 whether or not anything matched and 1 on an error, such
+    // as a malformed glob (#2164): exit 1 is never a clean empty result.
     match code {
-        Some(0 | 1) => Ok(output(stdout, &[], root, limit, false)),
+        Some(0) => Ok(output(stdout, &[], root, limit, false)),
         Some(2) => Err(FindError::Search(diagnostic(stderr))),
         _ if stdout.is_empty() => Err(FindError::Search(diagnostic(stderr))),
         _ => {
@@ -294,7 +296,9 @@ fn classify(
     }
 }
 fn output(stdout: &[u8], stderr: &[u8], root: &Path, limit: usize, stopped: bool) -> FindOutput {
-    let entries = normalize_output(stdout, root, stopped);
+    // Sorted: fd's threads find entries in no fixed order (#2164).
+    let mut entries = normalize_output(stdout, root, stopped);
+    entries.sort_unstable();
     FindOutput {
         result_limit_reached: entries.len() >= limit,
         entries,

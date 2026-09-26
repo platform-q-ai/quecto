@@ -124,7 +124,9 @@ fn renders_order_whitespace_directories_unicode_and_limit_heuristic() {
         "z/\n \n文�.rs"
     );
     assert!(
-        rendered(vec!["a".into()], false, true).contains("3 results limit reached. Use limit=6")
+        rendered(vec!["a".into()], false, true).contains(
+            "3 results limit reached: fd stops at the limit, so these are an arbitrary 3 of the matches, not the first. Use limit=6"
+        )
     );
 }
 
