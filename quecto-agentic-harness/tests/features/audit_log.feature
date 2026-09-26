@@ -141,7 +141,7 @@ Feature: Append-only audit log
     When the disabled audit path is exercised
     Then no audit directory is created
 
-  Scenario: Content preview in ToolResult is capped at 200 chars
+  Scenario: Content preview of a successful ToolResult is capped at 200 chars
     Given a tool result with 500 characters of content
     When the content_preview is generated for the audit event
     Then the content_preview is at most 200 characters
