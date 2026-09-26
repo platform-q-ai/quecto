@@ -194,3 +194,38 @@ async fn a_failed_tools_preview_keeps_its_cause() {
         .expect("the failed call is logged");
     assert!(preview.ends_with("ValueError: the cause"), "{preview}");
 }
+
+/// #2181 review: a successful result's preview stays the first 200
+/// characters.
+#[tokio::test]
+async fn a_successful_tools_preview_is_its_first_200_characters() {
+    let provider = Arc::new(MockProvider::new(vec![
+        tool_call_response("long", "{}"),
+        text_response("done"),
+    ]));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(MockTool::new("long", &"x".repeat(1000))));
+    let audit = Arc::new(RecordingAudit::default());
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        audit_log: Some(audit.clone()),
+        ..test_config(provider, Box::new(registry))
+    });
+    agent
+        .run_loop(&mut vec![Message::user("go")])
+        .await
+        .unwrap();
+    let events = audit.events.lock().unwrap();
+    let preview = events
+        .iter()
+        .find_map(|event| match event {
+            AuditEvent::ToolResult {
+                tool,
+                content_preview,
+                ..
+            } if tool == "long" => Some(content_preview.clone()),
+            _ => None,
+        })
+        .expect("the call is logged");
+    assert_eq!(preview.chars().count(), 200, "{preview}");
+    assert!(!preview.contains("omitted"), "{preview}");
+}
