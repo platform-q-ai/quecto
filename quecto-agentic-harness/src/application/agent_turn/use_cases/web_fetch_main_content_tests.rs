@@ -547,3 +547,39 @@ fn new_parsing_paths_read_in_linear_time() {
         );
     }
 }
+
+/// A quote opens an attribute value only after `=`: an apostrophe in text
+/// after a stray `<` hides nothing, and `= "..."` with spaces is a value.
+#[test]
+fn quotes_open_values_only_after_equals() {
+    let html = page(&format!(
+        "{}<p>1 < 2 isn't much</p><main>{}</main>",
+        words(20, "side"),
+        words(60, "in")
+    ));
+    let text = readable_html(&html);
+    assert!(text.contains(NOTE) && !text.contains("side"), "{text}");
+    let html = page(&format!(
+        "<div data-tip = \"a > b\" role=\"main\">{}</div>{}",
+        words(60, "in"),
+        words(20, "side")
+    ));
+    let text = readable_html(&html);
+    assert!(text.contains(NOTE) && !text.contains("side"), "{text}");
+}
+
+/// A close tag inside inert content does not end the landmark.
+#[test]
+fn inert_content_does_not_end_a_landmark() {
+    let html = page(&format!(
+        "<main>{}<textarea>x</main>y</textarea>{}</main>{}",
+        words(40, "in"),
+        words(20, "more"),
+        words(20, "side")
+    ));
+    let text = readable_html(&html);
+    assert!(
+        text.contains("more more") && !text.contains("side"),
+        "{text}"
+    );
+}
