@@ -30,13 +30,13 @@ fn bundled_tools_that_change_nothing_may_overlap() {
         assert!(registry.overlaps_safely(name), "{name} may overlap");
     }
     // Registered only in some compositions: when present, they may overlap.
-    for name in ["web_fetch", "docs", "recall"] {
+    for name in ["web_fetch", "docs"] {
         if registry.get(name).is_some() {
             assert!(registry.overlaps_safely(name), "{name} may overlap");
         }
     }
     // web_search is paced by its provider's rate limit (#2175 review).
-    for name in ["bash", "write", "edit", "web_search"] {
+    for name in ["bash", "write", "edit", "web_search", "recall"] {
         assert!(!registry.overlaps_safely(name), "{name} may not overlap");
     }
     assert!(!registry.overlaps_safely("not-a-tool"));
