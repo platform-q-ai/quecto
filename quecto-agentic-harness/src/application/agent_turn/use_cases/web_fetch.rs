@@ -113,10 +113,8 @@ impl WebFetchUseCase {
                             bytes: body.len(),
                         });
                     }
-                    (BodyKind::Html, false) => strip_html(&String::from_utf8_lossy(&body)),
-                    (BodyKind::Html, true) | (BodyKind::Text, _) => {
-                        String::from_utf8_lossy(&body).into_owned()
-                    }
+                    (BodyKind::Html, false) => strip_html(decoded(&body).as_ref()),
+                    (BodyKind::Html, true) | (BodyKind::Text, _) => decoded(&body).into_owned(),
                 };
                 Ok(WebFetchResult::Success(truncate_output(
                     content,
@@ -152,7 +150,10 @@ fn is_text_media(essence: &str) -> bool {
                 | "application/x-sh"
                 | "application/sql"
                 | "application/graphql"
-                | "image/svg+xml"
+                | "application/x-ndjson"
+                | "application/jsonl"
+                | "application/jsonlines"
+                | "application/csv"
         )
 }
 
@@ -163,6 +164,11 @@ fn kind_of(content_type: Option<&str>, body: &[u8]) -> BodyKind {
     match essence.as_deref() {
         Some("text/html" | "application/xhtml+xml") => BodyKind::Html,
         Some(essence) if is_text_media(essence) => BodyKind::Text,
+        // A generic, empty or malformed type says nothing about the bytes:
+        // text served as octet-stream is common (#2177 review).
+        Some(essence) if essence == "application/octet-stream" || !essence.contains('/') => {
+            sniff(body)
+        }
         Some(_) => BodyKind::Binary,
         None => sniff(body),
     }
@@ -177,12 +183,41 @@ fn sniff(body: &[u8]) -> BodyKind {
     if text.contains('\0') {
         return BodyKind::Binary;
     }
-    let opening = text.trim_start().get(..15).unwrap_or(text.trim_start());
-    let opening = opening.to_ascii_lowercase();
+    let opening = document_opening(text);
+    let opening = opening.get(..15).unwrap_or(opening).to_ascii_lowercase();
     if opening.starts_with("<!doctype html") || opening.starts_with("<html") {
         BodyKind::Html
     } else {
         BodyKind::Text
+    }
+}
+
+/// A text body, without a leading byte-order mark.
+fn decoded(body: &[u8]) -> std::borrow::Cow<'_, str> {
+    match String::from_utf8_lossy(body) {
+        std::borrow::Cow::Borrowed(text) => {
+            std::borrow::Cow::Borrowed(text.trim_start_matches('\u{feff}'))
+        }
+        std::borrow::Cow::Owned(text) => {
+            std::borrow::Cow::Owned(text.trim_start_matches('\u{feff}').to_owned())
+        }
+    }
+}
+
+/// Where a document's own markup starts: past a byte-order mark, an XML
+/// prolog, comments and whitespace (#2177 review).
+fn document_opening(text: &str) -> &str {
+    let mut rest = text.trim_start_matches('\u{feff}');
+    loop {
+        let trimmed = rest.trim_start();
+        let skipped = [("<?", "?>"), ("<!--", "-->")]
+            .iter()
+            .find(|(open, _)| trimmed.starts_with(open))
+            .and_then(|(_, close)| trimmed.find(close).map(|end| &trimmed[end + close.len()..]));
+        match skipped {
+            Some(after) => rest = after,
+            None => return trimmed,
+        }
     }
 }
 
@@ -264,6 +299,10 @@ const STRIPPED_BLOCK_TAGS: &[&str] = &["script", "style", "nav", "footer", "head
 fn remove_configured_tag_blocks(html: &str) -> String {
     let mut result = String::with_capacity(html.len());
     let mut pos = 0;
+    // Tags with no close anywhere after some point have none after any later
+    // point either: searched once, so many unclosed tags stay linear (#2177
+    // review).
+    let mut never_closed: Vec<&'static str> = Vec::new();
 
     while pos < html.len() {
         let Some(tag_start_rel) = html[pos..].find('<') else {
@@ -278,7 +317,11 @@ fn remove_configured_tag_blocks(html: &str) -> String {
         };
 
         result.push_str(&html[pos..tag_start]);
-        if let Some(close_start) = find_configured_close_tag(html, tag_start + 1, tag) {
+        let close = match never_closed.contains(&tag) {
+            true => None,
+            false => find_configured_close_tag(html, tag_start + 1, tag),
+        };
+        if let Some(close_start) = close {
             let close_end = html[close_start..]
                 .find('>')
                 .map(|idx| close_start + idx + 1)
@@ -287,6 +330,7 @@ fn remove_configured_tag_blocks(html: &str) -> String {
         } else {
             // Never closed: drop only the opening tag, never the rest of
             // the page (#2165).
+            never_closed.push(tag);
             pos = html[tag_start..]
                 .find('>')
                 .map_or(html.len(), |idx| tag_start + idx + 1);

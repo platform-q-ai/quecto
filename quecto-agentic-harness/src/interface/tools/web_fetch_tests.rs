@@ -69,3 +69,33 @@ fn every_fetch_failure_becomes_a_tool_error_naming_what_went_wrong() {
         "Fetch failed: dns"
     );
 }
+
+/// #2165: binary content is named, with its type and size, and is not an
+/// error (the fetch worked).
+#[tokio::test]
+async fn binary_content_is_named_not_shown() {
+    struct Binary;
+    impl FetchWebContent for Binary {
+        fn fetch<'a>(
+            &'a self,
+            _: &'a FetchRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<FetchOutcome, FetchFailure>> + Send + 'a>> {
+            Box::pin(async {
+                Ok(FetchOutcome::SuccessBody {
+                    body: vec![0xff; 2048],
+                    content_type: Some("image/png".into()),
+                })
+            })
+        }
+    }
+    let tool = WebFetchTool::new(Arc::new(WebFetchUseCase::new(Arc::new(Binary), 32)));
+    let result = tool
+        .execute(r#"{"url":"https://example.com/a.png"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    assert_eq!(
+        result.content,
+        "https://example.com/a.png is binary content (image/png, 2048 bytes), not shown: web_fetch returns text and HTML only"
+    );
+}

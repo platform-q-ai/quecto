@@ -102,3 +102,63 @@ async fn untyped_bytes_with_a_nul_are_binary() {
         }
     );
 }
+
+/// #2177 review: a page of many unclosed blocks is stripped in linear time.
+#[test]
+fn many_unclosed_blocks_strip_in_linear_time() {
+    let page = "<nav>x".repeat(160_000);
+    let started = std::time::Instant::now();
+    let text = strip_html(&page);
+    assert!(text.contains('x'));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "took {:?}",
+        started.elapsed()
+    );
+}
+
+/// #2177 review: text served as octet-stream, or with an empty or
+/// malformed type, is sniffed rather than refused.
+#[tokio::test]
+async fn octet_stream_and_bad_types_are_sniffed() {
+    for content_type in ["application/octet-stream", "", "text"] {
+        let got = fetched(b"# notes\nplain text", Some(content_type), false).await;
+        assert_eq!(
+            got,
+            WebFetchResult::Success("# notes\nplain text".into()),
+            "{content_type:?}"
+        );
+    }
+}
+
+/// #2177 review: line-delimited JSON and CSV are text.
+#[tokio::test]
+async fn ndjson_jsonl_and_csv_are_text() {
+    for content_type in [
+        "application/x-ndjson",
+        "application/jsonl",
+        "application/jsonlines",
+        "application/csv",
+    ] {
+        let got = fetched(b"{\"a\":1}\n", Some(content_type), false).await;
+        assert_eq!(
+            got,
+            WebFetchResult::Success("{\"a\":1}\n".into()),
+            "{content_type}"
+        );
+    }
+}
+
+/// #2177 review: untyped HTML is recognised after a BOM, an XML prolog or a
+/// leading comment.
+#[tokio::test]
+async fn untyped_html_after_a_bom_prolog_or_comment_is_html() {
+    for page in [
+        "\u{feff}<!DOCTYPE html><p>hi</p>",
+        "<?xml version=\"1.0\"?><!DOCTYPE html><p>hi</p>",
+        "<!-- built --><html><p>hi</p></html>",
+    ] {
+        let got = fetched(page.as_bytes(), None, false).await;
+        assert_eq!(got, WebFetchResult::Success("hi".into()), "{page}");
+    }
+}

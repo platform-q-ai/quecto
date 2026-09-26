@@ -32,7 +32,7 @@ impl Tool for WebFetchTool {
     }
 
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition{name:"web_fetch".into(),description:"Fetch a URL and return its content as readable text. Strips HTML tags by default to save tokens. Use raw mode for JSON APIs or markdown files.".into(),parameters_schema:Cow::Borrowed(r#"{"type":"object","properties":{"url":{"type":"string","description":"URL to fetch (http or https)"},"raw":{"type":"boolean","description":"Return raw body without HTML stripping (default: false)"}},"required":["url"]}"#)}
+        ToolDefinition{name:"web_fetch".into(),description:"Fetch a URL and return its content as text: HTML is made readable (tags stripped) unless raw, other text (JSON, markdown, code, CSV...) comes back as served, and binary content (images, archives, PDFs) is named, not shown.".into(),parameters_schema:Cow::Borrowed(r#"{"type":"object","properties":{"url":{"type":"string","description":"URL to fetch (http or https)"},"raw":{"type":"boolean","description":"For HTML: return the markup as served instead of readable text (default: false)"}},"required":["url"]}"#)}
     }
     fn execute(
         &self,

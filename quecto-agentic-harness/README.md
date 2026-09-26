@@ -863,7 +863,7 @@ External tool binaries (`rg`, `fd`) are resolved from `PATH`; missing binaries r
 For `agent_cmd` command `get_subagents_all`, pass `agent_id` as `*` to list the current parent agent's tracked subagent registry instead of targeting a child agent.
 
 | `web_search` | Optional: search the web via Brave Search or DuckDuckGo when `tools.web.brave.enabled` or `tools.web.duckduckgo.enabled` is true |
-| `web_fetch` | Optional: fetch a URL and return readable text when `tools.web.fetch.enabled` is true (HTML stripped by default; `raw: true` returns the original body) |
+| `web_fetch` | Optional: fetch a URL and return readable text when `tools.web.fetch.enabled` is true (HTML is made readable unless `raw: true`; other text such as JSON, markdown or CSV comes back as served; binary content is named, not shown (#2165)) |
 | `workflow` | UDS-only template-based development workflow (status, list_templates, select_template, check, uncheck, skip, reset, set_issue, clear_issue, check_guards with command). Available by default in UDS as a dormant tool unless `--no-workflow`; `--workflow` starts prompt-driven mode immediately. See [Workflow docs](docs/workflow.md) |
 
 Filesystem tools (`read`, `write`, `edit`, `ls`) run on async `tokio::fs` adapters.
