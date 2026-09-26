@@ -87,7 +87,7 @@ pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
             write_event(clients, client_id, id.as_deref(), "get_subagents", &ev).await;
             true
         }
-        Some("delete_all_subagents") => {
+        Some("kill_all_subagents") => {
             // The fleet teardown is bounded but not instant (protocol ACK,
             // exit budget, fallback): answer from a detached task so the
             // reader stays responsive, and never behind the in-flight turn.
@@ -100,7 +100,7 @@ pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
                     &clients,
                     client_id,
                     id.as_deref(),
-                    "delete_all_subagents",
+                    "kill_all_subagents",
                     &ev,
                 )
                 .await;

@@ -101,6 +101,41 @@ impl TerminateAllDelegatedAgents {
         Self::with_bound(ports, DEFAULT_SETTLEMENT_BOUND)
     }
 
+    /// Select one delegated agent using the same registry, routing and
+    /// supervised termination capabilities as the fleet. Unlike fleet teardown,
+    /// this never closes the whole conversation or its other children.
+    pub async fn kill_one(
+        &self,
+        reference: String,
+    ) -> Result<
+        super::super::dto::KillDelegatedAgentOutcome,
+        super::super::dto::KillDelegatedAgentError,
+    > {
+        use super::super::dto::KillDelegatedAgentRequest;
+        use super::super::use_cases::OwnerConclusionPorts;
+        use super::kill_delegated_agent::{KillDelegatedAgent, KillDelegatedAgentPorts};
+        use super::terminate_delegated_agent::TerminateDelegatedAgent;
+        let ports = &self.inner.ports;
+        let route = Arc::new(
+            TerminateDelegatedAgent::new(ports.lifecycle.clone(), ports.routing.clone())
+                .with_owner_conclusion(OwnerConclusionPorts {
+                    registry: ports.registry.clone(),
+                    termination: ports.termination.clone(),
+                    compensation: ports.compensation.clone(),
+                }),
+        );
+        KillDelegatedAgent::new(
+            route,
+            KillDelegatedAgentPorts {
+                registry: ports.registry.clone(),
+                lifecycle: ports.lifecycle.clone(),
+                compensation: ports.compensation.clone(),
+            },
+        )
+        .execute(KillDelegatedAgentRequest { reference })
+        .await
+    }
+
     pub fn with_bound(ports: TerminateAllDelegatedAgentsPorts, bound: usize) -> Self {
         assert!(
             bound >= 1,

@@ -41,8 +41,12 @@ static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
             description: "Refresh the TUI view".into(),
         },
         SlashCommand {
-            name: "delete-all-subagents".into(),
-            description: "Terminate and remove all subagents".into(),
+            name: "kill_all_subagents".into(),
+            description: "Kill all subagents".into(),
+        },
+        SlashCommand {
+            name: "kill_agent".into(),
+            description: "Kill the agent in the current conversation".into(),
         },
         SlashCommand {
             name: "resume".into(),

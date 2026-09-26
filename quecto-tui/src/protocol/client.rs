@@ -198,9 +198,16 @@ pub enum Command {
         id: Option<String>,
     },
     /// Terminate and remove every tracked sub-agent.
+    #[serde(rename = "kill_all_subagents")]
     DeleteAllSubagents {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+    },
+    /// Kill a child owned by the connected parent.
+    KillAgent {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        agent_id: String,
     },
     /// Pull committed ledger messages after `sinceRev` for `epoch` (#1194 PR2).
     Sync {

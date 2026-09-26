@@ -199,6 +199,9 @@ pub(crate) struct ConnectionRoster {
     /// ignored: any snapshot or broadcast in flight predates the delete and
     /// would resurrect the rows the user just removed.
     delete_pending: bool,
+    /// Only a reply on this connection to this captured target may confirm a kill.
+    pub(crate) pending_kill: Option<(String, String)>,
+    pub(crate) kill_request_sequence: u64,
 }
 
 impl ConnectionRoster {
@@ -239,6 +242,8 @@ impl ConnectionRoster {
             expired_terminal_uuids: BTreeSet::new(),
             frame: 0,
             delete_pending: false,
+            pending_kill: None,
+            kill_request_sequence: 0,
             sessions: BTreeMap::new(),
             session_order: Vec::new(),
             active_agent_id: None,

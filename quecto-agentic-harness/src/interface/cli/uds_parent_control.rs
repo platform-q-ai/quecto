@@ -141,6 +141,7 @@ pub(crate) fn may_be_control_line(line: &str) -> bool {
     BindParentControlWire::may_be_presentation(line)
         || line.contains(SHUTDOWN_COMMAND)
         || line.contains(TERMINATE_DELEGATED_AGENT_COMMAND)
+        || line.contains("kill_agent")
         || line.contains("\\u00")
 }
 
@@ -155,6 +156,42 @@ pub(crate) async fn intercept_line(mut ctx: LineContext<'_>, line: &str) -> Inte
             tracing::warn!(client_id = ctx.client_id, %detail, "closing connection: malformed parent control presentation");
             return Intercept::Close;
         }
+    }
+    // An operator-selected kill is conversation-local, not a parent shutdown.
+    // Serve it from the reader so it remains available during a model turn.
+    if let Ok(super::protocol::AgentCommand::KillAgent { id, agent_id }) =
+        serde_json::from_str::<super::protocol::AgentCommand>(line)
+    {
+        let fleet = Arc::clone(&ctx.teardown.fleet);
+        let writer = Arc::clone(ctx.writer);
+        let mode = ctx.wire_mode.clone();
+        tokio::spawn(async move {
+            let response = match fleet.kill_one(agent_id).await {
+                Ok(outcome) => super::protocol::AgentEvent::ok(
+                    id.as_deref(),
+                    "kill_agent",
+                    Some(serde_json::json!({
+                        "target": outcome.target.uuid.as_str(),
+                        "result": outcome.result.as_str(),
+                        "killed": outcome.removed.iter().map(|uuid| uuid.as_str()).collect::<Vec<_>>(),
+                    })),
+                ),
+                Err(error) => {
+                    super::protocol::AgentEvent::err(id.as_deref(), "kill_agent", error.to_string())
+                }
+            };
+            let mut writer = writer.lock().await;
+            if let Err(error) = super::uds_wire::write_event_line(
+                &mut *writer,
+                &(response.to_json_line() + "\n"),
+                &mode,
+            )
+            .await
+            {
+                tracing::debug!(%error, "kill_agent response not delivered");
+            }
+        });
+        return Intercept::Handled;
     }
     let writer = ConnectionAckWriter {
         writer: Arc::clone(ctx.writer),

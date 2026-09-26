@@ -13,9 +13,55 @@ const OPTIMISTIC_SUBAGENT_GRACE: Duration = Duration::from_secs(30);
 const DELETE_ALL_RECONCILE_ID: &str = "delete-all-reconcile";
 
 impl App {
+    /// Target the active conversation's canonical identity, never the highlighted row.
+    pub(super) fn kill_conversation_agent(&mut self) {
+        let Some(agent_id) = self.ac().roster.active_agent_id.clone() else {
+            self.notify(
+                "Open a live subagent conversation before /kill_agent",
+                NotifyLevel::Warning,
+            );
+            return;
+        };
+        let live = self
+            .ac()
+            .roster
+            .tracked
+            .get(&agent_id)
+            .is_some_and(|tracked| {
+                tracked.info.agent_uuid.as_deref() == Some(agent_id.as_str())
+                    && matches!(
+                        tracked.info.status.as_str(),
+                        "starting" | "running" | "idle"
+                    )
+            });
+        if !live || !self.ac().agent_connected {
+            self.notify(
+                "Open a connected, live subagent conversation before /kill_agent",
+                NotifyLevel::Warning,
+            );
+            return;
+        }
+        if self.ac().roster.pending_kill.is_some() {
+            self.notify(
+                "Wait for the previous /kill_agent result",
+                NotifyLevel::Warning,
+            );
+            return;
+        }
+        self.ac_mut().roster.kill_request_sequence += 1;
+        let id = format!("kill-agent:{}", self.ac().roster.kill_request_sequence);
+        if self.send_command(Command::KillAgent {
+            id: Some(id.clone()),
+            agent_id: agent_id.clone(),
+        }) {
+            self.ac_mut().roster.pending_kill = Some((id, agent_id));
+            self.notify("Killing conversation agent", NotifyLevel::Info);
+        }
+    }
+
     pub(super) fn delete_all_subagents(&mut self) {
         if !self.send_command(Command::DeleteAllSubagents {
-            id: Some("delete-all-subagents".to_string()),
+            id: Some("kill-all-subagents".to_string()),
         }) {
             return;
         }
@@ -30,7 +76,7 @@ impl App {
         self.ac_mut().roster.begin_delete_all();
         self.subagents.panel_nav = crate::components::list_navigator::ListNavigator::new();
         self.subagents.panel_nav_key = Some("master".to_string());
-        self.notify("Deleting all subagents", NotifyLevel::Info);
+        self.notify("Killing all subagents", NotifyLevel::Info);
     }
 
     /// Move every agent-keyed collection from `from` → `to` together (#1378).

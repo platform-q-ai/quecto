@@ -17,7 +17,7 @@ use crate::domain::subagent_teardown::ShutdownReason;
 
 use super::protocol::AgentEvent;
 
-const COMMAND: &str = "delete_all_subagents";
+const COMMAND: &str = "kill_all_subagents";
 
 /// Run the fleet teardown for an operator and present the correlated
 /// response. A harness without a fleet teardown (no subagent registry) has

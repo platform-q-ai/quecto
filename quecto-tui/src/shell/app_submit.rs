@@ -46,7 +46,11 @@ impl App {
                     self.render_full();
                     return;
                 }
-                "/delete-all-subagents" => {
+                "/kill_agent" => {
+                    self.kill_conversation_agent();
+                    return;
+                }
+                "/kill_all_subagents" => {
                     self.delete_all_subagents();
                     return;
                 }

@@ -313,13 +313,33 @@ impl App {
                 self.notify("History cleared · workflow retained", NotifyLevel::Info);
             }
             "get_subagents" if success => self.handle_get_subagents(id.as_deref(), data),
-            "delete_all_subagents" if success => {
+            "kill_all_subagents" if success => {
                 self.reconcile_after_delete_all();
-                self.notify("Deleted all subagents", NotifyLevel::Success)
+                self.notify("Killed all subagents", NotifyLevel::Success)
             }
-            "delete_all_subagents" => {
+            "kill_all_subagents" => {
                 self.reconcile_after_delete_all();
-                self.notify_response_error("Could not delete subagents", error)
+                self.notify_response_error("Could not kill subagents", error)
+            }
+            "kill_agent"
+                if self
+                    .ac()
+                    .roster
+                    .pending_kill
+                    .as_ref()
+                    .is_some_and(|(pending, _)| id.as_deref() == Some(pending.as_str())) =>
+            {
+                self.ac_mut().roster.pending_kill = None;
+                if success {
+                    self.notify(
+                        "Killed conversation agent; refreshing roster",
+                        NotifyLevel::Success,
+                    );
+                    self.request_roster_refresh(None);
+                } else {
+                    self.notify_response_error("Could not kill conversation agent", error);
+                    self.request_roster_refresh(None);
+                }
             }
             "agent_error" => self.handle_agent_error(error),
             // A `parse_error` is BROADCAST and carries no id: it is nobody's in

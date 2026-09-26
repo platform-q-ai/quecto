@@ -52,6 +52,12 @@ impl App {
         // A pending delete_all_subagents response died with the connection;
         // the guard must not outlive it and freeze the roster (#1626).
         self.ac_mut().roster.take_delete_pending();
+        if self.ac_mut().roster.pending_kill.take().is_some() {
+            self.notify(
+                "Connection lost; /kill_agent outcome cannot be confirmed",
+                crate::components::notification::NotifyLevel::Warning,
+            );
+        }
         self.ac_mut().agent_state.reset();
         self.ac_mut()
             .stop_coordinator_clock(tokio::time::Instant::now());
