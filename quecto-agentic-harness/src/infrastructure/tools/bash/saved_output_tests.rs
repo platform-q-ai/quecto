@@ -110,10 +110,11 @@ fn the_count_cap_removes_the_oldest_files_first() {
 
     let removed = prune_saved_outputs(tmp.path(), owner(), now, policy);
 
-    assert_eq!(removed, 5);
-    assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 200);
+    // Room is left for the save that follows: it then holds exactly 200.
+    assert_eq!(removed, 6);
+    assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 199);
     for (i, file) in files.iter().enumerate() {
-        assert_eq!(file.exists(), i >= 5, "file {i}");
+        assert_eq!(file.exists(), i >= 6, "file {i}");
     }
 }
 
@@ -200,9 +201,14 @@ fn a_save_into_a_full_directory_keeps_the_new_file() {
 
     assert_eq!(std::fs::read_to_string(&saved).unwrap(), "fresh body");
     assert!(is_saved_output_name(saved.file_name().unwrap()));
-    assert!(!oldest.exists(), "the oldest file makes room");
-    assert!(middle.exists());
+    assert!(!oldest.exists(), "the oldest files make room");
+    assert!(!middle.exists());
     assert!(newest.exists(), "the newest earlier file survives");
+    assert_eq!(
+        std::fs::read_dir(tmp.path()).unwrap().count(),
+        2,
+        "a save leaves at most max_files (#2167 review)"
+    );
 }
 
 #[test]
@@ -286,4 +292,67 @@ fn a_new_saved_output_directory_is_private() {
     create_private_dir(&dir).unwrap();
     let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o700);
+}
+
+/// #2167 review: expiry and the cap together remove whichever is more, not
+/// their sum.
+#[test]
+fn expiry_and_the_cap_remove_the_larger_count() {
+    let tmp = TempDir::new().unwrap();
+    let now = SystemTime::now();
+    for i in 0..3 {
+        saved_file(tmp.path(), &format!("old{i:03}"), now, 25 * HOUR);
+    }
+    for i in 0..7 {
+        saved_file(
+            tmp.path(),
+            &format!("new{i:03}"),
+            now,
+            Duration::from_secs(60 + i),
+        );
+    }
+    // 10 files, 3 expired; a cap of 6 leaves room for 5, so 5 go.
+    assert_eq!(
+        prune_saved_outputs(tmp.path(), owner(), now, small_policy(6)),
+        5
+    );
+}
+
+/// #2167 review: a file exactly at the age limit is kept.
+#[test]
+fn a_file_exactly_at_the_age_limit_is_kept() {
+    let tmp = TempDir::new().unwrap();
+    let now = SystemTime::now();
+    let policy = small_policy(200);
+    let edge = saved_file(tmp.path(), "edge00", now, policy.max_age);
+    assert_eq!(prune_saved_outputs(tmp.path(), owner(), now, policy), 0);
+    assert!(edge.exists());
+}
+
+/// #2167 review: an owned directory others can write into (as an older
+/// build may have left it) is made owner-only before a save.
+#[test]
+fn a_loose_owned_directory_is_made_private_before_a_save() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path().join("loose");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+    assert!(save_output_in(&dir, "body", small_policy(200)).is_some());
+    let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+}
+
+/// #2167 review: the old shared directory is swept of this user's files,
+/// and nothing else in it is touched.
+#[test]
+fn the_legacy_sweep_removes_only_this_users_saved_files() {
+    let tmp = TempDir::new().unwrap();
+    let now = SystemTime::now();
+    let mine = saved_file(tmp.path(), "mine00", now, HOUR);
+    let other = tmp.path().join("notes.txt");
+    std::fs::write(&other, "keep").unwrap();
+    assert_eq!(prune_saved_outputs(tmp.path(), owner(), now, SWEEP_ALL), 1);
+    assert!(!mine.exists());
+    assert!(other.exists());
 }

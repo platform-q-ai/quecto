@@ -442,7 +442,7 @@ async fn run_child_with_timeout(
 /// Truncation notice format (matching Quecto's bash.ts):
 /// - Byte-truncated:  `[Showing lines X-Y of Z (50KB limit). Full output: PATH]`
 /// - Line-truncated:  `[Showing lines X-Y of Z. Full output: PATH]`
-/// - Save fails:      `[Output truncated to last N lines / N bytes]`
+/// - Save fails:      `[Output truncated to last N lines / N bytes; the full output could not be saved, …]`
 #[cfg(test)]
 async fn collect_and_truncate_output(stream_tasks: &mut StreamTasks) -> String {
     let (output, capture_cut, _) = collect_after_exit(stream_tasks).await;
@@ -519,8 +519,9 @@ async fn truncate_output(combined: String, capture_cut: bool) -> String {
             start_line, end_line, total, limit_note, saved, combined_len, tmp_path
         )
     } else {
+        // Say so when the rest is kept nowhere (#2167 review).
         format!(
-            "\n[Output truncated to last {} lines / {} bytes]",
+            "\n[Output truncated to last {} lines / {} bytes; the full output could not be saved, so redirect it to a file (e.g. `> out.txt`) to keep it]",
             TAIL_MAX_LINES, TAIL_MAX_BYTES
         )
     };

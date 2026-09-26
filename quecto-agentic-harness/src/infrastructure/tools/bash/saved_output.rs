@@ -1,8 +1,8 @@
 //! Over-long `bash` output saved for the agent to read later (#2167).
 //!
 //! The directory limits itself: before each save, files the tool itself wrote
-//! that are older than a day go, then the oldest go until at most
-//! [`SAVED_OUTPUT_POLICY`]`.max_files` remain. Pruning is allowlisted: only
+//! that are older than a day go, then the oldest go until the save leaves at
+//! most [`SAVED_OUTPUT_POLICY`]`.max_files`. Pruning is allowlisted: only
 //! regular files named exactly as [`save_output_in`] names them, directly in a
 //! real (non-symlink) directory the current user owns, are ever removed. A
 //! pruning failure is logged and never fails the save.
@@ -17,12 +17,26 @@ const NAME_SUFFIX: &str = ".log";
 /// Pinned on the builder so the name pattern never drifts with `tempfile`.
 const NAME_RANDOM_LEN: usize = 6;
 
-/// The shared directory's name. Unit tests save under their own name so a
-/// test run never prunes the real directory.
+/// The directory's name; each user has their own (`<name>-<uid>`), so no
+/// user can squat another's (#2167 review). Unit tests save under their own
+/// name so a test run never prunes the real directory.
 #[cfg(not(test))]
 const DIR_NAME: &str = "quecto-bash-output";
 #[cfg(test)]
 const DIR_NAME: &str = "quecto-bash-output-lib-tests";
+
+/// The directory every user shared before it was per user: the files this
+/// user saved there are swept away, the directory itself is left alone.
+#[cfg(not(test))]
+const LEGACY_DIR_NAME: &str = "quecto-bash-output";
+#[cfg(test)]
+const LEGACY_DIR_NAME: &str = "quecto-bash-output-lib-tests-legacy";
+
+/// A policy that removes every file this user saved.
+pub(super) const SWEEP_ALL: PrunePolicy = PrunePolicy {
+    max_age: Duration::ZERO,
+    max_files: 0,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct PrunePolicy {
@@ -38,7 +52,14 @@ pub(super) const SAVED_OUTPUT_POLICY: PrunePolicy = PrunePolicy {
 /// Save content to the shared temp directory asynchronously and return the path.
 pub(super) async fn save_to_temp_file(content: String) -> Option<String> {
     tokio::task::spawn_blocking(move || {
-        let dir = std::env::temp_dir().join(DIR_NAME);
+        let temp = std::env::temp_dir();
+        prune_saved_outputs(
+            &temp.join(LEGACY_DIR_NAME),
+            current_uid(),
+            SystemTime::now(),
+            SWEEP_ALL,
+        );
+        let dir = temp.join(format!("{DIR_NAME}-{}", current_uid()));
         create_private_dir(&dir).ok()?;
         let path = save_output_in(&dir, &content, SAVED_OUTPUT_POLICY)?;
         Some(path.display().to_string())
@@ -78,6 +99,12 @@ pub(super) fn save_output_in_as(
             dir = %dir.display(),
             "bash output not saved: the directory is not a real directory owned by this user"
         );
+        return None;
+    }
+    // Others must not be able to swap a saved file for their own before the
+    // model reads it (#2167 review): the directory is kept owner-only.
+    if !make_private(dir) {
+        tracing::warn!(dir = %dir.display(), "bash output not saved: the directory cannot be made owner-only");
         return None;
     }
     prune_saved_outputs(dir, owner, SystemTime::now(), policy);
@@ -140,7 +167,11 @@ pub(super) fn prune_saved_outputs(
                 .is_ok_and(|age| age > policy.max_age)
         })
         .count();
-    let over_cap = candidates.len().saturating_sub(policy.max_files);
+    // Room for the file about to be saved: the save leaves at most
+    // `max_files` (#2167 review).
+    let over_cap = candidates
+        .len()
+        .saturating_sub(policy.max_files.saturating_sub(1));
     let doomed = expired.max(over_cap);
     assert!(doomed <= candidates.len(), "prune count within candidates");
     candidates[..doomed]
@@ -200,11 +231,39 @@ pub(super) fn saved_output_files(
 fn remove_saved_output(path: &Path) -> bool {
     match std::fs::remove_file(path) {
         Ok(()) => true,
+        // Another save's prune got there first.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
         Err(e) => {
             tracing::warn!(path = %path.display(), error = %e, "bash output prune: cannot remove file");
             false
         }
     }
+}
+
+/// Make an owned directory owner-only (0700), as a directory another build
+/// created may not be; true when it is owner-only afterwards.
+#[cfg(unix)]
+pub(super) fn make_private(dir: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let is_private = |dir: &Path| {
+        std::fs::symlink_metadata(dir)
+            .is_ok_and(|meta| meta.is_dir() && meta.permissions().mode() & 0o077 == 0)
+    };
+    if is_private(dir) {
+        return true;
+    }
+    match std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
+        Ok(()) => is_private(dir),
+        Err(e) => {
+            tracing::warn!(dir = %dir.display(), error = %e, "bash output: cannot make directory owner-only");
+            false
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub(super) fn make_private(_dir: &Path) -> bool {
+    false
 }
 
 #[cfg(unix)]
