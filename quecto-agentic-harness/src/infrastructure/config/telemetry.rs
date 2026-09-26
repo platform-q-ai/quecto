@@ -17,6 +17,19 @@ pub struct EventLogConfig {
     pub enabled: bool,
 }
 
+/// Whether the owner's global config (`<base_dir>/config.json`) switches
+/// the event log on (#2150): it covers every agent on the machine, one
+/// started with its own `--config` (a container member, a sub-agent given a
+/// config) included. A missing or unreadable file switches nothing on.
+pub fn globally_enabled(base_dir: &std::path::Path) -> bool {
+    std::fs::read(base_dir.join("config.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .is_some_and(|config| {
+            config["telemetry"]["event_log"]["enabled"] == serde_json::json!(true)
+        })
+}
+
 #[cfg(test)]
 #[path = "telemetry_tests.rs"]
 mod tests;

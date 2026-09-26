@@ -32,7 +32,8 @@ pub enum AuditEvent {
         is_error: bool,
         content_tokens: usize,
         content_preview: String,
-        /// How long the tool ran (#2150).
+        /// How long the call took, policy and approval waits included
+        /// (#2150).
         #[serde(default)]
         duration_ms: u64,
         /// The arguments the tool ran with, in bytes (#2150).

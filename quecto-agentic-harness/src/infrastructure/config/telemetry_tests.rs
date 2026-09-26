@@ -12,3 +12,26 @@ fn the_event_log_is_off_unless_switched_on() {
         serde_json::from_str(r#"{"telemetry":{"event_log":{"enabled":true}}}"#).unwrap();
     assert!(whole.telemetry.event_log.enabled);
 }
+
+/// #2150: the owner's global file switches the event log on for every
+/// agent, whatever config it was started with; no file or an unreadable one
+/// switches nothing on.
+#[test]
+fn the_global_file_switches_every_agent_on() {
+    let base = tempfile::tempdir().unwrap();
+    assert!(!globally_enabled(base.path()));
+    std::fs::write(base.path().join("config.json"), "not json").unwrap();
+    assert!(!globally_enabled(base.path()));
+    std::fs::write(
+        base.path().join("config.json"),
+        r#"{"telemetry":{"event_log":{"enabled":false}}}"#,
+    )
+    .unwrap();
+    assert!(!globally_enabled(base.path()));
+    std::fs::write(
+        base.path().join("config.json"),
+        r#"{"telemetry":{"event_log":{"enabled":true}}}"#,
+    )
+    .unwrap();
+    assert!(globally_enabled(base.path()));
+}

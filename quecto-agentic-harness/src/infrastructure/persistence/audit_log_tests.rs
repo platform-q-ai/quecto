@@ -393,3 +393,74 @@ async fn a_log_stops_at_its_cap_with_one_final_record() {
         .sum();
     assert!(before_cap <= 600, "{before_cap}");
 }
+
+/// #2150: `~/.quecto` is shared with containers, so a link planted as the
+/// audit directory or a log file is never followed: the open fails and
+/// what the link names is untouched.
+#[tokio::test]
+async fn a_planted_link_is_never_followed() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = TempDir::new().unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    let victim = elsewhere.path().join("tool");
+    std::fs::write(&victim, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::create_dir(tmp.path().join("audit")).unwrap();
+    std::os::unix::fs::symlink(&victim, AuditLog::file_path(tmp.path(), "s")).unwrap();
+    assert!(AuditLog::open_sync(tmp.path(), "s").is_err());
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "#!/bin/sh\n");
+    assert_eq!(
+        std::fs::metadata(&victim).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
+    std::fs::set_permissions(elsewhere.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let linked = TempDir::new().unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), linked.path().join("audit")).unwrap();
+    assert!(AuditLog::open_sync(linked.path(), "s").is_err());
+    assert_eq!(
+        std::fs::metadata(elsewhere.path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755,
+        "a linked directory is never made private in its target's place"
+    );
+    assert!(!elsewhere.path().join("s.jsonl").exists());
+}
+
+/// #2150: a log that reached its cap stays stopped when its session
+/// restarts: no second `log_capped` record.
+#[tokio::test]
+async fn a_capped_log_stays_stopped_after_a_restart() {
+    let tmp = TempDir::new().unwrap();
+    let emit_all = |log: AuditLog| async move {
+        for n in 0..20 {
+            log.emit(
+                n,
+                AuditEvent::SubagentCmd {
+                    agent_id: "a".into(),
+                    command: "x".repeat(40),
+                },
+            )
+            .await
+            .unwrap();
+        }
+    };
+    emit_all(
+        AuditLog::open(tmp.path(), "big")
+            .await
+            .unwrap()
+            .with_cap(600),
+    )
+    .await;
+    emit_all(
+        AuditLog::open(tmp.path(), "big")
+            .await
+            .unwrap()
+            .with_cap(600),
+    )
+    .await;
+    let text = std::fs::read_to_string(AuditLog::file_path(tmp.path(), "big")).unwrap();
+    assert_eq!(text.matches("log_capped").count(), 1, "{text}");
+}

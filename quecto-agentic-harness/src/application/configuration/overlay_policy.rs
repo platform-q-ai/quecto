@@ -136,6 +136,9 @@ pub fn merge_overlay(
                 merge_container_configs(global.entry(key).or_insert(Value::Null), value)
             }
             "workflow" => merge_depth(global.entry(key).or_insert(Value::Null), value, 1),
+            // #2150: key-wise, so an overlay's `{}` (or an unset `enabled`)
+            // leaves the owner's switch as it is.
+            "telemetry" => merge_depth(global.entry(key).or_insert(Value::Null), value, 2),
             _ => {
                 global.insert(key, value);
             }

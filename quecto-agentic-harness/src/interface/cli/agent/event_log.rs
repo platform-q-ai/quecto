@@ -1,12 +1,15 @@
 //! Which agents keep the audit log (#2150): a workflow session with a key,
-//! as before; with `telemetry.event_log` on, every agent.
+//! as before; with `telemetry.event_log` on, every agent except one asked
+//! to leave nothing behind (`-s -`, `--no-session`).
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::audit::ports::AuditSink;
 
 /// The key an agent's audit log is filed under, or `None` when it keeps
-/// none: its session's key, else (a session without one) its process.
+/// none: its session's key, else a key of its own (process and start time,
+/// never another session's).
 pub(super) fn log_key(
     workflow: bool,
     ephemeral: bool,
@@ -14,27 +17,49 @@ pub(super) fn log_key(
     event_log: bool,
 ) -> Option<String> {
     let workflow_log = workflow && !ephemeral && !session_key.is_empty();
-    match (workflow_log, event_log, session_key.is_empty()) {
+    match (
+        workflow_log,
+        event_log && !ephemeral,
+        session_key.is_empty(),
+    ) {
         (true, _, _) | (false, true, false) => Some(session_key.to_owned()),
-        (false, true, true) => Some(format!("pid-{}", std::process::id())),
+        (false, true, true) => Some(unkeyed()),
         (false, false, _) => None,
     }
 }
 
-/// Open the agent's audit log under `key`, naming a sub-agent's parent; a
-/// failure to open is a warning, never a failed start.
-pub(super) fn open(
+/// A session asked to leave nothing behind (`--no-session`, `-s -`).
+pub(super) fn ephemeral(flags: &super::AgentFlags) -> bool {
+    flags.no_session || flags.session_name.as_deref() == Some("-")
+}
+
+/// A key for a session without one: unique to this process and start.
+fn unkeyed() -> String {
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("unkeyed-{}-{started}", std::process::id())
+}
+
+/// Give `agent` its audit log when it keeps one; a failure to open is a
+/// warning, never a failed start.
+pub(super) fn attach(
+    agent: &mut AgentLoopImpl,
     base_dir: &Path,
-    key: &str,
     flags: &super::AgentFlags,
+    session_key: &str,
+    event_log: bool,
     stderr: &mut String,
-) -> Option<Arc<dyn AuditSink>> {
-    match crate::infrastructure::persistence::audit_log::AuditLog::open_sync(base_dir, key) {
-        Ok(log) => Some(Arc::new(log.with_parent(flags.parent_id.clone())) as Arc<dyn AuditSink>),
-        Err(e) => {
-            stderr.push_str(&format!("WARNING: failed to open audit log: {e}\n"));
-            None
-        }
+) {
+    let Some(key) = log_key(flags.workflow, ephemeral(flags), session_key, event_log) else {
+        return;
+    };
+    match crate::infrastructure::persistence::audit_log::AuditLog::open_sync(base_dir, &key) {
+        Ok(log) => agent.set_audit_log(Some(
+            Arc::new(log.with_parent(flags.parent_id.clone())) as Arc<dyn AuditSink>
+        )),
+        Err(e) => stderr.push_str(&format!("WARNING: failed to open audit log: {e}\n")),
     }
 }
 

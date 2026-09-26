@@ -42,7 +42,9 @@ impl AgentLoopImpl {
                     AuditEvent::ToolCall {
                         tool: tc.name.clone(),
                         call_id: tc.id.clone(),
-                        arguments: tc.arguments.clone(),
+                        // What the tool ran with (#2123), as `argument_bytes`
+                        // measures it (#2150).
+                        arguments: delivered_tool_arguments.clone(),
                     },
                 )
                 .await;

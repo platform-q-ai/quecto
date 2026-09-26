@@ -747,6 +747,8 @@ pub struct QuectoWorld {
     pub _swarm_temp_dir: Option<TempDir>,
     /// Workspace path for swarm tests
     pub swarm_workspace: Option<PathBuf>,
+    /// #2150: a real agent's event log run.
+    pub event_log: Option<event_log_steps::EventLogRun>,
     /// Result from the most recent swarm tool execution
     pub swarm_result: Option<quecto::domain::tool::ToolResult>,
     /// Scenario-scoped tool instance; owns the background job registry
@@ -1446,6 +1448,7 @@ mod delegated_subtree_steps;
 mod e2e_steps;
 mod edit_tool_steps;
 mod embedded_docs_steps;
+mod event_log_steps;
 mod exec_tool_steps;
 mod extension_steps;
 mod find_steps;

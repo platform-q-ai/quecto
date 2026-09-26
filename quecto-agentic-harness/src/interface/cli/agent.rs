@@ -13,7 +13,10 @@ pub(crate) struct AgentOutput<'a> {
     pub(crate) stderr: &'a mut String,
 }
 mod agent_deadline;
+#[path = "agent/build_result.rs"]
+mod build_result;
 mod event_log;
+pub(crate) use build_result::AgentBuildResult;
 mod flag_parse;
 mod startup_effort;
 mod startup_prompt;
@@ -285,39 +288,26 @@ pub(crate) fn cmd_agent(
             .push_str("agent: sessions capability not composed\n");
         return 1;
     };
+    let mut agent = build.agent;
+    let key = flags.session_name.clone().unwrap_or_default();
+    event_log::attach(
+        &mut agent,
+        &base_dir,
+        &flags,
+        &key,
+        build.event_log,
+        out.stderr,
+    );
     let code = run_agent_session(
         &base_dir,
         sessions,
-        build.agent,
+        agent,
         &build.retention,
         &flags,
         &mut out,
     );
     admission_startup::shutdown();
     code
-}
-pub(crate) struct AgentBuildResult {
-    pub agent: AgentLoopImpl,
-    /// The run's catalogue handles (#1845, #1848), the same instances the
-    /// spawn tool and the startup effort admission used.
-    pub catalogue: crate::interface::cli::catalogue_handles::CatalogueHandles,
-    /// The run's retained-context handles (D9 #1978): the store the loop's
-    /// session recovers through and the scrub the ephemeral exit reaches.
-    pub retention: crate::interface::cli::retention_handles::RetentionHandles,
-    pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,
-    pub extension_prompt_snippets: String,
-    pub model: String,
-    pub ext_registry: Arc<std::sync::Mutex<ExtensionRegistry>>,
-    pub notification_rx: Option<NotificationRx>,
-    pub subagent_registry: Option<SubagentRegistry>,
-    pub harness_lifecycle: Option<SharedHarnessLifecycle>,
-    /// The environment control slot (#2070) the loop hands its teardown.
-    pub environment_control:
-        Option<crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot>,
-    pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
-    pub workspace: std::path::PathBuf,
-    /// `telemetry.event_log.enabled` (#2150).
-    pub event_log: bool,
 }
 pub(crate) fn build_agent_from_config(
     base_dir: &std::path::Path,
@@ -538,7 +528,8 @@ pub(crate) fn build_agent_from_config(
         environment_control,
         workflow_state,
         workspace,
-        event_log: config.telemetry.event_log.enabled,
+        event_log: config.telemetry.event_log.enabled
+            || crate::infrastructure::config::telemetry::globally_enabled(base_dir),
     })
 }
 mod agent_tool_registry;
@@ -578,7 +569,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         return 1;
     };
 
-    let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
+    let ephemeral = event_log::ephemeral(&flags);
     let Some(session_identity) = resolve_startup_identity(ctx, &flags, ephemeral, stderr) else {
         return 1;
     };
@@ -632,9 +623,14 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
 
     agent.set_session_key(session_identity.clone());
 
-    // Workflow sessions keep a durable audit log; with the event log on, every agent does.
-    let key = event_log::log_key(flags.workflow, ephemeral, &session_key, build.event_log);
-    agent.set_audit_log(key.and_then(|key| event_log::open(&base_dir, &key, &flags, stderr)));
+    event_log::attach(
+        &mut agent,
+        &base_dir,
+        &flags,
+        &session_key,
+        build.event_log,
+        stderr,
+    );
 
     let model = build.model.clone();
 

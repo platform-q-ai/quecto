@@ -269,3 +269,24 @@ fn an_overlay_may_switch_the_event_log_on_but_not_off() {
         &json!({"telemetry": {"event_log": {"enabled": true}}})
     ));
 }
+
+/// #2150: an overlay's empty `telemetry` (or `event_log`) section leaves
+/// the owner's switch on: the section merges key-wise.
+#[test]
+fn an_empty_overlay_telemetry_section_leaves_the_switch_on() {
+    let global = json!({"telemetry": {"event_log": {"enabled": true}}});
+    for overlay in [
+        json!({"telemetry": {}}),
+        json!({"telemetry": {"event_log": {}}}),
+    ] {
+        let merged = merge_overlay(
+            global.as_object().unwrap().clone(),
+            overlay.as_object().unwrap().clone(),
+        );
+        assert_eq!(
+            merged["telemetry"]["event_log"]["enabled"],
+            json!(true),
+            "{overlay}"
+        );
+    }
+}

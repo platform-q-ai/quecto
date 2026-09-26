@@ -58,29 +58,48 @@ impl AuditLog {
 
     /// Open (or create) the audit log file for the given session (sync).
     ///
-    /// The directory is private (0700) and the file too (0600), tightened
-    /// when an earlier version left them looser (#2150).
+    /// `~/.quecto` is shared with containers (#2150), so nothing here
+    /// follows a link an agent could plant: the directory is opened without
+    /// following one, and the file through that directory, likewise. Both
+    /// are made private (0700, 0600) through their handles, tightening what
+    /// an earlier version left looser; a tightening refused (someone else's
+    /// file) leaves the log open, with a warning.
     pub fn open_sync(base_dir: &Path, session_key: &str) -> Result<Self, DomainError> {
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        use std::os::unix::io::AsRawFd;
         let audit_dir = base_dir.join("audit");
         std::fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
             .create(&audit_dir)
             .map_err(|e| DomainError::Session(format!("failed to create audit dir: {e}")))?;
-        std::fs::set_permissions(&audit_dir, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| DomainError::Session(format!("failed to secure audit dir: {e}")))?;
+        let dir = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(&audit_dir)
+            .map_err(|e| {
+                DomainError::Session(format!(
+                    "failed to open audit dir {} (a link is never followed): {e}",
+                    audit_dir.display()
+                ))
+            })?;
+        tighten(&dir, 0o700, &audit_dir);
 
-        let path = Self::file_path(base_dir, session_key);
+        let filename = format!("{}.jsonl", sanitize_session_key(session_key));
+        let within = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd())).join(&filename);
         let std_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .mode(0o600)
-            .open(&path)
-            .map_err(|e| DomainError::Session(format!("failed to open audit log: {e}")))?;
-        std_file
-            .set_permissions(std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| DomainError::Session(format!("failed to secure audit log: {e}")))?;
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&within)
+            .map_err(|e| {
+                DomainError::Session(format!(
+                    "failed to open audit log {} (a link is never followed): {e}",
+                    audit_dir.join(&filename).display()
+                ))
+            })?;
+        tighten(&std_file, 0o600, &audit_dir.join(&filename));
         let written = std_file
             .metadata()
             .map_err(|e| DomainError::Session(format!("failed to read audit log: {e}")))?
@@ -90,7 +109,7 @@ impl AuditLog {
             writer: Mutex::new(Writer {
                 file: tokio::fs::File::from_std(std_file),
                 written,
-                capped: false,
+                capped: written >= DEFAULT_CAP_BYTES,
             }),
             session_key: session_key.to_string(),
             parent: None,
@@ -104,10 +123,13 @@ impl AuditLog {
         self
     }
 
-    /// Stop at `cap_bytes` instead of [`DEFAULT_CAP_BYTES`].
+    /// Stop at `cap_bytes` instead of [`DEFAULT_CAP_BYTES`]; a log already
+    /// that full stays stopped.
     pub fn with_cap(mut self, cap_bytes: u64) -> Self {
         assert!(cap_bytes > 0, "an audit log holds something");
         self.cap_bytes = cap_bytes;
+        let writer = self.writer.get_mut();
+        writer.capped = writer.written >= cap_bytes;
         self
     }
 
@@ -194,6 +216,14 @@ impl AuditSink for AuditLog {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>
     {
         Box::pin(AuditLog::emit(self, turn, event))
+    }
+}
+
+/// Make `file` private (`mode`) through its handle; best-effort.
+fn tighten(file: &std::fs::File, mode: u32, shown: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Err(error) = file.set_permissions(std::fs::Permissions::from_mode(mode)) {
+        tracing::warn!(%error, path = %shown.display(), "audit log left as it was: it could not be made private");
     }
 }
 
