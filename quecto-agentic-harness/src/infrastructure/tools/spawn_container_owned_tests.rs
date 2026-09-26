@@ -32,6 +32,10 @@ async fn rollback_kills_child_and_consumes_cleanup_once() {
         settled: false,
     };
     prepared.rollback_once().await;
+    assert!(
+        prepared.owned_child.is_none(),
+        "the concluded handle is let go"
+    );
     assert!(prepared.cleanup_argv.is_empty());
     assert!(registry.get("C-test").is_none());
 }
