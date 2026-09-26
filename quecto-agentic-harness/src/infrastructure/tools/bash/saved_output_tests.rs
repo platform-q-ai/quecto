@@ -223,3 +223,36 @@ fn a_save_into_an_unreadable_directory_still_succeeds() {
     let saved = saved.expect("an unreadable directory never fails the save");
     assert_eq!(std::fs::read_to_string(saved).unwrap(), "body");
 }
+
+#[test]
+fn only_a_real_directory_the_owner_owns_qualifies() {
+    let tmp = TempDir::new().unwrap();
+    let holder = TempDir::new().unwrap();
+    let link = holder.path().join("linked");
+    std::os::unix::fs::symlink(tmp.path(), &link).unwrap();
+
+    assert!(is_owned_real_directory(tmp.path(), owner()));
+    assert!(!is_owned_real_directory(
+        tmp.path(),
+        owner().wrapping_add(1)
+    ));
+    assert!(!is_owned_real_directory(&link, owner()));
+}
+
+#[test]
+fn only_files_the_owner_owns_are_candidates() {
+    let tmp = TempDir::new().unwrap();
+    let now = SystemTime::now();
+    let old = saved_file(tmp.path(), "old000", now, 48 * HOUR);
+
+    let mine = saved_output_files(tmp.path(), owner()).unwrap();
+    assert_eq!(
+        mine,
+        vec![(std::fs::metadata(&old).unwrap().modified().unwrap(), old)]
+    );
+    let theirs = saved_output_files(tmp.path(), owner().wrapping_add(1)).unwrap();
+    assert!(
+        theirs.is_empty(),
+        "another user's file is never a candidate"
+    );
+}

@@ -120,7 +120,7 @@ pub(super) fn prune_saved_outputs(
 }
 
 /// The directory itself (not through a symlink) exists and `owner` owns it.
-fn is_owned_real_directory(dir: &Path, owner: u32) -> bool {
+pub(super) fn is_owned_real_directory(dir: &Path, owner: u32) -> bool {
     match std::fs::symlink_metadata(dir) {
         Ok(meta) => meta.is_dir() && is_owned_by(&meta, owner),
         Err(e) => {
@@ -132,7 +132,10 @@ fn is_owned_real_directory(dir: &Path, owner: u32) -> bool {
 
 /// Every saved-output regular file directly in `dir` owned by `owner`, with
 /// its modification time. Unreadable entries are skipped with a warning.
-fn saved_output_files(dir: &Path, owner: u32) -> std::io::Result<Vec<(SystemTime, PathBuf)>> {
+pub(super) fn saved_output_files(
+    dir: &Path,
+    owner: u32,
+) -> std::io::Result<Vec<(SystemTime, PathBuf)>> {
     let mut files = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let entry = match entry {
