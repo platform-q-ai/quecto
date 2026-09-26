@@ -147,6 +147,9 @@ async fn success_names_the_container_config_and_relays_the_selection_diagnostics
         .register_and_monitor(&identity, runtime, &mut prepared, &config())
         .await
         .unwrap();
+    // #2173: the registered entry owns the cleanup, so dropping the
+    // prepared launch no longer rolls it back.
+    assert!(prepared.settled);
     let result = ports.success(&identity, Some(&env_ref));
     assert!(!result.is_error);
     let expected = format!(
@@ -202,6 +205,10 @@ async fn register_into_a_stopped_environment_fails_and_unregisters() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains(&env_ref), "{err}");
+    assert!(
+        !prepared.settled,
+        "a failed registration is still rolled back"
+    );
     assert!(
         !tool
             .registry
