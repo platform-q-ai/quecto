@@ -583,3 +583,31 @@ fn inert_content_does_not_end_a_landmark() {
         "{text}"
     );
 }
+
+/// A `<title>` after `</head>` still belongs to the head (as a browser
+/// parses it): only a tag that is not a head tag ends the head.
+#[test]
+fn a_title_after_the_head_close_is_still_the_title() {
+    let html = format!(
+        "<html><head><meta charset=utf-8></head><title>After</title><div>{}</div><main>{}</main></html>",
+        words(20, "side"),
+        words(60, "in")
+    );
+    let text = readable_html(&html);
+    assert!(text.starts_with("After\n"), "{text}");
+}
+
+/// Navigation, footers, scripts and styles inside the landmark still go.
+#[test]
+fn chrome_inside_the_landmark_still_goes() {
+    let html = page(&format!(
+        "{}<main><nav>Menu</nav><style>.x{{}}</style>{}<script>var s;</script><footer>Legal</footer></main>",
+        words(20, "side"),
+        words(60, "in")
+    ));
+    let text = readable_html(&html);
+    assert!(text.contains(NOTE) && text.contains("in in"), "{text}");
+    for chrome in ["Menu", ".x", "var s", "Legal", "side"] {
+        assert!(!text.contains(chrome), "kept {chrome:?}: {text}");
+    }
+}

@@ -147,8 +147,9 @@ fn scan(html: &str) -> Found<'_> {
     let mut tags = Tags { html, pos: 0 };
     while let Some(tag) = tags.next() {
         let is = |name: &str| tag.name.eq_ignore_ascii_case(name);
-        // The head lasts while every tag is a head tag, until `</head>`.
-        in_head = in_head && HEAD_TAGS.iter().any(|name| is(name)) && !(tag.closing && is("head"));
+        // The head lasts while every tag is a head tag (`</head>` too: a
+        // title after it is still the head's, as a browser parses it).
+        in_head = in_head && HEAD_TAGS.iter().any(|name| is(name));
         if tag.closing {
             continue;
         }
