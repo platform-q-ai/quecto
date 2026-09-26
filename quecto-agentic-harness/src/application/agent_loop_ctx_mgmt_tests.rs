@@ -670,10 +670,15 @@ async fn oversized_tool_definitions_leave_the_messages_a_quarter() {
         max_context_tokens: tool_tokens / 2,
         ..test_config(provider, Box::new(registry))
     });
-    let mut messages = vec![Message::user("hi")];
+    let turn = |n: u32| {
+        let mut message = Message::assistant("ok", vec![]);
+        message.turn = Some(n);
+        message
+    };
+    let mut messages = vec![turn(1), turn(2), turn(3), turn(4), Message::user("hi")];
     agent.apply_context_pruning(&mut messages, 1, false).await;
     assert!(
-        messages.iter().any(|m| m.content == "hi"),
-        "the current prompt survives"
+        messages.iter().any(|m| m.turn == Some(1)),
+        "short history fits the quarter left to the messages"
     );
 }
