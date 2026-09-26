@@ -128,3 +128,104 @@ async fn a_tool_call_keeps_the_models_raw_arguments_when_replaced() {
     assert_ne!(call.0, "{not json", "{call:?}");
     assert_eq!(call.1.as_deref(), Some("{not json"), "{call:?}");
 }
+
+/// A tool that fails with a long message whose cause is at its end.
+#[derive(Debug)]
+struct FailingTool;
+
+impl crate::application::tools::ports::Tool for FailingTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "failing".into(),
+            description: "fails".into(),
+            parameters_schema: r#"{"type":"object"}"#.into(),
+        }
+    }
+
+    fn execute(
+        &self,
+        _arguments: &str,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ToolResult, DomainError>> + Send + '_>>
+    {
+        Box::pin(async {
+            Ok(ToolResult {
+                content: format!(
+                    "Traceback:\n{}ValueError: the cause",
+                    "  frame\n".repeat(100)
+                ),
+                is_error: true,
+                image_blocks: vec![],
+                delivery_metadata: None,
+            })
+        })
+    }
+}
+
+/// #2159: a failed tool's logged preview keeps the end of its output, where
+/// the cause is.
+#[tokio::test]
+async fn a_failed_tools_preview_keeps_its_cause() {
+    let provider = Arc::new(MockProvider::new(vec![
+        tool_call_response("failing", "{}"),
+        text_response("done"),
+    ]));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(FailingTool));
+    let audit = Arc::new(RecordingAudit::default());
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        audit_log: Some(audit.clone()),
+        ..test_config(provider, Box::new(registry))
+    });
+    agent
+        .run_loop(&mut vec![Message::user("go")])
+        .await
+        .unwrap();
+    let events = audit.events.lock().unwrap();
+    let preview = events
+        .iter()
+        .find_map(|event| match event {
+            AuditEvent::ToolResult {
+                tool,
+                content_preview,
+                ..
+            } if tool == "failing" => Some(content_preview.clone()),
+            _ => None,
+        })
+        .expect("the failed call is logged");
+    assert!(preview.ends_with("ValueError: the cause"), "{preview}");
+}
+
+/// #2181 review: a successful result's preview stays the first 200
+/// characters.
+#[tokio::test]
+async fn a_successful_tools_preview_is_its_first_200_characters() {
+    let provider = Arc::new(MockProvider::new(vec![
+        tool_call_response("long", "{}"),
+        text_response("done"),
+    ]));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(MockTool::new("long", &"x".repeat(1000))));
+    let audit = Arc::new(RecordingAudit::default());
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        audit_log: Some(audit.clone()),
+        ..test_config(provider, Box::new(registry))
+    });
+    agent
+        .run_loop(&mut vec![Message::user("go")])
+        .await
+        .unwrap();
+    let events = audit.events.lock().unwrap();
+    let preview = events
+        .iter()
+        .find_map(|event| match event {
+            AuditEvent::ToolResult {
+                tool,
+                content_preview,
+                ..
+            } if tool == "long" => Some(content_preview.clone()),
+            _ => None,
+        })
+        .expect("the call is logged");
+    assert_eq!(preview.chars().count(), 200, "{preview}");
+    assert!(!preview.contains("omitted"), "{preview}");
+}

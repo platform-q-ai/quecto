@@ -400,3 +400,48 @@ fn content_preview_exact_boundary() {
     let exact = "x".repeat(200);
     assert_eq!(content_preview(&exact, 200), exact);
 }
+
+/// #2159: an error's preview keeps its end, where the traceback is.
+#[test]
+fn an_error_preview_keeps_the_start_and_the_end() {
+    let traceback = String::from("status: completed\nstderr: Traceback (most recent call last):\n")
+        + &"  File x, line 1\n".repeat(200)
+        + "TypeError: submit() takes 3 positional arguments";
+    let preview = error_preview(&traceback, 200, 800);
+    assert!(preview.starts_with("status: completed"), "{preview}");
+    assert!(
+        preview.ends_with("TypeError: submit() takes 3 positional arguments"),
+        "{preview}"
+    );
+    assert!(preview.contains("chars omitted"), "{preview}");
+    assert!(
+        preview.chars().count() <= 200 + 800 + 40,
+        "{}",
+        preview.chars().count()
+    );
+}
+
+/// A short error is kept whole, and multibyte text is cut on characters.
+#[test]
+fn a_short_error_preview_is_whole_and_cuts_on_characters() {
+    assert_eq!(error_preview("boom", 200, 800), "boom");
+    let wide = "é".repeat(2000);
+    let preview = error_preview(&wide, 10, 10);
+    assert!(preview.starts_with(&"é".repeat(10)), "{preview}");
+    assert!(preview.ends_with(&"é".repeat(10)), "{preview}");
+}
+
+/// #2181 review: the edges — an exact fit is whole, one over is cut, and a
+/// zero head or tail keeps only the other end.
+#[test]
+fn an_error_preview_at_its_edges() {
+    let ten = "0123456789";
+    assert_eq!(error_preview(ten, 4, 6), ten);
+    assert_eq!(
+        error_preview(ten, 4, 5),
+        "0123\n[... 1 chars omitted ...]\n56789"
+    );
+    assert_eq!(error_preview(ten, 0, 3), "\n[... 7 chars omitted ...]\n789");
+    assert_eq!(error_preview(ten, 3, 0), "012\n[... 7 chars omitted ...]\n");
+    assert_eq!(error_preview(ten, usize::MAX, 1), ten);
+}
