@@ -102,6 +102,8 @@ pub(super) fn build_assistant_message(
                     "data": data,
                 }));
             }
+            // Another provider's reasoning: only the Responses API reads it.
+            ThinkingBlock::EncryptedReasoning { .. } => {}
         }
     }
 

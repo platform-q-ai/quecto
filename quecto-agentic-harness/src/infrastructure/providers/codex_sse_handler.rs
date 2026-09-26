@@ -30,7 +30,7 @@ impl CodexSseHandler {
     fn take_response(&mut self) -> LlmResponse {
         let mut response = std::mem::take(&mut self.acc).into_response();
         if let Some(model) = &self.model {
-            crate::domain::usage_accounting::attach_cost(&mut response, model);
+            CodexProvider::finish_response(&mut response, model);
         }
         response
     }

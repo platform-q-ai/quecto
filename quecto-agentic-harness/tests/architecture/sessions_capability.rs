@@ -751,7 +751,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/persistence/session_ownership.rs", 229),
     // R2-H2: the empty-save delete moved beside the home sidecar it now
     // removes (`session_store_home.rs`); the store is back at 687.
-    ("src/infrastructure/persistence/session_store.rs", 685),
+    ("src/infrastructure/persistence/session_store.rs", 656),
     (
         "src/infrastructure/persistence/session_store_catalogue.rs",
         23,

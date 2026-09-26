@@ -43,6 +43,7 @@ pub fn visible_thinking_len(blocks: &[ThinkingBlock]) -> usize {
         .map(|b| match b {
             ThinkingBlock::Normal { thinking, .. } => thinking.len(),
             ThinkingBlock::Redacted { .. } => 1,
+            ThinkingBlock::EncryptedReasoning { .. } => 0,
         })
         .sum()
 }
@@ -82,6 +83,8 @@ pub fn visible_thinking_page(
                 }
                 cursor += 1;
             }
+            // Never shown (#2162).
+            ThinkingBlock::EncryptedReasoning { .. } => {}
         }
     }
     out
@@ -94,3 +97,7 @@ fn nearest_char_boundary_at_or_before(s: &str, mut idx: usize) -> usize {
     }
     idx
 }
+
+#[cfg(test)]
+#[path = "visible_thinking_tests.rs"]
+mod tests;

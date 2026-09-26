@@ -68,6 +68,7 @@ fn thinking_block_bytes(tb: &ThinkingBlock) -> usize {
             signature,
         } => thinking.len() + signature.len(),
         ThinkingBlock::Redacted { data } => data.len(),
+        ThinkingBlock::EncryptedReasoning { model, item } => model.len() + item.len(),
     }
 }
 

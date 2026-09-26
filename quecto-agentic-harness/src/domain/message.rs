@@ -115,6 +115,24 @@ pub enum ThinkingBlock {
         /// Opaque encrypted payload — must be passed back verbatim.
         data: String,
     },
+    /// A reasoning item the Responses API returned with its
+    /// `encrypted_content` (#2162): opaque, never shown, and replayed only
+    /// by that provider and only to the model that produced it.
+    EncryptedReasoning {
+        /// The model the request named, which alone can decrypt it.
+        model: String,
+        /// The item as it is sent back: a JSON object of `type`,
+        /// `summary` and `encrypted_content`.
+        item: String,
+    },
+}
+
+impl ThinkingBlock {
+    /// Whether the block is reasoning a person may see (text, or the fact
+    /// that it was redacted); an encrypted item is for the provider only.
+    pub fn is_visible(&self) -> bool {
+        matches!(self, Self::Normal { .. } | Self::Redacted { .. })
+    }
 }
 
 /// An image block attached directly to a user message.

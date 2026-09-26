@@ -13,7 +13,9 @@ use std::pin::Pin;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role};
+#[cfg(any(test, feature = "test-support"))]
+use crate::domain::message::Message;
+use crate::domain::message::{LlmResponse, Role, ThinkingBlock};
 use crate::domain::provider::StreamEvent;
 
 #[path = "codex_sse_state.rs"]
@@ -110,110 +112,46 @@ impl CodexProvider {
         }
     }
 
-    /// Build request headers for the active auth mode.
-    fn apply_headers(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    /// Build request headers for the active auth mode. A ChatGPT OAuth
+    /// request also names its session, as the official client does
+    /// (#2162): the same sanitised key as `prompt_cache_key`.
+    fn apply_headers(
+        &self,
+        builder: reqwest::RequestBuilder,
+        session: Option<&str>,
+    ) -> reqwest::RequestBuilder {
         let builder = builder
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("accept", "text/event-stream");
         match &self.auth {
-            ResponsesAuth::ChatGptOAuth { account_id } => builder
-                .header("chatgpt-account-id", account_id)
-                .header("OpenAI-Beta", "responses=experimental")
-                .header("originator", "codex_cli_rs"),
+            ResponsesAuth::ChatGptOAuth { account_id } => {
+                let builder = builder
+                    .header("chatgpt-account-id", account_id)
+                    .header("OpenAI-Beta", "responses=experimental")
+                    .header("originator", "codex_cli_rs");
+                match session {
+                    Some(session) => builder.header("session_id", session),
+                    None => builder,
+                }
+            }
             ResponsesAuth::ApiKey => builder,
         }
     }
 
-    /// Convert our domain messages into Responses API `input` array.
-    ///
-    /// Calls [`crate::domain::session::filter_orphan_tool_pairs`] to exclude
-    /// mismatched function_call/function_call_output pairs (which would cause
-    /// HTTP 400). Logs any orphaned pairs with Codex-specific context.
-    fn build_input(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
-        let (valid_pairs, diag) = crate::domain::session::filter_orphan_tool_pairs(messages);
-        let last_non_tool_assistant_idx = messages
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, m)| matches!(m.role, Role::Assistant) && m.tool_calls.is_empty())
-            .map(|(i, _)| i);
-        if diag.has_orphans() {
-            tracing::warn!(
-                orphaned_calls = ?diag.orphaned_calls,
-                orphaned_outputs = ?diag.orphaned_results,
-                "Codex: orphaned function_call/output pairs removed \
-                 (session corrupted mid-turn or by context pruning). \
-                 OpenAI and Anthropic have the same pairing constraint."
-            );
-        }
-        let mut instructions: Option<String> = None;
-        let mut input = Vec::new();
-
-        for (idx, msg) in messages.iter().enumerate() {
-            match msg.role {
-                Role::System => match &mut instructions {
-                    Some(existing) => {
-                        existing.push('\n');
-                        existing.push_str(&msg.content);
-                    }
-                    None => instructions = Some(msg.content.clone()),
-                },
-                Role::User => {
-                    input.push(serde_json::json!({ "role": "user", "content": msg.content }));
-                }
-                Role::Assistant => {
-                    let phase = if Some(idx) == last_non_tool_assistant_idx {
-                        "final_answer"
-                    } else {
-                        "commentary"
-                    };
-                    if !msg.tool_calls.is_empty() {
-                        // Emit only the valid (matched) tool calls.
-                        let mut emitted = 0usize;
-                        for tc in &msg.tool_calls {
-                            if valid_pairs.contains(&tc.id) {
-                                input.push(serde_json::json!({
-                                    "type": "function_call",
-                                    "call_id": tc.id,
-                                    "name": tc.name,
-                                    "arguments": tc.wire_arguments(),
-                                }));
-                                emitted += 1;
-                            }
-                        }
-                        // If every tool call was orphaned and dropped, fall back to
-                        // emitting the assistant text content (if any) so narrative
-                        // context is not silently lost.
-                        if emitted == 0 && !msg.content.is_empty() {
-                            input.push(serde_json::json!({
-                                "role": "assistant",
-                                "phase": phase,
-                                "content": msg.content,
-                            }));
-                        }
-                    } else {
-                        input.push(serde_json::json!({
-                            "role": "assistant",
-                            "phase": phase,
-                            "content": msg.content,
-                        }));
-                    }
-                }
-                Role::Tool => {
-                    if let Some(ref call_id) = msg.tool_call_id {
-                        if valid_pairs.contains(call_id) {
-                            input.push(serde_json::json!({
-                                "type": "function_call_output",
-                                "call_id": call_id,
-                                "output": msg.content,
-                            }));
-                        }
-                    }
-                }
+    /// Cost the response, and stamp its reasoning items with the model the
+    /// request named, the one they are replayed to (#2162).
+    pub(super) fn finish_response(response: &mut LlmResponse, model: &str) {
+        crate::domain::usage_accounting::attach_cost(response, model);
+        for block in &mut response.thinking_blocks {
+            if let ThinkingBlock::EncryptedReasoning { model: stamped, .. } = block {
+                *stamped = model.to_string();
             }
         }
+    }
 
-        (instructions, input)
+    /// The session a request names, sanitised as its cache key is.
+    fn request_session(request: &ChatRequest<'_>) -> Option<String> {
+        request.session_id.map(Self::sanitize_cache_key)
     }
 
     /// Build the Responses API tool definitions.
@@ -273,7 +211,7 @@ impl CodexProvider {
     /// "Unsupported parameter: max_output_tokens"}` (#1233 regression), so
     /// it is emitted only on the API-key path.
     fn build_request_body(request: &ChatRequest<'_>, auth: &ResponsesAuth) -> serde_json::Value {
-        let (instructions, input) = Self::build_input(request.messages);
+        let (instructions, input) = Self::build_input_for(request.messages, request.model);
 
         let mut body = serde_json::json!({
             "model": request.model,
@@ -511,9 +449,10 @@ impl CodexProvider {
         body: serde_json::Value,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
         model: &str,
+        session: Option<&str>,
     ) {
         let mut response = match self
-            .apply_headers(self.client.post(url))
+            .apply_headers(self.client.post(url), session)
             .json(&body)
             .send()
             .await
@@ -576,12 +515,15 @@ impl LlmProvider for CodexProvider {
         let cancel = request.cancel_flag.clone();
         let trace = request.trace.clone();
         let model = request.model.to_string();
+        let session = Self::request_session(&request);
         let body = Self::build_request_body(&request, &self.auth);
         let url = self.responses_url();
 
         Box::pin(async move {
             if let Some(gate) = &self.attempt_admission {
-                let builder = self.apply_headers(self.client.post(&url)).json(&body);
+                let builder = self
+                    .apply_headers(self.client.post(&url), session.as_deref())
+                    .json(&body);
                 return super::attempt_transport::assembled(
                     gate,
                     trace.clone(),
@@ -590,14 +532,14 @@ impl LlmProvider for CodexProvider {
                     Profile::new(Vendor::Codex, Surface::Assembled),
                     |raw| {
                         let mut parsed = Self::parse_sse_response(raw)?;
-                        crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
+                        Self::finish_response(&mut parsed, &model);
                         Ok(parsed)
                     },
                 )
                 .await;
             }
             let resp = self
-                .apply_headers(self.client.post(&url))
+                .apply_headers(self.client.post(&url), session.as_deref())
                 .json(&body)
                 .send()
                 .await
@@ -623,7 +565,7 @@ impl LlmProvider for CodexProvider {
                 .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
 
             let mut parsed = Self::parse_sse_response(&raw)?;
-            crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
+            Self::finish_response(&mut parsed, &model);
             Ok(parsed)
         })
     }
@@ -649,6 +591,7 @@ impl LlmProvider for CodexProvider {
         let cancel = request.cancel_flag.clone();
         let trace = request.trace.clone();
         let model = request.model.to_string();
+        let session = Self::request_session(&request);
         let body = Self::build_request_body(&request, &self.auth);
         let url = self.responses_url();
         let provider = self.clone();
@@ -657,7 +600,7 @@ impl LlmProvider for CodexProvider {
             tokio::spawn(async move {
                 if let Some(gate) = &provider.attempt_admission {
                     let builder = provider
-                        .apply_headers(provider.client.post(&url))
+                        .apply_headers(provider.client.post(&url), session.as_deref())
                         .json(&body);
                     super::attempt_transport::stream(
                         gate,
@@ -669,7 +612,9 @@ impl LlmProvider for CodexProvider {
                     )
                     .await;
                 } else {
-                    provider.pump_codex_sse(&url, body, tx, &model).await;
+                    provider
+                        .pump_codex_sse(&url, body, tx, &model, session.as_deref())
+                        .await;
                 }
             });
             rx
@@ -677,6 +622,8 @@ impl LlmProvider for CodexProvider {
     }
 }
 
+#[path = "codex_input.rs"]
+mod codex_input;
 #[path = "codex_sse_handler.rs"]
 mod codex_sse_handler;
 #[cfg(test)]
@@ -705,3 +652,7 @@ mod effort_1066_tests;
 #[cfg(test)]
 #[path = "codex_cov_tests.rs"]
 mod cov_tests;
+
+#[cfg(test)]
+#[path = "codex_2162_tests.rs"]
+mod issue_2162_tests;
