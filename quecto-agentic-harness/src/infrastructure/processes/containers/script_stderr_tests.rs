@@ -211,11 +211,13 @@ async fn a_stopped_script_group_gets_sigterm() {
 async fn a_stopped_script_past_the_grace_is_left_running() {
     let dir = tempfile::TempDir::new().unwrap();
     let pid_file = dir.path().join("pid");
+    let beat = dir.path().join("beat");
     let path = script(
         dir.path(),
         &format!(
-            "echo $$ > {}\ntrap '' TERM\nwhile true; do sleep 0.05; done",
-            pid_file.display()
+            "echo $$ > {pid}\ntrap '' TERM\nn=0; while true; do n=$((n+1)); echo $n > {beat}; sleep 0.05; done",
+            pid = pid_file.display(),
+            beat = beat.display()
         ),
     );
     let started = std::time::Instant::now();
@@ -237,16 +239,18 @@ async fn a_stopped_script_past_the_grace_is_left_running() {
         "{:?}",
         started.elapsed()
     );
+    // Alive means still beating (a killed script's zombie would not).
+    let before = std::fs::read_to_string(&beat).unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let after = std::fs::read_to_string(&beat).unwrap();
     let pid: libc::pid_t = std::fs::read_to_string(&pid_file)
         .unwrap()
         .trim()
         .parse()
         .unwrap();
-    // SAFETY: signal 0 probes the script's pid; nothing is delivered.
-    let alive = unsafe { libc::kill(pid, 0) } == 0;
-    // SAFETY: ends the test's own leftover script.
+    // SAFETY: ends the test's own leftover script group.
     unsafe {
         libc::kill(-pid, libc::SIGKILL);
     }
-    assert!(alive, "the script was left running, not killed");
+    assert_ne!(before, after, "the script was left running, not killed");
 }
