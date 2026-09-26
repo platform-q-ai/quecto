@@ -465,3 +465,107 @@ async fn a_whole_reply_that_cannot_be_parsed_ends_as_rejected() {
         );
     }
 }
+
+/// Review #2156: an error status's body is typed from the whole body, though
+/// the caller's message is cut to its limit as before; streamed whole and
+/// incrementally.
+#[tokio::test]
+async fn a_long_error_body_is_typed_from_the_whole_body() {
+    use crate::domain::attempt_diagnostics::ErrorCode;
+    let body = serde_json::json!({
+        "error": {
+            "message": "m".repeat(2 * crate::infrastructure::providers::sse_common::MAX_ERROR_BODY_BYTES),
+            "type": "insufficient_quota",
+        }
+    })
+    .to_string();
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(429).set_body_string(body))
+        .mount(&server)
+        .await;
+    let provider = super::create_provider_with_client(
+        "openai",
+        "sk".into(),
+        Some(server.uri()),
+        reqwest::Client::new(),
+    )
+    .unwrap();
+    let (events, attempts) = incremental(&provider).await;
+    assert_eq!(
+        attempts[0].error_code,
+        Some(ErrorCode::InsufficientQuota),
+        "{attempts:?}"
+    );
+    assert_eq!(
+        format!("{events:?}"),
+        format!("{:?}", untraced(&provider).await),
+        "observation changed handling"
+    );
+    assert!(format!("{events:?}").contains("(truncated)"), "{events:?}");
+
+    let trace = Arc::new(RequestTrace::default());
+    trace.start();
+    let messages = vec![crate::domain::message::Message::user("hi")];
+    let request = crate::application::providers::ports::ChatRequest {
+        trace: Some(trace.clone()),
+        admission: None,
+        model: "gpt-4o-mini",
+        messages: &messages,
+        tools: &[],
+        max_tokens: 16,
+        temperature: 0.0,
+        thinking_level: None,
+        effort: None,
+        tool_choice: None,
+        metadata: None,
+        session_id: None,
+        cancel_flag: None,
+    };
+    assert!(provider.chat_stream(request).await.is_err());
+    let attempts = trace.attempt_diagnostics();
+    assert_eq!(
+        attempts[0].error_code,
+        Some(ErrorCode::InsufficientQuota),
+        "{attempts:?}"
+    );
+}
+
+/// The same class: an error status whose body could not be read ends as a
+/// read error, as it does through admission, not as an HTTP error.
+#[tokio::test]
+async fn an_error_body_that_cannot_be_read_ends_as_a_read_error() {
+    use crate::domain::attempt_diagnostics::Termination;
+    use tokio::io::AsyncWriteExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 8192];
+            let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request).await;
+            // Promises more body than it sends, then closes.
+            let head = "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 100\r\n\r\n{\"err";
+            socket.write_all(head.as_bytes()).await.unwrap();
+        }
+    });
+    let provider = super::create_provider_with_client(
+        "openai",
+        "sk".into(),
+        Some(format!("http://{address}")),
+        reqwest::Client::new(),
+    )
+    .unwrap();
+    let (events, attempts) = incremental(&provider).await;
+    assert_eq!(attempts[0].wire_status, Some(500), "{attempts:?}");
+    assert_eq!(
+        attempts[0].termination,
+        Termination::ReadError,
+        "{attempts:?}"
+    );
+    assert_eq!(
+        format!("{events:?}"),
+        format!("{:?}", untraced(&provider).await),
+        "observation changed handling"
+    );
+}

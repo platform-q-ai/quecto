@@ -37,10 +37,16 @@ impl PassiveAttempt {
         self.receipt.termination(Termination::SendError);
     }
 
-    /// The provider answered an error status; its body's error typed.
-    pub(in crate::infrastructure::providers) fn http_error(&self, status: u16, body: &str) {
-        self.receipt.http_error(status, body);
-        self.receipt.termination(Termination::HttpError);
+    /// The provider answered an error status: its whole body's error typed
+    /// (before any cut for display, #2156 review), or `None` when the body
+    /// could not be read, which ends the attempt as a read error, as it does
+    /// through admission.
+    pub(in crate::infrastructure::providers) fn http_error(&self, status: u16, body: Option<&str>) {
+        self.receipt.http_error(status, body.unwrap_or_default());
+        self.receipt.termination(match body {
+            Some(_) => Termination::HttpError,
+            None => Termination::ReadError,
+        });
     }
 
     /// The reply's body could not be read.
