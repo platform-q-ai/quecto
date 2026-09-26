@@ -8,14 +8,18 @@ const ARTICLE: &str =
 const DOCS: &str = include_str!("../../../../tests/fixtures/web_fetch/docs_with_main.html");
 const NO_LANDMARKS: &str = include_str!("../../../../tests/fixtures/web_fetch/no_landmarks.html");
 
-/// The fixture's article text, as the whole-page stripper renders it: the
-/// part between its `article-start` and `article-end` comments.
+/// The fixture's article text: the part between its `article-start` and
+/// `article-end` comments, headings in its `<header>` included (renamed to
+/// a `<div>` here, so the whole-page stripper keeps them).
 fn article_lines(fixture: &str) -> Vec<String> {
     let start = fixture
         .find("<!-- article-start -->")
         .expect("start marker");
     let end = fixture.find("<!-- article-end -->").expect("end marker");
-    strip_html(&fixture[start..end])
+    let article = fixture[start..end]
+        .replace("<header", "<div")
+        .replace("</header>", "</div>");
+    strip_html(&article)
         .lines()
         .filter(|line| !line.trim().is_empty())
         .map(str::to_owned)
@@ -37,7 +41,7 @@ fn measure(fixture: &str, output: &str) -> (f64, f64) {
     )
 }
 
-const NOTE: &str = "[Main content only; raw: true returns the whole page as served]";
+const NOTE: &str = "[Main content only; main_only: false returns the whole page]";
 
 /// The docs page keeps its `<main>`: the title, then the note, then the
 /// article, without the sidebar, the table of contents or the languages.
@@ -50,6 +54,10 @@ fn a_docs_page_keeps_its_main_content() {
         Some("Array.prototype.map() - JavaScript | MDN")
     );
     assert_eq!(lines.next(), Some(NOTE));
+    assert!(
+        text.lines().any(|line| line == "Array.prototype.map()"),
+        "lost the h1: {text}"
+    );
     for line in article_lines(DOCS) {
         assert!(text.contains(&line), "lost {line:?}");
     }
@@ -68,6 +76,11 @@ fn a_docs_page_keeps_its_main_content() {
 #[test]
 fn an_article_page_loses_its_sidebar() {
     let text = readable_html(ARTICLE);
+    assert!(
+        text.lines()
+            .any(|line| line == "A weekday sourdough that fits around work"),
+        "lost the h1: {text}"
+    );
     assert!(
         text.starts_with("A weekday sourdough that fits around work \u{2013} The Crumb Diaries\n"),
         "{text}"
@@ -92,9 +105,10 @@ fn a_page_without_landmarks_is_unchanged() {
 }
 
 /// Landmark-first extraction raises the article's share of the output on
-/// the landmark pages, and loses none of the article anywhere. Measured:
-/// article page 41.0% -> 58.8% (8028 -> 5599 bytes), docs page 63.2% ->
-/// 89.8% (7574 -> 5333 bytes), page without landmarks 71.6% unchanged.
+/// the landmark pages, and loses none of the article, its heading
+/// included, anywhere. Measured: article page 41.5% -> 59.1% (8028 -> 5639
+/// bytes), docs page 63.5% -> 89.9% (7574 -> 5380 bytes), page without
+/// landmarks 71.6% unchanged.
 #[test]
 fn the_article_share_rises_where_there_is_a_landmark() {
     for (fixture, least) in [(ARTICLE, 0.55), (DOCS, 0.80), (NO_LANDMARKS, 0.70)] {
@@ -333,6 +347,203 @@ fn malformed_pages_read_in_linear_time() {
             started.elapsed() < std::time::Duration::from_secs(2),
             "took {:?}",
             started.elapsed()
+        );
+    }
+}
+
+/// A tag's name is all of it: `<main-nav>`, `<article-card>` and
+/// `</main-menu>` are not `<main>` or `<article>`.
+#[test]
+fn a_tag_name_is_matched_whole() {
+    for body in [
+        format!(
+            "<main-nav>{}</main-nav><main>{}</main>",
+            words(40, "side"),
+            words(60, "in")
+        ),
+        format!(
+            "<article-card>{}</article-card><article>{}</article>",
+            words(40, "side"),
+            words(60, "in")
+        ),
+    ] {
+        let text = readable_html(&page(&body));
+        assert!(
+            text.contains(NOTE) && !text.contains("side"),
+            "{body}: {text}"
+        );
+    }
+    let html = page(&format!(
+        "<main>{}</main-menu>{}</main>{}",
+        words(60, "in"),
+        words(20, "still"),
+        words(30, "out")
+    ));
+    let text = readable_html(&html);
+    assert!(
+        text.contains("still still") && !text.contains("out"),
+        "{text}"
+    );
+}
+
+/// A `<main>` or `role="main"` holding nearly everything is the page: a
+/// smaller `<article>` inside it does not win over it.
+#[test]
+fn a_landmark_too_large_to_note_keeps_the_whole_page() {
+    for open in ["<main>", "<div role=\"main\">"] {
+        let close = if open == "<main>" {
+            "</main>"
+        } else {
+            "</div>"
+        };
+        let html = page(&format!(
+            "{open}{}<article>{}</article>{}{close}",
+            words(15, "intro"),
+            words(80, "a"),
+            words(15, "comment")
+        ));
+        let text = readable_html(&html);
+        assert_eq!(text, strip_html(&html), "{open}");
+    }
+}
+
+/// A `<header>` inside the chosen landmark is content (its heading); the
+/// page's own header outside it still goes.
+#[test]
+fn a_header_inside_the_landmark_is_kept() {
+    for (open, close) in [
+        ("<main>", "</main>"),
+        ("<article>", "</article>"),
+        ("<div role=\"main\">", "</div>"),
+    ] {
+        let html = page(&format!(
+            "<header><p>Site banner</p></header>{}{open}<header><h1>The heading</h1></header>{}{close}",
+            words(30, "side"),
+            words(60, "in")
+        ));
+        let text = readable_html(&html);
+        assert!(
+            text.lines().any(|line| line == "The heading"),
+            "{open}: {text}"
+        );
+        assert!(
+            !text.contains("Site banner") && !text.contains("side"),
+            "{open}: {text}"
+        );
+    }
+}
+
+/// A landmark inside the page's own header is not counted.
+#[test]
+fn a_landmark_inside_the_page_header_is_not_counted() {
+    let html = page(&format!(
+        "<header><article>{}</article></header><article>{}</article>{}",
+        words(5, "teaser"),
+        words(60, "in"),
+        words(20, "side")
+    ));
+    let text = readable_html(&html);
+    assert!(text.contains(NOTE) && !text.contains("side"), "{text}");
+}
+
+/// Without `<body>`, the head ends at the first tag that is not a head
+/// tag: a `<title>` in an icon after it is not the page's title.
+#[test]
+fn the_head_ends_at_the_first_body_tag() {
+    let html = format!(
+        "<html><head><meta charset=utf-8><link rel=x></head><div>{}<svg><title>icon</title></svg></div><main>{}</main></html>",
+        words(20, "side"),
+        words(60, "in")
+    );
+    let text = readable_html(&html);
+    assert!(text.starts_with(&format!("{NOTE}\n\nin in")), "{text}");
+    let html = format!(
+        "<html><meta charset=utf-8><title>Kept</title><div>{}</div><main>{}</main></html>",
+        words(20, "side"),
+        words(60, "in")
+    );
+    assert!(readable_html(&html).starts_with("Kept\n"), "{html}");
+}
+
+/// A title closed with space before its `>` is kept.
+#[test]
+fn a_title_closed_with_space_is_kept() {
+    for close in ["</title >", "</title\n>", "</TITLE\t>"] {
+        let html = format!(
+            "<html><head><title>Spaced</title{}<body>{}<main>{}</main></body></html>",
+            &close[7..],
+            words(20, "side"),
+            words(60, "in")
+        );
+        let text = readable_html(&html);
+        assert!(text.starts_with("Spaced\n"), "{close:?}: {text}");
+    }
+}
+
+/// A `>` inside a quoted attribute value does not end the tag.
+#[test]
+fn a_quoted_bracket_does_not_end_a_tag() {
+    let html = page(&format!(
+        "<div data-tip=\"a > b\" role=\"main\">{}</div>{}",
+        words(60, "in"),
+        words(20, "side")
+    ));
+    let text = readable_html(&html);
+    assert!(
+        text.contains(NOTE) && !text.contains("side") && !text.contains("b\""),
+        "{text}"
+    );
+    let html = page(&format!(
+        "<main data-x='a>b'>{}</main>{}",
+        words(60, "in"),
+        words(20, "side")
+    ));
+    let text = readable_html(&html);
+    assert!(text.contains(NOTE) && !text.contains("b'"), "{text}");
+}
+
+/// Landmarks inside `<template>`, `<textarea>` or `<xmp>` are not counted.
+#[test]
+fn landmarks_in_templates_and_raw_text_are_not_counted() {
+    for (open, close) in [
+        ("<template>", "</template>"),
+        ("<textarea name=t>", "</textarea>"),
+        ("<xmp>", "</xmp>"),
+    ] {
+        let html = page(&format!(
+            "{open}<main>x</main>{close}<main>{}</main>{}",
+            words(60, "in"),
+            words(20, "side")
+        ));
+        let text = readable_html(&html);
+        assert!(
+            text.contains(NOTE) && !text.contains("side"),
+            "{open}: {text}"
+        );
+    }
+}
+
+/// The new parsing paths stay linear on malformed pages.
+#[test]
+fn new_parsing_paths_read_in_linear_time() {
+    for page in [
+        format!("<main data-x=\"{}", "a>b ".repeat(60_000)),
+        "<div a='x>".repeat(25_000),
+        "<textarea>x".repeat(20_000),
+        "<template><xmp>x".repeat(15_000),
+        "<header>x".repeat(25_000),
+        format!("<title>t{}", "</title ".repeat(25_000)),
+        "<meta><link>".repeat(20_000),
+        "<main-nav>x</main-menu>".repeat(10_000),
+    ] {
+        assert!(page.len() >= 200_000, "{}", page.len());
+        let started = std::time::Instant::now();
+        let _ = readable_html(&page);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "took {:?} on {:?}",
+            started.elapsed(),
+            &page[..24]
         );
     }
 }

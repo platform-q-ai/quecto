@@ -1,6 +1,6 @@
 use crate::{
     application::agent_turn::use_cases::web_fetch::{
-        FetchFailure, WebFetchError, WebFetchResult, WebFetchUseCase,
+        FetchFailure, HtmlView, WebFetchError, WebFetchResult, WebFetchUseCase,
     },
     application::tools::ports::Tool,
     domain::{
@@ -32,7 +32,7 @@ impl Tool for WebFetchTool {
     }
 
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition{name:"web_fetch".into(),description:"Fetch a URL and return its content as text: HTML is made readable (tags stripped; only the main content when the page marks one) unless raw, other text (JSON, markdown, code, CSV...) comes back as served, and binary content (images, archives, PDFs) is named, not shown.".into(),parameters_schema:Cow::Borrowed(r#"{"type":"object","properties":{"url":{"type":"string","description":"URL to fetch (http or https)"},"raw":{"type":"boolean","description":"For HTML: return the markup as served instead of readable text (default: false)"}},"required":["url"]}"#)}
+        ToolDefinition{name:"web_fetch".into(),description:"Fetch a URL and return its content as text: HTML is made readable (tags stripped; only the main content when the page marks one, unless main_only is false) unless raw, other text (JSON, markdown, code, CSV...) comes back as served, and binary content (images, archives, PDFs) is named, not shown.".into(),parameters_schema:Cow::Borrowed(r#"{"type":"object","properties":{"url":{"type":"string","description":"URL to fetch (http or https)"},"raw":{"type":"boolean","description":"For HTML: return the markup as served instead of readable text (default: false)"},"main_only":{"type":"boolean","description":"For HTML: when the page marks its main content, return only that (default: true); false returns the whole page as readable text"}},"required":["url"]}"#)}
     }
     fn execute(
         &self,
@@ -47,7 +47,16 @@ impl Tool for WebFetchTool {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| DomainError::Tool("missing required field: url".into()))?;
             let raw = parsed.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
-            match self.use_case.execute(url, raw).await {
+            let main_only = parsed
+                .get("main_only")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let view = match (raw, main_only) {
+                (true, _) => HtmlView::Markup,
+                (false, true) => HtmlView::MainContent,
+                (false, false) => HtmlView::WholePage,
+            };
+            match self.use_case.execute(url, view).await {
                 Ok(WebFetchResult::Success(s)) => Ok(result(s, false)),
                 Ok(WebFetchResult::Binary {
                     content_type,

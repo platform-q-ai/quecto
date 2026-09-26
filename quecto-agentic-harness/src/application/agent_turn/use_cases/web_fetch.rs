@@ -71,6 +71,17 @@ pub enum WebFetchResult {
     RestrictedInitialHost(String),
     NonSuccessStatus(HttpStatus),
 }
+/// How an HTML body is returned (#2165).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HtmlView {
+    /// Readable text of the page's main content when it marks one, else of
+    /// the whole page.
+    MainContent,
+    /// Readable text of the whole page.
+    WholePage,
+    /// The markup as served.
+    Markup,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ExecutionGate {
     Allowed(ParsedHttpUrl),
@@ -89,7 +100,11 @@ impl WebFetchUseCase {
             max_response_kb,
         }
     }
-    pub async fn execute(&self, url: &str, raw: bool) -> Result<WebFetchResult, WebFetchError> {
+    pub async fn execute(
+        &self,
+        url: &str,
+        view: HtmlView,
+    ) -> Result<WebFetchResult, WebFetchError> {
         let parsed = url::Url::parse(url).map_err(|e| WebFetchError::InvalidUrl(e.to_string()))?;
         let request = match classify(parsed) {
             ExecutionGate::Allowed(url) => FetchRequest { url },
@@ -106,19 +121,23 @@ impl WebFetchUseCase {
         {
             FetchOutcome::NonSuccessStatus(status) => Ok(WebFetchResult::NonSuccessStatus(status)),
             FetchOutcome::SuccessBody { body, content_type } => {
-                // By what was served (#2165): HTML is made readable, its
-                // main content first (unless raw), other text comes back as
-                // it is, anything else is named rather than decoded into
-                // noise.
-                let content = match (kind_of(content_type.as_deref(), &body), raw) {
+                // By what was served (#2165): HTML is returned in the view
+                // asked for, other text comes back as it is, anything else
+                // is named rather than decoded into noise.
+                let content = match (kind_of(content_type.as_deref(), &body), view) {
                     (BodyKind::Binary, _) => {
                         return Ok(WebFetchResult::Binary {
                             content_type,
                             bytes: body.len(),
                         });
                     }
-                    (BodyKind::Html, false) => main_content::readable_html(decoded(&body).as_ref()),
-                    (BodyKind::Html, true) | (BodyKind::Text, _) => decoded(&body).into_owned(),
+                    (BodyKind::Html, HtmlView::MainContent) => {
+                        main_content::readable_html(decoded(&body).as_ref())
+                    }
+                    (BodyKind::Html, HtmlView::WholePage) => strip_html(decoded(&body).as_ref()),
+                    (BodyKind::Html, HtmlView::Markup) | (BodyKind::Text, _) => {
+                        decoded(&body).into_owned()
+                    }
                 };
                 Ok(WebFetchResult::Success(truncate_output(
                     content,
@@ -319,6 +338,12 @@ const STRIPPED_BLOCK_TAGS: &[&str] = &["script", "style", "nav", "footer", "head
 /// will leave content after the first closing tag. This is acceptable for
 /// readability stripping (not security sanitisation).
 fn remove_configured_tag_blocks(html: &str) -> String {
+    remove_tag_blocks(html, STRIPPED_BLOCK_TAGS)
+}
+
+/// Remove all occurrences of `<tag ...>...</tag>` blocks for the given tags,
+/// as [`remove_configured_tag_blocks`] does for its own.
+fn remove_tag_blocks(html: &str, stripped: &[&'static str]) -> String {
     let mut result = String::with_capacity(html.len());
     let mut pos = 0;
     // Tags with no close anywhere after some point have none after any later
@@ -332,7 +357,7 @@ fn remove_configured_tag_blocks(html: &str) -> String {
             break;
         };
         let tag_start = pos + tag_start_rel;
-        let Some(tag) = configured_open_tag_at(html, tag_start) else {
+        let Some(tag) = open_tag_of(stripped, html, tag_start) else {
             result.push_str(&html[pos..=tag_start]);
             pos = tag_start + 1;
             continue;
@@ -362,8 +387,8 @@ fn remove_configured_tag_blocks(html: &str) -> String {
     result
 }
 
-fn configured_open_tag_at(html: &str, tag_start: usize) -> Option<&'static str> {
-    STRIPPED_BLOCK_TAGS
+fn open_tag_of(stripped: &[&'static str], html: &str, tag_start: usize) -> Option<&'static str> {
+    stripped
         .iter()
         .copied()
         .find(|tag| specific_open_tag_at(html, tag_start, tag))
@@ -391,14 +416,23 @@ fn find_configured_close_tag(html: &str, mut pos: usize, tag: &str) -> Option<us
     None
 }
 
+/// `</tag>` at `tag_start`, with optional whitespace before its `>`
+/// (#2165 review). The whitespace run is read once per `</tag`, so the
+/// callers' scans stay linear.
 fn specific_close_tag_at(html: &str, tag_start: usize, tag: &str) -> bool {
     let after_slash = tag_start + 2;
     let after_name = after_slash + tag.len();
+    let closes = || {
+        html.get(after_name..).is_some_and(|rest| {
+            rest.trim_start_matches(|c: char| c.is_ascii_whitespace())
+                .starts_with('>')
+        })
+    };
     html.as_bytes().get(tag_start..after_slash) == Some(b"</")
         && html
             .get(after_slash..after_name)
             .is_some_and(|name| name.eq_ignore_ascii_case(tag))
-        && html.as_bytes().get(after_name) == Some(&b'>')
+        && closes()
 }
 
 /// Convert HTML tags to text: block tags become newlines, others are stripped.
