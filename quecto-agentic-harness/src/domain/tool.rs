@@ -187,3 +187,14 @@ pub struct ToolPolicyReconciliation {
 #[cfg(test)]
 #[path = "tool_tests.rs"]
 mod tests;
+
+impl ToolDefinition {
+    /// What sending this definition with a request costs: its name,
+    /// description and parameter schema (#2160).
+    pub fn estimated_tokens(&self) -> usize {
+        use crate::domain::message::Message;
+        Message::estimate_tokens(&self.name)
+            + Message::estimate_tokens(&self.description)
+            + Message::estimate_tokens(&self.parameters_schema)
+    }
+}

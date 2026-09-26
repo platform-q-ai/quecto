@@ -587,9 +587,11 @@ async fn the_context_estimate_includes_the_tool_definitions() {
     let with = tooled
         .apply_context_pruning(&mut conversation(), 1, false)
         .await;
-    let tools = crate::application::context_pruning::estimate_tool_definition_tokens(
-        &tooled.current_tool_definitions(),
-    );
+    let tools = tooled
+        .current_tool_definitions()
+        .iter()
+        .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+        .sum::<usize>();
     assert!(tools > 0);
     assert_eq!(with, without + tools);
 }
@@ -617,9 +619,11 @@ async fn the_tool_definitions_count_against_the_budget() {
         for name in tools {
             registry.register(std::sync::Arc::new(MockTool::new(name, "ok")));
         }
-        let tool_tokens = crate::application::context_pruning::estimate_tool_definition_tokens(
-            &registry.cached_definitions,
-        );
+        let tool_tokens = registry
+            .cached_definitions
+            .iter()
+            .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+            .sum::<usize>();
         let provider = std::sync::Arc::new(MockProvider::new(vec![]));
         let agent = AgentLoopImpl::new(AgentLoopConfig {
             max_context_tokens: messages_total + 5,

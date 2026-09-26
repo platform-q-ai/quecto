@@ -51,21 +51,6 @@ pub fn estimate_total_tokens(messages: &[Message]) -> usize {
     messages.iter().map(Message::estimated_tokens).sum()
 }
 
-/// What the tool definitions a request carries cost: each one's name,
-/// description and parameter schema (#2160).
-pub fn estimate_tool_definition_tokens(
-    definitions: &[crate::domain::tool::ToolDefinition],
-) -> usize {
-    definitions
-        .iter()
-        .map(|definition| {
-            estimate_tokens(&definition.name)
-                + estimate_tokens(&definition.description)
-                + estimate_tokens(&definition.parameters_schema)
-        })
-        .sum()
-}
-
 pub fn estimate_message_tokens(msg: &Message) -> usize {
     msg.estimated_tokens()
 }

@@ -9,8 +9,11 @@ impl AgentLoopImpl {
     ) -> usize {
         // Every request carries the tool definitions too (#2160): they count
         // against the budget and in the estimate.
-        let fixed_tokens =
-            context_pruning::estimate_tool_definition_tokens(&self.current_tool_definitions());
+        let fixed_tokens: usize = self
+            .current_tool_definitions()
+            .iter()
+            .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+            .sum();
         let plan = self
             .context_manager
             .prepare_provider_context(
