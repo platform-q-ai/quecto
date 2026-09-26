@@ -6,6 +6,7 @@ fn tool_call_round_trip() {
         tool: "bash".into(),
         call_id: "call_1".into(),
         arguments: r#"{"command":"ls"}"#.into(),
+        raw_arguments: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AuditEvent = serde_json::from_str(&json).unwrap();
@@ -20,6 +21,9 @@ fn tool_result_round_trip() {
         is_error: false,
         content_tokens: 450,
         content_preview: "ok".into(),
+        duration_ms: 0,
+        argument_bytes: 0,
+        content_bytes: 0,
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AuditEvent = serde_json::from_str(&json).unwrap();
@@ -185,12 +189,16 @@ fn subagent_await_audit_event_is_absent() {
 fn envelope_round_trip() {
     let envelope = AuditEnvelope {
         ts: "2026-03-28T14:32:01.847Z".into(),
+        unix_ms: 1_774_708_321_847,
+        pid: 42,
         session: "cli:my-feature".into(),
+        parent: Some("chat-parent".into()),
         turn: 7,
         event: AuditEvent::ToolCall {
             tool: "bash".into(),
             call_id: "call_abc".into(),
             arguments: r#"{"command":"test"}"#.into(),
+            raw_arguments: None,
         },
     };
     let json = serde_json::to_string(&envelope).unwrap();

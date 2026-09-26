@@ -24,7 +24,12 @@ pub enum AuditEvent {
     ToolCall {
         tool: String,
         call_id: String,
+        /// What the tool ran with.
         arguments: String,
+        /// What the model sent, when it differs (invalid arguments the
+        /// harness replaced, #2123): kept for diagnosis (#2150).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        raw_arguments: Option<String>,
     },
     ToolResult {
         call_id: String,
@@ -32,7 +37,19 @@ pub enum AuditEvent {
         is_error: bool,
         content_tokens: usize,
         content_preview: String,
+        /// How long the call took, policy and approval waits included
+        /// (#2150).
+        #[serde(default)]
+        duration_ms: u64,
+        /// The arguments the tool ran with, in bytes (#2150).
+        #[serde(default)]
+        argument_bytes: usize,
+        /// The result the tool answered, in bytes (#2150).
+        #[serde(default)]
+        content_bytes: usize,
     },
+    /// The log reached its size cap: nothing more is written (#2150).
+    LogCapped { cap_bytes: u64 },
     LlmTurnStart {
         input_tokens_estimate: usize,
         message_count: usize,
@@ -111,7 +128,16 @@ pub enum AuditEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AuditEnvelope {
     pub ts: String,
+    /// The same moment in Unix milliseconds (#2150).
+    #[serde(default)]
+    pub unix_ms: u64,
+    /// The writing process (#2150).
+    #[serde(default)]
+    pub pid: u32,
     pub session: String,
+    /// A sub-agent's parent session (#2150).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
     pub turn: u32,
     #[serde(flatten)]
     pub event: AuditEvent,

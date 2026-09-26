@@ -13,13 +13,26 @@ use crate::domain::audit::{AuditEnvelope, AuditEvent};
 use crate::domain::error::DomainError;
 use crate::infrastructure::persistence::filename::sanitize_session_key;
 
+/// The most one session's log holds before it stops (#2150): a runaway
+/// session cannot fill the disk.
+pub const DEFAULT_CAP_BYTES: u64 = 256 * 1024 * 1024;
+
 /// Append-only audit log handle for a single session.
 ///
 /// Uses a raw `tokio::fs::File` (no `BufWriter`) because every `emit()` call
 /// flushes immediately for crash durability — buffering would be negated.
 pub struct AuditLog {
-    writer: Mutex<tokio::fs::File>,
+    writer: Mutex<Writer>,
     session_key: String,
+    parent: Option<String>,
+    cap_bytes: u64,
+}
+
+/// The open file and how much it holds.
+struct Writer {
+    file: tokio::fs::File,
+    written: u64,
+    capped: bool,
 }
 
 impl std::fmt::Debug for AuditLog {
@@ -36,69 +49,111 @@ impl AuditLog {
     /// Creates `<base_dir>/audit/` if it doesn't exist (lazy init).
     /// The file is opened in append mode so restarts continue the same log.
     pub async fn open(base_dir: &Path, session_key: &str) -> Result<Self, DomainError> {
-        let audit_dir = base_dir.join("audit");
-        tokio::fs::create_dir_all(&audit_dir)
+        let base_dir = base_dir.to_path_buf();
+        let key = session_key.to_string();
+        tokio::task::spawn_blocking(move || Self::open_sync(&base_dir, &key))
             .await
-            .map_err(|e| DomainError::Session(format!("failed to create audit dir: {e}")))?;
-
-        let filename = format!("{}.jsonl", sanitize_session_key(session_key));
-        let path = audit_dir.join(&filename);
-
-        let file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .await
-            .map_err(|e| DomainError::Session(format!("failed to open audit log: {e}")))?;
-
-        Ok(Self {
-            writer: Mutex::new(file),
-            session_key: session_key.to_string(),
-        })
+            .map_err(|e| DomainError::Session(format!("failed to open audit log: {e}")))?
     }
 
     /// Open (or create) the audit log file for the given session (sync).
     ///
-    /// Same as [`Self::open`] but uses blocking I/O. Suitable for use in
-    /// sync contexts (e.g. before the tokio runtime is entered).
+    /// `~/.quecto` is shared with containers (#2150), so nothing here
+    /// follows a link an agent could plant: the directory is opened without
+    /// following one, and the file through that directory, likewise. Both
+    /// are made private (0700, 0600) through their handles, tightening what
+    /// an earlier version left looser; a tightening refused (someone else's
+    /// file) leaves the log open, with a warning.
     pub fn open_sync(base_dir: &Path, session_key: &str) -> Result<Self, DomainError> {
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
         let audit_dir = base_dir.join("audit");
-        std::fs::create_dir_all(&audit_dir)
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&audit_dir)
             .map_err(|e| DomainError::Session(format!("failed to create audit dir: {e}")))?;
+        let dir = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(&audit_dir)
+            .map_err(|e| {
+                DomainError::Session(format!(
+                    "failed to open audit dir {} (a link is never followed): {e}",
+                    audit_dir.display()
+                ))
+            })?;
+        tighten(&dir, 0o700, &audit_dir);
 
         let filename = format!("{}.jsonl", sanitize_session_key(session_key));
-        let path = audit_dir.join(&filename);
-
-        let std_file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|e| DomainError::Session(format!("failed to open audit log: {e}")))?;
-
-        let tokio_file = tokio::fs::File::from_std(std_file);
+        let shown = audit_dir.join(&filename);
+        let std_file = open_within(&dir, &filename).map_err(|e| {
+            DomainError::Session(format!(
+                "failed to open audit log {} (only a regular file, never through a link): {e}",
+                shown.display()
+            ))
+        })?;
+        tighten(&std_file, 0o600, &shown);
+        let written = std_file
+            .metadata()
+            .map_err(|e| DomainError::Session(format!("failed to read audit log: {e}")))?
+            .len();
+        let stopped = ends_capped(&std_file, written);
 
         Ok(Self {
-            writer: Mutex::new(tokio_file),
+            writer: Mutex::new(Writer {
+                file: tokio::fs::File::from_std(std_file),
+                written,
+                capped: stopped || written >= DEFAULT_CAP_BYTES,
+            }),
             session_key: session_key.to_string(),
+            parent: None,
+            cap_bytes: DEFAULT_CAP_BYTES,
         })
+    }
+
+    /// Name this session's parent in every record: it is a sub-agent.
+    pub fn with_parent(mut self, parent: Option<String>) -> Self {
+        self.parent = parent;
+        self
+    }
+
+    /// Stop at `cap_bytes` instead of [`DEFAULT_CAP_BYTES`]; a log already
+    /// that full stays stopped.
+    pub fn with_cap(mut self, cap_bytes: u64) -> Self {
+        assert!(cap_bytes > 0, "an audit log holds something");
+        self.cap_bytes = cap_bytes;
+        let writer = self.writer.get_mut();
+        writer.capped = writer.capped || writer.written >= cap_bytes;
+        self
+    }
+
+    fn line(&self, turn: u32, event: AuditEvent) -> Result<String, DomainError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let envelope = AuditEnvelope {
+            ts: now_utc_iso8601(),
+            unix_ms: u64::try_from(now.as_millis()).unwrap_or(u64::MAX),
+            pid: std::process::id(),
+            session: self.session_key.clone(),
+            parent: self.parent.clone(),
+            turn,
+            event,
+        };
+        let mut line =
+            serde_json::to_string(&envelope).map_err(|e| DomainError::Other(e.to_string()))?;
+        line.push('\n');
+        Ok(line)
     }
 
     /// Emit a single audit event.
     ///
     /// Serialises with envelope fields, writes one JSONL line, and flushes.
-    /// The flush is critical — the log must survive crashes.
+    /// The flush is critical — the log must survive crashes. A line that
+    /// would take the file past its cap is not written: one `log_capped`
+    /// record is, and nothing after it.
     pub async fn emit(&self, turn: u32, event: AuditEvent) -> Result<(), DomainError> {
-        let envelope = AuditEnvelope {
-            ts: now_utc_iso8601(),
-            session: self.session_key.clone(),
-            turn,
-            event,
-        };
-
-        let mut line =
-            serde_json::to_string(&envelope).map_err(|e| DomainError::Other(e.to_string()))?;
-        line.push('\n');
-
+        let line = self.line(turn, event)?;
         // Write directly — no BufWriter since we need every line flushed for
         // crash durability. On Linux, append-mode writes of < PIPE_BUF (4096)
         // bytes are atomic, and a typical JSONL line is 200-500 bytes.
@@ -109,14 +164,31 @@ impl AuditLog {
         // a drop of the File (or a process crash) can lose the last line —
         // exactly the case the contract test caught.
         let mut writer = self.writer.lock().await;
+        let fits = writer.written.saturating_add(line.len() as u64) <= self.cap_bytes;
+        let line = match (writer.capped, fits) {
+            (false, true) => line,
+            (false, false) => {
+                writer.capped = true;
+                self.line(
+                    turn,
+                    AuditEvent::LogCapped {
+                        cap_bytes: self.cap_bytes,
+                    },
+                )?
+            }
+            (true, _) => return Ok(()),
+        };
         writer
+            .file
             .write_all(line.as_bytes())
             .await
             .map_err(|e| DomainError::Session(format!("audit log write failed: {e}")))?;
         writer
+            .file
             .flush()
             .await
             .map_err(|e| DomainError::Session(format!("audit log flush failed: {e}")))?;
+        writer.written = writer.written.saturating_add(line.len() as u64);
 
         Ok(())
     }
@@ -138,6 +210,61 @@ impl AuditSink for AuditLog {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>
     {
         Box::pin(AuditLog::emit(self, turn, event))
+    }
+}
+
+/// Open (or create, 0600) `name` in the directory `dir` names, for
+/// appending: never through a link (`O_NOFOLLOW`), never blocking on a
+/// planted FIFO (`O_NONBLOCK`), and only a regular file. `openat` needs no
+/// `/proc`, which a container may not mount.
+fn open_within(dir: &std::fs::File, name: &str) -> std::io::Result<std::fs::File> {
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+    let name = std::ffi::CString::new(name)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "a NUL in the name"))?;
+    let flags = libc::O_RDWR
+        | libc::O_APPEND
+        | libc::O_CREAT
+        | libc::O_NOFOLLOW
+        | libc::O_NONBLOCK
+        | libc::O_CLOEXEC;
+    // The returned descriptor is owned below.
+    // SAFETY: `dir` is an open directory for the call and `name` is NUL-terminated.
+    let fd = unsafe { libc::openat(dir.as_raw_fd(), name.as_ptr(), flags, 0o600 as libc::c_uint) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `fd` was just opened and is owned by nothing else.
+    let file = unsafe { std::fs::File::from_raw_fd(fd) };
+    match file.metadata()?.file_type().is_file() {
+        true => Ok(file),
+        false => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        )),
+    }
+}
+
+/// Whether the log already ends with its `log_capped` record: it stopped,
+/// even though that record left it below the cap.
+fn ends_capped(file: &std::fs::File, len: u64) -> bool {
+    use std::os::unix::fs::FileExt;
+    let tail = len.min(4096);
+    let mut bytes = vec![0; tail as usize];
+    if file.read_exact_at(&mut bytes, len - tail).is_err() {
+        return false;
+    }
+    String::from_utf8_lossy(&bytes)
+        .trim_end()
+        .rsplit('\n')
+        .next()
+        .is_some_and(|last| last.contains(r#""event":"log_capped""#))
+}
+
+/// Make `file` private (`mode`) through its handle; best-effort.
+fn tighten(file: &std::fs::File, mode: u32, shown: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Err(error) = file.set_permissions(std::fs::Permissions::from_mode(mode)) {
+        tracing::warn!(%error, path = %shown.display(), "audit log left as it was: it could not be made private");
     }
 }
 
