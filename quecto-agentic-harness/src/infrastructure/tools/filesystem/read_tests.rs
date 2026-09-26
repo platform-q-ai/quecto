@@ -603,3 +603,30 @@ async fn test_read_non_utf8_file_returns_tool_error() {
     let msg = format!("{err}");
     assert!(msg.contains("not valid UTF-8"), "unexpected error: {msg}");
 }
+
+/// #2166: a binary file is named as binary, with a way to inspect it.
+#[tokio::test]
+async fn a_binary_file_is_named_not_decoded() {
+    let (ws, sb, tmp) = test_tools();
+    std::fs::write(tmp.path().join("blob.dat"), [0u8, 159, 146, 150, 255, 1]).unwrap();
+    let tool = ReadTool::new(ws, sb);
+    let result = tool.execute(r#"{"path": "blob.dat"}"#).await.unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("binary file"), "{}", result.content);
+    assert!(result.content.contains("xxd"), "{}", result.content);
+}
+
+/// #2166: a dangling symlink says where it points.
+#[tokio::test]
+async fn a_dangling_symlink_names_its_missing_target() {
+    let (ws, sb, tmp) = test_tools();
+    std::os::unix::fs::symlink("/nonexistent/target", tmp.path().join("link")).unwrap();
+    let tool = ReadTool::new(ws, sb);
+    let outcome = tool.execute(r#"{"path": "link"}"#).await;
+    let message = match outcome {
+        Ok(result) => result.content,
+        Err(error) => error.to_string(),
+    };
+    assert!(message.contains("symbolic link"), "{message}");
+    assert!(message.contains("/nonexistent/target"), "{message}");
+}

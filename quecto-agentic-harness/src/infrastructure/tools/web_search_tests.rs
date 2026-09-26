@@ -375,3 +375,21 @@ fn test_web_search_accepts_shared_client() {
     let tool = WebSearchTool::with_client(None, client);
     assert_eq!(tool.definition().name, "web_search");
 }
+
+/// #2166: an empty or blank query is refused before any request.
+#[tokio::test]
+async fn an_empty_query_is_refused_before_searching() {
+    let tool = WebSearchTool::new(Some("unused-key".into()));
+    for query in ["", "   "] {
+        let result = tool
+            .execute(&serde_json::json!({ "query": query }).to_string())
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(
+            result.content.contains("query must not be empty"),
+            "{}",
+            result.content
+        );
+    }
+}

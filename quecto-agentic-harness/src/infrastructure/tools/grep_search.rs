@@ -162,9 +162,14 @@ pub(super) async fn search(
         // not an error;
         (Some(Cut::Bytes), 0) => {
             facts.incomplete = true;
+            // Narrowing by glob or type cannot help a search of one file
+            // (#2166).
+            let advice = match full_path.is_file() {
+                true => "read the file directly (read with an offset, or bash with head -c)",
+                false => "narrow the search with glob or type, or read the file directly",
+            };
             return answered(format!(
-                "A matching line is larger than {}, so no match could be shown: \
-                 narrow the search with glob or type, or read the file directly",
+                "A matching line is larger than {}, so no match could be shown: {advice}",
                 format_size(limit.bytes)
             ));
         }

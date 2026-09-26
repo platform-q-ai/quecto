@@ -82,7 +82,7 @@ pub fn resolve_inspection_route(
         .ok_or_else(|| format!("subagent '{}' not found in registry", target_ref))?;
     if target.persisted_liveness != SubagentLiveness::Live {
         return Err(format!(
-            "subagent '{target_ref}' is {} and has no live inspection route",
+            "subagent '{target_ref}' is {} and has no live inspection route: it has ended, so there is no live state to inspect",
             match target.persisted_liveness {
                 SubagentLiveness::Live => "live",
                 SubagentLiveness::Detached => "detached",

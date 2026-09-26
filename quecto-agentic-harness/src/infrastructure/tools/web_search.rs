@@ -218,6 +218,15 @@ impl Tool for WebSearchTool {
                 .get("query")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| DomainError::Tool("missing required field: query".to_string()))?;
+            // Refused here, not by the search service's opaque error (#2166).
+            if query.trim().is_empty() {
+                return Ok(ToolResult {
+                    content: "query must not be empty".into(),
+                    is_error: true,
+                    image_blocks: vec![],
+                    delivery_metadata: None,
+                });
+            }
 
             let result = if let Some(ref key) = self.api_key {
                 self.search_brave(query, key).await

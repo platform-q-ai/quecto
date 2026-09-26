@@ -110,6 +110,18 @@ impl Tool for EditTool {
                 return Ok(missing_edit_arg("newText"));
             };
 
+            // Empty text matches nothing useful: say so, not "not found" (#2166).
+            if old_text.is_empty() {
+                return Ok(ToolResult {
+                    content: "oldText must not be empty: give the exact text to replace, \
+                              with enough surrounding lines to match once"
+                        .into(),
+                    is_error: true,
+                    image_blocks: vec![],
+                    delivery_metadata: None,
+                });
+            }
+
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
             enforce_edit_file_size_limit(&full_path).await?;
 

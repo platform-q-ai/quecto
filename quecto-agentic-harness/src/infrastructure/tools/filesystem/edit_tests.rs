@@ -579,3 +579,21 @@ fn test_edit_description_includes_example() {
         def.description
     );
 }
+
+/// #2166: an empty oldText is refused as such, not as "not found".
+#[tokio::test]
+async fn an_empty_old_text_is_refused_as_empty() {
+    let (ws, sb, tmp) = test_tools();
+    std::fs::write(tmp.path().join("test.txt"), "hello").unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = tool
+        .execute(r#"{"path": "test.txt", "oldText": "", "newText": "x"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("oldText must not be empty"),
+        "{}",
+        result.content
+    );
+}
