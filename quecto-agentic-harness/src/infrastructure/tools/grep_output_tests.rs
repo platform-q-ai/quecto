@@ -70,13 +70,7 @@ async fn distant_matches_keep_separate_blocks() {
     let numbers: Vec<usize> = out
         .lines()
         .filter_map(|l| l.strip_prefix("rows.txt"))
-        .filter_map(|rest| {
-            rest[1..]
-                .split(|c| c == ':' || c == '-')
-                .next()?
-                .parse()
-                .ok()
-        })
+        .filter_map(|rest| rest[1..].split([':', '-']).next()?.parse().ok())
         .collect();
     assert_eq!(numbers, [1, 2, 3, 9, 10, 11], "{out}");
 }
