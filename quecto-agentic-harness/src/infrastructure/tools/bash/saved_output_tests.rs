@@ -442,3 +442,28 @@ fn a_symlinked_directory_is_never_made_private() {
         0o755
     );
 }
+
+/// #2187 review: this user's expired files are swept from an old shared
+/// directory another user owns; the directory itself stays theirs.
+#[test]
+fn the_legacy_sweep_reaches_own_files_in_another_users_directory() {
+    let tmp = TempDir::new().unwrap();
+    let legacy = tmp.path().join("legacy");
+    std::fs::create_dir(&legacy).unwrap();
+    let now = SystemTime::now();
+    let old = saved_file(&legacy, "old001", now, 25 * HOUR);
+    // As if another user owned the directory: pruning never requires it
+    // here, and removal of the directory needs ownership.
+    let stranger = owner().wrapping_add(1);
+    assert!(!is_owned_real_directory(&legacy, stranger));
+    sweep_legacy(&legacy, owner(), now);
+    assert!(!old.exists(), "own expired file swept");
+    // A symlinked legacy directory is never entered.
+    let target = tmp.path().join("target");
+    std::fs::create_dir(&target).unwrap();
+    let theirs = saved_file(&target, "old002", now, 25 * HOUR);
+    let link = tmp.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    sweep_legacy(&link, owner(), now);
+    assert!(theirs.exists(), "a symlinked directory is not swept");
+}

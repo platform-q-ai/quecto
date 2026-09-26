@@ -115,8 +115,15 @@ pub(super) async fn save_to_temp_file(content: String) -> Option<String> {
 
 /// Sweep the old shared directory of this user's expired files, and remove
 /// it once it is empty (it then costs nothing more).
+/// The old directory was shared: another user may own it while this
+/// user's files sit in it (#2187 review), so only this user's own regular
+/// files are pruned there, in any real directory; the directory itself is
+/// removed only by its owner.
 pub(super) fn sweep_legacy(dir: &Path, owner: u32, now: SystemTime) {
-    prune_saved_outputs(dir, owner, now, LEGACY_POLICY);
+    let real_directory = std::fs::symlink_metadata(dir).is_ok_and(|meta| meta.is_dir());
+    if real_directory {
+        prune_own_files(dir, owner, now, LEGACY_POLICY);
+    }
     if is_owned_real_directory(dir, owner) {
         // Fails, harmlessly, while anything is left in it.
         let _ = std::fs::remove_dir(dir);
@@ -206,6 +213,12 @@ pub(super) fn prune_saved_outputs(
     if !is_owned_real_directory(dir, owner) {
         return 0;
     }
+    prune_own_files(dir, owner, now, policy)
+}
+
+/// Prune `owner`'s saved files directly in `dir`, which the caller has
+/// vetted as a real directory.
+fn prune_own_files(dir: &Path, owner: u32, now: SystemTime, policy: PrunePolicy) -> usize {
     let mut candidates = match saved_output_files(dir, owner) {
         Ok(candidates) => candidates,
         Err(e) => {
