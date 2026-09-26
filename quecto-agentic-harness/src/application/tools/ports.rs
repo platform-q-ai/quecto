@@ -146,6 +146,13 @@ pub trait ToolExecutor: Send + Sync {
 
     /// Acknowledge that a non-error result was durably delivered to the caller's context.
     fn result_delivered(&self, _name: &str, _arguments: &str, _result: &ToolResult) {}
+
+    /// Whether a call of `name` may run at the same time as other calls
+    /// that may (#2169): only tools that change nothing and depend on no
+    /// other call's effects. Nothing may unless its registry says so.
+    fn overlaps_safely(&self, _name: &str) -> bool {
+        false
+    }
 }
 
 /// Port: live runtime policy mutation for registered tools.

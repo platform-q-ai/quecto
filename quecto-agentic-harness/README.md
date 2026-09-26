@@ -153,6 +153,8 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 ### Tool isolation
 
+**Parallel tool calls** (#2169): when every call in one model response is to a bundled tool that changes nothing (`read`, `grep`, `find`, `ls`, `web_fetch`, `web_search`, `docs`, `recall`), the calls run at once; a response with any other call (`bash`, `write`, `edit`, `spawn`, `swarm`, `agent_cmd`, or any extension tool) runs its calls one at a time, as before. Results are always added to the conversation, the audit log and the event log in call order.
+
 **Filesystem tools** (`read`, `write`, `edit`, `ls`): call `Sandbox::validate_path` as a shared path hook before I/O. It no longer confines paths to the workspace; filesystem tools can access any path the Quecto process user can access.
 
 **bash** (exec only): commands run natively as the invoking user, with the workspace as the working directory but **no filesystem confinement** — unlike the filesystem tools, `bash` is *not* restricted to the workspace and can read any path the user can (e.g. `~/.ssh`, `~/.aws`, `/etc/passwd`) and reach the network. `Sandbox::validate_command` rejects a denylist of obviously-destructive commands, but this is a **best-effort speed-bump, not a security boundary** (trivially bypassed via shell escapes, `base64`, env indirection). There are **no in-process resource limits** (memory/PID/CPU/wall-time are unbounded). Real isolation is delegated to the deployment — see [Security](#security). Output is captured up to `exec_max_capture_bytes` per stream (1 MiB by default), keeping the start and the true end with the dropped middle named; once the shell exits, the call returns when the output has been quiet for half a second (at most 5 s for a job that keeps writing) even if a background job (`cmd &`) still holds it, and says so; the job keeps running and its later output is discarded (#2167).
@@ -898,7 +900,7 @@ OAuth tokens from `auth.openai.com` (obtained via `quecto auth login --provider 
 - SSE streaming with accumulator-based response assembly
 - `prompt_cache_key` support: session keys are FNV-1a hashed with type-prefix preservation for privacy (e.g. `telegram:12345` → `telegram:c3d7e1f2`)
 - Orphaned tool call pair repair: mismatched `function_call`/`function_call_output` pairs (from context pruning or mid-turn interruption) are detected and dropped before sending to the API
-- Parallel tool calls enabled
+- Parallel tool calls enabled (they run at once only when every call may overlap; see Parallel tool calls)
 
 ### OAuth auto-refresh
 
