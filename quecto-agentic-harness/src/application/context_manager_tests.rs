@@ -107,7 +107,7 @@ async fn context_manager_plan_preserves_pinned_recent_turns() {
     ];
 
     let plan = manager
-        .prepare_provider_context(&mut messages, 1, false, 0)
+        .prepare_provider_context(&mut messages, manager.effective_max_context_tokens(), false)
         .await;
 
     assert!(
@@ -137,7 +137,7 @@ async fn context_manager_marks_dirty_when_manifest_layout_shifts() {
     let mut messages = vec![manifest];
 
     let plan = manager
-        .prepare_provider_context(&mut messages, 1, true, 0)
+        .prepare_provider_context(&mut messages, manager.effective_max_context_tokens(), true)
         .await;
 
     assert!(
@@ -200,13 +200,13 @@ async fn tokens_sent_with_every_request_shrink_the_message_budget() {
 
     let mut roomy = conversation();
     manager
-        .prepare_provider_context(&mut roomy, 1, false, 0)
+        .prepare_provider_context(&mut roomy, total + 10, false)
         .await;
     assert!(roomy.iter().any(|m| m.turn == Some(1)), "everything fits");
 
     let mut tight = conversation();
     let plan = manager
-        .prepare_provider_context(&mut tight, 1, false, total / 2)
+        .prepare_provider_context(&mut tight, total + 10 - total / 2, false)
         .await;
     assert!(
         !tight.iter().any(|m| m.turn == Some(1)),

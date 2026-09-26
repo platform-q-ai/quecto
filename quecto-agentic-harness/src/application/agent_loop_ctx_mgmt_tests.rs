@@ -593,3 +593,51 @@ async fn the_context_estimate_includes_the_tool_definitions() {
     assert!(tools > 0);
     assert_eq!(with, without + tools);
 }
+
+/// #2160: the tool definitions every request carries count against the
+/// budget: a conversation that fits without them loses its oldest turn
+/// with them.
+#[tokio::test]
+async fn the_tool_definitions_count_against_the_budget() {
+    use crate::application::agent_loop::tests::{
+        MockProvider, MockRegistry, MockTool, test_config,
+    };
+    let conversation = || {
+        let turn = |n: u32| {
+            let mut message = Message::assistant("x".repeat(2_000), vec![]);
+            message.turn = Some(n);
+            message
+        };
+        vec![turn(1), turn(2), turn(3), turn(4), Message::user("now")]
+    };
+    let messages_total =
+        crate::application::context_pruning::estimate_total_tokens(&conversation());
+    let agent_with = |tools: &[&str]| {
+        let mut registry = MockRegistry::new();
+        for name in tools {
+            registry.register(std::sync::Arc::new(MockTool::new(name, "ok")));
+        }
+        let tool_tokens = crate::application::context_pruning::estimate_tool_definition_tokens(
+            &registry.cached_definitions,
+        );
+        let provider = std::sync::Arc::new(MockProvider::new(vec![]));
+        let agent = AgentLoopImpl::new(AgentLoopConfig {
+            max_context_tokens: messages_total + 5,
+            ..test_config(provider, Box::new(registry))
+        });
+        (agent, tool_tokens)
+    };
+    let (bare, _) = agent_with(&[]);
+    let mut kept = conversation();
+    bare.apply_context_pruning(&mut kept, 1, false).await;
+    assert!(kept.iter().any(|m| m.turn == Some(1)), "everything fits");
+
+    let (tooled, tool_tokens) = agent_with(&["lookup", "fetch", "search", "inspect"]);
+    assert!(tool_tokens > 5, "{tool_tokens}");
+    let mut pruned = conversation();
+    tooled.apply_context_pruning(&mut pruned, 1, false).await;
+    assert!(
+        !pruned.iter().any(|m| m.turn == Some(1)),
+        "the oldest turn makes room for the tool definitions"
+    );
+}

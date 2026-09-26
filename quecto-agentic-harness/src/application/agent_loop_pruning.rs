@@ -13,7 +13,13 @@ impl AgentLoopImpl {
             context_pruning::estimate_tool_definition_tokens(&self.current_tool_definitions());
         let plan = self
             .context_manager
-            .prepare_provider_context(messages, current_turn, spills_dirty, fixed_tokens)
+            .prepare_provider_context(
+                messages,
+                // The messages get the budget less what every request carries.
+                self.effective_max_context_tokens()
+                    .saturating_sub(fixed_tokens),
+                spills_dirty,
+            )
             .await;
         let budget = self.effective_max_context_tokens();
         if plan.over_budget {

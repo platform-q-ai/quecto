@@ -262,15 +262,11 @@ impl ContextManager {
         }
     }
 
-    /// `fixed_tokens` is what every request carries outside the messages
-    /// (the tool definitions): the messages get the rest of the budget
-    /// (#2160).
     pub async fn prepare_provider_context(
         &self,
         messages: &mut Vec<Message>,
-        _current_turn: u32,
+        message_budget: usize,
         spills_dirty: bool,
-        fixed_tokens: usize,
     ) -> ContextPlan {
         let tokens_before = context_pruning::estimate_total_tokens(messages);
         let message_spilled = self.spill_unspilled_conversation_messages(messages).await;
@@ -285,8 +281,7 @@ impl ContextManager {
         );
         let outcome = context_pruning::messages::enforce_context_ceiling_ladder(
             messages,
-            self.effective_max_context_tokens()
-                .saturating_sub(fixed_tokens),
+            message_budget,
             self.pin_recent_turns,
         );
         let mut manifest_shifted = false;
