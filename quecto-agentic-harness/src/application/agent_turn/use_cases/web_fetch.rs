@@ -28,7 +28,11 @@ impl HttpStatus {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FetchOutcome {
-    SuccessBody(Vec<u8>),
+    /// A body and the `Content-Type` it was served with, when there was one.
+    SuccessBody {
+        body: Vec<u8>,
+        content_type: Option<String>,
+    },
     NonSuccessStatus(HttpStatus),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,6 +59,11 @@ pub enum WebFetchError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WebFetchResult {
     Success(String),
+    /// Content that is not text: named, not shown (#2165).
+    Binary {
+        content_type: Option<String>,
+        bytes: usize,
+    },
     UnsupportedScheme,
     RestrictedInitialHost(String),
     NonSuccessStatus(HttpStatus),
@@ -93,12 +102,19 @@ impl WebFetchUseCase {
             .map_err(WebFetchError::Fetch)?
         {
             FetchOutcome::NonSuccessStatus(status) => Ok(WebFetchResult::NonSuccessStatus(status)),
-            FetchOutcome::SuccessBody(bytes) => {
-                let body = String::from_utf8_lossy(&bytes);
-                let content = if raw {
-                    body.into_owned()
-                } else {
-                    strip_html(&body)
+            FetchOutcome::SuccessBody { body, content_type } => {
+                // By what was served (#2165): HTML is made readable (unless
+                // raw), other text comes back as it is, anything else is
+                // named rather than decoded into noise.
+                let content = match (kind_of(content_type.as_deref(), &body), raw) {
+                    (BodyKind::Binary, _) => {
+                        return Ok(WebFetchResult::Binary {
+                            content_type,
+                            bytes: body.len(),
+                        });
+                    }
+                    (BodyKind::Html, false) => strip_html(decoded(&body).as_ref()),
+                    (BodyKind::Html, true) | (BodyKind::Text, _) => decoded(&body).into_owned(),
                 };
                 Ok(WebFetchResult::Success(truncate_output(
                     content,
@@ -108,6 +124,117 @@ impl WebFetchUseCase {
         }
     }
 }
+/// What a fetched body is, by its served type or, without one, its bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BodyKind {
+    Html,
+    Text,
+    Binary,
+}
+
+/// Media types returned as text (the served type's essence, lowercased).
+fn is_text_media(essence: &str) -> bool {
+    essence.starts_with("text/")
+        || essence.ends_with("+json")
+        || essence.ends_with("+xml")
+        || matches!(
+            essence,
+            "application/json"
+                | "application/xml"
+                | "application/javascript"
+                | "application/ecmascript"
+                | "application/x-javascript"
+                | "application/yaml"
+                | "application/x-yaml"
+                | "application/toml"
+                | "application/x-sh"
+                | "application/sql"
+                | "application/graphql"
+                | "application/x-ndjson"
+                | "application/jsonl"
+                | "application/jsonlines"
+                | "application/csv"
+        )
+}
+
+/// A served type that says nothing about the content: generic, unknown,
+/// empty or not of the `type/subtype` form.
+fn says_nothing(essence: &str) -> bool {
+    let well_formed = essence
+        .split_once('/')
+        .is_some_and(|(kind, sub)| !kind.is_empty() && !sub.is_empty());
+    matches!(
+        essence,
+        "application/octet-stream" | "binary/octet-stream" | "application/unknown"
+    ) || !well_formed
+}
+
+fn kind_of(content_type: Option<&str>, body: &[u8]) -> BodyKind {
+    let essence = content_type
+        .and_then(|value| value.split(';').next())
+        .map(|value| value.trim().to_ascii_lowercase());
+    match essence.as_deref() {
+        Some("text/html" | "application/xhtml+xml") => BodyKind::Html,
+        Some(essence) if is_text_media(essence) => BodyKind::Text,
+        // A generic or unknown type says nothing about the bytes: text
+        // served as octet-stream is common (S3, CDNs; #2177 review).
+        Some(essence) if says_nothing(essence) => sniff(body),
+        Some(_) => BodyKind::Binary,
+        None => sniff(body),
+    }
+}
+
+/// Untyped content: text when it is valid UTF-8 with no NUL, HTML when it
+/// also opens like a document.
+fn sniff(body: &[u8]) -> BodyKind {
+    let Ok(text) = std::str::from_utf8(body) else {
+        return BodyKind::Binary;
+    };
+    if text.contains('\0') {
+        return BodyKind::Binary;
+    }
+    let opening = document_opening(text).as_bytes();
+    let opens_with = |prefix: &[u8]| {
+        opening
+            .get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+    };
+    if opens_with(b"<!doctype html") || opens_with(b"<html") {
+        BodyKind::Html
+    } else {
+        BodyKind::Text
+    }
+}
+
+/// A text body, without a leading byte-order mark.
+fn decoded(body: &[u8]) -> std::borrow::Cow<'_, str> {
+    match String::from_utf8_lossy(body) {
+        std::borrow::Cow::Borrowed(text) => {
+            std::borrow::Cow::Borrowed(text.trim_start_matches('\u{feff}'))
+        }
+        std::borrow::Cow::Owned(text) => {
+            std::borrow::Cow::Owned(text.trim_start_matches('\u{feff}').to_owned())
+        }
+    }
+}
+
+/// Where a document's own markup starts: past a byte-order mark, an XML
+/// prolog, comments and whitespace (#2177 review).
+fn document_opening(text: &str) -> &str {
+    let mut rest = text.trim_start_matches('\u{feff}');
+    loop {
+        let trimmed = rest.trim_start();
+        let skipped = [("<?", "?>"), ("<!--", "-->")]
+            .iter()
+            .find(|(open, _)| trimmed.starts_with(open))
+            .and_then(|(_, close)| trimmed.find(close).map(|end| &trimmed[end + close.len()..]));
+        match skipped {
+            Some(after) => rest = after,
+            None => return trimmed,
+        }
+    }
+}
+
 fn classify(url: url::Url) -> ExecutionGate {
     if matches!(url.scheme(), "http" | "https") {
         let host = url.host_str().unwrap_or_default();
@@ -186,6 +313,10 @@ const STRIPPED_BLOCK_TAGS: &[&str] = &["script", "style", "nav", "footer", "head
 fn remove_configured_tag_blocks(html: &str) -> String {
     let mut result = String::with_capacity(html.len());
     let mut pos = 0;
+    // Tags with no close anywhere after some point have none after any later
+    // point either: searched once, so many unclosed tags stay linear (#2177
+    // review).
+    let mut never_closed: Vec<&'static str> = Vec::new();
 
     while pos < html.len() {
         let Some(tag_start_rel) = html[pos..].find('<') else {
@@ -200,14 +331,23 @@ fn remove_configured_tag_blocks(html: &str) -> String {
         };
 
         result.push_str(&html[pos..tag_start]);
-        if let Some(close_start) = find_configured_close_tag(html, tag_start + 1, tag) {
+        let close = match never_closed.contains(&tag) {
+            true => None,
+            false => find_configured_close_tag(html, tag_start + 1, tag),
+        };
+        if let Some(close_start) = close {
             let close_end = html[close_start..]
                 .find('>')
                 .map(|idx| close_start + idx + 1)
                 .unwrap_or(html.len());
             pos = close_end;
         } else {
-            break;
+            // Never closed: drop only the opening tag, never the rest of
+            // the page (#2165).
+            never_closed.push(tag);
+            pos = html[tag_start..]
+                .find('>')
+                .map_or(html.len(), |idx| tag_start + idx + 1);
         }
     }
 
@@ -276,12 +416,20 @@ fn tags_to_text(html: &str) -> String {
 
     let mut result = String::with_capacity(html.len());
     let mut pos = 0;
+    // Once no `>` follows, none follows any later `<` either: stop looking,
+    // so many stray `<` stay linear (#2177 review).
+    let mut no_more_ends = false;
 
     while let Some(open) = html[pos..].find('<') {
         let abs_open = pos + open;
         result.push_str(&html[pos..abs_open]);
 
-        if let Some(end_offset) = html[abs_open..].find('>') {
+        let end = match no_more_ends {
+            true => None,
+            false => html[abs_open..].find('>'),
+        };
+        no_more_ends = end.is_none();
+        if let Some(end_offset) = end {
             let tag_content = &html[abs_open + 1..abs_open + end_offset];
             let trimmed = tag_content.trim().trim_start_matches('/');
             let tag_end = trimmed
@@ -308,6 +456,9 @@ fn tags_to_text(html: &str) -> String {
 
 /// Decode common HTML entities. Operates on `&str` so multibyte characters
 /// are preserved instead of being re-interpreted as Latin-1 bytes.
+/// Longest entity text looked for, `&` to `;` (`&thetasym;` is 10).
+const MAX_ENTITY_BYTES: usize = 12;
+
 fn decode_entities(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut pos = 0;
@@ -316,7 +467,11 @@ fn decode_entities(text: &str) -> String {
         let abs_amp = pos + amp;
         result.push_str(&text[pos..abs_amp]);
 
-        if let Some(semi) = text[abs_amp..].find(';') {
+        // An entity is short: look for its `;` only within reach, so many
+        // `&` with a far `;` stay linear (#2177 review).
+        let reach = text.len().min(abs_amp + MAX_ENTITY_BYTES);
+        let window = text.get(abs_amp..reach).unwrap_or("");
+        if let Some(semi) = window.find(';') {
             let entity = &text[abs_amp + 1..abs_amp + semi];
             if let Some(decoded) = decode_entity(entity) {
                 result.push(decoded);
@@ -417,6 +572,9 @@ fn collapse_whitespace(text: &str) -> String {
     out
 }
 
+#[cfg(test)]
+#[path = "web_fetch_content_tests.rs"]
+mod content_tests;
 #[cfg(test)]
 #[path = "web_fetch_tests.rs"]
 mod tests;

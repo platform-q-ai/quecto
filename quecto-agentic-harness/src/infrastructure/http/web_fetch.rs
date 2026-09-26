@@ -40,9 +40,14 @@ impl FetchWebContent for ReqwestFetchWebContent {
                     status.canonical_reason().map(str::to_owned),
                 )));
             }
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
             read_body(response, MAX_RAW_BYTES)
                 .await
-                .map(FetchOutcome::SuccessBody)
+                .map(|body| FetchOutcome::SuccessBody { body, content_type })
         })
     }
 }

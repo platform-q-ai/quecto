@@ -87,9 +87,9 @@ fn given_mock_returns_html(world: &mut QuectoWorld, step: &gherkin::Step) {
     mount_web_fetch_mock(
         server,
         wiremock::Mock::given(wiremock::matchers::method("GET")).respond_with(
-            wiremock::ResponseTemplate::new(200)
-                .set_body_string(body)
-                .insert_header("content-type", "text/html"),
+            // Served as HTML: set_body_string would fix the type to
+            // text/plain whatever header is added (#2165).
+            wiremock::ResponseTemplate::new(200).set_body_raw(body, "text/html"),
         ),
     );
 }

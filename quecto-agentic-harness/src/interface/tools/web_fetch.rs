@@ -32,7 +32,7 @@ impl Tool for WebFetchTool {
     }
 
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition{name:"web_fetch".into(),description:"Fetch a URL and return its content as readable text. Strips HTML tags by default to save tokens. Use raw mode for JSON APIs or markdown files.".into(),parameters_schema:Cow::Borrowed(r#"{"type":"object","properties":{"url":{"type":"string","description":"URL to fetch (http or https)"},"raw":{"type":"boolean","description":"Return raw body without HTML stripping (default: false)"}},"required":["url"]}"#)}
+        ToolDefinition{name:"web_fetch".into(),description:"Fetch a URL and return its content as text: HTML is made readable (tags stripped) unless raw, other text (JSON, markdown, code, CSV...) comes back as served, and binary content (images, archives, PDFs) is named, not shown.".into(),parameters_schema:Cow::Borrowed(r#"{"type":"object","properties":{"url":{"type":"string","description":"URL to fetch (http or https)"},"raw":{"type":"boolean","description":"For HTML: return the markup as served instead of readable text (default: false)"}},"required":["url"]}"#)}
     }
     fn execute(
         &self,
@@ -49,6 +49,16 @@ impl Tool for WebFetchTool {
             let raw = parsed.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
             match self.use_case.execute(url, raw).await {
                 Ok(WebFetchResult::Success(s)) => Ok(result(s, false)),
+                Ok(WebFetchResult::Binary {
+                    content_type,
+                    bytes,
+                }) => Ok(result(
+                    format!(
+                        "{url} is binary content ({}, {bytes} bytes), not shown: web_fetch returns text and HTML only",
+                        content_type.as_deref().unwrap_or("no content type")
+                    ),
+                    false,
+                )),
                 Ok(WebFetchResult::UnsupportedScheme) => Ok(result(
                     format!(
                         "Invalid URL scheme: only http:// and https:// are allowed. Got: {url}"
