@@ -5,10 +5,80 @@
 //! request, the response or the handling of either.
 use super::*;
 
+/// Observe a whole SSE response without changing the no-admission send path.
+/// Each wire chunk is inspected as it arrives; the caller still parses the
+/// complete response with its existing parser.
+pub(in crate::infrastructure::providers) async fn assembled<T>(
+    trace: Option<Arc<RequestTrace>>,
+    builder: reqwest::RequestBuilder,
+    profile: Profile,
+    parse: impl FnOnce(&str) -> Result<T, DomainError>,
+) -> Result<T, DomainError> {
+    let attempt = PassiveAttempt::begin(trace, profile);
+    let mut response = builder.send().await.map_err(|error| {
+        if let Some(attempt) = &attempt {
+            attempt.send_failed();
+        }
+        profile.send_error(&error)
+    })?;
+    if let Some(attempt) = &attempt {
+        attempt.response(&response);
+    }
+    if response.status().as_u16() != 200 {
+        let status = response.status().as_u16();
+        let body = response.text().await.ok();
+        if let Some(attempt) = &attempt {
+            attempt.http_error(status, body.as_deref());
+        }
+        return Err(DomainError::Provider(format!(
+            "HTTP {status} from {}: {}",
+            profile.name(),
+            body.unwrap_or_default()
+        )));
+    }
+    let mut bytes = Vec::new();
+    let mut observer = LineObserver {
+        protocol: ProtocolObserver::new(profile),
+        carry: Vec::new(),
+        oversized: false,
+    };
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if let Some(attempt) = &attempt {
+                    observer.push(&chunk, &attempt.receipt);
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(error) => {
+                if let Some(attempt) = &attempt {
+                    attempt.read_failed();
+                }
+                return Err(DomainError::Provider(format!("failed to read response: {error}")));
+            }
+        }
+    }
+    if let Some(attempt) = &attempt {
+        observer.finish(&attempt.receipt);
+    }
+    let result = parse(&String::from_utf8_lossy(&bytes));
+    if let Some(attempt) = &attempt {
+        if result.is_ok() {
+            attempt.completed();
+        } else {
+            attempt.rejected();
+        }
+    }
+    result
+}
+
 /// One observed attempt; recorded into its request's trace when dropped.
 pub(in crate::infrastructure::providers) struct PassiveAttempt {
     receipt: Receipt,
     observer: ProtocolObserver,
+    carry: Vec<u8>,
+    oversized: bool,
 }
 
 impl PassiveAttempt {
@@ -22,6 +92,8 @@ impl PassiveAttempt {
         Some(Self {
             receipt,
             observer: ProtocolObserver::new(profile),
+            carry: Vec::new(),
+            oversized: false,
         })
     }
 
@@ -55,6 +127,37 @@ impl PassiveAttempt {
         self.receipt.termination(Termination::ReadError);
     }
 
+    /// Observe a complete non-stream response without retaining its content.
+    pub(in crate::infrastructure::providers) fn nonstream_body(&self, body: &serde_json::Value) {
+        let mut state = self.receipt.0.lock().unwrap_or_else(|e| e.into_inner());
+        let diagnostics = &mut state.diagnostics;
+        diagnostics::typed(diagnostics, body);
+        diagnostics.stop_reason = body["stop_reason"].as_str().map(|reason| match reason {
+            "end_turn" => TerminalStopReason::EndTurn,
+            "max_tokens" => TerminalStopReason::MaxTokens,
+            "tool_use" => TerminalStopReason::ToolUse,
+            "refusal" => TerminalStopReason::Refusal,
+            _ => TerminalStopReason::Unknown,
+        });
+        if let Some(blocks) = body["content"].as_array() {
+            for block in blocks {
+                match block["type"].as_str() {
+                    Some("text") => diagnostics.generated_text |= block["text"].as_str().is_some_and(|s| !s.is_empty()),
+                    Some("tool_use") => diagnostics.generated_tool_call = true,
+                    Some("thinking") | Some("redacted_thinking") => diagnostics.generated_thinking = true,
+                    _ => {}
+                }
+            }
+        }
+        if diagnostics.generated_text || diagnostics.generated_tool_call || diagnostics.generated_thinking {
+            let elapsed = state.started.elapsed().as_millis();
+            state.diagnostics.first_token_ms = Some(u64::try_from(elapsed).unwrap_or(u64::MAX));
+            if let Some(trace) = &state.trace {
+                trace.mark_first_token(std::time::Instant::now());
+            }
+        }
+    }
+
     /// A whole reply was read but could not be accepted.
     pub(in crate::infrastructure::providers) fn rejected(&self) {
         self.receipt.fail();
@@ -73,6 +176,33 @@ impl PassiveAttempt {
         if state.diagnostics.termination == Termination::Dropped {
             state.diagnostics.termination = Termination::Eof;
         }
+    }
+
+    /// Inspect complete SSE lines as each network chunk arrives.
+    pub(in crate::infrastructure::providers) fn chunk(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            if byte == b'\n' {
+                self.finish_line();
+            } else if !self.oversized {
+                if self.carry.len() < super::super::sse_common::MAX_SSE_LINE_BYTES {
+                    self.carry.push(byte);
+                } else {
+                    self.carry.clear();
+                    self.oversized = true;
+                }
+            }
+        }
+    }
+
+    pub(in crate::infrastructure::providers) fn finish_line(&mut self) {
+        if self.oversized {
+            let mut state = self.receipt.0.lock().unwrap_or_else(|e| e.into_inner());
+            state.diagnostics.oversized_lines = state.diagnostics.oversized_lines.saturating_add(1);
+        } else if let Ok(line) = std::str::from_utf8(&self.carry) {
+            self.observer.observe(line.trim(), &self.receipt);
+        }
+        self.carry.clear();
+        self.oversized = false;
     }
 
     /// One SSE line of the response body.

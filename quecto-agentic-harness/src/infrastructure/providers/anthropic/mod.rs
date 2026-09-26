@@ -5,6 +5,7 @@ use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor
 
 mod claude_code;
 mod normalize;
+mod response;
 mod usage;
 
 use std::future::Future;
@@ -12,9 +13,10 @@ use std::pin::Pin;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role, StopReason, ThinkingBlock, ToolCall};
+use crate::domain::message::{LlmResponse, Message, Role};
+#[cfg(test)]
+use crate::domain::message::ToolCall;
 use crate::domain::provider::StreamEvent;
-use crate::domain::visible_thinking::append_visible_thinking;
 use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name};
 
 pub(super) mod anthropic_sse;
@@ -438,86 +440,7 @@ impl AnthropicProvider {
             .collect()
     }
 
-    fn parse_response(
-        body: &serde_json::Value,
-        is_oauth: bool,
-        tools: &[crate::domain::tool::ToolDefinition],
-    ) -> Result<LlmResponse, DomainError> {
-        let content_blocks = body["content"]
-            .as_array()
-            .ok_or_else(|| DomainError::Provider("missing content in response".to_string()))?;
 
-        let mut text_parts: Vec<String> = Vec::new();
-        let mut tool_calls: Vec<ToolCall> = Vec::new();
-        let mut thinking_blocks: Vec<ThinkingBlock> = Vec::new();
-        let mut thinking_budget = String::new();
-
-        for block in content_blocks {
-            match block["type"].as_str() {
-                Some("text") => {
-                    if let Some(t) = block["text"].as_str() {
-                        text_parts.push(t.to_string());
-                    }
-                }
-                Some("thinking") => {
-                    let thinking = block["thinking"].as_str().unwrap_or_default();
-                    if thinking.is_empty() {
-                        continue;
-                    }
-                    append_visible_thinking(
-                        &mut thinking_budget,
-                        thinking,
-                        "Anthropic non-stream thinking",
-                    )?;
-                    thinking_blocks.push(ThinkingBlock::Normal {
-                        thinking: thinking.to_string(),
-                        signature: block["signature"].as_str().unwrap_or_default().to_string(),
-                    });
-                }
-                Some("redacted_thinking") => {
-                    thinking_blocks.push(ThinkingBlock::Redacted {
-                        data: block["data"].as_str().unwrap_or_default().to_string(),
-                    });
-                }
-                Some("tool_use") => {
-                    let id = block["id"].as_str().unwrap_or_default().to_string();
-                    let raw_name = block["name"].as_str().unwrap_or_default().to_string();
-                    // Reverse-map canonical tool names for OAuth (#437-4)
-                    let name = if is_oauth {
-                        claude_code::from_claude_code_name(&raw_name, tools)
-                    } else {
-                        raw_name
-                    };
-                    let input = &block["input"];
-                    let arguments = serde_json::to_string(input).unwrap_or_default();
-                    tool_calls.push(ToolCall {
-                        id,
-                        name,
-                        arguments,
-                    });
-                }
-                _ => {}
-            }
-        }
-
-        let content = if text_parts.is_empty() {
-            None
-        } else {
-            Some(text_parts.join(""))
-        };
-
-        let usage = body["usage"].as_object().map(usage::parse_usage);
-
-        let stop_reason = body["stop_reason"].as_str().map(StopReason::parse);
-
-        Ok(LlmResponse {
-            content,
-            tool_calls,
-            usage,
-            stop_reason,
-            thinking_blocks,
-        })
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -570,10 +493,17 @@ impl LlmProvider for AnthropicProvider {
                 )
                 .await;
             }
+            let attempt = crate::infrastructure::providers::attempt_transport::PassiveAttempt::begin(
+                trace, Profile::new(Vendor::Anthropic, Surface::Chat),
+            );
             let response = request_builder
                 .send()
                 .await
-                .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
+                .map_err(|e| {
+                    if let Some(attempt) = &attempt { attempt.send_failed(); }
+                    DomainError::Provider(format!("HTTP error: {}", e))
+                })?;
+            if let Some(attempt) = &attempt { attempt.response(&response); }
 
             let status = response.status().as_u16();
             let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
@@ -582,9 +512,13 @@ impl LlmProvider for AnthropicProvider {
             let response_text = response
                 .text()
                 .await
-                .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
+                .map_err(|e| {
+                    if let Some(attempt) = &attempt { attempt.read_failed(); }
+                    DomainError::Provider(format!("failed to read response: {}", e))
+                })?;
 
             if status != 200 {
+                if let Some(attempt) = &attempt { attempt.http_error(status, Some(&response_text)); }
                 return Err(DomainError::Provider(format!(
                     "HTTP {} from Anthropic: {}{}",
                     status, response_text, retry_after
@@ -593,11 +527,17 @@ impl LlmProvider for AnthropicProvider {
 
             let response_json: serde_json::Value =
                 serde_json::from_str(&response_text).map_err(|e| {
+                    if let Some(attempt) = &attempt { attempt.rejected(); }
                     DomainError::Provider(format!("failed to parse response JSON: {}", e))
                 })?;
-
-            let mut resp = Self::parse_response(&response_json, is_oauth, &tools_snapshot)?;
+            if let Some(attempt) = &attempt { attempt.nonstream_body(&response_json); }
+            let mut resp = Self::parse_response(&response_json, is_oauth, &tools_snapshot)
+                .map_err(|error| {
+                    if let Some(attempt) = &attempt { attempt.rejected(); }
+                    error
+                })?;
             crate::domain::usage_accounting::attach_cost(&mut resp, &model);
+            if let Some(attempt) = &attempt { attempt.completed(); }
             Ok(resp)
         })
     }
@@ -645,6 +585,7 @@ impl LlmProvider for AnthropicProvider {
                     url: &url,
                     model: &model,
                     tool_defs: tools_snapshot,
+                    trace: trace.clone(),
                 })
                 .await?;
             crate::domain::usage_accounting::attach_cost(&mut resp, &model);
@@ -705,6 +646,7 @@ impl LlmProvider for AnthropicProvider {
                             url: &url,
                             model: &model,
                             tool_defs: tools_snapshot,
+                            trace: trace.clone(),
                         },
                         tx,
                     })

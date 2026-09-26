@@ -323,6 +323,7 @@ pub(super) struct StreamParams<'a> {
     pub model: &'a str,
     /// Tool definitions for reverse-mapping OAuth tool names (#438).
     pub tool_defs: Option<Vec<ToolDefinition>>,
+    pub trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
 }
 
 /// Parameters for incremental streaming (extends [`StreamParams`] with a channel).
@@ -340,28 +341,45 @@ impl AnthropicProvider {
         let request_builder = self.client.post(params.url).json(&params.body);
         let request_builder = self.apply_headers(request_builder, params.model);
 
-        let response = request_builder
-            .send()
-            .await
-            .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
-
+        let mut attempt = crate::infrastructure::providers::attempt_transport::PassiveAttempt::begin(
+            params.trace,
+            crate::infrastructure::providers::attempt_profile::Profile::new(
+                crate::infrastructure::providers::attempt_profile::Vendor::Anthropic,
+                crate::infrastructure::providers::attempt_profile::Surface::Assembled,
+            ),
+        );
+        let mut response = request_builder.send().await.map_err(|e| {
+            if let Some(attempt) = &attempt { attempt.send_failed(); }
+            DomainError::Provider(format!("HTTP error: {}", e))
+        })?;
+        if let Some(attempt) = &attempt { attempt.response(&response); }
         let status = response.status().as_u16();
         if status != 200 {
-            let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
-                response.headers(),
-            );
+            let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(response.headers());
             let text = response.text().await.unwrap_or_default();
-            return Err(DomainError::Provider(format!(
-                "HTTP {} from Anthropic: {}{}",
-                status, text, retry_after
-            )));
+            if let Some(attempt) = &attempt { attempt.http_error(status, Some(&text)); }
+            return Err(DomainError::Provider(format!("HTTP {} from Anthropic: {}{}", status, text, retry_after)));
         }
-
-        let full = response
-            .text()
-            .await
-            .map_err(|e| DomainError::Provider(format!("failed to read stream: {}", e)))?;
-
+        let mut full = Vec::new();
+        loop {
+            let chunk = response.chunk().await.map_err(|e| {
+                if let Some(attempt) = &attempt { attempt.read_failed(); }
+                DomainError::Provider(format!("failed to read stream: {}", e))
+            })?;
+            let Some(chunk) = chunk else { break; };
+            if let Some(attempt) = &mut attempt { attempt.chunk(&chunk); }
+            full.extend_from_slice(&chunk);
+        }
+        let full = String::from_utf8(full).map_err(|e| {
+            if let Some(attempt) = &attempt { attempt.read_failed(); }
+            DomainError::Provider(format!("failed to read stream: {}", e))
+        })?;
+        if let Some(mut attempt) = attempt {
+            attempt.finish_line();
+            let result = Self::parse_sse_response(&full, params.tool_defs);
+            if result.is_ok() { attempt.completed(); } else { attempt.rejected(); }
+            return result;
+        }
         Self::parse_sse_response(&full, params.tool_defs)
     }
 

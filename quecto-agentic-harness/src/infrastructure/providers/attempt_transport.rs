@@ -732,4 +732,4 @@ mod tests;
 
 #[path = "attempt_transport_passive.rs"]
 mod passive;
-pub(super) use passive::{PassiveAttempt, pump_observed};
+pub(super) use passive::{PassiveAttempt, assembled as passive_assembled, pump_observed};

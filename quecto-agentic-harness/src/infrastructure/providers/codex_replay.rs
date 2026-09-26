@@ -109,6 +109,19 @@ impl CodexProvider {
             )
             .await;
         }
+        if call.trace.is_some() {
+            return super::super::attempt_transport::passive_assembled(
+                call.trace.clone(),
+                builder,
+                Profile::new(Vendor::Codex, Surface::Assembled),
+                |raw| {
+                    let mut parsed = Self::parse_sse_response(raw)?;
+                    Self::finish_response(&mut parsed, &call.model, &call.origin);
+                    Ok(parsed)
+                },
+            )
+            .await;
+        }
         let resp = builder.send().await.map_err(|e| {
             DomainError::Provider(format!(
                 "Codex request failed: {}",
