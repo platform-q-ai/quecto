@@ -654,7 +654,11 @@ impl<H: SseHandler> SseHandler for ObservedHandler<H> {
                 }
             }
         }
-        self.inner.process_line(line, tx).await
+        let outcome = self.inner.process_line(line, tx).await;
+        if matches!(outcome, SseLineOutcome::Done) {
+            self.receipt.refused();
+        }
+        outcome
     }
     async fn on_eof(&mut self, tx: &Sender) {
         self.receipt.termination(Termination::Eof);
@@ -743,4 +747,4 @@ mod tests;
 
 #[path = "attempt_transport_passive.rs"]
 mod passive;
-pub(super) use passive::{Observed, PassiveAttempt};
+pub(super) use passive::{PassiveAttempt, pump_observed};

@@ -92,7 +92,11 @@ impl<H: SseHandler> SseHandler for Observed<H> {
         if let Some(attempt) = &mut self.attempt {
             attempt.line(line);
         }
-        self.inner.process_line(line, tx).await
+        let outcome = self.inner.process_line(line, tx).await;
+        if let (SseLineOutcome::Done, Some(attempt)) = (&outcome, &self.attempt) {
+            attempt.receipt.refused();
+        }
+        outcome
     }
 
     async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
@@ -100,5 +104,31 @@ impl<H: SseHandler> SseHandler for Observed<H> {
             attempt.eof();
         }
         self.inner.on_eof(tx).await
+    }
+}
+
+/// Pump a response through `inner`, observing the attempt when there is
+/// one. An observed stream goes through the instrumented pump, which sends
+/// the same events and also records a read failure or an oversized line as
+/// how the attempt ended (#2156 review).
+pub(in crate::infrastructure::providers) async fn pump_observed<H: SseHandler>(
+    response: &mut reqwest::Response,
+    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+    inner: H,
+    attempt: Option<PassiveAttempt>,
+) {
+    match attempt {
+        Some(attempt) => {
+            let receipt = attempt.receipt.clone();
+            let mut handler = Observed {
+                inner,
+                attempt: Some(attempt),
+            };
+            super::diagnostic_sse::pump_sse(&receipt, response, tx, &mut handler).await;
+        }
+        None => {
+            let mut inner = inner;
+            super::super::sse_common::pump_sse(response, tx, &mut inner).await;
+        }
     }
 }

@@ -257,6 +257,52 @@ mod transport_tests {
         );
         task.await.unwrap();
     }
+    /// A handler that refuses the reply on its first line.
+    struct RefusingHandler;
+    impl SseHandler for RefusingHandler {
+        async fn process_line(&mut self, _: &str, tx: &Sender) -> SseLineOutcome {
+            tx.send(StreamEvent::Error("over a limit".into()))
+                .await
+                .unwrap();
+            SseLineOutcome::Done
+        }
+        async fn on_eof(&mut self, _: &Sender) {}
+    }
+    /// Review #2156: a stream the handler refused, with no terminal event to
+    /// explain its end, ends as rejected, never as dropped.
+    #[tokio::test]
+    async fn a_refused_stream_ends_as_rejected() {
+        let server = MockServer::start().await;
+        let chunk = r#"data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}"#;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!("{chunk}\n")))
+            .mount(&server)
+            .await;
+        let trace = Arc::new(RequestTrace::default());
+        let gate: Arc<dyn AttemptAdmission> = Arc::new(Gate);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let saved = trace.clone();
+        let task = tokio::spawn(async move {
+            stream(
+                &gate,
+                (Some(saved), None),
+                reqwest::Client::new().get(server.uri()),
+                Profile::new(
+                    Vendor::OpenAi,
+                    crate::infrastructure::providers::attempt_profile::Surface::Incremental,
+                ),
+                tx,
+                RefusingHandler,
+            )
+            .await;
+        });
+        assert!(matches!(rx.recv().await, Some(StreamEvent::Error(_))));
+        task.await.unwrap();
+        assert_eq!(
+            trace.attempt_diagnostics()[0].termination,
+            Termination::Rejected
+        );
+    }
     #[tokio::test]
     async fn wire_facts_are_distinct_from_empty_semantics_and_redacted() {
         for (status, body, terminal, malformed) in [

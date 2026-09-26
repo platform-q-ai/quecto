@@ -1,5 +1,17 @@
 //! Instrumented pump preserves the common pump behavior while reporting transport exits.
 use super::*;
+
+impl Receipt {
+    /// The handler ended the stream: a terminal event already recorded how,
+    /// so only an ending no event explains is the harness refusing the reply
+    /// (#2156 review).
+    pub(super) fn refused(&self) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.diagnostics.termination == Termination::Dropped {
+            state.diagnostics.termination = Termination::Rejected;
+        }
+    }
+}
 pub(super) async fn pump_sse<H: SseHandler>(
     receipt: &Receipt,
     response: &mut reqwest::Response,

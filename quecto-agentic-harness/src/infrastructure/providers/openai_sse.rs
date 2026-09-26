@@ -5,7 +5,7 @@
 
 use crate::domain::message::{LlmResponse, ThinkingBlock, ToolCall, UsageInfo};
 use crate::domain::provider::StreamEvent;
-use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome, pump_sse};
+use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 
 use super::OpenAiProvider;
 use super::openai_sse_parser::{MAX_OPENAI_SSE_CONTENT_BYTES, append_with_limit};
@@ -157,7 +157,7 @@ pub(crate) async fn pump_sse_bytes(
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
 ) {
     let mut handler = OpenAiSseHandler::new();
-    pump_sse(response, tx, &mut handler).await;
+    crate::infrastructure::providers::sse_common::pump_sse(response, tx, &mut handler).await;
 }
 
 pub(crate) async fn pump_sse_bytes_for_model(
@@ -166,11 +166,13 @@ pub(crate) async fn pump_sse_bytes_for_model(
     model: &str,
     attempt: Option<super::super::attempt_transport::PassiveAttempt>,
 ) {
-    let mut handler = super::super::attempt_transport::Observed {
-        inner: OpenAiSseHandler::with_model(model),
+    super::super::attempt_transport::pump_observed(
+        response,
+        tx,
+        OpenAiSseHandler::with_model(model),
         attempt,
-    };
-    pump_sse(response, tx, &mut handler).await;
+    )
+    .await;
 }
 
 /// Consume an owned OpenAI SSE byte stream, emitting `StreamEvent`s per delta.

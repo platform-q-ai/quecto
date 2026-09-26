@@ -300,3 +300,134 @@ async fn a_tool_call_alone_is_a_first_token() {
     assert!(attempts[0].generated_tool_call, "{attempts:?}");
     assert!(attempts[0].first_token_ms.is_some(), "{attempts:?}");
 }
+
+/// Review #2156: a stream the transport cut short, and one whose line
+/// outgrew the pump's limit, end as read errors, never as dropped; and the
+/// events the caller sees are exactly as before.
+#[tokio::test]
+async fn a_stream_that_fails_mid_body_ends_as_a_read_error() {
+    use crate::domain::attempt_diagnostics::Termination;
+    use tokio::io::AsyncWriteExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        // Two connections: the traced request and the untraced one.
+        for _ in 0..2 {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 8192];
+            let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request).await;
+            let chunk = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\n";
+            let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\
+                        transfer-encoding: chunked\r\n\r\n";
+            let body = format!("{head}{:x}\r\n{chunk}\r\n", chunk.len());
+            socket.write_all(body.as_bytes()).await.unwrap();
+            // The connection closes without the terminating chunk.
+        }
+    });
+    let provider = super::create_provider_with_client(
+        "openai",
+        "sk".into(),
+        Some(format!("http://{address}")),
+        reqwest::Client::new(),
+    )
+    .unwrap();
+    let (events, attempts) = incremental(&provider).await;
+    assert_eq!(attempts.len(), 1, "{attempts:?}");
+    assert_eq!(
+        attempts[0].termination,
+        Termination::ReadError,
+        "{attempts:?}"
+    );
+    assert!(
+        matches!(events.last(), Some(crate::domain::provider::StreamEvent::Error(e)) if e.contains("stream read error")),
+        "{events:?}"
+    );
+    assert_eq!(
+        format!("{events:?}"),
+        format!("{:?}", untraced(&provider).await),
+        "observation changed handling"
+    );
+
+    let (_server, provider) =
+        served(&"x".repeat(crate::infrastructure::providers::sse_common::MAX_SSE_LINE_BYTES + 1))
+            .await;
+    let (events, attempts) = incremental(&provider).await;
+    assert_eq!(
+        attempts[0].termination,
+        Termination::ReadError,
+        "{attempts:?}"
+    );
+    assert_eq!(attempts[0].oversized_lines, 1, "{attempts:?}");
+    assert_eq!(
+        format!("{events:?}"),
+        format!("{:?}", untraced(&provider).await),
+        "observation changed handling"
+    );
+}
+
+/// Review #2156, the same class: a reply the harness refuses part way (here
+/// tool-call arguments over their limit) ends as rejected, never as dropped.
+#[tokio::test]
+async fn a_reply_refused_mid_stream_ends_as_rejected() {
+    use crate::domain::attempt_diagnostics::Termination;
+    let piece = "a".repeat(600 * 1024);
+    let line = |arguments: &str| {
+        format!(
+            "data: {}\n\n",
+            serde_json::json!({"choices":[{"index":0,"delta":{"tool_calls":[
+                {"index":0,"function":{"arguments":arguments}}]}}]})
+        )
+    };
+    let mut body = line("{\"x\":\"");
+    for _ in 0..4 {
+        body.push_str(&line(&piece));
+    }
+    body.push_str("data: [DONE]\n\n");
+    let (_server, provider) = served(&body).await;
+    let (events, attempts) = incremental(&provider).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(crate::domain::provider::StreamEvent::Error(_))
+        ),
+        "{events:?}"
+    );
+    assert_eq!(
+        attempts[0].termination,
+        Termination::Rejected,
+        "{attempts:?}"
+    );
+    assert_eq!(
+        format!("{events:?}"),
+        format!("{:?}", untraced(&provider).await),
+        "observation changed handling"
+    );
+}
+
+/// The same request with no trace: the old path's events, to compare.
+async fn untraced(
+    provider: &Arc<dyn crate::application::providers::ports::LlmProvider>,
+) -> Vec<crate::domain::provider::StreamEvent> {
+    let messages = vec![crate::domain::message::Message::user("hi")];
+    let request = crate::application::providers::ports::ChatRequest {
+        trace: None,
+        admission: None,
+        model: "gpt-4o-mini",
+        messages: &messages,
+        tools: &[],
+        max_tokens: 16,
+        temperature: 0.0,
+        thinking_level: None,
+        effort: None,
+        tool_choice: None,
+        metadata: None,
+        session_id: None,
+        cancel_flag: None,
+    };
+    let mut rx = provider.chat_stream_incremental(request).await;
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    events
+}

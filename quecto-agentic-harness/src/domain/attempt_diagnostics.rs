@@ -86,6 +86,9 @@ pub enum Termination {
     Deadline,
     Cancelled,
     ReceiverClosed,
+    /// The harness refused the reply part way: a limit it enforces, or a
+    /// reply it could not accept (#2156 review).
+    Rejected,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
