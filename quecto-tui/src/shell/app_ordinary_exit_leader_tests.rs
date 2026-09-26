@@ -176,7 +176,7 @@ fn ordinary_exit_describes_kill_and_strays_only() {
     };
     let text = crate::shell::app::App::describe_leader_termination(&killed, budget).unwrap();
     assert!(
-        text.contains("harness pid 4 did not exit within 30s of SIGTERM nor 45s of a repeated SIGTERM; sent SIGKILL to that process only"),
+        text.contains("harness pid 4 did not exit within 35s of SIGTERM nor 45s of a repeated SIGTERM; sent SIGKILL to that process only"),
         "{text}"
     );
     assert!(
@@ -216,7 +216,7 @@ async fn ordinary_exit_budget_follows_the_roster() {
     assert_eq!(a.leader_budget(0), LeaderBudget::for_children(0));
     assert_eq!(
         a.leader_budget(9).settle,
-        std::time::Duration::from_secs(55)
+        std::time::Duration::from_secs(60)
     );
     a.ac_mut().child_exit_watch = Some(crate::shell::child_watch::ChildWatch::for_tests(Some(5)));
     for i in 0..9 {

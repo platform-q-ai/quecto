@@ -143,3 +143,155 @@ fn sync_runner_bounds_the_tail_and_the_wall_clock() {
         "{missing}"
     );
 }
+
+fn tokio_bash(path: &std::path::Path) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new("bash");
+    cmd.arg(path);
+    cmd
+}
+
+/// #2173: a script that is not stopped finishes as it would unstoppable.
+#[tokio::test]
+async fn a_stoppable_script_left_alone_finishes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let done = script(dir.path(), "echo out; echo err >&2");
+    let run = tokio::time::timeout(
+        Duration::from_secs(10),
+        run_stoppable_capturing_stderr_tail(
+            tokio_bash(&done),
+            ScriptStdout::Result,
+            std::future::pending::<()>(),
+            Duration::from_secs(1),
+        ),
+    )
+    .await
+    .expect("a stoppable run ends promptly")
+    .unwrap();
+    let ScriptRun::Finished(output) = run else {
+        panic!("{run:?}")
+    };
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"out\n");
+    assert_eq!(output.stderr_tail, "err");
+}
+
+/// #2173: stopped, the whole group gets SIGTERM — a grandchild included —
+/// and the script's trap runs.
+#[tokio::test]
+async fn a_stopped_script_group_gets_sigterm() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let marker = dir.path().join("trapped");
+    let grandchild = dir.path().join("grandchild");
+    let body = format!(
+        "trap 'echo trapped > {m}; exit 143' TERM\n(trap 'echo gone > {g}; exit 0' TERM; sleep 30 & wait) &\nsleep 30 & wait",
+        m = marker.display(),
+        g = grandchild.display()
+    );
+    let path = script(dir.path(), &body);
+    let run = tokio::time::timeout(
+        Duration::from_secs(10),
+        run_stoppable_capturing_stderr_tail(
+            tokio_bash(&path),
+            ScriptStdout::Result,
+            tokio::time::sleep(Duration::from_millis(300)),
+            Duration::from_secs(5),
+        ),
+    )
+    .await
+    .expect("a stoppable run ends promptly")
+    .unwrap();
+    assert!(matches!(run, ScriptRun::Stopped), "{run:?}");
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "trapped\n");
+    assert_eq!(std::fs::read_to_string(&grandchild).unwrap(), "gone\n");
+}
+
+/// #2173 swarm review: a script still running past the grace (its trap
+/// slow, or ignoring SIGTERM) is never killed — it is left to finish.
+#[tokio::test]
+async fn a_stopped_script_past_the_grace_is_left_running() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let pid_file = dir.path().join("pid");
+    let beat = dir.path().join("beat");
+    let path = script(
+        dir.path(),
+        &format!(
+            "echo $$ > {pid}\ntrap '' TERM\nn=0; while true; do n=$((n+1)); echo $n > {beat}; sleep 0.05; done",
+            pid = pid_file.display(),
+            beat = beat.display()
+        ),
+    );
+    // Ends the script group however the test ends (review 3).
+    struct KillGroup(std::path::PathBuf);
+    impl Drop for KillGroup {
+        fn drop(&mut self) {
+            let pid = std::fs::read_to_string(&self.0)
+                .ok()
+                .and_then(|text| text.trim().parse::<libc::pid_t>().ok());
+            if let Some(pid) = pid.filter(|pid| *pid > 0) {
+                // SAFETY: signals the test's own leftover script group.
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
+        }
+    }
+    let _cleanup = KillGroup(pid_file.clone());
+    let started = std::time::Instant::now();
+    let run = tokio::time::timeout(
+        Duration::from_secs(10),
+        run_stoppable_capturing_stderr_tail(
+            tokio_bash(&path),
+            ScriptStdout::Result,
+            tokio::time::sleep(Duration::from_millis(200)),
+            Duration::from_millis(300),
+        ),
+    )
+    .await
+    .expect("a stoppable run ends promptly")
+    .unwrap();
+    assert!(matches!(run, ScriptRun::Stopped), "{run:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    // Alive means still beating (a killed script's zombie would not).
+    let before = std::fs::read_to_string(&beat).unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let after = std::fs::read_to_string(&beat).unwrap();
+    assert_ne!(before, after, "the script was left running, not killed");
+}
+
+/// #2173 review 3: a rollback still running past the grace keeps its
+/// output drained, so a trap that writes to stdout is not killed by a
+/// closed pipe part-way.
+#[tokio::test]
+async fn a_slow_rollback_that_writes_output_still_finishes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let done = dir.path().join("done");
+    let path = script(
+        dir.path(),
+        &format!(
+            "trap 'sleep 0.4; for i in $(seq 1 2000); do echo rolling back $i; done; echo ok > {done}; exit 143' TERM\nsleep 30 & wait",
+            done = done.display()
+        ),
+    );
+    let run = tokio::time::timeout(
+        Duration::from_secs(10),
+        run_stoppable_capturing_stderr_tail(
+            tokio_bash(&path),
+            ScriptStdout::Result,
+            tokio::time::sleep(Duration::from_millis(100)),
+            Duration::from_millis(100),
+        ),
+    )
+    .await
+    .expect("a stoppable run ends promptly")
+    .unwrap();
+    assert!(matches!(run, ScriptRun::Stopped), "{run:?}");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !done.exists() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(std::fs::read_to_string(&done).unwrap(), "ok\n");
+}

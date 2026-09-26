@@ -89,6 +89,89 @@ pub async fn run_capturing_stderr_tail(
     })
 }
 
+/// How a stoppable script run ended.
+#[derive(Debug)]
+pub enum ScriptRun {
+    Finished(ScriptOutput),
+    /// Stopped before it finished: its process group was sent SIGTERM.
+    /// It has exited, or is still undoing its work past the grace and is
+    /// left to finish on its own.
+    Stopped,
+}
+
+/// Run `cmd` as [`run_capturing_stderr_tail`] does, in a process group of
+/// its own. When `stop` resolves first, the whole group is sent SIGTERM —
+/// a create script's cue to remove what it made (#2173). It is waited for
+/// up to `grace`, then left running: never killed, since a kill could cut
+/// its rollback short and orphan what it made (#2173 swarm review).
+pub async fn run_stoppable_capturing_stderr_tail(
+    mut cmd: tokio::process::Command,
+    stdout: ScriptStdout,
+    stop: impl std::future::Future<Output = ()>,
+    grace: Duration,
+) -> std::io::Result<ScriptRun> {
+    cmd.process_group(0);
+    cmd.stdout(match stdout {
+        ScriptStdout::Result => std::process::Stdio::piped(),
+        ScriptStdout::Discard => std::process::Stdio::null(),
+    });
+    cmd.stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn()?;
+    // The group is the child's pid (`process_group(0)`); it is signalled
+    // only while the child is unreaped, so the id cannot have been reused.
+    let group = child.id().and_then(|pid| libc::pid_t::try_from(pid).ok());
+    let tail = child
+        .stderr
+        .take()
+        .map(|stderr| StderrTail::pump(&tokio::runtime::Handle::current(), stderr));
+    let mut wait = Box::pin(child.wait_with_output());
+    tokio::pin!(stop);
+    let output = tokio::select! {
+        output = &mut wait => output?,
+        () = &mut stop => {
+            signal_group(group, libc::SIGTERM);
+            if tokio::time::timeout(grace, &mut wait).await.is_err() {
+                tracing::warn!(
+                    "a stopped container script is still undoing its work; left to finish on its own"
+                );
+                // Still drained and reaped: a closed pipe must not kill
+                // its rollback part-way (#2173 review 3).
+                tokio::spawn(async move {
+                    let _ = wait.await;
+                });
+            }
+            return Ok(ScriptRun::Stopped);
+        }
+    };
+    let stderr_tail = match tail {
+        Some(tail) => {
+            tail.wait_eof(STDERR_REPORT_GRACE).await;
+            sanitise(&tail.snapshot())
+        }
+        None => String::new(),
+    };
+    Ok(ScriptRun::Finished(ScriptOutput {
+        status: output.status,
+        stdout: output.stdout,
+        stderr_tail,
+    }))
+}
+
+/// Signal the script's process group, when its id is known and positive.
+fn signal_group(group: Option<libc::pid_t>, signal: libc::c_int) {
+    match group {
+        Some(pgid) if pgid > 0 => {
+            // A negative pid names the process group the unreaped script
+            // leads, so no other process can be addressed.
+            // SAFETY: kill(2) takes plain integers and touches no memory.
+            unsafe {
+                libc::kill(-pgid, signal);
+            }
+        }
+        Some(_) | None => {}
+    }
+}
+
 /// Run `cmd` to completion on the calling (blocking) thread with a hard
 /// wall-clock bound (`Duration::MAX` for none), keeping stdout whole
 /// (when it is a result) and only the bounded tail of stderr. On timeout

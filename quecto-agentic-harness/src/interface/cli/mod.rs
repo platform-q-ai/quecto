@@ -18,6 +18,7 @@ pub use container::{
     ContainerStatusBuilder, EnvironmentRegistryBuilder,
 };
 mod help;
+mod launch_rollback_wait;
 mod models;
 pub mod protocol;
 pub mod uds;

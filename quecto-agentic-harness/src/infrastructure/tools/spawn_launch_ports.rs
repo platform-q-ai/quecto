@@ -19,6 +19,10 @@ use crate::domain::subagent_launch::{
 use crate::domain::tool::ToolResult;
 use std::path::{Path, PathBuf};
 
+#[path = "spawn_launch_guard.rs"]
+mod guard;
+use guard::LaunchStage;
+
 pub(super) struct SpawnLaunchPorts<'a> {
     tool: &'a SpawnTool,
     agent_uuid: Option<AgentUuid>,
@@ -34,6 +38,11 @@ pub(super) struct SpawnLaunchPorts<'a> {
     /// prepared child was selected from (#2024 S4a); relayed verbatim in
     /// the spawn result so the model, not only stderr, sees it.
     container_diagnostics: Vec<String>,
+    /// The admission scope registered for the child and the context file
+    /// that hands it over, until the launch is registered.
+    admission_registration: Option<(PathBuf, crate::application::ports::Credential)>,
+    /// How far the launch got; what dropping these ports must undo.
+    stage: LaunchStage,
 }
 
 impl<'a> SpawnLaunchPorts<'a> {
@@ -47,6 +56,8 @@ impl<'a> SpawnLaunchPorts<'a> {
             parent_control: None,
             parent_control_path: None,
             container_diagnostics: Vec::new(),
+            admission_registration: None,
+            stage: LaunchStage::Unregistered,
         }
     }
 
@@ -210,10 +221,6 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             // and hand it the capability through a private sidecar (#1679 P3).
             let admission = crate::infrastructure::admission::process::current();
             let mut launch_args = cli_args.to_vec();
-            let mut registered: Option<(
-                std::path::PathBuf,
-                crate::application::ports::Credential,
-            )> = None;
             let admission_dir = match admission.as_ref() {
                 Some(admission) => {
                     let agent_uuid = self.agent_uuid.as_ref().expect("identity allocated");
@@ -237,7 +244,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     })?;
                     launch_args.push("--admission-context".into());
                     launch_args.push(path.clone().into());
-                    registered = Some((path, credential));
+                    self.admission_registration = Some((path, credential));
                     Some(admission.client_dir().to_path_buf())
                 }
                 None => None,
@@ -261,7 +268,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 // capability file behind.
                 self.discard_unconsumed_parent_control_sidecar();
                 if let (Some(admission), Some((path, credential))) =
-                    (admission.as_ref(), registered)
+                    (admission.as_ref(), self.admission_registration.take())
                 {
                     let _ = std::fs::remove_file(&path);
                     if let Err(error) = admission.connection().retire_child(credential.scope).await
@@ -363,45 +370,11 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             // through its owned handle, then compensated exactly once with
             // the launch-rollback cleanup contract (retained `cleanup`, not
             // `kill`; a creator's environment record is discarded). A
-            // monitor or reaper observing the same end joins it.
-            let child = {
-                let entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
-                entries
-                    .get(registry_key)
-                    .and_then(super::subagent_registry::SubagentEntry::delegated_identity)
-            };
-            let Some(child) = child else {
-                return;
-            };
-            let lifecycle = match self.tool.lifecycle_use_cases() {
-                Ok(lifecycle) => lifecycle,
-                Err(error) => {
-                    // A registration needs the lifecycle, so an uncommit
-                    // without one has nothing registered to conclude.
-                    tracing::warn!(agent = %registry_key, %error, "launch rollback without a lifecycle");
-                    return;
-                }
-            };
-            let compensated = lifecycle
-                .compensate_launch
-                .execute(
-                    crate::application::subagents::dto::CompensateFailedLaunchRequest {
-                        child,
-                        owns_environment: self.owns_environment,
-                    },
-                )
-                .await;
-            tracing::info!(
-                agent = %registry_key,
-                conclusion = ?compensated.conclusion,
-                removed = compensated.removed.len(),
-                "rolled back registered launch"
-            );
-            // The compensated row is dropped outright: the launch that
-            // failed never returns it to the caller, and no tombstone is
-            // listed for a child that never became usable.
-            let mut entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
-            entries.remove(registry_key);
+            // monitor or reaper observing the same end joins it. Detached,
+            // so a caller cancelled here cannot leave it half done.
+            if let Some(compensation) = self.spawn_compensation(registry_key) {
+                let _ = compensation.await;
+            }
         })
     }
 
@@ -555,6 +528,12 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     },
                 );
             }
+            // The registered entry owns the cleanup now (#2173).
+            prepared.hand_over();
+            self.stage = match config.task {
+                Some(_) => LaunchStage::AwaitingPrompt(identity.registry_key.clone()),
+                None => LaunchStage::Complete,
+            };
             Ok(RegisteredLaunch {
                 registry_key: identity.registry_key.clone(),
                 socket_path: runtime.socket_path,
@@ -569,7 +548,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         deadline: Option<tokio::time::Instant>,
     ) -> LaunchFuture<'b, Result<(), DomainError>> {
         Box::pin(async move {
-            match deadline {
+            let sent = match deadline {
                 Some(deadline) => {
                     match tokio::time::timeout_at(
                         deadline,
@@ -584,7 +563,11 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     }
                 }
                 None => send_initial_prompt_to_socket(socket_path, task).await,
+            };
+            if sent.is_ok() {
+                self.stage = LaunchStage::Complete;
             }
+            sent
         })
     }
     fn success(&self, identity: &LaunchIdentity, environment_ref: Option<&str>) -> ToolResult {

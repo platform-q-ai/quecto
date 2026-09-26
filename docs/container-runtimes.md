@@ -762,6 +762,21 @@ worktree's git directory is outside it, so that board is unreadable and the
 environment is kept. A container created before #2145 keeps its board in the
 work tree, where the host no longer looks: end such runs before upgrading.
 
+**Stopping a create (#2173).** The script runs in a process group of its
+own. When the spawn that started it is cancelled (the run was stopped by
+`--max-time`, the turn was cancelled, the harness is exiting), the whole
+group is sent SIGTERM. Quecto waits up to 3 s, then leaves the script to
+finish on its own: it is never killed, so its rollback cannot be cut short
+(it outlives an exiting harness if it must). Its output is drained while
+the harness runs, but an exiting harness closes those pipes, so a rollback
+trap should send its output elsewhere, as the official one does. Quecto records nothing and
+gives the ref back, so a script must remove whatever it already made on
+SIGTERM; the official Docker/Podman `create.sh` runs its rollback trap
+(remove the container and the environment directory). A
+create that finished but whose spawn was cancelled before it was
+registered is rolled back through `cleanup`. Every harness exit waits up to
+5 s for these rollbacks.
+
 ### `exec`
 
 Invoked to add another agent to an existing environment:

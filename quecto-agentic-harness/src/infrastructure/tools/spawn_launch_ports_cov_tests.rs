@@ -49,6 +49,8 @@ fn ports_allocate_build_success_and_duplicate_contracts() {
             0,
         ),
     );
+    // The ports borrow the tool until dropped (their drop guard runs then).
+    drop(ports);
     let duplicate_tool = tool.with_registry(registry);
     let mut duplicate_ports = SpawnLaunchPorts::new(&duplicate_tool);
     assert!(duplicate_ports.allocate_identity(&cfg).is_err());
@@ -147,6 +149,10 @@ async fn success_names_the_container_config_and_relays_the_selection_diagnostics
         .register_and_monitor(&identity, runtime, &mut prepared, &config())
         .await
         .unwrap();
+    // #2173: the registered entry owns the cleanup, so dropping the
+    // prepared launch no longer rolls it back.
+    assert!(prepared.settled);
+    assert_ne!(ports.stage, LaunchStage::Unregistered);
     let result = ports.success(&identity, Some(&env_ref));
     assert!(!result.is_error);
     let expected = format!(
@@ -202,6 +208,11 @@ async fn register_into_a_stopped_environment_fails_and_unregisters() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains(&env_ref), "{err}");
+    assert!(
+        !prepared.settled,
+        "a failed registration is still rolled back"
+    );
+    assert_eq!(ports.stage, LaunchStage::Unregistered);
     assert!(
         !tool
             .registry
@@ -462,4 +473,255 @@ async fn launch_steps_recover_from_poisoned_locks_and_uncommit_terminates_child(
         }
     }
     assert!(gone, "uncommit must terminate the launched child");
+}
+
+/// #2173 review: a launch dropped before registration (cancelled) removes
+/// the parent-control sidecar it wrote; a registered one leaves it to the
+/// child that consumes it.
+#[test]
+fn an_unregistered_launch_drops_its_sidecar_and_a_registered_one_keeps_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = tool();
+    for (stage, kept) in [
+        (LaunchStage::Unregistered, false),
+        (LaunchStage::Complete, true),
+    ] {
+        let sidecar = dir.path().join(format!("control-{kept}"));
+        std::fs::write(&sidecar, "credential").unwrap();
+        let mut ports = SpawnLaunchPorts::new(&tool);
+        ports.parent_control_path = Some(sidecar.clone());
+        ports.stage = stage;
+        drop(ports);
+        assert_eq!(sidecar.exists(), kept);
+    }
+}
+
+/// #2173 swarm review: a launch cancelled after registration but before its
+/// initial prompt arrived (the caller dropped during the send) is
+/// compensated as a failed launch: unregistered, its child ended.
+#[tokio::test]
+async fn a_registered_launch_dropped_before_its_prompt_is_compensated() {
+    let tool = tool();
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let mut cfg = config();
+    cfg.task = Some("the task that never arrives".into());
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    ports.build_cli_args(&identity, &cfg).unwrap();
+    let mut sleep = tokio::process::Command::new("sleep");
+    sleep
+        .arg("30")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut prepared = PreparedChild::new_for_test(Some(sleep), None, None).await;
+    let supervisor = std::sync::Arc::clone(&prepared.supervisor);
+    let handle = prepared.owned_child.expect("a child");
+    let runtime = PreparedRuntime {
+        socket_path: ports.socket_path.clone().unwrap(),
+        pid: prepared.display_pid,
+        environment_ref: None,
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .unwrap();
+    assert_eq!(
+        ports.stage,
+        LaunchStage::AwaitingPrompt(identity.registry_key.clone())
+    );
+    // The send is aborted mid-way (the caller cancelled): a child that
+    // accepts and never answers holds it.
+    let dir = tempfile::tempdir().unwrap();
+    let silent = dir.path().join("silent.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&silent).unwrap();
+    let aborted = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        ports.send_initial_prompt(&silent, "the task", None),
+    )
+    .await;
+    assert!(aborted.is_err(), "the send was cut off");
+    drop(ports);
+    assert!(super::super::launch_rollbacks::settled(std::time::Duration::from_secs(30)).await);
+    assert!(
+        !tool
+            .registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&identity.registry_key),
+        "the cancelled launch is unregistered"
+    );
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            supervisor.wait_exit(handle)
+        )
+        .await
+        .is_ok(),
+        "its child is ended"
+    );
+}
+
+/// A launch with no task is complete once registered: nothing to undo.
+#[tokio::test]
+async fn a_registered_launch_without_a_task_is_complete() {
+    let tool = tool();
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let mut cfg = config();
+    cfg.task = None;
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    ports.build_cli_args(&identity, &cfg).unwrap();
+    let mut prepared = PreparedChild::new_for_test(None, None, None).await;
+    let runtime = PreparedRuntime {
+        socket_path: ports.socket_path.clone().unwrap(),
+        pid: 0,
+        environment_ref: None,
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .unwrap();
+    assert_eq!(ports.stage, LaunchStage::Complete);
+}
+
+/// #2173 swarm review: a delivered initial prompt completes the launch, so
+/// dropping the ports afterwards (the ordinary end of every spawn) leaves
+/// the registered child alone.
+#[tokio::test]
+async fn a_delivered_prompt_completes_the_launch_and_keeps_it() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let dir = tempfile::tempdir().unwrap();
+    let child_socket = dir.path().join("child.sock");
+    let listener = tokio::net::UnixListener::bind(&child_socket).unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        // The request is framed (ADR-0008): read until its JSON has closed
+        // and take the `id` it was stamped with.
+        let mut received = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let id = loop {
+            let n = stream.read(&mut chunk).await.unwrap();
+            assert!(n > 0, "the request arrives");
+            received.extend_from_slice(&chunk[..n]);
+            let text = String::from_utf8_lossy(&received).into_owned();
+            let json_start = text.find('{');
+            let parsed = json_start.and_then(|start| {
+                serde_json::from_str::<serde_json::Value>(text[start..].trim_end()).ok()
+            });
+            if let Some(request) = parsed {
+                break request["id"].clone();
+            }
+        };
+        let reply = serde_json::json!({
+            "type": "response",
+            "id": id,
+            "command": "prompt",
+            "success": true,
+        });
+        stream
+            .write_all(format!("{reply}\n").as_bytes())
+            .await
+            .unwrap();
+    });
+    let tool = tool();
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let mut cfg = config();
+    cfg.task = Some("work".into());
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    ports.build_cli_args(&identity, &cfg).unwrap();
+    let mut prepared = PreparedChild::new_for_test(None, None, None).await;
+    let runtime = PreparedRuntime {
+        socket_path: ports.socket_path.clone().unwrap(),
+        pid: 0,
+        environment_ref: None,
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .unwrap();
+    // A first attempt that fails leaves the launch awaiting its prompt; the
+    // retry that delivers it completes the launch.
+    let missing = dir.path().join("missing.sock");
+    assert!(
+        ports
+            .send_initial_prompt(&missing, "work", None)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        ports.stage,
+        LaunchStage::AwaitingPrompt(identity.registry_key.clone())
+    );
+    ports
+        .send_initial_prompt(&child_socket, "work", None)
+        .await
+        .unwrap();
+    server.await.unwrap();
+    assert_eq!(ports.stage, LaunchStage::Complete);
+    drop(ports);
+    assert!(super::super::launch_rollbacks::settled(std::time::Duration::from_secs(30)).await);
+    assert!(
+        tool.registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&identity.registry_key),
+        "a delivered launch stays registered"
+    );
+}
+
+/// #2173 review 3: an uncommit cancelled part-way (the turn stopped while a
+/// failed launch was being compensated) still completes: the compensation
+/// runs detached, and the launch is not compensated a second time.
+#[tokio::test]
+async fn an_uncommit_cancelled_part_way_still_completes() {
+    let tool = tool();
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let mut cfg = config();
+    cfg.task = Some("work".into());
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    ports.build_cli_args(&identity, &cfg).unwrap();
+    let mut sleep = tokio::process::Command::new("sleep");
+    sleep
+        .arg("30")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut prepared = PreparedChild::new_for_test(Some(sleep), None, None).await;
+    let supervisor = std::sync::Arc::clone(&prepared.supervisor);
+    let handle = prepared.owned_child.expect("a child");
+    let runtime = PreparedRuntime {
+        socket_path: ports.socket_path.clone().unwrap(),
+        pid: prepared.display_pid,
+        environment_ref: None,
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .unwrap();
+    // The child's socket accepts and never answers: the compensation's
+    // shutdown ask waits there, and the uncommit is cancelled meanwhile.
+    let socket = ports.socket_path.clone().unwrap();
+    let _silent = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let cut = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        ports.uncommit_registered(&identity.registry_key),
+    )
+    .await;
+    assert!(cut.is_err(), "the uncommit was cancelled part-way");
+    assert_eq!(ports.stage, LaunchStage::Complete, "no second compensation");
+    drop(ports);
+    assert!(super::super::launch_rollbacks::settled(std::time::Duration::from_secs(30)).await);
+    assert!(
+        !tool
+            .registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&identity.registry_key)
+    );
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            supervisor.wait_exit(handle)
+        )
+        .await
+        .is_ok(),
+        "the child is ended"
+    );
 }

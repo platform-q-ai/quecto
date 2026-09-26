@@ -2,7 +2,7 @@
 
 A lightweight terminal UI client for `quecto agent --mode uds`.
 
-**Version `0.77.36` (pre-1.0).** The TUI is a UDS bus client of the harness: the
+**Version `0.77.37` (pre-1.0).** The TUI is a UDS bus client of the harness: the
 wire protocol and session ownership live in `quecto`, so most breaking risk is
 upstream. This crate stays on `0.y` until feature-oriented presentation boundaries and
 public surface (flags, slash commands, attach/spawn) meet the bar for a deliberate
@@ -257,9 +257,11 @@ a **repeated** SIGTERM inside that work is ignored, and one arriving after
 1. After the snapshots are persisted, SIGTERM to the harness leader pid —
    never `kill(-pgid)`, never a descendant.
 2. Wait for that process to exit within the *settle* budget: `ceil(n / 8)`
-   batches × 25 s + 5 s to persist and exit, where `n` is the number of
-   subagents the roster last showed (30 s for up to 8, 55 s for 9–16,
-   80 s — the 3-pass worst case — beyond that or when the roster is unknown).
+   batches × 25 s + 5 s to persist and exit + 5 s for the harness to roll
+   back sub-agent launches the exit cancelled (#2173), where `n` is the
+   number of subagents the roster last showed (35 s for up to 8, 60 s for
+   9–16, 85 s — the 3-pass worst case — beyond that or when the roster is
+   unknown).
 3. If it is still running, send a **second** SIGTERM — the repeated signal is
    what arms the harness's own 45 s force-exit — and wait those 45 s.
 4. Only then SIGKILL that one pid.

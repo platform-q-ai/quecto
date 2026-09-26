@@ -1836,6 +1836,41 @@ fn then_session_file_exists(world: &mut QuectoWorld, session_name: String) {
     );
 }
 
+/// #2173: every tool call in the saved transcript has its result, and the
+/// results of a message follow it directly, as providers require.
+#[then(expr = "the session for {string} should answer each tool call right after it")]
+fn then_session_answers_each_tool_call(world: &mut QuectoWorld, session_name: String) {
+    let base = world.cli_context.base_dir.clone().expect("no base dir");
+    let key = Session::build_key("cli", &session_name);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(&base));
+    let session = rt
+        .block_on(store.load(&SessionIdentity::from_persisted_key(&key)))
+        .expect("failed to load session")
+        .expect("session not found");
+    let (_, orphans) = quecto::domain::session::filter_orphan_tool_pairs(&session.messages);
+    assert!(!orphans.has_orphans(), "unpaired tool calls: {orphans:?}");
+    let mut open_calls: Vec<String> = Vec::new();
+    for message in &session.messages {
+        match message.role {
+            Role::Assistant => {
+                assert!(open_calls.is_empty(), "calls left open: {open_calls:?}");
+                open_calls = message.tool_calls.iter().map(|c| c.id.clone()).collect();
+            }
+            Role::Tool => {
+                let id = message.tool_call_id.clone().unwrap_or_default();
+                let position = open_calls.iter().position(|open| *open == id);
+                assert!(position.is_some(), "result {id:?} does not follow its call");
+                open_calls.remove(position.unwrap_or_default());
+            }
+            Role::System | Role::User => {
+                assert!(open_calls.is_empty(), "calls left open: {open_calls:?}");
+            }
+        }
+    }
+    assert!(open_calls.is_empty(), "calls left open: {open_calls:?}");
+}
+
 #[then(expr = "the session for {string} should not contain a system message")]
 fn then_session_has_no_system_message(world: &mut QuectoWorld, session_name: String) {
     let base = world.cli_context.base_dir.clone().expect("no base dir");

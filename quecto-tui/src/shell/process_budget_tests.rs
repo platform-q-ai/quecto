@@ -16,10 +16,10 @@ fn settle_budget_covers_the_fleet_batches_for_the_roster() {
     assert_eq!(fleet_batches(16), 2);
     assert_eq!(fleet_batches(17), 3);
     assert_eq!(fleet_batches(1_000), 3);
-    assert_eq!(fleet_settle_budget(0), Duration::from_secs(30));
-    assert_eq!(fleet_settle_budget(9), Duration::from_secs(55));
+    assert_eq!(fleet_settle_budget(0), Duration::from_secs(35));
+    assert_eq!(fleet_settle_budget(9), Duration::from_secs(60));
     // The roster-less worst case (startup-failure cleanup) is the 3-pass cap.
-    assert_eq!(LeaderBudget::WORST_CASE.settle, Duration::from_secs(80));
+    assert_eq!(LeaderBudget::WORST_CASE.settle, Duration::from_secs(85));
     assert_eq!(
         LeaderBudget::for_children(usize::MAX),
         LeaderBudget::WORST_CASE
@@ -43,7 +43,7 @@ fn force_wait_is_the_harness_force_exit_after_a_repeated_signal() {
     );
     assert_eq!(
         LeaderBudget::WORST_CASE.total(),
-        Duration::from_secs(80 + 45 + 2)
+        Duration::from_secs(85 + 45 + 2)
     );
 }
 
@@ -115,6 +115,14 @@ fn mirrored_constants_match_the_harness_sources() {
     assert_eq!(
         usize_after(&fleet, "const MAX_PASSES: usize"),
         HARNESS_MAX_PASSES as usize
+    );
+    let rollbacks = harness_source("interface/cli/launch_rollback_wait.rs");
+    assert_eq!(
+        Duration::from_secs(secs_after(
+            &rollbacks,
+            "pub(crate) const LAUNCH_ROLLBACK_LIMIT"
+        )),
+        HARNESS_LAUNCH_ROLLBACK_LIMIT
     );
     let shutdown = harness_source("interface/cli/uds_shutdown.rs");
     assert_eq!(

@@ -2,10 +2,10 @@
 //! session through the composed store, run the prompt, persist the result.
 //! The store comes from composition's sessions builder (#1970); this module
 //! never constructs one.
+use super::run_session_save::TranscriptSave;
 use super::{AgentFlags, AgentOutput, DeadlineResult, run_with_deadline, settle_stopped_run};
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::agent_turn::ports::AgentLoop;
-use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::message::Message;
 use crate::domain::session_identity::SessionIdentity;
 
@@ -54,6 +54,8 @@ pub(crate) fn run_agent_session(
             return 1;
         }
     };
+    // Dropped before the runtime on every return: rollbacks finish (#2173).
+    let _exit = crate::interface::cli::launch_rollback_wait::WaitForLaunchRollbacks(&rt);
 
     // Open the session (#1863, D8 #1977): the transaction claims it (a key
     // owned by another live process is refused at open, #1460) and loads
@@ -81,12 +83,18 @@ pub(crate) fn run_agent_session(
     });
 
     let message = flags.message.as_deref().unwrap_or("");
-    messages.push(Message::user(message.to_string()));
+    let prompt = Message::user(message.to_string());
+    let run_start = prompt.id();
+    messages.push(prompt);
 
     let agent_result = if let Some(secs) = flags.max_time {
         match run_with_deadline(&rt, &mut agent, &mut messages, secs) {
             DeadlineResult::Completed(inner) => inner,
             DeadlineResult::TimedOut => {
+                // Saved first: the settling below can take a minute, and a
+                // process killed meanwhile must not lose it (#2173).
+                let saving = TranscriptSave::new(&rt, &sessions, system_prompt_id, ephemeral);
+                saving.stopped(&mut messages, run_start, secs, out);
                 settle_stopped_run(&rt, &agent, secs);
                 out.stderr.push_str("max-time exceeded\n");
                 retention.recall.scrub_ephemeral(ephemeral);
@@ -101,23 +109,8 @@ pub(crate) fn run_agent_session(
 
     match agent_result {
         Ok(result) => {
-            if !ephemeral {
-                // Identity-based removal: immune to index shifts from
-                // mid-run pruning (a no-op if pruning dropped it).
-                if let Some(id) = system_prompt_id
-                    && let Some(idx) = messages.iter().position(|m| m.id() == id)
-                {
-                    messages.remove(idx);
-                }
-                if let Err(e) = rt.block_on(
-                    sessions
-                        .save_session
-                        .save(&mut messages, SaveTrigger::OrdinaryExit),
-                ) {
-                    out.stderr
-                        .push_str(&format!("warning: failed to save session: {}\n", e));
-                }
-            }
+            TranscriptSave::new(&rt, &sessions, system_prompt_id, ephemeral)
+                .save(&mut messages, out);
             out.stdout.push_str(&result.response);
             out.stdout.push('\n');
             0

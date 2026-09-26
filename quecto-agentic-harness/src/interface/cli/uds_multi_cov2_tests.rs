@@ -366,3 +366,54 @@ fn tiny_extension_tool_default_session_key_is_noop() {
     Tool::set_session_key(&tool, "client-session".into());
     assert_eq!(Tool::definition(&tool).name, "owned_tool");
 }
+
+/// #2173 review: the last client's exit waits for a launch rollback in
+/// flight before the loop returns (and the runtime with it is dropped).
+#[test]
+fn the_multi_client_loop_waits_for_a_launch_rollback_at_exit() {
+    use std::io::BufRead;
+    let work = crate::infrastructure::tools::launch_rollbacks::InFlight::enter();
+    let dir = tempfile::tempdir().unwrap();
+    let socket_path = dir.path().join("multi.sock");
+    let listener = {
+        let std_listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        std_listener.set_nonblocking(true).unwrap();
+        std_listener
+    };
+    let task = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let listener = tokio::net::UnixListener::from_std(listener).unwrap();
+            let store = crate::composition::sessions::build_session_handles(
+                crate::interface::cli::uds::dispatch_session_roster_tests::loop_inputs(
+                    dir.path(),
+                    "cli:cov",
+                ),
+            );
+            multi_client_loop(
+                multi_args(dir.path()),
+                listener,
+                &store,
+                &crate::composition::catalogue::build_catalogue_handles(dir.path(), None),
+            )
+            .await
+        })
+    });
+    let client = std::os::unix::net::UnixStream::connect(&socket_path).unwrap();
+    client
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    let mut first = String::new();
+    std::io::BufReader::new(&client)
+        .read_line(&mut first)
+        .unwrap();
+    assert!(first.contains("workspace"), "{first}");
+    drop(client);
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    assert!(!task.is_finished(), "the exit waits for the rollback");
+    drop(work);
+    assert_eq!(task.join().unwrap(), 0);
+}

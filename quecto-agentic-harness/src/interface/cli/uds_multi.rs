@@ -382,6 +382,10 @@ pub(super) async fn multi_client_loop(
         tracing::warn!("failed to persist session on exit: {err}");
     }
 
+    super::launch_rollback_wait::await_launch_rollbacks(
+        super::launch_rollback_wait::LAUNCH_ROLLBACK_LIMIT,
+    )
+    .await;
     0
 }
 

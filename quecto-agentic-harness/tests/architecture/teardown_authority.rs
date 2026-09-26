@@ -286,9 +286,11 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
     ),
     (
         "src/infrastructure/processes/containers/script_stderr.rs",
-        &["kill("],
+        &["kill(", "libc::kill", "process_group(", "libc::SIGTERM"],
         "the container-script runner ending its own script Child on timeout \
-         (#1924 retained `inspect` argv, #2024 S4b create preflight)",
+         (#1924 retained `inspect` argv, #2024 S4b create preflight), and the \
+         SIGTERM to the process group of a create whose spawn was cancelled \
+         (#2173)",
     ),
     (
         "src/infrastructure/tools/grep_run.rs",

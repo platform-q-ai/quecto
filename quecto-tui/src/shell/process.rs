@@ -59,6 +59,9 @@ pub const HARNESS_FORCE_EXIT_AFTER: Duration = Duration::from_secs(45);
 /// Room, past the fleet's worst case, for the harness to persist its session
 /// and exit after the fleet settled.
 pub const LEADER_PERSIST_SLACK: Duration = Duration::from_secs(5);
+/// Harness: how long its exit waits for cancelled launches to roll back
+/// (`LAUNCH_ROLLBACK_LIMIT`, #2173), after the persist.
+pub const HARNESS_LAUNCH_ROLLBACK_LIMIT: Duration = Duration::from_secs(5);
 
 /// Show the "waiting for the agent to settle its subagents…" notice once the
 /// exit has taken this long.
@@ -68,7 +71,7 @@ pub const SETTLING_NOTICE_AFTER: Duration = Duration::from_secs(1);
 ///
 /// 1. after the first SIGTERM, `settle` — the fleet teardown's worst case for
 ///    the roster the TUI last saw (`ceil(children / 8)` batches × 25 s, at
-///    least one batch, at most the 3-pass worst case) plus 5 s persist slack;
+///    least one batch, at most the 3-pass worst case) plus 5 s persist slack and the 5 s wait for launch rollbacks;
 /// 2. after a **second** SIGTERM (which arms the harness's own 45 s
 ///    force-exit), `force` — the harness's `FORCE_EXIT_AFTER`;
 ///
@@ -90,11 +93,12 @@ impl LeaderBudget {
         }
     }
 
-    /// Worst case with an unknown roster: 3 × 25 s + 5 s, then 45 s.
+    /// Worst case with an unknown roster: 3 × 25 s + 5 s + 5 s, then 45 s.
     pub const WORST_CASE: Self = Self {
         settle: Duration::from_secs(
             HARNESS_COMPENSATION_WAIT.as_secs() * HARNESS_MAX_PASSES as u64
-                + LEADER_PERSIST_SLACK.as_secs(),
+                + LEADER_PERSIST_SLACK.as_secs()
+                + HARNESS_LAUNCH_ROLLBACK_LIMIT.as_secs(),
         ),
         force: HARNESS_FORCE_EXIT_AFTER,
     };
@@ -116,11 +120,13 @@ pub fn fleet_batches(children: usize) -> u32 {
         .min(HARNESS_MAX_PASSES)
 }
 
-/// `fleet_batches(children)` × 25 s + 5 s persist slack.
+/// `fleet_batches(children)` × 25 s + 5 s persist slack + the 5 s wait
+/// for launch rollbacks.
 pub fn fleet_settle_budget(children: usize) -> Duration {
     HARNESS_COMPENSATION_WAIT
         .saturating_mul(fleet_batches(children))
         .saturating_add(LEADER_PERSIST_SLACK)
+        .saturating_add(HARNESS_LAUNCH_ROLLBACK_LIMIT)
 }
 
 #[derive(Debug, PartialEq)]
