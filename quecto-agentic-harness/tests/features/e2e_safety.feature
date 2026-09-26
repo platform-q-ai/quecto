@@ -125,3 +125,12 @@ Feature: End-to-End Safety and Limits
     When I run quecto agent -s - --max-time 1 -m "Run slow command"
     Then the exit code should be 2
     And stderr should contain "max-time exceeded"
+
+  Scenario: A named session stopped by max-time keeps its transcript
+    Given the mock LLM first returns a tool call for "bash" with args:
+      | command | sleep 3 |
+    And the mock LLM then returns a text response "Done"
+    When I run quecto agent -s stopped-run --max-time 1 -m "Run slow command"
+    Then the exit code should be 2
+    And the session "cli:stopped-run" should contain text "Run slow command"
+    And the session "cli:stopped-run" should contain text "max-time 1s stopped the run before this call finished"

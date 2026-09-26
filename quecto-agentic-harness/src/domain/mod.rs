@@ -24,6 +24,7 @@ pub mod request_observation;
 pub mod search_ranking;
 pub mod session;
 pub mod session_identity;
+pub mod session_stopped;
 pub mod subagent;
 pub mod subagent_launch;
 pub mod subagent_teardown;
