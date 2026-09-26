@@ -46,11 +46,8 @@ impl Tool for WebFetchTool {
                 .get("url")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| DomainError::Tool("missing required field: url".into()))?;
-            let raw = parsed.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
-            let main_only = parsed
-                .get("main_only")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
+            let raw = flag(&parsed, "raw", false)?;
+            let main_only = flag(&parsed, "main_only", true)?;
             let view = match (raw, main_only) {
                 (true, _) => HtmlView::Markup,
                 (false, true) => HtmlView::MainContent,
@@ -91,6 +88,17 @@ impl Tool for WebFetchTool {
                 Err(WebFetchError::Fetch(f)) => Err(map_failure(f, url)),
             }
         })
+    }
+}
+/// A boolean argument: absent or null is its default; anything else but a
+/// boolean is refused, naming the argument (#2165 review).
+fn flag(args: &serde_json::Value, name: &str, default: bool) -> Result<bool, DomainError> {
+    match args.get(name) {
+        Some(serde_json::Value::Bool(value)) => Ok(*value),
+        None | Some(serde_json::Value::Null) => Ok(default),
+        Some(other) => Err(DomainError::Tool(format!(
+            "invalid argument {name}: expected a boolean (true or false), got {other}"
+        ))),
     }
 }
 #[cfg(test)]

@@ -8,8 +8,8 @@
 //! [`strip_html`] reads it. One pass finds the landmarks and at most three
 //! more read them: linear in the page.
 use super::{
-    decode_entities, find_configured_close_tag, push_collapsed_line, remove_tag_blocks, strip_html,
-    text_of_markup,
+    TagEnd, decode_entities, find_configured_close_tag, push_collapsed_line, remove_tag_blocks,
+    strip_html, tag_end, text_of_markup,
 };
 
 /// The one line said when only the main content is kept.
@@ -46,12 +46,14 @@ const HEAD_TAGS: &[&str] = &[
 /// Readable text for an HTML page: its main content when it marks one
 /// that holds a substantial share of its text, otherwise the whole page.
 pub fn readable_html(html: &str) -> String {
+    // The page's share is measured on the text the whole page reads as;
+    // `marked` keeps `<header>` only to slice the landmark from.
+    let whole = strip_html(html);
     let marked = remove_tag_blocks(html, LANDMARK_STRIPPED_BLOCK_TAGS);
-    let page_text = text_of_markup(&marked).len();
     let found = scan(&marked);
-    match main_text(&marked, &found, page_text) {
+    match main_text(&marked, &found, whole.len()) {
         Some(text) => with_title(found.title, &text),
-        None => strip_html(html),
+        None => whole,
     }
 }
 
@@ -232,23 +234,46 @@ fn content_end(html: &str, open: Open<'_>) -> Option<usize> {
     None
 }
 
-/// Whether a tag's attributes say `role="main"`, in any quoting or case.
+/// Whether a tag's attributes hold one named exactly `role` whose first
+/// token is `main`, in any case. Attributes are walked as a browser reads
+/// them: a name, then optionally `=` and a quoted or unquoted value, so
+/// `role=main` inside another attribute's value is not one (#2165 review).
 fn has_role_main(attrs: &str) -> bool {
-    let lower = attrs.to_ascii_lowercase();
-    lower.match_indices("role").any(|(at, _)| {
-        let named = lower[..at].ends_with(|c: char| c.is_ascii_whitespace());
-        let value = lower[at + "role".len()..]
-            .trim_start()
-            .strip_prefix('=')
-            .map(|value| value.trim_start());
-        let value = value.map(|value| value.strip_prefix(['"', '\'']).unwrap_or(value));
-        named
-            && value
-                .and_then(|value| value.strip_prefix("main"))
-                .is_some_and(|after| {
-                    after.is_empty() || after.starts_with(['"', '\'', '/', ' ', '\t', '\n', '\r'])
-                })
-    })
+    let space = |c: char| c.is_ascii_whitespace();
+    let mut rest = attrs;
+    loop {
+        rest = rest.trim_start_matches(|c: char| space(c) || c == '/');
+        if rest.is_empty() {
+            return false;
+        }
+        let before = rest.len();
+        let name_len = rest
+            .find(|c: char| space(c) || c == '=' || c == '/')
+            .unwrap_or(rest.len());
+        let name = &rest[..name_len];
+        rest = rest[name_len..].trim_start_matches(space);
+        let mut value = "";
+        if let Some(after) = rest.strip_prefix('=') {
+            let after = after.trim_start_matches(space);
+            (value, rest) = match after.chars().next() {
+                Some(quote @ ('"' | '\'')) => {
+                    let body = &after[1..];
+                    match body.find(quote) {
+                        Some(end) => (&body[..end], &body[end + 1..]),
+                        None => (body, ""),
+                    }
+                }
+                _ => after.split_at(after.find(space).unwrap_or(after.len())),
+            };
+        }
+        debug_assert!(rest.len() < before, "an attribute read nothing");
+        let first_token = value.split_ascii_whitespace().next();
+        if name.eq_ignore_ascii_case("role")
+            && first_token.is_some_and(|token| token.eq_ignore_ascii_case("main"))
+        {
+            return true;
+        }
+    }
 }
 
 /// A tag: where it starts, whether it closes, its name and attributes.
@@ -258,44 +283,6 @@ struct Tag<'a> {
     closing: bool,
     name: &'a str,
     attrs: &'a str,
-}
-
-/// Where a tag opened by the `<` at `rest[0]` ends.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TagEnd {
-    /// Its `>`.
-    At(usize),
-    /// Another `<` came first, outside quotes: the first was stray.
-    Stray(usize),
-    /// Neither comes: no whole tag follows.
-    Never,
-}
-
-/// Find a tag's `>`, past quoted attribute values (a quote opens a value
-/// only after `=`), in one forward pass.
-fn tag_end(rest: &[u8]) -> TagEnd {
-    let mut quote = None;
-    let mut after_equals = false;
-    for (at, &byte) in rest.iter().enumerate().skip(1) {
-        if let Some(open) = quote {
-            if byte == open {
-                quote = None;
-            }
-            continue;
-        }
-        match byte {
-            b'>' => return TagEnd::At(at),
-            b'<' => return TagEnd::Stray(at),
-            b'"' | b'\'' if after_equals => {
-                quote = Some(byte);
-                after_equals = false;
-                continue;
-            }
-            _ => {}
-        }
-        after_equals = byte == b'=' || (after_equals && byte.is_ascii_whitespace());
-    }
-    TagEnd::Never
 }
 
 /// The named tags of a page from `pos` on, past comments. Ends at an

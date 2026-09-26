@@ -458,20 +458,13 @@ fn tags_to_text(html: &str) -> String {
 
     let mut result = String::with_capacity(html.len());
     let mut pos = 0;
-    // Once no `>` follows, none follows any later `<` either: stop looking,
-    // so many stray `<` stay linear (#2177 review).
-    let mut no_more_ends = false;
 
     while let Some(open) = html[pos..].find('<') {
         let abs_open = pos + open;
         result.push_str(&html[pos..abs_open]);
 
-        let end = match no_more_ends {
-            true => None,
-            false => html[abs_open..].find('>'),
-        };
-        no_more_ends = end.is_none();
-        if let Some(end_offset) = end {
+        // Past quoted attribute values (#2165 review); a stray `<` is text.
+        if let TagEnd::At(end_offset) = tag_end(&html.as_bytes()[abs_open..]) {
             let tag_content = &html[abs_open + 1..abs_open + end_offset];
             let trimmed = tag_content.trim().trim_start_matches('/');
             let tag_end = trimmed
@@ -486,7 +479,9 @@ fn tags_to_text(html: &str) -> String {
             }
             pos = abs_open + end_offset + 1;
         } else {
-            // Unclosed '<' — treat it as a literal character and continue.
+            // A stray or unended '<' is a literal character. The next '<'
+            // is where `tag_end` stopped, so every byte is read at most
+            // twice.
             result.push('<');
             pos = abs_open + 1;
         }
@@ -494,6 +489,63 @@ fn tags_to_text(html: &str) -> String {
 
     result.push_str(&html[pos..]);
     result
+}
+
+/// Where a tag opened by the `<` at `rest[0]` ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TagEnd {
+    /// Its `>`.
+    At(usize),
+    /// Another `<` came first, outside quotes: the first was stray.
+    Stray(usize),
+    /// Neither follows: no whole tag does.
+    Never,
+}
+
+/// Find a tag's `>` in one forward pass, past quoted attribute values (a
+/// quote opens a value only after `=`; #2165 review).
+///
+/// A quote that never closes is no value: the tag then ends at the first
+/// `>`, or the next starts at the first `<`, after its start, whatever the
+/// quotes. Both lie past that quote, and that quote character appears
+/// nowhere after it, so no later tag reads to the end for it again: at
+/// most two such reads a page, one per quote character, so linear.
+fn tag_end(rest: &[u8]) -> TagEnd {
+    let mut quote = None;
+    let mut after_equals = false;
+    let mut first_bracket = None;
+    for (at, &byte) in rest.iter().enumerate().skip(1) {
+        if first_bracket.is_none() {
+            first_bracket = match byte {
+                b'>' => Some(TagEnd::At(at)),
+                b'<' => Some(TagEnd::Stray(at)),
+                _ => None,
+            };
+        }
+        if let Some(open) = quote {
+            if byte == open {
+                quote = None;
+            }
+            continue;
+        }
+        match byte {
+            b'>' => return TagEnd::At(at),
+            b'<' => return TagEnd::Stray(at),
+            b'"' | b'\'' if after_equals => {
+                quote = Some(byte);
+                after_equals = false;
+                continue;
+            }
+            _ => {}
+        }
+        after_equals = byte == b'=' || (after_equals && byte.is_ascii_whitespace());
+    }
+    // Brackets inside values that closed were values; only an unclosed
+    // quote falls back to the first bracket.
+    match quote {
+        Some(_) => first_bracket.unwrap_or(TagEnd::Never),
+        None => TagEnd::Never,
+    }
 }
 
 /// Decode common HTML entities. Operates on `&str` so multibyte characters

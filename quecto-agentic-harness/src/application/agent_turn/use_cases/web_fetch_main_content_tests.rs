@@ -611,3 +611,103 @@ fn chrome_inside_the_landmark_still_goes() {
         assert!(!text.contains(chrome), "kept {chrome:?}: {text}");
     }
 }
+
+/// The page's share is measured on the text the whole page reads as: its
+/// own `<header>`, which that drops, does not count against the landmark.
+#[test]
+fn the_page_header_does_not_count_against_the_landmark() {
+    let html = page(&format!(
+        "<header>{}</header><aside>{}</aside><main>{}</main>",
+        words(80, "hd"),
+        words(60, "sd"),
+        words(40, "in")
+    ));
+    let text = readable_html(&html);
+    assert!(text.contains(NOTE) && text.contains("in in"), "{text}");
+    assert!(!text.contains("sd") && !text.contains("hd"), "{text}");
+}
+
+/// Only an attribute named `role` whose first token is `main` makes a
+/// landmark; `role=main` inside another attribute's value does not.
+#[test]
+fn role_main_is_an_attribute_not_a_substring() {
+    for (open, landmark) in [
+        ("<div title=\"a role=main\">", false),
+        ("<div title='x role=\"main\"'>", false),
+        ("<div data-x=role=main>", false),
+        ("<div role=\"main region\">", true),
+        ("<div role=\"region main\">", false),
+        ("<div hidden ROLE = MAIN>", true),
+        ("<div role=main/>", false),
+    ] {
+        let html = page(&format!(
+            "{open}{}</div>{}",
+            words(60, "in"),
+            words(20, "out")
+        ));
+        let text = readable_html(&html);
+        assert_eq!(text.contains(NOTE), landmark, "{open}: {text}");
+    }
+    // A quoted `role=main` beside a real one is not a second landmark.
+    let html = page(&format!(
+        "<p title=\"see role=main\">{}</p><div role=\"main\">{}</div>",
+        words(20, "out"),
+        words(60, "in")
+    ));
+    let text = readable_html(&html);
+    assert!(text.contains(NOTE) && !text.contains("out"), "{text}");
+}
+
+/// A quote that never closes, after a stray `<`, does not end the scan:
+/// the landmarks after it are still found.
+#[test]
+fn an_unterminated_quote_does_not_hide_later_landmarks() {
+    let html = page(&format!(
+        "{}<p>x < y = \"z</p><main>{}</main>",
+        words(20, "side"),
+        words(60, "in")
+    ));
+    let text = readable_html(&html);
+    assert!(text.contains(NOTE) && !text.contains("side"), "{text}");
+    let text = strip_html("<p>x < y = \"z</p><p>after</p>");
+    assert_eq!(text, "x < y = \"z\n\nafter");
+}
+
+/// A quoted `>` inside an attribute leaks nothing, whole page or landmark.
+#[test]
+fn a_quoted_bracket_leaks_no_attribute_text() {
+    assert_eq!(strip_html("<p><a title=\"p>q\">link</a></p>"), "link");
+    let html = page(&format!(
+        "<main><a title=\"p>q\">link</a>{}</main>{}",
+        words(60, "in"),
+        words(20, "side")
+    ));
+    let text = readable_html(&html);
+    assert!(text.contains(NOTE) && text.contains("link"), "{text}");
+    assert!(!text.contains("q\""), "{text}");
+}
+
+/// The quote and attribute paths stay linear on malformed pages, whole
+/// page and landmark alike.
+#[test]
+fn quote_and_attribute_paths_read_in_linear_time() {
+    for page in [
+        format!("<a x=\"{}", "<b y='z>".repeat(25_000)),
+        "< y = \"z".repeat(25_000),
+        "<p a=\"x>".repeat(25_000),
+        format!("<div {}>", "role=x ".repeat(30_000)),
+        "<div title=\"a role=main\">".repeat(8_000),
+        format!("<div role={}>", "=".repeat(200_000)),
+    ] {
+        assert!(page.len() >= 200_000, "{}", page.len());
+        let started = std::time::Instant::now();
+        let _ = readable_html(&page);
+        let _ = strip_html(&page);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "took {:?} on {:?}",
+            started.elapsed(),
+            &page[..24]
+        );
+    }
+}

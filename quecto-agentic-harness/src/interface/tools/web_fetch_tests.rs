@@ -144,3 +144,40 @@ async fn main_only_chooses_between_the_main_content_and_the_whole_page() {
     assert!(definition.parameters_schema.contains("\"main_only\""));
     assert!(definition.description.contains("main_only"));
 }
+
+/// #2165 review: `raw` and `main_only` take booleans; anything else is an
+/// error naming the argument, never a silent default.
+#[tokio::test]
+async fn non_boolean_flags_are_refused() {
+    let fetcher: Arc<dyn FetchWebContent> = Arc::new(HtmlFetcher("<p>x</p>"));
+    let tool = WebFetchTool::new(Arc::new(WebFetchUseCase::new(fetcher, 32)));
+    for (args, name) in [
+        (
+            r#"{"url":"https://example.com","main_only":"false"}"#,
+            "main_only",
+        ),
+        (
+            r#"{"url":"https://example.com","main_only":0}"#,
+            "main_only",
+        ),
+        (r#"{"url":"https://example.com","raw":"true"}"#, "raw"),
+        (r#"{"url":"https://example.com","raw":1}"#, "raw"),
+    ] {
+        match tool.execute(args).await {
+            Err(crate::domain::error::DomainError::Tool(message)) => {
+                assert!(
+                    message.contains(name) && message.contains("boolean"),
+                    "{args}: {message}"
+                );
+            }
+            other => panic!("{args}: expected a tool error, got {other:?}"),
+        }
+    }
+    // Absent or null is the default.
+    for args in [
+        r#"{"url":"https://example.com"}"#,
+        r#"{"url":"https://example.com","raw":null,"main_only":null}"#,
+    ] {
+        assert!(tool.execute(args).await.is_ok(), "{args}");
+    }
+}
