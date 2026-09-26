@@ -221,7 +221,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `--system` | No | System prompt prepended to conversation |
 | `--model` | No | Override model. Accepts bare id (`gpt-5.3-codex`) or provider-qualified (`openai/gpt-4o`). Default: `gpt-5.5` |
 | `--max-iterations` | No | Max tool call rounds before stopping |
-| `--max-time` | No | Wall-clock timeout in seconds (exit code 2 on timeout). At the deadline the run stops where it stands: an in-flight model request is abandoned and a running tool is stopped (#2168) |
+| `--max-time` | No | Wall-clock timeout in seconds (exit code 2 on timeout). At the deadline the run is stopped: an in-flight model request is abandoned, a running bash command's process group is killed, and the unfinished request and the reason are written to the event log; blocking cleanup already under way (a DNS lookup, a container teardown script) may still finish before the process exits (#2168) |
 | `--mode` | No | Operation mode: default one-shot, or `uds` for UDS event bus |
 | `--socket` | No | Explicit socket path for `--mode uds` (default: auto-generated in tmpdir) |
 | `--persist` | No | UDS mode only — keep agent alive when all clients disconnect (default: exit on last disconnect) |

@@ -34,6 +34,28 @@ pub(crate) fn run_with_deadline(
     }
 }
 
+/// How long settling a stopped run may take before the process exits.
+const SETTLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// After the deadline stopped the run: record its unfinished request and why
+/// it stopped, and flush pending request accounting (#2172 review), within
+/// [`SETTLE_LIMIT`] so settling can never hold the exit.
+pub(crate) fn settle_stopped_run(
+    rt: &tokio::runtime::Runtime,
+    agent: &AgentLoopImpl,
+    timeout_secs: u64,
+) {
+    let reason = format!("max-time {timeout_secs}s exceeded: the run was stopped");
+    let settled = rt.block_on(async {
+        tokio::time::timeout(SETTLE_LIMIT, agent.settle_stopped_run(&reason)).await
+    });
+    match settled {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "a stopped run's accounting remains pending"),
+        Err(_) => tracing::warn!("settling a stopped run outlasted its limit"),
+    }
+}
+
 #[cfg(test)]
 #[path = "agent_deadline_tests.rs"]
 mod tests;

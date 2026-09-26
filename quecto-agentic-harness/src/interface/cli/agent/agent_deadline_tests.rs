@@ -55,11 +55,16 @@ fn agent_at(api_base: &str, base_dir: &std::path::Path) -> AgentLoopImpl {
 #[test]
 fn a_tool_running_at_the_deadline_is_stopped_with_the_run() {
     let tmp = tempfile::TempDir::new().unwrap();
+    let started_marker = tmp.path().join("started");
     let marker = tmp.path().join("finished");
     let server_rt = tokio::runtime::Runtime::new().unwrap();
     let server = server_rt.block_on(wiremock::MockServer::start());
     let arguments = serde_json::json!({
-        "command": format!("sleep 3 && touch {}", marker.display())
+        "command": format!(
+            "touch {} && sleep 3 && touch {}",
+            started_marker.display(),
+            marker.display()
+        )
     })
     .to_string();
     let reply = serde_json::json!({
@@ -89,6 +94,10 @@ fn a_tool_running_at_the_deadline_is_stopped_with_the_run() {
     assert!(
         elapsed < Duration::from_millis(2500),
         "returned after {elapsed:?}"
+    );
+    assert!(
+        started_marker.exists(),
+        "the command never started: the kill went untested"
     );
     std::thread::sleep(Duration::from_secs(4));
     assert!(
@@ -123,5 +132,50 @@ fn a_provider_that_never_answers_is_abandoned_at_the_deadline() {
     assert!(
         elapsed < Duration::from_millis(2500),
         "returned after {elapsed:?}"
+    );
+}
+
+/// Review #2172: a stopped run leaves its unfinished request in the event
+/// log as cancelled, and says why the log ends.
+#[test]
+fn a_stopped_run_records_its_unfinished_request_and_why() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for stream in listener.incoming().take(4) {
+            held.push(stream);
+        }
+        std::thread::sleep(Duration::from_secs(10));
+    });
+    let mut agent = agent_at(&format!("http://{address}"), tmp.path());
+    let audit =
+        crate::infrastructure::persistence::audit_log::AuditLog::open_sync(tmp.path(), "deadline")
+            .unwrap();
+    agent.set_audit_log(Some(std::sync::Arc::new(audit)));
+    let rt = crate::interface::cli::build_tokio_runtime().unwrap();
+    let mut messages = vec![Message::user("hello")];
+
+    let result = run_with_deadline(&rt, &mut agent, &mut messages, 1);
+    assert!(matches!(result, DeadlineResult::TimedOut));
+    settle_stopped_run(&rt, &agent, 1);
+
+    let log = std::fs::read_to_string(tmp.path().join("audit").join("deadline.jsonl")).unwrap();
+    let records: Vec<serde_json::Value> = log
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(
+        records.iter().any(|r| r["event"] == "request_observed"
+            && r["observation"]["outcome"] == "cancelled"),
+        "{log}"
+    );
+    assert!(
+        records.iter().any(|r| r["event"] == "error"
+            && r["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("max-time"))),
+        "{log}"
     );
 }

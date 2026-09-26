@@ -2,7 +2,7 @@
 //! session through the composed store, run the prompt, persist the result.
 //! The store comes from composition's sessions builder (#1970); this module
 //! never constructs one.
-use super::{AgentFlags, AgentOutput, DeadlineResult, run_with_deadline};
+use super::{AgentFlags, AgentOutput, DeadlineResult, run_with_deadline, settle_stopped_run};
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::agent_turn::ports::AgentLoop;
 use crate::application::sessions::dto::SaveTrigger;
@@ -87,6 +87,7 @@ pub(crate) fn run_agent_session(
         match run_with_deadline(&rt, &mut agent, &mut messages, secs) {
             DeadlineResult::Completed(inner) => inner,
             DeadlineResult::TimedOut => {
+                settle_stopped_run(&rt, &agent, secs);
                 out.stderr.push_str("max-time exceeded\n");
                 retention.recall.scrub_ephemeral(ephemeral);
                 return 2;

@@ -11,6 +11,41 @@ impl AgentLoopImpl {
         )
     }
 
+    /// A run stopped where it stood (a `--max-time` deadline, #2168): write
+    /// the requests it left unfinished to the audit log as `cancelled`, say
+    /// why the run stopped, and flush the accounting outbox as a finished
+    /// turn would. The records are written with turn 0: after the run.
+    pub async fn settle_stopped_run(&self, reason: &str) -> Result<(), DomainError> {
+        let unfinished: Vec<_> = self
+            .request_observations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .recent
+            .iter()
+            .filter(|record| record.outcome == "cancelled")
+            .cloned()
+            .collect();
+        for record in unfinished {
+            self.audit(
+                0,
+                AuditEvent::RequestObserved {
+                    observation: Box::new(record),
+                },
+            )
+            .await;
+        }
+        self.audit(
+            0,
+            AuditEvent::Error {
+                source: "cli".into(),
+                tool: None,
+                message: reason.into(),
+            },
+        )
+        .await;
+        self.flush_request_accounting().await
+    }
+
     pub fn take_request_observations(
         &self,
     ) -> Vec<crate::domain::request_observation::RequestObservation> {
