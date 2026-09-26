@@ -1,7 +1,9 @@
 //! #2162: the `session_id` header, and encrypted reasoning kept and
-//! replayed to the model that produced it.
+//! replayed, each item before the call it led to, to its own origin.
 use super::*;
 use crate::domain::message::ToolCall;
+
+const ORIGIN: &str = "https://h/codex/responses|acct|gpt-6-sol";
 
 fn sse(events: &[serde_json::Value]) -> String {
     events
@@ -10,166 +12,272 @@ fn sse(events: &[serde_json::Value]) -> String {
         .collect()
 }
 
-fn reasoning_done(encrypted: Option<&str>) -> serde_json::Value {
+fn reasoning_done(output_index: u64, encrypted: Option<&str>) -> serde_json::Value {
     let mut item = serde_json::json!({
         "type": "reasoning",
-        "id": "rs_123",
+        "id": format!("rs_{output_index}"),
         "summary": [{"type": "summary_text", "text": "why"}],
     });
     if let Some(encrypted) = encrypted {
         item["encrypted_content"] = serde_json::json!(encrypted);
     }
-    serde_json::json!({"type": "response.output_item.done", "output_index": 0, "item": item})
+    serde_json::json!({"type": "response.output_item.done", "output_index": output_index, "item": item})
+}
+
+fn call_added(output_index: u64, call_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "response.output_item.added",
+        "output_index": output_index,
+        "item": {"type": "function_call", "call_id": call_id, "name": "bash"},
+    })
 }
 
 fn completed() -> serde_json::Value {
     serde_json::json!({"type": "response.completed", "response": {"status": "completed"}})
 }
 
-fn encrypted(model: &str, item: serde_json::Value) -> ThinkingBlock {
-    ThinkingBlock::EncryptedReasoning {
-        model: model.into(),
-        item: item.to_string(),
-    }
-}
-
-fn replay_item() -> serde_json::Value {
-    serde_json::json!({"type": "reasoning", "summary": [], "encrypted_content": "gAAA"})
+fn encrypted_blocks(response: &LlmResponse) -> Vec<(String, Option<String>, serde_json::Value)> {
+    response
+        .thinking_blocks
+        .iter()
+        .filter_map(|block| match block {
+            ThinkingBlock::EncryptedReasoning {
+                origin,
+                leads_to,
+                item,
+            } => Some((
+                origin.clone(),
+                leads_to.clone(),
+                serde_json::from_str(item).unwrap(),
+            )),
+            ThinkingBlock::Normal { .. } | ThinkingBlock::Redacted { .. } => None,
+        })
+        .collect()
 }
 
 #[test]
 fn a_reasoning_item_with_encrypted_content_is_kept_without_its_id() {
-    let raw = sse(&[reasoning_done(Some("gAAA")), completed()]);
+    let raw = sse(&[reasoning_done(0, Some("gAAA")), completed()]);
     let response = CodexProvider::parse_sse_response(&raw).unwrap();
     assert_eq!(
-        response.thinking_blocks.len(),
-        2,
-        "{:?}",
-        response.thinking_blocks
-    );
-    let ThinkingBlock::EncryptedReasoning { model, item } = &response.thinking_blocks[1] else {
-        panic!("{:?}", response.thinking_blocks)
-    };
-    assert_eq!(model, "", "stamped by the provider, not the parser");
-    let item: serde_json::Value = serde_json::from_str(item).unwrap();
-    assert_eq!(
-        item,
-        serde_json::json!({
-            "type": "reasoning",
-            "summary": [{"type": "summary_text", "text": "why"}],
-            "encrypted_content": "gAAA",
-        })
+        encrypted_blocks(&response),
+        vec![(
+            String::new(),
+            None,
+            serde_json::json!({
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "why"}],
+                "encrypted_content": "gAAA",
+            })
+        )],
+        "unstamped (the provider stamps), led to no call, no id"
     );
 }
 
 #[test]
 fn a_reasoning_item_without_encrypted_content_keeps_only_its_summary() {
     for encrypted in [None, Some("")] {
-        let raw = sse(&[reasoning_done(encrypted), completed()]);
+        let raw = sse(&[reasoning_done(0, encrypted), completed()]);
         let response = CodexProvider::parse_sse_response(&raw).unwrap();
-        assert!(
-            response
-                .thinking_blocks
-                .iter()
-                .all(ThinkingBlock::is_visible),
-            "{:?}",
-            response.thinking_blocks
-        );
+        assert!(encrypted_blocks(&response).is_empty());
     }
 }
 
+/// Review: each item leads to the first call after it in the output.
 #[test]
-fn finishing_a_response_stamps_its_reasoning_with_the_requested_model() {
-    let raw = sse(&[reasoning_done(Some("gAAA")), completed()]);
-    let mut response = CodexProvider::parse_sse_response(&raw).unwrap();
-    CodexProvider::finish_response(&mut response, "gpt-6-sol");
-    assert!(matches!(
-        &response.thinking_blocks[1],
-        ThinkingBlock::EncryptedReasoning { model, .. } if model == "gpt-6-sol"
-    ));
-}
-
-fn tool_turn(blocks: Vec<ThinkingBlock>) -> Vec<Message> {
-    let mut assistant = Message::assistant(
-        "",
-        vec![ToolCall {
-            id: "call_1".into(),
-            name: "bash".into(),
-            arguments: "{}".into(),
-        }],
+fn each_item_leads_to_the_call_that_followed_it() {
+    let raw = sse(&[
+        reasoning_done(0, Some("r0")),
+        call_added(1, "call_a"),
+        reasoning_done(2, Some("r2")),
+        call_added(3, "call_b"),
+        reasoning_done(4, Some("r4")),
+        completed(),
+    ]);
+    let response = CodexProvider::parse_sse_response(&raw).unwrap();
+    let led: Vec<(Option<String>, String)> = encrypted_blocks(&response)
+        .into_iter()
+        .map(|(_, leads_to, item)| {
+            (
+                leads_to,
+                item["encrypted_content"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        led,
+        vec![
+            (Some("call_a".into()), "r0".into()),
+            (Some("call_b".into()), "r2".into()),
+            (None, "r4".into()),
+        ]
     );
-    assistant.thinking_blocks = blocks;
-    vec![
-        Message::system("sys"),
-        Message::user("go"),
-        assistant,
-        Message::tool("call_1", "done"),
-    ]
 }
 
-fn types(input: &[serde_json::Value]) -> Vec<String> {
+/// Review: encrypted reasoning past the per-response cap is not kept.
+#[test]
+fn encrypted_reasoning_past_the_cap_is_dropped() {
+    let big = "x".repeat(codex_sse_state::MAX_ENCRYPTED_REASONING_BYTES / 2 + 1);
+    let raw = sse(&[
+        reasoning_done(0, Some(&big)),
+        reasoning_done(1, Some(&big)),
+        reasoning_done(2, Some("small")),
+        completed(),
+    ]);
+    let response = CodexProvider::parse_sse_response(&raw).unwrap();
+    let kept: Vec<usize> = encrypted_blocks(&response)
+        .iter()
+        .map(|(_, _, item)| item["encrypted_content"].as_str().unwrap().len())
+        .collect();
+    assert_eq!(kept, vec![big.len(), "small".len()]);
+}
+
+fn block(origin: &str, leads_to: Option<&str>, content: &str) -> ThinkingBlock {
+    ThinkingBlock::EncryptedReasoning {
+        origin: origin.into(),
+        leads_to: leads_to.map(str::to_string),
+        item: serde_json::json!({"type": "reasoning", "summary": [], "encrypted_content": content})
+            .to_string(),
+    }
+}
+
+fn call(id: &str) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        name: "bash".into(),
+        arguments: "{}".into(),
+    }
+}
+
+/// A turn of `calls` (each answered) whose assistant message carries `blocks`.
+fn turn(calls: &[&str], text: &str, blocks: Vec<ThinkingBlock>) -> Vec<Message> {
+    let mut assistant = Message::assistant(text, calls.iter().map(|id| call(id)).collect());
+    assistant.thinking_blocks = blocks;
+    let mut messages = vec![Message::system("sys"), Message::user("go"), assistant];
+    messages.extend(calls.iter().map(|id| Message::tool(*id, "done")));
+    messages
+}
+
+/// Each input item as `type:detail` (reasoning content, call id, role).
+fn shape(input: &[serde_json::Value]) -> Vec<String> {
     input
         .iter()
-        .map(|item| {
-            item["type"]
-                .as_str()
-                .or(item["role"].as_str())
-                .unwrap_or_default()
-                .to_string()
+        .map(|item| match item["type"].as_str() {
+            Some("reasoning") => {
+                format!("reasoning:{}", item["encrypted_content"].as_str().unwrap())
+            }
+            Some(kind) => format!("{kind}:{}", item["call_id"].as_str().unwrap_or_default()),
+            None => item["role"].as_str().unwrap_or_default().to_string(),
         })
         .collect()
 }
 
 #[test]
-fn reasoning_is_replayed_to_its_own_model_just_before_the_turn_it_led_to() {
-    let messages = tool_turn(vec![
-        ThinkingBlock::Normal {
-            thinking: "why".into(),
-            signature: String::new(),
-        },
-        encrypted("gpt-6-sol", replay_item()),
-    ]);
-    let (_, input) = CodexProvider::build_input_for(&messages, "gpt-6-sol");
-    assert_eq!(
-        types(&input),
-        ["user", "reasoning", "function_call", "function_call_output"]
+fn reasoning_is_replayed_to_its_origin_just_before_the_call_it_led_to() {
+    let messages = turn(
+        &["call_a", "call_b"],
+        "",
+        vec![
+            block(ORIGIN, Some("call_a"), "r0"),
+            block(ORIGIN, Some("call_b"), "r2"),
+        ],
     );
-    assert_eq!(input[1], replay_item());
+    let (_, input) = CodexProvider::build_input_for(&messages, ORIGIN);
+    assert_eq!(
+        shape(&input),
+        [
+            "user",
+            "reasoning:r0",
+            "function_call:call_a",
+            "reasoning:r2",
+            "function_call:call_b",
+            "function_call_output:call_a",
+            "function_call_output:call_b",
+        ]
+    );
 }
 
 #[test]
-fn reasoning_is_not_replayed_to_another_model_or_an_unstamped_one() {
-    for (stamped, requested) in [("gpt-6-sol", "gpt-6"), ("", "gpt-6-sol"), ("gpt-6-sol", "")] {
-        let messages = tool_turn(vec![encrypted(stamped, replay_item())]);
+fn reasoning_that_led_to_text_goes_before_the_text() {
+    let messages = turn(&[], "answer", vec![block(ORIGIN, None, "r0")]);
+    let (_, input) = CodexProvider::build_input_for(&messages, ORIGIN);
+    assert_eq!(shape(&input), ["user", "reasoning:r0", "assistant"]);
+}
+
+/// Review: another endpoint, account or model — or none — replays nothing.
+#[test]
+fn reasoning_is_not_replayed_to_another_origin() {
+    let other_account = "https://h/codex/responses|other|gpt-6-sol";
+    let other_endpoint = "https://api/responses|api-key|gpt-6-sol";
+    for (stamped, requested) in [
+        (ORIGIN, other_account),
+        (ORIGIN, other_endpoint),
+        ("", ORIGIN),
+        (ORIGIN, ""),
+    ] {
+        let messages = turn(&["call_a"], "", vec![block(stamped, Some("call_a"), "r0")]);
         let (_, input) = CodexProvider::build_input_for(&messages, requested);
         assert_eq!(
-            types(&input),
-            ["user", "function_call", "function_call_output"],
+            shape(&input),
+            [
+                "user",
+                "function_call:call_a",
+                "function_call_output:call_a"
+            ],
             "stamped {stamped:?}, requested {requested:?}"
         );
     }
 }
 
 #[test]
-fn reasoning_is_not_replayed_without_the_turn_it_led_to() {
-    // Every call orphaned (no result) and no text: nothing follows it.
-    let mut messages = tool_turn(vec![encrypted("gpt-6-sol", replay_item())]);
+fn reasoning_is_not_replayed_without_the_item_it_led_to() {
+    // The call it led to went unanswered (orphaned), and no text follows.
+    let mut messages = turn(&["call_a"], "", vec![block(ORIGIN, Some("call_a"), "r0")]);
     messages.pop();
-    let (_, input) = CodexProvider::build_input_for(&messages, "gpt-6-sol");
-    assert_eq!(types(&input), ["user"]);
+    let (_, input) = CodexProvider::build_input_for(&messages, ORIGIN);
+    assert_eq!(shape(&input), ["user"]);
+    // Reasoning that led to text is not sent with a tool turn's calls.
+    let messages = turn(&["call_a"], "", vec![block(ORIGIN, None, "r0")]);
+    let (_, input) = CodexProvider::build_input_for(&messages, ORIGIN);
+    assert_eq!(
+        shape(&input),
+        [
+            "user",
+            "function_call:call_a",
+            "function_call_output:call_a"
+        ]
+    );
 }
 
 #[test]
 fn a_stored_item_that_is_not_an_object_is_skipped() {
-    let messages = tool_turn(vec![ThinkingBlock::EncryptedReasoning {
-        model: "gpt-6-sol".into(),
+    let mut messages = turn(&["call_a"], "", Vec::new());
+    messages[2].thinking_blocks = vec![ThinkingBlock::EncryptedReasoning {
+        origin: ORIGIN.into(),
+        leads_to: Some("call_a".into()),
         item: "not json".into(),
-    }]);
-    let (_, input) = CodexProvider::build_input_for(&messages, "gpt-6-sol");
+    }];
+    let (_, input) = CodexProvider::build_input_for(&messages, ORIGIN);
     assert_eq!(
-        types(&input),
-        ["user", "function_call", "function_call_output"]
+        shape(&input),
+        [
+            "user",
+            "function_call:call_a",
+            "function_call_output:call_a"
+        ]
     );
+}
+
+/// Review: a key's prefix reaches a header, so only a plain one is kept.
+#[test]
+fn a_cache_key_prefix_is_kept_only_when_plain() {
+    assert!(CodexProvider::sanitize_cache_key("cli:default").starts_with("cli:"));
+    assert!(CodexProvider::sanitize_cache_key("chat-1_x:a").starts_with("chat-1_x:"));
+    for odd in ["caf\u{e9}:a", "a b:c", "tab\t:x", ":empty", &"p".repeat(33)] {
+        let key = CodexProvider::sanitize_cache_key(odd);
+        assert!(key.starts_with("session:"), "{odd:?} -> {key}");
+        assert!(reqwest::header::HeaderValue::from_str(&key).is_ok());
+    }
 }
 
 fn chat_request<'a>(messages: &'a [Message], session: Option<&'a str>) -> ChatRequest<'a> {
@@ -190,37 +298,41 @@ fn chat_request<'a>(messages: &'a [Message], session: Option<&'a str>) -> ChatRe
     }
 }
 
-async fn send_one(provider: CodexProvider, session: Option<&'static str>) {
-    let messages = vec![Message::system("sys"), Message::user("hi")];
-    provider
-        .chat(chat_request(&messages, session))
-        .await
-        .unwrap();
-}
-
-async fn served(session: Option<&'static str>, oauth: bool) -> Vec<Option<String>> {
+async fn server_answering(events: &[serde_json::Value]) -> wiremock::MockServer {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .respond_with(
-            wiremock::ResponseTemplate::new(200)
-                .set_body_raw(sse(&[completed()]), "text/event-stream"),
+            wiremock::ResponseTemplate::new(200).set_body_raw(sse(events), "text/event-stream"),
         )
         .mount(&server)
         .await;
+    server
+}
+
+fn oauth_at(server: &wiremock::MockServer) -> CodexProvider {
+    CodexProvider::with_client(
+        "sk-test".into(),
+        "acct".into(),
+        Some(server.uri()),
+        reqwest::Client::new(),
+    )
+}
+
+async fn served(session: Option<&'static str>, oauth: bool) -> Vec<Option<String>> {
+    let server = server_answering(&[completed()]).await;
     let provider = match oauth {
-        true => CodexProvider::with_client(
-            "sk-test".into(),
-            "acct".into(),
-            Some(server.uri()),
-            reqwest::Client::new(),
-        ),
+        true => oauth_at(&server),
         false => CodexProvider::with_api_key(
             "sk-test".into(),
             Some(server.uri()),
             reqwest::Client::new(),
         ),
     };
-    send_one(provider, session).await;
+    let messages = vec![Message::system("sys"), Message::user("hi")];
+    provider
+        .chat(chat_request(&messages, session))
+        .await
+        .unwrap();
     server
         .received_requests()
         .await
@@ -248,4 +360,129 @@ async fn an_oauth_request_names_its_session_as_its_cache_key_does() {
 async fn no_session_header_without_a_session_or_off_oauth() {
     assert_eq!(served(None, true).await, vec![None]);
     assert_eq!(served(Some("cli:default"), false).await, vec![None]);
+}
+
+fn stamped_origins(response: &LlmResponse) -> Vec<String> {
+    encrypted_blocks(response)
+        .into_iter()
+        .map(|(origin, _, _)| origin)
+        .collect()
+}
+
+/// Review: the assembled path stamps the origin the request went to.
+#[tokio::test]
+async fn the_assembled_path_stamps_its_origin() {
+    let server = server_answering(&[reasoning_done(0, Some("gAAA")), completed()]).await;
+    let provider = oauth_at(&server);
+    let origin = provider.reasoning_origin("gpt-6-sol");
+    assert!(
+        origin.contains(&server.uri()) && origin.ends_with("|gpt-6-sol"),
+        "{origin}"
+    );
+    assert!(
+        !origin.contains("|acct|"),
+        "the account is kept by digest: {origin}"
+    );
+    let messages = vec![Message::system("sys"), Message::user("hi")];
+    let response = provider.chat(chat_request(&messages, None)).await.unwrap();
+    assert_eq!(stamped_origins(&response), vec![origin]);
+}
+
+/// Review: the incremental stream stamps it too.
+#[tokio::test]
+async fn the_incremental_stream_stamps_its_origin() {
+    let server = server_answering(&[reasoning_done(0, Some("gAAA")), completed()]).await;
+    let provider = oauth_at(&server);
+    let origin = provider.reasoning_origin("gpt-6-sol");
+    let messages = vec![Message::system("sys"), Message::user("hi")];
+    let mut events = provider
+        .chat_stream_incremental(chat_request(&messages, None))
+        .await;
+    let mut done = None;
+    while let Some(event) = events.recv().await {
+        if let StreamEvent::Done(response) = event {
+            done = Some(response);
+        }
+    }
+    assert_eq!(stamped_origins(&done.expect("a response")), vec![origin]);
+}
+
+/// Review: a response's reasoning, kept on its assistant message, is sent
+/// back in the next request to the same provider.
+#[tokio::test]
+async fn a_responses_reasoning_rides_the_next_request() {
+    let server = server_answering(&[
+        reasoning_done(0, Some("gAAA")),
+        call_added(1, "call_a"),
+        completed(),
+    ])
+    .await;
+    let provider = oauth_at(&server);
+    let mut messages = vec![Message::system("sys"), Message::user("hi")];
+    let response = provider.chat(chat_request(&messages, None)).await.unwrap();
+    let mut assistant = Message::assistant("", response.tool_calls.clone());
+    assistant.thinking_blocks = response.thinking_blocks.clone();
+    messages.push(assistant);
+    messages.push(Message::tool("call_a", "done"));
+    provider.chat(chat_request(&messages, None)).await.unwrap();
+    let requests = server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    let input = body["input"].as_array().unwrap();
+    assert_eq!(
+        shape(input),
+        [
+            "user",
+            "reasoning:gAAA",
+            "function_call:call_a",
+            "function_call_output:call_a"
+        ]
+    );
+}
+
+/// A gate that grants every attempt at once.
+#[derive(Debug)]
+struct Grant;
+#[derive(Debug)]
+struct Granted;
+impl crate::application::ports::AttemptPermit for Granted {
+    fn feedback(&mut self, _: crate::domain::inference_admission::ThrottleFeedback) {}
+    fn finish(self: Box<Self>, _: crate::domain::inference_admission::Feedback) {}
+}
+impl crate::application::ports::AttemptAdmission for Grant {
+    fn acquire(&self) -> crate::application::ports::AttemptAcquisition<'_> {
+        Box::pin(async {
+            Ok(Box::new(Granted) as Box<dyn crate::application::ports::AttemptPermit>)
+        })
+    }
+}
+
+fn gated_at(server: &wiremock::MockServer) -> CodexProvider {
+    oauth_at(server).with_attempt_admission(
+        std::sync::Arc::new(Grant),
+        crate::infrastructure::providers::SingleAttemptClient::build(
+            reqwest::Client::builder().no_proxy(),
+        )
+        .unwrap(),
+    )
+}
+
+/// Review: the admission-gated assembled and streamed paths stamp too.
+#[tokio::test]
+async fn the_admission_paths_stamp_their_origin() {
+    let server = server_answering(&[reasoning_done(0, Some("gAAA")), completed()]).await;
+    let provider = gated_at(&server);
+    let origin = provider.reasoning_origin("gpt-6-sol");
+    let messages = vec![Message::system("sys"), Message::user("hi")];
+    let response = provider.chat(chat_request(&messages, None)).await.unwrap();
+    assert_eq!(stamped_origins(&response), vec![origin.clone()]);
+    let mut events = provider
+        .chat_stream_incremental(chat_request(&messages, None))
+        .await;
+    let mut done = None;
+    while let Some(event) = events.recv().await {
+        if let StreamEvent::Done(response) = event {
+            done = Some(response);
+        }
+    }
+    assert_eq!(stamped_origins(&done.expect("a response")), vec![origin]);
 }

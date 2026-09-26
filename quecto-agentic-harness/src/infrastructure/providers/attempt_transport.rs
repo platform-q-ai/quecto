@@ -604,7 +604,10 @@ async fn forward(
                 state.diagnostics.generated_text |=
                     response.content.as_ref().is_some_and(|s| !s.is_empty());
                 state.diagnostics.generated_tool_call |= !response.tool_calls.is_empty();
-                state.diagnostics.generated_thinking |= !response.thinking_blocks.is_empty();
+                state.diagnostics.generated_thinking |=
+                    crate::domain::visible_thinking::has_visible_thinking(
+                        &response.thinking_blocks,
+                    );
             }
             if matches!(event, StreamEvent::Error(_)) {
                 receipt.fail();

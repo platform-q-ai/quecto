@@ -10,16 +10,25 @@ impl CodexProvider {
         Self::build_input_for(messages, "")
     }
 
-    /// The reasoning items `msg` carries for `model`, as input items: only
-    /// the model that produced one can decrypt it (#2162).
-    fn replayed_reasoning(msg: &Message, model: &str) -> Vec<serde_json::Value> {
+    /// The reasoning items `msg` carries for `origin` that led to
+    /// `leads_to` (a call, or `None` for the reply's text), as input items:
+    /// only the origin that produced one can decrypt it (#2162).
+    fn replayed_reasoning(
+        msg: &Message,
+        origin: &str,
+        leads_to: Option<&str>,
+    ) -> Vec<serde_json::Value> {
         msg.thinking_blocks
             .iter()
             .filter_map(|block| match block {
                 ThinkingBlock::EncryptedReasoning {
-                    model: produced_by,
+                    origin: produced_by,
+                    leads_to: led_to,
                     item,
-                } if !model.is_empty() && produced_by == model => {
+                } if !origin.is_empty()
+                    && produced_by == origin
+                    && led_to.as_deref() == leads_to =>
+                {
                     match serde_json::from_str::<serde_json::Value>(item) {
                         Ok(value @ serde_json::Value::Object(_)) => Some(value),
                         Ok(_) | Err(_) => {
@@ -37,14 +46,9 @@ impl CodexProvider {
             .collect()
     }
 
-    /// Convert our domain messages into Responses API `input` array.
-    ///
-    /// Calls [`crate::domain::session::filter_orphan_tool_pairs`] to exclude
-    /// mismatched function_call/function_call_output pairs (which would cause
-    /// HTTP 400). Logs any orphaned pairs with Codex-specific context.
     pub(super) fn build_input_for(
         messages: &[Message],
-        model: &str,
+        origin: &str,
     ) -> (Option<String>, Vec<serde_json::Value>) {
         let (valid_pairs, diag) = crate::domain::session::filter_orphan_tool_pairs(messages);
         let last_non_tool_assistant_idx = messages
@@ -83,15 +87,14 @@ impl CodexProvider {
                     } else {
                         "commentary"
                     };
-                    // The turn's own items, then (below) its reasoning in
-                    // front of them: a reasoning item is only sent with the
-                    // item that followed it (#2162).
-                    let turn_start = input.len();
+                    // Each reasoning item goes just before the item it led
+                    // to, and only with it (#2162).
                     if !msg.tool_calls.is_empty() {
                         // Emit only the valid (matched) tool calls.
                         let mut emitted = 0usize;
                         for tc in &msg.tool_calls {
                             if valid_pairs.contains(&tc.id) {
+                                input.extend(Self::replayed_reasoning(msg, origin, Some(&tc.id)));
                                 input.push(serde_json::json!({
                                     "type": "function_call",
                                     "call_id": tc.id,
@@ -105,6 +108,7 @@ impl CodexProvider {
                         // emitting the assistant text content (if any) so narrative
                         // context is not silently lost.
                         if emitted == 0 && !msg.content.is_empty() {
+                            input.extend(Self::replayed_reasoning(msg, origin, None));
                             input.push(serde_json::json!({
                                 "role": "assistant",
                                 "phase": phase,
@@ -112,15 +116,12 @@ impl CodexProvider {
                             }));
                         }
                     } else {
+                        input.extend(Self::replayed_reasoning(msg, origin, None));
                         input.push(serde_json::json!({
                             "role": "assistant",
                             "phase": phase,
                             "content": msg.content,
                         }));
-                    }
-                    if input.len() > turn_start {
-                        let reasoning = Self::replayed_reasoning(msg, model);
-                        input.splice(turn_start..turn_start, reasoning);
                     }
                 }
                 Role::Tool => {

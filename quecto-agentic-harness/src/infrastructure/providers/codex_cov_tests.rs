@@ -37,7 +37,7 @@ fn req<'a>(
 #[tokio::test]
 async fn handler_emits_text_delta_then_done_on_completed() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-    let mut handler = CodexSseHandler::with_model("gpt-5.6-luna");
+    let mut handler = CodexSseHandler::with_model("gpt-5.6-luna", "");
 
     let out = handler
         .process_line(

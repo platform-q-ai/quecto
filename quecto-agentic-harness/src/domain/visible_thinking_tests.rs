@@ -7,7 +7,8 @@ fn blocks() -> Vec<ThinkingBlock> {
             signature: String::new(),
         },
         ThinkingBlock::EncryptedReasoning {
-            model: "m".into(),
+            origin: "m".into(),
+            leads_to: None,
             item: "{}".into(),
         },
         ThinkingBlock::Redacted { data: "x".into() },

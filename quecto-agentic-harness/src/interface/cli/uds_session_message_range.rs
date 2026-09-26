@@ -10,7 +10,9 @@
 //! metadata so clients walk and reassemble content that exceeds the cap.
 use crate::application::sessions::dto::{RecoveredContent, Utf8Range};
 use crate::domain::message::{Message, ToolCall};
-use crate::domain::visible_thinking::{visible_thinking_len, visible_thinking_page};
+use crate::domain::visible_thinking::{
+    has_visible_thinking, visible_thinking_len, visible_thinking_page,
+};
 use crate::interface::cli::protocol::AgentEvent;
 
 #[cfg(test)]
@@ -54,7 +56,7 @@ fn message_to_json_with_content_and_thinking(
         "isError": msg.is_error,
         "collapsed": msg.is_collapsed,
     });
-    if include_thinking && !msg.thinking_blocks.is_empty() {
+    if include_thinking && has_visible_thinking(&msg.thinking_blocks) {
         value["thinking"] =
             super::uds_visible_thinking_wire::visible_thinking_blocks_json(&msg.thinking_blocks);
     }

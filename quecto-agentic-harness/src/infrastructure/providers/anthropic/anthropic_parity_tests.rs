@@ -284,7 +284,8 @@ fn test_encrypted_reasoning_is_not_sent_to_anthropic() {
     use crate::domain::message::ThinkingBlock;
     let mut msg = Message::assistant("response text", vec![]);
     msg.thinking_blocks.push(ThinkingBlock::EncryptedReasoning {
-        model: "gpt-6-sol".to_string(),
+        origin: "gpt-6-sol".to_string(),
+        leads_to: None,
         item: "SECRET".to_string(),
     });
     let json = AnthropicProvider::build_assistant_message(&msg, false);

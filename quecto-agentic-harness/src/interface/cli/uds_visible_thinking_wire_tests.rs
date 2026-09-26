@@ -5,7 +5,8 @@ use super::*;
 fn the_wire_leaves_out_encrypted_reasoning() {
     let blocks = vec![
         ThinkingBlock::EncryptedReasoning {
-            model: "m".into(),
+            origin: "m".into(),
+            leads_to: None,
             item: "SECRET".into(),
         },
         ThinkingBlock::Redacted { data: "x".into() },

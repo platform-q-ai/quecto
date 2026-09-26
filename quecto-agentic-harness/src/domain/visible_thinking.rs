@@ -37,6 +37,12 @@ pub enum VisibleThinkingPageBlock {
     Redacted,
 }
 
+/// Whether any block is thinking a person may see (#2162): encrypted
+/// reasoning alone is no visible output.
+pub fn has_visible_thinking(blocks: &[ThinkingBlock]) -> bool {
+    blocks.iter().any(ThinkingBlock::is_visible)
+}
+
 pub fn visible_thinking_len(blocks: &[ThinkingBlock]) -> usize {
     blocks
         .iter()

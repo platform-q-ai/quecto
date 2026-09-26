@@ -343,7 +343,8 @@ fn history_never_shows_encrypted_reasoning() {
                 signature: String::new(),
             },
             ThinkingBlock::EncryptedReasoning {
-                model: "gpt-6-sol".into(),
+                origin: "gpt-6-sol".into(),
+                leads_to: None,
                 item: r#"{"encrypted_content":"SECRET-BLOB"}"#.into(),
             },
         ];
@@ -351,5 +352,25 @@ fn history_never_shows_encrypted_reasoning() {
         assert!(json.contains("shown reasoning"), "{json}");
         assert!(!json.contains("SECRET-BLOB"), "{json}");
         assert!(!json.contains("hidden"), "{json}");
+    }
+}
+
+/// #2162 review: a message whose only thinking is encrypted carries no
+/// `thinking` field at all, full or summarised.
+#[test]
+fn encrypted_only_thinking_adds_no_thinking_field() {
+    use crate::domain::message::ThinkingBlock;
+    for body in [
+        "short".to_string(),
+        "x".repeat(HISTORY_PAGE_JSON_BUDGET * 2),
+    ] {
+        let mut message = Message::assistant(body, vec![]);
+        message.thinking_blocks = vec![ThinkingBlock::EncryptedReasoning {
+            origin: "o".into(),
+            leads_to: None,
+            item: "{}".into(),
+        }];
+        let json = super::message_to_json_for_history_page(&message);
+        assert!(json.get("thinking").is_none(), "{json}");
     }
 }

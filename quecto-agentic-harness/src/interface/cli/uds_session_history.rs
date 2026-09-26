@@ -143,7 +143,7 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         "truncated": true,
         "contentLength": msg.content.len(),
     });
-    if !msg.thinking_blocks.is_empty() {
+    if crate::domain::visible_thinking::has_visible_thinking(&msg.thinking_blocks) {
         let base_size = serde_json::to_vec(&summary)
             .map(|v| v.len())
             .unwrap_or(usize::MAX);

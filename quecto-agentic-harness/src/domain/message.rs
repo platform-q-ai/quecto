@@ -119,8 +119,12 @@ pub enum ThinkingBlock {
     /// `encrypted_content` (#2162): opaque, never shown, and replayed only
     /// by that provider and only to the model that produced it.
     EncryptedReasoning {
-        /// The model the request named, which alone can decrypt it.
-        model: String,
+        /// Where it came from: the endpoint, account and model that alone
+        /// can decrypt it. Replayed only to the same origin.
+        origin: String,
+        /// The call the reasoning led to, in the response's output order;
+        /// `None` when it led to the reply's text (or to nothing).
+        leads_to: Option<String>,
         /// The item as it is sent back: a JSON object of `type`,
         /// `summary` and `encrypted_content`.
         item: String,

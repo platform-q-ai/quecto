@@ -13,10 +13,16 @@ pub(super) struct SseAccumulator {
     pub(super) stop_reason: Option<StopReason>,
     pub(super) reasoning: String,
     pub(super) reasoning_summary_position: Option<(Option<u64>, u64)>,
-    /// Reasoning items returned with `encrypted_content`, in output order,
-    /// as they are sent back (#2162).
-    pub(super) encrypted_reasoning: Vec<Value>,
+    /// Reasoning items returned with `encrypted_content`, each with its
+    /// output index, as they are sent back (#2162).
+    pub(super) encrypted_reasoning: Vec<(usize, Value)>,
+    /// Bytes of encrypted content kept so far in this response.
+    pub(super) encrypted_reasoning_bytes: usize,
 }
+
+/// Encrypted reasoning kept per response: replaying it is an optimisation,
+/// so items past this are dropped rather than carried turn after turn.
+pub(super) const MAX_ENCRYPTED_REASONING_BYTES: usize = 1024 * 1024;
 
 /// The reasoning item as it is replayed: its summary and encrypted
 /// content, without the id — with `store: false` an id names an item the
@@ -135,11 +141,27 @@ impl SseAccumulator {
                 signature: String::new(),
             }]
         };
-        // The model is stamped by the provider, which knows what it asked
-        // for; an unstamped item is never replayed.
-        thinking_blocks.extend(self.encrypted_reasoning.into_iter().map(|item| {
+        // Each item led to the first call after it in the output (none:
+        // the reply's text). The origin is stamped by the provider, which
+        // knows where it sent the request; an unstamped item is never
+        // replayed.
+        let mut calls: Vec<(usize, &str)> = self
+            .output_index_to_tool
+            .iter()
+            .filter_map(|(output, tool)| {
+                self.tool_calls
+                    .get(*tool)
+                    .map(|call| (*output, call.id.as_str()))
+            })
+            .collect();
+        calls.sort_unstable();
+        thinking_blocks.extend(self.encrypted_reasoning.iter().map(|(output, item)| {
             ThinkingBlock::EncryptedReasoning {
-                model: String::new(),
+                origin: String::new(),
+                leads_to: calls
+                    .iter()
+                    .find(|(call_output, _)| call_output > output)
+                    .map(|(_, id)| id.to_string()),
                 item: item.to_string(),
             }
         }));
@@ -203,7 +225,8 @@ impl SseAccumulator {
                     .filter(|i| i["type"].as_str() == Some("reasoning"))
                 {
                     if let Some(replayable) = replayable_reasoning(item) {
-                        self.encrypted_reasoning.push(replayable);
+                        let output_index = event["output_index"].as_u64().unwrap_or(0) as usize;
+                        self.keep_encrypted_reasoning(output_index, replayable);
                     }
                     let summary = collect_reasoning_summary(item);
                     if !summary.is_empty()
@@ -264,6 +287,20 @@ impl SseAccumulator {
             _ => {}
         }
         Ok(())
+    }
+
+    fn keep_encrypted_reasoning(&mut self, output_index: usize, item: Value) {
+        let bytes = item["encrypted_content"].as_str().map_or(0, str::len);
+        let total = self.encrypted_reasoning_bytes.saturating_add(bytes);
+        if total > MAX_ENCRYPTED_REASONING_BYTES {
+            tracing::warn!(
+                bytes,
+                "Codex: encrypted reasoning past its per-response cap is not kept for replay"
+            );
+            return;
+        }
+        self.encrypted_reasoning_bytes = total;
+        self.encrypted_reasoning.push((output_index, item));
     }
 
     fn handle_item_added(&mut self, event: &serde_json::Value) {

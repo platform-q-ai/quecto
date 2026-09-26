@@ -138,15 +138,28 @@ impl CodexProvider {
         }
     }
 
-    /// Cost the response, and stamp its reasoning items with the model the
-    /// request named, the one they are replayed to (#2162).
-    pub(super) fn finish_response(response: &mut LlmResponse, model: &str) {
+    /// Cost the response, and stamp its reasoning items with the origin
+    /// they are replayed to (#2162).
+    pub(super) fn finish_response(response: &mut LlmResponse, model: &str, origin: &str) {
         crate::domain::usage_accounting::attach_cost(response, model);
         for block in &mut response.thinking_blocks {
-            if let ThinkingBlock::EncryptedReasoning { model: stamped, .. } = block {
-                *stamped = model.to_string();
+            if let ThinkingBlock::EncryptedReasoning {
+                origin: stamped, ..
+            } = block
+            {
+                *stamped = origin.to_string();
             }
         }
+    }
+
+    /// Where a request's reasoning can be decrypted again (#2162 review):
+    /// the endpoint, the account (by digest, never in clear) and the model.
+    fn reasoning_origin(&self, model: &str) -> String {
+        let account = match &self.auth {
+            ResponsesAuth::ChatGptOAuth { account_id } => format!("{:08x}", fnv1a(account_id)),
+            ResponsesAuth::ApiKey => "api-key".to_string(),
+        };
+        format!("{}|{account}|{model}", self.responses_url())
     }
 
     /// The session a request names, sanitised as its cache key is.
@@ -210,8 +223,12 @@ impl CodexProvider {
     /// ChatGPT Codex backend rejects outright with HTTP 400 `{"detail":
     /// "Unsupported parameter: max_output_tokens"}` (#1233 regression), so
     /// it is emitted only on the API-key path.
-    fn build_request_body(request: &ChatRequest<'_>, auth: &ResponsesAuth) -> serde_json::Value {
-        let (instructions, input) = Self::build_input_for(request.messages, request.model);
+    fn build_request_body(
+        request: &ChatRequest<'_>,
+        auth: &ResponsesAuth,
+        origin: &str,
+    ) -> serde_json::Value {
+        let (instructions, input) = Self::build_input_for(request.messages, origin);
 
         let mut body = serde_json::json!({
             "model": request.model,
@@ -431,14 +448,22 @@ impl CodexProvider {
     /// Examples:
     /// - `"cli:default"` → `"cli:5e2b9f3a"` (no PII in original, prefix kept)
     /// - `"uds:agent-1"` → `"uds:7b3f1e9a"` (agent ID hidden)
+    ///
+    /// The prefix is kept only when it is plain (`[A-Za-z0-9_-]`, at most
+    /// 32 bytes), so the key is always a valid `session_id` header value
+    /// (#2162 review); any other prefix becomes `session`.
     fn sanitize_cache_key(key: &str) -> String {
-        // FNV-1a 32-bit hash — fast, no deps, deterministic.
-        let mut hash: u32 = 0x811c_9dc5;
-        for byte in key.bytes() {
-            hash ^= byte as u32;
-            hash = hash.wrapping_mul(0x0100_0193);
-        }
-        let prefix = key.split(':').next().unwrap_or("session");
+        let hash = fnv1a(key);
+        let prefix = key
+            .split(':')
+            .next()
+            .filter(|prefix| {
+                (1..=32).contains(&prefix.len())
+                    && prefix
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            })
+            .unwrap_or("session");
         format!("{prefix}:{hash:08x}")
     }
 
@@ -448,8 +473,8 @@ impl CodexProvider {
         url: &str,
         body: serde_json::Value,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
-        model: &str,
         session: Option<&str>,
+        mut handler: CodexSseHandler,
     ) {
         let mut response = match self
             .apply_headers(self.client.post(url), session)
@@ -479,7 +504,6 @@ impl CodexProvider {
                 .await;
             return;
         }
-        let mut handler = CodexSseHandler::with_model(model);
         super::sse_common::pump_sse(&mut response, &tx, &mut handler).await;
     }
 
@@ -516,7 +540,8 @@ impl LlmProvider for CodexProvider {
         let trace = request.trace.clone();
         let model = request.model.to_string();
         let session = Self::request_session(&request);
-        let body = Self::build_request_body(&request, &self.auth);
+        let origin = self.reasoning_origin(request.model);
+        let body = Self::build_request_body(&request, &self.auth, &origin);
         let url = self.responses_url();
 
         Box::pin(async move {
@@ -532,7 +557,7 @@ impl LlmProvider for CodexProvider {
                     Profile::new(Vendor::Codex, Surface::Assembled),
                     |raw| {
                         let mut parsed = Self::parse_sse_response(raw)?;
-                        Self::finish_response(&mut parsed, &model);
+                        Self::finish_response(&mut parsed, &model, &origin);
                         Ok(parsed)
                     },
                 )
@@ -565,7 +590,7 @@ impl LlmProvider for CodexProvider {
                 .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
 
             let mut parsed = Self::parse_sse_response(&raw)?;
-            Self::finish_response(&mut parsed, &model);
+            Self::finish_response(&mut parsed, &model, &origin);
             Ok(parsed)
         })
     }
@@ -592,7 +617,8 @@ impl LlmProvider for CodexProvider {
         let trace = request.trace.clone();
         let model = request.model.to_string();
         let session = Self::request_session(&request);
-        let body = Self::build_request_body(&request, &self.auth);
+        let origin = self.reasoning_origin(request.model);
+        let body = Self::build_request_body(&request, &self.auth, &origin);
         let url = self.responses_url();
         let provider = self.clone();
         Box::pin(async move {
@@ -608,12 +634,18 @@ impl LlmProvider for CodexProvider {
                         builder,
                         Profile::new(Vendor::Codex, Surface::Incremental),
                         tx,
-                        CodexSseHandler::with_model(&model),
+                        CodexSseHandler::with_model(&model, &origin),
                     )
                     .await;
                 } else {
                     provider
-                        .pump_codex_sse(&url, body, tx, &model, session.as_deref())
+                        .pump_codex_sse(
+                            &url,
+                            body,
+                            tx,
+                            session.as_deref(),
+                            CodexSseHandler::with_model(&model, &origin),
+                        )
                         .await;
                 }
             });
@@ -624,6 +656,16 @@ impl LlmProvider for CodexProvider {
 
 #[path = "codex_input.rs"]
 mod codex_input;
+/// FNV-1a 32-bit: fast, dependency-free, deterministic.
+fn fnv1a(text: &str) -> u32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in text.bytes() {
+        hash ^= byte as u32;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
 #[path = "codex_sse_handler.rs"]
 mod codex_sse_handler;
 #[cfg(test)]

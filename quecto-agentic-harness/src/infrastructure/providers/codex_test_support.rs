@@ -15,13 +15,14 @@ impl CodexProvider {
             &ResponsesAuth::ChatGptOAuth {
                 account_id: "acct-test".to_string(),
             },
+            "",
         )
     }
 
     /// Public accessor for `build_request_body` on the standard OpenAI
     /// Responses API (API-key) backend (for BDD/integration tests).
     pub fn build_request_body_public_api_key(request: &ChatRequest<'_>) -> serde_json::Value {
-        Self::build_request_body(request, &ResponsesAuth::ApiKey)
+        Self::build_request_body(request, &ResponsesAuth::ApiKey, "")
     }
 
     /// Public accessor for `build_input` (for BDD/integration tests).
