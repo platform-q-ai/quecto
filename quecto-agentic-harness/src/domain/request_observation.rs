@@ -12,8 +12,20 @@ pub struct RequestTrace {
     attempts: AtomicU32,
     oauth_retries: AtomicU32,
     diagnostics: Mutex<Vec<AttemptDiagnostics>>,
+    /// When the request's first token arrived, on the monotonic clock
+    /// (#2151): the earliest any attempt saw.
+    first_token: Mutex<Option<std::time::Instant>>,
 }
 impl RequestTrace {
+    /// A token arrived at `at`; the earliest stays.
+    pub fn mark_first_token(&self, at: std::time::Instant) {
+        let mut first = self.first_token.lock().unwrap_or_else(|e| e.into_inner());
+        *first = Some(first.map_or(at, |earlier| earlier.min(at)));
+    }
+    /// When the request's first token arrived, if one did.
+    pub fn first_token(&self) -> Option<std::time::Instant> {
+        *self.first_token.lock().unwrap_or_else(|e| e.into_inner())
+    }
     /// Retain a bounded prefix of actual transport attempts, in completion order.
     pub fn record_attempt(&self, record: AttemptDiagnostics) {
         let mut records = self.diagnostics.lock().unwrap_or_else(|e| e.into_inner());
@@ -70,11 +82,14 @@ pub struct RequestObservation {
     pub instrumented_attempts: u32,
     pub oauth_retries: u32,
     pub duration_ms: u64,
+    /// When the request saw its first token, from its start (#2151); `None`
+    /// when no attempt saw one (or none was observed).
+    #[serde(default)]
+    pub first_token_ms: Option<u64>,
     pub harness_prefix_sha256: String,
     pub harness_prefix_bytes: usize,
     pub harness_prefix_unchanged: Option<bool>,
 }
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RequestDiagnostics {
     pub logical_requests: u64,

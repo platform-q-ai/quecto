@@ -106,6 +106,89 @@ mod transport_tests {
                 .contains("SECRET")
         );
     }
+    /// Review #2156: a whole reply the adapter cannot parse ends as rejected
+    /// through admission too, for both whole-body shapes; one it accepts, as
+    /// it did.
+    #[tokio::test]
+    async fn a_whole_reply_the_adapter_cannot_parse_ends_as_rejected() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+        let gate: Arc<dyn AttemptAdmission> = Arc::new(Gate);
+        let surface = crate::infrastructure::providers::attempt_profile::Surface::Assembled;
+        let profile = Profile::new(Vendor::OpenAi, surface);
+        let refuse =
+            |_: &str| -> Result<(), DomainError> { Err(DomainError::Provider("bad".into())) };
+        let accept = |_: &str| -> Result<(), DomainError> { Ok(()) };
+        for (parse_ok, whole) in [(false, true), (true, true), (false, false), (true, false)] {
+            let trace = Arc::new(RequestTrace::default());
+            let builder = reqwest::Client::new().get(server.uri());
+            let parse = if parse_ok { accept } else { refuse };
+            let result = match whole {
+                true => text(&gate, Some(trace.clone()), None, builder, profile, parse).await,
+                false => assembled(&gate, Some(trace.clone()), None, builder, profile, parse).await,
+            };
+            assert_eq!(result.is_ok(), parse_ok);
+            let expected = match (parse_ok, whole) {
+                (false, _) => Termination::Rejected,
+                (true, true) => Termination::Completed,
+                (true, false) => Termination::Eof,
+            };
+            assert_eq!(
+                trace.attempt_diagnostics()[0].termination,
+                expected,
+                "{parse_ok} {whole}"
+            );
+        }
+    }
+    /// A handler that reads every line and ends nothing.
+    struct ReadingHandler;
+    impl SseHandler for ReadingHandler {
+        async fn process_line(&mut self, _: &str, _: &Sender) -> SseLineOutcome {
+            SseLineOutcome::Continue
+        }
+        async fn on_eof(&mut self, _: &Sender) {}
+    }
+    /// Review #2156: the instrumented pump holds each line to the limit on
+    /// its own, as the common pump does, however the lines were chunked.
+    #[tokio::test]
+    async fn long_lines_in_one_chunk_are_not_oversized() {
+        let receipt = Receipt(Arc::new(Mutex::new(State {
+            permit: None,
+            failure: false,
+            hinted: false,
+            trace: None,
+            diagnostics: Default::default(),
+            started: std::time::Instant::now(),
+        })));
+        let line = "x".repeat(600 * 1024);
+        let long = "x".repeat(crate::infrastructure::providers::sse_common::MAX_SSE_LINE_BYTES + 1);
+        for (body, refused) in [
+            (format!("{line}\n{line}\n{line}\n"), false),
+            (format!("ok\n{long}\n"), true),
+        ] {
+            let mut response = reqwest::Response::from(http::Response::new(body.into_bytes()));
+            let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+            super::super::super::diagnostic_sse::pump_sse(
+                &receipt,
+                &mut response,
+                &tx,
+                &mut ReadingHandler,
+            )
+            .await;
+            drop(tx);
+            let event = rx.recv().await;
+            assert_eq!(
+                matches!(event, Some(StreamEvent::Error(_))),
+                refused,
+                "{event:?}"
+            );
+            let state = receipt.0.lock().unwrap();
+            assert_eq!(state.diagnostics.oversized_lines, u32::from(refused));
+        }
+    }
     #[tokio::test]
     async fn stops_are_recorded_before_owner_release() {
         let trace = Arc::new(RequestTrace::default());
@@ -256,6 +339,52 @@ mod transport_tests {
             Termination::Completed
         );
         task.await.unwrap();
+    }
+    /// A handler that refuses the reply on its first line.
+    struct RefusingHandler;
+    impl SseHandler for RefusingHandler {
+        async fn process_line(&mut self, _: &str, tx: &Sender) -> SseLineOutcome {
+            tx.send(StreamEvent::Error("over a limit".into()))
+                .await
+                .unwrap();
+            SseLineOutcome::Done
+        }
+        async fn on_eof(&mut self, _: &Sender) {}
+    }
+    /// Review #2156: a stream the handler refused, with no terminal event to
+    /// explain its end, ends as rejected, never as dropped.
+    #[tokio::test]
+    async fn a_refused_stream_ends_as_rejected() {
+        let server = MockServer::start().await;
+        let chunk = r#"data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}"#;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!("{chunk}\n")))
+            .mount(&server)
+            .await;
+        let trace = Arc::new(RequestTrace::default());
+        let gate: Arc<dyn AttemptAdmission> = Arc::new(Gate);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let saved = trace.clone();
+        let task = tokio::spawn(async move {
+            stream(
+                &gate,
+                (Some(saved), None),
+                reqwest::Client::new().get(server.uri()),
+                Profile::new(
+                    Vendor::OpenAi,
+                    crate::infrastructure::providers::attempt_profile::Surface::Incremental,
+                ),
+                tx,
+                RefusingHandler,
+            )
+            .await;
+        });
+        assert!(matches!(rx.recv().await, Some(StreamEvent::Error(_))));
+        task.await.unwrap();
+        assert_eq!(
+            trace.attempt_diagnostics()[0].termination,
+            Termination::Rejected
+        );
     }
     #[tokio::test]
     async fn wire_facts_are_distinct_from_empty_semantics_and_redacted() {

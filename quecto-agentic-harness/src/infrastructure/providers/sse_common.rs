@@ -163,17 +163,17 @@ pub async fn pump_sse<H: SseHandler>(
             }
         };
 
-        // Guard against unbounded line growth from a misbehaving server.
-        if carry.len() + bytes.len() > MAX_SSE_LINE_BYTES && !carry.contains(&b'\n') {
-            let _ = tx
-                .send(StreamEvent::Error("SSE line exceeds 1 MiB limit".into()))
-                .await;
-            return;
-        }
         carry.extend_from_slice(&bytes);
 
         // Drain complete lines — decode in-place to avoid per-line allocation.
+        // Each line is held to the limit on its own, however the transport
+        // chunked it (#2156 review); `carry` holds at most one partial line
+        // within the limit plus one chunk.
         while let Some(pos) = carry.iter().position(|&b| b == b'\n') {
+            if !line_within_limit(pos) {
+                refuse_long_line(tx).await;
+                return;
+            }
             let done = if let Ok(line) = std::str::from_utf8(&carry[..=pos]) {
                 let line = line.trim_end_matches(['\n', '\r']);
                 matches!(handler.process_line(line, tx).await, SseLineOutcome::Done)
@@ -185,10 +185,28 @@ pub async fn pump_sse<H: SseHandler>(
                 return;
             }
         }
+        // Guard against unbounded line growth from a misbehaving server.
+        if !line_within_limit(carry.len()) {
+            refuse_long_line(tx).await;
+            return;
+        }
     }
 
     // Clean EOF — let the handler finalize.
     handler.on_eof(tx).await;
+}
+
+/// Whether a line of `len` bytes (its `\n` excluded) is within
+/// [`MAX_SSE_LINE_BYTES`].
+pub(crate) fn line_within_limit(len: usize) -> bool {
+    len <= MAX_SSE_LINE_BYTES
+}
+
+/// Refuse a line over [`MAX_SSE_LINE_BYTES`]: the stream ends in error.
+pub(crate) async fn refuse_long_line(tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
+    let _ = tx
+        .send(StreamEvent::Error("SSE line exceeds 1 MiB limit".into()))
+        .await;
 }
 
 #[cfg(test)]
@@ -302,6 +320,51 @@ mod pump_tests {
 
         pump_sse(&mut response, &tx, &mut handler).await;
 
+        assert!(
+            matches!(rx.recv().await, Some(StreamEvent::Error(message)) if message.contains("exceeds"))
+        );
+    }
+
+    /// A response whose whole body arrives as one chunk.
+    pub(crate) fn one_chunk(body: Vec<u8>) -> reqwest::Response {
+        reqwest::Response::from(http::Response::new(body))
+    }
+
+    /// Review #2156: lines each under the limit are never refused, however
+    /// the transport chunks them (here: all in one chunk over the limit).
+    #[tokio::test]
+    async fn pump_sse_accepts_long_lines_in_one_chunk() {
+        let line = "x".repeat(600 * 1024);
+        let mut response = one_chunk(format!("{line}\n{line}\n{line}\n").into_bytes());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let mut handler = RecordingHandler {
+            lines: Arc::clone(&lines),
+            done_on: None,
+        };
+
+        pump_sse(&mut response, &tx, &mut handler).await;
+
+        assert_eq!(lines.lock().unwrap().len(), 3);
+        assert!(matches!(rx.recv().await, Some(StreamEvent::TextDelta(eof)) if eof == "eof"));
+    }
+
+    /// A complete line over the limit is refused even when a newline ends it
+    /// in the same chunk; the lines before it were dispatched.
+    #[tokio::test]
+    async fn pump_sse_refuses_a_terminated_line_over_the_limit() {
+        let long = "x".repeat(MAX_SSE_LINE_BYTES + 1);
+        let mut response = one_chunk(format!("ok\n{long}\nlater\n").into_bytes());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let mut handler = RecordingHandler {
+            lines: Arc::clone(&lines),
+            done_on: None,
+        };
+
+        pump_sse(&mut response, &tx, &mut handler).await;
+
+        assert_eq!(*lines.lock().unwrap(), vec!["ok".to_string()]);
         assert!(
             matches!(rx.recv().await, Some(StreamEvent::Error(message)) if message.contains("exceeds"))
         );

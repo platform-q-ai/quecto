@@ -34,6 +34,40 @@ struct State {
     started: std::time::Instant,
 }
 impl Receipt {
+    /// A new attempt's receipt: the permit its gate granted (none for an
+    /// attempt observed without admission, #2151) and its request's trace.
+    fn new(permit: Option<Box<dyn AttemptPermit>>, trace: Option<Arc<RequestTrace>>) -> Self {
+        Receipt(Arc::new(Mutex::new(State {
+            permit,
+            failure: false,
+            hinted: false,
+            diagnostics: AttemptDiagnostics {
+                attempt_number: trace.as_ref().map_or(1, |t| t.attempts().max(1)),
+                started_unix_ms: diagnostics::unix_ms(),
+                ..Default::default()
+            },
+            trace,
+            started: std::time::Instant::now(),
+        })))
+    }
+
+    /// Record the attempt into its request's trace: once, when it ends.
+    fn record(state: &mut State) {
+        state.diagnostics.finished_unix_ms = diagnostics::unix_ms();
+        state.diagnostics.elapsed_ms =
+            state.started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        debug_assert!(
+            state
+                .diagnostics
+                .first_token_ms
+                .is_none_or(|first| first <= state.diagnostics.elapsed_ms),
+            "a first token arrives within its attempt"
+        );
+        if let Some(trace) = &state.trace {
+            trace.record_attempt(state.diagnostics.clone());
+        }
+    }
+
     fn headers(&self, response: &reqwest::Response) {
         let mut state = self.0.lock().unwrap();
         state.diagnostics.wire_status = Some(response.status().as_u16());
@@ -43,7 +77,12 @@ impl Receipt {
                 .iter()
                 .filter_map(|(k, v)| v.to_str().ok().map(|v| (k.as_str(), v))),
         );
-        let permit = state.permit.as_mut().unwrap();
+        // Throttle feedback goes to admission; an attempt no gate started
+        // (#2151) has none to report to.
+        let state = &mut *state;
+        let Some(permit) = state.permit.as_mut() else {
+            return;
+        };
         let (mono, wall) = permit.receipt_clock();
         let hint = normalize_throttle(
             response.status().as_u16(),
@@ -73,8 +112,13 @@ impl Receipt {
         if is_typed_throttle(value) {
             state.failure = true;
         }
-        if !state.hinted && is_typed_throttle(value) {
-            state.permit.as_mut().unwrap().throttle_without_hint();
+        let state = &mut *state;
+        if let (false, true, Some(permit)) = (
+            state.hinted,
+            is_typed_throttle(value),
+            state.permit.as_mut(),
+        ) {
+            permit.throttle_without_hint();
             state.hinted = true;
         }
     }
@@ -101,9 +145,12 @@ impl Receipt {
         let mut state = self.0.lock().unwrap();
         diagnostics::typed(&mut state.diagnostics, &value);
         state.failure = true;
-        if !state.hinted && !terminal && (matches!(status, 429 | 529) || is_typed_throttle(&value))
+        let throttled = matches!(status, 429 | 529) || is_typed_throttle(&value);
+        let state = &mut *state;
+        if let (false, false, true, Some(permit)) =
+            (state.hinted, terminal, throttled, state.permit.as_mut())
         {
-            state.permit.as_mut().unwrap().throttle_without_hint();
+            permit.throttle_without_hint();
             state.hinted = true;
         }
     }
@@ -140,12 +187,7 @@ impl<F> Drop for OwnedTransport<F> {
         } else {
             Feedback::Failure
         };
-        state.diagnostics.finished_unix_ms = diagnostics::unix_ms();
-        state.diagnostics.elapsed_ms =
-            state.started.elapsed().as_millis().min(u64::MAX as u128) as u64;
-        if let Some(trace) = &state.trace {
-            trace.record_attempt(state.diagnostics.clone());
-        }
+        Receipt::record(&mut state);
         if let Some(permit) = state.permit.take() {
             permit.finish(feedback);
         }
@@ -195,18 +237,7 @@ async fn run<T, F: Future<Output = Result<T, DomainError>>>(
         permit = gate.acquire() => permit.map_err(AttemptError::Failed)?,
     };
     let deadline = permit.deadline_expired();
-    let receipt = Receipt(Arc::new(Mutex::new(State {
-        permit: Some(permit),
-        failure: false,
-        hinted: false,
-        diagnostics: AttemptDiagnostics {
-            attempt_number: trace.as_ref().map_or(1, |t| t.attempts().max(1)),
-            started_unix_ms: diagnostics::unix_ms(),
-            ..Default::default()
-        },
-        trace,
-        started: std::time::Instant::now(),
-    })));
+    let receipt = Receipt::new(Some(permit), trace);
     let observed = receipt.clone();
     let operation = async move {
         let result = operation(observed.clone()).await;
@@ -289,8 +320,7 @@ pub(super) async fn text<T>(
             receipt.termination(Termination::ReadError);
             DomainError::Provider(format!("failed to read response: {e}"))
         })?;
-        receipt.termination(Termination::Completed);
-        parse(&body)
+        receipt.accepted(parse(&body), Termination::Completed)
     })
     .await
     .map_err(AttemptError::into_domain)
@@ -325,8 +355,7 @@ pub(super) async fn assembled<T>(
             body.extend_from_slice(&bytes);
         }
         observer.finish(&receipt);
-        receipt.termination(Termination::Eof);
-        parse(&String::from_utf8_lossy(&body))
+        receipt.accepted(parse(&String::from_utf8_lossy(&body)), Termination::Eof)
     })
     .await
     .map_err(AttemptError::into_domain)
@@ -413,7 +442,8 @@ impl ProtocolObserver {
             state.diagnostics.termination = Termination::Completed;
             return;
         }
-        {
+        // Parsed once: the diagnostics below and the failure check after.
+        let parsed = {
             let mut state = receipt.0.lock().unwrap();
             match serde_json::from_str::<serde_json::Value>(data) {
                 Ok(value) => {
@@ -430,7 +460,12 @@ impl ProtocolObserver {
                             .is_some_and(|v| !v.is_empty())
                             || value["item"]["type"] == "function_call"
                             || value["content_block"]["type"] == "tool_use";
+                    // OpenAI-compatible reasoning models (DeepSeek, GLM,
+                    // OpenRouter) stream thinking as `reasoning` or
+                    // `reasoning_content` (#2151).
                     state.diagnostics.generated_thinking |= nonempty(&value["delta"]["thinking"])
+                        || nonempty(&value["choices"][0]["delta"]["reasoning"])
+                        || nonempty(&value["choices"][0]["delta"]["reasoning_content"])
                         || (matches!(
                             value["type"].as_str(),
                             Some(
@@ -438,6 +473,17 @@ impl ProtocolObserver {
                                     | "response.reasoning.summary_text.delta"
                             )
                         ) && nonempty(&value["delta"]));
+                    let token = state.diagnostics.generated_text
+                        || state.diagnostics.generated_tool_call
+                        || state.diagnostics.generated_thinking;
+                    if token && state.diagnostics.first_token_ms.is_none() {
+                        if let Some(trace) = &state.trace {
+                            trace.mark_first_token(std::time::Instant::now());
+                        }
+                        let elapsed = state.started.elapsed().as_millis();
+                        state.diagnostics.first_token_ms =
+                            Some(u64::try_from(elapsed).unwrap_or(u64::MAX));
+                    }
                     let event = if matches!(self.vendor, Vendor::Anthropic) {
                         self.event.as_str()
                     } else {
@@ -484,13 +530,15 @@ impl ProtocolObserver {
                         state.diagnostics.unknown_events =
                             state.diagnostics.unknown_events.saturating_add(1);
                     }
+                    Some(value)
                 }
                 Err(_) => {
                     state.diagnostics.parse_errors =
-                        state.diagnostics.parse_errors.saturating_add(1)
+                        state.diagnostics.parse_errors.saturating_add(1);
+                    None
                 }
             }
-        }
+        };
         if matches!(self.vendor, Vendor::Anthropic) {
             // Both Anthropic parsers dispatch by event name and substitute a
             // null value for malformed JSON. Terminal dispatch must not depend
@@ -501,8 +549,7 @@ impl ProtocolObserver {
                     state.diagnostics.terminal_event = Some(TerminalEvent::Error);
                     state.diagnostics.termination = Termination::Completed;
                     drop(state);
-                    let value = serde_json::from_str(data).unwrap_or_default();
-                    receipt.typed(&value);
+                    receipt.typed(&parsed.clone().unwrap_or_default());
                     receipt.fail();
                     self.terminal = true;
                 }
@@ -515,7 +562,7 @@ impl ProtocolObserver {
                 _ => {}
             }
         } else {
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
+            let Some(value) = parsed else {
                 return;
             };
             let (failed, completed) = match self.vendor {
@@ -605,7 +652,11 @@ impl<H: SseHandler> SseHandler for ObservedHandler<H> {
                 }
             }
         }
-        self.inner.process_line(line, tx).await
+        let outcome = self.inner.process_line(line, tx).await;
+        if matches!(outcome, SseLineOutcome::Done) {
+            self.receipt.refused();
+        }
+        outcome
     }
     async fn on_eof(&mut self, tx: &Sender) {
         self.receipt.termination(Termination::Eof);
@@ -691,3 +742,7 @@ pub(super) async fn collect(
 #[cfg(test)]
 #[path = "attempt_transport_tests.rs"]
 mod tests;
+
+#[path = "attempt_transport_passive.rs"]
+mod passive;
+pub(super) use passive::{PassiveAttempt, pump_observed};
