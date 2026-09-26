@@ -143,16 +143,13 @@ fn non_live_exact_uuid_references_report_liveness_for_command_and_inspection_rou
             .unwrap_err()
             .contains("dead")
     );
-    assert!(
-        resolve_inspection_route(&reg, "detached")
-            .unwrap_err()
-            .contains("detached")
-    );
-    assert!(
-        resolve_inspection_route(&reg, "dead")
-            .unwrap_err()
-            .contains("dead")
-    );
+    let detached = resolve_inspection_route(&reg, "detached").unwrap_err();
+    assert!(detached.contains("detached"));
+    // #2166: only a dead one has ended; a detached one may still run.
+    assert!(!detached.contains("ended"), "{detached}");
+    let dead = resolve_inspection_route(&reg, "dead").unwrap_err();
+    assert!(dead.contains("dead"));
+    assert!(dead.contains("it has ended"), "{dead}");
 }
 
 #[test]

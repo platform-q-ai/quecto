@@ -675,3 +675,35 @@ async fn a_pipe_held_open_after_rg_exits_is_abandoned_after_a_grace() {
         result.content
     );
 }
+
+/// #2166: searching one file, the oversized-line answer does not suggest
+/// narrowing by glob or type.
+#[tokio::test]
+async fn an_oversized_line_in_one_file_is_answered_without_glob_advice() {
+    let (tool, _ws, tmp) = test_grep();
+    std::fs::write(
+        tmp.path().join("min.js"),
+        format!("{}needle\n", "a".repeat(5_000_000)),
+    )
+    .unwrap();
+    let result = tool
+        .execute(r#"{"pattern": "needle", "path": "min.js"}"#)
+        .await
+        .unwrap();
+    assert!(
+        result.content.contains("A matching line is larger than"),
+        "{}",
+        result.content
+    );
+    assert!(
+        !result.content.contains("glob or type"),
+        "{}",
+        result.content
+    );
+    assert!(result.content.contains("rg -o"), "{}", result.content);
+    assert!(
+        result.content.contains("min.js | head -n 20"),
+        "{}",
+        result.content
+    );
+}

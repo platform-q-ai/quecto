@@ -149,9 +149,10 @@ impl Tool for ReadTool {
             // Read entire file once (up to 10 MiB cap, already checked above).
             // Peek magic bytes from the buffer — avoids TOCTOU and extra syscalls.
             const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
-            let raw_bytes = tokio::fs::read(&resolved)
-                .await
-                .map_err(|e| DomainError::Tool(format!("read failed: {}", e)))?;
+            let raw_bytes = match tokio::fs::read(&resolved).await {
+                Ok(bytes) => bytes,
+                Err(error) => return Err(read_failure(&resolved, &error).await),
+            };
 
             // Magic-byte MIME detection. Extension-only fallback is intentionally
             // absent — text files named .jpg should be read as text.
@@ -183,9 +184,25 @@ impl Tool for ReadTool {
                 });
             }
 
-            // Not an image — interpret as UTF-8 text.
-            let content = String::from_utf8(raw_bytes)
-                .map_err(|e| DomainError::Tool(format!("read failed (not valid UTF-8): {}", e)))?;
+            // Not an image — interpret as UTF-8 text; anything else is named
+            // as binary (#2166).
+            let content = match String::from_utf8(raw_bytes) {
+                Ok(content) => content,
+                Err(error) => {
+                    let size = format_size(error.as_bytes().len());
+                    let hint = shell_escape_single(path);
+                    return Ok(ToolResult {
+                        content: format!(
+                            "{path} is not UTF-8 text ({size}): binary, or text in another \
+                             encoding. Inspect it with bash, e.g. xxd {hint} | head -n 40, or \
+                             convert it, e.g. iconv -f latin1 -t utf-8 {hint}"
+                        ),
+                        is_error: true,
+                        image_blocks: vec![],
+                        delivery_metadata: None,
+                    });
+                }
+            };
 
             let selected = select_read_text(&content, offset, limit)?;
             let hash = sha256_hex(selected.as_bytes());
@@ -570,6 +587,50 @@ fn truncate_head_from_offset(
         output_lines,
         first_line_exceeds_limit,
         first_line_bytes,
+    }
+}
+
+/// Why a read failed: a dangling symbolic link names the path that does not
+/// exist, following a chain of links and resolving relative targets against
+/// each link's own directory (#2166); anything else is the system's own
+/// error.
+async fn read_failure(path: &std::path::Path, error: &std::io::Error) -> DomainError {
+    let mut link = path.to_path_buf();
+    let mut missing = None;
+    if error.kind() == std::io::ErrorKind::NotFound {
+        // Bounded: a loop of links is reported by the system as such.
+        for _ in 0..32 {
+            let Ok(target) = tokio::fs::read_link(&link).await else {
+                break;
+            };
+            let target = match link.parent() {
+                Some(dir) if target.is_relative() => dir.join(target),
+                Some(_) | None => target,
+            };
+            match tokio::fs::symlink_metadata(&target).await {
+                Ok(meta) if meta.file_type().is_symlink() => link = target,
+                Ok(_) => break,
+                Err(_) => {
+                    // Shown plainly: its directory exists, so resolve it.
+                    let plain = match (target.parent(), target.file_name()) {
+                        (Some(dir), Some(name)) => tokio::fs::canonicalize(dir)
+                            .await
+                            .map_or_else(|_| target.clone(), |dir| dir.join(name)),
+                        _ => target.clone(),
+                    };
+                    missing = Some(plain);
+                    break;
+                }
+            }
+        }
+    }
+    match missing {
+        Some(target) => DomainError::Tool(format!(
+            "read failed: {} is a symbolic link to {}, which does not exist",
+            path.display(),
+            target.display()
+        )),
+        None => DomainError::Tool(format!("read failed: {error}")),
     }
 }
 
