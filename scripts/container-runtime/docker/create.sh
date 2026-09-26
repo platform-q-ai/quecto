@@ -707,14 +707,14 @@ fi
 if [ -n "$secret_env_file" ]; then
   # `sh -c` sources the 0600 file then exec-replaces itself, leaving the
   # child as the container's PID 1. Requires /bin/sh in the image.
-  "$cli" run --pull=never -d --name "$container" \
+  "$cli" run --pull=never -d --name "$container" --hostname "$container" \
     --label "quecto.environment_id=$environment_id" \
     --label "quecto.state_dir=$state_root" \
     "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
     -w "$child_cwd" \
     "$image" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@" >/dev/null
 else
-  "$cli" run --pull=never -d --name "$container" \
+  "$cli" run --pull=never -d --name "$container" --hostname "$container" \
     --label "quecto.environment_id=$environment_id" \
     --label "quecto.state_dir=$state_root" \
     "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \

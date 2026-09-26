@@ -358,6 +358,9 @@ async fn each_record_names_its_time_process_and_parent() {
     assert!(record["unix_ms"].as_u64().unwrap() >= before, "{record}");
     assert_eq!(record["pid"], std::process::id());
     assert_eq!(record["parent"], "chat-parent");
+    // #2161: the host tells containers apart, whose pids repeat.
+    let host = std::process::Command::new("hostname").output().unwrap();
+    assert_eq!(record["host"], String::from_utf8_lossy(&host.stdout).trim());
 }
 
 /// #2150: a log stops at its size cap with one final record saying so;
@@ -526,4 +529,14 @@ async fn a_log_capped_by_a_large_line_stays_stopped_after_a_restart() {
         text.lines().last().unwrap().contains("log_capped"),
         "{text}"
     );
+}
+
+/// #2184 review: a failed call, an unterminated or an empty name gives no
+/// host.
+#[test]
+fn a_host_name_only_from_a_good_call() {
+    assert_eq!(super::host_from(0, b"box\0junk"), Some("box".into()));
+    assert_eq!(super::host_from(-1, b"box\0"), None);
+    assert_eq!(super::host_from(0, b"unterminated"), None);
+    assert_eq!(super::host_from(0, b"\0"), None);
 }

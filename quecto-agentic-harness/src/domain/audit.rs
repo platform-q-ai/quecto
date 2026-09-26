@@ -134,6 +134,10 @@ pub struct AuditEnvelope {
     /// The writing process (#2150).
     #[serde(default)]
     pub pid: u32,
+    /// The host the process runs on (#2161): a container's own name, so
+    /// records from containers, whose pids repeat, are told apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub session: String,
     /// A sub-agent's parent session (#2150).
     #[serde(default, skip_serializing_if = "Option::is_none")]
