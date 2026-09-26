@@ -414,6 +414,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
                 Err(error) => res["coordination_error"] = json!(error.to_string()),
                 _ => {}
             }
+            swarm_result::output_last(&mut res);
             if let Ok(mut s) = state.lock() {
                 s.exit_code = exit_code;
                 s.completed_ms = Some(completed_ms);
@@ -478,6 +479,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
     if !warnings.is_empty() {
         result["notification_warnings"] = json!(warnings);
     }
+    swarm_result::output_last(&mut result);
     let is_err = status != "completed" || code.unwrap_or(0) != 0;
     ok_json(result, is_err)
 }

@@ -126,14 +126,30 @@ pub(crate) async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::V
             "Python is configured with RLIMIT_NPROC=1; child processes may be denied even when the container has capacity. Use the bash tool for external commands under its configured policy, and use Python for in-process work and board coordination. Do not change limits from agent code."
         );
     }
-    // The output last (keys keep their order): a failure's cause, stderr's
-    // end, is then the end of the result, where a log's preview looks
-    // (#2181 review).
     let obj = result.as_object_mut().expect("result object");
     obj.insert("stdout".into(), json!(stdout));
     obj.insert("stderr".into(), json!(stderr));
+    output_last(&mut result);
     Ok(result)
 }
+
+/// Move a result's `stdout` and `stderr` to its end (serde_json keeps key
+/// order in this crate): a failure's cause, stderr's end, is then the end
+/// of the result, where a log's preview looks (#2181 review). Call again
+/// after adding fields.
+pub(crate) fn output_last(result: &mut serde_json::Value) {
+    if let Some(obj) = result.as_object_mut() {
+        for key in ["stdout", "stderr"] {
+            if let Some(value) = obj.remove(key) {
+                obj.insert(key.into(), value);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "swarm_result_tests.rs"]
+mod tests;
 
 /// `None` when the artifact is absent or unreadable, so a missing file is not
 /// reported as a zero-byte one.
