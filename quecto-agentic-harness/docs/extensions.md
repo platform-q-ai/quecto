@@ -85,7 +85,7 @@ environment variable (overrides `tools.web.brave.api_key` in config).
 | `enabled` | `false` | Enable the `web_fetch` tool |
 | `max_response_kb` | `32` | Maximum output size in KB returned to the LLM |
 
-`web_fetch` strips HTML tags by default to produce clean text and save tokens. Pass `raw: true` in the tool call to get the original body (useful for JSON APIs or markdown files).
+`web_fetch` strips HTML tags by default to produce clean text and save tokens. When a page marks its main content (one `<main>`, `role="main"` element or `<article>`) and that element holds a third to nine tenths of the page's text, only that element is read, under the page's title and a one-line note; otherwise the whole page is. Pass `raw: true` in the tool call to get the original body (useful for JSON APIs or markdown files).
 
 Safety limits:
 - Only `http://` and `https://` URLs are allowed

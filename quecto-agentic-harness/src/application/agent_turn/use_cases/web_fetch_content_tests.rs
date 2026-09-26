@@ -190,3 +190,18 @@ async fn binary_octet_stream_and_unknown_are_sniffed() {
         );
     }
 }
+
+/// #2165 part 3: a page that marks its main content reads from it, and raw
+/// still returns the page as served.
+#[tokio::test]
+async fn html_reads_its_main_content_and_raw_keeps_the_page() {
+    let page = include_str!("../../../../tests/fixtures/web_fetch/docs_with_main.html");
+    let WebFetchResult::Success(text) = fetched(page.as_bytes(), Some("text/html"), false).await
+    else {
+        panic!("not text");
+    };
+    assert!(text.contains(main_content::MAIN_CONTENT_NOTE), "{text}");
+    assert!(!text.contains("Array.prototype.copyWithin()"), "{text}");
+    let raw = fetched(page.as_bytes(), Some("text/html"), true).await;
+    assert_eq!(raw, WebFetchResult::Success(page.to_owned()));
+}

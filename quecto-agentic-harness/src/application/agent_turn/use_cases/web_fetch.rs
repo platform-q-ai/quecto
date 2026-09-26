@@ -1,6 +1,9 @@
 //! Application-owned web fetch policy, orchestration, and content transformation.
 use std::{future::Future, net::IpAddr, pin::Pin, sync::Arc};
 
+#[path = "web_fetch_main_content.rs"]
+pub mod main_content;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedHttpUrl(url::Url);
 impl ParsedHttpUrl {
@@ -103,9 +106,10 @@ impl WebFetchUseCase {
         {
             FetchOutcome::NonSuccessStatus(status) => Ok(WebFetchResult::NonSuccessStatus(status)),
             FetchOutcome::SuccessBody { body, content_type } => {
-                // By what was served (#2165): HTML is made readable (unless
-                // raw), other text comes back as it is, anything else is
-                // named rather than decoded into noise.
+                // By what was served (#2165): HTML is made readable, its
+                // main content first (unless raw), other text comes back as
+                // it is, anything else is named rather than decoded into
+                // noise.
                 let content = match (kind_of(content_type.as_deref(), &body), raw) {
                     (BodyKind::Binary, _) => {
                         return Ok(WebFetchResult::Binary {
@@ -113,7 +117,7 @@ impl WebFetchUseCase {
                             bytes: body.len(),
                         });
                     }
-                    (BodyKind::Html, false) => strip_html(decoded(&body).as_ref()),
+                    (BodyKind::Html, false) => main_content::readable_html(decoded(&body).as_ref()),
                     (BodyKind::Html, true) | (BodyKind::Text, _) => decoded(&body).into_owned(),
                 };
                 Ok(WebFetchResult::Success(truncate_output(
@@ -297,8 +301,12 @@ fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
 /// 4. Decode common HTML entities
 /// 5. Collapse whitespace
 pub fn strip_html(html: &str) -> String {
-    let stripped = remove_configured_tag_blocks(html);
-    let text = tags_to_text(&stripped);
+    text_of_markup(&remove_configured_tag_blocks(html))
+}
+
+/// Steps 2-5 of [`strip_html`], for markup whose stripped blocks are gone.
+fn text_of_markup(stripped: &str) -> String {
+    let text = tags_to_text(stripped);
     let text = decode_entities(&text);
     collapse_whitespace(&text)
 }

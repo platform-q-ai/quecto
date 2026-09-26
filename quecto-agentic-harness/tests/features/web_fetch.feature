@@ -44,6 +44,23 @@ Feature: Web Fetch Tool
     And the [ToolResult] should not be an error
 
   @done
+  Scenario: Fetch keeps only the main content of a page that marks one
+    Given a tool workspace with a web_fetch tool backed by a mock server
+    And the mock web server returns HTML:
+      """
+      <html><head><title>Install Guide</title></head><body>
+      <aside><p>Popular posts</p><p>Archive list</p><p>Newsletter signup</p></aside>
+      <main><h1>Install</h1><p>Download the archive and run the installer, then restart your shell so the new path is picked up.</p></main>
+      </body></html>
+      """
+    When the agent executes tool "web_fetch" with mock URL
+    Then the [ToolResult] should contain "Install Guide"
+    And the [ToolResult] should contain "Main content only"
+    And the [ToolResult] should contain "run the installer"
+    And the [ToolResult] should not contain "Popular posts"
+    And the [ToolResult] should not be an error
+
+  @done
   Scenario: Fetch decodes HTML entities
     Given a tool workspace with a web_fetch tool backed by a mock server
     And the mock web server returns HTML:
