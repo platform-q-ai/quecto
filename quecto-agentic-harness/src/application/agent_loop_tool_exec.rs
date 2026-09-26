@@ -238,7 +238,11 @@ impl AgentLoopImpl {
         // Audit: ToolResult (guarded — avoid estimate_tokens/preview when disabled)
         if self.audit_log.is_some() {
             let content_tokens = context_pruning::estimate_tokens(&content);
-            let preview = crate::domain::audit::content_preview(&content, 200);
+            // A failure keeps its end too, where its cause is (#2159).
+            let preview = match is_error {
+                true => crate::domain::audit::error_preview(&content, 200, 800),
+                false => crate::domain::audit::content_preview(&content, 200),
+            };
             self.audit(
                 current_turn,
                 AuditEvent::ToolResult {

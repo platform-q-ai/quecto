@@ -202,6 +202,32 @@ pub fn content_preview(content: &str, max_chars: usize) -> String {
         .into_owned()
 }
 
+/// A failed tool's preview: its first `head_chars` and last `tail_chars`
+/// characters, naming what lies between (#2159). A failure's cause (a
+/// traceback, stderr's last lines) is usually at the end, which a
+/// start-only preview cuts off.
+pub fn error_preview(content: &str, head_chars: usize, tail_chars: usize) -> String {
+    let total = content.chars().count();
+    if total <= head_chars.saturating_add(tail_chars) {
+        return content.to_string();
+    }
+    let head_end = content
+        .char_indices()
+        .nth(head_chars)
+        .map_or(content.len(), |(index, _)| index);
+    let tail_start = content
+        .char_indices()
+        .nth(total - tail_chars)
+        .map_or(content.len(), |(index, _)| index);
+    debug_assert!(head_end <= tail_start);
+    let omitted = total - head_chars - tail_chars;
+    format!(
+        "{}\n[... {omitted} chars omitted ...]\n{}",
+        &content[..head_end],
+        &content[tail_start..]
+    )
+}
+
 #[cfg(test)]
 #[path = "audit_tests.rs"]
 mod tests;
