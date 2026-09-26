@@ -190,3 +190,34 @@ pub(super) fn is_context_or_output_limit_error(message: &str) -> bool {
         || lowered.contains("requested") && lowered.contains("tokens"))
         && (lowered.contains("token") || lowered.contains("context"))
 }
+
+/// Undo retry-only conversation changes when a provider turn fails. The ledger
+/// identifies newly appended messages even if context pruning moved their slots.
+pub(super) fn discard_retry_feedback(
+    messages: &mut Vec<Message>,
+    ledger: &[Message],
+    original: Option<&(uuid::Uuid, String)>,
+) {
+    messages.retain(|message| !ledger.iter().any(|entry| entry.id() == message.id()));
+    if let Some((id, content)) = original {
+        if let Some(message) = messages.iter_mut().find(|message| message.id() == *id) {
+            if message.role == Role::User {
+                message.content.clone_from(content);
+                message.invalidate_token_cache();
+            }
+        }
+    }
+}
+
+/// Terminal retry cleanup at the application turn boundary.
+pub(super) fn finish_retry_attempt<T>(
+    messages: &mut Vec<Message>,
+    ledger: &[Message],
+    original: Option<&(uuid::Uuid, String)>,
+    result: Result<T, DomainError>,
+) -> Result<T, DomainError> {
+    if result.is_err() {
+        discard_retry_feedback(messages, ledger, original);
+    }
+    result
+}

@@ -49,7 +49,7 @@ mod agent_loop_turn_flow;
 #[path = "agent_loop_uds_tools.rs"]
 mod agent_loop_uds_tools;
 use agent_loop_errors::{
-    append_feedback, append_malformed_feedback, enhance_provider_error,
+    append_feedback, append_malformed_feedback, enhance_provider_error, finish_retry_attempt,
     is_context_or_output_limit_error, output_limit_feedback, provider_failure_audit_event,
     record_feedback,
 };
@@ -580,13 +580,12 @@ impl AgentLoopImpl {
         // clone-on-demote (move the original into the ledger only when a
         // prune pass is about to mutate it), not Arc sharing.
         let mut appended_messages = Vec::new();
-        // #1072: durable-prefix dirtiness is latched by `apply_context_pruning`
-        // itself (any mutating ladder/collapse outcome) rather than diffing a
-        // pre-run id snapshot — in-place stub demotion changes content while
-        // every message id stays the same, which a snapshot comparison misses.
         // Count of model-malformed requests turned into addressable feedback.
         let mut malformed_retries: u32 = 0;
         let mut cut_off_retries: u32 = 0;
+        let retry_original = messages
+            .last()
+            .map(|message| (message.id(), message.content.clone()));
 
         loop {
             if iterations > 0 {
@@ -652,7 +651,14 @@ impl AgentLoopImpl {
                     current_turn += 1;
                     continue;
                 }
-                AfterResponse::Finish(result) => return result,
+                AfterResponse::Finish(result) => {
+                    return finish_retry_attempt(
+                        messages,
+                        &appended_messages,
+                        retry_original.as_ref(),
+                        result,
+                    );
+                }
             };
 
             match next_state_after_provider_response(&response) {
@@ -673,10 +679,6 @@ impl AgentLoopImpl {
                 _ => unreachable!("provider response classification returned non-response state"),
             }
 
-            // #1072: this turn's appended messages are recorded in the run
-            // ledger AT APPEND TIME inside `execute_tool_calls_for_response`
-            // — never recovered from a positional slice of `messages`, which
-            // pruning can shrink or demote in place.
             let ledger_from = appended_messages.len();
             self.execute_tool_calls_for_response(
                 messages,
