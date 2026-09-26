@@ -3,9 +3,10 @@
 //! scope behind.
 use std::time::Duration;
 
-/// How long an exit waits: a container create a cancellation interrupted
-/// finishes first, and only then is its container removed.
-pub(crate) const LAUNCH_ROLLBACK_LIMIT: Duration = Duration::from_secs(60);
+/// How long an exit waits: a stopped create removing what it made (its
+/// 3 s grace), or a made container's cleanup. The TUI's exit budget and a
+/// parent's wait for an acknowledged child both count it.
+pub(crate) const LAUNCH_ROLLBACK_LIMIT: Duration = Duration::from_secs(5);
 
 /// Wait (bounded) for cancelled launches to roll back; false, with a
 /// warning, when some were still running at the limit.
@@ -17,6 +18,17 @@ pub(crate) async fn await_launch_rollbacks(limit: Duration) -> bool {
         );
     }
     settled
+}
+
+/// Held by a one-shot run over its runtime: whichever way the run ends,
+/// dropping it waits for rollbacks before the runtime goes (#2173).
+pub(crate) struct WaitForLaunchRollbacks<'a>(pub(crate) &'a tokio::runtime::Runtime);
+
+impl Drop for WaitForLaunchRollbacks<'_> {
+    fn drop(&mut self) {
+        self.0
+            .block_on(await_launch_rollbacks(LAUNCH_ROLLBACK_LIMIT));
+    }
 }
 
 #[cfg(test)]

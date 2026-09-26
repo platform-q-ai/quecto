@@ -125,14 +125,24 @@ fn calls_before_the_run_start_are_left_alone() {
     assert_eq!(answered, vec![Some("new")]);
 }
 
-/// A run start that is gone (pruned) makes the whole transcript the run's.
+/// Round 2 finding: a run start that is gone (pruned) falls back to the
+/// messages not yet saved, never to history an earlier run saved.
 #[test]
-fn a_pruned_run_start_answers_the_whole_transcript() {
-    let mut messages = vec![Message::assistant("", vec![call("a", "bash")])];
+fn a_pruned_run_start_answers_only_unsaved_messages() {
+    let mut saved = Message::assistant("", vec![call("old", "bash")]);
+    saved.ordinal = Some(7);
+    let mut messages = vec![saved, Message::assistant("", vec![call("new", "bash")])];
     let gone = Message::user("pruned").id();
     assert_eq!(
         answer_unfinished_tool_calls(&mut messages, gone, "stopped"),
         1
+    );
+    assert_eq!(messages[2].tool_call_id.as_deref(), Some("new"));
+    // Everything saved already: nothing is this run's to answer.
+    let mut saved_only = vec![messages.remove(0)];
+    assert_eq!(
+        answer_unfinished_tool_calls(&mut saved_only, gone, "stopped"),
+        0
     );
 }
 

@@ -143,3 +143,78 @@ fn sync_runner_bounds_the_tail_and_the_wall_clock() {
         "{missing}"
     );
 }
+
+fn tokio_bash(path: &std::path::Path) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new("bash");
+    cmd.arg(path);
+    cmd
+}
+
+/// #2173: a script that is not stopped finishes as it would unstoppable.
+#[tokio::test]
+async fn a_stoppable_script_left_alone_finishes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let done = script(dir.path(), "echo out; echo err >&2");
+    let run = run_stoppable_capturing_stderr_tail(
+        tokio_bash(&done),
+        ScriptStdout::Result,
+        std::future::pending::<()>(),
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    let ScriptRun::Finished(output) = run else {
+        panic!("{run:?}")
+    };
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"out\n");
+    assert_eq!(output.stderr_tail, "err");
+}
+
+/// #2173: stopped, the whole group gets SIGTERM — a grandchild included —
+/// and the script's trap runs.
+#[tokio::test]
+async fn a_stopped_script_group_gets_sigterm() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let marker = dir.path().join("trapped");
+    let grandchild = dir.path().join("grandchild");
+    let body = format!(
+        "trap 'echo trapped > {m}; exit 143' TERM\n(trap 'echo gone > {g}; exit 0' TERM; sleep 30 & wait) &\nsleep 30 & wait",
+        m = marker.display(),
+        g = grandchild.display()
+    );
+    let path = script(dir.path(), &body);
+    let run = run_stoppable_capturing_stderr_tail(
+        tokio_bash(&path),
+        ScriptStdout::Result,
+        tokio::time::sleep(Duration::from_millis(300)),
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(run, ScriptRun::Stopped), "{run:?}");
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "trapped\n");
+    assert_eq!(std::fs::read_to_string(&grandchild).unwrap(), "gone\n");
+}
+
+/// #2173: a script that ignores SIGTERM is killed at the grace.
+#[tokio::test]
+async fn a_stopped_script_ignoring_sigterm_is_killed_at_the_grace() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = script(dir.path(), "trap '' TERM\nwhile true; do sleep 0.05; done");
+    let started = std::time::Instant::now();
+    let run = run_stoppable_capturing_stderr_tail(
+        tokio_bash(&path),
+        ScriptStdout::Result,
+        tokio::time::sleep(Duration::from_millis(100)),
+        Duration::from_millis(300),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(run, ScriptRun::Stopped), "{run:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+}

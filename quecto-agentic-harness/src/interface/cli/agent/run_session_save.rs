@@ -10,6 +10,8 @@ pub(super) struct TranscriptSave<'a> {
     sessions: &'a SessionHandles,
     /// The call-time system prompt, which is never persisted.
     system_prompt_id: Option<uuid::Uuid>,
+    /// A run asked to leave nothing behind (`-s -`, `--no-session`).
+    ephemeral: bool,
 }
 
 impl<'a> TranscriptSave<'a> {
@@ -17,11 +19,13 @@ impl<'a> TranscriptSave<'a> {
         rt: &'a tokio::runtime::Runtime,
         sessions: &'a SessionHandles,
         system_prompt_id: Option<uuid::Uuid>,
+        ephemeral: bool,
     ) -> Self {
         Self {
             rt,
             sessions,
             system_prompt_id,
+            ephemeral,
         }
     }
 
@@ -35,6 +39,9 @@ impl<'a> TranscriptSave<'a> {
         secs: u64,
         out: &mut AgentOutput<'_>,
     ) {
+        if self.ephemeral {
+            return;
+        }
         crate::domain::session_stopped::answer_unfinished_tool_calls(
             messages,
             run_start,
@@ -43,7 +50,11 @@ impl<'a> TranscriptSave<'a> {
         self.save(messages, out);
     }
 
+    /// Save the transcript, unless the run is ephemeral.
     pub(super) fn save(&self, messages: &mut Vec<Message>, out: &mut AgentOutput<'_>) {
+        if self.ephemeral {
+            return;
+        }
         // Identity-based removal: immune to index shifts from mid-run
         // pruning (a no-op if pruning dropped it).
         if let Some(id) = self.system_prompt_id

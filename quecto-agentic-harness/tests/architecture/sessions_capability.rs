@@ -816,7 +816,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/persistence/session_record_read.rs", 71),
     ("src/infrastructure/session_export.rs", 110),
     ("src/infrastructure/session_export_records.rs", 80),
-    ("src/interface/cli/agent/run_session.rs", 124),
+    ("src/interface/cli/agent/run_session.rs", 123),
     ("src/interface/cli/uds_dispatch.rs", 500),
     // D10 #1979 hands the presenters the active session's key (was 190).
     // #2009: the discovery presenter is its own owner; the query extraction

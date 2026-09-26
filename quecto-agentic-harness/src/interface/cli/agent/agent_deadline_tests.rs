@@ -205,21 +205,3 @@ fn a_stopped_run_records_its_unfinished_request_and_why() {
         "the unfinished request's accounting is flushed"
     );
 }
-
-/// #2173 review: a stopped run waits for the launches its stop cancelled
-/// to roll back before the runtime is dropped.
-#[test]
-fn a_stopped_run_waits_for_launch_rollbacks() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let agent = agent_at("http://127.0.0.1:9", tmp.path());
-    let rt = crate::interface::cli::build_tokio_runtime().unwrap();
-    let work = crate::infrastructure::tools::launch_rollbacks::InFlight::enter();
-    let releaser = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(300));
-        drop(work);
-    });
-    let started = Instant::now();
-    settle_stopped_run(&rt, &agent, 1);
-    assert!(started.elapsed() >= Duration::from_millis(300));
-    releaser.join().unwrap();
-}

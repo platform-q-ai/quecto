@@ -18,8 +18,11 @@ use crate::infrastructure::processes::owned_child_supervisor::{
 };
 use std::sync::Arc;
 
+#[path = "spawn_create.rs"]
+mod create;
 #[path = "spawn_minted_ref.rs"]
 mod minted_ref;
+use create::{CreateJob, create_environment};
 #[path = "spawn_prepared.rs"]
 mod prepared;
 use minted_ref::MintedRef;
@@ -408,11 +411,11 @@ async fn spawn_script_managed_child(
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", &environment_ref);
     apply_common_child_env(&mut cmd, child.base_dir);
     apply_admission_env(&mut cmd, child.admission_dir);
-    // The create runs to its end even if this spawn is dropped meanwhile
-    // (#2173): its result then goes unclaimed and is rolled back, so no
-    // container or ref outlives a cancelled spawn.
+    // A spawn dropped mid-create stops its create (#2173): the script's
+    // group gets SIGTERM, its cue to remove what it made. A create that
+    // finished unclaimed is rolled back when its result is dropped.
     let flight = super::launch_rollbacks::InFlight::enter();
-    let (claim, claimed) = tokio::sync::oneshot::channel();
+    let (mut claim, claimed) = tokio::sync::oneshot::channel();
     let job = CreateJob {
         minted: MintedRef::new(environment_ref, environments.clone()),
         selected: selected.clone(),
@@ -421,7 +424,10 @@ async fn spawn_script_managed_child(
         supervisor: Arc::clone(child.supervisor),
     };
     tokio::spawn(async move {
-        let prepared = create_environment(cmd, job).await;
+        let prepared = {
+            let abandoned = claim.closed();
+            create_environment(cmd, job, abandoned).await
+        };
         // Unclaimed, the prepared child is dropped here and rolls back.
         let _ = claim.send(prepared);
         drop(flight);
@@ -430,103 +436,6 @@ async fn spawn_script_managed_child(
         Err(DomainError::Tool(
             "container create ended without a result".into(),
         ))
-    })
-}
-
-/// What a detached container create needs, owned.
-struct CreateJob {
-    /// Released unless the create commits, even if the job never runs.
-    minted: MintedRef,
-    selected: SelectedContainerConfig,
-    name: Option<String>,
-    admission_dir: Option<std::path::PathBuf>,
-    supervisor: Arc<OwnedChildSupervisor>,
-}
-
-/// Run the create script, then commit the environment it made.
-async fn create_environment(
-    cmd: tokio::process::Command,
-    job: CreateJob,
-) -> Result<PreparedChild, DomainError> {
-    let CreateJob {
-        minted,
-        selected,
-        name,
-        admission_dir,
-        supervisor,
-    } = job;
-    let container = &selected.config;
-    let config_name = container.name.as_str();
-    // Every return before the commit gives the minted ref back.
-    let output = run_script(cmd, "create").await?;
-    let result = match parse_create_result(&output.stdout, admission_dir.as_deref()) {
-        Ok(result) => result,
-        Err(e) => {
-            let mut cleanup_argv = container.cleanup.clone();
-            if let Some(env_id) = salvage_environment_id(&output.stdout) {
-                run_cleanup_once(Some(env_id), &mut cleanup_argv).await;
-            }
-            return Err(e);
-        }
-    };
-    if result
-        .metadata
-        .get(super::environment_commands::CHECKOUT_METADATA_KEY)
-        .and_then(serde_json::Value::as_str)
-        .is_none_or(str::is_empty)
-    {
-        // Without it the host probes <workspace>/repo and <workspace> for a
-        // coordination store before deciding whether a swarm's box must be
-        // kept (#1924); say so once per create so a script author notices.
-        tracing::warn!(
-            environment_id = %result.environment_id,
-            script = %config_name,
-            "create result omits metadata.checkout; swarm retention will probe the workspace for the coordination store"
-        );
-    }
-    let environment_ref = minted.as_str().to_string();
-    let environments = minted.registry().clone();
-    minted.commit(EnvironmentRecord {
-        environment_ref: environment_ref.clone(),
-        environment_id: result.environment_id.clone(),
-        environment_uuid: crate::domain::environment_registry::mint_environment_uuid(),
-        name,
-        workspace_path: result.workspace_path.clone(),
-        // The config owns its source (#1410): the repository shown in
-        // listings/TUI is whatever the create script truthfully reported in
-        // its metadata; sandbox configs report none.
-        repository: reported_repository(&result.metadata),
-        script_name: config_name.to_string(),
-        retained_exec_argv: container.exec.clone(),
-        retained_kill_argv: container.kill.clone(),
-        retained_cleanup_argv: container.cleanup.clone(),
-        retained_inspect_argv: container.inspect.clone(),
-        members: Vec::new(),
-        status: crate::domain::environment_registry::EnvironmentStatus::Running,
-        metadata: result.metadata.clone(),
-        last_error: None,
-        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
-        created_by: environments.session().to_string(),
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()
-            .map(|since| since.as_secs()),
-    });
-    Ok(PreparedChild {
-        swarm_reservation: None,
-        owned_child: None,
-        display_pid: 0,
-        supervisor,
-        environment_ref: Some(environment_ref),
-        endpoint: Some(result.endpoint),
-        proxy_bridge: None,
-        process_owner: super::process_tree::ProcessOwner::DirectPid,
-        cleanup_environment_id: Some(result.environment_id),
-        cleanup_argv: container.cleanup.clone(),
-        environments: Some(environments.clone()),
-        stderr_tail: None,
-        container_diagnostics: selected.diagnostics,
-        settled: false,
     })
 }
 

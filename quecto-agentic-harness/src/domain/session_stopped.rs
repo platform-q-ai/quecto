@@ -9,7 +9,8 @@ use super::message::{Message, Role};
 /// Give every tool call of this run without a result an error result that
 /// says the run stopped first, placed after the results of its own
 /// assistant message. The run starts at the message with id `run_start`;
-/// when that message is gone (pruned), the whole transcript is the run's.
+/// when that message is gone (pruned), at its first message not yet saved
+/// (one with no ordinal) — never in history an earlier run saved.
 /// Returns how many were added.
 pub fn answer_unfinished_tool_calls(
     messages: &mut Vec<Message>,
@@ -26,7 +27,12 @@ pub fn answer_unfinished_tool_calls(
     let mut index = messages
         .iter()
         .position(|message| message.id() == run_start)
-        .unwrap_or(0);
+        .or_else(|| {
+            messages
+                .iter()
+                .position(|message| message.ordinal.is_none())
+        })
+        .unwrap_or(messages.len());
     let mut added = 0;
     while index < messages.len() {
         let dispatch = &messages[index];

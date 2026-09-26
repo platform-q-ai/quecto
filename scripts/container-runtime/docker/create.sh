@@ -549,8 +549,10 @@ environment_id="$(basename "$env_dir")"
 container="quecto-$environment_id"
 # Rollback on any later failure: remove partial state AND any container we
 # managed to start — an unreported environment can never be cleaned up by
-# Quecto.
+# Quecto. A spawn cancelled mid-create sends the script's process group
+# SIGTERM (#2173): the same rollback runs, then the script exits.
 trap '"$cli" rm -f "$container" >/dev/null 2>&1 || true; rm -rf "$env_dir"' ERR
+trap '"$cli" rm -f "$container" >/dev/null 2>&1 || true; rm -rf "$env_dir"; exit 143' TERM INT
 workspace_path="$env_dir/workspace"
 mkdir "$workspace_path"
 printf '%s\n' "$QUECTO_CONTAINER_ENVIRONMENT_REF" >"$env_dir/ref"

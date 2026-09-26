@@ -5,13 +5,15 @@ use super::*;
 use std::time::Duration;
 use tempfile::TempDir;
 
-/// A config whose create waits for `<dir>/gate` to exist, and whose
-/// cleanup writes the environment id it was given to `<dir>/cleaned`.
+/// A config whose create waits for `<dir>/gate` to exist (and, sent
+/// SIGTERM, writes `<dir>/stopped`), and whose cleanup writes the
+/// environment id it was given to `<dir>/cleaned`.
 fn write_config(dir: &Path) -> std::path::PathBuf {
     let path = dir.join("config.json");
     let create = format!(
-        r#"while [ ! -e {gate} ]; do sleep 0.02; done; printf '{{"environment_id":"env-1","workspace_path":"/tmp/ws","socket_path":"/tmp/s.sock","metadata":{{}}}}'"#,
-        gate = dir.join("gate").display()
+        r#"trap 'echo stopped > {stopped}; exit 143' TERM; while [ ! -e {gate} ]; do sleep 0.02; done; printf '{{"environment_id":"env-1","workspace_path":"/tmp/ws","socket_path":"/tmp/s.sock","metadata":{{}}}}'"#,
+        gate = dir.join("gate").display(),
+        stopped = dir.join("stopped").display()
     );
     let cleanup = format!(
         r#"printf %s "$QUECTO_CONTAINER_ENVIRONMENT_ID" > {}"#,
@@ -64,19 +66,25 @@ async fn rollbacks_settle() {
     assert!(super::super::launch_rollbacks::settled(Duration::from_secs(30)).await);
 }
 
+/// The create a dropped spawn was running is stopped, not waited for: its
+/// script gets SIGTERM to remove what it made, and nothing is recorded.
 #[tokio::test]
-async fn a_spawn_dropped_during_its_create_removes_the_container_it_made() {
+async fn a_spawn_dropped_during_its_create_stops_the_create() {
     let dir = TempDir::new().unwrap();
     let registry = EnvironmentRegistry::new();
     let stopped =
         tokio::time::timeout(Duration::from_millis(100), launch(dir.path(), &registry)).await;
     assert!(stopped.is_err(), "the create waits for its gate");
-    assert_eq!(cleaned(dir.path()), None, "the create has not finished");
-    // The create finishes after its spawn was dropped, then rolls back.
-    open_gate(dir.path());
     rollbacks_settle().await;
-    assert_eq!(cleaned(dir.path()).as_deref(), Some("env-1"));
-    assert!(registry.get("C1").is_none(), "the record is gone");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("stopped"))
+            .ok()
+            .as_deref(),
+        Some("stopped\n"),
+        "the create was told to stop"
+    );
+    assert_eq!(cleaned(dir.path()), None, "nothing was committed to clean");
+    assert!(registry.get("C1").is_none());
 }
 
 #[tokio::test]

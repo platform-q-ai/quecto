@@ -54,6 +54,8 @@ pub(crate) fn run_agent_session(
             return 1;
         }
     };
+    // Dropped before the runtime on every return: rollbacks finish (#2173).
+    let _exit = crate::interface::cli::launch_rollback_wait::WaitForLaunchRollbacks(&rt);
 
     // Open the session (#1863, D8 #1977): the transaction claims it (a key
     // owned by another live process is refused at open, #1460) and loads
@@ -91,10 +93,8 @@ pub(crate) fn run_agent_session(
             DeadlineResult::TimedOut => {
                 // Saved first: the settling below can take a minute, and a
                 // process killed meanwhile must not lose it (#2173).
-                if !ephemeral {
-                    let saving = TranscriptSave::new(&rt, &sessions, system_prompt_id);
-                    saving.stopped(&mut messages, run_start, secs, out);
-                }
+                let saving = TranscriptSave::new(&rt, &sessions, system_prompt_id, ephemeral);
+                saving.stopped(&mut messages, run_start, secs, out);
                 settle_stopped_run(&rt, &agent, secs);
                 out.stderr.push_str("max-time exceeded\n");
                 retention.recall.scrub_ephemeral(ephemeral);
@@ -109,9 +109,8 @@ pub(crate) fn run_agent_session(
 
     match agent_result {
         Ok(result) => {
-            if !ephemeral {
-                TranscriptSave::new(&rt, &sessions, system_prompt_id).save(&mut messages, out);
-            }
+            TranscriptSave::new(&rt, &sessions, system_prompt_id, ephemeral)
+                .save(&mut messages, out);
             out.stdout.push_str(&result.response);
             out.stdout.push('\n');
             0

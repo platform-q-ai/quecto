@@ -41,8 +41,7 @@ const SETTLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
 /// After the deadline stopped the run: record its unfinished request and why
 /// it stopped, and flush pending request accounting (#2172 review). The wait
 /// is bounded by [`SETTLE_LIMIT`]; blocking work the flush already started
-/// (a swarm board write) may still finish before the process exits. Then
-/// the launches the stop cancelled roll back, within the exit's limit.
+/// (a swarm board write) may still finish before the process exits.
 pub(crate) fn settle_stopped_run(
     rt: &tokio::runtime::Runtime,
     agent: &AgentLoopImpl,
@@ -57,10 +56,6 @@ pub(crate) fn settle_stopped_run(
         Ok(Err(error)) => tracing::warn!(%error, "a stopped run's accounting remains pending"),
         Err(_) => tracing::warn!("settling a stopped run outlasted its limit"),
     }
-    use crate::interface::cli::launch_rollback_wait::{
-        LAUNCH_ROLLBACK_LIMIT, await_launch_rollbacks,
-    };
-    rt.block_on(await_launch_rollbacks(LAUNCH_ROLLBACK_LIMIT));
 }
 
 #[cfg(test)]
