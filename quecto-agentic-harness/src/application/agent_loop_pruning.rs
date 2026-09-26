@@ -7,9 +7,13 @@ impl AgentLoopImpl {
         current_turn: u32,
         spills_dirty: bool,
     ) -> usize {
+        // Every request carries the tool definitions too (#2160): they count
+        // against the budget and in the estimate.
+        let fixed_tokens =
+            context_pruning::estimate_tool_definition_tokens(&self.current_tool_definitions());
         let plan = self
             .context_manager
-            .prepare_provider_context(messages, current_turn, spills_dirty)
+            .prepare_provider_context(messages, current_turn, spills_dirty, fixed_tokens)
             .await;
         let budget = self.effective_max_context_tokens();
         if plan.over_budget {
@@ -52,7 +56,7 @@ impl AgentLoopImpl {
             )
             .await;
         }
-        plan.total_tokens
+        plan.total_tokens.saturating_add(fixed_tokens)
     }
 
     pub async fn prune_resumed_context(&self, messages: &mut Vec<Message>) -> usize {

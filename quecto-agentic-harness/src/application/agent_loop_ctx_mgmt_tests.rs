@@ -570,3 +570,26 @@ async fn mem_spill_store_trait_surface_recalls_and_clears() {
             .is_none()
     );
 }
+
+/// #2160: the context estimate includes the tool definitions every request
+/// carries.
+#[tokio::test]
+async fn the_context_estimate_includes_the_tool_definitions() {
+    let (bare, _) = crate::application::agent_loop::tests::make_agent(vec![], vec![]);
+    let (tooled, _) = crate::application::agent_loop::tests::make_agent(
+        vec![],
+        vec![("lookup", "ok"), ("fetch", "ok")],
+    );
+    let conversation = || vec![Message::user("hi")];
+    let without = bare
+        .apply_context_pruning(&mut conversation(), 1, false)
+        .await;
+    let with = tooled
+        .apply_context_pruning(&mut conversation(), 1, false)
+        .await;
+    let tools = crate::application::context_pruning::estimate_tool_definition_tokens(
+        &tooled.current_tool_definitions(),
+    );
+    assert!(tools > 0);
+    assert_eq!(with, without + tools);
+}

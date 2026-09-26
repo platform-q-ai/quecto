@@ -107,7 +107,7 @@ async fn context_manager_plan_preserves_pinned_recent_turns() {
     ];
 
     let plan = manager
-        .prepare_provider_context(&mut messages, 1, false)
+        .prepare_provider_context(&mut messages, 1, false, 0)
         .await;
 
     assert!(
@@ -137,7 +137,7 @@ async fn context_manager_marks_dirty_when_manifest_layout_shifts() {
     let mut messages = vec![manifest];
 
     let plan = manager
-        .prepare_provider_context(&mut messages, 1, true)
+        .prepare_provider_context(&mut messages, 1, true, 0)
         .await;
 
     assert!(
@@ -181,3 +181,36 @@ fn context_manager_is_the_agent_loop_context_boundary() {
 
 #[path = "context_gauge_tests.rs"]
 mod gauge_tests;
+
+/// #2160: tokens sent with every request outside the messages (the tool
+/// definitions) shrink the room the messages have.
+#[tokio::test]
+async fn tokens_sent_with_every_request_shrink_the_message_budget() {
+    let conversation = || {
+        vec![
+            long_message(1),
+            long_message(2),
+            long_message(3),
+            long_message(4),
+            Message::user("now"),
+        ]
+    };
+    let total = context_pruning::estimate_total_tokens(&conversation());
+    let manager = manager(total + 10);
+
+    let mut roomy = conversation();
+    manager
+        .prepare_provider_context(&mut roomy, 1, false, 0)
+        .await;
+    assert!(roomy.iter().any(|m| m.turn == Some(1)), "everything fits");
+
+    let mut tight = conversation();
+    let plan = manager
+        .prepare_provider_context(&mut tight, 1, false, total / 2)
+        .await;
+    assert!(
+        !tight.iter().any(|m| m.turn == Some(1)),
+        "the oldest turn makes room for what every request carries"
+    );
+    assert!(plan.total_tokens + total / 2 <= total + 10 || plan.over_budget);
+}
