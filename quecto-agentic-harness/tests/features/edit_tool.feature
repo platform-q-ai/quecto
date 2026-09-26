@@ -73,6 +73,22 @@ Feature: EditTool — Quecto compatibility
     Then the file "spaces.txt" should contain "replaced"
     And the [ToolResult] should not be an error
 
+  @done
+  Scenario: Fuzzy match on a file with trailing spaces replaces only the matched lines
+    Given a tool workspace
+    And a file "pad.txt" exists with content "pad  \nfoo  \nbar\nend\n"
+    When the agent edits "pad.txt" replacing "foo\nbar" with "X"
+    Then the [ToolResult] should not be an error
+    And the file "pad.txt" should read exactly "pad  \nX\nend\n"
+
+  @done
+  Scenario: Fuzzy match on a file with curly quotes before the match
+    Given a tool workspace
+    And a file "curly.txt" exists with content "’’ab’\n"
+    When the agent edits "curly.txt" replacing "b'" with "Z"
+    Then the [ToolResult] should not be an error
+    And the file "curly.txt" should read exactly "’’aZ\n"
+
   # --- Line-ending preservation ---
 
   @done

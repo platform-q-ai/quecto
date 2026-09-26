@@ -15,6 +15,7 @@ use crate::domain::error::DomainError;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
+use super::edit_match::{Location, Unmappable, locate};
 use super::resolve_and_validate;
 
 const MAX_EDIT_FILE_BYTES: u64 = 1024 * 1024;
@@ -30,6 +31,37 @@ fn missing_edit_arg(param: &str) -> ToolResult {
         image_blocks: vec![],
         delivery_metadata: None,
     }
+}
+
+fn edit_refused(content: String) -> ToolResult {
+    ToolResult {
+        content,
+        is_error: true,
+        image_blocks: vec![],
+        delivery_metadata: None,
+    }
+}
+
+/// #2191: a match that cannot be placed exactly in the file is never written.
+fn unmappable_match(path: &str) -> ToolResult {
+    edit_refused(format!(
+        "edit refused: the match could not be mapped back to the text of {} exactly, \
+         so nothing was written. Copy oldText exactly from the file and retry.",
+        path
+    ))
+}
+
+/// Replace `range` of `content` with `new`, or `None` when the range is not
+/// on character boundaries of `content`.
+fn splice(content: &str, range: std::ops::Range<usize>, new: &str) -> Option<String> {
+    let range = (range.start <= range.end).then_some(range)?;
+    let before = content.get(..range.start)?;
+    let after = content.get(range.end..)?;
+    let mut out = String::with_capacity(before.len() + new.len() + after.len());
+    out.push_str(before);
+    out.push_str(new);
+    out.push_str(after);
+    Some(out)
 }
 
 async fn enforce_edit_file_size_limit(full_path: &Path) -> Result<(), DomainError> {
@@ -135,58 +167,31 @@ impl Tool for EditTool {
             // Detect BOM BEFORE normalisation.
             let has_bom = raw.starts_with('\u{FEFF}');
 
-            // Stage 1: exact match on BOM-stripped / CRLF-normalised content.
-            // `content` is what we splice into — the base-normalised file.
+            // Exact match first, then the fuzzy fallback, on BOM-stripped /
+            // CRLF-normalised text.
             let content = base_normalise(&raw);
             let base_old = base_normalise(old_text);
 
-            let (count, match_offset) = count_occurrences_capped(&content, &base_old, 2);
-
-            // Stage 2: fuzzy fallback — locate match only; splice into `content`.
-            // fuzzy_char() is a 1:1 char→char substitution so byte offsets
-            // in fuzzy_content correspond to the same positions in `content`.
-            let (splice_old, splice_offset, splice_count) = if count == 0 {
-                let fuzzy_content = normalize_for_fuzzy_match(&content);
-                let fuzzy_old = normalize_for_fuzzy_match(old_text);
-                let (fc, fo) = count_occurrences_capped(&fuzzy_content, &fuzzy_old, 2);
-                (Cow::Owned(fuzzy_old), fo, fc)
-            } else {
-                (base_old, match_offset, count)
-            };
-
-            if splice_count == 0 {
-                return Ok(ToolResult {
-                    content: format!("oldText not found in {}", path),
-                    is_error: true,
-                    image_blocks: vec![],
-                    delivery_metadata: None,
-                });
-            }
-            if splice_count > 1 {
-                return Ok(ToolResult {
-                    content: format!(
+            // `content` is what we splice into — the base-normalised file. The
+            // range is proven to be on character boundaries of `content`.
+            let range = match locate(&content, &base_old) {
+                Ok(Location::Unique(range)) => range,
+                Ok(Location::NotFound) => {
+                    return Ok(edit_refused(format!("oldText not found in {}", path)));
+                }
+                Ok(Location::Ambiguous(count)) => {
+                    return Ok(edit_refused(format!(
                         "oldText matches {} times in {} — it must match exactly once to avoid \
                          ambiguous edits. Add more context to make it unique.",
-                        splice_count, path
-                    ),
-                    is_error: true,
-                    image_blocks: vec![],
-                    delivery_metadata: None,
-                });
-            }
+                        count, path
+                    )));
+                }
+                Err(Unmappable) => return Ok(unmappable_match(path)),
+            };
 
-            let offset = splice_offset.expect("count=1 guarantees Some(offset)");
             let normalised_new = base_normalise(new_text);
-
-            // Splice into `content` (base-normalised), NOT fuzzy_content.
-            // This preserves all non-edited content exactly as-is.
-            let updated_lf = {
-                let mut s =
-                    String::with_capacity(content.len() - splice_old.len() + normalised_new.len());
-                s.push_str(&content[..offset]);
-                s.push_str(&normalised_new);
-                s.push_str(&content[offset + splice_old.len()..]);
-                s
+            let Some(updated_lf) = splice(&content, range, &normalised_new) else {
+                return Ok(unmappable_match(path));
             };
 
             // No-op detection: if the result is byte-identical, reject.
@@ -272,72 +277,6 @@ fn base_normalise(s: &str) -> Cow<'_, str> {
         }
     }
     Cow::Owned(out)
-}
-
-/// Normalise text for fuzzy matching — mirrors Quecto's `normalizeForFuzzyMatch`.
-///
-/// Applies on top of BOM stripping and CRLF normalisation:
-/// - Trailing whitespace stripped per line
-/// - Smart single quotes (U+2018–U+201B) → `'`
-/// - Smart double quotes (U+201C–U+201F) → `"`
-/// - Unicode dashes (U+2010–U+2015, U+2212) → `-`
-/// - Special/non-breaking spaces → regular ASCII space
-fn normalize_for_fuzzy_match(s: &str) -> String {
-    // Start from base normalisation (BOM strip + CRLF→LF).
-    let base = base_normalise(s);
-
-    // Strip trailing whitespace per line, then apply char substitutions.
-    base.lines()
-        .map(|line| {
-            let trimmed = line.trim_end();
-            let mut out = String::with_capacity(trimmed.len());
-            for c in trimmed.chars() {
-                out.push(fuzzy_char(c));
-            }
-            out
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        // Preserve trailing newline if original had one.
-        + if base.ends_with('\n') { "\n" } else { "" }
-}
-
-/// Map a single character to its fuzzy-normalised equivalent.
-#[inline]
-fn fuzzy_char(c: char) -> char {
-    match c {
-        // Smart single quotes → straight single quote
-        '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
-        // Smart double quotes → straight double quote
-        '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
-        // Unicode dashes / minus → ASCII hyphen-minus
-        '\u{2010}'..='\u{2015}' | '\u{2212}' => '-',
-        // Non-breaking and typographic spaces → regular space
-        '\u{00A0}' | '\u{2002}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}' => ' ',
-        other => other,
-    }
-}
-
-/// Count non-overlapping occurrences of `needle` in `haystack`, stopping at `cap`.
-fn count_occurrences_capped(haystack: &str, needle: &str, cap: usize) -> (usize, Option<usize>) {
-    if needle.is_empty() {
-        return (0, None);
-    }
-    let mut count = 0usize;
-    let mut first_offset: Option<usize> = None;
-    let mut start = 0;
-    while let Some(pos) = haystack[start..].find(needle) {
-        let abs_pos = start + pos;
-        if first_offset.is_none() {
-            first_offset = Some(abs_pos);
-        }
-        count += 1;
-        if count >= cap {
-            return (count, first_offset);
-        }
-        start = abs_pos + needle.len();
-    }
-    (count, first_offset)
 }
 
 /// Produce a unified-diff snippet using LCS-based line diffing via `similar`.
@@ -503,7 +442,8 @@ fn truncate_to_byte_budget(line: &str, budget: usize) -> String {
         .chain(std::iter::once(line.len()))
         .take_while(|idx| *idx <= budget)
         .last()
-        .map(|end| line[..end].to_string())
+        .and_then(|end| line.get(..end))
+        .map(str::to_string)
         .unwrap_or_default()
 }
 
@@ -521,3 +461,7 @@ fn diff_truncated_notice(
 #[cfg(test)]
 #[path = "edit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "edit_fuzzy_file_tests.rs"]
+mod fuzzy_file_tests;
