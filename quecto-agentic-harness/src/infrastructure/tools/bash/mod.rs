@@ -1,6 +1,7 @@
 // Shell execution tool: impl Tool for ExecTool (bash).
 //
-// Commands run natively (via the user's shell) in the configured workspace.
+// Commands run natively under bash where it is installed (see `shell`, #2195)
+// in the configured workspace.
 // Isolation is delegated to the deployment (e.g. running Quecto in a
 // container); the in-process command policy still blocks configured dangerous
 // commands before execution.
@@ -304,8 +305,8 @@ fn build_shell_command(
     command: &str,
     source_env: Option<&HashMap<String, String>>,
 ) -> tokio::process::Command {
-    // Detect the user's shell from explicit environment overrides when present.
-    // Validated against an allowlist to prevent arbitrary binary execution.
+    // The requested shell (an explicit override, else the parent's SHELL)
+    // goes through `shell::select_shell`: bash where installed (#2195).
     let parent_shell = (source_env.is_none())
         .then(|| std::env::var("SHELL").ok())
         .flatten();
@@ -660,21 +661,33 @@ async fn await_stream_output_within(
     }
 }
 
+/// Said in the description when no bash is installed (#2195): bash syntax
+/// will not work there.
+fn posix_note(shell: &str) -> String {
+    match shell::runs_bash(shell) {
+        true => String::new(),
+        false => format!(" Commands run under {shell} (POSIX sh; no bash syntax)."),
+    }
+}
+
 impl Tool for ExecTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "bash".into(),
-            description: "Execute a bash command in the current working directory. Returns stdout \
+            description: format!("Execute a bash command in the workspace root. Returns stdout \
                           and stderr. Output is truncated to last 2000 lines or 50KB (whichever is \
                           hit first). If truncated, the output is saved to a stable temp file (very \
                           long output keeps its start and end). A background job (`cmd &`) that \
                           keeps the output open is not waited for: redirect its output to keep it. \
-                          Each call runs in a fresh shell: `cd` and `export` do not carry over \
-                          to the next call. \
+                          Each call runs in a fresh shell in the workspace root: `cd` and \
+                          `export` do not carry over to the next call, so chain dependent steps \
+                          with `&&` in one command.{} \
                           Optionally provide a timeout in seconds or output_file to write full \
                           combined output to a file and return a concise summary. \
-                          Example: {\"command\": \"ls -la\"}"
-                .into(),
+                          Example: {{\"command\": \"ls -la\"}}",
+                posix_note(shell::default_shell())
+            )
+            .into(),
             parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Bash command to execute"},"timeout":{"type":"number","description":"Timeout in seconds (optional, capped at configured maximum)"},"output_file":{"type":"string","description":"Path to write full combined stdout/stderr; inline result is a concise summary"}},"required":["command"]}"#.into(),
         }
     }
@@ -692,7 +705,6 @@ impl Tool for ExecTool {
 #[cfg(test)]
 mod ownership_tests;
 
-#[path = "shell.rs"]
 mod shell;
 #[cfg(test)]
 use shell::ALLOWED_SHELLS;

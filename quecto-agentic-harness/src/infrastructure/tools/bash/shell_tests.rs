@@ -29,11 +29,16 @@ fn bash_is_preferred_over_a_requested_posix_shell() {
     }
 }
 
-/// An allowed bash or zsh in `SHELL` is kept as the user's choice.
+/// An allowed bash in `SHELL` is kept; zsh gives way to an installed bash
+/// (#2195 review), and runs only when there is no bash.
 #[test]
-fn a_requested_bash_or_zsh_is_kept() {
+fn a_requested_bash_is_kept_and_zsh_gives_way_to_bash() {
     assert_eq!(
         select_shell(Some("/usr/bin/zsh"), only(&["/bin/bash"])),
+        "/bin/bash"
+    );
+    assert_eq!(
+        select_shell(Some("/usr/bin/zsh"), only(&[])),
         "/usr/bin/zsh"
     );
     assert_eq!(
@@ -53,4 +58,25 @@ fn without_bash_the_fallbacks_hold() {
         select_shell(Some("/tmp/evil"), only(&["/bin/bash"])),
         "/bin/bash"
     );
+}
+
+/// Missing paths, directories and dangling symlinks are not installed.
+#[test]
+fn only_an_existing_file_is_installed() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let file = tmp.path().join("sh");
+    std::fs::write(&file, "").unwrap();
+    let dangling = tmp.path().join("dangling");
+    std::os::unix::fs::symlink(tmp.path().join("nowhere"), &dangling).unwrap();
+    assert!(is_installed(file.to_str().unwrap()));
+    assert!(!is_installed(tmp.path().to_str().unwrap()));
+    assert!(!is_installed(dangling.to_str().unwrap()));
+    assert!(!is_installed(tmp.path().join("missing").to_str().unwrap()));
+}
+
+#[test]
+fn only_bash_counts_as_running_bash() {
+    assert!(runs_bash("/usr/bin/bash"));
+    assert!(!runs_bash("/bin/sh"));
+    assert!(!runs_bash("/usr/bin/zsh"));
 }

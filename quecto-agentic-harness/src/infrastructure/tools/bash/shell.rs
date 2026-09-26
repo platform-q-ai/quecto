@@ -18,22 +18,17 @@ pub(super) const ALLOWED_SHELLS: &[&str] = &[
     "/usr/local/bin/zsh",
 ];
 
-/// Requested shells kept as they are: bash itself, and zsh, which runs the
-/// bash syntax agents write.
-const KEPT_AS_REQUESTED: &[&str] = &[
-    "/bin/bash",
-    "/usr/bin/bash",
-    "/usr/local/bin/bash",
-    "/bin/zsh",
-    "/usr/bin/zsh",
-    "/usr/local/bin/zsh",
-];
+/// Requested shells kept as they are: bash only. zsh differs from bash in
+/// word splitting, arrays and globbing, and expands `=cmd` in ways the
+/// command policy's bash model does not see (#2195 review), so an installed
+/// bash wins over it too.
+const KEPT_AS_REQUESTED: &[&str] = &["/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash"];
 
 /// Where bash is looked for, in order, when the requested shell is not kept.
 const BASH_LOCATIONS: &[&str] = &["/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash"];
 
-/// The shell for a command: the requested one when it is an allowed bash or
-/// zsh; otherwise the first installed bash; otherwise the requested allowed
+/// The shell for a command: the requested one when it is an allowed bash;
+/// otherwise the first installed bash; otherwise the requested allowed
 /// shell; otherwise `/bin/sh`. `installed` says whether a path exists.
 pub(super) fn select_shell(
     requested: Option<&str>,
@@ -51,9 +46,19 @@ pub(super) fn select_shell(
         .unwrap_or("/bin/sh")
 }
 
-/// Whether a shell path exists as a file.
+/// Whether a shell path exists as a file (a symlink counts by its target).
 pub(super) fn is_installed(path: &str) -> bool {
     std::path::Path::new(path).is_file()
+}
+
+/// Whether commands run under bash here, or a plain POSIX shell.
+pub(super) fn runs_bash(shell: &str) -> bool {
+    KEPT_AS_REQUESTED.contains(&shell)
+}
+
+/// The shell the tool picks when nothing in its environment asks otherwise.
+pub(super) fn default_shell() -> &'static str {
+    select_shell(std::env::var("SHELL").ok().as_deref(), is_installed)
 }
 
 #[cfg(test)]

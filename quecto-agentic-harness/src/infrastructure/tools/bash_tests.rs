@@ -141,10 +141,16 @@ async fn test_exec_command_prefix_prepended() {
 
 // --- Shell detection ---
 
+fn bash_is_installed() -> bool {
+    ["/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash"]
+        .iter()
+        .any(|path| super::shell::is_installed(path))
+}
+
+/// #2195: `SHELL=/bin/sh` gives way to bash where bash is installed.
 #[tokio::test]
-async fn test_exec_shell_detection_uses_shell_env() {
+async fn test_exec_posix_shell_env_gives_way_to_bash() {
     let (tool, _tmp) = test_exec();
-    // Set SHELL to /bin/sh and verify the shell is spawned (not an arbitrary binary).
     // $0 in the spawned shell prints the shell executable name.
     let mut env_overrides = HashMap::new();
     env_overrides.insert("SHELL".to_string(), "/bin/sh".to_string());
@@ -162,15 +168,35 @@ async fn test_exec_shell_detection_uses_shell_env() {
         "output should name the shell, got: {}",
         result.content
     );
+    if bash_is_installed() {
+        assert!(
+            result.content.trim().ends_with("bash"),
+            "{}",
+            result.content
+        );
+    }
+}
+
+/// #2195: bash syntax works with no `SHELL` in the environment (a
+/// container) and with the parent's own, wherever bash is installed.
+#[tokio::test]
+async fn bash_syntax_runs_in_a_container_like_environment() {
+    if !bash_is_installed() {
+        return;
+    }
+    let (tool, _tmp) = test_exec();
+    let command = r#"{"command": "[[ a == a ]] && echo {1..3}"}"#;
+    let empty = HashMap::new();
+    let contained = tool.execute_with_env(command, &empty).await.unwrap();
+    assert_eq!(contained.content.trim(), "1 2 3", "{}", contained.content);
+    let native = tool.execute(command).await.unwrap();
+    assert_eq!(native.content.trim(), "1 2 3", "{}", native.content);
 }
 
 #[test]
-fn test_exec_disallowed_shell_falls_back_to_sh() {
-    // $SHELL pointing to a non-allowlisted binary should silently fall back to /bin/sh.
-    // We test build_shell_command indirectly via the allowlist logic.
-    // ALLOWED_SHELLS does not contain /tmp/evil, so it should use /bin/sh.
-    // We can't call build_shell_command directly (it's private), but we can
-    // confirm the constant list is correct.
+fn test_exec_allowlist_excludes_arbitrary_binaries() {
+    // A non-allowlisted $SHELL is never run: the fallback (bash where
+    // installed, else /bin/sh, #2195) runs the command instead.
     assert!(ALLOWED_SHELLS.contains(&"/bin/sh"));
     assert!(ALLOWED_SHELLS.contains(&"/bin/bash"));
     assert!(!ALLOWED_SHELLS.contains(&"/tmp/evil"));
