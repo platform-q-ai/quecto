@@ -77,7 +77,7 @@ pub(crate) async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::V
         "cpu_time_ms": serde_json::Value::Null,
         "max_rss_bytes": serde_json::Value::Null,
     });
-    let mut result = json!({"status":ctx.status,"exit_code":ctx.exit_code,"execution_id":ctx.exec_id,"stdout":stdout,"stderr":stderr,"duration_ms":ctx.end.saturating_sub(ctx.start)});
+    let mut result = json!({"status":ctx.status,"exit_code":ctx.exit_code,"execution_id":ctx.exec_id,"duration_ms":ctx.end.saturating_sub(ctx.start)});
     let obj = result.as_object_mut().expect("result object");
     if st || et {
         obj.insert("output_truncated".into(), json!(true));
@@ -120,16 +120,18 @@ pub(crate) async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::V
         );
         obj.insert("resource_usage".into(), resource_usage);
     }
-    if ctx.cfg.max_processes == Some(1)
-        && result["stderr"]
-            .as_str()
-            .is_some_and(|s| s.contains("BlockingIOError: [Errno 11]"))
-    {
+    if ctx.cfg.max_processes == Some(1) && stderr.contains("BlockingIOError: [Errno 11]") {
         result["resource_limits"] = json!({"memory_bytes":ctx.cfg.max_memory_bytes,"cpu_seconds":ctx.cfg.max_cpu_seconds,"processes":ctx.cfg.max_processes});
         result["diagnostic"] = json!(
             "Python is configured with RLIMIT_NPROC=1; child processes may be denied even when the container has capacity. Use the bash tool for external commands under its configured policy, and use Python for in-process work and board coordination. Do not change limits from agent code."
         );
     }
+    // The output last (keys keep their order): a failure's cause, stderr's
+    // end, is then the end of the result, where a log's preview looks
+    // (#2181 review).
+    let obj = result.as_object_mut().expect("result object");
+    obj.insert("stdout".into(), json!(stdout));
+    obj.insert("stderr".into(), json!(stderr));
     Ok(result)
 }
 

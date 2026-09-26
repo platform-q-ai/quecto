@@ -405,16 +405,7 @@ impl AgentLoopImpl {
 /// (#2123). It shows both ends of what was received: for a call cut off at
 /// the output limit, the end is where it broke.
 fn invalid_arguments(tool: &str, raw: &str) -> crate::domain::tool::ToolResult {
-    const HEAD: usize = 200;
-    const TAIL: usize = 300;
-    let count = raw.chars().count();
-    let received = if count <= HEAD + TAIL {
-        raw.to_string()
-    } else {
-        let head: String = raw.chars().take(HEAD).collect();
-        let tail: String = raw.chars().skip(count - TAIL).collect();
-        format!("{head} … {tail}")
-    };
+    let received = crate::domain::audit::error_preview(raw, 200, 300);
     crate::domain::tool::ToolResult {
         content: format!(
             "the arguments for tool '{tool}' were not a JSON object, so it was not run (they \

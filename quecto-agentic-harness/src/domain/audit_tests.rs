@@ -430,3 +430,18 @@ fn a_short_error_preview_is_whole_and_cuts_on_characters() {
     assert!(preview.starts_with(&"é".repeat(10)), "{preview}");
     assert!(preview.ends_with(&"é".repeat(10)), "{preview}");
 }
+
+/// #2181 review: the edges — an exact fit is whole, one over is cut, and a
+/// zero head or tail keeps only the other end.
+#[test]
+fn an_error_preview_at_its_edges() {
+    let ten = "0123456789";
+    assert_eq!(error_preview(ten, 4, 6), ten);
+    assert_eq!(
+        error_preview(ten, 4, 5),
+        "0123\n[... 1 chars omitted ...]\n56789"
+    );
+    assert_eq!(error_preview(ten, 0, 3), "\n[... 7 chars omitted ...]\n789");
+    assert_eq!(error_preview(ten, 3, 0), "012\n[... 7 chars omitted ...]\n");
+    assert_eq!(error_preview(ten, usize::MAX, 1), ten);
+}
