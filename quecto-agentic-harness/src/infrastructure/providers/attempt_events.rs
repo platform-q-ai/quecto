@@ -15,6 +15,7 @@ pub(super) const KNOWN_EVENTS: &[&str] = &[
     "response.content_part.done",
     "response.output_text.delta",
     "response.output_text.done",
+    "response.function_call_arguments.delta",
     "response.function_call_arguments.done",
     "response.refusal.delta",
     "response.refusal.done",
