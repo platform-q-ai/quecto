@@ -89,8 +89,10 @@ async fn build_official_tool_registry_registers_common_bundled_native_surface() 
         .await
         .expect("bash executes")
         .content;
+    // A 4-byte cap keeps a quarter from the start and the rest from the
+    // end, naming what it dropped (#2167).
     assert_eq!(
-        output, "abcd",
+        output, "a\n[... 2 bytes of output omitted ...]\ndef",
         "custom exec capture limit should be applied"
     );
 }
