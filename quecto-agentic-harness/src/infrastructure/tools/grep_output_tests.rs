@@ -85,7 +85,8 @@ async fn distant_matches_keep_separate_blocks() {
 /// search shows as many matches as asked for.
 #[tokio::test]
 async fn many_hits_per_line_still_show_the_matches_asked_for() {
-    let text: String = (0..1_000)
+    // ~18 MB of rg JSON: a byte budget alone would stop long before the end.
+    let text: String = (0..5_000)
         .map(|i| format!("{i:04} {}\n", "x".repeat(80)))
         .collect();
     let (tool, _tmp) = grep_in(&[("xs.txt", &text)]);
@@ -120,4 +121,24 @@ async fn a_ranked_match_past_the_first_megabyte_is_judged() {
         first.starts_with("[0.95] big.txt:49991: line 49990"),
         "{out}"
     );
+}
+
+/// A matching line cut part-way by the 1 MB file cache is shown whole, as
+/// rg reported it, not as the cache's cut copy.
+#[tokio::test]
+async fn a_match_straddling_the_cache_boundary_is_shown_whole() {
+    let padding = "p".repeat(99) + "\n";
+    let mut text = padding.repeat(1024 * 1024 / 100);
+    text.push_str(&format!("needle {} END\n", "y".repeat(200)));
+    let (tool, _tmp) = grep_in(&[("edge.txt", &text)]);
+    let out = search(
+        &tool,
+        serde_json::json!({"pattern": "needle", "path": "edge.txt"}),
+    )
+    .await;
+    let shown = out
+        .lines()
+        .find(|l| l.contains("needle"))
+        .unwrap_or_default();
+    assert!(shown.ends_with("END"), "{out}");
 }
