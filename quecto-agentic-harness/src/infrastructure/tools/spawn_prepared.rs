@@ -141,7 +141,10 @@ impl PreparedChild {
         self.settled = true;
     }
 
-    /// Whether anything a rollback would undo is still held.
+    /// Whether anything a rollback would undo is still held. A join holds
+    /// none of it: its child, started detached in a shared environment,
+    /// never bound a parent and ends itself at its bind deadline
+    /// (`parent_never_bound`), and the environment is not the join's to end.
     fn holds_launch_state(&self) -> bool {
         self.owned_child.is_some()
             || self.proxy_bridge.is_some()

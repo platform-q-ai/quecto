@@ -765,10 +765,12 @@ work tree, where the host no longer looks: end such runs before upgrading.
 **Stopping a create (#2173).** The script runs in a process group of its
 own. When the spawn that started it is cancelled (the run was stopped by
 `--max-time`, the turn was cancelled, the harness is exiting), the whole
-group is sent SIGTERM, and SIGKILL if it has not exited within 3 s. Quecto
-records nothing and gives the ref back, so a script must remove whatever it
-already made on SIGTERM; the official Docker/Podman `create.sh` runs its
-rollback trap (remove the container and the environment directory). A
+group is sent SIGTERM. Quecto waits up to 3 s, then leaves the script to
+finish on its own: it is never killed, so its rollback cannot be cut short
+(it outlives an exiting harness if it must). Quecto records nothing and
+gives the ref back, so a script must remove whatever it already made on
+SIGTERM; the official Docker/Podman `create.sh` runs its rollback trap
+(remove the container and the environment directory). A
 create that finished but whose spawn was cancelled before it was
 registered is rolled back through `cleanup`. Every harness exit waits up to
 5 s for these rollbacks.

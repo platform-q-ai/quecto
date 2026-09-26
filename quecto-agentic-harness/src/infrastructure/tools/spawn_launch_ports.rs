@@ -19,6 +19,10 @@ use crate::domain::subagent_launch::{
 use crate::domain::tool::ToolResult;
 use std::path::{Path, PathBuf};
 
+#[path = "spawn_launch_guard.rs"]
+mod guard;
+use guard::LaunchStage;
+
 pub(super) struct SpawnLaunchPorts<'a> {
     tool: &'a SpawnTool,
     agent_uuid: Option<AgentUuid>,
@@ -37,20 +41,8 @@ pub(super) struct SpawnLaunchPorts<'a> {
     /// The admission scope registered for the child and the context file
     /// that hands it over, until the launch is registered.
     admission_registration: Option<(PathBuf, crate::application::ports::Credential)>,
-    /// Registered: the child owns its sidecars and scope from here.
-    handed_over: bool,
-}
-
-/// A launch dropped before registration was cancelled (#2173 review): its
-/// capability files go and its admission scope is retired, as they would
-/// be on any failure before the child started.
-impl Drop for SpawnLaunchPorts<'_> {
-    fn drop(&mut self) {
-        match self.handed_over {
-            true => {}
-            false => self.abandon_unregistered(),
-        }
-    }
+    /// How far the launch got; what dropping these ports must undo.
+    stage: LaunchStage,
 }
 
 impl<'a> SpawnLaunchPorts<'a> {
@@ -65,32 +57,8 @@ impl<'a> SpawnLaunchPorts<'a> {
             parent_control_path: None,
             container_diagnostics: Vec::new(),
             admission_registration: None,
-            handed_over: false,
+            stage: LaunchStage::Unregistered,
         }
-    }
-
-    /// Remove what an unregistered launch leaves on disk and retire its
-    /// admission scope in a counted task a stopping run waits for.
-    fn abandon_unregistered(&mut self) {
-        self.discard_unconsumed_parent_control_sidecar();
-        let Some((path, credential)) = self.admission_registration.take() else {
-            return;
-        };
-        let _ = std::fs::remove_file(&path);
-        let (Some(admission), Ok(runtime)) = (
-            crate::infrastructure::admission::process::current(),
-            tokio::runtime::Handle::try_current(),
-        ) else {
-            tracing::warn!("an unregistered child's admission scope could not be retired");
-            return;
-        };
-        let flight = super::launch_rollbacks::InFlight::enter();
-        runtime.spawn(async move {
-            if let Err(error) = admission.connection().retire_child(credential.scope).await {
-                tracing::warn!(%error, "failed to retire the unlaunched child's admission scope");
-            }
-            drop(flight);
-        });
     }
 
     /// Remove the sidecar if the child never consumed it (a launch that
@@ -441,6 +409,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             // listed for a child that never became usable.
             let mut entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
             entries.remove(registry_key);
+            self.stage = LaunchStage::Complete;
         })
     }
 
@@ -596,7 +565,10 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             }
             // The registered entry owns the cleanup now (#2173).
             prepared.hand_over();
-            self.handed_over = true;
+            self.stage = match config.task {
+                Some(_) => LaunchStage::AwaitingPrompt(identity.registry_key.clone()),
+                None => LaunchStage::Complete,
+            };
             Ok(RegisteredLaunch {
                 registry_key: identity.registry_key.clone(),
                 socket_path: runtime.socket_path,
@@ -611,7 +583,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         deadline: Option<tokio::time::Instant>,
     ) -> LaunchFuture<'b, Result<(), DomainError>> {
         Box::pin(async move {
-            match deadline {
+            let sent = match deadline {
                 Some(deadline) => {
                     match tokio::time::timeout_at(
                         deadline,
@@ -626,7 +598,11 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     }
                 }
                 None => send_initial_prompt_to_socket(socket_path, task).await,
+            };
+            if sent.is_ok() {
+                self.stage = LaunchStage::Complete;
             }
+            sent
         })
     }
     fn success(&self, identity: &LaunchIdentity, environment_ref: Option<&str>) -> ToolResult {

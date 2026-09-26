@@ -93,15 +93,17 @@ pub async fn run_capturing_stderr_tail(
 #[derive(Debug)]
 pub enum ScriptRun {
     Finished(ScriptOutput),
-    /// Stopped before it finished: its process group was sent SIGTERM
-    /// (and SIGKILL past the grace), and it has exited.
+    /// Stopped before it finished: its process group was sent SIGTERM.
+    /// It has exited, or is still undoing its work past the grace and is
+    /// left to finish on its own.
     Stopped,
 }
 
 /// Run `cmd` as [`run_capturing_stderr_tail`] does, in a process group of
 /// its own. When `stop` resolves first, the whole group is sent SIGTERM —
-/// a create script's cue to remove what it made (#2173) — and, if it has
-/// not exited within `grace`, SIGKILL.
+/// a create script's cue to remove what it made (#2173). It is waited for
+/// up to `grace`, then left running: never killed, since a kill could cut
+/// its rollback short and orphan what it made (#2173 swarm review).
 pub async fn run_stoppable_capturing_stderr_tail(
     mut cmd: tokio::process::Command,
     stdout: ScriptStdout,
@@ -130,8 +132,9 @@ pub async fn run_stoppable_capturing_stderr_tail(
         () = &mut stop => {
             signal_group(group, libc::SIGTERM);
             if tokio::time::timeout(grace, &mut wait).await.is_err() {
-                signal_group(group, libc::SIGKILL);
-                let _ = wait.await;
+                tracing::warn!(
+                    "a stopped container script is still undoing its work; left to finish on its own"
+                );
             }
             return Ok(ScriptRun::Stopped);
         }

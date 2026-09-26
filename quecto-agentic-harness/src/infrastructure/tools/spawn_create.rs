@@ -107,8 +107,8 @@ pub(super) async fn create_environment(
     })
 }
 
-/// How long a stopped create has to remove what it made before its group
-/// is killed; well inside the exit's wait for launch rollbacks.
+/// How long a stopped create is waited for while it removes what it made;
+/// past it the script finishes on its own. Inside the exit's 5 s wait.
 const CREATE_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// [`run_script`] that `stop` can end: `None` once stopped.
