@@ -95,7 +95,9 @@ impl FdFindPaths {
                 "--no-require-git",
                 "--max-results",
             ])
-            .arg(request.limit.to_string());
+            // One past the limit: whether more exist is then known, not
+            // guessed (#2176 review).
+            .arg(request.limit.saturating_add(1).to_string());
         let pattern = if request.pattern.contains('/') {
             command.arg("--full-path");
             let normalized = request
@@ -296,11 +298,14 @@ fn classify(
     }
 }
 fn output(stdout: &[u8], stderr: &[u8], root: &Path, limit: usize, stopped: bool) -> FindOutput {
-    // Sorted: fd's threads find entries in no fixed order (#2164).
+    // Sorted: fd's threads find entries in no fixed order (#2164). fd was
+    // asked for one past the limit, so an entry past it means more exist.
     let mut entries = normalize_output(stdout, root, stopped);
     entries.sort_unstable();
+    let more = entries.len() > limit;
+    entries.truncate(limit);
     FindOutput {
-        result_limit_reached: entries.len() >= limit,
+        result_limit_reached: more,
         entries,
         incomplete: stopped,
         diagnostic: if stopped && stderr.is_empty() {

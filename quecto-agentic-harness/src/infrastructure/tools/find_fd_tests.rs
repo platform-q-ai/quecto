@@ -156,7 +156,8 @@ async fn argv_cwd_and_glob_are_literal() {
             "--hidden",
             "--no-require-git",
             "--max-results",
-            "7",
+            // One past the limit (#2176 review).
+            "8",
             "--full-path",
             "--",
             "**/src/*.rs"
@@ -594,7 +595,7 @@ async fn two_live_calls_keep_children_workspaces_and_arguments_isolated() {
             &std::fs::read_to_string(second_root.join("second.args")).unwrap(),
         )
         .unwrap();
-        assert_eq!(args[5], "7");
+        assert_eq!(args[5], "8", "one past the limit");
         assert_eq!(args[args.len() - 2], "second");
         assert_eq!(
             args.last().unwrap(),
@@ -653,4 +654,16 @@ fn entries_are_sorted() {
     )
     .unwrap();
     assert_eq!(result.entries, ["a", "a/z", "b"]);
+}
+
+/// #2176 review: exactly `limit` matches is complete; one past it (fd is
+/// asked for limit + 1) means more exist, and the listing keeps `limit`.
+#[test]
+fn the_limit_is_known_from_one_extra_entry() {
+    let exact = classify(Some(0), b"/ws/a\n/ws/b\n", b"", Path::new("/ws"), 2).unwrap();
+    assert!(!exact.result_limit_reached);
+    assert_eq!(exact.entries, ["a", "b"]);
+    let more = classify(Some(0), b"/ws/c\n/ws/a\n/ws/b\n", b"", Path::new("/ws"), 2).unwrap();
+    assert!(more.result_limit_reached);
+    assert_eq!(more.entries, ["a", "b"]);
 }

@@ -125,7 +125,7 @@ fn renders_order_whitespace_directories_unicode_and_limit_heuristic() {
     );
     assert!(
         rendered(vec!["a".into()], false, true).contains(
-            "3 results limit reached: fd stops at the limit, so these are an arbitrary 3 of the matches, not the first. Use limit=6"
+            "3 results limit reached: the search stops at the limit, so these are an arbitrary 3 of the matches, not the first. Use limit=6"
         )
     );
 }
@@ -195,4 +195,15 @@ async fn successful_invocation_renders_metadata_without_changing_error_flag() {
     assert!(result.content.contains("partial search"));
     assert!(result.image_blocks.is_empty());
     assert!(result.delivery_metadata.is_none());
+}
+
+/// #2176 review: a listing cut by the byte cap still says it is drawn from
+/// an arbitrary subset when the limit was also reached.
+#[test]
+fn the_byte_cap_keeps_the_limit_notice() {
+    let long = "x".repeat(200);
+    let entries: Vec<String> = (0..400).map(|i| format!("{long}{i}")).collect();
+    let out = rendered(entries, false, true);
+    assert!(out.contains("[50KB limit reached]"), "{out}");
+    assert!(out.contains("an arbitrary 3 of the matches"), "{out}");
 }
