@@ -28,7 +28,11 @@ impl HttpStatus {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FetchOutcome {
-    SuccessBody(Vec<u8>),
+    /// A body and the `Content-Type` it was served with, when there was one.
+    SuccessBody {
+        body: Vec<u8>,
+        content_type: Option<String>,
+    },
     NonSuccessStatus(HttpStatus),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,6 +59,11 @@ pub enum WebFetchError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WebFetchResult {
     Success(String),
+    /// Content that is not text: named, not shown (#2165).
+    Binary {
+        content_type: Option<String>,
+        bytes: usize,
+    },
     UnsupportedScheme,
     RestrictedInitialHost(String),
     NonSuccessStatus(HttpStatus),
@@ -93,12 +102,21 @@ impl WebFetchUseCase {
             .map_err(WebFetchError::Fetch)?
         {
             FetchOutcome::NonSuccessStatus(status) => Ok(WebFetchResult::NonSuccessStatus(status)),
-            FetchOutcome::SuccessBody(bytes) => {
-                let body = String::from_utf8_lossy(&bytes);
-                let content = if raw {
-                    body.into_owned()
-                } else {
-                    strip_html(&body)
+            FetchOutcome::SuccessBody { body, content_type } => {
+                // By what was served (#2165): HTML is made readable (unless
+                // raw), other text comes back as it is, anything else is
+                // named rather than decoded into noise.
+                let content = match (kind_of(content_type.as_deref(), &body), raw) {
+                    (BodyKind::Binary, _) => {
+                        return Ok(WebFetchResult::Binary {
+                            content_type,
+                            bytes: body.len(),
+                        });
+                    }
+                    (BodyKind::Html, false) => strip_html(&String::from_utf8_lossy(&body)),
+                    (BodyKind::Html, true) | (BodyKind::Text, _) => {
+                        String::from_utf8_lossy(&body).into_owned()
+                    }
                 };
                 Ok(WebFetchResult::Success(truncate_output(
                     content,
@@ -108,6 +126,66 @@ impl WebFetchUseCase {
         }
     }
 }
+/// What a fetched body is, by its served type or, without one, its bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BodyKind {
+    Html,
+    Text,
+    Binary,
+}
+
+/// Media types returned as text (the served type's essence, lowercased).
+fn is_text_media(essence: &str) -> bool {
+    essence.starts_with("text/")
+        || essence.ends_with("+json")
+        || essence.ends_with("+xml")
+        || matches!(
+            essence,
+            "application/json"
+                | "application/xml"
+                | "application/javascript"
+                | "application/ecmascript"
+                | "application/x-javascript"
+                | "application/yaml"
+                | "application/x-yaml"
+                | "application/toml"
+                | "application/x-sh"
+                | "application/sql"
+                | "application/graphql"
+                | "image/svg+xml"
+        )
+}
+
+fn kind_of(content_type: Option<&str>, body: &[u8]) -> BodyKind {
+    let essence = content_type
+        .and_then(|value| value.split(';').next())
+        .map(|value| value.trim().to_ascii_lowercase());
+    match essence.as_deref() {
+        Some("text/html" | "application/xhtml+xml") => BodyKind::Html,
+        Some(essence) if is_text_media(essence) => BodyKind::Text,
+        Some(_) => BodyKind::Binary,
+        None => sniff(body),
+    }
+}
+
+/// Untyped content: text when it is valid UTF-8 with no NUL, HTML when it
+/// also opens like a document.
+fn sniff(body: &[u8]) -> BodyKind {
+    let Ok(text) = std::str::from_utf8(body) else {
+        return BodyKind::Binary;
+    };
+    if text.contains('\0') {
+        return BodyKind::Binary;
+    }
+    let opening = text.trim_start().get(..15).unwrap_or(text.trim_start());
+    let opening = opening.to_ascii_lowercase();
+    if opening.starts_with("<!doctype html") || opening.starts_with("<html") {
+        BodyKind::Html
+    } else {
+        BodyKind::Text
+    }
+}
+
 fn classify(url: url::Url) -> ExecutionGate {
     if matches!(url.scheme(), "http" | "https") {
         let host = url.host_str().unwrap_or_default();
@@ -207,7 +285,11 @@ fn remove_configured_tag_blocks(html: &str) -> String {
                 .unwrap_or(html.len());
             pos = close_end;
         } else {
-            break;
+            // Never closed: drop only the opening tag, never the rest of
+            // the page (#2165).
+            pos = html[tag_start..]
+                .find('>')
+                .map_or(html.len(), |idx| tag_start + idx + 1);
         }
     }
 
@@ -417,6 +499,9 @@ fn collapse_whitespace(text: &str) -> String {
     out
 }
 
+#[cfg(test)]
+#[path = "web_fetch_content_tests.rs"]
+mod content_tests;
 #[cfg(test)]
 #[path = "web_fetch_tests.rs"]
 mod tests;

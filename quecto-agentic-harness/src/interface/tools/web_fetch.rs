@@ -49,6 +49,16 @@ impl Tool for WebFetchTool {
             let raw = parsed.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
             match self.use_case.execute(url, raw).await {
                 Ok(WebFetchResult::Success(s)) => Ok(result(s, false)),
+                Ok(WebFetchResult::Binary {
+                    content_type,
+                    bytes,
+                }) => Ok(result(
+                    format!(
+                        "{url} is binary content ({}, {bytes} bytes), not shown: web_fetch returns text and HTML only",
+                        content_type.as_deref().unwrap_or("no content type")
+                    ),
+                    false,
+                )),
                 Ok(WebFetchResult::UnsupportedScheme) => Ok(result(
                     format!(
                         "Invalid URL scheme: only http:// and https:// are allowed. Got: {url}"

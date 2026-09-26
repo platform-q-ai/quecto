@@ -35,12 +35,20 @@ fn request(url: &str) -> FetchRequest {
 
 #[tokio::test]
 async fn adapter_sends_get_and_version_user_agent() {
-    let (url, peer) = server(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").await;
+    let (url, peer) =
+        server(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nok").await;
     let result = ReqwestFetchWebContent::new(reqwest::Client::new())
         .fetch(&request(&url))
         .await
         .unwrap();
-    assert_eq!(result, FetchOutcome::SuccessBody(b"ok".to_vec()));
+    assert_eq!(
+        result,
+        FetchOutcome::SuccessBody {
+            body: b"ok".to_vec(),
+            content_type: Some("text/plain".into())
+        },
+        "the body and its served type"
+    );
     let wire = String::from_utf8_lossy(&peer.await.unwrap()).to_ascii_lowercase();
     assert!(wire.starts_with("get /resource http/1.1"));
     assert!(wire.contains(&format!("user-agent: quecto/{}", env!("CARGO_PKG_VERSION"))));
@@ -177,7 +185,7 @@ async fn adapter_allows_concurrent_requests() {
     let r1 = request(&format!("http://localtest.me:{port}/1"));
     let r2 = request(&format!("http://localtest.me:{port}/2"));
     let (a, b, _) = tokio::join!(adapter.fetch(&r1), adapter.fetch(&r2), barrier.wait());
-    assert!(matches!(a, Ok(FetchOutcome::SuccessBody(_))));
-    assert!(matches!(b, Ok(FetchOutcome::SuccessBody(_))));
+    assert!(matches!(a, Ok(FetchOutcome::SuccessBody { .. })));
+    assert!(matches!(b, Ok(FetchOutcome::SuccessBody { .. })));
     serve.await.unwrap();
 }

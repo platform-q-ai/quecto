@@ -31,7 +31,10 @@ async fn rejection_categories_never_call_port() {
         ("http://10.0.0.1", "host"),
         ("http://[::1]", "host"),
     ] {
-        let (f, u) = use_case(FetchOutcome::SuccessBody(vec![]));
+        let (f, u) = use_case(FetchOutcome::SuccessBody {
+            body: vec![],
+            content_type: None,
+        });
         let got = u.execute(url, false).await;
         match expected {
             "error" => assert!(got.is_err()),
@@ -52,7 +55,10 @@ async fn accepted_baseline_hosts_call_port_once() {
         "http://8.8.8.8",
         "http://[2001:db8::1]",
     ] {
-        let (f, u) = use_case(FetchOutcome::SuccessBody(b"ok".to_vec()));
+        let (f, u) = use_case(FetchOutcome::SuccessBody {
+            body: b"ok".to_vec(),
+            content_type: None,
+        });
         assert_eq!(
             u.execute(url, true).await.unwrap(),
             WebFetchResult::Success("ok".into())
