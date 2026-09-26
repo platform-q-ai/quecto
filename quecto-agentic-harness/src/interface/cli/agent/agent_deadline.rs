@@ -16,8 +16,9 @@ pub(crate) enum DeadlineResult {
 /// Run the agent until it finishes or `timeout_secs` pass, whichever comes
 /// first. At the deadline the run is dropped where it stands (#2168): an
 /// in-flight model request is abandoned and a running tool is stopped (the
-/// bash tool kills its command's process group when its call is dropped), so
-/// nothing the run started goes on acting after it. The earlier thread-based
+/// bash tool kills its command's process group when its call is dropped).
+/// Blocking work already under way (a claimed teardown script, a DNS lookup)
+/// may still finish before the process exits. The earlier thread-based
 /// wait noticed the deadline but still joined the worker, so the run went on
 /// to its natural end.
 pub(crate) fn run_with_deadline(
@@ -38,8 +39,9 @@ pub(crate) fn run_with_deadline(
 const SETTLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// After the deadline stopped the run: record its unfinished request and why
-/// it stopped, and flush pending request accounting (#2172 review), within
-/// [`SETTLE_LIMIT`] so settling can never hold the exit.
+/// it stopped, and flush pending request accounting (#2172 review). The wait
+/// is bounded by [`SETTLE_LIMIT`]; blocking work the flush already started
+/// (a swarm board write) may still finish before the process exits.
 pub(crate) fn settle_stopped_run(
     rt: &tokio::runtime::Runtime,
     agent: &AgentLoopImpl,

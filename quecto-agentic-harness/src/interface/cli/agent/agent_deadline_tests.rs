@@ -1,5 +1,5 @@
-//! #2168: `--max-time` stops the run at the deadline; nothing it started
-//! goes on acting after it.
+//! #2168: `--max-time` stops the run at the deadline: its model request is
+//! abandoned and its running command stopped.
 use super::*;
 use crate::application::agent_loop::AgentLoopConfig;
 use crate::composition::runtime::build_agent_provider;
@@ -149,7 +149,27 @@ fn a_stopped_run_records_its_unfinished_request_and_why() {
         }
         std::thread::sleep(Duration::from_secs(10));
     });
-    let mut agent = agent_at(&format!("http://{address}"), tmp.path());
+    /// Records every request accounting is asked to keep.
+    #[derive(Default)]
+    struct Recorded(std::sync::Mutex<Vec<String>>);
+    impl crate::application::providers::ports::RequestAccounting for Recorded {
+        fn record<'a>(
+            &'a self,
+            observation: &'a crate::domain::request_observation::RequestObservation,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            self.0.lock().unwrap().push(observation.outcome.clone());
+            Box::pin(async { Ok(()) })
+        }
+    }
+    let accounting = std::sync::Arc::new(Recorded::default());
+    let mut agent = agent_at(&format!("http://{address}"), tmp.path())
+        .with_request_accounting(Some(accounting.clone()));
     let audit =
         crate::infrastructure::persistence::audit_log::AuditLog::open_sync(tmp.path(), "deadline")
             .unwrap();
@@ -173,9 +193,15 @@ fn a_stopped_run_records_its_unfinished_request_and_why() {
     );
     assert!(
         records.iter().any(|r| r["event"] == "error"
+            && r["source"] == "deadline"
             && r["message"]
                 .as_str()
                 .is_some_and(|m| m.contains("max-time"))),
         "{log}"
+    );
+    assert_eq!(
+        *accounting.0.lock().unwrap(),
+        ["cancelled"],
+        "the unfinished request's accounting is flushed"
     );
 }

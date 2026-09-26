@@ -37,7 +37,7 @@ impl AgentLoopImpl {
         self.audit(
             0,
             AuditEvent::Error {
-                source: "cli".into(),
+                source: "deadline".into(),
                 tool: None,
                 message: reason.into(),
             },
