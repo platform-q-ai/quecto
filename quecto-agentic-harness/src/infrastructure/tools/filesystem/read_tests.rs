@@ -599,9 +599,14 @@ async fn test_read_non_utf8_file_returns_tool_error() {
     // Not a known image magic, and not valid UTF-8.
     std::fs::write(tmp.path().join("binary.bin"), [0x00u8, 0xFF, 0xFE, 0x80]).unwrap();
 
-    let err = tool.execute(r#"{"path": "binary.bin"}"#).await.unwrap_err();
-    let msg = format!("{err}");
-    assert!(msg.contains("not valid UTF-8"), "unexpected error: {msg}");
+    // #2166: named as not UTF-8 text, a tool error the agent can act on.
+    let result = tool.execute(r#"{"path": "binary.bin"}"#).await.unwrap();
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("not UTF-8 text"),
+        "{}",
+        result.content
+    );
 }
 
 /// #2166: a binary file is named as binary, with a way to inspect it.
@@ -612,7 +617,11 @@ async fn a_binary_file_is_named_not_decoded() {
     let tool = ReadTool::new(ws, sb);
     let result = tool.execute(r#"{"path": "blob.dat"}"#).await.unwrap();
     assert!(result.is_error);
-    assert!(result.content.contains("binary file"), "{}", result.content);
+    assert!(
+        result.content.contains("not UTF-8 text"),
+        "{}",
+        result.content
+    );
     assert!(result.content.contains("xxd"), "{}", result.content);
 }
 
@@ -621,12 +630,26 @@ async fn a_binary_file_is_named_not_decoded() {
 async fn a_dangling_symlink_names_its_missing_target() {
     let (ws, sb, tmp) = test_tools();
     std::os::unix::fs::symlink("/nonexistent/target", tmp.path().join("link")).unwrap();
-    let tool = ReadTool::new(ws, sb);
-    let outcome = tool.execute(r#"{"path": "link"}"#).await;
-    let message = match outcome {
-        Ok(result) => result.content,
-        Err(error) => error.to_string(),
-    };
+    let tool = ReadTool::new(ws.clone(), sb.clone());
+    let message = tool
+        .execute(r#"{"path": "link"}"#)
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(message.contains("symbolic link"), "{message}");
     assert!(message.contains("/nonexistent/target"), "{message}");
+
+    // #2183 review: a chain names the link that dangles, with a relative
+    // target resolved against the link's own directory.
+    std::fs::create_dir(tmp.path().join("sub")).unwrap();
+    std::os::unix::fs::symlink("../gone", tmp.path().join("sub/b")).unwrap();
+    std::os::unix::fs::symlink("sub/b", tmp.path().join("a")).unwrap();
+    let message = ReadTool::new(ws, sb)
+        .execute(r#"{"path": "a"}"#)
+        .await
+        .unwrap_err()
+        .to_string();
+    let gone = tmp.path().join("gone");
+    assert!(message.contains(&gone.display().to_string()), "{message}");
+    assert!(message.contains("which does not exist"), "{message}");
 }

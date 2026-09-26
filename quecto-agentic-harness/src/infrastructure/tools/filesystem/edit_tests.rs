@@ -597,3 +597,24 @@ async fn an_empty_old_text_is_refused_as_empty() {
         result.content
     );
 }
+
+/// #2183 review: text that normalises to nothing (a lone byte-order mark)
+/// is refused as empty too.
+#[tokio::test]
+async fn an_old_text_of_only_a_bom_is_refused_as_empty() {
+    let (ws, sb, tmp) = test_tools();
+    std::fs::write(tmp.path().join("test.txt"), "hello").unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = tool
+        .execute(
+            &serde_json::json!({"path": "test.txt", "oldText": "\u{feff}", "newText": "x"})
+                .to_string(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        result.content.contains("oldText must not be empty"),
+        "{}",
+        result.content
+    );
+}

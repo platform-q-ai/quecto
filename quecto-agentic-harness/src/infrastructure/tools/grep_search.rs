@@ -165,7 +165,9 @@ pub(super) async fn search(
             // Narrowing by glob or type cannot help a search of one file
             // (#2166).
             let advice = match full_path.is_file() {
-                true => "read the file directly (read with an offset, or bash with head -c)",
+                true => {
+                    "show the text around the match with bash, e.g. rg -o '.{0,100}PATTERN.{0,100}' on the file"
+                }
                 false => "narrow the search with glob or type, or read the file directly",
             };
             return answered(format!(

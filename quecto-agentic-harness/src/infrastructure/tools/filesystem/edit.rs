@@ -111,7 +111,7 @@ impl Tool for EditTool {
             };
 
             // Empty text matches nothing useful: say so, not "not found" (#2166).
-            if old_text.is_empty() {
+            if base_normalise(old_text).is_empty() {
                 return Ok(ToolResult {
                     content: "oldText must not be empty: give the exact text to replace, \
                               with enough surrounding lines to match once"
