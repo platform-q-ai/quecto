@@ -336,9 +336,12 @@ fn is_leap(year: u64) -> bool {
 fn host_name() -> Option<String> {
     static HOST: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     HOST.get_or_init(|| {
-        std::fs::read_to_string("/proc/sys/kernel/hostname")
-            .ok()
-            .map(|name| name.trim().to_owned())
+        let mut buffer = [0u8; 256];
+        // SAFETY: the buffer is writable for its whole length, which is passed.
+        let status = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
+        let end = buffer.iter().position(|byte| *byte == 0)?;
+        (status == 0)
+            .then(|| String::from_utf8_lossy(&buffer[..end]).into_owned())
             .filter(|name| !name.is_empty())
     })
     .clone()

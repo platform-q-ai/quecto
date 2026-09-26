@@ -359,8 +359,8 @@ async fn each_record_names_its_time_process_and_parent() {
     assert_eq!(record["pid"], std::process::id());
     assert_eq!(record["parent"], "chat-parent");
     // #2161: the host tells containers apart, whose pids repeat.
-    let host = std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap();
-    assert_eq!(record["host"], host.trim());
+    let host = std::process::Command::new("hostname").output().unwrap();
+    assert_eq!(record["host"], String::from_utf8_lossy(&host.stdout).trim());
 }
 
 /// #2150: a log stops at its size cap with one final record saying so;
