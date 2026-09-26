@@ -165,10 +165,14 @@ pub(super) async fn search(
             // Narrowing by glob or type cannot help a search of one file
             // (#2166).
             let advice = match full_path.is_file() {
-                true => {
-                    "show the text around the match with bash, e.g. rg -o '.{0,100}PATTERN.{0,100}' on the file"
+                true => format!(
+                    "show the text around the match with bash, e.g. rg -o '.{{0,100}}PATTERN.{{0,100}}' {} | head -n 20 \
+                     (escape the pattern's special characters if it is literal)",
+                    full_path.display()
+                ),
+                false => {
+                    "narrow the search with glob or type, or read the file directly".to_string()
                 }
-                false => "narrow the search with glob or type, or read the file directly",
             };
             return answered(format!(
                 "A matching line is larger than {}, so no match could be shown: {advice}",

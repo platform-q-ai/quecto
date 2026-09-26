@@ -700,4 +700,10 @@ async fn an_oversized_line_in_one_file_is_answered_without_glob_advice() {
         "{}",
         result.content
     );
+    assert!(result.content.contains("rg -o"), "{}", result.content);
+    assert!(
+        result.content.contains("min.js | head -n 20"),
+        "{}",
+        result.content
+    );
 }
