@@ -49,6 +49,8 @@ fn ports_allocate_build_success_and_duplicate_contracts() {
             0,
         ),
     );
+    // The ports borrow the tool until dropped (their drop guard runs then).
+    drop(ports);
     let duplicate_tool = tool.with_registry(registry);
     let mut duplicate_ports = SpawnLaunchPorts::new(&duplicate_tool);
     assert!(duplicate_ports.allocate_identity(&cfg).is_err());
@@ -150,6 +152,7 @@ async fn success_names_the_container_config_and_relays_the_selection_diagnostics
     // #2173: the registered entry owns the cleanup, so dropping the
     // prepared launch no longer rolls it back.
     assert!(prepared.settled);
+    assert!(ports.handed_over);
     let result = ports.success(&identity, Some(&env_ref));
     assert!(!result.is_error);
     let expected = format!(
@@ -209,6 +212,7 @@ async fn register_into_a_stopped_environment_fails_and_unregisters() {
         !prepared.settled,
         "a failed registration is still rolled back"
     );
+    assert!(!ports.handed_over);
     assert!(
         !tool
             .registry
@@ -469,4 +473,22 @@ async fn launch_steps_recover_from_poisoned_locks_and_uncommit_terminates_child(
         }
     }
     assert!(gone, "uncommit must terminate the launched child");
+}
+
+/// #2173 review: a launch dropped before registration (cancelled) removes
+/// the parent-control sidecar it wrote; a registered one leaves it to the
+/// child that consumes it.
+#[test]
+fn an_unregistered_launch_drops_its_sidecar_and_a_registered_one_keeps_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = tool();
+    for (handed_over, kept) in [(false, false), (true, true)] {
+        let sidecar = dir.path().join(format!("control-{handed_over}"));
+        std::fs::write(&sidecar, "credential").unwrap();
+        let mut ports = SpawnLaunchPorts::new(&tool);
+        ports.parent_control_path = Some(sidecar.clone());
+        ports.handed_over = handed_over;
+        drop(ports);
+        assert_eq!(sidecar.exists(), kept, "handed over: {handed_over}");
+    }
 }

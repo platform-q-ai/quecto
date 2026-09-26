@@ -34,6 +34,23 @@ pub(super) struct SpawnLaunchPorts<'a> {
     /// prepared child was selected from (#2024 S4a); relayed verbatim in
     /// the spawn result so the model, not only stderr, sees it.
     container_diagnostics: Vec<String>,
+    /// The admission scope registered for the child and the context file
+    /// that hands it over, until the launch is registered.
+    admission_registration: Option<(PathBuf, crate::application::ports::Credential)>,
+    /// Registered: the child owns its sidecars and scope from here.
+    handed_over: bool,
+}
+
+/// A launch dropped before registration was cancelled (#2173 review): its
+/// capability files go and its admission scope is retired, as they would
+/// be on any failure before the child started.
+impl Drop for SpawnLaunchPorts<'_> {
+    fn drop(&mut self) {
+        match self.handed_over {
+            true => {}
+            false => self.abandon_unregistered(),
+        }
+    }
 }
 
 impl<'a> SpawnLaunchPorts<'a> {
@@ -47,7 +64,33 @@ impl<'a> SpawnLaunchPorts<'a> {
             parent_control: None,
             parent_control_path: None,
             container_diagnostics: Vec::new(),
+            admission_registration: None,
+            handed_over: false,
         }
+    }
+
+    /// Remove what an unregistered launch leaves on disk and retire its
+    /// admission scope in a counted task a stopping run waits for.
+    fn abandon_unregistered(&mut self) {
+        self.discard_unconsumed_parent_control_sidecar();
+        let Some((path, credential)) = self.admission_registration.take() else {
+            return;
+        };
+        let _ = std::fs::remove_file(&path);
+        let (Some(admission), Ok(runtime)) = (
+            crate::infrastructure::admission::process::current(),
+            tokio::runtime::Handle::try_current(),
+        ) else {
+            tracing::warn!("an unregistered child's admission scope could not be retired");
+            return;
+        };
+        let flight = super::launch_rollbacks::InFlight::enter();
+        runtime.spawn(async move {
+            if let Err(error) = admission.connection().retire_child(credential.scope).await {
+                tracing::warn!(%error, "failed to retire the unlaunched child's admission scope");
+            }
+            drop(flight);
+        });
     }
 
     /// Remove the sidecar if the child never consumed it (a launch that
@@ -210,10 +253,6 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             // and hand it the capability through a private sidecar (#1679 P3).
             let admission = crate::infrastructure::admission::process::current();
             let mut launch_args = cli_args.to_vec();
-            let mut registered: Option<(
-                std::path::PathBuf,
-                crate::application::ports::Credential,
-            )> = None;
             let admission_dir = match admission.as_ref() {
                 Some(admission) => {
                     let agent_uuid = self.agent_uuid.as_ref().expect("identity allocated");
@@ -237,7 +276,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     })?;
                     launch_args.push("--admission-context".into());
                     launch_args.push(path.clone().into());
-                    registered = Some((path, credential));
+                    self.admission_registration = Some((path, credential));
                     Some(admission.client_dir().to_path_buf())
                 }
                 None => None,
@@ -261,7 +300,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 // capability file behind.
                 self.discard_unconsumed_parent_control_sidecar();
                 if let (Some(admission), Some((path, credential))) =
-                    (admission.as_ref(), registered)
+                    (admission.as_ref(), self.admission_registration.take())
                 {
                     let _ = std::fs::remove_file(&path);
                     if let Err(error) = admission.connection().retire_child(credential.scope).await
@@ -557,6 +596,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             }
             // The registered entry owns the cleanup now (#2173).
             prepared.hand_over();
+            self.handed_over = true;
             Ok(RegisteredLaunch {
                 registry_key: identity.registry_key.clone(),
                 socket_path: runtime.socket_path,

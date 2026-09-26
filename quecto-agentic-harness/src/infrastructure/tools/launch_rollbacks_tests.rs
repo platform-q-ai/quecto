@@ -1,7 +1,7 @@
 use super::*;
 
-// One test only: the count is process-wide, so tests that touch it must
-// not run beside each other.
+// The count is process-wide: other tests' launches may be counted beside
+// this one's, which can only lengthen a wait, never shorten it.
 #[tokio::test]
 async fn settled_waits_for_counted_work_and_gives_up_at_its_limit() {
     // Other tests' launches may be in flight: wait them out first.

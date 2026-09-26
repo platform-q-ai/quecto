@@ -11,10 +11,10 @@ static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 
 /// One counted piece of launch work; dropping it ends the count.
 #[derive(Debug)]
-pub(in crate::infrastructure::tools) struct InFlight(());
+pub struct InFlight(());
 
 impl InFlight {
-    pub(in crate::infrastructure::tools) fn enter() -> Self {
+    pub fn enter() -> Self {
         IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
         Self(())
     }

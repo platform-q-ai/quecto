@@ -26,16 +26,18 @@ impl<'a> TranscriptSave<'a> {
     }
 
     /// What a stopped run did stays on record: its files and sub-agents
-    /// exist, so the transcript is saved with each unfinished call
-    /// answered as stopped.
+    /// exist, so the transcript is saved with each unfinished call of the
+    /// run, which began with the message `run_start`, answered as stopped.
     pub(super) fn stopped(
         &self,
         messages: &mut Vec<Message>,
+        run_start: uuid::Uuid,
         secs: u64,
         out: &mut AgentOutput<'_>,
     ) {
         crate::domain::session_stopped::answer_unfinished_tool_calls(
             messages,
+            run_start,
             &format!("max-time {secs}s stopped the run"),
         );
         self.save(messages, out);

@@ -81,19 +81,23 @@ pub(crate) fn run_agent_session(
     });
 
     let message = flags.message.as_deref().unwrap_or("");
-    messages.push(Message::user(message.to_string()));
+    let prompt = Message::user(message.to_string());
+    let run_start = prompt.id();
+    messages.push(prompt);
 
     let agent_result = if let Some(secs) = flags.max_time {
         match run_with_deadline(&rt, &mut agent, &mut messages, secs) {
             DeadlineResult::Completed(inner) => inner,
             DeadlineResult::TimedOut => {
+                // Saved first: the settling below can take a minute, and a
+                // process killed meanwhile must not lose it (#2173).
+                if !ephemeral {
+                    let saving = TranscriptSave::new(&rt, &sessions, system_prompt_id);
+                    saving.stopped(&mut messages, run_start, secs, out);
+                }
                 settle_stopped_run(&rt, &agent, secs);
                 out.stderr.push_str("max-time exceeded\n");
                 retention.recall.scrub_ephemeral(ephemeral);
-                if !ephemeral {
-                    let saving = TranscriptSave::new(&rt, &sessions, system_prompt_id);
-                    saving.stopped(&mut messages, secs, out);
-                }
                 return 2;
             }
         }

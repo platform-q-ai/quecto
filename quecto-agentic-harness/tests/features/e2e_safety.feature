@@ -134,3 +134,4 @@ Feature: End-to-End Safety and Limits
     Then the exit code should be 2
     And the session "cli:stopped-run" should contain text "Run slow command"
     And the session "cli:stopped-run" should contain text "max-time 1s stopped the run before this call finished"
+    And the session for "stopped-run" should answer each tool call right after it

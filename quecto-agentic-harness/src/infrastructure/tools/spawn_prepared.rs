@@ -65,11 +65,13 @@ pub(in crate::infrastructure::tools) struct PreparedChild {
 
 impl Drop for PreparedChild {
     fn drop(&mut self) {
-        if self.settled || !self.holds_launch_state() {
-            return;
+        // Only an unsettled launch that still holds something is rolled
+        // back: it was dropped before registration, so it was cancelled.
+        match (self.settled, self.holds_launch_state()) {
+            (false, true) => {}
+            (true, _) | (false, false) => return,
         }
-        // Dropped before registration, so the launch was cancelled: roll
-        // it back in a task of its own; a stopping run waits for it.
+        // In a task of its own; an exiting process waits for it.
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             tracing::warn!(
                 environment_ref = self.environment_ref.as_deref().unwrap_or_default(),
@@ -219,7 +221,9 @@ impl PreparedChild {
     /// conclusion as every other termination then applies: a signal only
     /// after a negative outcome or an exit timeout.
     pub async fn rollback_once_via(&mut self, endpoint: Option<&std::path::Path>) {
-        if let Some(handle) = self.owned_child.take() {
+        // The handle is let go only once concluded: a rollback cancelled
+        // on the way is taken up again by the drop guard (#2173 review).
+        if let Some(handle) = self.owned_child {
             let attempt = match endpoint {
                 Some(endpoint) => {
                     match crate::infrastructure::processes::direct_child_routing::shutdown_over_socket(
@@ -241,6 +245,7 @@ impl PreparedChild {
             // No reaper task ever runs for a launch that never registered:
             // the slot is retired here (or as soon as the reap completes).
             self.supervisor.retire_when_reaped(handle);
+            self.owned_child = None;
             let exit = match conclusion {
                 TerminationConclusion::StillRunning(_)
                 | TerminationConclusion::NoRetainedHandle => None,
@@ -263,7 +268,10 @@ impl PreparedChild {
         if let Some(bridge) = self.proxy_bridge.take() {
             bridge.teardown();
         }
-        run_cleanup_once(self.cleanup_environment_id.clone(), &mut self.cleanup_argv).await;
+        // Taken before it runs: cancelled mid-script, the script still
+        // finishes on its own and must not be started a second time.
+        let mut cleanup_argv = std::mem::take(&mut self.cleanup_argv);
+        run_cleanup_once(self.cleanup_environment_id.clone(), &mut cleanup_argv).await;
         if let (Some(environments), Some(env_ref)) = (&self.environments, &self.environment_ref) {
             environments.remove(env_ref);
         }

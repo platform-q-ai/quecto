@@ -9,6 +9,10 @@ fn call(id: &str, name: &str) -> ToolCall {
     }
 }
 
+fn start(messages: &[Message]) -> uuid::Uuid {
+    messages[0].id()
+}
+
 #[test]
 fn an_unanswered_call_gets_an_error_result_after_its_answered_siblings() {
     let mut messages = vec![
@@ -16,8 +20,9 @@ fn an_unanswered_call_gets_an_error_result_after_its_answered_siblings() {
         Message::assistant("", vec![call("a", "bash"), call("b", "write")]),
         Message::tool("a", "done"),
     ];
+    let run_start = start(&messages);
     assert_eq!(
-        answer_unfinished_tool_calls(&mut messages, "the run was stopped"),
+        answer_unfinished_tool_calls(&mut messages, run_start, "the run was stopped"),
         1
     );
     assert_eq!(messages.len(), 4);
@@ -40,7 +45,11 @@ fn a_result_is_placed_before_the_next_message_not_at_the_end() {
         Message::assistant("", vec![call("b", "read")]),
         Message::tool("b", "text"),
     ];
-    assert_eq!(answer_unfinished_tool_calls(&mut messages, "stopped"), 1);
+    let run_start = start(&messages);
+    assert_eq!(
+        answer_unfinished_tool_calls(&mut messages, run_start, "stopped"),
+        1
+    );
     let order: Vec<(Role, Option<&str>)> = messages
         .iter()
         .map(|m| (m.role.clone(), m.tool_call_id.as_deref()))
@@ -66,7 +75,11 @@ fn a_complete_transcript_is_left_alone() {
         Message::assistant("finished", vec![]),
     ];
     let before: Vec<uuid::Uuid> = messages.iter().map(Message::id).collect();
-    assert_eq!(answer_unfinished_tool_calls(&mut messages, "stopped"), 0);
+    let run_start = start(&messages);
+    assert_eq!(
+        answer_unfinished_tool_calls(&mut messages, run_start, "stopped"),
+        0
+    );
     let after: Vec<uuid::Uuid> = messages.iter().map(Message::id).collect();
     assert_eq!(before, after);
 }
@@ -77,10 +90,65 @@ fn every_call_of_a_message_with_no_results_is_answered_in_call_order() {
         "",
         vec![call("a", "bash"), call("b", "grep")],
     )];
-    assert_eq!(answer_unfinished_tool_calls(&mut messages, "stopped"), 2);
+    let run_start = start(&messages);
+    assert_eq!(
+        answer_unfinished_tool_calls(&mut messages, run_start, "stopped"),
+        2
+    );
     let ids: Vec<Option<&str>> = messages[1..]
         .iter()
         .map(|m| m.tool_call_id.as_deref())
         .collect();
     assert_eq!(ids, vec![Some("a"), Some("b")]);
+}
+
+/// Review finding: a call left unanswered by an earlier run (a crash) is
+/// not relabelled as stopped by this one.
+#[test]
+fn calls_before_the_run_start_are_left_alone() {
+    let prompt = Message::user("this run");
+    let run_start = prompt.id();
+    let mut messages = vec![
+        Message::assistant("", vec![call("old", "bash")]),
+        prompt,
+        Message::assistant("", vec![call("new", "bash")]),
+    ];
+    assert_eq!(
+        answer_unfinished_tool_calls(&mut messages, run_start, "stopped"),
+        1
+    );
+    let answered: Vec<Option<&str>> = messages
+        .iter()
+        .filter(|m| m.role == Role::Tool)
+        .map(|m| m.tool_call_id.as_deref())
+        .collect();
+    assert_eq!(answered, vec![Some("new")]);
+}
+
+/// A run start that is gone (pruned) makes the whole transcript the run's.
+#[test]
+fn a_pruned_run_start_answers_the_whole_transcript() {
+    let mut messages = vec![Message::assistant("", vec![call("a", "bash")])];
+    let gone = Message::user("pruned").id();
+    assert_eq!(
+        answer_unfinished_tool_calls(&mut messages, gone, "stopped"),
+        1
+    );
+}
+
+/// Review finding: pairing is by id, as the orphan filter pairs them: a
+/// result that is not directly after its call still answers it.
+#[test]
+fn a_result_anywhere_answers_its_call() {
+    let mut messages = vec![
+        Message::assistant("", vec![call("a", "bash")]),
+        Message::user("between"),
+        Message::tool("a", "late"),
+    ];
+    let run_start = start(&messages);
+    assert_eq!(
+        answer_unfinished_tool_calls(&mut messages, run_start, "stopped"),
+        0
+    );
+    assert_eq!(messages.len(), 3);
 }

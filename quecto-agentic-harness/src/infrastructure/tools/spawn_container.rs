@@ -18,8 +18,11 @@ use crate::infrastructure::processes::owned_child_supervisor::{
 };
 use std::sync::Arc;
 
+#[path = "spawn_minted_ref.rs"]
+mod minted_ref;
 #[path = "spawn_prepared.rs"]
 mod prepared;
+use minted_ref::MintedRef;
 pub(super) use prepared::{PreparedChild, run_cleanup_once};
 
 /// The child command a launch adapter must run (or hand to a create script):
@@ -411,8 +414,7 @@ async fn spawn_script_managed_child(
     let flight = super::launch_rollbacks::InFlight::enter();
     let (claim, claimed) = tokio::sync::oneshot::channel();
     let job = CreateJob {
-        environment_ref,
-        environments: environments.clone(),
+        minted: MintedRef::new(environment_ref, environments.clone()),
         selected: selected.clone(),
         name: environment_name(config),
         admission_dir: child.admission_dir.map(Path::to_path_buf),
@@ -433,8 +435,8 @@ async fn spawn_script_managed_child(
 
 /// What a detached container create needs, owned.
 struct CreateJob {
-    environment_ref: String,
-    environments: EnvironmentRegistry,
+    /// Released unless the create commits, even if the job never runs.
+    minted: MintedRef,
     selected: SelectedContainerConfig,
     name: Option<String>,
     admission_dir: Option<std::path::PathBuf>,
@@ -447,8 +449,7 @@ async fn create_environment(
     job: CreateJob,
 ) -> Result<PreparedChild, DomainError> {
     let CreateJob {
-        environment_ref,
-        environments,
+        minted,
         selected,
         name,
         admission_dir,
@@ -456,15 +457,8 @@ async fn create_environment(
     } = job;
     let container = &selected.config;
     let config_name = container.name.as_str();
-    let environments = &environments;
-    let output = match run_script(cmd, "create").await {
-        Ok(output) => output,
-        Err(e) => {
-            // Nothing was created under the ref: its number goes back.
-            environments.release_ref(&environment_ref);
-            return Err(e);
-        }
-    };
+    // Every return before the commit gives the minted ref back.
+    let output = run_script(cmd, "create").await?;
     let result = match parse_create_result(&output.stdout, admission_dir.as_deref()) {
         Ok(result) => result,
         Err(e) => {
@@ -472,7 +466,6 @@ async fn create_environment(
             if let Some(env_id) = salvage_environment_id(&output.stdout) {
                 run_cleanup_once(Some(env_id), &mut cleanup_argv).await;
             }
-            environments.release_ref(&environment_ref);
             return Err(e);
         }
     };
@@ -491,7 +484,9 @@ async fn create_environment(
             "create result omits metadata.checkout; swarm retention will probe the workspace for the coordination store"
         );
     }
-    environments.commit(EnvironmentRecord {
+    let environment_ref = minted.as_str().to_string();
+    let environments = minted.registry().clone();
+    minted.commit(EnvironmentRecord {
         environment_ref: environment_ref.clone(),
         environment_id: result.environment_id.clone(),
         environment_uuid: crate::domain::environment_registry::mint_environment_uuid(),
