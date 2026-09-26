@@ -767,7 +767,9 @@ own. When the spawn that started it is cancelled (the run was stopped by
 `--max-time`, the turn was cancelled, the harness is exiting), the whole
 group is sent SIGTERM. Quecto waits up to 3 s, then leaves the script to
 finish on its own: it is never killed, so its rollback cannot be cut short
-(it outlives an exiting harness if it must). Quecto records nothing and
+(it outlives an exiting harness if it must). Its output is drained while
+the harness runs, but an exiting harness closes those pipes, so a rollback
+trap should send its output elsewhere, as the official one does. Quecto records nothing and
 gives the ref back, so a script must remove whatever it already made on
 SIGTERM; the official Docker/Podman `create.sh` runs its rollback trap
 (remove the container and the environment directory). A

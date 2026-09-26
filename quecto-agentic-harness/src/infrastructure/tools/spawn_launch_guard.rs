@@ -22,35 +22,55 @@ impl Drop for SpawnLaunchPorts<'_> {
     fn drop(&mut self) {
         match std::mem::replace(&mut self.stage, LaunchStage::Complete) {
             LaunchStage::Unregistered => self.abandon_unregistered(),
-            LaunchStage::AwaitingPrompt(registry_key) => self.compensate_detached(registry_key),
+            LaunchStage::AwaitingPrompt(registry_key) => {
+                // Detached: it finishes after these ports are gone.
+                let _ = self.spawn_compensation(&registry_key);
+            }
             LaunchStage::Complete => {}
         }
     }
 }
 
 impl SpawnLaunchPorts<'_> {
-    /// Compensate a registered launch whose initial prompt never arrived,
-    /// in a counted task (the ports borrow the tool; the use cases don't).
-    fn compensate_detached(&mut self, registry_key: String) {
+    /// Compensate a registered launch whose task never arrived, as a failed
+    /// launch is (#1936): the child claimed stopping, asked over its edge,
+    /// concluded, compensated once, then its row dropped. The work runs in a
+    /// counted task of its own, so a caller cancelled while awaiting it
+    /// cannot leave it half done (#2173 review); the launch is complete
+    /// from here either way. `None` when there was nothing to compensate.
+    pub(super) fn spawn_compensation(
+        &mut self,
+        registry_key: &str,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        self.stage = LaunchStage::Complete;
         let child = {
             let entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
             entries
-                .get(&registry_key)
+                .get(registry_key)
                 .and_then(super::super::subagent_registry::SubagentEntry::delegated_identity)
         };
-        let (Some(child), Ok(lifecycle), Ok(runtime)) = (
-            child,
-            self.tool.lifecycle_use_cases(),
-            tokio::runtime::Handle::try_current(),
-        ) else {
-            tracing::warn!(agent = %registry_key, "a cancelled launch could not be compensated");
-            return;
+        // A row already gone (its exit was observed and settled) leaves
+        // nothing to compensate.
+        let child = child?;
+        let lifecycle = match self.tool.lifecycle_use_cases() {
+            Ok(lifecycle) => lifecycle,
+            Err(error) => {
+                // A registration needs the lifecycle, so a launch without
+                // one has nothing registered to conclude.
+                tracing::warn!(agent = %registry_key, %error, "launch rollback without a lifecycle");
+                return None;
+            }
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(agent = %registry_key, "a cancelled launch could not be compensated: no runtime");
+            return None;
         };
         let registry = self.tool.registry.clone();
         let owns_environment = self.owns_environment;
+        let registry_key = registry_key.to_string();
         let flight = super::super::launch_rollbacks::InFlight::enter();
-        runtime.spawn(async move {
-            lifecycle
+        Some(runtime.spawn(async move {
+            let compensated = lifecycle
                 .compensate_launch
                 .execute(
                     crate::application::subagents::dto::CompensateFailedLaunchRequest {
@@ -59,12 +79,21 @@ impl SpawnLaunchPorts<'_> {
                     },
                 )
                 .await;
+            tracing::info!(
+                agent = %registry_key,
+                conclusion = ?compensated.conclusion,
+                removed = compensated.removed.len(),
+                "rolled back registered launch"
+            );
+            // The compensated row is dropped outright: the launch that
+            // failed never returns it to the caller, and no tombstone is
+            // listed for a child that never became usable.
             registry
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .remove(&registry_key);
             drop(flight);
-        });
+        }))
     }
 
     /// Remove what an unregistered launch leaves on disk and retire its

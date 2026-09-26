@@ -370,46 +370,11 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             // through its owned handle, then compensated exactly once with
             // the launch-rollback cleanup contract (retained `cleanup`, not
             // `kill`; a creator's environment record is discarded). A
-            // monitor or reaper observing the same end joins it.
-            let child = {
-                let entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
-                entries
-                    .get(registry_key)
-                    .and_then(super::subagent_registry::SubagentEntry::delegated_identity)
-            };
-            let Some(child) = child else {
-                return;
-            };
-            let lifecycle = match self.tool.lifecycle_use_cases() {
-                Ok(lifecycle) => lifecycle,
-                Err(error) => {
-                    // A registration needs the lifecycle, so an uncommit
-                    // without one has nothing registered to conclude.
-                    tracing::warn!(agent = %registry_key, %error, "launch rollback without a lifecycle");
-                    return;
-                }
-            };
-            let compensated = lifecycle
-                .compensate_launch
-                .execute(
-                    crate::application::subagents::dto::CompensateFailedLaunchRequest {
-                        child,
-                        owns_environment: self.owns_environment,
-                    },
-                )
-                .await;
-            tracing::info!(
-                agent = %registry_key,
-                conclusion = ?compensated.conclusion,
-                removed = compensated.removed.len(),
-                "rolled back registered launch"
-            );
-            // The compensated row is dropped outright: the launch that
-            // failed never returns it to the caller, and no tombstone is
-            // listed for a child that never became usable.
-            let mut entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
-            entries.remove(registry_key);
-            self.stage = LaunchStage::Complete;
+            // monitor or reaper observing the same end joins it. Detached,
+            // so a caller cancelled here cannot leave it half done.
+            if let Some(compensation) = self.spawn_compensation(registry_key) {
+                let _ = compensation.await;
+            }
         })
     }
 

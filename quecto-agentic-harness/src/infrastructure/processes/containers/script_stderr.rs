@@ -124,8 +124,7 @@ pub async fn run_stoppable_capturing_stderr_tail(
         .stderr
         .take()
         .map(|stderr| StderrTail::pump(&tokio::runtime::Handle::current(), stderr));
-    let wait = child.wait_with_output();
-    tokio::pin!(wait);
+    let mut wait = Box::pin(child.wait_with_output());
     tokio::pin!(stop);
     let output = tokio::select! {
         output = &mut wait => output?,
@@ -135,6 +134,11 @@ pub async fn run_stoppable_capturing_stderr_tail(
                 tracing::warn!(
                     "a stopped container script is still undoing its work; left to finish on its own"
                 );
+                // Still drained and reaped: a closed pipe must not kill
+                // its rollback part-way (#2173 review 3).
+                tokio::spawn(async move {
+                    let _ = wait.await;
+                });
             }
             return Ok(ScriptRun::Stopped);
         }

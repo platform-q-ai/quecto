@@ -528,6 +528,17 @@ async fn a_registered_launch_dropped_before_its_prompt_is_compensated() {
         ports.stage,
         LaunchStage::AwaitingPrompt(identity.registry_key.clone())
     );
+    // The send is aborted mid-way (the caller cancelled): a child that
+    // accepts and never answers holds it.
+    let dir = tempfile::tempdir().unwrap();
+    let silent = dir.path().join("silent.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&silent).unwrap();
+    let aborted = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        ports.send_initial_prompt(&silent, "the task", None),
+    )
+    .await;
+    assert!(aborted.is_err(), "the send was cut off");
     drop(ports);
     assert!(super::super::launch_rollbacks::settled(std::time::Duration::from_secs(30)).await);
     assert!(
@@ -626,6 +637,19 @@ async fn a_delivered_prompt_completes_the_launch_and_keeps_it() {
         .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
         .await
         .unwrap();
+    // A first attempt that fails leaves the launch awaiting its prompt; the
+    // retry that delivers it completes the launch.
+    let missing = dir.path().join("missing.sock");
+    assert!(
+        ports
+            .send_initial_prompt(&missing, "work", None)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        ports.stage,
+        LaunchStage::AwaitingPrompt(identity.registry_key.clone())
+    );
     ports
         .send_initial_prompt(&child_socket, "work", None)
         .await
@@ -640,5 +664,64 @@ async fn a_delivered_prompt_completes_the_launch_and_keeps_it() {
             .unwrap_or_else(|e| e.into_inner())
             .contains_key(&identity.registry_key),
         "a delivered launch stays registered"
+    );
+}
+
+/// #2173 review 3: an uncommit cancelled part-way (the turn stopped while a
+/// failed launch was being compensated) still completes: the compensation
+/// runs detached, and the launch is not compensated a second time.
+#[tokio::test]
+async fn an_uncommit_cancelled_part_way_still_completes() {
+    let tool = tool();
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let mut cfg = config();
+    cfg.task = Some("work".into());
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    ports.build_cli_args(&identity, &cfg).unwrap();
+    let mut sleep = tokio::process::Command::new("sleep");
+    sleep
+        .arg("30")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut prepared = PreparedChild::new_for_test(Some(sleep), None, None).await;
+    let supervisor = std::sync::Arc::clone(&prepared.supervisor);
+    let handle = prepared.owned_child.expect("a child");
+    let runtime = PreparedRuntime {
+        socket_path: ports.socket_path.clone().unwrap(),
+        pid: prepared.display_pid,
+        environment_ref: None,
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .unwrap();
+    // The child's socket accepts and never answers: the compensation's
+    // shutdown ask waits there, and the uncommit is cancelled meanwhile.
+    let socket = ports.socket_path.clone().unwrap();
+    let _silent = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let cut = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        ports.uncommit_registered(&identity.registry_key),
+    )
+    .await;
+    assert!(cut.is_err(), "the uncommit was cancelled part-way");
+    assert_eq!(ports.stage, LaunchStage::Complete, "no second compensation");
+    drop(ports);
+    assert!(super::super::launch_rollbacks::settled(std::time::Duration::from_secs(30)).await);
+    assert!(
+        !tool
+            .registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&identity.registry_key)
+    );
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            supervisor.wait_exit(handle)
+        )
+        .await
+        .is_ok(),
+        "the child is ended"
     );
 }

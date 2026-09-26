@@ -220,6 +220,22 @@ async fn a_stopped_script_past_the_grace_is_left_running() {
             beat = beat.display()
         ),
     );
+    // Ends the script group however the test ends (review 3).
+    struct KillGroup(std::path::PathBuf);
+    impl Drop for KillGroup {
+        fn drop(&mut self) {
+            let pid = std::fs::read_to_string(&self.0)
+                .ok()
+                .and_then(|text| text.trim().parse::<libc::pid_t>().ok());
+            if let Some(pid) = pid.filter(|pid| *pid > 0) {
+                // SAFETY: signals the test's own leftover script group.
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
+        }
+    }
+    let _cleanup = KillGroup(pid_file.clone());
     let started = std::time::Instant::now();
     let run = tokio::time::timeout(
         Duration::from_secs(10),
@@ -243,14 +259,39 @@ async fn a_stopped_script_past_the_grace_is_left_running() {
     let before = std::fs::read_to_string(&beat).unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     let after = std::fs::read_to_string(&beat).unwrap();
-    let pid: libc::pid_t = std::fs::read_to_string(&pid_file)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    // SAFETY: ends the test's own leftover script group.
-    unsafe {
-        libc::kill(-pid, libc::SIGKILL);
-    }
     assert_ne!(before, after, "the script was left running, not killed");
+}
+
+/// #2173 review 3: a rollback still running past the grace keeps its
+/// output drained, so a trap that writes to stdout is not killed by a
+/// closed pipe part-way.
+#[tokio::test]
+async fn a_slow_rollback_that_writes_output_still_finishes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let done = dir.path().join("done");
+    let path = script(
+        dir.path(),
+        &format!(
+            "trap 'sleep 0.4; for i in $(seq 1 2000); do echo rolling back $i; done; echo ok > {done}; exit 143' TERM\nsleep 30 & wait",
+            done = done.display()
+        ),
+    );
+    let run = tokio::time::timeout(
+        Duration::from_secs(10),
+        run_stoppable_capturing_stderr_tail(
+            tokio_bash(&path),
+            ScriptStdout::Result,
+            tokio::time::sleep(Duration::from_millis(100)),
+            Duration::from_millis(100),
+        ),
+    )
+    .await
+    .expect("a stoppable run ends promptly")
+    .unwrap();
+    assert!(matches!(run, ScriptRun::Stopped), "{run:?}");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !done.exists() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(std::fs::read_to_string(&done).unwrap(), "ok\n");
 }
