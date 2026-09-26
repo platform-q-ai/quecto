@@ -51,9 +51,9 @@ pub(super) struct FormatState {
     pub(super) byte_total: usize,
     pub(super) lines_truncated: bool,
     pub(super) truncated_bytes: bool,
-    /// The file and line last shown: the next block in the same file starts
-    /// after it, so no line is shown twice (#2163).
-    pub(super) printed_through: Option<(PathBuf, usize)>,
+    /// The lines already shown, by file: no line is shown twice, whatever
+    /// order the blocks come in (#2163; rank order, #2174 review).
+    pub(super) shown: HashMap<PathBuf, std::collections::HashSet<usize>>,
 }
 
 /// Format one match block (match line + optional context lines) into `state`.
@@ -81,19 +81,21 @@ pub(super) fn format_match_block(
 
     let total_lines = file_lines.len();
     let last_matched = m.line_number + m.line_count.max(1) - 1;
-    let mut start = m.line_number.saturating_sub(cfg.context_lines).max(1);
+    let start = m.line_number.saturating_sub(cfg.context_lines).max(1);
     let end = (last_matched + cfg.context_lines)
         .min(total_lines.max(last_matched))
         .max(m.line_number);
-    // Lines this file just showed are not shown again (#2163).
-    if let Some((path, through)) = &state.printed_through {
-        if path == &m.file_path {
-            start = start.max(through + 1);
-        }
-    }
     let matched_here = cfg.matched.get(&m.file_path);
 
     for current in start..=end {
+        // A line this file already showed is not shown again (#2163).
+        if state
+            .shown
+            .get(&m.file_path)
+            .is_some_and(|lines| lines.contains(&current))
+        {
+            continue;
+        }
         let matched_line = matched_here.and_then(|lines| lines.get(&current));
         // This block's own match counts whether or not the map lists it.
         let own = (m.line_number..=last_matched).contains(&current);
@@ -141,7 +143,11 @@ pub(super) fn format_match_block(
             return false;
         }
         state.output_lines.push(formatted);
-        state.printed_through = Some((m.file_path.clone(), current));
+        state
+            .shown
+            .entry(m.file_path.clone())
+            .or_default()
+            .insert(current);
     }
     true
 }

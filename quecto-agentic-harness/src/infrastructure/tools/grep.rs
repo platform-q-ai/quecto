@@ -490,7 +490,7 @@ async fn format_matches(all_matches: Vec<RgMatch>, a: &MatchFormat<'_>) -> Strin
         byte_total: 0,
         lines_truncated: false,
         truncated_bytes: false,
-        printed_through: None,
+        shown: HashMap::new(),
     };
 
     for m in &capped {

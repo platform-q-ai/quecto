@@ -24,7 +24,7 @@ fn with_rg_binary_sets_definition_and_format_match_block_paths_and_truncation() 
         byte_total: 0,
         lines_truncated: false,
         truncated_bytes: false,
-        printed_through: None,
+        shown: HashMap::new(),
     };
     let ws = tmp.path().to_string_lossy().to_string();
     let prefix = format!("{ws}/");
@@ -65,7 +65,7 @@ fn format_match_block_stops_at_byte_cap() {
         byte_total: 0,
         lines_truncated: false,
         truncated_bytes: false,
-        printed_through: None,
+        shown: HashMap::new(),
     };
     let ws = tmp.path().to_string_lossy().to_string();
     let prefix = format!("{ws}/");

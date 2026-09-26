@@ -136,3 +136,36 @@ async fn a_match_straddling_the_cache_boundary_is_shown_whole() {
         .unwrap_or_default();
     assert!(shown.ends_with("END"), "{out}");
 }
+
+/// Review #2174: in rank order a match earlier in a file than the one
+/// ranked above it is still shown, and files that interleave repeat no line.
+#[tokio::test]
+async fn a_better_ranked_later_match_does_not_hide_an_earlier_one() {
+    use super::rank_by_tests::KeywordJudge;
+    let text: String = (1..=60)
+        .map(|i| match i {
+            10 => "hit low\n".to_string(),
+            50 => "hit best\n".to_string(),
+            _ => format!("row {i}\n"),
+        })
+        .collect();
+    let (tool, _tmp) = grep_in(&[("r.txt", &text)]);
+    let tool = tool.with_relevance(Arc::new(KeywordJudge("best")), 100);
+    for context in [0, 2] {
+        let out = search(
+            &tool,
+            serde_json::json!({"pattern": "hit", "path": "r.txt", "rank_by": "best", "context": context}),
+        )
+        .await;
+        assert!(out.contains("r.txt:50: hit best"), "{out}");
+        assert!(
+            out.contains("r.txt:10: hit low"),
+            "context {context}: {out}"
+        );
+        let mut shown: Vec<&str> = out.lines().filter(|l| l.contains("r.txt")).collect();
+        let all = shown.len();
+        shown.sort();
+        shown.dedup();
+        assert_eq!(shown.len(), all, "a line repeated: {out}");
+    }
+}
