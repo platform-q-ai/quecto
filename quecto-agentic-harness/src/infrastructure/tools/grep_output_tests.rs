@@ -190,7 +190,24 @@ async fn a_match_shown_in_a_better_block_leaves_no_stray_context() {
         serde_json::json!({"pattern": "hit", "path": "r.txt", "rank_by": "best", "context": 2}),
     )
     .await;
-    assert!(out.contains("r.txt:48: hit low"), "{out}");
-    assert!(!out.contains("r.txt-46-"), "stray context of 48: {out}");
-    assert!(!out.contains("r.txt-47-"), "stray context of 48: {out}");
+    // Best first; the lower match comes later with its context right
+    // before it, and no line repeats (#2174 swarm review).
+    let lines: Vec<&str> = out.lines().filter(|l| l.contains("r.txt")).collect();
+    assert!(
+        lines[0].starts_with("r.txt-49-") && lines[1].starts_with("[0.95] r.txt:50:"),
+        "{out}"
+    );
+    let low = lines
+        .iter()
+        .position(|l| l.contains("r.txt:48: hit low"))
+        .expect("48 shown");
+    assert!(low > 1, "{out}");
+    assert!(
+        lines[low - 1].starts_with("r.txt-47-") && lines[low - 2].starts_with("r.txt-46-"),
+        "{out}"
+    );
+    let mut sorted = lines.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(sorted.len(), lines.len(), "a line repeated: {out}");
 }
