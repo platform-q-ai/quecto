@@ -36,9 +36,11 @@ const BACKGROUND_NOTE: &str = "[a background process still holds this command's 
      e.g. `cmd > out.log 2>&1 &`]";
 
 mod capture;
+mod saved_output;
 use capture::StreamReader;
 #[cfg(test)]
 use capture::read_stream_limited;
+use saved_output::save_to_temp_file;
 
 #[derive(Debug, Clone)]
 pub struct ExecOptions {
@@ -440,7 +442,7 @@ async fn run_child_with_timeout(
 /// Truncation notice format (matching Quecto's bash.ts):
 /// - Byte-truncated:  `[Showing lines X-Y of Z (50KB limit). Full output: PATH]`
 /// - Line-truncated:  `[Showing lines X-Y of Z. Full output: PATH]`
-/// - Save fails:      `[Output truncated to last N lines / N bytes]`
+/// - Save fails:      `[Output truncated to last N lines / N bytes; the full output could not be saved, …]`
 #[cfg(test)]
 async fn collect_and_truncate_output(stream_tasks: &mut StreamTasks) -> String {
     let (output, capture_cut, _) = collect_after_exit(stream_tasks).await;
@@ -501,27 +503,18 @@ async fn truncate_output(combined: String, capture_cut: bool) -> String {
     let end_line = total;
     let combined_len = combined.len();
 
-    let hint = if let Some(tmp_path) = save_to_temp_file(combined).await {
-        let limit_note = if tr.truncated_by == Some(TruncatedBy::Bytes) {
-            " (50KB limit)"
-        } else {
-            ""
-        };
-        // A capture that dropped its middle is not the full output (#2167).
-        let saved = match capture_cut {
-            true => "Output (start and end; middle omitted)",
-            false => "Full output",
-        };
-        format!(
-            "\n[Showing lines {}-{} of {}{}. {} ({} bytes) saved to: {}]",
-            start_line, end_line, total, limit_note, saved, combined_len, tmp_path
-        )
-    } else {
-        format!(
-            "\n[Output truncated to last {} lines / {} bytes]",
-            TAIL_MAX_LINES, TAIL_MAX_BYTES
-        )
+    let view = saved_output::TailView {
+        start_line,
+        end_line,
+        total,
+        by_bytes: tr.truncated_by == Some(TruncatedBy::Bytes),
+        capture_cut,
+        combined_len,
+        tail_lines: TAIL_MAX_LINES,
+        tail_bytes: TAIL_MAX_BYTES,
     };
+    let saved_to = save_to_temp_file(combined).await;
+    let hint = saved_output::truncation_hint(saved_to.as_deref(), &view);
 
     let mut output = tr.content;
     output.push_str(&hint);
@@ -683,25 +676,6 @@ async fn await_stream_output_within(
     }
 }
 
-/// Save content to a temp file asynchronously and return the path.
-async fn save_to_temp_file(content: String) -> Option<String> {
-    tokio::task::spawn_blocking(move || {
-        use std::io::Write;
-        let dir = std::env::temp_dir().join("quecto-bash-output");
-        std::fs::create_dir_all(&dir).ok()?;
-        let mut f = tempfile::Builder::new()
-            .prefix("bash-output-")
-            .suffix(".log")
-            .tempfile_in(&dir)
-            .ok()?;
-        f.write_all(content.as_bytes()).ok()?;
-        let (_, path) = f.keep().ok()?;
-        Some(path.display().to_string())
-    })
-    .await
-    .ok()?
-}
-
 impl Tool for ExecTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -745,3 +719,6 @@ mod launch_environment_tests;
 
 #[cfg(test)]
 mod capture_tests;
+
+#[cfg(test)]
+mod saved_output_tests;
