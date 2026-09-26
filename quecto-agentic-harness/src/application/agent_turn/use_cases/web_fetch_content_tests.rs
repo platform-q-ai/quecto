@@ -162,3 +162,31 @@ async fn untyped_html_after_a_bom_prolog_or_comment_is_html() {
         assert_eq!(got, WebFetchResult::Success("hi".into()), "{page}");
     }
 }
+
+/// #2177 review 2: stray `<` with no `>`, and `&` with a far `;`, strip in
+/// linear time.
+#[test]
+fn stray_brackets_and_ampersands_strip_in_linear_time() {
+    for page in ["<".repeat(400_000), format!("{};", "&".repeat(400_000))] {
+        let started = std::time::Instant::now();
+        let _ = strip_html(&page);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+}
+
+/// #2177 review 2: S3's label for untyped uploads is sniffed too.
+#[tokio::test]
+async fn binary_octet_stream_and_unknown_are_sniffed() {
+    for content_type in ["binary/octet-stream", "application/unknown"] {
+        let got = fetched(b"# notes", Some(content_type), false).await;
+        assert_eq!(
+            got,
+            WebFetchResult::Success("# notes".into()),
+            "{content_type}"
+        );
+    }
+}

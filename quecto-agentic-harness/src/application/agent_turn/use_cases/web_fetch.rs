@@ -157,6 +157,18 @@ fn is_text_media(essence: &str) -> bool {
         )
 }
 
+/// A served type that says nothing about the content: generic, unknown,
+/// empty or not of the `type/subtype` form.
+fn says_nothing(essence: &str) -> bool {
+    let well_formed = essence
+        .split_once('/')
+        .is_some_and(|(kind, sub)| !kind.is_empty() && !sub.is_empty());
+    matches!(
+        essence,
+        "application/octet-stream" | "binary/octet-stream" | "application/unknown"
+    ) || !well_formed
+}
+
 fn kind_of(content_type: Option<&str>, body: &[u8]) -> BodyKind {
     let essence = content_type
         .and_then(|value| value.split(';').next())
@@ -164,11 +176,9 @@ fn kind_of(content_type: Option<&str>, body: &[u8]) -> BodyKind {
     match essence.as_deref() {
         Some("text/html" | "application/xhtml+xml") => BodyKind::Html,
         Some(essence) if is_text_media(essence) => BodyKind::Text,
-        // A generic, empty or malformed type says nothing about the bytes:
-        // text served as octet-stream is common (#2177 review).
-        Some(essence) if essence == "application/octet-stream" || !essence.contains('/') => {
-            sniff(body)
-        }
+        // A generic or unknown type says nothing about the bytes: text
+        // served as octet-stream is common (S3, CDNs; #2177 review).
+        Some(essence) if says_nothing(essence) => sniff(body),
         Some(_) => BodyKind::Binary,
         None => sniff(body),
     }
@@ -183,9 +193,13 @@ fn sniff(body: &[u8]) -> BodyKind {
     if text.contains('\0') {
         return BodyKind::Binary;
     }
-    let opening = document_opening(text);
-    let opening = opening.get(..15).unwrap_or(opening).to_ascii_lowercase();
-    if opening.starts_with("<!doctype html") || opening.starts_with("<html") {
+    let opening = document_opening(text).as_bytes();
+    let opens_with = |prefix: &[u8]| {
+        opening
+            .get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+    };
+    if opens_with(b"<!doctype html") || opens_with(b"<html") {
         BodyKind::Html
     } else {
         BodyKind::Text
@@ -402,12 +416,20 @@ fn tags_to_text(html: &str) -> String {
 
     let mut result = String::with_capacity(html.len());
     let mut pos = 0;
+    // Once no `>` follows, none follows any later `<` either: stop looking,
+    // so many stray `<` stay linear (#2177 review).
+    let mut no_more_ends = false;
 
     while let Some(open) = html[pos..].find('<') {
         let abs_open = pos + open;
         result.push_str(&html[pos..abs_open]);
 
-        if let Some(end_offset) = html[abs_open..].find('>') {
+        let end = match no_more_ends {
+            true => None,
+            false => html[abs_open..].find('>'),
+        };
+        no_more_ends = end.is_none();
+        if let Some(end_offset) = end {
             let tag_content = &html[abs_open + 1..abs_open + end_offset];
             let trimmed = tag_content.trim().trim_start_matches('/');
             let tag_end = trimmed
@@ -434,6 +456,9 @@ fn tags_to_text(html: &str) -> String {
 
 /// Decode common HTML entities. Operates on `&str` so multibyte characters
 /// are preserved instead of being re-interpreted as Latin-1 bytes.
+/// Longest entity text looked for, `&` to `;` (`&thetasym;` is 10).
+const MAX_ENTITY_BYTES: usize = 12;
+
 fn decode_entities(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut pos = 0;
@@ -442,7 +467,11 @@ fn decode_entities(text: &str) -> String {
         let abs_amp = pos + amp;
         result.push_str(&text[pos..abs_amp]);
 
-        if let Some(semi) = text[abs_amp..].find(';') {
+        // An entity is short: look for its `;` only within reach, so many
+        // `&` with a far `;` stay linear (#2177 review).
+        let reach = text.len().min(abs_amp + MAX_ENTITY_BYTES);
+        let window = text.get(abs_amp..reach).unwrap_or("");
+        if let Some(semi) = window.find(';') {
             let entity = &text[abs_amp + 1..abs_amp + semi];
             if let Some(decoded) = decode_entity(entity) {
                 result.push(decoded);
