@@ -49,6 +49,11 @@ pub struct CodexProvider {
     /// Set once the service refused replayed reasoning: this provider (and
     /// its clones) replays no more (#2162 review).
     replay_refused: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// A random identity minted when an API-key provider is built: the
+    /// origin its reasoning replays to. Nothing is derived from the key,
+    /// which must never reach a session file, not even as a digest (#2162
+    /// swarm review). Empty for ChatGPT OAuth, whose account identifies it.
+    key_origin: String,
 }
 
 impl CodexProvider {
@@ -87,6 +92,7 @@ impl CodexProvider {
             client,
             attempt_admission: None,
             replay_refused: Default::default(),
+            key_origin: String::new(),
             auth: ResponsesAuth::ChatGptOAuth { account_id },
         }
     }
@@ -104,6 +110,7 @@ impl CodexProvider {
             client,
             attempt_admission: None,
             replay_refused: Default::default(),
+            key_origin: uuid::Uuid::new_v4().to_string(),
             auth: ResponsesAuth::ApiKey,
         }
     }
@@ -157,12 +164,15 @@ impl CodexProvider {
     }
 
     /// Where a request's reasoning can be decrypted again (#2162 review):
-    /// the endpoint, the account or API key (by digest, never in clear) and
-    /// the model. A rotated key only stops replay, which is harmless.
+    /// the endpoint, who asked, and the model. A ChatGPT account is named by
+    /// a digest of its id (sent openly as a header, not a secret), so a
+    /// resumed session replays. An API-key provider is named by the random
+    /// identity it was built with — never by anything derived from the key
+    /// (#2162 swarm review) — so its reasoning replays only while it lives.
     fn reasoning_origin(&self, model: &str) -> String {
         let account = match &self.auth {
             ResponsesAuth::ChatGptOAuth { account_id } => format!("{:08x}", fnv1a(account_id)),
-            ResponsesAuth::ApiKey => format!("key-{:08x}", fnv1a(&self.api_key)),
+            ResponsesAuth::ApiKey => format!("key-{}", self.key_origin),
         };
         format!("{}|{account}|{model}", self.responses_url())
     }

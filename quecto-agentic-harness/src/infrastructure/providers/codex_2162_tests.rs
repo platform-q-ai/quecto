@@ -604,16 +604,32 @@ fn nothing_is_replayed_without_an_origin() {
     );
 }
 
-/// Review 2: an API-key origin names the key (by digest), so another key
-/// on the same endpoint and model is another origin.
+/// Swarm review: nothing derived from an API key reaches an origin (it is
+/// saved with the session): each provider has its own random identity, so
+/// two keys never share an origin and no key can be checked against one.
 #[test]
-fn an_api_key_origin_names_its_key() {
-    let at = |key: &str| {
+fn an_api_key_origin_holds_nothing_derived_from_the_key() {
+    let built = |key: &str| {
         CodexProvider::with_api_key(key.into(), Some("https://h".into()), reqwest::Client::new())
-            .reasoning_origin("m")
     };
-    assert_ne!(at("sk-one"), at("sk-two"));
-    assert!(!at("sk-one").contains("sk-one"), "never in clear");
+    let one = built("sk-one");
+    let origin = one.reasoning_origin("m");
+    assert!(!origin.contains("sk-one"), "{origin}");
+    assert!(
+        !origin.contains(&format!("{:08x}", fnv1a("sk-one"))),
+        "{origin}"
+    );
+    assert_eq!(
+        origin,
+        one.clone().reasoning_origin("m"),
+        "stable for the provider"
+    );
+    assert_ne!(
+        origin,
+        built("sk-one").reasoning_origin("m"),
+        "not the key's"
+    );
+    assert_ne!(origin, built("sk-two").reasoning_origin("m"));
 }
 
 /// Review 2: the streamed and gated paths send the header too.
