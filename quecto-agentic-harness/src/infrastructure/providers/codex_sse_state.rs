@@ -222,11 +222,9 @@ impl SseAccumulator {
                     self.usage = resp["usage"]
                         .as_object()
                         .map(crate::infrastructure::providers::usage::parse_codex_usage);
-                    // A refusal seen in the stream stays a refusal (#2179).
-                    if let (Some(status), false) = (
-                        resp["status"].as_str(),
-                        self.stop_reason == Some(StopReason::Refusal),
-                    ) {
+                    // The status only fills a stop reason the stream has not
+                    // already given (a refusal stays a refusal, #2179).
+                    if let (Some(status), None) = (resp["status"].as_str(), &self.stop_reason) {
                         self.stop_reason = Some(Self::parse_response_status(status));
                     }
                 }
