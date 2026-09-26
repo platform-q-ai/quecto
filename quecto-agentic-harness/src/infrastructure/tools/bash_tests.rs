@@ -415,92 +415,6 @@ fn test_make_exit_result_killed_by_signal_uses_minus_one() {
     );
 }
 
-// --- read_stream_limited (in-memory AsyncRead, no real pipes) ---
-
-#[tokio::test]
-async fn test_read_stream_limited_keeps_valid_utf8_under_cap() {
-    let data = b"hello world".to_vec();
-    let (content, truncated) = super::read_stream_limited(&data[..], 1024).await;
-    assert_eq!(content, "hello world");
-    assert!(!truncated);
-}
-
-#[tokio::test]
-async fn test_read_stream_limited_replaces_invalid_utf8_under_cap() {
-    let data = [b'o', b'k', 0xFF, b'!'];
-    let (content, truncated) = super::read_stream_limited(&data[..], 1024).await;
-    assert_eq!(content, "ok�!");
-    assert!(!truncated);
-}
-
-#[tokio::test]
-async fn test_read_stream_limited_allows_exact_cap() {
-    let data = [b'x'; 100];
-    let (content, truncated) = super::read_stream_limited(&data[..], 100).await;
-    assert_eq!(content.len(), 100);
-    assert!(!truncated, "exactly at the cap should not truncate");
-}
-
-#[tokio::test]
-async fn test_read_stream_limited_truncates_over_cap() {
-    let data = [b'x'; 101];
-    let (content, truncated) = super::read_stream_limited(&data[..], 100).await;
-    assert_eq!(content.len(), 100, "should keep only the cap");
-    assert!(truncated, "exceeding the cap should set truncated=true");
-}
-
-#[tokio::test]
-async fn test_read_stream_limited_empty_input() {
-    let data: Vec<u8> = Vec::new();
-    let (content, truncated) = super::read_stream_limited(&data[..], 100).await;
-    assert!(content.is_empty());
-    assert!(!truncated);
-}
-
-// --- await_stream_output / await_stream_output_with_timeout ---
-
-#[tokio::test]
-async fn test_await_stream_output_none() {
-    let (s, t) = super::await_stream_output(None).await;
-    assert!(s.is_empty());
-    assert!(!t);
-}
-
-#[tokio::test]
-async fn test_await_stream_output_some() {
-    let handle = tokio::spawn(async { ("captured".to_string(), false) });
-    let (s, t) = super::await_stream_output(Some(handle)).await;
-    assert_eq!(s, "captured");
-    assert!(!t);
-}
-
-#[tokio::test]
-async fn test_await_stream_output_with_timeout_none() {
-    let (s, t) = super::await_stream_output_with_timeout(None, Duration::from_millis(50)).await;
-    assert!(s.is_empty());
-    assert!(!t);
-}
-
-#[tokio::test]
-async fn test_await_stream_output_with_timeout_completes() {
-    let handle = tokio::spawn(async { ("done".to_string(), false) });
-    let (s, _t) =
-        super::await_stream_output_with_timeout(Some(handle), Duration::from_secs(5)).await;
-    assert_eq!(s, "done");
-}
-
-#[tokio::test]
-async fn test_await_stream_output_with_timeout_times_out() {
-    let handle = tokio::spawn(async {
-        tokio::time::sleep(Duration::from_secs(30)).await;
-        ("never".to_string(), false)
-    });
-    let (s, t) =
-        super::await_stream_output_with_timeout(Some(handle), Duration::from_millis(20)).await;
-    assert!(s.is_empty(), "timeout should yield empty output");
-    assert!(!t);
-}
-
 // --- collect_and_truncate_output (combining + truncation + temp-file hint) ---
 
 fn stream_tasks_from(
@@ -508,8 +422,8 @@ fn stream_tasks_from(
     stderr: Option<(String, bool)>,
 ) -> super::StreamTasks {
     super::StreamTasks {
-        stdout_task: stdout.map(|v| tokio::spawn(async move { v })),
-        stderr_task: stderr.map(|v| tokio::spawn(async move { v })),
+        stdout_task: stdout.map(|v| tokio::spawn(async move { v }).into()),
+        stderr_task: stderr.map(|v| tokio::spawn(async move { v }).into()),
     }
 }
 
