@@ -380,3 +380,24 @@ async fn cancelling_during_the_wait_stops_the_background_job() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert!(!marker.exists(), "the job outlived its cancelled call");
 }
+
+/// Swarm review of #2171: with `output_file`, a background job writes on to
+/// the file after the call returns; nothing says its output is discarded.
+#[tokio::test]
+async fn an_output_file_keeps_a_background_jobs_later_output() {
+    let (tool, tmp) = exec_with_capture(MAX_CAPTURE_BYTES);
+    let file = tmp.path().join("out.log");
+    let args = serde_json::json!({
+        "command": "(sleep 1; echo later) & echo early",
+        "output_file": file.display().to_string(),
+    })
+    .to_string();
+    let result = tool.execute(&args).await.unwrap();
+    assert!(!result.content.contains("discarded"), "{}", result.content);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let written = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        written.contains("early") && written.contains("later"),
+        "{written}"
+    );
+}
