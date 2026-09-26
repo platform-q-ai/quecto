@@ -191,6 +191,7 @@ fn envelope_round_trip() {
         ts: "2026-03-28T14:32:01.847Z".into(),
         unix_ms: 1_774_708_321_847,
         pid: 42,
+        host: None,
         session: "cli:my-feature".into(),
         parent: Some("chat-parent".into()),
         turn: 7,

@@ -135,6 +135,7 @@ impl AuditLog {
             ts: now_utc_iso8601(),
             unix_ms: u64::try_from(now.as_millis()).unwrap_or(u64::MAX),
             pid: std::process::id(),
+            host: host_name(),
             session: self.session_key.clone(),
             parent: self.parent.clone(),
             turn,
@@ -328,6 +329,19 @@ fn unix_to_utc(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
 
 fn is_leap(year: u64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+/// This host's name, read once (#2161). Inside a container it is the
+/// container's own name, set by the runtime.
+fn host_name() -> Option<String> {
+    static HOST: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    HOST.get_or_init(|| {
+        std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .ok()
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty())
+    })
+    .clone()
 }
 
 #[cfg(test)]
