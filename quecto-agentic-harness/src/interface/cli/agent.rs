@@ -22,7 +22,7 @@ mod startup_effort;
 mod startup_prompt;
 mod startup_route;
 mod swarm_runtime;
-pub(crate) use agent_deadline::{DeadlineResult, run_with_deadline};
+pub(crate) use agent_deadline::{DeadlineResult, run_with_deadline, settle_stopped_run};
 mod flag_private;
 pub(crate) use flag_parse::AgentFlags;
 use flag_parse::{
