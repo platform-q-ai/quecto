@@ -150,6 +150,8 @@ impl LlmProvider for MockProvider {
 pub(super) struct MockRegistry {
     pub(super) tools: Vec<Arc<dyn Tool>>,
     pub(super) cached_definitions: Vec<ToolDefinition>,
+    /// Tools whose calls may overlap (#2169); none by default.
+    pub(super) overlapping: Vec<String>,
 }
 
 impl MockRegistry {
@@ -157,6 +159,7 @@ impl MockRegistry {
         Self {
             tools: Vec::new(),
             cached_definitions: Vec::new(),
+            overlapping: Vec::new(),
         }
     }
 
@@ -189,6 +192,12 @@ impl ToolExecutor for MockRegistry {
         }
         let err = DomainError::Tool(format!("unknown tool: {}", name));
         Box::pin(async move { Err(err) })
+    }
+
+    fn overlaps_safely(&self, name: &str, _arguments: &str) -> bool {
+        self.overlapping
+            .iter()
+            .any(|overlapping| overlapping == name)
     }
 }
 
@@ -644,6 +653,8 @@ mod event_log_tests;
 mod invalid_tool_arguments_tests;
 #[path = "agent_loop_2124_tests.rs"]
 mod output_limit_tests;
+#[path = "agent_loop_2169_tests.rs"]
+mod parallel_tool_calls_tests;
 #[path = "agent_loop_progress_tests.rs"]
 mod progress_tests;
 #[path = "agent_loop_931_tests.rs"]

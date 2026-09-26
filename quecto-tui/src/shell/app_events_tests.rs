@@ -585,3 +585,52 @@ async fn command_send_failure_becomes_error_notification() {
         "notification should include the send error: {rendered}"
     );
 }
+
+/// #2175: calls running at once each end on their own; the spinner goes
+/// back to the working message only when the last of them has ended.
+#[tokio::test]
+async fn the_spinner_keeps_a_tool_label_while_overlapping_calls_run() {
+    let mut app = test_app().await;
+    app.ac_mut().spinner = Some(Spinner::new("Working"));
+    for id in ["a", "b"] {
+        app.handle_event(Event::ToolExecutionStart {
+            tool_call_id: id.into(),
+            tool_name: "read".into(),
+            args: serde_json::json!({"path": format!("{id}.txt")}),
+        });
+    }
+    let end = |id: &str| Event::ToolExecutionEnd {
+        tool_call_id: id.into(),
+        tool_name: "read".into(),
+        result: serde_json::json!({"content":[{"type":"text","text":"ok"}]}),
+        is_error: false,
+    };
+    let awaiting = "Working... (Esc to interrupt)";
+    app.handle_event(end("a"));
+    assert_ne!(
+        app.ac().spinner.as_ref().unwrap().message(),
+        awaiting,
+        "one call still runs"
+    );
+    app.handle_event(end("b"));
+    assert_eq!(app.ac().spinner.as_ref().unwrap().message(), awaiting);
+}
+
+/// #2175 review: an end event lost on the way cannot pin a tool label: the
+/// model streaming again means every tool of its last response ended.
+#[tokio::test]
+async fn a_lost_tool_end_does_not_pin_the_spinner_label() {
+    let mut app = test_app().await;
+    app.ac_mut().spinner = Some(Spinner::new("Working"));
+    app.handle_event(Event::ToolExecutionStart {
+        tool_call_id: "lost".into(),
+        tool_name: "read".into(),
+        args: serde_json::json!({"path": "a.txt"}),
+    });
+    let awaiting = "Working... (Esc to interrupt)";
+    assert_ne!(app.ac().spinner.as_ref().unwrap().message(), awaiting);
+    app.handle_event(Event::Token {
+        token: "next".into(),
+    });
+    assert_eq!(app.ac().spinner.as_ref().unwrap().message(), awaiting);
+}

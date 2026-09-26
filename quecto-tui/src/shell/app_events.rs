@@ -27,10 +27,12 @@ impl App {
                 self.apply_git_branch(app_git::read_git_branch_from(&root));
             }
             Event::Token { token } => {
+                self.settle_tool_spinner();
                 self.ac_mut().master_session.chat.append_token(&token);
                 self.reconcile_master_retention_trim();
             }
             Event::Thinking { text } => {
+                self.settle_tool_spinner();
                 self.ac_mut().master_session.chat.append_thinking(&text);
                 self.reconcile_master_retention_trim();
             }
@@ -153,6 +155,7 @@ impl App {
         self.ac_mut().start_coordinator_clock(now);
         self.ac_mut().master_session.tools_this_turn = 0;
         self.ac_mut().master_session.open_tool_calls = 0;
+        self.ac_mut().running_tools.clear();
         let _ = self
             .ac_mut()
             .master_session
@@ -240,6 +243,7 @@ impl App {
         } else {
             args.to_string()
         };
+        self.ac_mut().running_tools.insert(tool_call_id.clone());
         self.update_tool_spinner(&tool_name, &args, &args_str);
         let is_spawn = tool_name == "spawn";
         // Every model-issued tool call — even one whose box is suppressed (spawn)
@@ -369,6 +373,24 @@ impl App {
         if is_subagent_tool(&tool_name) {
             self.request_roster_refresh(None);
         }
+        // Calls that run at once end one by one (#2175): keep the tool
+        // label until the last of them has ended.
+        self.ac_mut().running_tools.remove(&tool_call_id);
+        if self.ac().running_tools.is_empty() {
+            self.reset_spinner_message();
+        }
+    }
+
+    /// The model is streaming again: every tool of its last response has
+    /// ended, whether or not its end event arrived (#2175 review).
+    fn settle_tool_spinner(&mut self) {
+        if !self.ac().running_tools.is_empty() {
+            self.ac_mut().running_tools.clear();
+            self.reset_spinner_message();
+        }
+    }
+
+    fn reset_spinner_message(&mut self) {
         // Back to the plain message, unless the master is still queued for
         // admission: that label outlives any single tool (#1679 P4).
         let message = self

@@ -168,6 +168,11 @@ impl DocsTool {
 }
 
 impl Tool for DocsTool {
+    /// Reads only: calls may overlap (#2169).
+    fn overlaps_safely(&self, _arguments: &str) -> bool {
+        true
+    }
+
     fn definition(&self) -> ToolDefinition {
         let description = "Quecto operating manual (embedded in the binary, CWD-independent). \
             Call with no name (or {}) for the table of contents (name + title per page). \

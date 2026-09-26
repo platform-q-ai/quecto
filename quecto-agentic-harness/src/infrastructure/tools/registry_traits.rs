@@ -52,6 +52,18 @@ impl ToolExecutor for ToolRegistryImpl {
             tool.result_delivered(arguments, result);
         }
     }
+
+    /// A bundled tool that says its calls may overlap (#2169); every other
+    /// tool, an extension included whatever it claims, runs one at a time.
+    fn overlaps_safely(&self, name: &str, arguments: &str) -> bool {
+        let bundled = self.metadata.get(name).is_some_and(|registration| {
+            registration.source == crate::domain::tool_descriptor::ToolSource::BundledNative
+        });
+        bundled
+            && self
+                .get(name)
+                .is_some_and(|tool| tool.overlaps_safely(arguments))
+    }
 }
 
 impl RuntimeToolLifecycleRegistry for ToolRegistryImpl {
@@ -204,3 +216,7 @@ impl SessionAwareTools for ToolRegistryImpl {
 }
 
 impl crate::application::tools::ports::ToolRegistry for ToolRegistryImpl {}
+
+#[cfg(test)]
+#[path = "registry_overlap_tests.rs"]
+mod overlap_tests;
