@@ -24,6 +24,7 @@ fn with_rg_binary_sets_definition_and_format_match_block_paths_and_truncation() 
         byte_total: 0,
         lines_truncated: false,
         truncated_bytes: false,
+        shown: HashMap::new(),
     };
     let ws = tmp.path().to_string_lossy().to_string();
     let prefix = format!("{ws}/");
@@ -33,6 +34,7 @@ fn with_rg_binary_sets_definition_and_format_match_block_paths_and_truncation() 
         context_lines: 1,
         max_line_bytes: 4,
         max_output_bytes: 10_000,
+        matched: &HashMap::new(),
     };
     assert!(format_match_block(
         &RgMatch {
@@ -41,6 +43,7 @@ fn with_rg_binary_sets_definition_and_format_match_block_paths_and_truncation() 
             line_count: 1,
             score: None,
             column: None,
+            text: None,
         },
         &mut cache,
         &cfg,
@@ -62,6 +65,7 @@ fn format_match_block_stops_at_byte_cap() {
         byte_total: 0,
         lines_truncated: false,
         truncated_bytes: false,
+        shown: HashMap::new(),
     };
     let ws = tmp.path().to_string_lossy().to_string();
     let prefix = format!("{ws}/");
@@ -71,6 +75,7 @@ fn format_match_block_stops_at_byte_cap() {
         context_lines: 0,
         max_line_bytes: 100,
         max_output_bytes: 3,
+        matched: &HashMap::new(),
     };
     assert!(!format_match_block(
         &RgMatch {
@@ -79,6 +84,7 @@ fn format_match_block_stops_at_byte_cap() {
             line_count: 1,
             score: None,
             column: None,
+            text: None,
         },
         &mut cache,
         &cfg,

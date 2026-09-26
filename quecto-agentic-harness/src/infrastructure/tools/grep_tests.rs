@@ -523,7 +523,7 @@ async fn a_flood_of_rg_errors_never_blocks_and_a_slow_rg_is_stopped() {
 async fn a_matching_line_larger_than_the_cap_is_explained() {
     let tmp = TempDir::new().unwrap();
     let huge = format!(
-        "printf '%s' '{{\"type\":\"match\",\"data\":{{\"path\":{{\"text\":\"{}/a.js\"}},\"lines\":{{\"text\":\"'; head -c 300000 /dev/zero | tr '\\0' a; printf '%s\\n' '\"}},\"line_number\":1}}}}'",
+        "printf '%s' '{{\"type\":\"match\",\"data\":{{\"path\":{{\"text\":\"{}/a.js\"}},\"lines\":{{\"text\":\"'; head -c 5000000 /dev/zero | tr '\\0' a; printf '%s\\n' '\"}},\"line_number\":1}}}}'",
         tmp.path().display()
     );
     let tool = GrepTool::with_rg_binary(

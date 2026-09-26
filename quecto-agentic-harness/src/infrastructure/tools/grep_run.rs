@@ -46,6 +46,9 @@ pub(super) struct ReadLimit {
 /// How much rg output a plain search reads (JSON is larger than the plain
 /// text shown).
 pub(super) const RG_STDOUT_CAP: usize = MAX_OUTPUT_BYTES * 4;
+/// A plain content search's byte backstop (#2163): it reads the matches it
+/// shows (and one more), which a line with many hits makes large in JSON.
+pub(super) const CONTENT_STDOUT_CAP: usize = 4 * 1024 * 1024;
 /// A ranked search's byte backstop (#2142): it reads up to as many matches
 /// as it may judge, which for typical lines is well under this; very long
 /// lines, context or many files are what reach it.
