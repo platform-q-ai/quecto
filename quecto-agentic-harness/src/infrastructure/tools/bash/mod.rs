@@ -36,9 +36,11 @@ const BACKGROUND_NOTE: &str = "[a background process still holds this command's 
      e.g. `cmd > out.log 2>&1 &`]";
 
 mod capture;
+mod saved_output;
 use capture::StreamReader;
 #[cfg(test)]
 use capture::read_stream_limited;
+use saved_output::save_to_temp_file;
 
 #[derive(Debug, Clone)]
 pub struct ExecOptions {
@@ -683,25 +685,6 @@ async fn await_stream_output_within(
     }
 }
 
-/// Save content to a temp file asynchronously and return the path.
-async fn save_to_temp_file(content: String) -> Option<String> {
-    tokio::task::spawn_blocking(move || {
-        use std::io::Write;
-        let dir = std::env::temp_dir().join("quecto-bash-output");
-        std::fs::create_dir_all(&dir).ok()?;
-        let mut f = tempfile::Builder::new()
-            .prefix("bash-output-")
-            .suffix(".log")
-            .tempfile_in(&dir)
-            .ok()?;
-        f.write_all(content.as_bytes()).ok()?;
-        let (_, path) = f.keep().ok()?;
-        Some(path.display().to_string())
-    })
-    .await
-    .ok()?
-}
-
 impl Tool for ExecTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -745,3 +728,6 @@ mod launch_environment_tests;
 
 #[cfg(test)]
 mod capture_tests;
+
+#[cfg(test)]
+mod saved_output_tests;
