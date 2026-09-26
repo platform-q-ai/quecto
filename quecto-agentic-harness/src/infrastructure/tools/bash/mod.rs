@@ -23,6 +23,22 @@ use crate::infrastructure::tools::truncate::{TruncatedBy, truncate_tail};
 const MAX_CAPTURE_BYTES: usize = 10 * 1024 * 1024;
 /// Grace window for draining stdout/stderr after a timed-out child is killed.
 const STREAM_DRAIN_TIMEOUT_ON_KILL: Duration = Duration::from_millis(250);
+/// After the shell exits, the call waits for its output to end — until no
+/// output has arrived for this long (#2167): only a background job still
+/// holds the pipes then, and the call does not wait for it.
+const QUIET_AFTER_EXIT: Duration = Duration::from_millis(500);
+/// The longest the call waits after the shell exits, for a background job
+/// that keeps writing.
+const CEILING_AFTER_EXIT: Duration = Duration::from_secs(5);
+/// Said when a background job still held the output after the shell exited.
+const BACKGROUND_NOTE: &str = "[a background process still holds this command's output; the call \
+     returned without waiting for it, and its later output is discarded. Redirect it to keep it, \
+     e.g. `cmd > out.log 2>&1 &`]";
+
+mod capture;
+use capture::StreamReader;
+#[cfg(test)]
+use capture::read_stream_limited;
 
 #[derive(Debug, Clone)]
 pub struct ExecOptions {
@@ -195,11 +211,11 @@ impl ExecTool {
         let stdout_task = child
             .stdout
             .take()
-            .map(|pipe| tokio::spawn(read_stream_limited(pipe, self.max_capture_bytes)));
+            .map(|pipe| StreamReader::spawn(pipe, self.max_capture_bytes));
         let stderr_task = child
             .stderr
             .take()
-            .map(|pipe| tokio::spawn(read_stream_limited(pipe, self.max_capture_bytes)));
+            .map(|pipe| StreamReader::spawn(pipe, self.max_capture_bytes));
 
         let stream_tasks = StreamTasks {
             stdout_task,
@@ -357,8 +373,8 @@ fn build_shell_command(
 }
 
 struct StreamTasks {
-    stdout_task: Option<tokio::task::JoinHandle<(String, bool)>>,
-    stderr_task: Option<tokio::task::JoinHandle<(String, bool)>>,
+    stdout_task: Option<StreamReader>,
+    stderr_task: Option<StreamReader>,
 }
 
 mod wait_owned;
@@ -382,7 +398,7 @@ async fn run_child_with_timeout(
         Ok(Ok(observed)) => {
             #[cfg(not(unix))]
             group_guard.disarm();
-            let output = collect_raw_output(&mut stream_tasks).await;
+            let (output, capture_cut, held_open) = collect_after_exit(&mut stream_tasks).await;
             group_guard.disarm();
             #[cfg(unix)]
             let status = {
@@ -394,11 +410,17 @@ async fn run_child_with_timeout(
             };
             #[cfg(not(unix))]
             let status = observed;
-            if let Some(target) = output_target {
-                Ok(make_exit_result(status, output_file_summary(&target, None)))
-            } else {
-                Ok(make_exit_result(status, truncate_output(output).await))
+            let mut content = match output_target {
+                Some(target) => output_file_summary(&target, None),
+                None => truncate_output(output, capture_cut).await,
+            };
+            if held_open {
+                if !content.is_empty() {
+                    content.push('\n');
+                }
+                content.push_str(BACKGROUND_NOTE);
             }
+            Ok(make_exit_result(status, content))
         }
         Ok(Err(e)) => {
             group_guard.disarm();
@@ -421,23 +443,49 @@ async fn run_child_with_timeout(
 /// - Save fails:      `[Output truncated to last N lines / N bytes]`
 #[cfg(test)]
 async fn collect_and_truncate_output(stream_tasks: &mut StreamTasks) -> String {
-    truncate_output(collect_raw_output(stream_tasks).await).await
+    let (output, capture_cut, _) = collect_after_exit(stream_tasks).await;
+    truncate_output(output, capture_cut).await
 }
 
-async fn collect_raw_output(stream_tasks: &mut StreamTasks) -> String {
-    let (stdout_raw, _) = await_stream_output(stream_tasks.stdout_task.take()).await;
-    let (stderr_raw, _) = await_stream_output(stream_tasks.stderr_task.take()).await;
+/// The output once the shell has exited: each stream to its end, or what
+/// arrived before it went quiet when a background job still holds it
+/// (#2167). Returns the output, whether a capture dropped part of it, and
+/// whether a stream was still held open.
+async fn collect_after_exit(stream_tasks: &mut StreamTasks) -> (String, bool, bool) {
+    let (stdout, stderr) = tokio::join!(
+        await_stream_output_within(
+            stream_tasks.stdout_task.take(),
+            QUIET_AFTER_EXIT,
+            CEILING_AFTER_EXIT
+        ),
+        await_stream_output_within(
+            stream_tasks.stderr_task.take(),
+            QUIET_AFTER_EXIT,
+            CEILING_AFTER_EXIT
+        )
+    );
+    let ((stdout, stdout_cut), stdout_open) = stdout;
+    let ((stderr, stderr_cut), stderr_open) = stderr;
+    (
+        combine(stdout, stderr),
+        stdout_cut || stderr_cut,
+        stdout_open || stderr_open,
+    )
+}
 
-    if stderr_raw.is_empty() {
-        stdout_raw
-    } else if stdout_raw.is_empty() {
-        stderr_raw
+fn combine(stdout: String, stderr: String) -> String {
+    if stderr.is_empty() {
+        stdout
+    } else if stdout.is_empty() {
+        stderr
     } else {
-        format!("{}\n{}", stdout_raw, stderr_raw)
+        format!("{}\n{}", stdout, stderr)
     }
 }
 
-async fn truncate_output(combined: String) -> String {
+/// The inline tail of `combined`, saving the whole to a temp file when cut;
+/// `capture_cut` says the capture itself already dropped part of the middle.
+async fn truncate_output(combined: String, capture_cut: bool) -> String {
     const TAIL_MAX_LINES: usize = 2000;
     const TAIL_MAX_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
@@ -459,9 +507,14 @@ async fn truncate_output(combined: String) -> String {
         } else {
             ""
         };
+        // A capture that dropped its middle is not the full output (#2167).
+        let saved = match capture_cut {
+            true => "Output (start and end; middle omitted)",
+            false => "Full output",
+        };
         format!(
-            "\n[Showing lines {}-{} of {}{}. Full output ({} bytes) saved to: {}]",
-            start_line, end_line, total, limit_note, combined_len, tmp_path
+            "\n[Showing lines {}-{} of {}{}. {} ({} bytes) saved to: {}]",
+            start_line, end_line, total, limit_note, saved, combined_len, tmp_path
         )
     } else {
         format!(
@@ -564,23 +617,22 @@ async fn handle_timeout(
     #[cfg(not(unix))]
     let _ = child.kill().await;
     let _ = child.wait().await;
-    let (stdout_raw, _) = await_stream_output_with_timeout(
+    // What arrived before the kill is kept even when a descendant outside
+    // the group still holds a stream open (#2167).
+    let ((stdout_raw, stdout_cut), _) = await_stream_output_within(
         stream_tasks.stdout_task.take(),
         STREAM_DRAIN_TIMEOUT_ON_KILL,
-    )
-    .await;
-    let (stderr_raw, _) = await_stream_output_with_timeout(
-        stream_tasks.stderr_task.take(),
         STREAM_DRAIN_TIMEOUT_ON_KILL,
     )
     .await;
-    let combined = if stderr_raw.is_empty() {
-        stdout_raw
-    } else if stdout_raw.is_empty() {
-        stderr_raw
-    } else {
-        format!("{}\n{}", stdout_raw, stderr_raw)
-    };
+    let ((stderr_raw, stderr_cut), _) = await_stream_output_within(
+        stream_tasks.stderr_task.take(),
+        STREAM_DRAIN_TIMEOUT_ON_KILL,
+        STREAM_DRAIN_TIMEOUT_ON_KILL,
+    )
+    .await;
+    let capture_cut = stdout_cut || stderr_cut;
+    let combined = combine(stdout_raw, stderr_raw);
     let file_note = if let Some(target) = &output_target {
         format!(
             "\n{}",
@@ -595,7 +647,7 @@ async fn handle_timeout(
     } else {
         String::new()
     };
-    let tail = truncate_output(combined).await;
+    let tail = truncate_output(combined, capture_cut).await;
     let content = if tail.is_empty() {
         format!(
             "command timed out after {}s{}",
@@ -618,60 +670,16 @@ async fn handle_timeout(
     }
 }
 
-async fn read_stream_limited<R>(mut pipe: R, max_capture_bytes: usize) -> (String, bool)
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    use tokio::io::AsyncReadExt;
-
-    let mut collected = Vec::new();
-    let mut chunk = [0_u8; 8192];
-    let mut truncated = false;
-
-    loop {
-        match pipe.read(&mut chunk).await {
-            Ok(0) => break,
-            Ok(n) => {
-                let remaining = max_capture_bytes.saturating_sub(collected.len());
-                if remaining > 0 {
-                    let keep = remaining.min(n);
-                    collected.extend_from_slice(&chunk[..keep]);
-                }
-                if n > remaining {
-                    truncated = true;
-                }
-            }
-            Err(_) => break,
-        }
-    }
-
-    let output = match String::from_utf8(collected) {
-        Ok(valid) => valid,
-        Err(err) => String::from_utf8_lossy(err.as_bytes()).into_owned(),
-    };
-    (output, truncated)
-}
-
-async fn await_stream_output(
-    task: Option<tokio::task::JoinHandle<(String, bool)>>,
-) -> (String, bool) {
+/// A stream to its end, or what arrived before it went quiet for `quiet` or
+/// `ceiling` passed; the flag says the stream was still open.
+async fn await_stream_output_within(
+    task: Option<StreamReader>,
+    quiet: Duration,
+    ceiling: Duration,
+) -> ((String, bool), bool) {
     match task {
-        Some(handle) => (handle.await).unwrap_or_default(),
-        None => (String::new(), false),
-    }
-}
-
-async fn await_stream_output_with_timeout(
-    task: Option<tokio::task::JoinHandle<(String, bool)>>,
-    timeout: Duration,
-) -> (String, bool) {
-    if let Some(handle) = task {
-        match tokio::time::timeout(timeout, handle).await {
-            Ok(join) => join.unwrap_or_default(),
-            Err(_) => (String::new(), false),
-        }
-    } else {
-        (String::new(), false)
+        Some(reader) => reader.finish_within(quiet, ceiling).await,
+        None => ((String::new(), false), false),
     }
 }
 
@@ -700,7 +708,9 @@ impl Tool for ExecTool {
             name: "bash".into(),
             description: "Execute a bash command in the current working directory. Returns stdout \
                           and stderr. Output is truncated to last 2000 lines or 50KB (whichever is \
-                          hit first). If truncated, full output is saved to a stable temp file. \
+                          hit first). If truncated, the output is saved to a stable temp file (very \
+                          long output keeps its start and end). A background job (`cmd &`) that \
+                          keeps the output open is not waited for: redirect its output to keep it. \
                           Optionally provide a timeout in seconds or output_file to write full \
                           combined output to a file and return a concise summary. \
                           Example: {\"command\": \"ls -la\"}"
@@ -732,3 +742,6 @@ mod output_file_tests;
 
 #[cfg(test)]
 mod launch_environment_tests;
+
+#[cfg(test)]
+mod capture_tests;

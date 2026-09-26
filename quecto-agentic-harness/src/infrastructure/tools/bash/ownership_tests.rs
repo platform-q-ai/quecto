@@ -17,7 +17,7 @@ async fn cancellation_during_pending_drain_keeps_group_leader_owned() {
     let reader = tokio::spawn(std::future::pending::<(String, bool)>());
     let reader_abort = reader.abort_handle();
     let streams = StreamTasks {
-        stdout_task: Some(reader),
+        stdout_task: Some(reader.into()),
         stderr_task: None,
     };
     let mut execution = Box::pin(run_child_with_timeout(
@@ -83,7 +83,7 @@ async fn cancellation_during_drain_kills_same_group_pipe_holder() {
     let mut execution = Box::pin(run_child_with_timeout(
         child,
         StreamTasks {
-            stdout_task: Some(reader),
+            stdout_task: Some(reader.into()),
             stderr_task: None,
         },
         Duration::from_secs(30),
