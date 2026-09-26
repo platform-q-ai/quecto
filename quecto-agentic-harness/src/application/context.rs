@@ -265,7 +265,7 @@ impl ContextManager {
     pub async fn prepare_provider_context(
         &self,
         messages: &mut Vec<Message>,
-        _current_turn: u32,
+        message_budget: usize,
         spills_dirty: bool,
     ) -> ContextPlan {
         let tokens_before = context_pruning::estimate_total_tokens(messages);
@@ -281,7 +281,7 @@ impl ContextManager {
         );
         let outcome = context_pruning::messages::enforce_context_ceiling_ladder(
             messages,
-            self.effective_max_context_tokens(),
+            message_budget,
             self.pin_recent_turns,
         );
         let mut manifest_shifted = false;

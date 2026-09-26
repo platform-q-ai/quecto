@@ -7,11 +7,31 @@ impl AgentLoopImpl {
         current_turn: u32,
         spills_dirty: bool,
     ) -> usize {
+        // Every request carries the tool definitions too (#2160): they count
+        // against the budget and in the estimate. The messages keep at least
+        // a quarter of it, so oversized tools cannot empty every turn.
+        let fixed_tokens: usize = self
+            .current_tool_definitions()
+            .iter()
+            .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+            .sum();
+        let effective = self.effective_max_context_tokens();
+        let budget = match effective.checked_sub(fixed_tokens) {
+            Some(room) if room >= effective / 4 => room,
+            Some(_) | None => {
+                tracing::warn!(
+                    target: "context_prune",
+                    fixed_tokens,
+                    effective,
+                    "the tool definitions take most of the context budget; the messages keep a quarter of it"
+                );
+                effective / 4
+            }
+        };
         let plan = self
             .context_manager
-            .prepare_provider_context(messages, current_turn, spills_dirty)
+            .prepare_provider_context(messages, budget, spills_dirty)
             .await;
-        let budget = self.effective_max_context_tokens();
         if plan.over_budget {
             // The pinned/exempt set alone exceeds the budget (#1044 AC1).
             tracing::warn!(
@@ -45,14 +65,15 @@ impl AgentLoopImpl {
                 AuditEvent::ContextPruned {
                     messages_dropped: plan.messages_dropped,
                     tool_results_collapsed: plan.tool_results_collapsed,
-                    tokens_before: plan.tokens_before,
-                    tokens_after: plan.total_tokens,
+                    // Counted as the estimate is: with the tool definitions.
+                    tokens_before: plan.tokens_before.saturating_add(fixed_tokens),
+                    tokens_after: plan.total_tokens.saturating_add(fixed_tokens),
                     budget_unmet: plan.over_budget,
                 },
             )
             .await;
         }
-        plan.total_tokens
+        plan.total_tokens.saturating_add(fixed_tokens)
     }
 
     pub async fn prune_resumed_context(&self, messages: &mut Vec<Message>) -> usize {
