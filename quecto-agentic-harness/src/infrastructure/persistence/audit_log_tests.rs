@@ -530,3 +530,13 @@ async fn a_log_capped_by_a_large_line_stays_stopped_after_a_restart() {
         "{text}"
     );
 }
+
+/// #2184 review: a failed call, an unterminated or an empty name gives no
+/// host.
+#[test]
+fn a_host_name_only_from_a_good_call() {
+    assert_eq!(super::host_from(0, b"box\0junk"), Some("box".into()));
+    assert_eq!(super::host_from(-1, b"box\0"), None);
+    assert_eq!(super::host_from(0, b"unterminated"), None);
+    assert_eq!(super::host_from(0, b"\0"), None);
+}

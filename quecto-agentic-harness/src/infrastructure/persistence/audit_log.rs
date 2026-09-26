@@ -331,20 +331,28 @@ fn is_leap(year: u64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
-/// This host's name, read once (#2161). Inside a container it is the
-/// container's own name, set by the runtime.
+/// This host's name, read once (#2161). The bundled container scripts name
+/// each container's host after the container (`quecto-<environment>`);
+/// otherwise a container's host is its short ID, and on the host it is the
+/// machine's name.
 fn host_name() -> Option<String> {
     static HOST: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     HOST.get_or_init(|| {
         let mut buffer = [0u8; 256];
         // SAFETY: the buffer is writable for its whole length, which is passed.
         let status = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
-        let end = buffer.iter().position(|byte| *byte == 0)?;
-        (status == 0)
-            .then(|| String::from_utf8_lossy(&buffer[..end]).into_owned())
-            .filter(|name| !name.is_empty())
+        host_from(status, &buffer)
     })
     .clone()
+}
+
+/// A host name from gethostname's status and buffer: none when the call
+/// failed, the name was not terminated within the buffer, or it is empty.
+fn host_from(status: libc::c_int, buffer: &[u8]) -> Option<String> {
+    let end = buffer.iter().position(|byte| *byte == 0)?;
+    (status == 0)
+        .then(|| String::from_utf8_lossy(&buffer[..end]).into_owned())
+        .filter(|name| !name.is_empty())
 }
 
 #[cfg(test)]
