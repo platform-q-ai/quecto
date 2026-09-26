@@ -299,21 +299,6 @@ fn parse_timeout(args: &serde_json::Value) -> Option<Duration> {
     })
 }
 
-/// Shells that may be selected via the \`SHELL\` environment variable.
-///
-/// Restricted to well-known system shells to prevent arbitrary binary execution
-/// via a crafted or injected \`SHELL\` env var.
-const ALLOWED_SHELLS: &[&str] = &[
-    "/bin/sh",
-    "/bin/bash",
-    "/bin/dash",
-    "/bin/zsh",
-    "/usr/bin/bash",
-    "/usr/bin/zsh",
-    "/usr/local/bin/bash",
-    "/usr/local/bin/zsh",
-];
-
 fn build_shell_command(
     workspace: &PathBuf,
     command: &str,
@@ -324,11 +309,10 @@ fn build_shell_command(
     let parent_shell = (source_env.is_none())
         .then(|| std::env::var("SHELL").ok())
         .flatten();
-    let shell = source_env
+    let requested = source_env
         .and_then(|env| env.get("SHELL").map(String::as_str))
-        .or(parent_shell.as_deref())
-        .filter(|s| ALLOWED_SHELLS.contains(s))
-        .unwrap_or("/bin/sh");
+        .or(parent_shell.as_deref());
+    let shell = shell::select_shell(requested, shell::is_installed);
 
     let mut cmd = tokio::process::Command::new(shell);
     cmd.arg("-c").arg(command).current_dir(workspace);
@@ -685,6 +669,8 @@ impl Tool for ExecTool {
                           hit first). If truncated, the output is saved to a stable temp file (very \
                           long output keeps its start and end). A background job (`cmd &`) that \
                           keeps the output open is not waited for: redirect its output to keep it. \
+                          Each call runs in a fresh shell: `cd` and `export` do not carry over \
+                          to the next call. \
                           Optionally provide a timeout in seconds or output_file to write full \
                           combined output to a file and return a concise summary. \
                           Example: {\"command\": \"ls -la\"}"
@@ -705,6 +691,11 @@ impl Tool for ExecTool {
 
 #[cfg(test)]
 mod ownership_tests;
+
+#[path = "shell.rs"]
+mod shell;
+#[cfg(test)]
+use shell::ALLOWED_SHELLS;
 
 #[cfg(test)]
 #[path = "../bash_tests.rs"]

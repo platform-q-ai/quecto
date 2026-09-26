@@ -308,14 +308,23 @@ fn test_build_shell_command_uses_allowed_shell_from_env() {
 fn test_build_shell_command_rejects_disallowed_shell() {
     let mut env = HashMap::new();
     env.insert("SHELL".to_string(), "/tmp/evil".to_string());
-    // Disallowed shell falls back to /bin/sh.
-    assert_eq!(shell_program(&env), "/bin/sh");
+    // A disallowed shell is never run: the fallback (bash where installed,
+    // else /bin/sh, #2195) runs the command instead.
+    let program = shell_program(&env);
+    assert_ne!(program, "/tmp/evil");
+    assert_eq!(
+        program,
+        super::shell::select_shell(None, super::shell::is_installed)
+    );
 }
 
 #[test]
-fn test_build_shell_command_defaults_to_sh_without_shell_env() {
+fn test_build_shell_command_without_shell_env_uses_the_fallback() {
     let env = HashMap::new();
-    assert_eq!(shell_program(&env), "/bin/sh");
+    assert_eq!(
+        shell_program(&env),
+        super::shell::select_shell(None, super::shell::is_installed)
+    );
 }
 
 #[test]
@@ -661,4 +670,19 @@ async fn test_exec_drop_kills_whole_process_group() {
         !marker.exists(),
         "a killed subshell cannot have touched the marker"
     );
+}
+
+/// #2195: with no `SHELL` in the command's environment (as in a container),
+/// the command runs under the shell selection's choice: bash where it is
+/// installed, never a hard-coded `/bin/sh`.
+#[test]
+fn a_command_without_shell_in_its_environment_runs_under_bash_when_installed() {
+    let workspace = std::env::temp_dir();
+    let env = std::collections::HashMap::new();
+    let cmd = super::build_shell_command(&workspace, "true", Some(&env));
+    let expected = super::shell::select_shell(None, super::shell::is_installed);
+    assert_eq!(cmd.as_std().get_program(), std::ffi::OsStr::new(expected));
+    if super::shell::is_installed("/bin/bash") || super::shell::is_installed("/usr/bin/bash") {
+        assert!(expected.ends_with("/bash"), "{expected}");
+    }
 }
