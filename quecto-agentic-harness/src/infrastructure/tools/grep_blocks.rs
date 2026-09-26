@@ -54,6 +54,8 @@ pub(super) struct FormatState {
     /// The lines already shown, by file: no line is shown twice, whatever
     /// order the blocks come in (#2163; rank order, #2174 review).
     pub(super) shown: HashMap<PathBuf, std::collections::HashSet<usize>>,
+    /// The file and line printed last.
+    pub(super) last_printed: Option<(PathBuf, usize)>,
 }
 
 /// Format one match block (match line + optional context lines) into `state`.
@@ -86,11 +88,17 @@ pub(super) fn format_match_block(
         .min(total_lines.max(last_matched))
         .max(m.line_number);
     let matched_here = cfg.matched.get(&m.file_path);
-    // A match whose own lines were all shown in an earlier block (a better
-    // ranked one's context) adds nothing: its context alone would stand
-    // apart from it (#2174 review).
+    // A match whose own lines were all shown earlier continues only when
+    // the output has just come from it (rg order: its context follows on);
+    // otherwise its context alone would stand apart from it (a better
+    // ranked block showed it, #2174 review).
     if let Some(shown) = state.shown.get(&m.file_path) {
-        if (m.line_number..=last_matched).all(|line| shown.contains(&line)) {
+        let all_shown = (m.line_number..=last_matched).all(|line| shown.contains(&line));
+        let continues = matches!(
+            &state.last_printed,
+            Some((path, line)) if path == &m.file_path && *line >= m.line_number && *line <= last_matched + cfg.context_lines
+        );
+        if all_shown && !continues {
             return true;
         }
     }
@@ -156,6 +164,7 @@ pub(super) fn format_match_block(
             .entry(m.file_path.clone())
             .or_default()
             .insert(current);
+        state.last_printed = Some((m.file_path.clone(), current));
     }
     true
 }
