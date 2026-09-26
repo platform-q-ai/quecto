@@ -348,3 +348,35 @@ async fn a_stream_producing_steadily_is_read_to_its_end() {
     assert!(!open, "ended streams are not held");
     assert_eq!(s.matches("tick").count(), 12, "{s}");
 }
+
+/// Review #2171 (round 2): once the call has taken its output, the reader
+/// keeps draining but keeps nothing, so a long-lived background job pins
+/// no capture.
+#[test]
+fn a_released_capture_keeps_nothing_more() {
+    let mut capture = capture::Capture::new(1024);
+    capture.push(b"before");
+    let (text, _) = capture.render();
+    assert_eq!(text, "before");
+    capture.release();
+    capture.push(&[b'x'; 4096]);
+    assert_eq!(capture.held(), 0, "nothing is kept after release");
+}
+
+/// Cancelling a call while it waits for a background job's output to go
+/// quiet kills that job with the command's group, on the production read
+/// path.
+#[tokio::test]
+async fn cancelling_during_the_wait_stops_the_background_job() {
+    let (tool, tmp) = exec_with_capture(MAX_CAPTURE_BYTES);
+    let marker = tmp.path().join("finished");
+    let command = format!("(sleep 1; touch {}) & echo started", marker.display());
+    let args = serde_json::json!({ "command": command }).to_string();
+    let cancelled = tokio::time::timeout(Duration::from_millis(200), tool.execute(&args)).await;
+    assert!(
+        cancelled.is_err(),
+        "the call was still waiting when cancelled"
+    );
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(!marker.exists(), "the job outlived its cancelled call");
+}

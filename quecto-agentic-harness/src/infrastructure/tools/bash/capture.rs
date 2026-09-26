@@ -14,6 +14,9 @@ pub(super) struct Capture {
     head_cap: usize,
     tail_cap: usize,
     total: usize,
+    /// The caller has taken its output: bytes still arriving (a background
+    /// job's) are drained and dropped, not kept (#2171 review).
+    released: bool,
 }
 
 impl Capture {
@@ -25,11 +28,15 @@ impl Capture {
             head_cap,
             tail_cap: max_capture_bytes - head_cap,
             total: 0,
+            released: false,
         }
     }
 
     pub(super) fn push(&mut self, bytes: &[u8]) {
         self.total = self.total.saturating_add(bytes.len());
+        if self.released {
+            return;
+        }
         let to_head = self
             .head_cap
             .saturating_sub(self.head.len())
@@ -80,6 +87,19 @@ impl Capture {
     /// Bytes pushed so far: a reader making progress changes it.
     fn total(&self) -> usize {
         self.total
+    }
+
+    /// Keep nothing more: the caller has taken the output.
+    pub(super) fn release(&mut self) {
+        self.released = true;
+        self.head = Vec::new();
+        self.tail = VecDeque::new();
+    }
+
+    /// How many bytes the capture holds.
+    #[cfg(test)]
+    pub(super) fn held(&self) -> usize {
+        self.head.len() + self.tail.len()
     }
 }
 
@@ -202,7 +222,10 @@ impl StreamReader {
                         break true;
                     }
                 };
-                let rendered = capture.lock().unwrap_or_else(|e| e.into_inner()).render();
+                let mut capture = capture.lock().unwrap_or_else(|e| e.into_inner());
+                let rendered = capture.render();
+                // A reader still draining keeps nothing more (#2171 review).
+                capture.release();
                 (rendered, open)
             }
             #[cfg(test)]
