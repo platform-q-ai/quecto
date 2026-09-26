@@ -712,3 +712,15 @@ fn a_command_without_shell_in_its_environment_runs_under_bash_when_installed() {
         assert!(expected.ends_with("/bash"), "{expected}");
     }
 }
+
+/// #2195 review: without bash the description says commands run under a
+/// POSIX shell; with bash it adds nothing.
+#[test]
+fn the_description_names_a_posix_shell_only_without_bash() {
+    let note = super::posix_note("/bin/sh");
+    assert!(
+        note.contains("/bin/sh") && note.contains("no bash syntax"),
+        "{note}"
+    );
+    assert_eq!(super::posix_note("/usr/bin/bash"), "");
+}
