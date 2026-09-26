@@ -30,3 +30,14 @@ data: {"type":"response.completed","response":{"status":"incomplete"}}
     let resp = CodexProvider::parse_sse_response(sse).unwrap();
     assert_eq!(resp.stop_reason, Some(StopReason::MaxTokens));
 }
+
+/// #2179: a refusal stays a refusal when the response then completes.
+#[test]
+fn a_refusal_then_completed_stays_a_refusal() {
+    let sse = r#"data: {"type":"response.refusal.delta","delta":"I can't help with that."}
+data: {"type":"response.refusal.done","refusal":"I can't help with that."}
+data: {"type":"response.completed","response":{"status":"completed"}}
+"#;
+    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    assert_eq!(resp.stop_reason, Some(StopReason::Refusal));
+}
