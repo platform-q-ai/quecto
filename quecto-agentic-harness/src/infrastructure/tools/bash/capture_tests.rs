@@ -38,6 +38,58 @@ async fn a_background_job_holding_the_output_does_not_hold_the_call() {
     );
 }
 
+/// Review #2171: the background job survives the call and its later
+/// writes: returning does not close the output under it.
+#[tokio::test]
+async fn a_background_job_goes_on_after_the_call_returns() {
+    let (tool, tmp) = exec_with_capture(MAX_CAPTURE_BYTES);
+    let marker = tmp.path().join("finished");
+    let command = format!(
+        "(sleep 1; echo later; touch {}) & echo started",
+        marker.display()
+    );
+    let result = tool
+        .execute(&serde_json::json!({ "command": command }).to_string())
+        .await
+        .unwrap();
+    assert!(result.content.contains("started"), "{}", result.content);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(marker.exists(), "the job was stopped by its next write");
+}
+
+/// A background job that keeps writing does not hold the call either: the
+/// wait for quiet output is bounded.
+#[tokio::test]
+async fn a_background_job_that_keeps_writing_does_not_hold_the_call() {
+    let (tool, _tmp) = exec_with_capture(MAX_CAPTURE_BYTES);
+    let started = std::time::Instant::now();
+    let result = tool
+        .execute(r#"{"command": "(for i in $(seq 1 200); do echo tick; sleep 0.1; done) & echo started"}"#)
+        .await
+        .unwrap();
+    let elapsed = started.elapsed();
+    assert!(elapsed < Duration::from_secs(8), "held for {elapsed:?}");
+    assert!(result.content.contains("background"), "{}", result.content);
+}
+
+/// Heavy output from a command with no background job ends normally: all of
+/// it, and no note.
+#[tokio::test]
+async fn heavy_output_without_a_background_job_gets_no_note() {
+    let (tool, _tmp) = exec_with_capture(MAX_CAPTURE_BYTES);
+    let result = tool
+        .execute(r#"{"command": "seq 1 2000000"}"#)
+        .await
+        .unwrap();
+    assert!(!result.content.contains("background"), "{}", result.content);
+    let last = result
+        .content
+        .lines()
+        .rev()
+        .find(|l| l.parse::<u64>().is_ok());
+    assert_eq!(last, Some("2000000"));
+}
+
 /// Output a background job writes after the shell exits is not waited for,
 /// but everything written before is kept, stderr included.
 #[tokio::test]
@@ -49,7 +101,11 @@ async fn output_written_before_the_shell_exits_is_kept() {
         .unwrap();
     assert!(result.content.contains("early"), "{}", result.content);
     assert!(result.content.contains("warned"), "{}", result.content);
-    assert!(!result.content.contains("late"), "{}", result.content);
+    assert!(
+        !result.content.lines().any(|line| line == "late"),
+        "{}",
+        result.content
+    );
 }
 
 /// A command whose output closes when the shell exits gets no note.
@@ -162,6 +218,32 @@ fn a_capture_is_the_same_however_the_stream_is_chunked() {
     }
 }
 
+/// Review #2171: the cuts fall on character boundaries, never splitting a
+/// multibyte character into replacement characters.
+#[test]
+fn a_cut_never_splits_a_character() {
+    for (text, cap) in [
+        ("é".repeat(100), 101),
+        (format!("x{}", "é".repeat(100)), 100),
+        ("日本語".repeat(50), 97),
+    ] {
+        let mut capture = capture::Capture::new(cap);
+        capture.push(text.as_bytes());
+        let (rendered, cut) = capture.render();
+        assert!(cut);
+        assert!(!rendered.contains('\u{FFFD}'), "{rendered}");
+        let omitted: usize = rendered
+            .split("[... ")
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .and_then(|n| n.parse().ok())
+            .unwrap();
+        let kept =
+            rendered.len() - format!("\n[... {omitted} bytes of output omitted ...]\n").len();
+        assert_eq!(kept + omitted, text.len(), "{rendered}");
+    }
+}
+
 #[tokio::test]
 async fn test_read_stream_limited_empty_input() {
     let data: Vec<u8> = Vec::new();
@@ -173,50 +255,73 @@ async fn test_read_stream_limited_empty_input() {
 // --- awaiting a stream ---
 
 #[tokio::test]
-async fn test_await_stream_output_none() {
-    let (s, t) = await_stream_output(None).await;
-    assert!(s.is_empty());
-    assert!(!t);
-}
-
-#[tokio::test]
-async fn test_await_stream_output_some() {
-    let handle = tokio::spawn(async { ("captured".to_string(), false) });
-    let (s, t) = await_stream_output(Some(handle.into())).await;
-    assert_eq!(s, "captured");
-    assert!(!t);
-}
-
-#[tokio::test]
-async fn test_await_stream_output_with_timeout_none() {
-    let ((s, t), open) = await_stream_output_with_timeout(None, Duration::from_millis(50)).await;
+async fn awaiting_no_stream_gives_nothing() {
+    let q = Duration::from_millis(50);
+    let ((s, t), open) = await_stream_output_within(None, q, q).await;
     assert!(s.is_empty());
     assert!(!t);
     assert!(!open);
 }
 
 #[tokio::test]
-async fn test_await_stream_output_with_timeout_completes() {
+async fn awaiting_a_finished_stream_gives_all_of_it() {
     let handle = tokio::spawn(async { ("done".to_string(), false) });
-    let ((s, _), open) =
-        await_stream_output_with_timeout(Some(handle.into()), Duration::from_secs(5)).await;
+    let ((s, _), open) = await_stream_output_within(
+        Some(handle.into()),
+        Duration::from_secs(5),
+        Duration::from_secs(5),
+    )
+    .await;
     assert_eq!(s, "done");
     assert!(!open);
 }
 
-/// A stream still open when the wait runs out gives what it captured so
-/// far, and says it was still open.
+/// A stream gone quiet but still open gives what it captured so far, says
+/// it was still open, and goes on being drained: the writer is not cut off.
 #[tokio::test]
-async fn a_stream_still_open_gives_what_arrived_so_far() {
+async fn a_stream_gone_quiet_gives_what_arrived_so_far() {
+    use tokio::io::AsyncWriteExt;
     let (mut writer, reader) = tokio::io::duplex(64);
-    tokio::io::AsyncWriteExt::write_all(&mut writer, b"partial")
-        .await
-        .unwrap();
+    writer.write_all(b"partial").await.unwrap();
     let reader = capture::StreamReader::spawn(reader, 1024);
-    let ((s, cut), open) =
-        await_stream_output_with_timeout(Some(reader), Duration::from_millis(100)).await;
+    let ((s, cut), open) = await_stream_output_within(
+        Some(reader),
+        Duration::from_millis(100),
+        Duration::from_secs(5),
+    )
+    .await;
     assert_eq!(s, "partial");
     assert!(!cut);
     assert!(open, "the writer is still held");
-    drop(writer);
+    for _ in 0..8 {
+        writer
+            .write_all(&[b'x'; 64])
+            .await
+            .expect("the reader still drains");
+    }
+}
+
+/// A stream that keeps producing is awaited only up to the ceiling.
+#[tokio::test]
+async fn a_stream_that_keeps_producing_is_awaited_up_to_the_ceiling() {
+    use tokio::io::AsyncWriteExt;
+    let (mut writer, reader) = tokio::io::duplex(64);
+    let writing = tokio::spawn(async move {
+        while writer.write_all(b"tick\n").await.is_ok() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    });
+    let reader = capture::StreamReader::spawn(reader, 1 << 20);
+    let started = std::time::Instant::now();
+    let ((s, _), open) = await_stream_output_within(
+        Some(reader),
+        Duration::from_millis(200),
+        Duration::from_millis(600),
+    )
+    .await;
+    let elapsed = started.elapsed();
+    assert!(open);
+    assert!(s.starts_with("tick\n"), "{s}");
+    assert!(elapsed < Duration::from_millis(1500), "{elapsed:?}");
+    writing.abort();
 }

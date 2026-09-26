@@ -23,12 +23,17 @@ use crate::infrastructure::tools::truncate::{TruncatedBy, truncate_tail};
 const MAX_CAPTURE_BYTES: usize = 10 * 1024 * 1024;
 /// Grace window for draining stdout/stderr after a timed-out child is killed.
 const STREAM_DRAIN_TIMEOUT_ON_KILL: Duration = Duration::from_millis(250);
-/// How long output may keep arriving after the shell exits (#2167). Only a
-/// background job still holds the pipes then; the call does not wait for it.
-const STREAM_DRAIN_AFTER_EXIT: Duration = Duration::from_millis(500);
+/// After the shell exits, the call waits for its output to end — until no
+/// output has arrived for this long (#2167): only a background job still
+/// holds the pipes then, and the call does not wait for it.
+const QUIET_AFTER_EXIT: Duration = Duration::from_millis(500);
+/// The longest the call waits after the shell exits, for a background job
+/// that keeps writing.
+const CEILING_AFTER_EXIT: Duration = Duration::from_secs(5);
 /// Said when a background job still held the output after the shell exited.
-const BACKGROUND_NOTE: &str = "[a background process still holds this command's output; \
-     output after the shell exited is not captured. Redirect it to keep it, e.g. `cmd > out.log 2>&1 &`]";
+const BACKGROUND_NOTE: &str = "[a background process still holds this command's output; the call \
+     returned without waiting for it, and its later output is discarded. Redirect it to keep it, \
+     e.g. `cmd > out.log 2>&1 &`]";
 
 mod capture;
 use capture::StreamReader;
@@ -438,25 +443,26 @@ async fn run_child_with_timeout(
 /// - Save fails:      `[Output truncated to last N lines / N bytes]`
 #[cfg(test)]
 async fn collect_and_truncate_output(stream_tasks: &mut StreamTasks) -> String {
-    let (stdout, stdout_cut) = await_stream_output(stream_tasks.stdout_task.take()).await;
-    let (stderr, stderr_cut) = await_stream_output(stream_tasks.stderr_task.take()).await;
-    truncate_output(combine(stdout, stderr), stdout_cut || stderr_cut).await
+    let (output, capture_cut, _) = collect_after_exit(stream_tasks).await;
+    truncate_output(output, capture_cut).await
 }
 
 /// The output once the shell has exited: each stream to its end, or what
-/// arrived within [`STREAM_DRAIN_AFTER_EXIT`] when a background job still
-/// holds it (#2167). Returns the output, whether a capture dropped part of
-/// it, and whether a stream was still held open.
+/// arrived before it went quiet when a background job still holds it
+/// (#2167). Returns the output, whether a capture dropped part of it, and
+/// whether a stream was still held open.
 async fn collect_after_exit(stream_tasks: &mut StreamTasks) -> (String, bool, bool) {
-    let drain = |reader: Option<StreamReader>| async move {
-        match reader {
-            Some(reader) => reader.finish_within(STREAM_DRAIN_AFTER_EXIT).await,
-            None => (Default::default(), false),
-        }
-    };
     let (stdout, stderr) = tokio::join!(
-        drain(stream_tasks.stdout_task.take()),
-        drain(stream_tasks.stderr_task.take())
+        await_stream_output_within(
+            stream_tasks.stdout_task.take(),
+            QUIET_AFTER_EXIT,
+            CEILING_AFTER_EXIT
+        ),
+        await_stream_output_within(
+            stream_tasks.stderr_task.take(),
+            QUIET_AFTER_EXIT,
+            CEILING_AFTER_EXIT
+        )
     );
     let ((stdout, stdout_cut), stdout_open) = stdout;
     let ((stderr, stderr_cut), stderr_open) = stderr;
@@ -613,13 +619,15 @@ async fn handle_timeout(
     let _ = child.wait().await;
     // What arrived before the kill is kept even when a descendant outside
     // the group still holds a stream open (#2167).
-    let ((stdout_raw, stdout_cut), _) = await_stream_output_with_timeout(
+    let ((stdout_raw, stdout_cut), _) = await_stream_output_within(
         stream_tasks.stdout_task.take(),
+        STREAM_DRAIN_TIMEOUT_ON_KILL,
         STREAM_DRAIN_TIMEOUT_ON_KILL,
     )
     .await;
-    let ((stderr_raw, stderr_cut), _) = await_stream_output_with_timeout(
+    let ((stderr_raw, stderr_cut), _) = await_stream_output_within(
         stream_tasks.stderr_task.take(),
+        STREAM_DRAIN_TIMEOUT_ON_KILL,
         STREAM_DRAIN_TIMEOUT_ON_KILL,
     )
     .await;
@@ -662,22 +670,15 @@ async fn handle_timeout(
     }
 }
 
-#[cfg(test)]
-async fn await_stream_output(task: Option<StreamReader>) -> (String, bool) {
-    match task {
-        Some(reader) => reader.finish().await,
-        None => (String::new(), false),
-    }
-}
-
-/// A stream to its end or what arrived within `timeout`; the flag says the
-/// stream was still open.
-async fn await_stream_output_with_timeout(
+/// A stream to its end, or what arrived before it went quiet for `quiet` or
+/// `ceiling` passed; the flag says the stream was still open.
+async fn await_stream_output_within(
     task: Option<StreamReader>,
-    timeout: Duration,
+    quiet: Duration,
+    ceiling: Duration,
 ) -> ((String, bool), bool) {
     match task {
-        Some(reader) => reader.finish_within(timeout).await,
+        Some(reader) => reader.finish_within(quiet, ceiling).await,
         None => ((String::new(), false), false),
     }
 }

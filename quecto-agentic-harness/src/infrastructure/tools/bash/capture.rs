@@ -47,24 +47,68 @@ impl Capture {
         debug_assert!(self.head.len() <= self.head_cap && self.tail.len() <= self.tail_cap);
     }
 
-    /// The kept text, and whether any of the stream was dropped.
+    /// The kept text, and whether any of the stream was dropped. When the
+    /// middle was dropped, both cuts move to a character boundary so no
+    /// character is split (#2171 review); the bytes moved are counted as
+    /// omitted.
     pub(super) fn render(&self) -> (String, bool) {
-        let kept = self.head.len() + self.tail.len();
-        debug_assert!(kept <= self.total);
-        let dropped = self.total - kept;
-        let mut bytes = self.head.clone();
+        debug_assert!(self.head.len() + self.tail.len() <= self.total);
+        let dropped = self.total - self.head.len() - self.tail.len();
+        let tail: Vec<u8> = self.tail.iter().copied().collect();
+        let (head, tail) = match dropped {
+            0 => (&self.head[..], &tail[..]),
+            _ => (
+                &self.head[..complete_prefix(&self.head)],
+                &tail[leading_continuations(&tail)..],
+            ),
+        };
+        let mut bytes = head.to_vec();
         if dropped > 0 {
+            let omitted = self.total - head.len() - tail.len();
             bytes.extend_from_slice(
-                format!("\n[... {dropped} bytes of output omitted ...]\n").as_bytes(),
+                format!("\n[... {omitted} bytes of output omitted ...]\n").as_bytes(),
             );
         }
-        bytes.extend(self.tail.iter());
+        bytes.extend_from_slice(tail);
         let text = match String::from_utf8(bytes) {
             Ok(valid) => valid,
             Err(err) => String::from_utf8_lossy(err.as_bytes()).into_owned(),
         };
         (text, dropped > 0)
     }
+
+    /// Bytes pushed so far: a reader making progress changes it.
+    fn total(&self) -> usize {
+        self.total
+    }
+}
+
+/// The length of `bytes` without a trailing, incomplete UTF-8 sequence.
+fn complete_prefix(bytes: &[u8]) -> usize {
+    let len = bytes.len();
+    for back in 1..=len.min(3) {
+        let byte = bytes[len - back];
+        if byte & 0xC0 != 0x80 {
+            // A lead byte: keep it only when its whole sequence is here.
+            let needed = match byte {
+                b if b >= 0xF0 => 4,
+                b if b >= 0xE0 => 3,
+                b if b >= 0xC0 => 2,
+                _ => 1,
+            };
+            return if needed > back { len - back } else { len };
+        }
+    }
+    len
+}
+
+/// How many continuation bytes open `bytes` (the rest of a character cut off).
+fn leading_continuations(bytes: &[u8]) -> usize {
+    bytes
+        .iter()
+        .take(3)
+        .take_while(|byte| *byte & 0xC0 == 0x80)
+        .count()
 }
 
 /// Read `pipe` to its end into a bounded capture.
@@ -96,13 +140,26 @@ where
     }
 }
 
-/// One stream being read in the background. The task renders the capture at
-/// end of stream; when the caller stops waiting first, it renders what the
-/// capture holds so far.
+/// One stream being read in the background. The reader drains the stream to
+/// its end whatever the caller does, so a background job still writing to
+/// it is never stopped by a closed pipe (#2171 review); the caller renders
+/// what the capture holds when it stops waiting.
 pub(super) struct StreamReader {
-    task: tokio::task::JoinHandle<(String, bool)>,
-    capture: Option<Arc<Mutex<Capture>>>,
+    source: Source,
 }
+
+enum Source {
+    Pipe {
+        done: tokio::task::JoinHandle<()>,
+        capture: Arc<Mutex<Capture>>,
+    },
+    /// A task that renders its own output (tests model pipes this way).
+    #[cfg(test)]
+    Rendered(tokio::task::JoinHandle<(String, bool)>),
+}
+
+/// How often a caller waiting for quiet output looks again.
+const QUIET_POLL: Duration = Duration::from_millis(25);
 
 impl StreamReader {
     pub(super) fn spawn<R>(pipe: R, max_capture_bytes: usize) -> Self
@@ -111,47 +168,64 @@ impl StreamReader {
     {
         let capture = Arc::new(Mutex::new(Capture::new(max_capture_bytes)));
         let shared = capture.clone();
-        let task = tokio::spawn(async move {
-            read_into(pipe, &shared).await;
-            let capture = shared.lock().unwrap_or_else(|e| e.into_inner());
-            capture.render()
-        });
+        let done = tokio::spawn(async move { read_into(pipe, &shared).await });
         Self {
-            task,
-            capture: Some(capture),
+            source: Source::Pipe { done, capture },
         }
     }
 
-    /// The stream to its end.
-    #[cfg(test)]
-    pub(super) async fn finish(self) -> (String, bool) {
-        self.task.await.unwrap_or_default()
-    }
-
-    /// The stream to its end, or what arrived within `wait`; the flag says
-    /// whether the stream was still open when the wait ran out.
-    pub(super) async fn finish_within(self, wait: Duration) -> ((String, bool), bool) {
-        let mut task = self.task;
-        match tokio::time::timeout(wait, &mut task).await {
-            Ok(joined) => (joined.unwrap_or_default(), false),
-            Err(_) => {
-                task.abort();
-                let so_far = self.capture.map_or_else(Default::default, |capture| {
-                    capture.lock().unwrap_or_else(|e| e.into_inner()).render()
-                });
-                (so_far, true)
+    /// The stream to its end, or — once no output has arrived for `quiet`,
+    /// or `ceiling` has passed — what arrived so far. The flag says the
+    /// stream was still open then: something else holds it. The reader goes
+    /// on draining it either way.
+    pub(super) async fn finish_within(
+        self,
+        quiet: Duration,
+        ceiling: Duration,
+    ) -> ((String, bool), bool) {
+        match self.source {
+            Source::Pipe { mut done, capture } => {
+                let started = tokio::time::Instant::now();
+                let mut seen = total(&capture);
+                let mut last_progress = started;
+                let open = loop {
+                    if tokio::time::timeout(QUIET_POLL, &mut done).await.is_ok() {
+                        break false;
+                    }
+                    let now = tokio::time::Instant::now();
+                    let latest = total(&capture);
+                    if latest != seen {
+                        seen = latest;
+                        last_progress = now;
+                    }
+                    if now - last_progress >= quiet || now - started >= ceiling {
+                        break true;
+                    }
+                };
+                let rendered = capture.lock().unwrap_or_else(|e| e.into_inner()).render();
+                (rendered, open)
             }
+            #[cfg(test)]
+            Source::Rendered(mut task) => match tokio::time::timeout(ceiling, &mut task).await {
+                Ok(joined) => (joined.unwrap_or_default(), false),
+                Err(_) => {
+                    task.abort();
+                    (Default::default(), true)
+                }
+            },
         }
     }
 }
 
-/// A reader over a task that renders its own output (tests model pipes this way).
+fn total(capture: &Mutex<Capture>) -> usize {
+    capture.lock().unwrap_or_else(|e| e.into_inner()).total()
+}
+
 #[cfg(test)]
 impl From<tokio::task::JoinHandle<(String, bool)>> for StreamReader {
     fn from(task: tokio::task::JoinHandle<(String, bool)>) -> Self {
         Self {
-            task,
-            capture: None,
+            source: Source::Rendered(task),
         }
     }
 }
