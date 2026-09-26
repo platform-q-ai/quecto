@@ -15,6 +15,8 @@ use crate::domain::inference_admission::{Feedback, ThrottleFeedback};
 use crate::domain::message::LlmResponse;
 use crate::domain::provider::{CancelFlag, StreamEvent};
 
+#[path = "attempt_events.rs"]
+mod attempt_events;
 #[path = "diagnostic_sse.rs"]
 mod diagnostic_sse;
 #[path = "transport_diagnostics.rs"]
@@ -505,26 +507,8 @@ impl ProtocolObserver {
                     if terminal.is_some() {
                         state.diagnostics.terminal_event = terminal;
                         state.diagnostics.termination = Termination::Completed;
-                    } else if matches!(
-                        event,
-                        "response.reasoning_summary_text.delta"
-                            | "response.reasoning.summary_text.delta"
-                            | "response.created"
-                            | "response.in_progress"
-                            | "response.output_text.delta"
-                            | "response.output_item.added"
-                            | "response.output_item.done"
-                            | "response.content_part.added"
-                            | "response.content_part.done"
-                            | "response.output_text.done"
-                            | "message_start"
-                            | "message_delta"
-                            | "content_block_start"
-                            | "content_block_delta"
-                            | "content_block_stop"
-                            | "ping"
-                    ) || (matches!(self.vendor, Vendor::OpenAi)
-                        && value.get("choices").is_some())
+                    } else if attempt_events::KNOWN_EVENTS.contains(&event)
+                        || (matches!(self.vendor, Vendor::OpenAi) && value.get("choices").is_some())
                     {
                     } else {
                         state.diagnostics.unknown_events =

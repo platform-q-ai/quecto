@@ -252,3 +252,32 @@ fn malformed_anthropic_terminal_retains_event_without_payload_content() {
         assert!(!serde_json::to_string(d).unwrap().contains("SECRET"));
     }
 }
+
+/// #2158: a recorded Codex tool-call stream counts no unknown events; an
+/// event nobody knows still counts.
+#[test]
+fn a_codex_tool_call_stream_has_no_unknown_events() {
+    let receipt = diagnostic_receipt();
+    let mut protocol = ProtocolObserver::new(Profile::new(
+        Vendor::Codex,
+        super::super::attempt_profile::Surface::Incremental,
+    ));
+    for line in [
+        r#"data: {"type":"response.created","response":{}}"#,
+        r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"c1","name":"read","arguments":""}}"#,
+        r#"data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\""}"#,
+        r#"data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":":\"a\"}"}"#,
+        r#"data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"path\":\"a\"}"}"#,
+        r#"data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call"}}"#,
+    ] {
+        protocol.observe(line, &receipt);
+    }
+    assert_eq!(receipt.0.lock().unwrap().diagnostics.unknown_events, 0);
+    // Before the terminal event, after which nothing is counted.
+    protocol.observe(r#"data: {"type":"response.never_heard_of"}"#, &receipt);
+    protocol.observe(
+        r#"data: {"type":"response.completed","response":{"status":"completed"}}"#,
+        &receipt,
+    );
+    assert_eq!(receipt.0.lock().unwrap().diagnostics.unknown_events, 1);
+}
