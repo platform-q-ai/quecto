@@ -122,9 +122,7 @@ fn render(found: FindResult) -> String {
         append_line(
             &mut content,
             &format!(
-                "[{} results limit reached: the search stops at the limit, so these are an arbitrary {} of the matches, not the first. Use limit={} for more, or refine pattern]",
-                found.limit,
-                found.limit,
+                "[Results limit reached: the search stops at its limit, so this listing is an arbitrary subset of the matches, not the first. Use limit={} for more, or refine pattern]",
                 found.limit.saturating_mul(2)
             ),
         );

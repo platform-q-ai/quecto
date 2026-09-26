@@ -667,3 +667,12 @@ fn the_limit_is_known_from_one_extra_entry() {
     assert!(more.result_limit_reached);
     assert_eq!(more.entries, ["a", "b"]);
 }
+
+/// #2176 review: output cut at the stdout cap is an arbitrary subset too.
+#[test]
+fn a_capped_read_is_an_arbitrary_subset() {
+    let capped = output(b"/ws/b\n/ws/a\n/ws/c", b"", Path::new("/ws"), 1000, true);
+    assert!(capped.incomplete);
+    assert!(capped.result_limit_reached);
+    assert_eq!(capped.entries, ["a", "b"], "the cut last line is dropped");
+}

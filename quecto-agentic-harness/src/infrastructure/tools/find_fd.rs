@@ -305,7 +305,9 @@ fn output(stdout: &[u8], stderr: &[u8], root: &Path, limit: usize, stopped: bool
     let more = entries.len() > limit;
     entries.truncate(limit);
     FindOutput {
-        result_limit_reached: more,
+        // Output cut at the stdout cap is as arbitrary a subset as one cut
+        // at the limit (#2176 review).
+        result_limit_reached: more || stopped,
         entries,
         incomplete: stopped,
         diagnostic: if stopped && stderr.is_empty() {

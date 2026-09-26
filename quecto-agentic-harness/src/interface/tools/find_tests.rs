@@ -114,7 +114,7 @@ fn rendered(entries: Vec<String>, incomplete: bool, limited: bool) -> String {
 }
 
 #[test]
-fn renders_order_whitespace_directories_unicode_and_limit_heuristic() {
+fn renders_order_whitespace_directories_unicode_and_limit_notice() {
     assert_eq!(
         rendered(vec![], false, false),
         "No files found matching pattern"
@@ -125,7 +125,7 @@ fn renders_order_whitespace_directories_unicode_and_limit_heuristic() {
     );
     assert!(
         rendered(vec!["a".into()], false, true).contains(
-            "3 results limit reached: the search stops at the limit, so these are an arbitrary 3 of the matches, not the first. Use limit=6"
+            "Results limit reached: the search stops at its limit, so this listing is an arbitrary subset of the matches, not the first. Use limit=6"
         )
     );
 }
@@ -205,5 +205,5 @@ fn the_byte_cap_keeps_the_limit_notice() {
     let entries: Vec<String> = (0..400).map(|i| format!("{long}{i}")).collect();
     let out = rendered(entries, false, true);
     assert!(out.contains("[50KB limit reached]"), "{out}");
-    assert!(out.contains("an arbitrary 3 of the matches"), "{out}");
+    assert!(out.contains("an arbitrary subset of the matches"), "{out}");
 }

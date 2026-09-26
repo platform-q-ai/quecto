@@ -17,12 +17,13 @@ pub struct FindPathsRequest {
     pub limit: usize,
 }
 
-/// Entries are complete, root-relative paths, sorted, never raw fragments.
+/// Entries are complete, root-relative paths, never raw fragments (the fd
+/// adapter sorts them).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FindOutput {
     pub entries: Vec<String>,
-    /// More matches exist than the limit returned: the entries are an
-    /// arbitrary `limit` of them, not the first.
+    /// More matches exist than were returned: the entries are an arbitrary
+    /// subset of them, not the first.
     pub result_limit_reached: bool,
     pub incomplete: bool,
     pub diagnostic: Option<String>,
