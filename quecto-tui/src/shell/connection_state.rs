@@ -42,6 +42,10 @@ pub(crate) struct ConnectionState {
     /// The spinner message this module last wrote, so a tool message set by
     /// someone else is never clobbered when the wait ends.
     pub(crate) admission_spinner_message: Option<String>,
+    /// Tools the spinner shows as running (#2175): calls of one response may
+    /// run at once, and the label stays until the last ends or the model
+    /// streams again (a lost end event cannot pin it).
+    pub(crate) running_tools: std::collections::BTreeSet<String>,
     pub(crate) agent_connected: bool,
     /// Pin: once the left panel has shown for a connected agent it must not
     /// vanish when the agent dies (#1047) — the user keeps the session /
@@ -154,6 +158,7 @@ impl ConnectionState {
             admission_unversioned_clears: Default::default(),
             admission_view: None,
             admission_spinner_message: None,
+            running_tools: Default::default(),
             agent_connected: true,
             agent_ever_connected: true,
             child_exit_watch: None,

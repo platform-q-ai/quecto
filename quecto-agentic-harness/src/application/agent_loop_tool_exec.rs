@@ -4,26 +4,66 @@
 
 use super::*;
 
-/// An overlapping batch in flight: its calls and the results finished so
-/// far. Dropped at the batch's end or by a cancellation, it gives the
-/// response its calls back and appends every finished result in call order,
-/// so a cancelled turn keeps what completed (#2175 review).
+/// An overlapping batch in flight: its calls and each call's result so far.
+/// Dropped at the batch's end or by a cancellation, it gives the response
+/// its calls back and appends every finished result in call order, so a
+/// cancelled turn keeps what completed (#2175 review).
 struct OverlappingBatch<'a> {
     agent: &'a AgentLoopImpl,
     messages: &'a mut Vec<Message>,
     run_ledger: &'a mut Vec<Message>,
     assistant_index: usize,
+    current_turn: u32,
     calls: Vec<ToolCall>,
-    finished: Vec<Option<PreparedResult>>,
+    slots: Vec<Slot>,
 }
+
+/// Where one call of a batch stands.
+enum Slot {
+    Running,
+    /// Ran; not yet audited or spilled.
+    Ran(CallOutcome, std::time::Duration),
+    Prepared(PreparedResult),
+}
+
+type CallOutcome = (
+    String,
+    Vec<crate::domain::tool::ImageBlock>,
+    Option<String>,
+    bool,
+);
 
 impl Drop for OverlappingBatch<'_> {
     fn drop(&mut self) {
-        self.messages[self.assistant_index].tool_calls = std::mem::take(&mut self.calls);
-        for result in std::mem::take(&mut self.finished).into_iter().flatten() {
+        let calls = std::mem::take(&mut self.calls);
+        for (tc, slot) in calls.iter().zip(std::mem::take(&mut self.slots)) {
+            let result = match slot {
+                Slot::Running => continue,
+                Slot::Prepared(result) => result,
+                // Cancelled before it was prepared: its message is built
+                // here, without the audit record or spill a finished batch
+                // gives it (neither can be awaited in a drop).
+                Slot::Ran((content, image_blocks, delivery_metadata, is_error), _) => {
+                    let mut message = self.agent.build_tool_message(ToolMessageArgs {
+                        tc,
+                        content,
+                        image_blocks,
+                        is_error,
+                    });
+                    message.turn = Some(self.current_turn);
+                    PreparedResult {
+                        message,
+                        tool_name: tc.name.clone(),
+                        tool_arguments: tc.wire_arguments().into_owned(),
+                        delivery_metadata,
+                        is_error,
+                    }
+                }
+            };
             self.agent
                 .append_tool_result(self.messages, self.run_ledger, result);
         }
+        self.messages[self.assistant_index].tool_calls = calls;
     }
 }
 
@@ -40,12 +80,7 @@ struct PreparedResult {
 struct FinishedCall<'a> {
     idx: usize,
     tc: &'a ToolCall,
-    outcome: (
-        String,
-        Vec<crate::domain::tool::ImageBlock>,
-        Option<String>,
-        bool,
-    ),
+    outcome: CallOutcome,
     elapsed: std::time::Duration,
 }
 
@@ -80,23 +115,31 @@ impl AgentLoopImpl {
         // one at a time, as before. Either way each call is recorded before
         // it runs and its result is appended in call order. The calls are
         // borrowed, never cloned: their arguments may be large (#993).
+        let calls = &messages[assistant_index].tool_calls;
         let overlap = call_count > 1
-            && messages[assistant_index]
-                .tool_calls
-                .iter()
-                .all(|tc| self.tool_executor().overlaps_safely(&tc.name));
+            && calls.iter().enumerate().all(|(i, tc)| {
+                let arguments = tc.wire_arguments();
+                // Two identical calls would race on the tools' own caches
+                // (read's), so they run one at a time (#2175 review).
+                let repeated = calls[..i]
+                    .iter()
+                    .any(|earlier| earlier.name == tc.name && earlier.arguments == tc.arguments);
+                !repeated && self.tool_executor().overlaps_safely(&tc.name, &arguments)
+            });
         if overlap {
-            // The calls move into the batch (never cloned, #993). Each result
-            // is prepared (audited, spilled) as it finishes; when the batch
-            // ends, or is dropped by a cancellation, the calls go back and
-            // every finished result is appended in call order (#2175 review).
+            // The calls move into the batch (never cloned, #993). While they
+            // run, nothing else is awaited, so each is timed alone; then each
+            // result is prepared (audited, spilled) in call order. Dropped at
+            // its end or by a cancellation, the batch gives the calls back
+            // and appends every finished result in call order (#2175 review).
             let calls = std::mem::take(&mut messages[assistant_index].tool_calls);
             let mut batch = OverlappingBatch {
                 agent: self,
                 messages,
                 run_ledger,
                 assistant_index,
-                finished: (0..calls.len()).map(|_| None).collect(),
+                current_turn,
+                slots: (0..calls.len()).map(|_| Slot::Running).collect(),
                 calls,
             };
             let calls = &batch.calls;
@@ -113,16 +156,27 @@ impl AgentLoopImpl {
                 })
                 .collect();
             while let Some((idx, outcome, elapsed)) = futures::StreamExt::next(&mut running).await {
-                let tc = &calls[idx];
+                debug_assert!(
+                    matches!(batch.slots[idx], Slot::Running),
+                    "each call finishes once"
+                );
+                batch.slots[idx] = Slot::Ran(outcome, elapsed);
+            }
+            drop(running);
+            for idx in 0..calls.len() {
+                let Slot::Ran(outcome, elapsed) =
+                    std::mem::replace(&mut batch.slots[idx], Slot::Running)
+                else {
+                    unreachable!("every call ran before any is prepared");
+                };
                 let finished = FinishedCall {
                     idx,
-                    tc,
+                    tc: &calls[idx],
                     outcome,
                     elapsed,
                 };
-                let prepared = self.prepare_tool_result(current_turn, finished).await;
-                debug_assert!(batch.finished[idx].is_none(), "each call finishes once");
-                batch.finished[idx] = Some(prepared);
+                batch.slots[idx] =
+                    Slot::Prepared(self.prepare_tool_result(current_turn, finished).await);
             }
         } else {
             // One at a time, each result appended before the next call runs.
@@ -149,22 +203,21 @@ impl AgentLoopImpl {
     /// Audit a call before it runs: what it runs with, and what the model
     /// sent when that differs (#2123).
     async fn audit_tool_call(&self, current_turn: u32, tc: &ToolCall) {
-        if self.audit_log.is_none() {
-            return;
+        if self.audit_log.is_some() {
+            let delivered = tc.wire_arguments().into_owned();
+            self.audit(
+                current_turn,
+                AuditEvent::ToolCall {
+                    tool: tc.name.clone(),
+                    call_id: tc.id.clone(),
+                    // What the tool ran with (#2123), as `argument_bytes`
+                    // measures it (#2150).
+                    raw_arguments: (tc.arguments != delivered).then(|| tc.arguments.clone()),
+                    arguments: delivered,
+                },
+            )
+            .await;
         }
-        let delivered = tc.wire_arguments().into_owned();
-        self.audit(
-            current_turn,
-            AuditEvent::ToolCall {
-                tool: tc.name.clone(),
-                call_id: tc.id.clone(),
-                // What the tool ran with (#2123), as `argument_bytes`
-                // measures it (#2150).
-                raw_arguments: (tc.arguments != delivered).then(|| tc.arguments.clone()),
-                arguments: delivered,
-            },
-        )
-        .await;
     }
 
     /// Prepare a finished call's result: audit it and build (and spill) its

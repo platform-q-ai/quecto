@@ -55,11 +55,14 @@ impl ToolExecutor for ToolRegistryImpl {
 
     /// A bundled tool that says its calls may overlap (#2169); every other
     /// tool, an extension included whatever it claims, runs one at a time.
-    fn overlaps_safely(&self, name: &str) -> bool {
+    fn overlaps_safely(&self, name: &str, arguments: &str) -> bool {
         let bundled = self.metadata.get(name).is_some_and(|registration| {
             registration.source == crate::domain::tool_descriptor::ToolSource::BundledNative
         });
-        bundled && self.get(name).is_some_and(|tool| tool.overlaps_safely())
+        bundled
+            && self
+                .get(name)
+                .is_some_and(|tool| tool.overlaps_safely(arguments))
     }
 }
 

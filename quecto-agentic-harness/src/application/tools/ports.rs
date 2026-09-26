@@ -49,11 +49,11 @@ pub trait Tool: Send + Sync {
     /// Called after a non-error tool result has been appended to the parent conversation and run ledger.
     fn result_delivered(&self, _arguments: &str, _result: &ToolResult) {}
 
-    /// Whether calls of this tool may run at the same time as other calls
-    /// that may (#2169): the tool changes nothing another call reads and
-    /// needs no pacing against a rate-limited service. False unless the tool
-    /// says so.
-    fn overlaps_safely(&self) -> bool {
+    /// Whether this call (with `arguments`) may run at the same time as
+    /// other calls that may (#2169): it changes nothing another call reads
+    /// and needs no pacing against a rate-limited service. False unless the
+    /// tool says so.
+    fn overlaps_safely(&self, _arguments: &str) -> bool {
         false
     }
     /// Return the tool's definition for the LLM.
@@ -155,10 +155,11 @@ pub trait ToolExecutor: Send + Sync {
     /// Acknowledge that a non-error result was durably delivered to the caller's context.
     fn result_delivered(&self, _name: &str, _arguments: &str, _result: &ToolResult) {}
 
-    /// Whether a call of `name` may run at the same time as other calls
-    /// that may (#2169): only tools that change nothing and depend on no
-    /// other call's effects. Nothing may unless its registry says so.
-    fn overlaps_safely(&self, _name: &str) -> bool {
+    /// Whether a call of `name` with `arguments` may run at the same time
+    /// as other calls that may (#2169): only calls that change nothing and
+    /// depend on no other call's effects. Nothing may unless its registry
+    /// says so.
+    fn overlaps_safely(&self, _name: &str, _arguments: &str) -> bool {
         false
     }
 }

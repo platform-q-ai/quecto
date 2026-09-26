@@ -27,19 +27,22 @@ fn bundled_tools_that_change_nothing_may_overlap() {
     let (registry, _tmp) = super::super::tests::test_registry();
     for name in ["read", "grep", "find", "ls"] {
         assert!(registry.get(name).is_some(), "{name} is registered");
-        assert!(registry.overlaps_safely(name), "{name} may overlap");
+        assert!(registry.overlaps_safely(name, "{}"), "{name} may overlap");
     }
     // Registered only in some compositions: when present, they may overlap.
     for name in ["web_fetch", "docs"] {
         if registry.get(name).is_some() {
-            assert!(registry.overlaps_safely(name), "{name} may overlap");
+            assert!(registry.overlaps_safely(name, "{}"), "{name} may overlap");
         }
     }
     // web_search is paced by its provider's rate limit (#2175 review).
     for name in ["bash", "write", "edit", "web_search", "recall"] {
-        assert!(!registry.overlaps_safely(name), "{name} may not overlap");
+        assert!(
+            !registry.overlaps_safely(name, "{}"),
+            "{name} may not overlap"
+        );
     }
-    assert!(!registry.overlaps_safely("not-a-tool"));
+    assert!(!registry.overlaps_safely("not-a-tool", "{}"));
 }
 
 /// A tool that says its calls may overlap.
@@ -47,7 +50,7 @@ fn bundled_tools_that_change_nothing_may_overlap() {
 struct Overlapping(&'static str);
 
 impl Tool for Overlapping {
-    fn overlaps_safely(&self) -> bool {
+    fn overlaps_safely(&self, _arguments: &str) -> bool {
         true
     }
     fn definition(&self) -> crate::domain::tool::ToolDefinition {
@@ -70,8 +73,17 @@ fn only_a_bundled_tool_that_says_so_overlaps() {
     assert!(registry.register_uds_tool(Arc::new(Overlapping("uds_read"))));
     assert!(registry.register(Arc::new(Named("bundled_quiet"))));
     assert!(registry.register(Arc::new(Overlapping("bundled_read"))));
-    assert!(!registry.overlaps_safely("extension_read"));
-    assert!(!registry.overlaps_safely("uds_read"));
-    assert!(!registry.overlaps_safely("bundled_quiet"));
-    assert!(registry.overlaps_safely("bundled_read"));
+    assert!(!registry.overlaps_safely("extension_read", "{}"));
+    assert!(!registry.overlaps_safely("uds_read", "{}"));
+    assert!(!registry.overlaps_safely("bundled_quiet", "{}"));
+    assert!(registry.overlaps_safely("bundled_read", "{}"));
+}
+
+/// #2175 review: a ranked grep paces a rate-limited judge, so it runs one
+/// at a time; a plain one may overlap.
+#[test]
+fn a_ranked_grep_does_not_overlap() {
+    let (registry, _tmp) = super::super::tests::test_registry();
+    assert!(registry.overlaps_safely("grep", r#"{"pattern":"x"}"#));
+    assert!(!registry.overlaps_safely("grep", r#"{"pattern":"x","rank_by":"y"}"#));
 }

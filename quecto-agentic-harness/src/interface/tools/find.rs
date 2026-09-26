@@ -18,7 +18,7 @@ impl FindTool {
 }
 impl Tool for FindTool {
     /// Reads only: calls may overlap (#2169).
-    fn overlaps_safely(&self) -> bool {
+    fn overlaps_safely(&self, _arguments: &str) -> bool {
         true
     }
 

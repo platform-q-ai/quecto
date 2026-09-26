@@ -136,9 +136,11 @@ impl GrepTool {
 }
 
 impl Tool for GrepTool {
-    /// Reads only: calls may overlap (#2169).
-    fn overlaps_safely(&self) -> bool {
-        true
+    /// Reads only: calls may overlap (#2169), except a ranked search, which
+    /// paces a rate-limited judge (#2175 review).
+    fn overlaps_safely(&self, arguments: &str) -> bool {
+        serde_json::from_str::<serde_json::Value>(arguments)
+            .is_ok_and(|args| args["rank_by"].is_null())
     }
 
     fn definition(&self) -> ToolDefinition {

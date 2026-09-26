@@ -47,6 +47,13 @@ impl Tool for SlowTool {
 /// Runs one response carrying `calls`, then a final answer; returns the tool
 /// results in conversation order and the most calls that ran at once.
 async fn run(calls: &[&str]) -> (Vec<String>, usize, std::time::Duration) {
+    run_with(calls, |i| format!(r#"{{"n":{i}}}"#)).await
+}
+
+async fn run_with(
+    calls: &[&str],
+    arguments: impl Fn(usize) -> String,
+) -> (Vec<String>, usize, std::time::Duration) {
     let running = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let most_at_once = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut registry = MockRegistry::new();
@@ -67,7 +74,7 @@ async fn run(calls: &[&str]) -> (Vec<String>, usize, std::time::Duration) {
         .map(|(i, name)| ToolCall {
             id: format!("call_{i}"),
             name: name.to_string(),
-            arguments: format!(r#"{{"n":{i}}}"#),
+            arguments: arguments(i),
         })
         .collect();
     let provider = Arc::new(MockProvider::new_results(vec![
@@ -205,4 +212,13 @@ async fn a_cancelled_batch_keeps_the_results_that_finished() {
         })
         .collect();
     assert_eq!(results, [("call_1", "fast result")]);
+}
+
+/// #2175 review: two identical calls would race on a tool's own cache, so a
+/// batch holding them runs one call at a time.
+#[tokio::test]
+async fn identical_calls_run_one_at_a_time() {
+    let (results, most_at_once, _) = run_with(&["read_slow", "read_slow"], |_| "{}".into()).await;
+    assert_eq!(most_at_once, 1);
+    assert_eq!(results.len(), 2);
 }

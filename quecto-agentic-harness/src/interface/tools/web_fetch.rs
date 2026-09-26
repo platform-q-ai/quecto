@@ -27,7 +27,7 @@ fn result(content: String, is_error: bool) -> ToolResult {
 }
 impl Tool for WebFetchTool {
     /// Reads only: calls may overlap (#2169).
-    fn overlaps_safely(&self) -> bool {
+    fn overlaps_safely(&self, _arguments: &str) -> bool {
         true
     }
 

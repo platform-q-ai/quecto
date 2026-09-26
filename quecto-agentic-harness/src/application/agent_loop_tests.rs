@@ -194,7 +194,7 @@ impl ToolExecutor for MockRegistry {
         Box::pin(async move { Err(err) })
     }
 
-    fn overlaps_safely(&self, name: &str) -> bool {
+    fn overlaps_safely(&self, name: &str, _arguments: &str) -> bool {
         self.overlapping
             .iter()
             .any(|overlapping| overlapping == name)

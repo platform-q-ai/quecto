@@ -615,3 +615,22 @@ async fn the_spinner_keeps_a_tool_label_while_overlapping_calls_run() {
     app.handle_event(end("b"));
     assert_eq!(app.ac().spinner.as_ref().unwrap().message(), awaiting);
 }
+
+/// #2175 review: an end event lost on the way cannot pin a tool label: the
+/// model streaming again means every tool of its last response ended.
+#[tokio::test]
+async fn a_lost_tool_end_does_not_pin_the_spinner_label() {
+    let mut app = test_app().await;
+    app.ac_mut().spinner = Some(Spinner::new("Working"));
+    app.handle_event(Event::ToolExecutionStart {
+        tool_call_id: "lost".into(),
+        tool_name: "read".into(),
+        args: serde_json::json!({"path": "a.txt"}),
+    });
+    let awaiting = "Working... (Esc to interrupt)";
+    assert_ne!(app.ac().spinner.as_ref().unwrap().message(), awaiting);
+    app.handle_event(Event::Token {
+        token: "next".into(),
+    });
+    assert_eq!(app.ac().spinner.as_ref().unwrap().message(), awaiting);
+}
