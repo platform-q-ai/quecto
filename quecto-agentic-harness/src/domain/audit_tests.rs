@@ -6,6 +6,7 @@ fn tool_call_round_trip() {
         tool: "bash".into(),
         call_id: "call_1".into(),
         arguments: r#"{"command":"ls"}"#.into(),
+        raw_arguments: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AuditEvent = serde_json::from_str(&json).unwrap();
@@ -197,6 +198,7 @@ fn envelope_round_trip() {
             tool: "bash".into(),
             call_id: "call_abc".into(),
             arguments: r#"{"command":"test"}"#.into(),
+            raw_arguments: None,
         },
     };
     let json = serde_json::to_string(&envelope).unwrap();

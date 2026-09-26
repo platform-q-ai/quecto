@@ -24,7 +24,12 @@ pub enum AuditEvent {
     ToolCall {
         tool: String,
         call_id: String,
+        /// What the tool ran with.
         arguments: String,
+        /// What the model sent, when it differs (invalid arguments the
+        /// harness replaced, #2123): kept for diagnosis (#2150).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        raw_arguments: Option<String>,
     },
     ToolResult {
         call_id: String,

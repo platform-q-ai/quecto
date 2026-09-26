@@ -66,7 +66,6 @@ impl AuditLog {
     /// file) leaves the log open, with a warning.
     pub fn open_sync(base_dir: &Path, session_key: &str) -> Result<Self, DomainError> {
         use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-        use std::os::unix::io::AsRawFd;
         let audit_dir = base_dir.join("audit");
         std::fs::DirBuilder::new()
             .recursive(true)
@@ -86,30 +85,25 @@ impl AuditLog {
         tighten(&dir, 0o700, &audit_dir);
 
         let filename = format!("{}.jsonl", sanitize_session_key(session_key));
-        let within = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd())).join(&filename);
-        let std_file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&within)
-            .map_err(|e| {
-                DomainError::Session(format!(
-                    "failed to open audit log {} (a link is never followed): {e}",
-                    audit_dir.join(&filename).display()
-                ))
-            })?;
-        tighten(&std_file, 0o600, &audit_dir.join(&filename));
+        let shown = audit_dir.join(&filename);
+        let std_file = open_within(&dir, &filename).map_err(|e| {
+            DomainError::Session(format!(
+                "failed to open audit log {} (only a regular file, never through a link): {e}",
+                shown.display()
+            ))
+        })?;
+        tighten(&std_file, 0o600, &shown);
         let written = std_file
             .metadata()
             .map_err(|e| DomainError::Session(format!("failed to read audit log: {e}")))?
             .len();
+        let stopped = ends_capped(&std_file, written);
 
         Ok(Self {
             writer: Mutex::new(Writer {
                 file: tokio::fs::File::from_std(std_file),
                 written,
-                capped: written >= DEFAULT_CAP_BYTES,
+                capped: stopped || written >= DEFAULT_CAP_BYTES,
             }),
             session_key: session_key.to_string(),
             parent: None,
@@ -129,7 +123,7 @@ impl AuditLog {
         assert!(cap_bytes > 0, "an audit log holds something");
         self.cap_bytes = cap_bytes;
         let writer = self.writer.get_mut();
-        writer.capped = writer.written >= cap_bytes;
+        writer.capped = writer.capped || writer.written >= cap_bytes;
         self
     }
 
@@ -217,6 +211,53 @@ impl AuditSink for AuditLog {
     {
         Box::pin(AuditLog::emit(self, turn, event))
     }
+}
+
+/// Open (or create, 0600) `name` in the directory `dir` names, for
+/// appending: never through a link (`O_NOFOLLOW`), never blocking on a
+/// planted FIFO (`O_NONBLOCK`), and only a regular file. `openat` needs no
+/// `/proc`, which a container may not mount.
+fn open_within(dir: &std::fs::File, name: &str) -> std::io::Result<std::fs::File> {
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+    let name = std::ffi::CString::new(name)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "a NUL in the name"))?;
+    let flags = libc::O_RDWR
+        | libc::O_APPEND
+        | libc::O_CREAT
+        | libc::O_NOFOLLOW
+        | libc::O_NONBLOCK
+        | libc::O_CLOEXEC;
+    // The returned descriptor is owned below.
+    // SAFETY: `dir` is an open directory for the call and `name` is NUL-terminated.
+    let fd = unsafe { libc::openat(dir.as_raw_fd(), name.as_ptr(), flags, 0o600 as libc::c_uint) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `fd` was just opened and is owned by nothing else.
+    let file = unsafe { std::fs::File::from_raw_fd(fd) };
+    match file.metadata()?.file_type().is_file() {
+        true => Ok(file),
+        false => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        )),
+    }
+}
+
+/// Whether the log already ends with its `log_capped` record: it stopped,
+/// even though that record left it below the cap.
+fn ends_capped(file: &std::fs::File, len: u64) -> bool {
+    use std::os::unix::fs::FileExt;
+    let tail = len.min(4096);
+    let mut bytes = vec![0; tail as usize];
+    if file.read_exact_at(&mut bytes, len - tail).is_err() {
+        return false;
+    }
+    String::from_utf8_lossy(&bytes)
+        .trim_end()
+        .rsplit('\n')
+        .next()
+        .is_some_and(|last| last.contains(r#""event":"log_capped""#))
 }
 
 /// Make `file` private (`mode`) through its handle; best-effort.

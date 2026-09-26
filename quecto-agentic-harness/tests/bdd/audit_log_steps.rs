@@ -40,6 +40,7 @@ fn given_tool_call(world: &mut QuectoWorld, tool: String, call_id: String, argum
         tool,
         call_id,
         arguments,
+        raw_arguments: None,
     };
     world.audit_event = Some(event);
 }
@@ -564,6 +565,7 @@ fn when_tool_call_emitted(world: &mut QuectoWorld, turn: u32) {
             tool: "bash".into(),
             call_id: "call_default".into(),
             arguments: "{}".into(),
+            raw_arguments: None,
         },
     );
 }
@@ -586,6 +588,7 @@ fn when_tool_call_emitted_specific(
             tool,
             call_id,
             arguments,
+            raw_arguments: None,
         },
     );
 }

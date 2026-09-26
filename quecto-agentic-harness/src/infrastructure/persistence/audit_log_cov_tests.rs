@@ -24,6 +24,7 @@ async fn open_sync_and_trait_emit_append_json_lines_to_sanitized_path() {
             tool: "bash".into(),
             call_id: "call-1".into(),
             arguments: "echo hi".into(),
+            raw_arguments: None,
         },
     )
     .await

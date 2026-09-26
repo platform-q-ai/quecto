@@ -23,6 +23,7 @@ async fn writes_valid_jsonl_with_envelope() {
             tool: "bash".into(),
             call_id: "call_abc".into(),
             arguments: r#"{"command":"test"}"#.into(),
+            raw_arguments: None,
         },
     )
     .await
@@ -56,6 +57,7 @@ async fn appends_multiple_events_in_order() {
             tool: "bash".into(),
             call_id: "c1".into(),
             arguments: "{}".into(),
+            raw_arguments: None,
         },
     )
     .await
@@ -123,6 +125,7 @@ async fn flushes_on_every_write() {
             tool: "bash".into(),
             call_id: "c1".into(),
             arguments: "{}".into(),
+            raw_arguments: None,
         },
     )
     .await
@@ -140,6 +143,7 @@ async fn flushes_on_every_write() {
             tool: "read".into(),
             call_id: "c2".into(),
             arguments: "{}".into(),
+            raw_arguments: None,
         },
     )
     .await
@@ -171,6 +175,7 @@ async fn all_event_types_write_successfully() {
             tool: "bash".into(),
             call_id: "c1".into(),
             arguments: "{}".into(),
+            raw_arguments: None,
         },
         AuditEvent::ToolResult {
             call_id: "c1".into(),
@@ -463,4 +468,62 @@ async fn a_capped_log_stays_stopped_after_a_restart() {
     .await;
     let text = std::fs::read_to_string(AuditLog::file_path(tmp.path(), "big")).unwrap();
     assert_eq!(text.matches("log_capped").count(), 1, "{text}");
+}
+
+/// #2150 review: a FIFO planted as a log file is refused at once, never
+/// waited on: only a regular file is a log.
+#[tokio::test]
+async fn a_planted_fifo_is_refused_without_waiting() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir(tmp.path().join("audit")).unwrap();
+    let fifo =
+        std::ffi::CString::new(AuditLog::file_path(tmp.path(), "s").to_str().unwrap()).unwrap();
+    // SAFETY: a NUL-terminated path; mkfifo creates the node only.
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    let started = std::time::Instant::now();
+    assert!(AuditLog::open_sync(tmp.path(), "s").is_err());
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+}
+
+/// #2150 review: the `log_capped` record replaces a line that did not
+/// fit, often far shorter, leaving the file below its cap: it still stays
+/// stopped after a restart.
+#[tokio::test]
+async fn a_log_capped_by_a_large_line_stays_stopped_after_a_restart() {
+    let tmp = TempDir::new().unwrap();
+    let small = || AuditEvent::SubagentCmd {
+        agent_id: "a".into(),
+        command: "x".into(),
+    };
+    let log = AuditLog::open(tmp.path(), "big")
+        .await
+        .unwrap()
+        .with_cap(2_000);
+    log.emit(1, small()).await.unwrap();
+    log.emit(
+        2,
+        AuditEvent::SubagentCmd {
+            agent_id: "a".into(),
+            command: "y".repeat(5_000),
+        },
+    )
+    .await
+    .unwrap();
+    drop(log);
+    let log = AuditLog::open(tmp.path(), "big")
+        .await
+        .unwrap()
+        .with_cap(2_000);
+    log.emit(3, small()).await.unwrap();
+    let text = std::fs::read_to_string(AuditLog::file_path(tmp.path(), "big")).unwrap();
+    assert!(
+        text.len() < 2_000,
+        "the cap record left it short: {}",
+        text.len()
+    );
+    assert_eq!(text.lines().count(), 2, "{text}");
+    assert!(
+        text.lines().last().unwrap().contains("log_capped"),
+        "{text}"
+    );
 }

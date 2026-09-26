@@ -45,6 +45,8 @@ impl AgentLoopImpl {
                         // What the tool ran with (#2123), as `argument_bytes`
                         // measures it (#2150).
                         arguments: delivered_tool_arguments.clone(),
+                        raw_arguments: (tc.arguments != delivered_tool_arguments)
+                            .then(|| tc.arguments.clone()),
                     },
                 )
                 .await;

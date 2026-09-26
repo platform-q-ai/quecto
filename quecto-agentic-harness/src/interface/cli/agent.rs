@@ -289,7 +289,7 @@ pub(crate) fn cmd_agent(
         return 1;
     };
     let mut agent = build.agent;
-    let key = flags.session_name.clone().unwrap_or_default();
+    let key = event_log::one_shot_key(flags.session_name.as_deref());
     event_log::attach(
         &mut agent,
         &base_dir,

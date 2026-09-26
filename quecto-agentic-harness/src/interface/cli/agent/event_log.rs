@@ -33,6 +33,15 @@ pub(super) fn ephemeral(flags: &super::AgentFlags) -> bool {
     flags.no_session || flags.session_name.as_deref() == Some("-")
 }
 
+/// The key a one-shot (`-m`) session runs as, as `run_agent_session`
+/// names it: `cli:<name>`, `cli:default` without `-s`.
+pub(super) fn one_shot_key(session_name: Option<&str>) -> String {
+    let name = session_name.unwrap_or("default");
+    crate::domain::session_identity::SessionIdentity::named_cli(name)
+        .map(|identity| identity.runtime_key().to_owned())
+        .unwrap_or_default()
+}
+
 /// A key for a session without one: unique to this process and start.
 fn unkeyed() -> String {
     let started = std::time::SystemTime::now()

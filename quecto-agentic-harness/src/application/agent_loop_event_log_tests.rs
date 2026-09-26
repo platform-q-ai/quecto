@@ -89,3 +89,42 @@ async fn a_tool_result_records_its_duration_and_sizes() {
     assert_eq!(result.1, arguments.len());
     assert_eq!(result.2, 10);
 }
+
+/// #2150 review: when the model sent arguments the harness had to replace
+/// (#2123), the tool call keeps what the model sent for diagnosis.
+#[tokio::test]
+async fn a_tool_call_keeps_the_models_raw_arguments_when_replaced() {
+    let provider = Arc::new(MockProvider::new(vec![
+        tool_call_response("slow", "{not json"),
+        text_response("done"),
+    ]));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(SlowTool(ToolDefinition {
+        name: "slow".into(),
+        description: "slow mock".into(),
+        parameters_schema: r#"{"type":"object"}"#.into(),
+    })));
+    let audit = Arc::new(RecordingAudit::default());
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        audit_log: Some(audit.clone()),
+        ..test_config(provider, Box::new(registry))
+    });
+    agent
+        .run_loop(&mut vec![Message::user("go")])
+        .await
+        .unwrap();
+    let events = audit.events.lock().unwrap();
+    let call = events
+        .iter()
+        .find_map(|event| match event {
+            AuditEvent::ToolCall {
+                arguments,
+                raw_arguments,
+                ..
+            } => Some((arguments.clone(), raw_arguments.clone())),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no tool call: {events:?}"));
+    assert_ne!(call.0, "{not json", "{call:?}");
+    assert_eq!(call.1.as_deref(), Some("{not json"), "{call:?}");
+}

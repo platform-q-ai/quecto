@@ -10,6 +10,7 @@ fn tool_call(id: &str) -> AuditEvent {
         tool: "bash".into(),
         call_id: id.into(),
         arguments: "{\"command\":\"ls\"}".into(),
+        raw_arguments: None,
     }
 }
 

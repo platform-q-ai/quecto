@@ -18,3 +18,10 @@ fn every_agent_but_an_ephemeral_one_logs_when_the_event_log_is_on() {
         "{own}"
     );
 }
+
+/// #2150 review: a one-shot session logs under the key it runs as.
+#[test]
+fn a_one_shot_session_logs_under_the_key_it_runs_as() {
+    assert_eq!(one_shot_key(None), "cli:default");
+    assert_eq!(one_shot_key(Some("foo")), "cli:foo");
+}
