@@ -5,13 +5,13 @@ use super::*;
 use std::time::Duration;
 use tempfile::TempDir;
 
-/// A config whose create waits for `<dir>/gate` to exist (and, sent
+/// A config whose create waits (up to 5 s) for `<dir>/gate` to exist (and, sent
 /// SIGTERM, writes `<dir>/stopped`), and whose cleanup writes the
 /// environment id it was given to `<dir>/cleaned`.
 fn write_config(dir: &Path) -> std::path::PathBuf {
     let path = dir.join("config.json");
     let create = format!(
-        r#"trap 'echo stopped > {stopped}; exit 143' TERM; while [ ! -e {gate} ]; do sleep 0.02; done; printf '{{"environment_id":"env-1","workspace_path":"/tmp/ws","socket_path":"/tmp/s.sock","metadata":{{}}}}'"#,
+        r#"trap 'echo stopped > {stopped}; exit 143' TERM; n=0; while [ ! -e {gate} ] && [ $n -lt 250 ]; do sleep 0.02; n=$((n+1)); done; printf '{{"environment_id":"env-1","workspace_path":"/tmp/ws","socket_path":"/tmp/s.sock","metadata":{{}}}}'"#,
         gate = dir.join("gate").display(),
         stopped = dir.join("stopped").display()
     );

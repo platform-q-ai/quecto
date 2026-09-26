@@ -155,13 +155,17 @@ fn tokio_bash(path: &std::path::Path) -> tokio::process::Command {
 async fn a_stoppable_script_left_alone_finishes() {
     let dir = tempfile::TempDir::new().unwrap();
     let done = script(dir.path(), "echo out; echo err >&2");
-    let run = run_stoppable_capturing_stderr_tail(
-        tokio_bash(&done),
-        ScriptStdout::Result,
-        std::future::pending::<()>(),
-        Duration::from_secs(1),
+    let run = tokio::time::timeout(
+        Duration::from_secs(10),
+        run_stoppable_capturing_stderr_tail(
+            tokio_bash(&done),
+            ScriptStdout::Result,
+            std::future::pending::<()>(),
+            Duration::from_secs(1),
+        ),
     )
     .await
+    .expect("a stoppable run ends promptly")
     .unwrap();
     let ScriptRun::Finished(output) = run else {
         panic!("{run:?}")
@@ -184,13 +188,17 @@ async fn a_stopped_script_group_gets_sigterm() {
         g = grandchild.display()
     );
     let path = script(dir.path(), &body);
-    let run = run_stoppable_capturing_stderr_tail(
-        tokio_bash(&path),
-        ScriptStdout::Result,
-        tokio::time::sleep(Duration::from_millis(300)),
-        Duration::from_secs(5),
+    let run = tokio::time::timeout(
+        Duration::from_secs(10),
+        run_stoppable_capturing_stderr_tail(
+            tokio_bash(&path),
+            ScriptStdout::Result,
+            tokio::time::sleep(Duration::from_millis(300)),
+            Duration::from_secs(5),
+        ),
     )
     .await
+    .expect("a stoppable run ends promptly")
     .unwrap();
     assert!(matches!(run, ScriptRun::Stopped), "{run:?}");
     assert_eq!(std::fs::read_to_string(&marker).unwrap(), "trapped\n");
@@ -203,13 +211,17 @@ async fn a_stopped_script_ignoring_sigterm_is_killed_at_the_grace() {
     let dir = tempfile::TempDir::new().unwrap();
     let path = script(dir.path(), "trap '' TERM\nwhile true; do sleep 0.05; done");
     let started = std::time::Instant::now();
-    let run = run_stoppable_capturing_stderr_tail(
-        tokio_bash(&path),
-        ScriptStdout::Result,
-        tokio::time::sleep(Duration::from_millis(100)),
-        Duration::from_millis(300),
+    let run = tokio::time::timeout(
+        Duration::from_secs(10),
+        run_stoppable_capturing_stderr_tail(
+            tokio_bash(&path),
+            ScriptStdout::Result,
+            tokio::time::sleep(Duration::from_millis(100)),
+            Duration::from_millis(300),
+        ),
     )
     .await
+    .expect("a stoppable run ends promptly")
     .unwrap();
     assert!(matches!(run, ScriptRun::Stopped), "{run:?}");
     assert!(
