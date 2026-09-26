@@ -325,3 +325,26 @@ async fn a_stream_that_keeps_producing_is_awaited_up_to_the_ceiling() {
     assert!(elapsed < Duration::from_millis(1500), "{elapsed:?}");
     writing.abort();
 }
+
+/// A stream that keeps producing and then ends within the ceiling is read to
+/// its end: quiet is measured from the last output, not from the start.
+#[tokio::test]
+async fn a_stream_producing_steadily_is_read_to_its_end() {
+    use tokio::io::AsyncWriteExt;
+    let (mut writer, reader) = tokio::io::duplex(64);
+    tokio::spawn(async move {
+        for _ in 0..12 {
+            writer.write_all(b"tick\n").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+    let reader = capture::StreamReader::spawn(reader, 1 << 20);
+    let ((s, _), open) = await_stream_output_within(
+        Some(reader),
+        Duration::from_millis(500),
+        Duration::from_secs(5),
+    )
+    .await;
+    assert!(!open, "ended streams are not held");
+    assert_eq!(s.matches("tick").count(), 12, "{s}");
+}
