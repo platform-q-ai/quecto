@@ -273,7 +273,7 @@ fn a_stored_item_that_is_not_an_object_is_skipped() {
 fn a_cache_key_prefix_is_kept_only_when_plain() {
     assert!(CodexProvider::sanitize_cache_key("cli:default").starts_with("cli:"));
     assert!(CodexProvider::sanitize_cache_key("chat-1_x:a").starts_with("chat-1_x:"));
-    for odd in ["caf\u{e9}:a", "a b:c", "tab\t:x", ":empty", &"p".repeat(33)] {
+    for odd in ["caf\u{e9}:a", "a b:c", "tab\t:x", ":empty", &"p".repeat(65)] {
         let key = CodexProvider::sanitize_cache_key(odd);
         assert!(key.starts_with("session:"), "{odd:?} -> {key}");
         assert!(reqwest::header::HeaderValue::from_str(&key).is_ok());
@@ -485,4 +485,176 @@ async fn the_admission_paths_stamp_their_origin() {
         }
     }
     assert_eq!(stamped_origins(&done.expect("a response")), vec![origin]);
+}
+
+/// A server that refuses any request replaying encrypted reasoning with
+/// `refusal`, and answers every other with a completed response.
+async fn server_refusing_replay(refusal: &str) -> wiremock::MockServer {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::body_string_contains(
+            r#""type":"reasoning""#,
+        ))
+        .respond_with(wiremock::ResponseTemplate::new(400).set_body_string(refusal.to_string()))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .set_body_raw(sse(&[completed()]), "text/event-stream"),
+        )
+        .with_priority(2)
+        .mount(&server)
+        .await;
+    server
+}
+
+/// A conversation whose last tool turn carries reasoning for `origin`.
+fn replaying(origin: &str) -> Vec<Message> {
+    turn(&["call_a"], "", vec![block(origin, Some("call_a"), "gAAA")])
+}
+
+/// Whether a request's input replays a reasoning item (every body names
+/// `encrypted_content` in its `include`).
+fn replayed(request: &wiremock::Request) -> bool {
+    String::from_utf8_lossy(&request.body).contains(r#""type":"reasoning""#)
+}
+
+const REFUSAL: &str = r#"{"error":{"message":"The encrypted content could not be verified.","code":"invalid_encrypted_content"}}"#;
+
+/// Review 2: a refused replay is resent once without it, and the provider
+/// replays no more.
+#[tokio::test]
+async fn a_refused_replay_is_resent_without_it_and_not_replayed_again() {
+    let server = server_refusing_replay(REFUSAL).await;
+    let provider = oauth_at(&server);
+    let messages = replaying(&provider.reasoning_origin("gpt-6-sol"));
+    provider.chat(chat_request(&messages, None)).await.unwrap();
+    provider.chat(chat_request(&messages, None)).await.unwrap();
+    let sent: Vec<bool> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(replayed)
+        .collect();
+    assert_eq!(
+        sent,
+        [true, false, false],
+        "refused, resent, then no replay"
+    );
+}
+
+/// Review 2: the same on the streamed path; the refusal never reaches the
+/// caller.
+#[tokio::test]
+async fn a_refused_streamed_replay_is_resent_without_it() {
+    let server = server_refusing_replay(REFUSAL).await;
+    let provider = oauth_at(&server);
+    let messages = replaying(&provider.reasoning_origin("gpt-6-sol"));
+    let mut events = provider
+        .chat_stream_incremental(chat_request(&messages, None))
+        .await;
+    let mut seen = Vec::new();
+    while let Some(event) = events.recv().await {
+        seen.push(match event {
+            StreamEvent::Done(_) => "done".to_string(),
+            StreamEvent::Error(message) => format!("error: {message}"),
+            _ => "other".to_string(),
+        });
+    }
+    assert_eq!(seen.last().map(String::as_str), Some("done"), "{seen:?}");
+    assert!(
+        seen.iter().all(|event| !event.starts_with("error")),
+        "{seen:?}"
+    );
+    let sent: Vec<bool> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(replayed)
+        .collect();
+    assert_eq!(sent, [true, false]);
+}
+
+/// Another 400 is not a refused replay: it is reported, not retried.
+#[tokio::test]
+async fn another_bad_request_is_not_retried() {
+    let server = server_refusing_replay(r#"{"error":{"message":"bad tools"}}"#).await;
+    let provider = oauth_at(&server);
+    let messages = replaying(&provider.reasoning_origin("gpt-6-sol"));
+    assert!(provider.chat(chat_request(&messages, None)).await.is_err());
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+/// Review 2: no origin on either side replays nothing.
+#[test]
+fn nothing_is_replayed_without_an_origin() {
+    let messages = turn(&["call_a"], "", vec![block("", Some("call_a"), "r0")]);
+    let (_, input) = CodexProvider::build_input_for(&messages, "");
+    assert_eq!(
+        shape(&input),
+        [
+            "user",
+            "function_call:call_a",
+            "function_call_output:call_a"
+        ]
+    );
+}
+
+/// Review 2: an API-key origin names the key (by digest), so another key
+/// on the same endpoint and model is another origin.
+#[test]
+fn an_api_key_origin_names_its_key() {
+    let at = |key: &str| {
+        CodexProvider::with_api_key(key.into(), Some("https://h".into()), reqwest::Client::new())
+            .reasoning_origin("m")
+    };
+    assert_ne!(at("sk-one"), at("sk-two"));
+    assert!(!at("sk-one").contains("sk-one"), "never in clear");
+}
+
+/// Review 2: the streamed and gated paths send the header too.
+#[tokio::test]
+async fn every_path_names_its_session() {
+    let server = server_answering(&[completed()]).await;
+    let expected = Some(CodexProvider::sanitize_cache_key("cli:default"));
+    let messages = vec![Message::system("sys"), Message::user("hi")];
+    for provider in [oauth_at(&server), gated_at(&server)] {
+        provider
+            .chat(chat_request(&messages, Some("cli:default")))
+            .await
+            .unwrap();
+        let mut events = provider
+            .chat_stream_incremental(chat_request(&messages, Some("cli:default")))
+            .await;
+        while events.recv().await.is_some() {}
+    }
+    let headers: Vec<Option<String>> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|request| {
+            request
+                .headers
+                .get("session_id")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string)
+        })
+        .collect();
+    assert_eq!(headers, vec![expected; 4]);
+}
+
+/// Review 2: a real chat key, at its longest, keeps its prefix.
+#[test]
+fn the_longest_chat_key_keeps_its_prefix() {
+    let key = crate::domain::session::user_chat_key(u64::MAX, u64::MAX);
+    let prefix = key.split(':').next().unwrap();
+    assert!(
+        CodexProvider::sanitize_cache_key(&key).starts_with(&format!("{prefix}:")),
+        "{key}"
+    );
 }

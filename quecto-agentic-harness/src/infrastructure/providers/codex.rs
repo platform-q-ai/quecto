@@ -1,4 +1,3 @@
-use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
 // OpenAI Responses API adapter: impl LlmProvider using the Responses wire
 // protocol under either auth mode (#1066).
 //
@@ -47,6 +46,9 @@ pub struct CodexProvider {
     client: reqwest::Client,
     attempt_admission: Option<std::sync::Arc<dyn crate::application::ports::AttemptAdmission>>,
     auth: ResponsesAuth,
+    /// Set once the service refused replayed reasoning: this provider (and
+    /// its clones) replays no more (#2162 review).
+    replay_refused: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl CodexProvider {
@@ -84,6 +86,7 @@ impl CodexProvider {
             api_base: api_base.unwrap_or_else(|| CODEX_BASE_URL.to_string()),
             client,
             attempt_admission: None,
+            replay_refused: Default::default(),
             auth: ResponsesAuth::ChatGptOAuth { account_id },
         }
     }
@@ -100,6 +103,7 @@ impl CodexProvider {
             api_base: api_base.unwrap_or_else(|| OPENAI_API_BASE_URL.to_string()),
             client,
             attempt_admission: None,
+            replay_refused: Default::default(),
             auth: ResponsesAuth::ApiKey,
         }
     }
@@ -153,11 +157,12 @@ impl CodexProvider {
     }
 
     /// Where a request's reasoning can be decrypted again (#2162 review):
-    /// the endpoint, the account (by digest, never in clear) and the model.
+    /// the endpoint, the account or API key (by digest, never in clear) and
+    /// the model. A rotated key only stops replay, which is harmless.
     fn reasoning_origin(&self, model: &str) -> String {
         let account = match &self.auth {
             ResponsesAuth::ChatGptOAuth { account_id } => format!("{:08x}", fnv1a(account_id)),
-            ResponsesAuth::ApiKey => "api-key".to_string(),
+            ResponsesAuth::ApiKey => format!("key-{:08x}", fnv1a(&self.api_key)),
         };
         format!("{}|{account}|{model}", self.responses_url())
     }
@@ -450,15 +455,16 @@ impl CodexProvider {
     /// - `"uds:agent-1"` → `"uds:7b3f1e9a"` (agent ID hidden)
     ///
     /// The prefix is kept only when it is plain (`[A-Za-z0-9_-]`, at most
-    /// 32 bytes), so the key is always a valid `session_id` header value
-    /// (#2162 review); any other prefix becomes `session`.
+    /// 64 bytes, which every key the harness makes fits, so none changes),
+    /// so the key is always a valid `session_id` header value (#2162
+    /// review); any other prefix becomes `session`.
     fn sanitize_cache_key(key: &str) -> String {
         let hash = fnv1a(key);
         let prefix = key
             .split(':')
             .next()
             .filter(|prefix| {
-                (1..=32).contains(&prefix.len())
+                (1..=64).contains(&prefix.len())
                     && prefix
                         .bytes()
                         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
@@ -536,63 +542,8 @@ impl LlmProvider for CodexProvider {
             return Box::pin(async move { Err(err) });
         }
 
-        let cancel = request.cancel_flag.clone();
-        let trace = request.trace.clone();
-        let model = request.model.to_string();
-        let session = Self::request_session(&request);
-        let origin = self.reasoning_origin(request.model);
-        let body = Self::build_request_body(&request, &self.auth, &origin);
-        let url = self.responses_url();
-
-        Box::pin(async move {
-            if let Some(gate) = &self.attempt_admission {
-                let builder = self
-                    .apply_headers(self.client.post(&url), session.as_deref())
-                    .json(&body);
-                return super::attempt_transport::assembled(
-                    gate,
-                    trace.clone(),
-                    cancel.as_ref(),
-                    builder,
-                    Profile::new(Vendor::Codex, Surface::Assembled),
-                    |raw| {
-                        let mut parsed = Self::parse_sse_response(raw)?;
-                        Self::finish_response(&mut parsed, &model, &origin);
-                        Ok(parsed)
-                    },
-                )
-                .await;
-            }
-            let resp = self
-                .apply_headers(self.client.post(&url), session.as_deref())
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| {
-                    DomainError::Provider(format!(
-                        "Codex request failed: {}",
-                        super::sse_common::format_send_error(&e)
-                    ))
-                })?;
-
-            let status = resp.status().as_u16();
-            if status != 200 {
-                let error_body = resp.text().await.unwrap_or_default();
-                return Err(DomainError::Provider(format!(
-                    "HTTP {} from Codex: {}",
-                    status, error_body
-                )));
-            }
-
-            let raw = resp
-                .text()
-                .await
-                .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
-
-            let mut parsed = Self::parse_sse_response(&raw)?;
-            Self::finish_response(&mut parsed, &model, &origin);
-            Ok(parsed)
-        })
+        let (call, bodies) = self.prepare(&request);
+        Box::pin(async move { self.assemble(&call, bodies).await })
     }
 
     fn chat_stream<'a>(
@@ -613,42 +564,11 @@ impl LlmProvider for CodexProvider {
                 rx
             });
         }
-        let cancel = request.cancel_flag.clone();
-        let trace = request.trace.clone();
-        let model = request.model.to_string();
-        let session = Self::request_session(&request);
-        let origin = self.reasoning_origin(request.model);
-        let body = Self::build_request_body(&request, &self.auth, &origin);
-        let url = self.responses_url();
+        let (call, bodies) = self.prepare(&request);
         let provider = self.clone();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
-            tokio::spawn(async move {
-                if let Some(gate) = &provider.attempt_admission {
-                    let builder = provider
-                        .apply_headers(provider.client.post(&url), session.as_deref())
-                        .json(&body);
-                    super::attempt_transport::stream(
-                        gate,
-                        (trace.clone(), cancel.as_ref()),
-                        builder,
-                        Profile::new(Vendor::Codex, Surface::Incremental),
-                        tx,
-                        CodexSseHandler::with_model(&model, &origin),
-                    )
-                    .await;
-                } else {
-                    provider
-                        .pump_codex_sse(
-                            &url,
-                            body,
-                            tx,
-                            session.as_deref(),
-                            CodexSseHandler::with_model(&model, &origin),
-                        )
-                        .await;
-                }
-            });
+            tokio::spawn(provider.stream(call, bodies, tx));
             rx
         })
     }
@@ -656,6 +576,8 @@ impl LlmProvider for CodexProvider {
 
 #[path = "codex_input.rs"]
 mod codex_input;
+#[path = "codex_replay.rs"]
+mod codex_replay;
 /// FNV-1a 32-bit: fast, dependency-free, deterministic.
 fn fnv1a(text: &str) -> u32 {
     let mut hash: u32 = 0x811c_9dc5;

@@ -290,7 +290,8 @@ impl SseAccumulator {
     }
 
     fn keep_encrypted_reasoning(&mut self, output_index: usize, item: Value) {
-        let bytes = item["encrypted_content"].as_str().map_or(0, str::len);
+        // The whole item as it is kept and sent again, summary included.
+        let bytes = item.to_string().len();
         let total = self.encrypted_reasoning_bytes.saturating_add(bytes);
         if total > MAX_ENCRYPTED_REASONING_BYTES {
             tracing::warn!(

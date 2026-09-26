@@ -364,7 +364,7 @@ async fn encrypted_reasoning_survives_save_and_load() {
     let mut reply = assistant("answer");
     let block = ThinkingBlock::EncryptedReasoning {
         origin: "gpt-6-sol".into(),
-        leads_to: None,
+        leads_to: Some("call_1".into()),
         item: r#"{"type":"reasoning","summary":[],"encrypted_content":"gAAA"}"#.into(),
     };
     reply.thinking_blocks = vec![block.clone()];
