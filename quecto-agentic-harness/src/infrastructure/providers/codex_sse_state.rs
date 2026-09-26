@@ -120,9 +120,16 @@ impl SseAccumulator {
             } else {
                 Some(self.content)
             },
+            // A response the service marks completed that carries calls
+            // stops for tool use (#2157).
+            stop_reason: match self.stop_reason {
+                Some(StopReason::EndTurn) if !self.tool_calls.is_empty() => {
+                    Some(StopReason::ToolUse)
+                }
+                other => other,
+            },
             tool_calls: self.tool_calls,
             usage: self.usage,
-            stop_reason: self.stop_reason,
             thinking_blocks,
         }
     }
@@ -215,7 +222,9 @@ impl SseAccumulator {
                     self.usage = resp["usage"]
                         .as_object()
                         .map(crate::infrastructure::providers::usage::parse_codex_usage);
-                    if let Some(status) = resp["status"].as_str() {
+                    // The status only fills a stop reason the stream has not
+                    // already given (a refusal stays a refusal, #2179).
+                    if let (Some(status), None) = (resp["status"].as_str(), &self.stop_reason) {
                         self.stop_reason = Some(Self::parse_response_status(status));
                     }
                 }
