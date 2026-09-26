@@ -76,6 +76,19 @@ async fn output_past_the_capture_cap_keeps_its_true_end() {
     assert!(result.content.contains("omitted"), "{}", result.content);
 }
 
+/// The saved file of a capture that dropped its middle is not called the
+/// full output; one that dropped nothing still is.
+#[tokio::test]
+async fn a_cut_capture_is_not_saved_as_the_full_output() {
+    let (tool, _tmp) = exec_with_capture(100_000);
+    let cut = tool.execute(r#"{"command": "seq 1 60000"}"#).await.unwrap();
+    assert!(cut.content.contains("middle omitted"), "{}", cut.content);
+    assert!(!cut.content.contains("Full output"), "{}", cut.content);
+    let (tool, _tmp) = exec_with_capture(MAX_CAPTURE_BYTES);
+    let whole = tool.execute(r#"{"command": "seq 1 60000"}"#).await.unwrap();
+    assert!(whole.content.contains("Full output"), "{}", whole.content);
+}
+
 /// A command that times out still returns what it printed first, even when
 /// a descendant outside the killed group holds the output open.
 #[tokio::test]
