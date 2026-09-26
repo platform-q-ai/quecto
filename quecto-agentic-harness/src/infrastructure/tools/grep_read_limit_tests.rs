@@ -24,7 +24,7 @@ impl RelevanceJudge for DownJudge {
 /// One rg JSON match record for `<dir>/a.rs:1` whose line is `text`.
 fn match_record(dir: &std::path::Path, text: &str) -> String {
     format!(
-        r#"{{"type":"match","data":{{"path":{{"text":"{}/a.rs"}},"lines":{{"text":"{text}\\n"}},"line_number":1,"absolute_offset":0,"submatches":[{{"match":{{"text":"retry"}},"start":0,"end":5}}]}}}}"#,
+        r#"{{"type":"match","data":{{"path":{{"text":"{}/a.rs"}},"lines":{{"text":"{text}\n"}},"line_number":1,"absolute_offset":0,"submatches":[{{"match":{{"text":"retry"}},"start":0,"end":5}}]}}}}"#,
         dir.display()
     )
 }
@@ -71,14 +71,16 @@ async fn a_ranked_search_reads_past_the_plain_results_cap() {
 async fn a_plain_search_keeps_the_plain_results_cap() {
     let tmp = TempDir::new().unwrap();
     std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
-    let flood = match_flood(&tmp, 3000);
+    // About 6 MB of rg output: past a plain search's 4 MiB backstop
+    // (#2163), and far short of a ranked search's.
+    let flood = match_flood(&tmp, 30_000);
     let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
         .with_relevance(Arc::new(KeywordJudge("retry")), 5000);
     let result = execute_fake(&tool, r#"{"pattern": "retry", "limit": 100000}"#)
         .await
         .unwrap();
     let tail = &result.content[result.content.len().saturating_sub(600)..];
-    assert!(tail.contains("rg printed more than 200.0KB"), "{tail}");
+    assert!(tail.contains("rg printed more than 4.0MB"), "{tail}");
     assert!(tail.contains("results are incomplete"), "{tail}");
 }
 
@@ -88,7 +90,7 @@ async fn a_plain_search_keeps_the_plain_results_cap() {
 async fn an_unranked_search_cut_at_the_read_cap_claims_no_ranking() {
     let tmp = TempDir::new().unwrap();
     std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
-    let flood = match_flood(&tmp, 3000);
+    let flood = match_flood(&tmp, 30_000);
     let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()));
     let result = execute_fake(
         &tool,

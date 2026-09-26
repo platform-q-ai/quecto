@@ -16,7 +16,9 @@ use crate::infrastructure::tools::truncate::format_size;
 use super::grep_listing::{ListedFile, ListingFormat, format_listing, parse_listing};
 use super::grep_rank::{Ranking, rank};
 use super::grep_request::{OutputMode, parse_request};
-use super::grep_run::{Cut, RANKED_STDOUT_CAP, RG_STDOUT_CAP, ReadLimit, human_duration, run_rg};
+use super::grep_run::{
+    CONTENT_STDOUT_CAP, Cut, RANKED_STDOUT_CAP, RG_STDOUT_CAP, ReadLimit, human_duration, run_rg,
+};
 use super::{
     MAX_LINE_BYTES, MAX_OUTPUT_BYTES, MatchFormat, RgMatch, build_rg_command, format_matches,
     parse_rg_matches,
@@ -92,14 +94,19 @@ pub(super) async fn search(
     // reads as many matches as it may judge (#2142), far past what a plain
     // one shows; the byte cap is only a backstop. `rank_by` with a listing
     // is refused when parsed.
+    // A plain content search reads the matches it shows and one more (to
+    // know more exist), not a byte budget: rg's JSON for a line with many
+    // hits is many times the line (#2163), so bytes are only a backstop.
     let limit = match (&request.rank_by, &ctx.ranking, request.output) {
         (Some(_), Some(ranking), OutputMode::Content) => ReadLimit {
             bytes: RANKED_STDOUT_CAP,
             matches: Some(ranking.max_candidates),
         },
-        (Some(_), Some(_), OutputMode::Files | OutputMode::Count)
-        | (Some(_), None, _)
-        | (None, _, _) => ReadLimit {
+        (_, _, OutputMode::Content) => ReadLimit {
+            bytes: CONTENT_STDOUT_CAP,
+            matches: Some(request.limit.saturating_add(1)),
+        },
+        (_, _, OutputMode::Files | OutputMode::Count) => ReadLimit {
             bytes: RG_STDOUT_CAP,
             matches: None,
         },

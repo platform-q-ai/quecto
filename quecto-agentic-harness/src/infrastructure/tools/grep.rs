@@ -15,6 +15,8 @@ use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::truncate::format_size;
 
+#[path = "grep_blocks.rs"]
+mod grep_blocks;
 #[path = "grep_listing.rs"]
 mod grep_listing;
 #[path = "grep_rank.rs"]
@@ -26,6 +28,7 @@ mod grep_run;
 #[path = "grep_search.rs"]
 mod grep_search;
 
+use grep_blocks::{BlockConfig, FormatState, format_match_block, matched_lines};
 use grep_rank::Ranking;
 use grep_request::{DEFAULT_MATCH_LIMIT, GrepRequest, OutputMode};
 use grep_run::RG_TIMEOUT;
@@ -317,6 +320,10 @@ struct RgMatch {
     /// Where the match starts in its first line (a byte offset), as rg
     /// reports it: a long line is shown to the judge around this.
     column: Option<usize>,
+    /// The lines the match spans, as rg reported them (#2163): shown for the
+    /// match however far into its file it is, where the file cache holds
+    /// only the first 1 MB (and is used for context).
+    text: Option<Vec<String>>,
 }
 
 /// Parse `rg --json` output: extract only `"match"` type events.
@@ -342,6 +349,7 @@ fn parse_rg_matches(json_output: &str) -> Vec<RgMatch> {
         // rg reports the lines a match spans in `lines.text`, ending in a
         // newline: a multiline match spans several (#2136).
         let line_count = spanned_lines(&event["data"]["lines"]);
+        let text = reported_lines(&event["data"]["lines"]);
         matches.push(RgMatch {
             file_path: PathBuf::from(file_path),
             line_number: line_number as usize,
@@ -350,9 +358,32 @@ fn parse_rg_matches(json_output: &str) -> Vec<RgMatch> {
             column: event["data"]["submatches"][0]["start"]
                 .as_u64()
                 .and_then(|start| usize::try_from(start).ok()),
+            text,
         });
     }
     matches
+}
+
+/// The lines rg reports a match spanning, without their line breaks: from
+/// `text`, or decoded (lossily) from base64 `bytes` when not valid UTF-8.
+fn reported_lines(lines: &serde_json::Value) -> Option<Vec<String>> {
+    use base64::Engine as _;
+    let text = match (lines["text"].as_str(), lines["bytes"].as_str()) {
+        (Some(text), _) => text.to_string(),
+        (None, Some(encoded)) => {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .ok()?;
+            String::from_utf8_lossy(&bytes).into_owned()
+        }
+        (None, None) => return None,
+    };
+    let text = text.strip_suffix('\n').unwrap_or(&text);
+    Some(
+        text.split('\n')
+            .map(|line| line.trim_end_matches('\r').to_string())
+            .collect(),
+    )
 }
 
 /// How many lines a match spans: rg gives them as `text`, or as base64
@@ -394,89 +425,6 @@ struct GrepFormatArgs<'a> {
     max_output_bytes: usize,
 }
 
-/// Format parsed matches with file-cache-based context extraction (Quecto compatibility).
-/// Configuration shared across all match blocks during formatting.
-struct BlockConfig<'a> {
-    ws_str: &'a str,
-    ws_prefix_slash: &'a str,
-    context_lines: usize,
-    max_line_bytes: usize,
-    max_output_bytes: usize,
-}
-
-/// State accumulated while formatting matches.
-struct FormatState {
-    output_lines: Vec<String>,
-    byte_total: usize,
-    lines_truncated: bool,
-    truncated_bytes: bool,
-}
-
-/// Format one match block (match line + optional context lines) into `state`.
-/// Returns `false` when the byte limit is exceeded and formatting should stop.
-fn format_match_block(
-    m: &RgMatch,
-    file_cache: &mut HashMap<PathBuf, Vec<String>>,
-    cfg: &BlockConfig<'_>,
-    state: &mut FormatState,
-) -> bool {
-    let file_lines = file_cache
-        .entry(m.file_path.clone())
-        .or_insert_with(|| read_file_for_cache(&m.file_path));
-
-    let raw_path = m.file_path.to_string_lossy();
-    let rel_path = if let Some(rest) = raw_path.strip_prefix(cfg.ws_prefix_slash) {
-        rest
-    } else if let Some(rest) = raw_path.strip_prefix(cfg.ws_str) {
-        rest
-    } else {
-        raw_path.as_ref()
-    };
-    // A search of "." reports `<workspace>/./x`: show `x`, as files mode does.
-    let rel_path = rel_path.strip_prefix("./").unwrap_or(rel_path);
-
-    let total_lines = file_lines.len();
-    let last_matched = m.line_number + m.line_count.max(1) - 1;
-    let start = m.line_number.saturating_sub(cfg.context_lines).max(1);
-    let end = (last_matched + cfg.context_lines)
-        .min(total_lines.max(last_matched))
-        .max(m.line_number);
-
-    for current in start..=end {
-        let matched = (m.line_number..=last_matched).contains(&current);
-        let line_text = match (file_lines.get(current - 1), matched) {
-            (Some(line), _) => line.as_str(),
-            // Past what the context cache read (the first 1 MB): say so
-            // rather than print an empty match line; skip empty context.
-            (None, true) => BEYOND_CACHE,
-            (None, false) => continue,
-        };
-        let sanitized = line_text.trim_end_matches('\n');
-        let (display_text, was_truncated) = truncate_line(sanitized, cfg.max_line_bytes);
-        if was_truncated {
-            state.lines_truncated = true;
-        }
-
-        let formatted = if matched {
-            let score = match (m.score, current == m.line_number) {
-                (Some(score), true) => format!("[{score:.2}] "),
-                (Some(_), false) | (None, _) => String::new(),
-            };
-            format!("{score}{}:{}: {}", rel_path, current, display_text)
-        } else {
-            format!("{}-{}- {}", rel_path, current, display_text)
-        };
-
-        state.byte_total += formatted.len() + 1;
-        if state.byte_total > cfg.max_output_bytes {
-            state.truncated_bytes = true;
-            return false;
-        }
-        state.output_lines.push(formatted);
-    }
-    true
-}
-
 #[cfg(test)]
 async fn format_grep_output(a: GrepFormatArgs<'_>) -> String {
     let format = MatchFormat {
@@ -504,12 +452,14 @@ async fn format_matches(all_matches: Vec<RgMatch>, a: &MatchFormat<'_>) -> Strin
 
     let ws_str = a.workspace.to_string_lossy();
     let ws_prefix_slash = format!("{}/", ws_str);
+    let matched = matched_lines(&capped);
     let cfg = BlockConfig {
         ws_str: ws_str.as_ref(),
         ws_prefix_slash: &ws_prefix_slash,
         context_lines: a.context_lines,
         max_line_bytes: a.max_line_bytes,
         max_output_bytes: a.max_output_bytes,
+        matched: &matched,
     };
     // Pre-populate file cache via spawn_blocking to avoid blocking the Tokio
     // runtime thread. Each file read can be up to MAX_FILE_CACHE_BYTES (1MB).
@@ -540,6 +490,7 @@ async fn format_matches(all_matches: Vec<RgMatch>, a: &MatchFormat<'_>) -> Strin
         byte_total: 0,
         lines_truncated: false,
         truncated_bytes: false,
+        printed_through: None,
     };
 
     for m in &capped {
@@ -659,6 +610,10 @@ mod rank_by_tests;
 #[cfg(test)]
 #[path = "grep_read_limit_tests.rs"]
 mod read_limit_tests;
+
+#[cfg(test)]
+#[path = "grep_output_tests.rs"]
+mod output_tests;
 
 #[cfg(test)]
 mod install_guidance_tests {

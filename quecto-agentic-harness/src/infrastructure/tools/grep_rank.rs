@@ -307,7 +307,11 @@ fn whole_lines(path: &Path) -> Vec<String> {
 /// One match's excerpt from its file's lines; `None` when its line is not
 /// among them (past the file, or past the context cache).
 fn candidate_text(lines: &[String], m: &RgMatch) -> Option<Excerpt> {
-    lines.get(m.line_number.checked_sub(1)?)?;
+    if lines.get(m.line_number.checked_sub(1)?).is_none() {
+        // Past the file cache: judged on its own lines, as rg reported them
+        // (#2163), with no context.
+        return reported_excerpt(m);
+    }
     let matched_last = m.line_number + m.line_count.clamp(1, CANDIDATE_MATCH_LINES) - 1;
     let first = m.line_number.saturating_sub(CANDIDATE_CONTEXT).max(1);
     let last = matched_last + CANDIDATE_CONTEXT;
@@ -338,6 +342,28 @@ fn candidate_text(lines: &[String], m: &RgMatch) -> Option<Excerpt> {
         "a judge sees at most {CANDIDATE_MAX_CHARS} characters of a match (got {size})"
     );
     Some(excerpt)
+}
+
+/// A match's excerpt from the lines rg reported, when its file's lines do
+/// not reach it: the matched lines only.
+fn reported_excerpt(m: &RgMatch) -> Option<Excerpt> {
+    let text = m.text.as_ref()?;
+    let matched = text
+        .iter()
+        .take(CANDIDATE_MATCH_LINES)
+        .enumerate()
+        .map(|(offset, line)| match (offset, m.column) {
+            (0, Some(column)) => around(line, column),
+            (_, _) => line.chars().take(CANDIDATE_LINE_CHARS).collect(),
+        })
+        .collect::<Vec<String>>()
+        .join("\n");
+    assert!(matched.chars().count() <= CANDIDATE_MAX_CHARS);
+    Some(Excerpt {
+        before: String::new(),
+        matched,
+        after: String::new(),
+    })
 }
 
 /// At most [`CANDIDATE_LINE_CHARS`] of `line` around the match starting at
