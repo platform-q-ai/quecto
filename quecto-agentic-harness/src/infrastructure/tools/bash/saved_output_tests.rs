@@ -343,16 +343,102 @@ fn a_loose_owned_directory_is_made_private_before_a_save() {
     assert_eq!(mode, 0o700);
 }
 
-/// #2167 review: the old shared directory is swept of this user's files,
-/// and nothing else in it is touched.
+/// #2167 review: the old shared directory loses this user's expired files
+/// only (a fresh one may belong to a running older build), nothing else in
+/// it, and goes once empty.
 #[test]
-fn the_legacy_sweep_removes_only_this_users_saved_files() {
+fn the_legacy_sweep_keeps_fresh_files_and_goes_once_empty() {
     let tmp = TempDir::new().unwrap();
+    let legacy = tmp.path().join("legacy");
+    std::fs::create_dir(&legacy).unwrap();
     let now = SystemTime::now();
-    let mine = saved_file(tmp.path(), "mine00", now, HOUR);
-    let other = tmp.path().join("notes.txt");
+    let old = saved_file(&legacy, "old000", now, 25 * HOUR);
+    let fresh = saved_file(&legacy, "fresh0", now, HOUR);
+    let other = legacy.join("notes.txt");
     std::fs::write(&other, "keep").unwrap();
-    assert_eq!(prune_saved_outputs(tmp.path(), owner(), now, SWEEP_ALL), 1);
-    assert!(!mine.exists());
+    sweep_legacy(&legacy, owner(), now);
+    assert!(!old.exists());
+    assert!(fresh.exists(), "a running older build may still read it");
     assert!(other.exists());
+    std::fs::remove_file(&fresh).unwrap();
+    std::fs::remove_file(&other).unwrap();
+    sweep_legacy(&legacy, owner(), now);
+    assert!(!legacy.exists(), "an emptied legacy directory goes");
+    // Gone, or never there: nothing to do, and nothing fails.
+    sweep_legacy(&legacy, owner(), now);
+}
+
+fn view() -> TailView {
+    TailView {
+        start_line: 3,
+        end_line: 9,
+        total: 9,
+        by_bytes: true,
+        capture_cut: false,
+        combined_len: 90,
+        tail_lines: 2000,
+        tail_bytes: 51200,
+    }
+}
+
+/// #2167 review: a cut output says where the rest was saved, or that it
+/// could not be and how to keep it.
+#[test]
+fn the_truncation_hint_says_where_the_rest_went() {
+    assert_eq!(
+        truncation_hint(Some("/t/x.log"), &view()),
+        "\n[Showing lines 3-9 of 9 (50KB limit). Full output (90 bytes) saved to: /t/x.log]"
+    );
+    let unsaved = truncation_hint(None, &view());
+    assert!(unsaved.contains("could not be saved"), "{unsaved}");
+    assert!(unsaved.contains("output_file"), "{unsaved}");
+}
+
+/// #2167 review: the real entry point saves into the per-user, owner-only
+/// directory and sweeps the old shared one.
+#[tokio::test]
+async fn a_save_goes_to_the_private_per_user_directory() {
+    use std::os::unix::fs::PermissionsExt;
+    // Other tests' saves sweep this directory too, and remove it once it is
+    // empty: a foreign file keeps it, and seeding retries a lost race.
+    let legacy = std::env::temp_dir().join("quecto-bash-output-lib-tests-legacy");
+    let keep = legacy.join(format!("keep-{}.txt", std::process::id()));
+    let seeded = (0..20)
+        .any(|_| std::fs::create_dir_all(&legacy).is_ok() && std::fs::write(&keep, "keep").is_ok());
+    assert!(seeded, "the legacy directory can be seeded");
+    let expired = saved_file(&legacy, "exp000", SystemTime::now(), 25 * HOUR);
+    let saved = save_to_temp_file("body".into()).await.unwrap();
+    let dir = Path::new(&saved).parent().unwrap();
+    assert_eq!(
+        dir.file_name().unwrap(),
+        OsStr::new(&format!("quecto-bash-output-lib-tests-{}", owner()))
+    );
+    assert_eq!(
+        std::fs::metadata(dir).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    assert!(!expired.exists(), "the old shared directory was swept");
+    assert!(
+        keep.exists(),
+        "nothing but this user's saved files is swept"
+    );
+    std::fs::remove_file(&saved).unwrap();
+    let _ = std::fs::remove_file(&keep);
+}
+
+/// #2167 review: tightening never follows a symlink.
+#[test]
+fn a_symlinked_directory_is_never_made_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = TempDir::new().unwrap();
+    let target = tmp.path().join("target");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let link = tmp.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    assert!(!make_private(&link));
+    assert_eq!(
+        std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
 }

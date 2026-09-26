@@ -503,28 +503,18 @@ async fn truncate_output(combined: String, capture_cut: bool) -> String {
     let end_line = total;
     let combined_len = combined.len();
 
-    let hint = if let Some(tmp_path) = save_to_temp_file(combined).await {
-        let limit_note = if tr.truncated_by == Some(TruncatedBy::Bytes) {
-            " (50KB limit)"
-        } else {
-            ""
-        };
-        // A capture that dropped its middle is not the full output (#2167).
-        let saved = match capture_cut {
-            true => "Output (start and end; middle omitted)",
-            false => "Full output",
-        };
-        format!(
-            "\n[Showing lines {}-{} of {}{}. {} ({} bytes) saved to: {}]",
-            start_line, end_line, total, limit_note, saved, combined_len, tmp_path
-        )
-    } else {
-        // Say so when the rest is kept nowhere (#2167 review).
-        format!(
-            "\n[Output truncated to last {} lines / {} bytes; the full output could not be saved, so redirect it to a file (e.g. `> out.txt`) to keep it]",
-            TAIL_MAX_LINES, TAIL_MAX_BYTES
-        )
+    let view = saved_output::TailView {
+        start_line,
+        end_line,
+        total,
+        by_bytes: tr.truncated_by == Some(TruncatedBy::Bytes),
+        capture_cut,
+        combined_len,
+        tail_lines: TAIL_MAX_LINES,
+        tail_bytes: TAIL_MAX_BYTES,
     };
+    let saved_to = save_to_temp_file(combined).await;
+    let hint = saved_output::truncation_hint(saved_to.as_deref(), &view);
 
     let mut output = tr.content;
     output.push_str(&hint);

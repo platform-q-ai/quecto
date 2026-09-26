@@ -6,6 +6,9 @@
 //! regular files named exactly as [`save_output_in`] names them, directly in a
 //! real (non-symlink) directory the current user owns, are ever removed. A
 //! pruning failure is logged and never fails the save.
+//!
+//! Off Unix, ownership cannot be proven, so output is never saved there: the
+//! model is told so and pointed at `output_file`.
 use std::ffi::OsStr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -32,11 +35,54 @@ const LEGACY_DIR_NAME: &str = "quecto-bash-output";
 #[cfg(test)]
 const LEGACY_DIR_NAME: &str = "quecto-bash-output-lib-tests-legacy";
 
-/// A policy that removes every file this user saved.
-pub(super) const SWEEP_ALL: PrunePolicy = PrunePolicy {
-    max_age: Duration::ZERO,
-    max_files: 0,
+/// The old shared directory keeps a day of this user's files, so a session
+/// of an older build still finds what it just saved (#2167 review).
+pub(super) const LEGACY_POLICY: PrunePolicy = PrunePolicy {
+    max_age: Duration::from_secs(24 * 60 * 60),
+    max_files: usize::MAX,
 };
+
+/// Where a cut output's tail sits in it, for the note after the tail.
+pub(super) struct TailView {
+    pub start_line: usize,
+    pub end_line: usize,
+    pub total: usize,
+    pub by_bytes: bool,
+    /// The capture itself already dropped part of the middle.
+    pub capture_cut: bool,
+    pub combined_len: usize,
+    pub tail_lines: usize,
+    pub tail_bytes: usize,
+}
+
+/// The note after a cut output's tail: where the rest was saved, or that it
+/// could not be (#2167 review).
+pub(super) fn truncation_hint(saved_to: Option<&str>, view: &TailView) -> String {
+    match saved_to {
+        Some(path) => {
+            let limit_note = if view.by_bytes { " (50KB limit)" } else { "" };
+            // A capture that dropped its middle is not the full output.
+            let saved = match view.capture_cut {
+                true => "Output (start and end; middle omitted)",
+                false => "Full output",
+            };
+            format!(
+                "\n[Showing lines {}-{} of {}{}. {} ({} bytes) saved to: {}]",
+                view.start_line,
+                view.end_line,
+                view.total,
+                limit_note,
+                saved,
+                view.combined_len,
+                path
+            )
+        }
+        None => format!(
+            "\n[Output truncated to last {} lines / {} bytes; the full output could not be saved: rerun with \"output_file\" to keep it]",
+            view.tail_lines, view.tail_bytes
+        ),
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct PrunePolicy {
@@ -53,11 +99,10 @@ pub(super) const SAVED_OUTPUT_POLICY: PrunePolicy = PrunePolicy {
 pub(super) async fn save_to_temp_file(content: String) -> Option<String> {
     tokio::task::spawn_blocking(move || {
         let temp = std::env::temp_dir();
-        prune_saved_outputs(
+        sweep_legacy(
             &temp.join(LEGACY_DIR_NAME),
             current_uid(),
             SystemTime::now(),
-            SWEEP_ALL,
         );
         let dir = temp.join(format!("{DIR_NAME}-{}", current_uid()));
         create_private_dir(&dir).ok()?;
@@ -66,6 +111,16 @@ pub(super) async fn save_to_temp_file(content: String) -> Option<String> {
     })
     .await
     .ok()?
+}
+
+/// Sweep the old shared directory of this user's expired files, and remove
+/// it once it is empty (it then costs nothing more).
+pub(super) fn sweep_legacy(dir: &Path, owner: u32, now: SystemTime) {
+    prune_saved_outputs(dir, owner, now, LEGACY_POLICY);
+    if is_owned_real_directory(dir, owner) {
+        // Fails, harmlessly, while anything is left in it.
+        let _ = std::fs::remove_dir(dir);
+    }
 }
 
 /// Create the saved-output directory readable by its owner alone; an
@@ -184,6 +239,8 @@ pub(super) fn prune_saved_outputs(
 pub(super) fn is_owned_real_directory(dir: &Path, owner: u32) -> bool {
     match std::fs::symlink_metadata(dir) {
         Ok(meta) => meta.is_dir() && is_owned_by(&meta, owner),
+        // A directory that is not there (the old shared one, usually).
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
         Err(e) => {
             tracing::warn!(dir = %dir.display(), error = %e, "bash output prune: cannot stat directory");
             false
@@ -242,18 +299,27 @@ fn remove_saved_output(path: &Path) -> bool {
 
 /// Make an owned directory owner-only (0700), as a directory another build
 /// created may not be; true when it is owner-only afterwards.
+/// Changed through a handle opened without following a link, so a swapped
+/// symlink can never redirect the chmod (#2167 review).
 #[cfg(unix)]
 pub(super) fn make_private(dir: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    let is_private = |dir: &Path| {
-        std::fs::symlink_metadata(dir)
-            .is_ok_and(|meta| meta.is_dir() && meta.permissions().mode() & 0o077 == 0)
-    };
-    if is_private(dir) {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    // Already owner-only (checked without following a link): nothing to
+    // change, and a directory the owner cannot list still takes saves.
+    let private = |meta: std::fs::Metadata| meta.is_dir() && meta.permissions().mode() & 0o077 == 0;
+    if std::fs::symlink_metadata(dir).is_ok_and(private) {
         return true;
     }
-    match std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
-        Ok(()) => is_private(dir),
+    let handle = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY)
+        .open(dir);
+    let Ok(handle) = handle else {
+        tracing::warn!(dir = %dir.display(), "bash output: cannot open the directory without following links");
+        return false;
+    };
+    match handle.set_permissions(std::fs::Permissions::from_mode(0o700)) {
+        Ok(()) => handle.metadata().is_ok_and(private),
         Err(e) => {
             tracing::warn!(dir = %dir.display(), error = %e, "bash output: cannot make directory owner-only");
             false
