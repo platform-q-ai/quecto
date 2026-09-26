@@ -120,9 +120,16 @@ impl SseAccumulator {
             } else {
                 Some(self.content)
             },
+            // A response the service marks completed that carries calls
+            // stops for tool use (#2157).
+            stop_reason: match self.stop_reason {
+                Some(StopReason::EndTurn) if !self.tool_calls.is_empty() => {
+                    Some(StopReason::ToolUse)
+                }
+                other => other,
+            },
             tool_calls: self.tool_calls,
             usage: self.usage,
-            stop_reason: self.stop_reason,
             thinking_blocks,
         }
     }
