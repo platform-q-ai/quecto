@@ -49,6 +49,12 @@ impl PassiveAttempt {
         self.receipt.termination(Termination::ReadError);
     }
 
+    /// A whole reply was read but could not be accepted.
+    pub(in crate::infrastructure::providers) fn rejected(&self) {
+        self.receipt.fail();
+        self.receipt.termination(Termination::Rejected);
+    }
+
     /// A whole reply was read and accepted.
     pub(in crate::infrastructure::providers) fn completed(&self) {
         self.receipt.termination(Termination::Completed);

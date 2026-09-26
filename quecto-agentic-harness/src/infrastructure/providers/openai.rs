@@ -522,12 +522,14 @@ impl LlmProvider for OpenAiProvider {
                 )));
             }
 
-            let response_json: serde_json::Value =
-                serde_json::from_str(&response_text).map_err(|e| {
+            let rejected = || attempt.iter().for_each(|a| a.rejected());
+            let response_json: serde_json::Value = serde_json::from_str(&response_text)
+                .inspect_err(|_| rejected())
+                .map_err(|e| {
                     DomainError::Provider(format!("failed to parse response JSON: {}", e))
                 })?;
 
-            let mut parsed = Self::parse_response(&response_json)?;
+            let mut parsed = Self::parse_response(&response_json).inspect_err(|_| rejected())?;
             crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
             attempt.iter().for_each(|a| a.completed());
             Ok(parsed)

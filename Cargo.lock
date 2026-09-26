@@ -1586,6 +1586,7 @@ dependencies = [
  "dirs",
  "filetime",
  "futures",
+ "http",
  "httpdate",
  "humantime",
  "libc",

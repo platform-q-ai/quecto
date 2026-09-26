@@ -106,6 +106,52 @@ mod transport_tests {
                 .contains("SECRET")
         );
     }
+    /// A handler that reads every line and ends nothing.
+    struct ReadingHandler;
+    impl SseHandler for ReadingHandler {
+        async fn process_line(&mut self, _: &str, _: &Sender) -> SseLineOutcome {
+            SseLineOutcome::Continue
+        }
+        async fn on_eof(&mut self, _: &Sender) {}
+    }
+    /// Review #2156: the instrumented pump holds each line to the limit on
+    /// its own, as the common pump does, however the lines were chunked.
+    #[tokio::test]
+    async fn long_lines_in_one_chunk_are_not_oversized() {
+        let receipt = Receipt(Arc::new(Mutex::new(State {
+            permit: None,
+            failure: false,
+            hinted: false,
+            trace: None,
+            diagnostics: Default::default(),
+            started: std::time::Instant::now(),
+        })));
+        let line = "x".repeat(600 * 1024);
+        let long = "x".repeat(crate::infrastructure::providers::sse_common::MAX_SSE_LINE_BYTES + 1);
+        for (body, refused) in [
+            (format!("{line}\n{line}\n{line}\n"), false),
+            (format!("ok\n{long}\n"), true),
+        ] {
+            let mut response = reqwest::Response::from(http::Response::new(body.into_bytes()));
+            let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+            super::super::super::diagnostic_sse::pump_sse(
+                &receipt,
+                &mut response,
+                &tx,
+                &mut ReadingHandler,
+            )
+            .await;
+            drop(tx);
+            let event = rx.recv().await;
+            assert_eq!(
+                matches!(event, Some(StreamEvent::Error(_))),
+                refused,
+                "{event:?}"
+            );
+            let state = receipt.0.lock().unwrap();
+            assert_eq!(state.diagnostics.oversized_lines, u32::from(refused));
+        }
+    }
     #[tokio::test]
     async fn stops_are_recorded_before_owner_release() {
         let trace = Arc::new(RequestTrace::default());

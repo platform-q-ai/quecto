@@ -431,3 +431,37 @@ async fn untraced(
     }
     events
 }
+
+/// Review #2156: a whole reply `chat` cannot accept ends as rejected.
+#[tokio::test]
+async fn a_whole_reply_that_cannot_be_parsed_ends_as_rejected() {
+    use crate::domain::attempt_diagnostics::Termination;
+    for body in ["not json", r#"{"choices":"not a list"}"#] {
+        let (_server, provider) = served(body).await;
+        let trace = Arc::new(RequestTrace::default());
+        trace.start();
+        let messages = vec![crate::domain::message::Message::user("hi")];
+        let request = crate::application::providers::ports::ChatRequest {
+            trace: Some(trace.clone()),
+            admission: None,
+            model: "gpt-4o-mini",
+            messages: &messages,
+            tools: &[],
+            max_tokens: 16,
+            temperature: 0.0,
+            thinking_level: None,
+            effort: None,
+            tool_choice: None,
+            metadata: None,
+            session_id: None,
+            cancel_flag: None,
+        };
+        assert!(provider.chat(request).await.is_err(), "{body}");
+        let attempts = trace.attempt_diagnostics();
+        assert_eq!(
+            attempts[0].termination,
+            Termination::Rejected,
+            "{body}: {attempts:?}"
+        );
+    }
+}
