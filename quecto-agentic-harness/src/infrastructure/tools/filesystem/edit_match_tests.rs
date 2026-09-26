@@ -3,7 +3,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 fn normalize_for_fuzzy_match(s: &str) -> String {
-    fuzzy_normalise(s).text
+    fuzzy_normalise(s).unwrap().text
 }
 
 fn unique(content: &str, old: &str) -> Range<usize> {
@@ -78,14 +78,14 @@ fn test_fuzzy_normalise_keeps_every_newline() {
 #[test]
 fn every_normalised_byte_maps_to_the_character_that_made_it() {
     let text = "\u{2019}a  \n\u{00A0}\u{2014}\n";
-    let fuzzy = fuzzy_normalise(text);
+    let fuzzy = fuzzy_normalise(text).unwrap();
     assert_eq!(fuzzy.text, "'a\n -\n");
     assert_eq!(fuzzy.source, vec![0, 3, 6, 7, 9, 12]);
 }
 
 #[test]
 fn a_multi_byte_character_kept_as_is_maps_every_byte_to_its_start() {
-    let fuzzy = fuzzy_normalise("x\u{754C}");
+    let fuzzy = fuzzy_normalise("x\u{754C}").unwrap();
     assert_eq!(fuzzy.text, "x\u{754C}");
     assert_eq!(fuzzy.source, vec![0, 1, 1, 1]);
 }
@@ -93,7 +93,7 @@ fn a_multi_byte_character_kept_as_is_maps_every_byte_to_its_start() {
 #[test]
 fn original_range_refuses_empty_out_of_bounds_and_mid_character_ranges() {
     let text = "a\u{754C}b";
-    let fuzzy = fuzzy_normalise(text);
+    let fuzzy = fuzzy_normalise(text).unwrap();
     assert_eq!(fuzzy.original_range(text, 1..1), None);
     assert_eq!(fuzzy.original_range(text, 0..9), None);
     assert_eq!(fuzzy.original_range(text, 2..4), None);
@@ -140,10 +140,43 @@ fn dropped_whitespace_inside_the_match_is_replaced_with_it() {
 }
 
 #[test]
-fn dropped_whitespace_at_either_edge_of_the_match_is_kept() {
+fn file_whitespace_at_an_edge_is_kept_when_old_text_has_none_there() {
     let content = "pad  \nfoo  \nbar\n";
     assert_eq!(unique(content, "\nfoo"), 5..9);
-    assert_eq!(unique(content, "foo\t"), 6..9);
+    assert_eq!(unique("pad  \nfo\u{2019}  \n", "fo'"), 6..11);
+}
+
+#[test]
+fn file_whitespace_at_an_edge_goes_with_the_match_when_old_text_has_some() {
+    let content = "pad  \nfoo  \nbar\n";
+    assert_eq!(unique(content, "foo\t"), 6..11);
+    assert_eq!(unique(content, "\t\nfoo"), 3..9);
+    assert_eq!(unique("a\u{2019}\u{00A0}\tb", "a' "), 0..7);
+}
+
+#[test]
+fn old_text_ending_in_whitespace_needs_file_whitespace_or_a_line_end() {
+    assert_eq!(
+        locate("it\u{2019}s foobar", "it's foo "),
+        Ok(Location::NotFound)
+    );
+    assert_eq!(unique("it\u{2019}s foo", "it's foo "), 0..10);
+    assert_eq!(unique("it\u{2019}s\nfoo", "it's\t"), 0..6);
+}
+
+#[test]
+fn edges_are_read_from_old_text() {
+    let edges = |old: &str| {
+        let e = Edges::of(old);
+        (e.before, e.after)
+    };
+    assert_eq!(edges("a"), (false, false));
+    assert_eq!(edges("a \n"), (false, false));
+    assert_eq!(edges(" a\nb"), (false, false));
+    assert_eq!(edges("\na"), (false, false));
+    assert_eq!(edges(" \t\na"), (true, false));
+    assert_eq!(edges("a\n\u{00A0}"), (false, true));
+    assert_eq!(edges("  \na\t"), (true, true));
 }
 
 #[test]
@@ -191,6 +224,7 @@ const ALPHABET: &[&str] = &[
     "\u{3000}",
     "\u{754C}",
     "\u{E9}",
+    "\u{2003}",
     "\u{1F680}",
 ];
 
@@ -202,12 +236,14 @@ fn random_text(rng: &mut StdRng, max_chars: usize) -> String {
 }
 
 /// Rewrite `region` the way a model might retype it: swap quotes, dashes and
-/// spaces for look-alikes, and add or drop trailing spaces before newlines.
+/// spaces for look-alikes, add or drop trailing spaces before newlines
+/// (which also covers a whitespace-only first line), and add or drop
+/// whitespace at the end.
 fn retype(rng: &mut StdRng, region: &str) -> String {
     let mut out = String::new();
     for c in region.chars() {
         if c == '\n' && rng.gen_bool(0.3) {
-            let trimmed = out.trim_end_matches([' ', '\t']).len();
+            let trimmed = out.trim_end_matches(is_line_space).len();
             out.truncate(trimmed);
             out.push_str(&" ".repeat(rng.gen_range(0..3)));
         }
@@ -224,6 +260,13 @@ fn retype(rng: &mut StdRng, region: &str) -> String {
         };
         out.push(retyped);
     }
+    if rng.gen_bool(0.25) {
+        let trimmed = out.trim_end_matches(is_line_space).len();
+        out.truncate(trimmed);
+    }
+    if rng.gen_bool(0.25) {
+        out.push_str([" ", "\t", "  ", " \t"][rng.gen_range(0..4)]);
+    }
     out
 }
 
@@ -234,29 +277,69 @@ fn char_boundaries(text: &str) -> Vec<usize> {
         .collect()
 }
 
+fn line_space_len(chars: impl Iterator<Item = char>) -> usize {
+    chars
+        .take_while(|c| is_line_space(*c))
+        .map(char::len_utf8)
+        .sum()
+}
+
+/// Oracle, independent of `locate`: the range a fuzzy edit of `old`, typed
+/// from `content[i..j]`, must replace. The region's own edge whitespace is
+/// dropped; where `old` has edge whitespace, the file's whitespace run there
+/// is taken instead. `None` when `old` ends in whitespace but the file has
+/// neither whitespace nor a line end after the region: that is no match.
+fn expected_range(content: &str, i: usize, j: usize, old: &str) -> Option<Range<usize>> {
+    let region = &content[i..j];
+    let start = match old.split_once('\n') {
+        Some((first, _)) if first.chars().all(is_line_space) => {
+            let newline = i + region.find('\n').expect("region keeps its newlines");
+            let run = line_space_len(content[..newline].chars().rev());
+            if first.is_empty() {
+                newline
+            } else {
+                newline - run
+            }
+        }
+        _ => i,
+    };
+    let core_end = i + region.trim_end_matches(is_line_space).len();
+    let end = if old.ends_with(is_line_space) {
+        let after = &content[core_end..];
+        let run = line_space_len(after.chars());
+        let fits = run > 0 || after.is_empty() || after.starts_with('\n');
+        fits.then_some(core_end + run)?
+    } else {
+        core_end
+    };
+    Some(start..end)
+}
+
 #[test]
-fn fuzzy_edits_only_change_the_matched_text_and_never_panic() {
+fn fuzzy_edits_replace_exactly_the_intended_text_and_never_panic() {
     let mut rng = StdRng::seed_from_u64(0x2191);
-    let mut unique_fuzzy = 0usize;
-    for _ in 0..20_000 {
+    let (mut checked, mut widened) = (0usize, 0usize);
+    for _ in 0..30_000 {
         let content = random_text(&mut rng, 40);
         let bounds = char_boundaries(&content);
         let i = bounds[rng.gen_range(0..bounds.len())];
         let j = bounds[rng.gen_range(0..bounds.len())];
         let (i, j) = (i.min(j), i.max(j));
         let old = retype(&mut rng, &content[i..j]);
-        let is_exact = content.contains(old.as_str()) && !old.is_empty();
+        let needle = fuzzy_normalise(&old).unwrap().text;
+        let is_exact = !old.is_empty() && content.contains(old.as_str());
+        let expected = expected_range(&content, i, j, &old);
+        let case = format!("{content:?} / {old:?} from {i}..{j}");
 
-        let location = locate(&content, &old);
-        let Ok(location) = location else {
-            panic!("unmappable: {content:?} / {old:?}");
-        };
-        let Location::Unique(range) = location else {
-            let fuzzy_old_is_empty = fuzzy_normalise(&old).text.is_empty();
-            let is_refusal = matches!(location, Location::Ambiguous(_))
-                || (location == Location::NotFound && fuzzy_old_is_empty);
-            assert!(is_refusal, "{location:?} for {old:?} in {content:?}");
-            continue;
+        let location = locate(&content, &old).unwrap_or_else(|_| panic!("unmappable: {case}"));
+        let range = match location {
+            Location::Unique(range) => range,
+            Location::Ambiguous(_) => continue,
+            Location::NotFound => {
+                let may_miss = needle.is_empty() || expected.is_none();
+                assert!(may_miss && !is_exact, "not found: {case}");
+                continue;
+            }
         };
         let replaced = content
             .get(range.clone())
@@ -265,19 +348,22 @@ fn fuzzy_edits_only_change_the_matched_text_and_never_panic() {
         assert_eq!(edited.get(..range.start), content.get(..range.start));
         assert!(edited.ends_with(&content[range.end..]));
         if is_exact {
-            assert_eq!(replaced, old, "{content:?}");
+            assert_eq!(replaced, old, "{case}");
             continue;
         }
-        unique_fuzzy += 1;
-        assert!(
-            i <= range.start && range.end <= j,
-            "fuzzy match {range:?} outside intended {i}..{j}: {content:?} / {old:?}"
-        );
-        assert_eq!(fuzzy_normalise(replaced).text, fuzzy_normalise(&old).text);
+        assert_eq!(fuzzy_normalise(replaced).unwrap().text, needle, "{case}");
+        let Some(expected) = expected else {
+            continue;
+        };
+        assert_eq!(range, expected, "{case}");
+        checked += 1;
+        let region_core = i + content[i..j].trim_end_matches(is_line_space).len();
+        widened += usize::from(range.start < i || range.end > region_core);
     }
+    assert!(checked > 2_000, "too few fuzzy edits checked: {checked}");
     assert!(
-        unique_fuzzy > 1_000,
-        "too few fuzzy edits exercised: {unique_fuzzy}"
+        widened > 200,
+        "too few edge-whitespace edits checked: {widened}"
     );
 }
 

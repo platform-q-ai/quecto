@@ -19,6 +19,8 @@ use super::edit_match::{Location, Unmappable, locate};
 use super::resolve_and_validate;
 
 const MAX_EDIT_FILE_BYTES: u64 = 1024 * 1024;
+// The fuzzy matcher's offset map stores `u32` offsets (edit_match.rs).
+const _: () = assert!(MAX_EDIT_FILE_BYTES <= u32::MAX as u64);
 const DIFF_MAX_BYTES: usize = 4096;
 const DIFF_CONTEXT_LINES: usize = 4;
 

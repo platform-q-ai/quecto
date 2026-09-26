@@ -149,3 +149,87 @@ fn splice_refuses_ranges_it_cannot_cut_cleanly() {
     let reversed = 4..1;
     assert_eq!(splice(text, reversed, "x"), None);
 }
+
+// --- whitespace at the edges of oldText (#2191 review) ---
+//
+// The fuzzy needle drops whitespace at the edges of oldText, but newText
+// still carries it. The match takes the file's whitespace run at that edge,
+// so newText's whitespace replaces it instead of adding to it.
+
+/// Trailing whitespace-only last line: the next line's indent is replaced.
+#[tokio::test]
+async fn a_whitespace_only_last_line_replaces_the_next_lines_indent() {
+    assert_edit(
+        "it\u{2019}s\n  bar\n",
+        "it's\n  ",
+        "done\n  ",
+        "done\n  bar\n",
+    )
+    .await;
+}
+
+/// Trailing space mid-line: the file's space is replaced, not doubled.
+#[tokio::test]
+async fn a_trailing_space_mid_line_replaces_the_files_space() {
+    assert_edit(
+        "it\u{2019}s foo bar\n",
+        "it's foo ",
+        "it's baz ",
+        "it's baz bar\n",
+    )
+    .await;
+}
+
+/// The whole whitespace run at a mid-line edge goes with the match.
+#[tokio::test]
+async fn a_trailing_space_mid_line_takes_the_whole_run() {
+    assert_edit("it\u{2019}s foo \t bar\n", "it's foo ", "X ", "X bar\n").await;
+}
+
+/// A trailing tab mid-line.
+#[tokio::test]
+async fn a_trailing_tab_mid_line_replaces_the_files_tab() {
+    assert_edit("it\u{2019}s\tx\n", "it's\t", "Y\t", "Y\tx\n").await;
+}
+
+/// Trailing whitespace at end of line: the file's trailing run is replaced.
+#[tokio::test]
+async fn trailing_whitespace_at_line_end_replaces_the_files_run() {
+    assert_edit("a\u{2019}  \n", "a'  ", "b  ", "b  \n").await;
+}
+
+/// oldText's trailing whitespace may stand for a line end with none.
+#[tokio::test]
+async fn trailing_whitespace_in_old_text_matches_a_bare_line_end() {
+    assert_edit("a\u{2019}\nz\n", "a'  ", "b", "b\nz\n").await;
+}
+
+/// oldText ends in whitespace but the file has none there, mid-line: that is
+/// not a match, so nothing is written.
+#[tokio::test]
+async fn trailing_whitespace_in_old_text_needs_whitespace_or_a_line_end() {
+    let file = "it\u{2019}s foobar\n";
+    let (result, after) = edit_file(file, "it's foo ", "X ").await;
+    assert!(result.is_error, "{}", result.content);
+    assert!(result.content.contains("not found"), "{}", result.content);
+    assert_eq!(after, file);
+}
+
+/// A whitespace-only FIRST line of oldText takes the file's trailing run
+/// before the matched newline.
+#[tokio::test]
+async fn a_whitespace_only_first_line_replaces_the_files_trailing_run() {
+    assert_edit("pad  \nit\u{2019}s\n", "  \nit's", "  \nX", "pad  \nX\n").await;
+}
+
+/// Only matches whose edges fit count towards ambiguity.
+#[tokio::test]
+async fn only_matches_whose_edges_fit_are_counted() {
+    assert_edit(
+        "it\u{2019}s foobar\nit\u{2019}s foo bar\n",
+        "it's foo ",
+        "X ",
+        "it\u{2019}s foobar\nX bar\n",
+    )
+    .await;
+}

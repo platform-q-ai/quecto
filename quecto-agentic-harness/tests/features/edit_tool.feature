@@ -89,6 +89,14 @@ Feature: EditTool — Quecto compatibility
     Then the [ToolResult] should not be an error
     And the file "curly.txt" should read exactly "’’aZ\n"
 
+  @done
+  Scenario: Fuzzy match with whitespace at the end of oldText replaces the file's whitespace
+    Given a tool workspace
+    And a file "edge.txt" exists with content "it’s foo bar\n"
+    When the agent edits "edge.txt" replacing "it's foo " with "it's baz "
+    Then the [ToolResult] should not be an error
+    And the file "edge.txt" should read exactly "it's baz bar\n"
+
   # --- Line-ending preservation ---
 
   @done
