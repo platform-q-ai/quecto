@@ -111,7 +111,7 @@ Feature: Agent Tool System
     Given a tool workspace with 1100 files
     When the agent executes tool "ls" with args:
       | path | . |
-    Then the [ToolResult] should contain "entries limit reached"
+    Then the [ToolResult] should contain "limit 500 reached). Next: offset=500"
     And the [ToolResult] should not be an error
 
   Scenario: Tool registry lists core tools

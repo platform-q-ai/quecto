@@ -183,6 +183,14 @@ fn when_find_with_path(world: &mut QuectoWorld, pattern: String, path: String) {
     world.find_result = Some(run_find(tool, args));
 }
 
+#[when(regex = r#"^I find entries matching "([^"]+)" of type "([^"]+)"$"#)]
+fn when_find_with_type(world: &mut QuectoWorld, pattern: String, kind: String) {
+    require_fd();
+    let tool = make_find_tool(world);
+    let args = serde_json::json!({ "pattern": pattern, "type": kind });
+    world.find_result = Some(run_find(tool, args));
+}
+
 #[when(
     regex = r#"^I find files matching "([^"]+)" in a temporary directory outside workspace containing "([^"]+)"$"#
 )]
@@ -221,6 +229,42 @@ fn then_find_not_contains(world: &mut QuectoWorld, expected: String) {
         !result.content.contains(&expected),
         "find result should NOT contain {:?}, got:\n{}",
         expected,
+        result.content
+    );
+}
+
+#[then(regex = r#"^the find result should have the line "([^"]+)"$"#)]
+fn then_find_has_line(world: &mut QuectoWorld, expected: String) {
+    let result = world
+        .find_result
+        .as_ref()
+        .expect("no find result — did you run a When step?");
+    assert!(
+        result.content.lines().any(|line| line == expected),
+        "find result should have the line {:?}, got:\n{}",
+        expected,
+        result.content
+    );
+}
+
+/// No entry is the directory or lies under it, at any depth; a sibling
+/// that only starts with the same name (`.gitignore`) is not inside it.
+#[then(regex = r#"^the find result should list nothing inside "([^"]+)"$"#)]
+fn then_find_lists_nothing_inside(world: &mut QuectoWorld, directory: String) {
+    let result = world
+        .find_result
+        .as_ref()
+        .expect("no find result — did you run a When step?");
+    let inside = format!("{directory}/");
+    let nested = format!("/{directory}/");
+    let offending: Vec<&str> = result
+        .content
+        .lines()
+        .filter(|line| line.starts_with(&inside) || line.contains(&nested))
+        .collect();
+    assert!(
+        offending.is_empty(),
+        "find result should list nothing inside {directory:?}, got {offending:?} in:\n{}",
         result.content
     );
 }

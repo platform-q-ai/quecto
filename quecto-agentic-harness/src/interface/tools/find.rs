@@ -1,6 +1,6 @@
 //! JSON delivery adapter for the typed find use case.
 use crate::application::agent_turn::use_cases::find::{
-    FindError, FindRequest, FindResult, FindUseCase,
+    FindEntryKind, FindError, FindRequest, FindResult, FindUseCase,
 };
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
@@ -25,17 +25,23 @@ impl Tool for FindTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "find".into(),
-            description: "Find files by glob pattern using fd. Requires fd on PATH. \
-                          Returns newline-separated relative paths. Respects .gitignore. \
-                          Output capped at 1000 results or 50KB. \
+            description: "Find files and directories by glob pattern using fd. Requires fd on PATH. \
+                          Returns newline-separated paths relative to the workspace, as grep \
+                          prints them (absolute outside it), ready for read or edit; directories \
+                          end in '/' (a symlink never does, whatever it points at). Respects .gitignore and lists hidden files, but skips \
+                          VCS internals (.git, .hg, .svn, .jj) below the search path; pass one \
+                          as path to search it. type \"d\" lists only directories (as does a \
+                          pattern that ends in '/'), type \"f\" only files; a symlink counts \
+                          as what it points at. Output capped at 1000 results or 50KB. \
                           Example: {\"pattern\": \"*.rs\"}"
                 .into(),
             parameters_schema: r#"{
                 "type": "object",
                 "properties": {
                     "pattern": {"type":"string","description":"Glob pattern, e.g. '*.rs', '**/*.json', or 'src/*.rs' (path-segment patterns work)"},
-                    "path":    {"type":"string","description":"Directory to search (defaults to '.')"},
-                    "limit":   {"type":"number","description":"Maximum results (default 1000)"}
+                    "path":    {"type":"string","description":"Directory to search (defaults to '.'); a VCS directory such as '.git' is searched only when it is the path"},
+                    "type":    {"type":"string","enum":["f","d"],"description":"f: files only; d: directories only (default: both)"},
+                    "limit":   {"type":"number","description":"Maximum results (default 1000, max 100000)"}
                 },
                 "required": ["pattern"]
             }"#
@@ -66,6 +72,10 @@ impl Tool for FindTool {
                     true,
                 ));
             };
+            let (kind, limit) = match (entry_kind(args.get("type")), limit(args.get("limit"))) {
+                (Ok(kind), Ok(limit)) => (kind, limit),
+                (Err(message), _) | (_, Err(message)) => return Ok(result(message, true)),
+            };
             let request = FindRequest {
                 pattern: pattern.into(),
                 path: args
@@ -73,7 +83,8 @@ impl Tool for FindTool {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or(".")
                     .into(),
-                limit: args.get("limit").and_then(serde_json::Value::as_f64),
+                limit,
+                kind,
             };
             match self.use_case.execute(request).await {
                 Ok(found) => Ok(result(render(found), false)),
@@ -86,6 +97,64 @@ impl Tool for FindTool {
         })
     }
 }
+/// The `type` argument, read against an allowlist (#2200): anything else is
+/// refused rather than silently listing both kinds.
+fn entry_kind(value: Option<&serde_json::Value>) -> Result<Option<FindEntryKind>, String> {
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => match value.as_str() {
+            Some("f" | "file") => Ok(Some(FindEntryKind::File)),
+            Some("d" | "directory") => Ok(Some(FindEntryKind::Directory)),
+            _ => Err(format!(
+                "invalid 'type' {value}: use \"f\" (files only) or \"d\" (directories only), \
+                 or omit it for both. Example: {{\"pattern\": \"*\", \"type\": \"d\"}}"
+            )),
+        },
+    }
+}
+
+/// The `limit` argument: absent or null is the default; a number that
+/// rounds to at least 1 is normalized by the use case; anything else is
+/// refused, as ls and grep refuse it (#2200 reviews 2 and 3).
+fn limit(value: Option<&serde_json::Value>) -> Result<Option<f64>, String> {
+    match value.map(|value| (value, value.as_f64())) {
+        None | Some((serde_json::Value::Null, _)) => Ok(None),
+        // As grep's whole numbers: rounded, at least 1; above the maximum
+        // is the maximum (the use case clamps).
+        Some((_, Some(number))) if number.round() >= 1.0 => Ok(Some(number)),
+        Some((value, _)) => Err(format!(
+            "invalid 'limit' {value}: use a whole number of at least 1. \
+             Example: {{\"pattern\": \"*.rs\", \"limit\": 100}}"
+        )),
+    }
+}
+
+/// What an empty search says: never a bare "nothing exists" (#2200).
+/// The kind may have come from `type` or from a trailing '/', so the hint
+/// names both; a skipped VCS directory is named only when there is one.
+fn no_matches(kind: Option<FindEntryKind>, skipped_vcs_dir: Option<&str>) -> String {
+    let said = match kind {
+        None => {
+            "No files found matching pattern (directories are listed too, ending in '/'; \
+             type \"d\" lists only directories, type \"f\" only files"
+        }
+        Some(FindEntryKind::Directory) => {
+            "No directories found matching pattern (only directories were searched, as \
+             type \"d\" or a pattern ending in '/' asks; drop both to match files too"
+        }
+        Some(FindEntryKind::File) => {
+            "No files found matching pattern (type \"f\" searched only files; omit it to \
+             match directories too"
+        }
+    };
+    match skipped_vcs_dir {
+        Some(directory) => format!(
+            "{said}; VCS metadata lives at {directory}, which is not searched unless passed as path)"
+        ),
+        None => format!("{said})"),
+    }
+}
+
 fn result(content: String, is_error: bool) -> ToolResult {
     ToolResult {
         content,
@@ -118,7 +187,12 @@ fn render(found: FindResult) -> String {
     }
     // Said even under the byte cap: what is shown is still drawn from an
     // arbitrary subset (#2176 review).
-    if found.output.result_limit_reached {
+    // With nothing shown, a bigger limit is no advice: the incompleteness
+    // note says why (#2200 review 3).
+    if let (true, false) = (
+        found.output.result_limit_reached,
+        found.output.entries.is_empty(),
+    ) {
         append_line(
             &mut content,
             &format!(
@@ -142,7 +216,7 @@ fn render(found: FindResult) -> String {
         }
     }
     if content.is_empty() {
-        "No files found matching pattern".into()
+        no_matches(found.kind, found.output.skipped_vcs_dir.as_deref())
     } else {
         content
     }

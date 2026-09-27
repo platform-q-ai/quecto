@@ -1,5 +1,7 @@
 use super::*;
-use crate::application::agent_turn::use_cases::find::{FindOutput, FindPaths, FindPathsRequest};
+use crate::application::agent_turn::use_cases::find::{
+    FindEntryKind, FindOutput, FindPaths, FindPathsRequest,
+};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -54,7 +56,7 @@ async fn optional_fallbacks_empty_pattern_and_unknown_fields_are_accepted() {
     for input in [
         r#"{"pattern":""}"#,
         r#"{"pattern":"","path":null,"limit":null}"#,
-        r#"{"pattern":"","path":42,"limit":"7","extra":true}"#,
+        r#"{"pattern":"","path":42,"limit":null,"extra":true}"#,
     ] {
         assert!(!tool.execute(input).await.unwrap().is_error);
     }
@@ -64,7 +66,8 @@ async fn optional_fallbacks_empty_pattern_and_unknown_fields_are_accepted() {
             FindPathsRequest {
                 pattern: "".into(),
                 path: ".".into(),
-                limit: 1000
+                limit: 1000,
+                kind: None,
             };
             3
         ]
@@ -77,7 +80,8 @@ async fn optional_fallbacks_empty_pattern_and_unknown_fields_are_accepted() {
         FindPathsRequest {
             pattern: "*.rs".into(),
             path: "src".into(),
-            limit: 6
+            limit: 6,
+            kind: None,
         }
     );
 }
@@ -108,17 +112,16 @@ fn rendered(entries: Vec<String>, incomplete: bool, limited: bool) -> String {
             incomplete,
             result_limit_reached: limited,
             diagnostic: None,
+            skipped_vcs_dir: None,
         },
         limit: 3,
+        kind: None,
     })
 }
 
 #[test]
 fn renders_order_whitespace_directories_unicode_and_limit_notice() {
-    assert_eq!(
-        rendered(vec![], false, false),
-        "No files found matching pattern"
-    );
+    assert!(rendered(vec![], false, false).starts_with("No files found matching pattern"));
     assert_eq!(
         rendered(vec!["z/".into(), " ".into(), "文�.rs".into()], false, false),
         "z/\n \n文�.rs"
@@ -165,6 +168,7 @@ fn incompleteness_survives_empty_output_and_other_hints() {
             ..Default::default()
         },
         limit: 1,
+        kind: None,
     });
     assert!(output.contains("producer stopped"));
 }
@@ -187,6 +191,7 @@ async fn successful_invocation_renders_metadata_without_changing_error_flag() {
         incomplete: true,
         result_limit_reached: true,
         diagnostic: Some("partial search".into()),
+        skipped_vcs_dir: None,
     }));
     let result = tool.execute(r#"{"pattern":"*","limit":1}"#).await.unwrap();
     assert!(!result.is_error);
@@ -206,4 +211,169 @@ fn the_byte_cap_keeps_the_limit_notice() {
     let out = rendered(entries, false, true);
     assert!(out.contains("[50KB limit reached]"), "{out}");
     assert!(out.contains("an arbitrary subset of the matches"), "{out}");
+}
+
+/// #2200: type is read against an allowlist; anything else is refused
+/// before any search, never silently widened to both kinds.
+#[tokio::test]
+async fn the_type_argument_is_an_allowlist() {
+    let (tool, fake) = fixture();
+    for (value, kind) in [
+        (r#""f""#, Some(FindEntryKind::File)),
+        (r#""file""#, Some(FindEntryKind::File)),
+        (r#""d""#, Some(FindEntryKind::Directory)),
+        (r#""directory""#, Some(FindEntryKind::Directory)),
+        ("null", None),
+    ] {
+        let result = tool
+            .execute(&format!(r#"{{"pattern":"*","type":{value}}}"#))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "{value}: {}", result.content);
+        assert_eq!(
+            fake.calls.lock().unwrap().pop().unwrap().kind,
+            kind,
+            "{value}"
+        );
+    }
+    for value in [r#""x""#, r#""D""#, r#""""#, "1", "true", r#"["d"]"#, "{}"] {
+        let result = tool
+            .execute(&format!(r#"{{"pattern":"*","type":{value}}}"#))
+            .await
+            .unwrap();
+        assert!(result.is_error, "{value}");
+        assert!(
+            result.content.contains(r#""f""#) && result.content.contains(r#""d""#),
+            "{value}: {}",
+            result.content
+        );
+    }
+    assert!(fake.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn no_matches_hint_at_the_type_filter_and_skipped_vcs_internals() {
+    let empty = |kind, skipped: Option<&str>| {
+        render(FindResult {
+            output: FindOutput {
+                skipped_vcs_dir: skipped.map(str::to_owned),
+                ..Default::default()
+            },
+            limit: 3,
+            kind,
+        })
+    };
+    let plain = empty(None, None);
+    assert!(
+        plain.starts_with("No files found matching pattern"),
+        "{plain}"
+    );
+    assert!(plain.contains(r#"type "d""#), "{plain}");
+    assert!(
+        !plain.contains("VCS"),
+        "no skipped directory, no hint: {plain}"
+    );
+    assert!(plain.ends_with(')'), "{plain}");
+    // Only a VCS directory that was really skipped is suggested, by the
+    // path that reaches it (a worktree's real git directory, #2199 review).
+    let skipped = empty(None, Some("main/.git/worktrees/wt"));
+    assert!(
+        skipped.ends_with(
+            "; VCS metadata lives at main/.git/worktrees/wt, which is not searched unless passed as path)"
+        ),
+        "{skipped}"
+    );
+    // A directory kind may come from type "d" or from a trailing '/'.
+    let directories = empty(Some(FindEntryKind::Directory), None);
+    assert!(
+        directories.starts_with("No directories found matching pattern"),
+        "{directories}"
+    );
+    assert!(
+        directories.contains(r#"type "d" or a pattern ending in '/'"#),
+        "{directories}"
+    );
+    let files = empty(Some(FindEntryKind::File), Some(".git"));
+    assert!(
+        files.starts_with("No files found matching pattern"),
+        "{files}"
+    );
+    assert!(files.contains(r#"type "f""#), "{files}");
+    assert!(files.contains("VCS metadata lives at .git,"), "{files}");
+}
+
+#[test]
+fn the_definition_offers_type_and_says_where_paths_are_relative_to() {
+    let (tool, _) = fixture();
+    let definition = tool.definition();
+    let schema: serde_json::Value = serde_json::from_str(&definition.parameters_schema).unwrap();
+    assert_eq!(
+        schema["properties"]["type"]["enum"],
+        serde_json::json!(["f", "d"])
+    );
+    for said in [
+        "relative to the workspace",
+        ".git",
+        "type",
+        "ends in '/'",
+        "symlink counts as what it points at",
+        "a symlink never does",
+    ] {
+        assert!(
+            definition.description.contains(said),
+            "{said}: {}",
+            definition.description
+        );
+    }
+    assert!(definition.description.len() <= 1024, "a short description");
+}
+
+/// Review 2: limit is a number, as for ls, read and grep; anything else
+/// is refused before any search.
+#[tokio::test]
+async fn a_limit_that_is_not_a_number_is_refused() {
+    let (tool, fake) = fixture();
+    // As grep's whole numbers: a value that rounds below 1 is refused.
+    for value in [r#""10""#, "true", "[5]", "{}", "-3", "0", "0.4", "-0.4"] {
+        let result = tool
+            .execute(&format!(r#"{{"pattern":"*","limit":{value}}}"#))
+            .await
+            .unwrap();
+        assert!(result.is_error, "{value}");
+        assert!(
+            result
+                .content
+                .starts_with(&format!("invalid 'limit' {value}:")),
+            "{}",
+            result.content
+        );
+        assert!(
+            result.content.contains(r#""limit": 100"#),
+            "{}",
+            result.content
+        );
+    }
+    assert!(fake.calls.lock().unwrap().is_empty());
+    for (value, normalized) in [("null", 1000), ("2.6", 3), ("0.6", 1), ("1e9", 100_000)] {
+        let result = tool
+            .execute(&format!(r#"{{"pattern":"*","limit":{value}}}"#))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "{value}: {}", result.content);
+        assert_eq!(
+            fake.calls.lock().unwrap().pop().unwrap().limit,
+            normalized,
+            "{value}"
+        );
+    }
+}
+
+/// Review 3: with nothing kept, a bigger limit is no advice.
+#[test]
+fn no_limit_advice_when_nothing_is_shown() {
+    let shown = rendered(vec!["a".into()], true, true);
+    assert!(shown.contains("Use limit=6"), "{shown}");
+    let empty = rendered(vec![], true, true);
+    assert!(!empty.contains("Use limit="), "{empty}");
+    assert!(empty.contains("Search incomplete"), "{empty}");
 }

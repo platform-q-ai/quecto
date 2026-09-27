@@ -1323,7 +1323,7 @@ fn application_path_allowed(path: &str) -> bool {
             "agent_turn",
             "use_cases",
             "find",
-            "FindPaths" | "FindPathsRequest" | "FindOutput" | "FindError",
+            "FindPaths" | "FindPathsRequest" | "FindOutput" | "FindError" | "FindEntryKind",
             ..,
         ] => true,
         [
@@ -3513,7 +3513,12 @@ fn find_vertical_slice_has_one_owner_per_role() {
         let name = Path::new(path).file_name().unwrap().to_str().unwrap();
         if name.starts_with("find") {
             assert!(
-                matches!(name, "find_fd.rs" | "find_fd_tests.rs"),
+                // `find_fd_entries.rs` is the fd adapter's own child module
+                // (what fd's lines become), not a second owner.
+                matches!(
+                    name,
+                    "find_fd.rs" | "find_fd_entries.rs" | "find_fd_tests.rs"
+                ),
                 "superseded find owner: {path}"
             );
         }
@@ -4029,6 +4034,7 @@ fn find_application_dependencies_allowed(source: &str) -> bool {
                     *name,
                     "FindRequest"
                         | "FindPathsRequest"
+                        | "FindEntryKind"
                         | "FindOutput"
                         | "FindError"
                         | "FindPaths"
@@ -4066,6 +4072,13 @@ fn find_application_dependencies_allowed(source: &str) -> bool {
                         | "assert"
                         | "DEFAULT_LIMIT"
                         | "MAX_LIMIT"
+                        | "Copy"
+                        | "entry_kind"
+                        | "pattern"
+                        | "kind"
+                        | "directories_matching"
+                        | "segments"
+                        | "str"
                 ),
                 [] => false,
             }

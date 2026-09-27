@@ -1,6 +1,6 @@
 //! fd discovery effect. Process and pipe ownership stay outside the use case.
 use crate::application::agent_turn::use_cases::find::{
-    FindError, FindOutput, FindPaths, FindPathsRequest,
+    FindEntryKind, FindError, FindOutput, FindPaths, FindPathsRequest,
 };
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::path_utils::resolve_to_cwd;
@@ -16,8 +16,22 @@ use tokio::{
     sync::oneshot,
 };
 
+#[path = "find_fd_entries.rs"]
+mod entries;
+#[cfg(test)]
+use entries::RECORD_MAX;
+#[cfg(test)]
+use entries::skipped_vcs_dir;
+use entries::{Listing, SearchRoot, Stop};
+
+/// Bytes of kept entries a listing holds at most.
 const STDOUT_CAP: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES * 2;
 const STDERR_CAP: usize = 4096;
+/// Hidden entries are listed, except the metadata of these version control
+/// systems: rg and fd skip them too, and a broad search otherwise spends
+/// its limit on git objects (#2199). fd applies `--exclude` below the search
+/// root only, so a path inside one of them still lists it.
+const VCS_METADATA_DIRS: [&str; 4] = [".git", ".hg", ".svn", ".jj"];
 
 pub struct FdFindPaths {
     workspace: Arc<PathBuf>,
@@ -52,6 +66,7 @@ impl FindPaths for FdFindPaths {
                 .validate_path(&root.to_string_lossy())
                 .map_err(|e| FindError::Security(e.to_string()))?;
             let mut command = self.command(&request, &root);
+            let workspace = self.workspace.clone();
             let (sender, receiver) = oneshot::channel();
             // The owner has its own thread and reactor: shutting down the caller's
             // runtime cannot abort termination/wait. Receiver closure cancels the
@@ -65,6 +80,9 @@ impl FindPaths for FdFindPaths {
                         .build()
                     {
                         Ok(runtime) => {
+                            // Resolving '..' touches the disk: done here, off
+                            // the caller's runtime.
+                            let root = SearchRoot::new(root, &workspace, request.kind);
                             runtime.block_on(own_process(&mut command, root, request.limit, sender))
                         }
                         Err(error) => {
@@ -86,18 +104,36 @@ impl FindPaths for FdFindPaths {
 impl FdFindPaths {
     fn command(&self, request: &FindPathsRequest, root: &Path) -> Command {
         let mut command = Command::new(&self.binary);
-        command
-            .current_dir(self.workspace.as_ref())
-            .args([
-                "--glob",
-                "--color=never",
-                "--hidden",
-                "--no-require-git",
-                "--max-results",
-            ])
+        command.current_dir(self.workspace.as_ref()).args([
+            "--glob",
+            "--color=never",
+            "--hidden",
+            "--no-require-git",
+            // NUL-separated: a name may hold a newline (#2200 review 3).
+            "--print0",
+        ]);
+        // Symlinks are asked for too and kept by their target's kind
+        // (`SearchRoot::entry`): fd's own types never follow them. fd then
+        // cannot count what is kept, so the listing stops it instead, once
+        // one past the limit are kept (#2200 review).
+        match request.kind {
             // One past the limit: whether more exist is then known, not
             // guessed (#2176 review).
-            .arg(request.limit.saturating_add(1).to_string());
+            None => {
+                command
+                    .arg("--max-results")
+                    .arg(request.limit.saturating_add(1).to_string());
+            }
+            Some(FindEntryKind::File) => {
+                command.args(["--type", "f", "--type", "l"]);
+            }
+            Some(FindEntryKind::Directory) => {
+                command.args(["--type", "d", "--type", "l"]);
+            }
+        }
+        for directory in VCS_METADATA_DIRS {
+            command.arg("--exclude").arg(directory);
+        }
         let pattern = if request.pattern.contains('/') {
             command.arg("--full-path");
             let normalized = request
@@ -126,7 +162,7 @@ impl FdFindPaths {
 
 async fn own_process(
     command: &mut Command,
-    root: PathBuf,
+    root: SearchRoot,
     limit: usize,
     mut sender: oneshot::Sender<Result<FindOutput, FindError>>,
 ) {
@@ -178,10 +214,6 @@ async fn terminate(child: &mut Child) -> Result<(), FindError> {
     }
 }
 
-struct Capture {
-    bytes: Vec<u8>,
-    capped: bool,
-}
 async fn drain(
     reader: &mut (impl AsyncRead + Unpin),
     cap: usize,
@@ -202,43 +234,82 @@ async fn drain(
     }
 }
 
-async fn collect(child: &mut Child, root: &Path, limit: usize) -> Result<FindOutput, FindError> {
+async fn collect(
+    child: &mut Child,
+    root: &SearchRoot,
+    limit: usize,
+) -> Result<FindOutput, FindError> {
     let mut stdout = child.stdout.take().expect("piped stdout invariant");
     let mut stderr = child.stderr.take().expect("piped stderr invariant");
-    let mut out = Capture {
-        bytes: Vec::new(),
-        capped: false,
-    };
-    let mut err = Capture {
-        bytes: Vec::new(),
-        capped: false,
-    };
-    // A cap is an intentional stop, not EOF. Returning either cap immediately
-    // drops both read futures before termination; never wait on another pipe.
+    let mut listing = Listing::new(root, limit, STDOUT_CAP);
+    let mut out_stop = None;
+    let mut err = Vec::new();
+    let mut err_capped = false;
+    // A cap, or enough entries, is an intentional stop, not EOF. Returning
+    // either immediately drops both read futures before termination; never
+    // wait on another pipe.
     let streams: std::io::Result<()> = async {
-        let read_out = drain(&mut stdout, STDOUT_CAP, &mut out.bytes);
-        let read_err = drain(&mut stderr, STDERR_CAP, &mut err.bytes);
+        let read_out = drain_entries(&mut stdout, &mut listing);
+        let read_err = drain(&mut stderr, STDERR_CAP, &mut err);
         tokio::pin!(read_out, read_err);
         tokio::select! {
             result = &mut read_out => {
-                out.capped = result?;
-                if out.capped { Ok(()) } else { err.capped = read_err.await?; Ok(()) }
+                out_stop = result?;
+                match out_stop {
+                    None => err_capped = read_err.await?,
+                    Some(Stop::Capped | Stop::Enough) => {}
+                }
+                Ok(())
             }
             result = &mut read_err => {
-                err.capped = result?;
-                if err.capped { Ok(()) } else { out.capped = read_out.await?; Ok(()) }
+                err_capped = result?;
+                match err_capped {
+                    true => {}
+                    false => out_stop = read_out.await?,
+                }
+                Ok(())
             }
         }
     }
     .await;
     finish_read(child, streams).await?;
-    if out.capped || err.capped {
-        terminate(child).await?;
-        return Ok(output(&out.bytes, &err.bytes, root, limit, true));
+    match (out_stop, err_capped) {
+        // Enough entries are kept: the rest is not needed (#2200 review).
+        // fd's exit status and stderr are deliberately not read: whatever
+        // it would still say cannot change the entries already kept.
+        (Some(Stop::Enough), _) => {
+            terminate(child).await?;
+            Ok(listing_output(listing, &[], false))
+        }
+        (Some(Stop::Capped), _) | (None, true) => {
+            terminate(child).await?;
+            Ok(listing_output(listing, &err, true))
+        }
+        (None, false) => {
+            let waited = child.wait().await;
+            let status = finish_wait(child, waited).await?;
+            classify_listing(status.code(), listing, &err)
+        }
     }
-    let waited = child.wait().await;
-    let status = finish_wait(child, waited).await?;
-    classify(status.code(), &out.bytes, &err.bytes, root, limit)
+}
+
+/// Feeds stdout to the listing until EOF, the cap, or enough (`None`: EOF
+/// with nothing to stop for).
+async fn drain_entries(
+    reader: &mut (impl AsyncRead + Unpin),
+    listing: &mut Listing<'_>,
+) -> std::io::Result<Option<Stop>> {
+    let mut buffer = [0; 8192];
+    loop {
+        match reader.read(&mut buffer).await? {
+            0 => return Ok(listing.finish()),
+            count => {
+                if let Some(stop) = listing.feed(&buffer[..count]) {
+                    return Ok(Some(stop));
+                }
+            }
+        }
+    }
 }
 
 async fn finish_read(child: &mut Child, read: std::io::Result<()>) -> Result<(), FindError> {
@@ -276,33 +347,31 @@ fn diagnostic(stderr: &[u8]) -> String {
         format!("find error: {}", text.trim())
     }
 }
-fn classify(
+fn classify_listing(
     code: Option<i32>,
-    stdout: &[u8],
+    listing: Listing<'_>,
     stderr: &[u8],
-    root: &Path,
-    limit: usize,
 ) -> Result<FindOutput, FindError> {
     // fd exits 0 whether or not anything matched and 1 on an error, such
     // as a malformed glob (#2164): exit 1 is never a clean empty result.
-    match code {
-        Some(0) => Ok(output(stdout, &[], root, limit, false)),
-        Some(2) => Err(FindError::Search(diagnostic(stderr))),
-        _ if stdout.is_empty() => Err(FindError::Search(diagnostic(stderr))),
+    match (code, listing.seen()) {
+        (Some(0), _) => Ok(listing_output(listing, &[], false)),
+        (Some(2), _) | (_, 0) => Err(FindError::Search(diagnostic(stderr))),
         _ => {
-            let mut result = output(stdout, stderr, root, limit, false);
+            let mut result = listing_output(listing, stderr, false);
             result.incomplete = true;
             result.diagnostic = Some(diagnostic(stderr));
             Ok(result)
         }
     }
 }
-fn output(stdout: &[u8], stderr: &[u8], root: &Path, limit: usize, stopped: bool) -> FindOutput {
-    // Sorted: fd's threads find entries in no fixed order (#2164). fd was
-    // asked for one past the limit, so an entry past it means more exist.
-    let mut entries = normalize_output(stdout, root, stopped);
-    entries.sort_unstable();
+
+fn listing_output(listing: Listing<'_>, stderr: &[u8], stopped: bool) -> FindOutput {
+    // Sorted: fd's threads find entries in no fixed order (#2164). One kept
+    // past the limit means more exist.
+    let (mut entries, limit, skipped_vcs_dir) = listing.into_parts();
     let more = entries.len() > limit;
+    entries.sort_unstable();
     entries.truncate(limit);
     FindOutput {
         // Output cut at the stdout cap is as arbitrary a subset as one cut
@@ -310,42 +379,59 @@ fn output(stdout: &[u8], stderr: &[u8], root: &Path, limit: usize, stopped: bool
         result_limit_reached: more || stopped,
         entries,
         incomplete: stopped,
-        diagnostic: if stopped && stderr.is_empty() {
-            None
-        } else if stopped {
-            Some(diagnostic(stderr))
-        } else {
-            None
+        diagnostic: match (stopped, stderr.is_empty()) {
+            (true, false) => Some(diagnostic(stderr)),
+            (true, true) | (false, _) => None,
         },
+        skipped_vcs_dir,
     }
 }
-fn normalize_output(bytes: &[u8], root: &Path, stopped: bool) -> Vec<String> {
-    let complete = if stopped {
-        bytes
-            .iter()
-            .rposition(|byte| *byte == b'\n')
-            .map_or(&bytes[..0], |last| &bytes[..=last])
-    } else {
-        bytes
-    };
-    let raw = String::from_utf8_lossy(complete);
-    if raw.trim().is_empty() {
-        return Vec::new();
+
+/// Tests feed whole outputs: `stopped` is a cut at the cap, so a final
+/// line without its newline is dropped.
+#[cfg(test)]
+fn listing_of<'a>(stdout: &[u8], root: &'a SearchRoot, limit: usize, stopped: bool) -> Listing<'a> {
+    let mut listing = Listing::new(root, limit, STDOUT_CAP);
+    if let (None, false) = (listing.feed(stdout), stopped) {
+        let _ = listing.finish();
     }
-    let root = root.to_string_lossy();
-    let root = root.trim_end_matches('/');
-    let prefix = format!("{root}/");
-    raw.lines()
-        .filter_map(|line| match line {
-            "" => None,
-            entry => Some(entry.strip_prefix(&prefix).unwrap_or(entry).to_owned()),
-        })
-        .collect()
+    listing
+}
+
+#[cfg(test)]
+fn classify(
+    code: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+    root: &SearchRoot,
+    limit: usize,
+) -> Result<FindOutput, FindError> {
+    classify_listing(code, listing_of(stdout, root, limit, false), stderr)
+}
+
+#[cfg(test)]
+fn output(
+    stdout: &[u8],
+    stderr: &[u8],
+    root: &SearchRoot,
+    limit: usize,
+    stopped: bool,
+) -> FindOutput {
+    listing_output(listing_of(stdout, root, limit, stopped), stderr, stopped)
+}
+
+#[cfg(test)]
+fn normalize_output(bytes: &[u8], root: &SearchRoot, stopped: bool) -> Vec<String> {
+    listing_of(bytes, root, usize::MAX, stopped).into_parts().0
 }
 
 #[cfg(test)]
 #[path = "find_fd_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "find_fd_listing_tests.rs"]
+mod listing_tests;
 
 #[cfg(test)]
 mod install_guidance_tests {
@@ -366,6 +452,7 @@ mod install_guidance_tests {
                 pattern: "*".into(),
                 path: ".".into(),
                 limit: 10,
+                kind: None,
             })
             .await;
         match result {

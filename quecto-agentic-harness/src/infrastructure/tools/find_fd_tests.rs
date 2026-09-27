@@ -7,10 +7,22 @@ fn request(pattern: &str) -> FindPathsRequest {
         pattern: pattern.into(),
         path: ".".into(),
         limit: 1000,
+        kind: None,
     }
 }
 
-fn fixture(script: &str) -> (TempDir, FdFindPaths) {
+/// A search root shown as the workspace itself.
+pub(super) fn at(root: &str) -> SearchRoot {
+    SearchRoot {
+        searched: PathBuf::from(root),
+        shown: String::new(),
+        workspace: PathBuf::from("/"),
+        kind: None,
+        skipped_vcs_dir: None,
+    }
+}
+
+pub(super) fn fixture(script: &str) -> (TempDir, FdFindPaths) {
     let dir = TempDir::new().unwrap();
     let binary = dir.path().join("fake-fd");
     // A parallel test can fork while this process holds a writable script fd,
@@ -43,7 +55,7 @@ async fn run(effect: &FdFindPaths) -> Result<FindOutput, FindError> {
 #[tokio::test]
 async fn natural_status_matrix() {
     for code in [0, 1, 2, 3] {
-        for output in ["", "entry\\n"] {
+        for output in ["", "entry\\0"] {
             let (_dir, effect) = fixture(&format!(
                 "import sys\nsys.stdout.write('{output}')\nsys.stderr.write('diagnostic')\nsys.exit({code})"
             ));
@@ -90,7 +102,7 @@ async fn ready_pid(dir: &TempDir) -> u32 {
     .expect("fixture readiness")
 }
 
-async fn assert_reaped(dir: &TempDir) {
+pub(super) async fn assert_reaped(dir: &TempDir) {
     let pid = ready_pid(dir).await;
     timeout(Duration::from_secs(5), async {
         loop {
@@ -123,17 +135,14 @@ async fn dropped_call_reaps_during_streams_and_wait() {
 #[test]
 fn normalization_preserves_components_and_complete_lines() {
     let output = normalize_output(
-        b"/ws/file\n/ws2/other\n/ws/dir/\npartial",
-        std::path::Path::new("/ws/"),
+        b"/ws/file\0/ws2/other\0/ws/dir/\0partial",
+        &at("/ws/"),
         true,
     );
     assert_eq!(output, ["file", "/ws2/other", "dir/"]);
+    assert_eq!(normalize_output(b"/file\0", &at("/"), false), ["file"]);
     assert_eq!(
-        normalize_output(b"/file\n", std::path::Path::new("/"), false),
-        ["file"]
-    );
-    assert_eq!(
-        normalize_output(b"\xff\nlast", std::path::Path::new("/ws"), false),
+        normalize_output(b"\xff\0last", &at("/ws"), false),
         ["\u{fffd}", "last"]
     );
 }
@@ -149,15 +158,26 @@ async fn argv_cwd_and_glob_are_literal() {
     let args: Vec<String> =
         serde_json::from_str(&std::fs::read_to_string(dir.path().join("argv")).unwrap()).unwrap();
     assert_eq!(
-        &args[..9],
+        &args[..18],
         [
             "--glob",
             "--color=never",
             "--hidden",
             "--no-require-git",
+            // NUL-separated records (#2200 review 3).
+            "--print0",
             "--max-results",
             // One past the limit (#2176 review).
             "8",
+            // VCS internals are skipped below the search root (#2199).
+            "--exclude",
+            ".git",
+            "--exclude",
+            ".hg",
+            "--exclude",
+            ".svn",
+            "--exclude",
+            ".jj",
             "--full-path",
             "--",
             "**/src/*.rs"
@@ -228,10 +248,11 @@ async fn read_fault_is_not_eof() {
 
 #[tokio::test]
 async fn exact_and_over_caps_never_fabricate_partial_entry() {
-    for count in [STDOUT_CAP - 1, STDOUT_CAP, STDOUT_CAP + 1] {
+    // An unfinished record is bounded by RECORD_MAX: longer is no path.
+    for count in [RECORD_MAX, RECORD_MAX + 1] {
         let (_dir, effect) = fixture(&format!("import os\nos.write(1,b'x'*{count})"));
         let output = run(&effect).await.unwrap();
-        if count < STDOUT_CAP {
+        if count <= RECORD_MAX {
             assert_eq!(output.entries[0].len(), count);
             assert!(!output.incomplete);
         } else {
@@ -239,11 +260,20 @@ async fn exact_and_over_caps_never_fabricate_partial_entry() {
             assert!(output.incomplete);
         }
     }
+    // Kept entries are bounded by the byte cap: past it the search is
+    // incomplete, and what is kept fits.
+    let (_dir, effect) = fixture(&format!(
+        "import os\nos.write(1,(b'y'*999+b'\\0')*{})",
+        STDOUT_CAP / 1000 + 5
+    ));
+    let output = run(&effect).await.unwrap();
+    assert!(output.incomplete);
+    assert_eq!(output.entries.len(), STDOUT_CAP / 1000);
 }
 
 #[tokio::test]
 async fn signal_status_with_partial_output_is_incomplete() {
-    for data in ["", "entry\\n"] {
+    for data in ["", "entry\\0"] {
         let (_dir, effect) = fixture(&format!(
             "import os,signal\nos.write(1,b'{data}')\nos.kill(os.getpid(),signal.SIGTERM)"
         ));
@@ -260,7 +290,7 @@ async fn signal_status_with_partial_output_is_incomplete() {
 async fn concurrent_cancel_does_not_affect_other_call() {
     let (cancel_dir, cancel) =
         fixture("import os,time\nopen('pid','w').write(str(os.getpid()))\ntime.sleep(60)");
-    let (_success_dir, success) = fixture("print('other-entry')");
+    let (_success_dir, success) = fixture("print('other-entry', end='\\0')");
     let mut task = tokio::spawn(async move { cancel.find(request("*")).await });
     ready_or_result(&cancel_dir, &mut task).await;
     task.abort();
@@ -342,7 +372,7 @@ async fn repeated_success_error_and_cancel_leave_no_children() {
     for _ in 0..4 {
         for code in [0, 2] {
             let (dir, effect) = fixture(&format!(
-                "import os,sys\nopen('pid','w').write(str(os.getpid()))\nprint('entry')\nsys.exit({code})"
+                "import os,sys\nopen('pid','w').write(str(os.getpid()))\nprint('entry', end='\\0')\nsys.exit({code})"
             ));
             let result = run(&effect).await;
             assert_eq!(result.is_ok(), code == 0);
@@ -369,19 +399,24 @@ async fn shared_path_resolution_and_external_roots_are_preserved() {
         Arc::new(workspace.path().into()),
         Arc::new(Sandbox::new(Some(workspace.path().into()))),
     );
-    for path in [
-        "@space dir".to_string(),
-        "space\u{a0}dir".to_string(),
-        format!("{}/", external.path().display()),
+    // Inside the workspace a path is shown relative to it; outside, whole
+    // (#2203), as grep shows them.
+    let outside = std::fs::canonicalize(external.path()).unwrap();
+    for (path, shown) in [
+        ("@space dir".to_string(), "space dir/local.txt".to_string()),
+        (
+            "space\u{a0}dir".to_string(),
+            "space dir/local.txt".to_string(),
+        ),
+        (
+            format!("{}/", external.path().display()),
+            format!("{}/external.txt", outside.display()),
+        ),
     ] {
         let mut req = request("*.txt");
         req.path = path;
         let output = effect.find(req).await.unwrap();
-        assert_eq!(output.entries.len(), 1);
-        assert!(matches!(
-            output.entries[0].as_str(),
-            "local.txt" | "external.txt"
-        ));
+        assert_eq!(output.entries, [shown]);
     }
 }
 
@@ -407,7 +442,7 @@ fn classification_complete_status_stdout_stderr_matrix() {
     for code in [Some(0), Some(1), Some(2), Some(3), None] {
         for stdout in [b"".as_slice(), b"entry".as_slice()] {
             for stderr in [b"".as_slice(), b"diagnostic".as_slice()] {
-                let result = classify(code, stdout, stderr, Path::new("/ws"), 1000);
+                let result = classify(code, stdout, stderr, &at("/ws"), 1000);
                 // fd exits 0 whether or not anything matched, and 1 on an
                 // error (#2164): never a clean empty result.
                 match (code, stdout) {
@@ -444,19 +479,21 @@ async fn injected_read_failure_reaps_and_returns_io() {
 
 #[test]
 fn normalization_whitespace_multibyte_and_long_prefix_bounds() {
-    assert!(normalize_output(b"  \n\n", Path::new("/ws"), false).is_empty());
+    // Only empty lines are skipped: fd never prints a blank path, and a
+    // name of spaces is still a name.
+    assert_eq!(normalize_output(b"  \0\0", &at("/ws"), false), ["  "]);
     assert_eq!(
-        normalize_output(b"one\n  \n\ntwo", Path::new("/ws"), false),
+        normalize_output(b"one\0  \0\0two", &at("/ws"), false),
         ["one", "  ", "two"]
     );
-    let bytes = "日本\n途中".as_bytes();
+    let bytes = "日本\0途中".as_bytes();
     assert_eq!(
-        normalize_output(&bytes[..bytes.len() - 1], Path::new("/ws"), true),
+        normalize_output(&bytes[..bytes.len() - 1], &at("/ws"), true),
         ["日本"]
     );
     let root = format!("/{}", "long".repeat(3000));
-    let raw = format!("{root}/file\n{root}/partial");
-    let output = output(raw.as_bytes(), b"", Path::new(&root), 1000, true);
+    let raw = format!("{root}/file\0{root}/partial");
+    let output = output(raw.as_bytes(), b"", &at(&root), 1000, true);
     assert_eq!(output.entries, ["file"]);
     assert!(output.incomplete);
 }
@@ -554,7 +591,7 @@ fn multi_thread_runtime_destruction_reaps_fd() {
 #[tokio::test]
 async fn two_live_calls_keep_children_workspaces_and_arguments_isolated() {
     for shared in [true, false] {
-        let script = "import os,sys,time,json\npattern=sys.argv[-2]\nopen(pattern+'.args','w').write(json.dumps(sys.argv[1:]))\nopen(pattern+'.pid','w').write(str(os.getpid()))\nwhile not os.path.exists(pattern+'.release'): time.sleep(0.01)\nprint(os.path.join(sys.argv[-1],pattern))";
+        let script = "import os,sys,time,json\npattern=sys.argv[-2]\nopen(pattern+'.args','w').write(json.dumps(sys.argv[1:]))\nopen(pattern+'.pid','w').write(str(os.getpid()))\nwhile not os.path.exists(pattern+'.release'): time.sleep(0.01)\nprint(os.path.join(sys.argv[-1],pattern), end='\\0')";
         let (first_dir, first) = fixture(script);
         let (second_dir, second) = fixture(script);
         let first = Arc::new(first);
@@ -595,7 +632,7 @@ async fn two_live_calls_keep_children_workspaces_and_arguments_isolated() {
             &std::fs::read_to_string(second_root.join("second.args")).unwrap(),
         )
         .unwrap();
-        assert_eq!(args[5], "8", "one past the limit");
+        assert_eq!(args[6], "8", "one past the limit");
         assert_eq!(args[args.len() - 2], "second");
         assert_eq!(
             args.last().unwrap(),
@@ -635,7 +672,7 @@ async fn named_ready_pid(root: &Path, name: &str) -> u32 {
 #[test]
 fn an_fd_error_is_reported_not_taken_for_no_matches() {
     let stderr = b"[fd error]: error parsing glob '[': unclosed character class; missing ']'";
-    let result = classify(Some(1), b"", stderr, Path::new("/ws"), 1000);
+    let result = classify(Some(1), b"", stderr, &at("/ws"), 1000);
     assert!(
         matches!(&result, Err(FindError::Search(message)) if message.contains("unclosed character class")),
         "{result:?}"
@@ -645,14 +682,7 @@ fn an_fd_error_is_reported_not_taken_for_no_matches() {
 /// What fd returns is shown sorted, whatever order its threads found it in.
 #[test]
 fn entries_are_sorted() {
-    let result = classify(
-        Some(0),
-        b"/ws/b\n/ws/a/z\n/ws/a\n",
-        b"",
-        Path::new("/ws"),
-        1000,
-    )
-    .unwrap();
+    let result = classify(Some(0), b"/ws/b\0/ws/a/z\0/ws/a\0", b"", &at("/ws"), 1000).unwrap();
     assert_eq!(result.entries, ["a", "a/z", "b"]);
 }
 
@@ -660,10 +690,10 @@ fn entries_are_sorted() {
 /// asked for limit + 1) means more exist, and the listing keeps `limit`.
 #[test]
 fn the_limit_is_known_from_one_extra_entry() {
-    let exact = classify(Some(0), b"/ws/a\n/ws/b\n", b"", Path::new("/ws"), 2).unwrap();
+    let exact = classify(Some(0), b"/ws/a\0/ws/b\0", b"", &at("/ws"), 2).unwrap();
     assert!(!exact.result_limit_reached);
     assert_eq!(exact.entries, ["a", "b"]);
-    let more = classify(Some(0), b"/ws/c\n/ws/a\n/ws/b\n", b"", Path::new("/ws"), 2).unwrap();
+    let more = classify(Some(0), b"/ws/c\0/ws/a\0/ws/b\0", b"", &at("/ws"), 2).unwrap();
     assert!(more.result_limit_reached);
     assert_eq!(more.entries, ["a", "b"]);
 }
@@ -671,7 +701,7 @@ fn the_limit_is_known_from_one_extra_entry() {
 /// #2176 review: output cut at the stdout cap is an arbitrary subset too.
 #[test]
 fn a_capped_read_is_an_arbitrary_subset() {
-    let capped = output(b"/ws/b\n/ws/a\n/ws/c", b"", Path::new("/ws"), 1000, true);
+    let capped = output(b"/ws/b\0/ws/a\0/ws/c", b"", &at("/ws"), 1000, true);
     assert!(capped.incomplete);
     assert!(capped.result_limit_reached);
     assert_eq!(capped.entries, ["a", "b"], "the cut last line is dropped");

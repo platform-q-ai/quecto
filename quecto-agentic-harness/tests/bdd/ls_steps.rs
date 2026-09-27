@@ -71,6 +71,14 @@ fn given_ls_many_files(world: &mut QuectoWorld, count: usize) {
     }
 }
 
+#[given(regex = r#"^ls workspace with (\d+) files named "fN"$"#)]
+fn given_ls_numbered_files(world: &mut QuectoWorld, count: usize) {
+    let ws = ensure_ls_workspace(world);
+    for i in 1..=count {
+        std::fs::write(ws.join(format!("f{i}")), "").expect("write ls file");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
@@ -91,6 +99,15 @@ fn when_ls_with_limit(world: &mut QuectoWorld, limit: usize) {
 fn when_ls_with_float_limit(world: &mut QuectoWorld, limit: f64) {
     let tool = make_ls_tool(world);
     world.ls_result = Some(run_ls(tool, serde_json::json!({"limit": limit})));
+}
+
+#[when(regex = r#"^I list the workspace with limit (\d+) and offset (\d+)$"#)]
+fn when_ls_with_limit_and_offset(world: &mut QuectoWorld, limit: usize, offset: usize) {
+    let tool = make_ls_tool(world);
+    world.ls_result = Some(run_ls(
+        tool,
+        serde_json::json!({"limit": limit, "offset": offset}),
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -143,4 +160,27 @@ fn then_ls_order(world: &mut QuectoWorld, first: String, second: String) {
             first, second, r.content
         ),
     }
+}
+
+#[then(regex = r#"^the ls result should list sorted entries (\d+) to (\d+) of the directory$"#)]
+fn then_ls_lists_sorted_range(world: &mut QuectoWorld, first: usize, last: usize) {
+    let ws = ensure_ls_workspace(world);
+    let mut all: Vec<String> = std::fs::read_dir(&ws)
+        .expect("read ls workspace")
+        .map(|entry| {
+            entry
+                .expect("ls workspace entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    all.sort_by_key(|name| (name.to_lowercase(), name.clone()));
+    let r = world.ls_result.as_ref().expect("no ls result");
+    let listed: Vec<&str> = r
+        .content
+        .lines()
+        .take_while(|line| !line.starts_with('['))
+        .collect();
+    assert_eq!(listed, all[first - 1..last], "ls page {first}-{last}");
 }
