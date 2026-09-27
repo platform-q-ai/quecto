@@ -1,6 +1,6 @@
 use super::*;
 
-fn env(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
     move |name: &str| {
         pairs
             .iter()
@@ -9,17 +9,20 @@ fn env(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Optio
     }
 }
 
-fn names(pairs: &'static [(&'static str, &'static str)]) -> Vec<String> {
-    proxy_environment(env(pairs)).proxy_names().to_vec()
+fn names(pairs: &[(&str, &str)]) -> Vec<String> {
+    proxy_environment(false, env(pairs)).proxy_names().to_vec()
 }
 
-fn variables(pairs: &'static [(&'static str, &'static str)]) -> Vec<&'static str> {
-    proxy_environment(env(pairs)).variables().to_vec()
+fn variables(pairs: &[(&str, &str)]) -> Vec<&'static str> {
+    proxy_environment(false, env(pairs)).variables().to_vec()
 }
 
 #[test]
 fn no_proxy_variable_means_no_proxy() {
-    assert_eq!(proxy_environment(env(&[])), ProxyEnvironment::default());
+    assert_eq!(
+        proxy_environment(false, env(&[])),
+        ProxyEnvironment::default()
+    );
     // NO_PROXY alone configures no proxy.
     assert_eq!(variables(&[("NO_PROXY", "*")]), Vec::<&str>::new());
 }
@@ -47,21 +50,61 @@ fn each_variable_is_read_upper_case_first_and_empty_means_none() {
 #[test]
 fn under_cgi_every_proxy_is_off() {
     for pairs in [
-        &[("REQUEST_METHOD", "GET"), ("HTTP_PROXY", "http://p:1")][..],
-        &[("REQUEST_METHOD", "GET"), ("HTTPS_PROXY", "http://p:1")][..],
-        &[("REQUEST_METHOD", "GET"), ("ALL_PROXY", "http://p:1")][..],
+        &[("HTTP_PROXY", "http://p:1")][..],
+        &[("HTTPS_PROXY", "http://p:1")][..],
+        &[("ALL_PROXY", "http://p:1")][..],
     ] {
-        let lookup = move |name: &str| {
-            pairs
-                .iter()
-                .find(|(key, _)| *key == name)
-                .map(|(_, value)| value.to_string())
-        };
         assert_eq!(
-            proxy_environment(lookup),
+            proxy_environment(true, env(pairs)),
             ProxyEnvironment::default(),
             "{pairs:?}"
         );
+        assert_ne!(
+            proxy_environment(false, env(pairs)),
+            ProxyEnvironment::default()
+        );
+    }
+}
+
+/// #1942 second review: every value is parsed by hyper-util itself, so a
+/// value it makes no proxy of is exempted by no name here.
+#[test]
+fn a_value_hyper_util_cannot_use_exempts_no_name() {
+    for value in [
+        "http://p:1 ",
+        "http://p:1\t",
+        "http://p:1\r",
+        " http://p:1",
+        "http://%6c%6fcalhost:1",
+        "//p:1",
+        "http://b\u{fc}cher.example:1",
+        "ftp://p:21",
+        "http://",
+        "",
+    ] {
+        let pairs = [("HTTPS_PROXY", value)];
+        assert_eq!(variables(&pairs), Vec::<&str>::new(), "{value:?}");
+        assert_eq!(names(&pairs), Vec::<String>::new(), "{value:?}");
+    }
+}
+
+/// Hosts hyper's connector does not parse as an address (it parses only a
+/// strict dotted quad or IPv6 address) reach the resolver: they are names.
+#[test]
+fn a_host_the_connector_resolves_is_a_name() {
+    for (value, name) in [
+        ("http://127.1:3128", "127.1"),
+        ("http://0x7f.1:3128", "0x7f.1"),
+        ("http://2130706433:3128", "2130706433"),
+        ("http://[fe80::1%25eth0]:3128", "fe80::1%25eth0"),
+        ("http://p:99999", "p"),
+        ("HTTP://Proxy.Corp.:1", "proxy.corp"),
+        (
+            "http://user:pw@squid.internal:3128/path?q",
+            "squid.internal",
+        ),
+    ] {
+        assert_eq!(names(&[("HTTPS_PROXY", value)]), [name], "{value:?}");
     }
 }
 
@@ -118,9 +161,9 @@ fn proxy_names_are_the_hosts_of_the_proxies_in_effect() {
 
 #[test]
 fn the_warning_names_the_variables_and_what_they_bypass() {
-    assert_eq!(proxy_environment(env(&[])).warning(), None);
+    assert_eq!(proxy_environment(false, env(&[])).warning(), None);
     assert_eq!(
-        proxy_environment(env(&[("http_proxy", "http://p:1")]))
+        proxy_environment(false, env(&[("http_proxy", "http://p:1")]))
             .warning()
             .as_deref(),
         Some(
@@ -128,10 +171,10 @@ fn the_warning_names_the_variables_and_what_they_bypass() {
         )
     );
     assert_eq!(
-        proxy_environment(env(&[
-            ("HTTP_PROXY", "http://p:1"),
-            ("HTTPS_PROXY", "http://q:1")
-        ]))
+        proxy_environment(
+            false,
+            env(&[("HTTP_PROXY", "http://p:1"), ("HTTPS_PROXY", "http://q:1")])
+        )
         .warning()
         .as_deref(),
         Some(

@@ -1,5 +1,5 @@
 //! Application-owned web fetch policy, orchestration, and content transformation.
-use crate::domain::network_destination::authorize_destination;
+use crate::domain::network_destination::{authorize_destination, is_local_name};
 use std::{future::Future, net::IpAddr, pin::Pin, sync::Arc};
 
 #[path = "web_fetch_main_content.rs"]
@@ -276,7 +276,8 @@ fn classify(url: url::Url) -> ExecutionGate {
 /// Why the URL's own host may not be fetched, if it may not. An address
 /// literal must be public (#1942): that allowlist is the security boundary,
 /// applied again by the adapter to every address a name resolves to and to
-/// every redirect hop.
+/// every redirect hop. A local name is refused early, as a courtesy
+/// ([`is_local_name`]); the adapter applies it to every hop too.
 fn restriction(url: &url::Url) -> Option<String> {
     let address = match url.host() {
         Some(url::Host::Ipv4(v4)) => IpAddr::V4(v4),
@@ -289,22 +290,6 @@ fn restriction(url: &url::Url) -> Option<String> {
     authorize_destination(address)
         .err()
         .map(|refused| refused.to_string())
-}
-/// A courtesy, not the security boundary: names that mean this machine or a
-/// cloud metadata service, refused early with a plain reason. Without a
-/// proxy it adds nothing (every address such a name resolves to is refused
-/// by the allowlist anyway); through an HTTP(S) proxy, which resolves names
-/// itself, it is the only name check there is, and a denylist of names can
-/// never be complete.
-fn is_local_name(name: &str) -> bool {
-    const LOCAL_NAMES: &[&str] = &[
-        "localhost",
-        "metadata",
-        "metadata.goog",
-        "metadata.google.internal",
-    ];
-    let bare = name.strip_suffix('.').unwrap_or(name);
-    LOCAL_NAMES.contains(&bare) || bare.ends_with(".localhost")
 }
 fn truncate_output(content: String, kb: u32) -> String {
     let max = kb as usize * 1024;

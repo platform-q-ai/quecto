@@ -203,3 +203,33 @@ fn refusals_name_the_address_and_any_embedded_ipv4_it_stands_for() {
         None
     );
 }
+
+#[test]
+fn local_names_are_matched_whole_ignoring_case_and_every_trailing_dot() {
+    for name in [
+        "localhost",
+        "localhost.",
+        "localhost..",
+        "LOCALHOST",
+        "localhost.localdomain",
+        "LocalHost.LocalDomain...",
+        "foo.localhost",
+        "a.b.localhost..",
+        "metadata",
+        "metadata.goog.",
+        "metadata.google.internal",
+    ] {
+        assert!(is_local_name(name), "{name}");
+    }
+    for name in [
+        "notlocalhost",
+        "localhost.example.com",
+        "localdomain",
+        "localhost.localdomain.example",
+        "example.com",
+        "",
+        ".",
+    ] {
+        assert!(!is_local_name(name), "{name}");
+    }
+}

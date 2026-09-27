@@ -67,6 +67,25 @@ pub fn authorize_destination(address: IpAddr) -> Result<(), NonPublicAddress> {
     }
 }
 
+/// A courtesy, not the security boundary: names that mean this machine or a
+/// cloud metadata service, refused early with a plain reason (#1942).
+/// Without a proxy it adds nothing (every address such a name resolves to
+/// is refused by [`authorize_destination`] anyway); through an HTTP(S)
+/// proxy, which resolves names itself, it is the only name check there is,
+/// and a list of names can never be complete. Case and any trailing dots
+/// are ignored.
+pub fn is_local_name(name: &str) -> bool {
+    const LOCAL_NAMES: &[&str] = &[
+        "localhost",
+        "localhost.localdomain",
+        "metadata",
+        "metadata.goog",
+        "metadata.google.internal",
+    ];
+    let bare = name.trim_end_matches('.').to_ascii_lowercase();
+    LOCAL_NAMES.contains(&bare.as_str()) || bare.ends_with(".localhost")
+}
+
 /// An IPv4 block, `base/prefix`.
 struct V4Block(Ipv4Addr, u8);
 

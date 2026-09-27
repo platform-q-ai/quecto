@@ -111,6 +111,11 @@ async fn non_public_address_literals_in_any_spelling_never_call_port() {
         ("http://LOCALHOST/", "localhost is a local name"),
         ("http://foo.localhost/", "foo.localhost is a local name"),
         ("http://a.b.localhost./", "a.b.localhost. is a local name"),
+        ("http://localhost../", "localhost.. is a local name"),
+        (
+            "http://localhost.localdomain/",
+            "localhost.localdomain is a local name",
+        ),
         ("http://metadata/", "metadata is a local name"),
         ("http://metadata.goog./", "metadata.goog. is a local name"),
         (

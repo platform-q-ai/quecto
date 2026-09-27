@@ -11,13 +11,15 @@
 //! through it, only the URL's (and each hop's) literal address is checked,
 //! because the proxy resolves names and connects on its own. The proxies'
 //! own names are resolved here unfiltered (reqwest reaches a proxy through
-//! this resolver), so a fetch of a URL naming the proxy host itself, when
-//! `NO_PROXY` sends it direct, is not filtered either.
+//! this resolver), and for that reason a URL or hop naming a proxy host is
+//! never fetched: the unfiltered answer is reached only by connecting to the
+//! proxy itself. Every URL and hop is also held to the courtesy local-name
+//! check ([`is_local_name`]).
 use crate::application::agent_turn::use_cases::web_fetch::{
     FetchFailure, FetchOutcome, FetchRequest, FetchWebContent, HttpStatus,
 };
-use crate::domain::network_destination::{NonPublicAddress, authorize_destination};
-use crate::infrastructure::http::proxy_env::{ProxyEnvironment, proxy_environment};
+use crate::domain::network_destination::{NonPublicAddress, authorize_destination, is_local_name};
+use crate::infrastructure::http::proxy_env::{ProxyEnvironment, host_key, process_proxies};
 use std::{future::Future, net::IpAddr, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 const MAX_RAW_BYTES: usize = 5 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -25,26 +27,54 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REDIRECTS: usize = 10;
 
 /// Which addresses may be reached: production admits public space only.
-type DestinationPolicy = fn(IpAddr) -> Result<(), NonPublicAddress>;
+type AddressPolicy = fn(IpAddr) -> Result<(), NonPublicAddress>;
+
+/// Which names a URL or hop may give: production refuses local names.
+type NamePolicy = fn(&str) -> Result<(), String>;
+
+/// What a fetch may reach: every address, and every name a URL or hop gives.
+#[derive(Clone, Copy, Debug)]
+struct DestinationPolicy {
+    address: AddressPolicy,
+    name: NamePolicy,
+}
+
+impl DestinationPolicy {
+    const PRODUCTION: Self = Self {
+        address: authorize_destination,
+        name: not_local_name,
+    };
+}
+
+/// The production name rule: any name but a local one ([`is_local_name`]).
+fn not_local_name(name: &str) -> Result<(), String> {
+    match is_local_name(name) {
+        false => Ok(()),
+        true => Err(format!("{name} is a local name")),
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ReqwestFetchWebContent {
     /// The client, or why it could not be built: a fetch then fails closed.
     client: Result<reqwest::Client, String>,
     policy: DestinationPolicy,
+    /// The configured proxies' own names, never fetch targets.
+    proxy_names: Arc<[String]>,
 }
 impl ReqwestFetchWebContent {
     /// Over the shared client recipe (headers, TLS trust, timeouts), with
     /// destination enforcement laid over it last.
     pub fn new(builder: reqwest::ClientBuilder) -> Self {
-        Self::with_environment(builder, authorize_destination, process_proxies())
+        Self::with_environment(builder, DestinationPolicy::PRODUCTION, process_proxies())
     }
 
-    /// Tests' local servers listen on 127.0.0.1: this adapter admits that one
-    /// address beyond public space, and is never compiled into production.
+    /// Tests' local servers listen on 127.0.0.1 and are named `localhost`:
+    /// this adapter admits that one address and that one name beyond
+    /// production, and is never compiled into production.
     #[cfg(any(test, feature = "test-support"))]
     pub fn allowing_loopback_for_tests(builder: reqwest::ClientBuilder) -> Self {
-        Self::with_environment(builder, loopback_or_public, process_proxies())
+        Self::with_environment(builder, LOOPBACK_FOR_TESTS, process_proxies())
     }
 
     fn with_environment(
@@ -64,29 +94,58 @@ impl ReqwestFetchWebContent {
         // not here, so only address literals (the URL's, checked in
         // `fetch`, and each hop's, checked by the redirect policy) are
         // enforced.
+        // That exemption is reachable only by connecting to a proxy: a URL
+        // or hop naming a proxy host is refused ([`target_is_fetchable`]).
+        let proxy_names: Arc<[String]> = proxies.proxy_names().into();
         let resolver = AuthorizingResolver {
-            policy,
-            proxy_names: proxies.proxy_names().into(),
+            policy: policy.address,
+            proxy_names: proxy_names.clone(),
         };
         let client = builder
             .dns_resolver(Arc::new(resolver))
-            .redirect(authorizing_redirects(policy))
+            .redirect(authorizing_redirects(policy, proxy_names.clone()))
             .build()
             .map_err(|e| format!("the web-fetch client could not be built: {e}"));
-        Self { client, policy }
+        Self {
+            client,
+            policy,
+            proxy_names,
+        }
     }
 }
 
-/// The proxies this process's environment configures for reqwest.
-fn process_proxies() -> ProxyEnvironment {
-    proxy_environment(|name| std::env::var(name).ok())
+#[cfg(test)]
+impl ReqwestFetchWebContent {
+    /// Over a default client with no proxy at all, whatever the process
+    /// environment says: the adapter's own tests never depend on it.
+    fn without_proxies(policy: DestinationPolicy) -> Self {
+        Self::with_environment(
+            reqwest::Client::builder().no_proxy(),
+            policy,
+            ProxyEnvironment::default(),
+        )
+    }
 }
+
+#[cfg(any(test, feature = "test-support"))]
+const LOOPBACK_FOR_TESTS: DestinationPolicy = DestinationPolicy {
+    address: loopback_or_public,
+    name: localhost_or_production,
+};
 
 #[cfg(any(test, feature = "test-support"))]
 fn loopback_or_public(address: IpAddr) -> Result<(), NonPublicAddress> {
     match address {
         IpAddr::V4(v4) if v4 == std::net::Ipv4Addr::LOCALHOST => Ok(()),
         _ => authorize_destination(address),
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn localhost_or_production(name: &str) -> Result<(), String> {
+    match name {
+        "localhost" => Ok(()),
+        _ => not_local_name(name),
     }
 }
 
@@ -100,34 +159,69 @@ impl std::fmt::Display for Refused {
 }
 impl std::error::Error for Refused {}
 
-/// Why `url`'s own address may not be reached, if it may not. A name is
-/// left to [`AuthorizingResolver`], which checks every address it resolves
-/// to.
-fn authorize_url(url: &url::Url, policy: DestinationPolicy) -> Result<(), String> {
+/// Whether `url` may be fetched at all given the configured proxies: only
+/// a URL whose host is no proxy's host (compared by [`host_key`]). A proxy
+/// name resolves unfiltered so reqwest can reach the proxy; fetching it
+/// directly would reach that unfiltered answer.
+fn target_is_fetchable(url: &url::Url, proxy_names: &[String]) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(name)) => {
+            let key = host_key(name);
+            proxy_names.iter().all(|proxy| *proxy != key)
+        }
+        Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)) | None => true,
+    }
+}
+
+/// Why `url` may not be reached, if it may not: its scheme, its address
+/// literal, or its name (a proxy's host, or refused by the name policy). A
+/// name's addresses are left to [`AuthorizingResolver`], which checks every
+/// address it resolves to.
+fn authorize_url(
+    url: &url::Url,
+    policy: DestinationPolicy,
+    proxy_names: &[String],
+) -> Result<(), String> {
     let address = match (url.scheme(), url.host()) {
-        ("http" | "https", Some(url::Host::Domain(_))) => return Ok(()),
+        ("http" | "https", Some(url::Host::Domain(name))) => {
+            return match target_is_fetchable(url, proxy_names) {
+                true => (policy.name)(name),
+                false => Err(format!(
+                    "{} is a configured proxy host, not a fetch target",
+                    host_key(name)
+                )),
+            };
+        }
         ("http" | "https", Some(url::Host::Ipv4(v4))) => IpAddr::V4(v4),
         ("http" | "https", Some(url::Host::Ipv6(v6))) => IpAddr::V6(v6),
         ("http" | "https", None) => return Err("the URL names no host".into()),
         _ => return Err("only http and https are fetched".into()),
     };
-    policy(address).map_err(|refused| refused.to_string())
+    (policy.address)(address).map_err(|refused| refused.to_string())
 }
 
-fn authorize_hop(url: &url::Url, policy: DestinationPolicy) -> Result<(), Refused> {
-    authorize_url(url, policy).map_err(|reason| Refused(format!("the redirect to {url}: {reason}")))
+fn authorize_hop(
+    url: &url::Url,
+    policy: DestinationPolicy,
+    proxy_names: &[String],
+) -> Result<(), Refused> {
+    authorize_url(url, policy, proxy_names)
+        .map_err(|reason| Refused(format!("the redirect to {url}: {reason}")))
 }
 
 /// reqwest's default redirect handling (the same statuses, at most
 /// [`MAX_REDIRECTS`] follows), with every hop authorized before it is
 /// followed.
-fn authorizing_redirects(policy: DestinationPolicy) -> reqwest::redirect::Policy {
+fn authorizing_redirects(
+    policy: DestinationPolicy,
+    proxy_names: Arc<[String]>,
+) -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(move |attempt| {
         // `previous` starts with the original URL, as in reqwest's limit.
         if attempt.previous().len() > MAX_REDIRECTS {
             return attempt.error("too many redirects");
         }
-        match authorize_hop(attempt.url(), policy) {
+        match authorize_hop(attempt.url(), policy, &proxy_names) {
             Ok(()) => attempt.follow(),
             Err(refused) => attempt.error(refused),
         }
@@ -138,7 +232,7 @@ fn authorizing_redirects(policy: DestinationPolicy) -> reqwest::redirect::Policy
 /// policy admits: the connector never resolves again, so the checked
 /// answer is the connected one.
 struct AuthorizingResolver {
-    policy: DestinationPolicy,
+    policy: AddressPolicy,
     /// The configured proxies' own names, passed unfiltered.
     proxy_names: Arc<[String]>,
 }
@@ -159,16 +253,16 @@ impl reqwest::dns::Resolve for AuthorizingResolver {
 }
 
 /// Every answer for a configured proxy's own name (the proxy is the
-/// operator's choice, reached as before); otherwise [`authorized_answers`].
+/// operator's choice, reached as before; a URL or hop never names it, see
+/// [`target_is_fetchable`]); otherwise [`authorized_answers`].
 fn admitted_answers(
     host: &str,
     answers: Vec<SocketAddr>,
-    policy: DestinationPolicy,
+    policy: AddressPolicy,
     proxy_names: &[String],
 ) -> Result<Vec<SocketAddr>, Refused> {
-    let is_proxy = proxy_names
-        .iter()
-        .any(|name| name.eq_ignore_ascii_case(host));
+    let key = host_key(host);
+    let is_proxy = proxy_names.contains(&key);
     match is_proxy && !answers.is_empty() {
         true => Ok(answers),
         false => authorized_answers(host, answers, policy),
@@ -180,7 +274,7 @@ fn admitted_answers(
 fn authorized_answers(
     host: &str,
     answers: Vec<SocketAddr>,
-    policy: DestinationPolicy,
+    policy: AddressPolicy,
 ) -> Result<Vec<SocketAddr>, Refused> {
     if answers.is_empty() {
         return Err(Refused(format!("{host} resolves to no address")));
@@ -230,7 +324,7 @@ impl FetchWebContent for ReqwestFetchWebContent {
                 .as_ref()
                 .map_err(|e| FetchFailure::Transport(e.clone()))?;
             let url = request.url.as_url();
-            authorize_url(url, self.policy).map_err(FetchFailure::Refused)?;
+            authorize_url(url, self.policy, &self.proxy_names).map_err(FetchFailure::Refused)?;
             let response = client
                 .get(url.clone())
                 .timeout(REQUEST_TIMEOUT)
@@ -285,6 +379,9 @@ async fn read_body(mut response: reqwest::Response, max: usize) -> Result<Vec<u8
 #[cfg(test)]
 #[path = "web_fetch_destination_tests.rs"]
 mod destination_tests;
+#[cfg(test)]
+#[path = "web_fetch_proxy_tests.rs"]
+mod proxy_tests;
 #[cfg(test)]
 #[path = "web_fetch_tests.rs"]
 mod tests;
