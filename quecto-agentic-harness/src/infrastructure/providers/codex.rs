@@ -487,21 +487,31 @@ impl CodexProvider {
         format!("{prefix}:{hash:08x}")
     }
 
-    /// Consume SSE body incrementally, emitting `StreamEvent`s per delta.
+    /// Consume SSE body incrementally, emitting `StreamEvent`s per delta;
+    /// observed beside the request when it carries a trace (#2151, #2210).
     async fn pump_codex_sse(
         &self,
-        url: &str,
+        call: &codex_replay::Call,
         body: serde_json::Value,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
-        session: Option<&str>,
-        mut handler: CodexSseHandler,
+        handler: CodexSseHandler,
     ) {
+        let idle = self.stream_idle;
+        let attempt = super::attempt_transport::PassiveAttempt::begin(
+            call.trace.clone(),
+            super::attempt_profile::Profile::new(
+                super::attempt_profile::Vendor::Codex,
+                super::attempt_profile::Surface::Incremental,
+                idle,
+            ),
+        );
         let builder = self
-            .apply_headers(self.client.post(url), session)
+            .apply_headers(self.client.post(&call.url), call.session.as_deref())
             .json(&body);
-        let mut response = match self.stream_idle.within(builder.send()).await {
+        let mut response = match idle.within(builder.send()).await {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
+                attempt.iter().for_each(|a| a.send_failed());
                 let _ = tx
                     .send(StreamEvent::Error(format!(
                         "Codex request failed: {}",
@@ -511,13 +521,18 @@ impl CodexProvider {
                 return;
             }
             Err(silent) => {
+                attempt.iter().for_each(|a| a.idle());
                 let _ = tx.send(StreamEvent::Error(silent.to_string())).await;
                 return;
             }
         };
+        if let Some(attempt) = &attempt {
+            attempt.response(&response);
+        }
         let status = response.status().as_u16();
         if status != 200 {
-            let read = self.stream_idle.text(response).await;
+            let read = idle.text(response).await;
+            attempt.iter().for_each(|a| a.error_read(status, &read));
             let text = super::sse_common::truncate_error_body(super::stream_idle::error_text(read));
             let _ = tx
                 .send(StreamEvent::Error(format!(
@@ -526,7 +541,7 @@ impl CodexProvider {
                 .await;
             return;
         }
-        super::sse_common::pump_sse(&mut response, &tx, &mut handler, self.stream_idle).await;
+        super::attempt_transport::pump_observed(&mut response, &tx, handler, attempt, idle).await;
     }
 
     #[cfg(test)]

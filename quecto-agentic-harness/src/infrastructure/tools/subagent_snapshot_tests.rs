@@ -39,6 +39,9 @@ fn slim_get_state_snapshot_validation_rejects_malformed_projections() {
         );
     }
 
+    // #2210 review: a member a newer child adds, at any boundary, is
+    // accepted and dropped from what is relayed; a name that is no member's
+    // is still refused.
     for (pointer, value) in [
         ("/data/progress/extra", serde_json::json!(true)),
         ("/data/workflow/extra", serde_json::json!(true)),
@@ -48,18 +51,36 @@ fn slim_get_state_snapshot_validation_rejects_malformed_projections() {
         ),
         ("/data/workflow/currentStep/extra", serde_json::json!(true)),
     ] {
-        let mut malformed = base.clone();
         let (parent, key) = pointer.rsplit_once('/').unwrap();
-        malformed
-            .pointer_mut(parent)
-            .unwrap()
-            .as_object_mut()
-            .unwrap()
-            .insert(key.into(), value);
-        assert!(
-            !response_is_valid_answer(&malformed, command),
-            "unexpected slim field {pointer} must be rejected"
-        );
+        for (name, accepted) in [(key, true), ("Bad_Name", false)] {
+            let mut added = base.clone();
+            added
+                .pointer_mut(parent)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .insert(name.into(), value.clone());
+            assert_eq!(
+                response_is_valid_answer(&added, command),
+                accepted,
+                "{parent}/{name}"
+            );
+            if accepted {
+                let relayed: serde_json::Value = serde_json::from_str(&finalize_snapshot_answer(
+                    added.to_string(),
+                    added.clone(),
+                    command,
+                ))
+                .unwrap();
+                let plain: serde_json::Value = serde_json::from_str(&finalize_snapshot_answer(
+                    base.to_string(),
+                    base.clone(),
+                    command,
+                ))
+                .unwrap();
+                assert_eq!(relayed, plain, "{pointer} is not relayed");
+            }
+        }
     }
 
     for replacement in [
@@ -267,6 +288,8 @@ fn real_projection_rejects_malformed_and_unknown_control_admission_shapes() {
             "{pointer}: {malformed}"
         );
     }
+    // #2210 review: a member a newer child adds, at any boundary, is
+    // accepted (forward compatibility) and never relayed.
     for pointer in [
         "/data",
         "/data/controlReceipts/0",
@@ -282,6 +305,144 @@ fn real_projection_rejects_malformed_and_unknown_control_admission_shapes() {
             .as_object_mut()
             .unwrap()
             .insert("extra".into(), serde_json::json!(true));
-        assert!(!response_is_valid_answer(&malformed, command), "{pointer}");
+        assert!(response_is_valid_answer(&malformed, command), "{pointer}");
+        let relayed = finalize_snapshot_answer(malformed.to_string(), malformed, command);
+        assert!(!relayed.contains("\"extra\""), "{pointer}: {relayed}");
     }
+}
+
+/// #2210: a busy child's snapshot carrying its model turn in flight is a
+/// valid `get_state` answer; the turn's closed shape still refuses unknown
+/// or malformed members.
+#[test]
+fn a_busy_snapshot_with_its_model_turn_is_a_valid_get_state_answer() {
+    let command = r#"{"type":"get_state"}"#;
+    let base = serde_json::json!({
+        "type": "response", "command": "get_state",
+        "data": {
+            "state": "thinking", "effort": "low", "model": "mock",
+            "sessionKey": "cli:child",
+            "progress": { "state": "active", "reason": "thinking" },
+            "generation": 3,
+            "modelTurn": {
+                "elapsedMs": 504_000,
+                "outputCapBytes": 1_024_000,
+                "attempt": {
+                    "number": 1, "elapsedMs": 503_000, "events": 9_000,
+                    "outputBytes": 640_000, "sinceLastEventMs": 40,
+                    "firstTokenMs": 2_100
+                }
+            }
+        }
+    });
+    assert!(response_is_valid_answer(&base, command));
+    let mut waiting = base.clone();
+    waiting["data"]["modelTurn"] = serde_json::json!({"elapsedMs": 12});
+    assert!(response_is_valid_answer(&waiting, command));
+    for pointer in ["/data/modelTurn/extra", "/data/modelTurn/attempt/extra"] {
+        let mut added = base.clone();
+        let (parent, key) = pointer.rsplit_once('/').unwrap();
+        added
+            .pointer_mut(parent)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert(key.into(), serde_json::json!(1));
+        assert!(response_is_valid_answer(&added, command), "{pointer}");
+    }
+    for (pointer, value) in [
+        ("/data/modelTurn/Extra", serde_json::json!(true)),
+        ("/data/modelTurn/attempt/bad_name", serde_json::json!(1)),
+        ("/data/modelTurn/elapsedMs", serde_json::json!("soon")),
+        (
+            "/data/modelTurn/attempt/sinceLastEventMs",
+            serde_json::Value::Null,
+        ),
+    ] {
+        let mut malformed = base.clone();
+        let (parent, key) = pointer.rsplit_once('/').unwrap();
+        malformed
+            .pointer_mut(parent)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert(key.into(), value);
+        assert!(
+            !response_is_valid_answer(&malformed, command),
+            "malformed model turn {pointer} must be rejected"
+        );
+    }
+}
+
+/// #2210 review: a `since` cursor never hides a model turn in flight — the
+/// busy child's snapshot is passed through in full, while one without a
+/// model turn still collapses to the unchanged marker.
+#[test]
+fn a_since_cursor_never_hides_a_model_turn_in_flight() {
+    let mut state = production_state();
+    state.execution = Some(Default::default());
+    state.execution.as_mut().unwrap().model_turn =
+        Some(serde_json::from_value(serde_json::json!({"elapsedMs": 480_000})).unwrap());
+    let response = production_response(&state);
+    for since in [6, 7, 8] {
+        let command = serde_json::json!({"type":"get_state","since":since}).to_string();
+        assert!(response_is_valid_answer(&response, &command), "{response}");
+        let answer: serde_json::Value = serde_json::from_str(&finalize_snapshot_answer(
+            response.to_string(),
+            response.clone(),
+            &command,
+        ))
+        .unwrap();
+        assert_eq!(
+            answer["data"]["modelTurn"]["elapsedMs"], 480_000,
+            "since={since}"
+        );
+        // A current cursor gets the small marker carrying the turn, never
+        // the whole projection; a stale one gets the projection.
+        match since >= 7 {
+            true => assert_eq!(
+                answer["data"],
+                serde_json::json!({"unchanged": true, "generation": since,
+                                   "modelTurn": {"elapsedMs": 480_000}})
+            ),
+            false => assert_eq!(answer["data"]["generation"], 7),
+        }
+    }
+    // A child's own marker carrying the turn is accepted and relayed at the
+    // caller's cursor.
+    let marker = serde_json::json!({"type": "response", "command": "get_state",
+        "data": {"unchanged": true, "generation": 7, "modelTurn": {"elapsedMs": 5}}});
+    for (since, accepted) in [(6, false), (7, true), (8, true)] {
+        let command = serde_json::json!({"type":"get_state","since":since}).to_string();
+        assert_eq!(
+            response_is_valid_answer(&marker, &command),
+            accepted,
+            "since={since}"
+        );
+        if accepted {
+            let answer: serde_json::Value = serde_json::from_str(&finalize_snapshot_answer(
+                marker.to_string(),
+                marker.clone(),
+                &command,
+            ))
+            .unwrap();
+            assert_eq!(
+                answer["data"],
+                serde_json::json!({"unchanged": true, "generation": since,
+                                   "modelTurn": {"elapsedMs": 5}})
+            );
+        }
+    }
+    let idle = production_response(&production_state());
+    let command = r#"{"type":"get_state","since":7}"#;
+    let answer: serde_json::Value = serde_json::from_str(&finalize_snapshot_answer(
+        idle.to_string(),
+        idle.clone(),
+        command,
+    ))
+    .unwrap();
+    assert_eq!(
+        answer["data"],
+        serde_json::json!({"unchanged": true, "generation": 7})
+    );
 }

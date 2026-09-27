@@ -165,6 +165,9 @@ fn terminal_class_guidance(err: &DomainError) -> Option<&'static str> {
         ProviderErrorClass::Stalled => Some(
             "Stalled: the provider stopped sending (the limit is in the error above) and the reply was abandoned. Retry later.",
         ),
+        ProviderErrorClass::OutputCapped => Some(
+            "Output cap: the reply kept streaming past its output cap (the cap is in the error above), the mark of a runaway such as a repetition loop, and was abandoned. It was not retried: resending the same request tends to repeat it. Narrow or rephrase the request before trying again.",
+        ),
         ProviderErrorClass::Network => Some(
             "Network: could not reach the provider (connection/timeout). It was retried and still failed — check connectivity and retry later.",
         ),

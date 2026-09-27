@@ -407,6 +407,7 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
                 ..Default::default()
             },
             admission: None,
+            model_turn: None,
         }),
         model: "m".into(),
         generation: 1,

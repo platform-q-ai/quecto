@@ -105,6 +105,10 @@ pub struct AgentLoopImpl {
     accounting_outbox:
         std::sync::Mutex<Vec<crate::domain::request_observation::RequestObservation>>,
     request_observations: std::sync::Mutex<crate::domain::request_observation::RequestDiagnostics>,
+    /// The request in flight, which `get_state` reports (#2210).
+    in_flight_request: Arc<crate::domain::request_progress::InFlightRequest>,
+    /// Requests that ended in flight, awaiting their audit record (#2210).
+    interrupted_requests: std::sync::Mutex<Vec<super::request_observation::InterruptedRequest>>,
     request_admission: Option<Arc<dyn crate::application::providers::ports::RequestAdmission>>,
     request_accounting: Option<Arc<dyn crate::application::providers::ports::RequestAccounting>>,
     tool_admission: Option<Arc<dyn crate::application::tools::ports::ToolExecutionAdmission>>,
@@ -174,6 +178,8 @@ impl AgentLoopImpl {
         Self {
             unreported_usage: std::sync::Mutex::new(UsageTotals::default()),
             request_observations: std::sync::Mutex::new(Default::default()),
+            in_flight_request: Arc::default(),
+            interrupted_requests: std::sync::Mutex::new(Vec::new()),
             request_accounting: None,
             accounting_outbox: std::sync::Mutex::new(Vec::new()),
             tool_admission: None,
@@ -458,58 +464,6 @@ impl AgentLoopImpl {
             cost_micro_usd: usage.cost_micro_usd,
             appended_messages: Vec::new(),
         }
-    }
-
-    /// Send a chat request using incremental streaming.
-    ///
-    /// Emits `AgentProgressEvent::Token` for each text delta so the UDS layer
-    /// can forward them as `{"type":"token"}` events.  Falls back gracefully
-    /// for providers whose `chat_stream_incremental()` wraps `chat()` (emitting
-    /// only a single `Done`).
-    async fn stream_chat_once(
-        &self,
-        request: ChatRequest<'_>,
-    ) -> Result<LlmResponse, StreamProviderError> {
-        let mut emitted_event = false;
-        let mut rx = self.provider.chat_stream_incremental(request).await;
-        while let Some(event) = rx.recv().await {
-            match event {
-                StreamEvent::TextDelta(t) => {
-                    emitted_event = true;
-                    self.notify(|| AgentProgressEvent::Token(t));
-                }
-                StreamEvent::ThinkingDelta(t) => {
-                    emitted_event = true;
-                    self.notify(|| AgentProgressEvent::ThinkingDelta(t));
-                }
-                StreamEvent::Done(response) => {
-                    if is_empty_streamed_response(&response) {
-                        return Err(StreamProviderError {
-                            error: DomainError::Provider(empty_stream_error_message(&response)),
-                            emitted_event,
-                        });
-                    }
-                    return Ok(response);
-                }
-                StreamEvent::Error(e) => {
-                    return Err(StreamProviderError {
-                        error: DomainError::Provider(e),
-                        emitted_event,
-                    });
-                }
-                // Tool call streaming events are handled by the provider's
-                // accumulator — they assemble into LlmResponse.tool_calls
-                // and are delivered via StreamEvent::Done.
-                _ => {
-                    emitted_event = true;
-                }
-            }
-        }
-        // Channel closed without Done — shouldn't happen but handle gracefully.
-        Err(StreamProviderError {
-            error: DomainError::Provider("streaming channel closed without completion".to_string()),
-            emitted_event,
-        })
     }
 
     /// Run the LLM-tool loop.

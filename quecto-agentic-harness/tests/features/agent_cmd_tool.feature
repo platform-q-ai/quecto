@@ -394,6 +394,16 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
       | extra-workflow  |
       | bad-generation  |
 
+  # #2210 review: a newer child's busy snapshot, with members this parent
+  # does not know, is accepted; only what the parent read is relayed.
+  @serial @issue-2210
+  Scenario: a newer child's busy get_state is relayed without its unknown members
+    Given an AgentCmdTool with a busy state snapshot registry entry "busy-newer-child"
+    When I execute agent_cmd with '{"agent_id":"busy-newer-child","command":"get_state"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain '"state":"runningTool"'
+    And the agent_cmd result should not contain "someFuture"
+
   # A genuinely DIFFERENT command (get_session_stats) must never be answered by
   # the connect-time get_messages snapshot — the #835 id-correlation guarantee.
   Scenario: mismatched command against a busy child preserves id-correlation

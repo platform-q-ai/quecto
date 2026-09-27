@@ -304,7 +304,11 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     } = args;
 
     agent_session.set_streaming(true);
-    update_execution(&execution_state, |state| state.start_run());
+    let in_flight = agent.request_in_flight();
+    update_execution(&execution_state, |state| {
+        state.set_model_turn_source(in_flight);
+        state.start_run();
+    });
     // Commit the prompt synchronously before the first await. Workflow-nudge
     // admission polls this future once while holding the subagent registry lock;
     // this push is therefore the linearization point between an admitted nudge
@@ -348,6 +352,9 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     })
     .await;
 
+    // #2210: a request the turn left in flight (abort, steer, shutdown)
+    // gets its terminal record before the diagnostics move on.
+    agent.audit_interrupted_requests().await;
     let result = match agent.flush_request_accounting().await {
         Ok(()) => result,
         Err(error) => {

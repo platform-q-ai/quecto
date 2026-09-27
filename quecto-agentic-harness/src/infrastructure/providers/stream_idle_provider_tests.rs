@@ -1,7 +1,8 @@
 //! #2210: every provider streaming path — Codex, OpenAI chat and Anthropic;
 //! assembled and incremental; with and without an admission gate — abandons
 //! a reply that goes silent for its idle bound with the idle error, and an
-//! observed attempt records it as `Termination::Idle`. Each provider is
+//! observed attempt records it as `Termination::Idle`: since #2210 every
+//! streaming path is observed when its request carries a trace. Each provider is
 //! given a short bound, in real time (a paused clock races loopback I/O).
 use std::sync::Arc;
 
@@ -26,9 +27,9 @@ const ANTHROPIC_EVENT: &str = "event: ping\ndata: {\"type\":\"ping\"}\n\n";
 
 /// A gate that grants every attempt at once.
 #[derive(Debug)]
-struct Grant;
+pub(super) struct Grant;
 #[derive(Debug)]
-struct Granted;
+pub(super) struct Granted;
 impl crate::application::ports::AttemptPermit for Granted {
     fn feedback(&mut self, _: crate::domain::inference_admission::ThrottleFeedback) {}
     fn finish(self: Box<Self>, _: crate::domain::inference_admission::Feedback) {}
@@ -40,18 +41,18 @@ impl crate::application::ports::AttemptAdmission for Grant {
         })
     }
 }
-fn single_attempt() -> super::SingleAttemptClient {
+pub(super) fn single_attempt() -> super::SingleAttemptClient {
     super::SingleAttemptClient::build(reqwest::Client::builder().no_proxy()).unwrap()
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Vendor {
+pub(crate) enum Vendor {
     Codex,
     OpenAi,
     Anthropic,
 }
 impl Vendor {
-    const ALL: [Vendor; 3] = [Vendor::Codex, Vendor::OpenAi, Vendor::Anthropic];
+    pub(super) const ALL: [Vendor; 3] = [Vendor::Codex, Vendor::OpenAi, Vendor::Anthropic];
     /// A whole non-streaming reply saying `ok`.
     fn whole_reply(self) -> &'static str {
         match self {
@@ -72,7 +73,7 @@ impl Vendor {
         }
     }
     /// The vendor's provider at `url` bounded by `bound`, gated when `gated`.
-    fn provider(
+    pub(crate) fn provider(
         self,
         url: String,
         gated: bool,
@@ -117,7 +118,7 @@ impl Vendor {
     }
 }
 
-fn request<'a>(messages: &'a [Message], trace: &Arc<RequestTrace>) -> ChatRequest<'a> {
+pub(super) fn request<'a>(messages: &'a [Message], trace: &Arc<RequestTrace>) -> ChatRequest<'a> {
     ChatRequest {
         trace: Some(trace.clone()),
         admission: None,
@@ -135,7 +136,7 @@ fn request<'a>(messages: &'a [Message], trace: &Arc<RequestTrace>) -> ChatReques
     }
 }
 
-fn traced() -> Arc<RequestTrace> {
+pub(super) fn traced() -> Arc<RequestTrace> {
     let trace = Arc::new(RequestTrace::default());
     trace.start();
     trace
@@ -177,7 +178,7 @@ async fn codex_chat(provider: &dyn LlmProvider) -> (Result<String, DomainError>,
     (result, terminations(&trace))
 }
 
-fn terminations(trace: &RequestTrace) -> Vec<Termination> {
+pub(super) fn terminations(trace: &RequestTrace) -> Vec<Termination> {
     trace
         .attempt_diagnostics()
         .iter()
@@ -198,13 +199,10 @@ fn is_idle_error(result: &Result<String, DomainError>) -> bool {
     matches!(result, Err(DomainError::Provider(message)) if *message == idle_message())
 }
 
-/// Whether an attempt was recorded as idle: every gated attempt is observed,
-/// and an ungated one only where passive observation exists (OpenAI).
-fn recorded_idle(vendor: Vendor, gated: bool, recorded: &[Termination]) -> bool {
-    match (vendor, gated) {
-        (_, true) | (Vendor::OpenAi, false) => recorded == [Termination::Idle],
-        (Vendor::Codex | Vendor::Anthropic, false) => recorded.is_empty(),
-    }
+/// Whether an attempt was recorded as idle: every streaming attempt of a
+/// traced request is observed, gated or not (#2151, #2210).
+fn recorded_idle(recorded: &[Termination]) -> bool {
+    recorded == [Termination::Idle]
 }
 
 #[tokio::test]
@@ -215,7 +213,7 @@ async fn an_incremental_stream_that_goes_silent_mid_body_is_abandoned() {
             let (last, recorded) = incremental(&*vendor.provider(url, gated, SILENT)).await;
             assert!(is_idle_event(&last), "{vendor:?} gated={gated}: {last:?}");
             assert!(
-                recorded_idle(vendor, gated, &recorded),
+                recorded_idle(&recorded),
                 "{vendor:?} gated={gated}: {recorded:?}"
             );
         }
@@ -233,7 +231,7 @@ async fn an_assembled_stream_that_goes_silent_mid_body_is_abandoned() {
                 "{vendor:?} gated={gated}: {result:?}"
             );
             assert!(
-                recorded_idle(vendor, gated, &recorded),
+                recorded_idle(&recorded),
                 "{vendor:?} gated={gated}: {recorded:?}"
             );
         }
@@ -246,10 +244,7 @@ async fn codex_chat_that_goes_silent_mid_body_is_abandoned() {
         let url = servers::silent_after(CODEX_EVENT).await;
         let (result, recorded) = codex_chat(&*Vendor::Codex.provider(url, gated, SILENT)).await;
         assert!(is_idle_error(&result), "gated={gated}: {result:?}");
-        assert!(
-            recorded_idle(Vendor::Codex, gated, &recorded),
-            "{recorded:?}"
-        );
+        assert!(recorded_idle(&recorded), "{recorded:?}");
     }
 }
 
@@ -265,7 +260,7 @@ async fn a_request_no_response_head_answers_is_abandoned() {
             assert!(started.elapsed() >= SILENT, "{vendor:?} gated={gated}");
             assert!(is_idle_event(&last), "{vendor:?} gated={gated}: {last:?}");
             assert!(
-                recorded_idle(vendor, gated, &recorded),
+                recorded_idle(&recorded),
                 "{vendor:?} gated={gated}: {recorded:?}"
             );
             let (result, recorded) = assembled(&*vendor.provider(url, gated, SILENT)).await;
@@ -274,7 +269,7 @@ async fn a_request_no_response_head_answers_is_abandoned() {
                 "{vendor:?} gated={gated}: {result:?}"
             );
             assert!(
-                recorded_idle(vendor, gated, &recorded),
+                recorded_idle(&recorded),
                 "{vendor:?} gated={gated}: {recorded:?}"
             );
         }
@@ -297,7 +292,7 @@ async fn an_error_body_that_goes_silent_is_abandoned() {
                 "{vendor:?} gated={gated}: {last:?}"
             );
             assert!(
-                recorded_idle(vendor, gated, &recorded),
+                recorded_idle(&recorded),
                 "{vendor:?} gated={gated}: {recorded:?}"
             );
             let url = servers::silent_error_body().await;
@@ -308,7 +303,7 @@ async fn an_error_body_that_goes_silent_is_abandoned() {
                 "{vendor:?} gated={gated}: {result:?}"
             );
             assert!(
-                recorded_idle(vendor, gated, &recorded),
+                recorded_idle(&recorded),
                 "{vendor:?} gated={gated}: {recorded:?}"
             );
         }

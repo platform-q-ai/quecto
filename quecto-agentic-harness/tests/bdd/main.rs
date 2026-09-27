@@ -749,6 +749,8 @@ pub struct QuectoWorld {
     pub swarm_workspace: Option<PathBuf>,
     /// #2150: a real agent's event log run.
     pub event_log: Option<event_log_steps::EventLogRun>,
+    /// #2210: a real agent's model turn in flight.
+    pub model_turn: Option<model_turn_progress_steps::ModelTurnRun>,
     /// Result from the most recent swarm tool execution
     pub swarm_result: Option<quecto::domain::tool::ToolResult>,
     /// Scenario-scoped tool instance; owns the background job registry
@@ -1458,6 +1460,7 @@ mod grep_steps;
 mod harness_efficiency_steps;
 mod ls_steps;
 mod model_discovery_steps;
+mod model_turn_progress_steps;
 mod models_refresh_steps;
 mod observability_steps;
 mod openai_routing_1066_steps;

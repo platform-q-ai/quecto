@@ -651,6 +651,8 @@ mod context_tokens_tests;
 mod event_log_tests;
 #[path = "agent_loop_2123_tests.rs"]
 mod invalid_tool_arguments_tests;
+#[path = "agent_loop_2210_tests.rs"]
+mod model_turn_progress_tests;
 #[path = "agent_loop_2124_tests.rs"]
 mod output_limit_tests;
 #[path = "agent_loop_2169_tests.rs"]
