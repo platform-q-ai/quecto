@@ -5,7 +5,7 @@
 use super::build_tests::selection_for_test;
 use super::*;
 
-fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {
+pub(super) fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {
     AgentFlags {
         session_name: None,
         no_session: false,

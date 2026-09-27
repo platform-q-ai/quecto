@@ -38,9 +38,15 @@ fn given_web_fetch_workspace(world: &mut QuectoWorld) {
     );
 
     let (server, uri) = start_web_fetch_mock();
-    let tool = quecto::composition::web_fetch::build(reqwest::Client::new(), 32);
+    // The production recipe; the test resolver answers `web-fetch.test`
+    // with the local mock server, so no public DNS is used, and web_fetch
+    // never uses a proxy (#1942).
+    let tool = quecto::composition::web_fetch::build_allowing_loopback_for_tests(
+        quecto::interface::shared::web_fetch_client_recipe(),
+        32,
+    );
     registry.register(tool);
-    let uri = uri.replace("127.0.0.1", "localtest.me");
+    let uri = uri.replace("127.0.0.1", "web-fetch.test");
 
     world.tool_workspace = Some(ws);
     world.tool_registry = Some(registry);
@@ -65,9 +71,15 @@ fn given_web_fetch_workspace_1kb(world: &mut QuectoWorld) {
     );
 
     let (server, uri) = start_web_fetch_mock();
-    let tool = quecto::composition::web_fetch::build(reqwest::Client::new(), 1);
+    // The production recipe; the test resolver answers `web-fetch.test`
+    // with the local mock server, so no public DNS is used, and web_fetch
+    // never uses a proxy (#1942).
+    let tool = quecto::composition::web_fetch::build_allowing_loopback_for_tests(
+        quecto::interface::shared::web_fetch_client_recipe(),
+        1,
+    );
     registry.register(tool);
-    let uri = uri.replace("127.0.0.1", "localtest.me");
+    let uri = uri.replace("127.0.0.1", "web-fetch.test");
 
     world.tool_workspace = Some(ws);
     world.tool_registry = Some(registry);
@@ -146,6 +158,23 @@ fn given_mock_returns_500(world: &mut QuectoWorld) {
     );
 }
 
+/// #1942: a redirect to this same server spelled as an IPv4-mapped IPv6
+/// address: followed, it would be a second request here.
+#[given("the mock web server redirects to itself through an IPv4-mapped address")]
+fn given_mock_redirects_to_mapped_self(world: &mut QuectoWorld) {
+    let server = world._web_fetch_mock_server.expect("mock server not set");
+    let port = server.address().port();
+    mount_web_fetch_mock(
+        server,
+        wiremock::Mock::given(wiremock::matchers::method("GET")).respond_with(
+            wiremock::ResponseTemplate::new(302).insert_header(
+                "location",
+                format!("http://[::ffff:127.0.0.1]:{port}/followed").as_str(),
+            ),
+        ),
+    );
+}
+
 // ─── When steps ──────────────────────────────────────────────────────────────
 
 #[when("the agent executes tool \"web_fetch\" with mock URL")]
@@ -200,4 +229,14 @@ fn then_tool_result_is_domain_error(world: &mut QuectoWorld) {
         "expected DomainError, got Ok: {:?}",
         result.as_ref().unwrap().content
     );
+}
+
+#[then(expr = "the mock web server should have received {int} request(s)")]
+fn then_mock_received_requests(world: &mut QuectoWorld, expected: usize) {
+    let server = world._web_fetch_mock_server.expect("mock server not set");
+    let received = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(server.received_requests())
+        .expect("request recording is on");
+    assert_eq!(received.len(), expected, "requests: {received:?}");
 }

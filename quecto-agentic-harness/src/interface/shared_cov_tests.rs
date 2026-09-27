@@ -108,7 +108,7 @@ fn build_and_register_native_extensions_registers_web_fetch() {
         &client,
         config.tools.web.fetch.enabled.then(|| {
             crate::composition::web_fetch::build(
-                client.clone(),
+                crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default(),
                 config.tools.web.fetch.max_response_kb,
             )
         }),
@@ -142,8 +142,7 @@ fn build_and_register_native_extensions_registers_web_fetch() {
 }
 
 #[tokio::test]
-async fn production_registry_preserves_injected_client_default_headers() {
-    use reqwest::header::{HeaderMap, HeaderValue};
+async fn production_registry_carries_the_production_recipe_and_user_agent() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -159,20 +158,14 @@ async fn production_registry_preserves_injected_client_default_headers() {
             .unwrap();
         request
     });
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "x-quecto-client-sentinel",
-        HeaderValue::from_static("preserved"),
-    );
-    let client = reqwest::Client::builder()
-        .default_headers(headers)
-        .no_proxy()
-        .build()
-        .unwrap();
+    let client = crate::interface::shared::build_http_client();
     let mut config = crate::infrastructure::config::Config::default();
     config.tools.web.fetch.enabled = true;
-    let graph = crate::composition::web_fetch::build(
-        client.clone(),
+    // The production graph over the production recipe; only the destination
+    // policy admits the local peer, and the test resolver answers
+    // `web-fetch.test` with it (#1942).
+    let graph = crate::composition::web_fetch::build_allowing_loopback_for_tests(
+        crate::interface::shared::web_fetch_client_recipe(),
         config.tools.web.fetch.max_response_kb,
     );
     let extensions = build_and_register_native_extensions(&config, &client, Some(graph));
@@ -181,14 +174,17 @@ async fn production_registry_preserves_injected_client_default_headers() {
     let result = registry
         .execute(
             "web_fetch",
-            &format!(r#"{{"url":"http://localtest.me:{port}/","raw":true}}"#),
+            &format!(r#"{{"url":"http://web-fetch.test:{port}/","raw":true}}"#),
         )
         .await
         .unwrap();
     assert!(!result.is_error);
     assert_eq!(result.content, "ok");
     let wire = String::from_utf8_lossy(&peer.await.unwrap()).to_ascii_lowercase();
-    assert!(wire.contains("x-quecto-client-sentinel: preserved"));
+    assert!(
+        wire.contains(&format!("user-agent: quecto/{}", env!("CARGO_PKG_VERSION"))),
+        "{wire}"
+    );
 }
 
 #[tokio::test]
@@ -197,7 +193,7 @@ async fn production_registry_preserves_injected_private_ca_tls_trust() {
     use tokio_rustls::rustls::{ServerConfig, pki_types::PrivateKeyDer};
 
     let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
-    let certified = rcgen::generate_simple_self_signed(vec!["localtest.me".into()]).unwrap();
+    let certified = rcgen::generate_simple_self_signed(vec!["web-fetch.test".into()]).unwrap();
     let cert_der = certified.cert.der().clone();
     let key = PrivateKeyDer::try_from(certified.key_pair.serialize_der()).unwrap();
     let tls = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(
@@ -219,15 +215,13 @@ async fn production_registry_preserves_injected_private_ca_tls_trust() {
             .unwrap();
     });
     let certificate = reqwest::Certificate::from_der(cert_der.as_ref()).unwrap();
-    let client = reqwest::Client::builder()
-        .add_root_certificate(certificate)
-        .no_proxy()
-        .build()
-        .unwrap();
+    let client = crate::interface::shared::build_http_client();
     let mut config = crate::infrastructure::config::Config::default();
     config.tools.web.fetch.enabled = true;
-    let graph = crate::composition::web_fetch::build(
-        client.clone(),
+    // The production recipe plus the private CA: the adapter's own client
+    // trusts it (#1942).
+    let graph = crate::composition::web_fetch::build_allowing_loopback_for_tests(
+        crate::interface::shared::web_fetch_client_recipe().add_root_certificate(certificate),
         config.tools.web.fetch.max_response_kb,
     );
     let extensions = build_and_register_native_extensions(&config, &client, Some(graph));
@@ -236,7 +230,7 @@ async fn production_registry_preserves_injected_private_ca_tls_trust() {
     let result = registry
         .execute(
             "web_fetch",
-            &format!(r#"{{"url":"https://localtest.me:{port}/","raw":true}}"#),
+            &format!(r#"{{"url":"https://web-fetch.test:{port}/","raw":true}}"#),
         )
         .await
         .unwrap();
@@ -254,7 +248,7 @@ fn build_and_register_native_extensions_empty_when_no_web_tools() {
         &client,
         config.tools.web.fetch.enabled.then(|| {
             crate::composition::web_fetch::build(
-                client.clone(),
+                crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default(),
                 config.tools.web.fetch.max_response_kb,
             )
         }),
@@ -447,7 +441,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
                 http_client: &client,
                 web_fetch_tool: config.tools.web.fetch.enabled.then(|| {
                     crate::composition::web_fetch::build(
-                        client.clone(),
+                        crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default(),
                         config.tools.web.fetch.max_response_kb,
                     )
                 }),

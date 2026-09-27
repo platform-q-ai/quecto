@@ -398,7 +398,7 @@ pub(crate) fn build_agent_from_config(
             "web-fetch factory missing"
         );
         flags.web_fetch_tool_factory.expect("checked")(
-            http_client.clone(),
+            crate::interface::shared::web_fetch_client_recipe(),
             config.tools.web.fetch.max_response_kb,
         )
     });
@@ -729,6 +729,9 @@ mod startup_identity_tests;
 #[cfg(test)]
 #[path = "agent_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "agent_web_fetch_recipe_tests.rs"]
+mod web_fetch_recipe_tests;
 #[cfg(test)]
 #[path = "agent_workflow_discovery_tests.rs"]
 mod workflow_discovery_tests;

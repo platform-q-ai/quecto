@@ -72,7 +72,7 @@ impl Tool for WebFetchTool {
                     true,
                 )),
                 Ok(WebFetchResult::RestrictedInitialHost(h)) => Ok(result(
-                    format!("Blocked: URL points to a restricted address ({h})"),
+                    format!("Blocked: URL points to a restricted address; refused: {h}"),
                     true,
                 )),
                 Ok(WebFetchResult::NonSuccessStatus(status)) => {
@@ -118,5 +118,9 @@ fn map_failure(f: FetchFailure, url: &str) -> DomainError {
         } => format!("Response too large: >{m} bytes (max {m})"),
         FetchFailure::Read(e) => format!("Failed to read response body: {e}"),
         FetchFailure::Transport(e) => format!("Fetch failed: {e}"),
+        FetchFailure::Refused(reason) => {
+            format!("Blocked: {url} reaches a restricted address; refused: {reason}")
+        }
+        FetchFailure::BadRedirect(reason) => format!("Redirect refused: {reason}"),
     })
 }

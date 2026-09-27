@@ -321,6 +321,14 @@ pub fn build_http_client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
+/// The settings production gives web_fetch's client (#1942): the shared
+/// recipe's connect timeout and the built-in TLS roots. web_fetch builds
+/// its own client from these, so no transport can be handed to it.
+pub fn web_fetch_client_recipe() -> crate::infrastructure::http::web_fetch::WebFetchClientRecipe {
+    crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default()
+        .connect_timeout(crate::infrastructure::providers::CONNECT_TIMEOUT)
+}
+
 /// Build the shared official-tool catalogue/registry root used by CLI, REPL,
 /// and UDS-backed agent sessions.
 ///

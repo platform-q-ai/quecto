@@ -22,8 +22,11 @@ pub fn default_client_builder() -> reqwest::ClientBuilder {
     // connect timeout gates the handshake; a streaming reply that goes
     // silent is bounded by each provider's `stream_idle` bound (#2210),
     // whatever client it was given.
-    reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10))
+    reqwest::Client::builder().connect_timeout(CONNECT_TIMEOUT)
 }
+
+/// The shared recipe's connection handshake limit, also web_fetch's (#1942).
+pub const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub struct SingleAttemptClient(reqwest::Client);

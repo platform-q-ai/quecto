@@ -21,7 +21,7 @@ async fn server(response: &'static [u8]) -> (String, tokio::task::JoinHandle<Vec
     });
     (
         format!(
-            "http://localtest.me:{address_port}/resource",
+            "http://localhost:{address_port}/resource",
             address_port = address.port()
         ),
         task,
@@ -37,7 +37,7 @@ fn request(url: &str) -> FetchRequest {
 async fn adapter_sends_get_and_version_user_agent() {
     let (url, peer) =
         server(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nok").await;
-    let result = ReqwestFetchWebContent::new(reqwest::Client::new())
+    let result = ReqwestFetchWebContent::with_policy(LOOPBACK_FOR_TESTS)
         .fetch(&request(&url))
         .await
         .unwrap();
@@ -65,7 +65,7 @@ async fn non_success_returns_without_polling_stalled_oversized_or_broken_body() 
         let (url, peer) = server(owned).await;
         let result = timeout(
             Duration::from_secs(1),
-            ReqwestFetchWebContent::new(reqwest::Client::new()).fetch(&request(&url)),
+            ReqwestFetchWebContent::with_policy(LOOPBACK_FOR_TESTS).fetch(&request(&url)),
         )
         .await
         .expect("status must be immediate")
@@ -79,7 +79,7 @@ async fn non_success_returns_without_polling_stalled_oversized_or_broken_body() 
 async fn success_caps_known_and_streamed_bodies_and_reports_read_errors() {
     let (url, _) = server(b"HTTP/1.1 200 OK\r\nContent-Length: 5242881\r\n\r\n").await;
     assert!(matches!(
-        ReqwestFetchWebContent::new(reqwest::Client::new())
+        ReqwestFetchWebContent::with_policy(LOOPBACK_FOR_TESTS)
             .fetch(&request(&url))
             .await,
         Err(FetchFailure::TooLarge {
@@ -90,7 +90,7 @@ async fn success_caps_known_and_streamed_bodies_and_reports_read_errors() {
     let (url, _) =
         server(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\nZ\r\n").await;
     assert!(matches!(
-        ReqwestFetchWebContent::new(reqwest::Client::new())
+        ReqwestFetchWebContent::with_policy(LOOPBACK_FOR_TESTS)
             .fetch(&request(&url))
             .await,
         Err(FetchFailure::Read(_))
@@ -103,7 +103,7 @@ async fn adapter_follows_redirects_and_reports_final_status() {
     let port = listener.local_addr().unwrap().port();
     let peer = tokio::spawn(async move {
         for response in [
-            b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\n\r\n".as_slice(),
+            b"HTTP/1.1 302 Found\r\nConnection: close\r\nLocation: /final\r\nContent-Length: 0\r\n\r\n".as_slice(),
             b"HTTP/1.1 418 Nope\r\nTransfer-Encoding: chunked\r\n\r\n".as_slice(),
         ] {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -112,8 +112,8 @@ async fn adapter_follows_redirects_and_reports_final_status() {
             socket.write_all(response).await.unwrap();
         }
     });
-    let result = ReqwestFetchWebContent::new(reqwest::Client::new())
-        .fetch(&request(&format!("http://localtest.me:{port}/start")))
+    let result = ReqwestFetchWebContent::with_policy(LOOPBACK_FOR_TESTS)
+        .fetch(&request(&format!("http://localhost:{port}/start")))
         .await
         .unwrap();
     assert_eq!(
@@ -139,8 +139,8 @@ async fn dropping_fetch_cancels_a_stalled_request() {
         let _ = arrived.send(());
         timeout(Duration::from_secs(1), socket.read(&mut request)).await
     });
-    let adapter = ReqwestFetchWebContent::new(reqwest::Client::new());
-    let req = request(&format!("http://localtest.me:{port}/stall"));
+    let adapter = ReqwestFetchWebContent::with_policy(LOOPBACK_FOR_TESTS);
+    let req = request(&format!("http://localhost:{port}/stall"));
     let task = tokio::spawn(async move { adapter.fetch(&req).await });
     timeout(Duration::from_secs(10), request_arrived)
         .await
@@ -181,9 +181,9 @@ async fn adapter_allows_concurrent_requests() {
             }
         }
     });
-    let adapter = ReqwestFetchWebContent::new(reqwest::Client::new());
-    let r1 = request(&format!("http://localtest.me:{port}/1"));
-    let r2 = request(&format!("http://localtest.me:{port}/2"));
+    let adapter = ReqwestFetchWebContent::with_policy(LOOPBACK_FOR_TESTS);
+    let r1 = request(&format!("http://localhost:{port}/1"));
+    let r2 = request(&format!("http://localhost:{port}/2"));
     let (a, b, _) = tokio::join!(adapter.fetch(&r1), adapter.fetch(&r2), barrier.wait());
     assert!(matches!(a, Ok(FetchOutcome::SuccessBody { .. })));
     assert!(matches!(b, Ok(FetchOutcome::SuccessBody { .. })));
