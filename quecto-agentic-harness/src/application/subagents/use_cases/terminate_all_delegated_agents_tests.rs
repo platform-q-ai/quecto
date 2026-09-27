@@ -663,6 +663,12 @@ fn only_the_owners_word_ends_the_owners_swarms() {
         fleet_cause(FleetTeardownAuthority::Harness),
         TerminationCause::FleetTeardown
     );
+    // #2206: a one-shot parent's run end is its word for its children, but
+    // no owner's teardown: a swarm it has not closed keeps its box.
+    assert_eq!(
+        fleet_cause(FleetTeardownAuthority::RunEnd),
+        TerminationCause::RunEnd
+    );
 }
 
 #[tokio::test]

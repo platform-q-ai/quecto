@@ -102,7 +102,7 @@ fn pid_logging_script(
     let (env_line, result_line) = if is_create {
         (
             format!(r#"env_id="{env_id_expr}""#),
-            r#"printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_path":"%s"}' "$env_id" "$PWD/workspace-$env_id" "$socket_path""#
+            r#"ws="$(dirname "$0")/workspace-$env_id"; mkdir -p "$ws"; printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_path":"%s"}' "$env_id" "$ws" "$socket_path""#
                 .to_string(),
         )
     } else {
@@ -259,7 +259,7 @@ fi
 child_pid=$!
 python3 '__PID_DIR__/../fixture-processes.py' track '__PID_DIR__' "$env_id" "$child_pid"
 echo "{\"kind\":\"child\",\"pid\":$child_pid,\"socket\":\"$private_sock\"}" >> '__LOG__'
-printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_proxy":{"argv":["__PROXY__","%s"]}}' "$env_id" "$PWD/workspace-$env_id" "$private_sock"
+ws="$(dirname "$0")/workspace-$env_id"; mkdir -p "$ws"; printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_proxy":{"argv":["__PROXY__","%s"]}}' "$env_id" "$ws" "$private_sock"
 "#
     .replace("__LOG__", &log.display().to_string())
     .replace("__DECOY_MARKER__", &decoy_marker.display().to_string())
@@ -318,7 +318,7 @@ fn given_create_result_both_endpoints(world: &mut QuectoWorld) {
 set -euo pipefail
 env_id="env-both-$$"
 echo "{\"kind\":\"create\",\"script\":\"${QUECTO_CONTAINER_CONFIG:-}\",\"env_ref\":\"${QUECTO_CONTAINER_ENVIRONMENT_REF:-}\",\"env_id\":\"$env_id\"}" >> '__LOG__'
-printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_path":"%s","socket_proxy":{"argv":["/bin/true"]}}' "$env_id" "$PWD/workspace-$env_id" "$PWD/never-used.sock"
+ws="$(dirname "$0")/workspace-$env_id"; mkdir -p "$ws"; printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_path":"%s","socket_proxy":{"argv":["/bin/true"]}}' "$env_id" "$ws" "$PWD/never-used.sock"
 "#
     .replace("__LOG__", &log.display().to_string());
     write_executable(&both, script);
@@ -682,7 +682,7 @@ fn host_swarm_run(world: &mut QuectoWorld, ended_holding: Option<String>) {
     let script = std::fs::read_to_string(&create).expect("liveness create fixture exists");
     let advertised = format!(r#""metadata":{{"checkout":"{}"}}"#, checkout.display());
     assert!(
-        script.contains(r#""metadata":{}"#) && script.contains(r#""$PWD/workspace-$env_id""#),
+        script.contains(r#""metadata":{}"#) && script.contains(r#" "$env_id" "$ws" "#),
         "create fixture reports empty metadata and a per-create workspace before patching"
     );
     // Like a sandbox config, the members' checkout IS the workspace: the
@@ -690,9 +690,10 @@ fn host_swarm_run(world: &mut QuectoWorld, ended_holding: Option<String>) {
     let workspace = format!("\"{}\"", checkout.display());
     write_executable(
         &create,
-        script
-            .replace(r#""metadata":{}"#, &advertised)
-            .replace(r#""$PWD/workspace-$env_id""#, &workspace),
+        script.replace(r#""metadata":{}"#, &advertised).replace(
+            r#" "$env_id" "$ws" "#,
+            &format!(" \"$env_id\" {workspace} "),
+        ),
     );
 }
 

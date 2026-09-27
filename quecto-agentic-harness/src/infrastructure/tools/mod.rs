@@ -62,6 +62,9 @@ pub mod subagent_registry;
 pub(crate) mod subagent_routing;
 #[cfg(test)]
 mod subagent_routing_tests;
+#[cfg(test)]
+#[path = "subagent_run_end_tests.rs"]
+mod subagent_run_end_tests;
 mod subagent_status;
 pub mod subagent_teardown_registry;
 pub mod subagent_teardown_wiring;

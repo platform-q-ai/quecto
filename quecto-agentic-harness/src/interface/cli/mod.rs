@@ -56,6 +56,7 @@ pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_wit
 pub use uds_shutdown::test_support::deliver_termination_signal;
 
 pub mod retention_handles;
+pub mod run_end_fleet;
 mod uds_admission_warnings;
 pub mod uds_discovery_handles;
 #[cfg(test)]
@@ -331,6 +332,13 @@ pub struct CliContext {
     /// container init|status` refuse to run without them.
     pub container_init: Option<ContainerInitBuilder>,
     pub container_status: Option<ContainerStatusBuilder>,
+    /// Composition's run-end fleet builder (#2206): a one-shot run settles
+    /// the children it launched when it ends in an orderly way. Without it
+    /// the run returns and its children run their parent-loss shutdown.
+    pub run_end_fleet: Option<run_end_fleet::RunEndFleetBuilder>,
+    /// Output reaches the real terminal (`run`, not `run_with_output`): a
+    /// one-shot run writes its answer out before it settles its children.
+    pub live_output: bool,
 }
 
 impl CliContext {
@@ -411,6 +419,7 @@ pub struct CliComposition {
     pub container_inventory: ContainerInventoryBuilder,
     pub container_init: ContainerInitBuilder,
     pub container_status: ContainerStatusBuilder,
+    pub run_end_fleet: run_end_fleet::RunEndFleetBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -445,6 +454,8 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         container_inventory: Some(composition.container_inventory),
         container_init: Some(composition.container_init),
         container_status: Some(composition.container_status),
+        run_end_fleet: Some(composition.run_end_fleet),
+        live_output: true,
         ..Default::default()
     };
 

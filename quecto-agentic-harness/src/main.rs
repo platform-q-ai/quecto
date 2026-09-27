@@ -24,6 +24,7 @@ fn main() {
             container_inventory: quecto::composition::environments::build_container_inventory,
             container_init: quecto::composition::standard_container::build_standard_container_init,
             container_status: quecto::composition::standard_container::build_container_status,
+            run_end_fleet: quecto::composition::subagent_teardown::build_run_end_fleet,
         },
     ));
 }

@@ -361,6 +361,12 @@ pub enum FleetTeardownAuthority {
     /// client gone, a lost parent): a swarm its owner has not closed keeps
     /// its environment.
     Harness,
+    /// A one-shot parent ends the run it was started for (#2206), in its own
+    /// code after the run finished or hit its `--max-time` — a failed run,
+    /// a crash or a signal runs none. Its
+    /// plain container children's environments end for good; a swarm its
+    /// owner has not closed keeps its box, since ending a run closes none.
+    RunEnd,
 }
 
 /// How one direct child settled under the fleet teardown.

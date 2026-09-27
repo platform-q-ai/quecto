@@ -84,7 +84,7 @@ impl ContainerAssetStore for MemoryAssets {
             }
             AssetState::Identical => AssetOutcome::KeptIdentical,
             AssetState::Differs => AssetOutcome::KeptDiffering,
-            AssetState::Refused => unreachable!(),
+            AssetState::Outdated | AssetState::Refused => unreachable!(),
         })
     }
 
@@ -104,6 +104,15 @@ impl ContainerAssetStore for MemoryAssets {
             }
             _ => self.materialise(root, dir, asset),
         }
+    }
+
+    fn refresh_outdated(
+        &self,
+        _: &Path,
+        _: &Path,
+        _: &ContainerAsset,
+    ) -> Result<AssetOutcome, String> {
+        unreachable!("init never refreshes only outdated files")
     }
 }
 

@@ -125,6 +125,11 @@ fn capped_agents_json(agent_ids: &[String]) -> serde_json::Value {
 fn kill_container_result_json(killed: &KilledEnvironment) -> serde_json::Value {
     let mut result = capped_agents_json(&killed.record.members);
     result["killed"] = serde_json::json!(killed.record.environment_ref);
+    if killed.removed_stopped {
+        // #2206: a stopped environment's leftovers were removed and its
+        // record forgotten.
+        result["removed_stopped"] = serde_json::json!(true);
+    }
     // How each member was settled before the retained kill ran (#1939).
     result["settled"] = serde_json::json!(
         killed

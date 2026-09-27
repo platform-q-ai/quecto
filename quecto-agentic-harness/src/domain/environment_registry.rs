@@ -706,6 +706,12 @@ pub fn ref_number(environment_ref: &str) -> Option<u64> {
 
 #[path = "environment_registry_inspect.rs"]
 mod inspect;
+#[path = "environment_registry_removal.rs"]
+mod removal;
+pub use removal::{REMOVAL_PENDING, RemovalClaim};
+#[cfg(test)]
+#[path = "environment_registry_removal_tests.rs"]
+mod removal_tests;
 
 #[cfg(test)]
 #[path = "environment_registry_tests.rs"]

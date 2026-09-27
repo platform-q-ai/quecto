@@ -42,12 +42,24 @@ pub trait EnvironmentProcessCommands: Send + Sync {
         argv: &'a [String],
     ) -> PortFuture<'a, Result<(), String>>;
 
-    /// Run the retained `cleanup` once (best effort by contract).
+    /// Run the retained `cleanup` once (best effort by contract). `Ok`
+    /// means the script reported success; `Err` carries its account (or
+    /// why it could not be run), so a caller that forgets the environment
+    /// afterwards (#2206) does so only once it is really gone.
     fn run_retained_cleanup<'a>(
         &'a self,
         environment_id: &'a str,
         argv: &'a [String],
-    ) -> PortFuture<'a, ()>;
+    ) -> PortFuture<'a, Result<(), String>>;
+
+    /// Whether `record`'s container still runs, through its retained
+    /// `inspect` (#2206): the check before a `stopped` record's leftovers
+    /// are removed. `Unknown` when the script set has no inspect or the
+    /// runtime could not be asked.
+    fn observe_liveness<'a>(
+        &'a self,
+        record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, EnvironmentLiveness>;
 }
 
 /// What the supervising session can learn about — and record on — the swarm
@@ -338,6 +350,19 @@ pub trait ContainerAssetStore: Send + Sync {
     /// its mode: `init --refresh`, the way back from an edit or an older
     /// bundle. The same symbolic-link refusals apply.
     fn refresh(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetOutcome, String>;
+
+    /// Replace `asset` below `dir` only while it still holds exactly bytes
+    /// an earlier quecto shipped (#2206): the bytes are re-read and
+    /// re-judged at replacement time, and the file must be unchanged up to
+    /// the rename. Anything else — an edit made since it was judged
+    /// outdated, a file gone — is refused (`Err`) and left as it is, so
+    /// no one's edit is ever overwritten by a refresh nobody asked for.
+    fn refresh_outdated(
         &self,
         root: &Path,
         dir: &Path,

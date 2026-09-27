@@ -77,15 +77,36 @@ async fn script_kill_adapter_reports_the_script_outcome_on_a_runtime() {
     assert!(err.contains("no retained kill argv"), "{err}");
     super::ScriptEnvironmentCommands::default()
         .run_retained_cleanup("env-runtime", &argv)
-        .await;
+        .await
+        .expect("the cleanup script reported success");
     assert_eq!(
         std::fs::read_to_string(&log).unwrap().lines().count(),
         2,
         "cleanup ran the same script once more"
     );
-    super::ScriptEnvironmentCommands::default()
+    let err = super::ScriptEnvironmentCommands::default()
         .run_retained_cleanup("env-runtime", &[])
-        .await;
+        .await
+        .unwrap_err();
+    assert!(err.contains("no retained cleanup argv"), "{err}");
+}
+
+/// A cleanup that hangs is killed at the adapter's bound and reported
+/// (#2206): an owner's end waiting on it is never parked.
+#[tokio::test]
+async fn a_hung_cleanup_is_killed_at_the_bound_and_reported() {
+    let argv = vec!["sleep".to_string(), "30".to_string()];
+    let started = std::time::Instant::now();
+    let err = super::ScriptEnvironmentCommands::default()
+        .with_cleanup_bound(std::time::Duration::from_millis(200))
+        .run_retained_cleanup("env-hung", &argv)
+        .await
+        .unwrap_err();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "bounded"
+    );
+    assert!(!err.is_empty());
 }
 
 /// Without a runtime the adapter runs the script inline (the final-member
@@ -150,7 +171,8 @@ async fn retained_argv_of_an_altered_standard_script_is_refused_before_it_runs()
         );
         assert!(!marker.exists(), "the altered {name} ran on the host");
         if op == "kill" {
-            commands.run_retained_cleanup("env-1", &argv).await;
+            let refused = commands.run_retained_cleanup("env-1", &argv).await;
+            assert!(refused.is_err(), "an altered cleanup is reported refused");
             assert!(!marker.exists(), "the altered {name} ran as cleanup");
         }
     }
@@ -172,4 +194,131 @@ async fn a_hung_kill_script_is_killed_at_the_bound_and_reported() {
         "{error}"
     );
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
+}
+
+/// #2206: a cleanup's bound is its own, generous one — a large state
+/// directory's `rm -rf` must not be cut at the kill's 20 s.
+#[test]
+fn a_cleanup_is_bounded_generously_and_apart_from_the_kill() {
+    assert!(super::CLEANUP_SCRIPT_BOUND >= std::time::Duration::from_secs(120));
+    assert!(super::CLEANUP_SCRIPT_BOUND > super::KILL_SCRIPT_BOUND);
+    // A cleanup that outlives the kill's bound still completes.
+    let argv = vec!["sleep".to_string(), "0.4".to_string()];
+    futures::executor::block_on(
+        super::ScriptEnvironmentCommands::default()
+            .with_kill_bound(std::time::Duration::from_millis(100))
+            .run_retained_cleanup("env-slow", &argv),
+    )
+    .expect("the kill's bound does not apply to a cleanup");
+}
+
+/// The #2206 round-1 probe, through `kill_container` of a stopped ref and
+/// the official scripts: a runtime that cannot be asked is no proof the
+/// container is gone, so nothing is removed and the record stays; one that
+/// says "no such container" is, so the leftovers go and the record is
+/// forgotten.
+#[test]
+fn a_stopped_ref_is_removed_only_on_the_runtimes_own_word() {
+    use crate::application::environments::ports::{
+        EnvironmentMemberShutdown, MemberShutdownReport, PortFuture,
+    };
+    use crate::application::environments::use_cases::KillEnvironment;
+    use crate::domain::environment_registry::{
+        EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
+        EnvironmentTarget,
+    };
+    use std::os::unix::fs::PermissionsExt;
+    struct NoMembers;
+    impl EnvironmentMemberShutdown for NoMembers {
+        fn shutdown_members<'a>(&'a self, _: &'a [String]) -> PortFuture<'a, MemberShutdownReport> {
+            Box::pin(async { MemberShutdownReport::default() })
+        }
+    }
+    let scripts =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/standard-container/scripts");
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    for (answer, removed) in [
+        (
+            "echo 'Error: cannot connect to Podman socket' >&2\nexit 125",
+            false,
+        ),
+        (
+            "echo 'Error: no such container quecto-env-x' >&2\nexit 125",
+            true,
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        let env_dir = state.join("env-x");
+        std::fs::create_dir_all(env_dir.join("workspace/repo")).unwrap();
+        std::fs::write(env_dir.join("container"), "quecto-env-x\n").unwrap();
+        std::fs::write(env_dir.join("workspace/repo/work.txt"), "work\n").unwrap();
+        let cli = dir.path().join("podman");
+        std::fs::write(&cli, format!("#!/bin/sh\n{answer}\n")).unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // The fake runtime reaches only these scripts: no process-wide
+        // environment is touched.
+        let argv = |script: &str, rest: &[&str]| -> Vec<String> {
+            let mut argv = vec![
+                "env".to_string(),
+                format!("QUECTO_CONTAINER_CLI={}", cli.display()),
+                "bash".to_string(),
+                scripts.join(script).display().to_string(),
+                "--state-dir".to_string(),
+                state.display().to_string(),
+            ];
+            argv.extend(rest.iter().map(|s| s.to_string()));
+            argv
+        };
+        let registry = EnvironmentRegistry::new();
+        registry.commit(EnvironmentRecord {
+            environment_ref: "C7".into(),
+            environment_id: "env-x".into(),
+            environment_uuid: "u7".into(),
+            name: None,
+            workspace_path: env_dir.join("workspace"),
+            repository: String::new(),
+            script_name: "standard".into(),
+            retained_exec_argv: vec!["exec.sh".into()],
+            retained_kill_argv: argv("kill.sh", &["--op", "kill"]),
+            retained_cleanup_argv: argv("kill.sh", &["--op", "cleanup"]),
+            retained_inspect_argv: argv("inspect.sh", &[]),
+            members: vec![],
+            status: EnvironmentStatus::Stopped,
+            metadata: serde_json::json!({}),
+            last_error: None,
+            origin: EnvironmentOrigin::Restored,
+            created_by: "cli".into(),
+            created_at: None,
+        });
+        let kill = KillEnvironment::new(
+            registry.clone(),
+            std::sync::Arc::new(NoMembers),
+            std::sync::Arc::new(super::ScriptEnvironmentCommands::default()),
+            std::sync::Arc::new(super::HostedStoreObservation),
+        );
+
+        let outcome = rt.block_on(kill.kill_container(&EnvironmentTarget::Ref("C7".into())));
+
+        if removed {
+            assert!(outcome.expect("removed").removed_stopped);
+            assert!(!env_dir.exists(), "leftovers removed");
+            assert!(registry.get("C7").is_none(), "record forgotten");
+        } else {
+            let error = outcome.unwrap_err().to_string();
+            assert!(error.contains("could not be checked"), "{error}");
+            assert!(
+                env_dir.join("workspace/repo/work.txt").exists(),
+                "work kept"
+            );
+            assert_eq!(
+                registry.get("C7").unwrap().status,
+                EnvironmentStatus::Stopped,
+                "record untouched"
+            );
+        }
+    }
 }

@@ -1441,6 +1441,7 @@ mod config_steps;
 mod container_discovery_steps;
 mod container_doctor_steps;
 mod container_mapping_steps;
+mod container_owner_end_steps;
 mod container_persistence_real_steps;
 mod container_persistence_round3_steps;
 mod container_persistence_round4_steps;

@@ -334,9 +334,19 @@ fn causes_map_to_the_cleanup_contract_and_exit_kind() {
         finalize_mode(TerminationCause::Exit(ExitObservation::ProcessExited)),
         FinalizeMode::Exit
     );
+    // #2206: the owner ending one child — its selected kill, or a one-shot
+    // parent ending its run — is its word for that child.
     assert_eq!(
         finalize_mode(TerminationCause::SelectedTermination),
-        FinalizeMode::ParentKill
+        FinalizeMode::OwnerEnd
+    );
+    assert_eq!(
+        finalize_mode(TerminationCause::RunEnd),
+        FinalizeMode::OwnerEnd
+    );
+    assert_eq!(
+        exit_kind(TerminationCause::RunEnd),
+        ExitSignalKind::Terminated
     );
     assert_eq!(
         finalize_mode(TerminationCause::EnvironmentKill),

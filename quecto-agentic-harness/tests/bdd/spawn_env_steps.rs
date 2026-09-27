@@ -67,7 +67,7 @@ done
 "$@" >/dev/null 2>&1 &
 child_pid="$!"
 python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "$env_id" "$child_pid"
-printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$env_id" "$PWD/workspace-$env_id" "$socket_path"
+ws="$(dirname "$0")/workspace-$env_id"; mkdir -p "$ws"; printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$env_id" "$ws" "$socket_path"
 "#,
             log = log.display(),
             pid_dir = pid_dir.display()
@@ -809,7 +809,7 @@ for arg in "$@"; do
 done
 ( while [ ! -e '{gate}' ]; do sleep 0.05; done; exec "$@" ) >/dev/null 2>&1 &
 python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "$env_id" "$!"
-printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$env_id" "$PWD/workspace-$env_id" "$socket_path"
+ws="$(dirname "$0")/workspace-$env_id"; mkdir -p "$ws"; printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$env_id" "$ws" "$socket_path"
 "#,
             log = log.display(),
             gate = gate.display(),

@@ -148,6 +148,9 @@ Feature: Shared script-managed environments
     And the container listing should include "C1" with status "running" and 1 member
     And scenario teardown should leave no fixture processes running
 
+  # #2206: the owner killing the final member of a plain container is its
+  # word: the box has nothing to resume, so the retained cleanup removes it
+  # and the record is forgotten, the way a launch rollback discards it.
   @done @container-env
   Scenario: Killing the final member triggers exactly one environment cleanup
     Given shared script-managed subagent spawning is available
@@ -155,8 +158,9 @@ Feature: Shared script-managed environments
     And read-only subagent "observer-final2-slice2" has joined existing environment ref "C1" with task "OBSERVER_FINAL2_MARKER"
     And subagent "observer-final2-slice2" has been killed
     When I kill subagent "impl-final2-slice2"
-    Then the script-managed runtime should have killed an environment exactly 1 time
-    And the container listing should include "C1" with status "stopped" and 0 members
+    Then the script-managed runtime should have cleaned up an environment exactly 1 time
+    And the script-managed runtime should have killed an environment exactly 0 times
+    And the container listing should not include "C1"
     And scenario teardown should leave no fixture processes running
 
   # @serial: the listing must be observed inside the spawn's 10s readiness

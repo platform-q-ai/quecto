@@ -4,11 +4,14 @@
 //! store the supervising session reads by path ([`HostedSwarmRunObservation`],
 //! #1924). Mechanics only: whether and when each runs is decided by the
 //! application use cases.
+use crate::application::environments::dto::EnvironmentLiveness;
+use crate::application::environments::ports::EnvironmentProcess;
 use crate::application::environments::ports::{
     EnvironmentProcessCommands, HostedSwarmRunInspection, HostedSwarmRunObservation, PortFuture,
 };
 use crate::domain::environment_registry::EnvironmentRecord;
 use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
+use crate::infrastructure::processes::containers::environment_process::ScriptEnvironmentProcess;
 use crate::infrastructure::processes::containers::script_stderr::{
     ScriptStdout, run_sync_capturing_stderr_tail,
 };
@@ -29,16 +32,30 @@ pub struct ScriptEnvironmentCommands {
     /// runtime that hangs on its remove. A kill takes seconds; an owner's
     /// exit waits on this at most once.
     kill_bound: std::time::Duration,
+    /// Bound on one retained cleanup script (#2206), past which it is
+    /// killed and reported failed like a hung kill.
+    cleanup_bound: std::time::Duration,
 }
 
 /// The default bound on one retained kill script.
 pub const KILL_SCRIPT_BOUND: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The default bound on one retained cleanup script (#2206). Generous and
+/// distinct from the kill's: a cleanup removes the whole state directory —
+/// a full repository clone, its build output — and a large `rm -rf` on a
+/// slow disk can take far longer than stopping a container, while a
+/// cleanup cut short leaves exactly the leftovers it was meant to remove.
+/// Nothing on an exit budget waits on it: launch rollbacks are waited for
+/// under their own limit, and the owner's end of a plain child runs it on
+/// a blocking worker. It only guards against a runtime that never returns.
+pub const CLEANUP_SCRIPT_BOUND: std::time::Duration = std::time::Duration::from_secs(120);
 
 impl Default for ScriptEnvironmentCommands {
     fn default() -> Self {
         Self {
             offload: true,
             kill_bound: KILL_SCRIPT_BOUND,
+            cleanup_bound: CLEANUP_SCRIPT_BOUND,
         }
     }
 }
@@ -50,12 +67,19 @@ impl ScriptEnvironmentCommands {
         Self {
             offload: false,
             kill_bound: KILL_SCRIPT_BOUND,
+            cleanup_bound: CLEANUP_SCRIPT_BOUND,
         }
     }
 
     #[cfg(test)]
     pub fn with_kill_bound(mut self, kill_bound: std::time::Duration) -> Self {
         self.kill_bound = kill_bound;
+        self
+    }
+
+    #[cfg(test)]
+    pub fn with_cleanup_bound(mut self, cleanup_bound: std::time::Duration) -> Self {
+        self.cleanup_bound = cleanup_bound;
         self
     }
 
@@ -116,16 +140,26 @@ impl EnvironmentProcessCommands for ScriptEnvironmentCommands {
         &'a self,
         environment_id: &'a str,
         argv: &'a [String],
-    ) -> PortFuture<'a, ()> {
+    ) -> PortFuture<'a, Result<(), String>> {
         let environment_id = environment_id.to_owned();
         let argv = argv.to_vec();
+        let bound = self.cleanup_bound;
         Box::pin(async move {
-            if let Err(error) = self
-                .blocking(move || run_script_sync(&environment_id, &argv))
+            self.blocking(move || run_cleanup_script_sync(&environment_id, &argv, bound))
                 .await
-            {
-                tracing::warn!(%error, "retained cleanup could not be run");
-            }
+                .inspect_err(|error| tracing::warn!(%error, "retained cleanup could not be run"))?
+        })
+    }
+
+    fn observe_liveness<'a>(
+        &'a self,
+        record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, EnvironmentLiveness> {
+        let record = record.clone();
+        Box::pin(async move {
+            self.blocking(move || ScriptEnvironmentProcess.observe(&record))
+                .await
+                .unwrap_or_else(EnvironmentLiveness::Unknown)
         })
     }
 }
@@ -143,18 +177,17 @@ pub(super) use crate::infrastructure::processes::containers::retained_scripts::r
 /// The retained-cleanup invocation: best effort by contract, never silent
 /// (#2024 S4b) — a cleanup that fails leaves an environment behind and
 /// its stderr tail is the operator's only lead.
-fn run_script_sync(environment_id: &str, argv: &[String]) {
-    if argv.is_empty() {
-        return;
-    }
-    if let Err(error) =
-        crate::infrastructure::processes::containers::retained_scripts::run_cleanup_sync(
-            environment_id,
-            argv,
-        )
-    {
-        tracing::warn!(environment_id, "{error}");
-    }
+fn run_cleanup_script_sync(
+    environment_id: &str,
+    argv: &[String],
+    bound: std::time::Duration,
+) -> Result<(), String> {
+    crate::infrastructure::processes::containers::retained_scripts::run_cleanup_sync_bounded(
+        environment_id,
+        argv,
+        bound,
+    )
+    .inspect_err(|error| tracing::warn!(environment_id, "{error}"))
 }
 
 /// The retained-kill invocation: argv exec, `QUECTO_CONTAINER_ENVIRONMENT_ID`,
@@ -196,45 +229,89 @@ pub(super) const CHECKOUT_METADATA_KEY: &str = "checkout";
 /// into, probed when a create result predates `metadata.checkout`.
 const REPO_CHECKOUT_SUBDIR: &str = "repo";
 
-/// The checkout the host may open a coordination store at (#1924): the
-/// create result's `metadata.checkout` when present, else the first of
-/// `<workspace>/repo` and `<workspace>` holding a store (older or third-party
-/// script sets). Either way the path must be absolute, `..`-free and — after
-/// resolving symlinks on both sides — at or under the record's workspace,
-/// the only host location a script-managed environment owns. Anything else
-/// is treated as no store at all rather than a place to run an interpreter.
-pub(super) fn hosted_checkout(record: &EnvironmentRecord) -> Option<std::path::PathBuf> {
+/// Where the host may open a coordination store for a record (#1924,
+/// #2206 rounds 2 and 3).
+///
+/// The checkout is the create result's `metadata.checkout` when present,
+/// else the first of `<workspace>/repo` and `<workspace>` where a board
+/// may be (older or third-party script sets). Either way the path must be
+/// absolute, `..`-free and — after resolving symlinks on both sides — at
+/// or under the record's workspace, the only host location a
+/// script-managed environment owns; a checkout that does not resolve
+/// there (renamed, unreadable, a link loop, outside) is `Unknown`, never a
+/// place to run an interpreter and never "no board".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum HostedCheckout {
+    /// The checkout to read, at or under the record's workspace.
+    At(std::path::PathBuf),
+    /// Proven to hold no board: the workspace is on this host and every
+    /// board place answered "no such file" — the only answer that lets a
+    /// box count as a plain container.
+    NoBoard,
+    /// No advertised checkout and the workspace is absent from this host
+    /// (a script set whose workspace lives only in the container): nothing
+    /// the host could read, and nothing proven either.
+    NotOnHost,
+    /// The host could not tell; the environment is kept.
+    Unknown(String),
+}
+
+pub(super) fn hosted_checkout(record: &EnvironmentRecord) -> HostedCheckout {
     match record
         .metadata
         .get(CHECKOUT_METADATA_KEY)
         .and_then(serde_json::Value::as_str)
         .filter(|checkout| !checkout.is_empty())
     {
-        Some(advertised) => contained_checkout(record, std::path::Path::new(advertised)),
-        None => [
-            record.workspace_path.join(REPO_CHECKOUT_SUBDIR),
-            record.workspace_path.clone(),
-        ]
-        .iter()
-        .filter(|candidate| super::swarm_bridge::store_database(candidate).is_file())
-        .find_map(|candidate| contained_checkout(record, candidate)),
+        Some(advertised) => {
+            match contained_below(&record.workspace_path, std::path::Path::new(advertised)) {
+                Ok(checkout) => HostedCheckout::At(checkout),
+                Err(reason) => HostedCheckout::Unknown(reason),
+            }
+        }
+        None => first_with_board(
+            &record.workspace_path,
+            [
+                record.workspace_path.join(REPO_CHECKOUT_SUBDIR),
+                record.workspace_path.clone(),
+            ],
+        ),
     }
 }
 
-fn contained_checkout(
-    record: &EnvironmentRecord,
-    checkout: &std::path::Path,
-) -> Option<std::path::PathBuf> {
-    contained_below(&record.workspace_path, checkout)
+/// The first candidate checkout that may hold a board, contained below
+/// `root`. With every candidate's every board place answering "no such
+/// file": `NoBoard` when `root` is on this host, `NotOnHost` when it is
+/// not.
+fn first_with_board(root: &std::path::Path, candidates: [std::path::PathBuf; 2]) -> HostedCheckout {
+    use super::swarm_store_location::BoardPresence;
+    for candidate in candidates {
+        match super::swarm_store_location::board_presence(&candidate) {
+            BoardPresence::Absent => {}
+            BoardPresence::Current { .. } | BoardPresence::Displaced(_) => {
+                return match contained_below(root, &candidate) {
+                    Ok(checkout) => HostedCheckout::At(checkout),
+                    Err(reason) => HostedCheckout::Unknown(reason),
+                };
+            }
+            BoardPresence::Unknown(reason) => return HostedCheckout::Unknown(reason),
+        }
+    }
+    match std::fs::symlink_metadata(root) {
+        Ok(_) => HostedCheckout::NoBoard,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => HostedCheckout::NotOnHost,
+        Err(error) => HostedCheckout::Unknown(format!("workspace {}: {error}", root.display())),
+    }
 }
 
 /// `checkout` resolved, when both it and `root` are absolute and `..`-free
 /// and — symlinks resolved on both sides, so a link under the root pointing
-/// elsewhere cannot lead the host outside it — it lies at or under `root`.
+/// elsewhere cannot lead the host outside it — it lies at or under `root`;
+/// otherwise why not.
 fn contained_below(
     root: &std::path::Path,
     checkout: &std::path::Path,
-) -> Option<std::path::PathBuf> {
+) -> Result<std::path::PathBuf, String> {
     use std::path::Component;
     let plain = |path: &std::path::Path| {
         path.is_absolute()
@@ -242,36 +319,70 @@ fn contained_below(
                 .components()
                 .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
     };
-    if !plain(checkout) || !plain(root) {
-        return None;
+    match plain(checkout) && plain(root) {
+        true => {}
+        false => {
+            return Err(format!(
+                "checkout {} is not a plain absolute path below {}",
+                checkout.display(),
+                root.display()
+            ));
+        }
     }
-    let resolved = std::fs::canonicalize(checkout).ok()?;
-    let root = std::fs::canonicalize(root).ok()?;
-    resolved.starts_with(&root).then_some(resolved)
+    let resolved = std::fs::canonicalize(checkout)
+        .map_err(|error| format!("checkout {}: {error}", checkout.display()))?;
+    let root = std::fs::canonicalize(root)
+        .map_err(|error| format!("workspace {}: {error}", root.display()))?;
+    match resolved.starts_with(&root) {
+        true => Ok(resolved),
+        false => Err(format!(
+            "checkout {} resolves outside its workspace {}",
+            resolved.display(),
+            root.display()
+        )),
+    }
 }
 
 fn hosted_store(record: &EnvironmentRecord) -> Option<super::swarm_bridge::HostedStore> {
-    hosted_checkout(record).map(super::swarm_bridge::HostedStore::at)
+    match hosted_checkout(record) {
+        HostedCheckout::At(checkout) => Some(super::swarm_bridge::HostedStore::at(checkout)),
+        HostedCheckout::NoBoard | HostedCheckout::NotOnHost | HostedCheckout::Unknown(_) => None,
+    }
 }
 
 /// The checkout a store may live at below a bare environment state
 /// directory the shipped scripts laid out (`<state_dir>/workspace[/repo]`),
-/// for a directory no record names: the first of the two holding a store,
-/// contained below the state dir the same way a record's checkout is
-/// contained below its workspace.
-fn unrecorded_checkout(state_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+/// for a directory no record names: the first of the two where a board may
+/// be, contained below the state dir the same way a record's checkout is
+/// contained below its workspace. A directory the collector found but
+/// whose workspace was never made has no board.
+fn unrecorded_checkout(state_dir: &std::path::Path) -> HostedCheckout {
     let workspace = state_dir.join("workspace");
-    [workspace.join(REPO_CHECKOUT_SUBDIR), workspace]
-        .iter()
-        .filter(|candidate| super::swarm_bridge::store_database(candidate).is_file())
-        .find_map(|candidate| contained_below(state_dir, candidate))
+    match first_with_board(state_dir, [workspace.join(REPO_CHECKOUT_SUBDIR), workspace]) {
+        // The collector judges directories on this host: one that is not
+        // (or no longer) there holds nothing, board included.
+        HostedCheckout::NotOnHost => HostedCheckout::NoBoard,
+        judged @ (HostedCheckout::At(_) | HostedCheckout::NoBoard | HostedCheckout::Unknown(_)) => {
+            judged
+        }
+    }
 }
 
 /// One synchronous read of the store at `checkout`, for the environment
 /// named `subject` in the log.
-fn read_hosted_run(checkout: Option<std::path::PathBuf>, subject: &str) -> SwarmRunObservation {
-    let Some(store) = checkout.map(super::swarm_bridge::HostedStore::at) else {
-        return SwarmRunObservation::NoStore;
+fn read_hosted_run(checkout: HostedCheckout, subject: &str) -> SwarmRunObservation {
+    let store = match checkout {
+        HostedCheckout::At(checkout) => super::swarm_bridge::HostedStore::at(checkout),
+        HostedCheckout::NoBoard => return SwarmRunObservation::NoStore,
+        HostedCheckout::NotOnHost => return SwarmRunObservation::NoStoreUnverified,
+        HostedCheckout::Unknown(error) => {
+            tracing::warn!(
+                environment = %subject,
+                %error,
+                "hosted swarm run's checkout could not be judged; environment retained"
+            );
+            return SwarmRunObservation::Unreadable(error);
+        }
     };
     match store.hosted_run() {
         Ok(Some(run)) => SwarmRunObservation::Run(run),
@@ -332,3 +443,7 @@ impl HostedSwarmRunInspection for HostedStoreObservation {
 #[cfg(test)]
 #[path = "environment_commands_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "environment_commands_board_tests.rs"]
+mod board_tests;

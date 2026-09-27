@@ -118,16 +118,24 @@ impl EnvironmentProcessCommands for HostedRunPort {
         })
     }
 
+    fn observe_liveness<'a>(
+        &'a self,
+        _record: &'a crate::domain::environment_registry::EnvironmentRecord,
+    ) -> PortFuture<'a, crate::application::environments::dto::EnvironmentLiveness> {
+        Box::pin(async { panic!("a final-member teardown never asks liveness") })
+    }
+
     fn run_retained_cleanup<'a>(
         &'a self,
         environment_id: &'a str,
         argv: &'a [String],
-    ) -> PortFuture<'a, ()> {
+    ) -> PortFuture<'a, Result<(), String>> {
         Box::pin(async move {
             self.cleanups.lock().unwrap().push(ScriptCall {
                 environment_id: environment_id.to_string(),
                 argv: argv.to_vec(),
             });
+            Ok(())
         })
     }
 }
@@ -389,11 +397,18 @@ fn a_run_that_ends_between_observation_and_the_loss_record_follows_how_it_ended(
         ) -> PortFuture<'a, Result<(), String>> {
             self.0.run_retained_kill(environment_id, argv)
         }
+        fn observe_liveness<'a>(
+            &'a self,
+            _record: &'a crate::domain::environment_registry::EnvironmentRecord,
+        ) -> PortFuture<'a, crate::application::environments::dto::EnvironmentLiveness> {
+            Box::pin(async { panic!("a final-member teardown never asks liveness") })
+        }
+
         fn run_retained_cleanup<'a>(
             &'a self,
             environment_id: &'a str,
             argv: &'a [String],
-        ) -> PortFuture<'a, ()> {
+        ) -> PortFuture<'a, Result<(), String>> {
             self.0.run_retained_cleanup(environment_id, argv)
         }
     }

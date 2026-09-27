@@ -376,6 +376,7 @@ fn present_status(status: &StandardContainerStatus, out: &mut String) {
                 AssetState::Identical => "ok",
                 AssetState::Differs if status.is_projects_own(path) => "yours",
                 AssetState::Differs => "differs",
+                AssetState::Outdated => "outdated",
                 AssetState::Refused => "refused",
             };
             out.push_str(&format!("           {word:<8} {}\n", path.display()));

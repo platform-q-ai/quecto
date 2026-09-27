@@ -29,7 +29,18 @@ impl EnvironmentProcessCommands for Commands {
         Box::pin(async { panic!("never inspects") })
     }
 
-    fn run_retained_cleanup<'a>(&'a self, _: &'a str, _: &'a [String]) -> PortFuture<'a, ()> {
+    fn observe_liveness<'a>(
+        &'a self,
+        _record: &'a crate::domain::environment_registry::EnvironmentRecord,
+    ) -> PortFuture<'a, crate::application::environments::dto::EnvironmentLiveness> {
+        Box::pin(async { panic!("a final-member teardown never asks liveness") })
+    }
+
+    fn run_retained_cleanup<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a [String],
+    ) -> PortFuture<'a, Result<(), String>> {
         Box::pin(async { panic!("never cleans up: every record retains a kill") })
     }
 
@@ -102,6 +113,7 @@ fn control(reg: &EnvironmentRegistry, commands: Arc<Commands>) -> EnvironmentCon
             reg.clone(),
             Arc::new(NoMembers(AtomicUsize::new(0))),
             commands,
+            Arc::new(crate::infrastructure::tools::environment_commands::HostedStoreObservation),
         )),
     }
 }

@@ -236,6 +236,7 @@ fn fleet_cause(authority: FleetTeardownAuthority) -> TerminationCause {
     match authority {
         FleetTeardownAuthority::Owner => TerminationCause::OwnerTeardown,
         FleetTeardownAuthority::Harness => TerminationCause::FleetTeardown,
+        FleetTeardownAuthority::RunEnd => TerminationCause::RunEnd,
     }
 }
 

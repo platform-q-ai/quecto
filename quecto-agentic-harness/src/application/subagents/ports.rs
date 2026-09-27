@@ -407,8 +407,17 @@ pub enum ExitObservation {
 pub enum TerminationCause {
     /// The child ended on its own, observed this way.
     Exit(ExitObservation),
-    /// An operator selected the agent for termination.
+    /// An operator selected the agent for termination: its owner's word
+    /// (#2206) — a plain container child's environment ends for good, a
+    /// swarm its owner has not closed keeps its box.
     SelectedTermination,
+    /// A one-shot parent is ending the run it was started for (#2206): it
+    /// finished or hit its `--max-time`; never a failed run, a signal or a
+    /// crash (those settle nothing). Its
+    /// word for the children it launched — a plain container child's
+    /// environment ends for good — but no close of any swarm, whose box is
+    /// kept as for a harness shutdown.
+    RunEnd,
     /// The whole fleet of direct children is being torn down by the harness's
     /// own shutdown (#1938), whatever triggered it: a termination signal, the
     /// last client leaving, a lost parent. Death by the parent's hand: no

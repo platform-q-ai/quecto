@@ -4,7 +4,18 @@
 //! embedded bytes with the same observation `init` and `status` use
 //! (identical, differing, missing; a symbolic link on the way refused),
 //! so what `status` prints as `differs` is what a launch refuses. Any
-//! other path is not the bundle's and gets no verdict.
+//! other path is not the bundle's and gets no verdict: a config whose
+//! scripts live outside `.quecto/containers/standard` is `NotStandard` and
+//! runs as it is, vouched for by the configuration's trust alone.
+//!
+//! A script holding exactly the bytes an earlier quecto shipped (#2206) is
+//! `Outdated`. Only the explicit commands — `container doctor` and
+//! `container status` (with `init`, which writes the bundle anyway) — use
+//! [`RefreshingScriptIntegrity`]: it replaces such a file with the embedded
+//! bytes (the atomic `refresh`), says so, and judges it intact. A launch
+//! and every retained-argv path — join, inspect, kill, cleanup — refuse it
+//! and never write the tree (#2206 round 3): an older quecto still running
+//! may be using those very scripts, and would find them changed.
 
 use std::path::Path;
 
@@ -37,12 +48,59 @@ impl ContainerScriptIntegrity for EmbeddedScriptIntegrity {
         match store.observe(root, &dir, asset) {
             Ok(AssetState::Identical) => StandardScriptVerdict::Intact,
             Ok(AssetState::Differs) => StandardScriptVerdict::Differs,
+            Ok(AssetState::Outdated) => StandardScriptVerdict::Outdated,
             Ok(AssetState::Missing) => StandardScriptVerdict::Missing,
             Ok(AssetState::Refused) => {
                 StandardScriptVerdict::Refused("the destination is not a regular file".into())
             }
             Err(reason) => StandardScriptVerdict::Refused(reason),
         }
+    }
+}
+
+/// The judge of `container doctor` and `container status` (#2206): as
+/// [`EmbeddedScriptIntegrity`], but an
+/// `Outdated` script — bytes an earlier quecto wrote, so no one's edit —
+/// is refreshed in place with the embedded bytes, a notice printed, and
+/// then judged again. A refresh that fails refuses the script.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RefreshingScriptIntegrity;
+
+impl ContainerScriptIntegrity for RefreshingScriptIntegrity {
+    fn verify(&self, script: &Path) -> StandardScriptVerdict {
+        match EmbeddedScriptIntegrity.verify(script) {
+            StandardScriptVerdict::Outdated => refresh_outdated(script),
+            verdict => verdict,
+        }
+    }
+}
+
+fn refresh_outdated(script: &Path) -> StandardScriptVerdict {
+    let Ok((root, relative)) = split_at_bundle(script) else {
+        return StandardScriptVerdict::Refused("the bundle path could not be split".into());
+    };
+    let store = EmbeddedStandardAssets;
+    let Some(asset) = store
+        .catalogue()
+        .assets
+        .into_iter()
+        .find(|asset| Path::new(&asset.path) == relative)
+    else {
+        return StandardScriptVerdict::NotStandard;
+    };
+    match store.refresh_outdated(root, &root.join(STANDARD_CONTAINER_DIR), &asset) {
+        Ok(_) => {
+            let notice = format!(
+                "quecto: refreshed {} — it held a standard bundle script an earlier quecto wrote; this quecto's version is now in place. Restart any older quecto that is still running: its scripts changed under it",
+                script.display()
+            );
+            tracing::warn!("{notice}");
+            eprintln!("{notice}");
+            EmbeddedScriptIntegrity.verify(script)
+        }
+        Err(reason) => StandardScriptVerdict::Refused(format!(
+            "it was written by an earlier quecto and could not be refreshed: {reason}"
+        )),
     }
 }
 
@@ -141,3 +199,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 #[path = "integrity_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "integrity_outdated_tests.rs"]
+mod outdated_tests;

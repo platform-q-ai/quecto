@@ -64,6 +64,20 @@ pub fn build_fleet_teardown(wiring: FleetTeardownWiring) -> Arc<TerminateAllDele
     )
 }
 
+/// The fleet a one-shot run settles at its orderly end (#2206), over the
+/// same production adapters as [`build_fleet_teardown`].
+pub fn build_run_end_fleet(
+    inputs: crate::interface::cli::run_end_fleet::RunEndFleetInputs,
+) -> Arc<TerminateAllDelegatedAgents> {
+    build_fleet_teardown(FleetTeardownWiring {
+        owner: inputs.owner,
+        registry: inputs.registry,
+        broadcast_tx: None,
+        notify_tx: None,
+        harness_lifecycle: inputs.harness_lifecycle,
+    })
+}
+
 fn build_fleet_over(
     lifecycle: Arc<RegistryLifecycleRepository>,
     registry: SubagentRegistry,

@@ -542,6 +542,8 @@ pub enum TeardownIntent {
     Exit,
     /// An operator selected it for termination.
     SelectedTermination,
+    /// A one-shot parent ended the run it was started for (#2206).
+    RunEnd,
     /// The whole fleet is being torn down by the harness's shutdown (#1938).
     FleetTeardown,
     /// The whole fleet is being torn down by an explicit owner act (#2070).

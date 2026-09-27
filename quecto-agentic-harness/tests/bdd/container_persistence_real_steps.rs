@@ -12,6 +12,10 @@ use std::time::Duration;
 
 const SPAWN_MARKER: &str = "PERSIST_SPAWN_CONTAINER";
 const JOIN_MARKER: &str = "PERSIST_JOIN_CONTAINER";
+/// #2206: spawn a container child, then finish the run.
+const RUN_END_OK_MARKER: &str = "PERSIST_RUN_END_FINISHES";
+/// #2206: spawn a container child, then the provider fails the run.
+const RUN_END_ERR_MARKER: &str = "PERSIST_RUN_END_PROVIDER_FAILS";
 const REAL_AGENT_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// A provider that, on a turn carrying [`SPAWN_MARKER`], answers one
@@ -50,8 +54,22 @@ fn mount_provider(server: &wiremock::MockServer, seen: Arc<Mutex<Vec<String>>>) 
                         "function": {"name": name, "arguments": arguments.to_string()}
                     }]})
                 };
+                let spawns_then_ends = user_has(RUN_END_OK_MARKER) || user_has(RUN_END_ERR_MARKER);
+                if user_has(RUN_END_ERR_MARKER) && tool_results > 0 {
+                    return wiremock::ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                        "error": {"message": "the fake provider refuses", "type": "invalid_request_error"}
+                    }));
+                }
                 let mut delay = Duration::ZERO;
-                let (delta, finish) = if user_has(SPAWN_MARKER) {
+                let (delta, finish) = if spawns_then_ends && tool_results == 0 {
+                    (
+                        call(
+                            "spawn",
+                            serde_json::json!({"agent_id": "run-end-child", "task": "wait", "container": true, "read_only": true}),
+                        ),
+                        "tool_calls",
+                    )
+                } else if user_has(SPAWN_MARKER) {
                     match tool_results {
                         0 => (
                             call(
@@ -257,6 +275,55 @@ fn then_provider_saw_join(_world: &mut QuectoWorld, env_ref: String) {
             content.contains("is running (uuid=") && content.contains(&expected)
         }),
         "expected a spawn result joining {env_ref} among: {results:?}\nstderr: {}",
+        run.stderr
+    );
+}
+
+/// Run a real one-shot agent to its exit, recording how it ended.
+fn run_real_agent_to_exit(world: &mut QuectoWorld, session: &str, marker: &str) {
+    let seen = provider_for_real_agents(world);
+    let mut child = start_real_agent(world, session, marker);
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("poll the real agent") {
+            break status;
+        }
+        assert!(
+            started.elapsed() < REAL_AGENT_TIMEOUT,
+            "the real agent did not exit within {REAL_AGENT_TIMEOUT:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let output = child.wait_with_output().unwrap();
+    *REAL_AGENT_RUN.lock().unwrap() = Some(RealAgentRun {
+        tool_results: seen,
+        exit_code: status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    });
+}
+
+#[when("a real quecto agent driven by a fake provider spawns container true and finishes its run")]
+fn when_real_agent_finishes(world: &mut QuectoWorld) {
+    run_real_agent_to_exit(world, "run-end-ok", RUN_END_OK_MARKER);
+}
+
+#[when(
+    "a real quecto agent driven by a fake provider spawns container true and then its provider fails"
+)]
+fn when_real_agent_provider_fails(world: &mut QuectoWorld) {
+    run_real_agent_to_exit(world, "run-end-err", RUN_END_ERR_MARKER);
+}
+
+#[then(expr = "the real agent should have exited with code {int}")]
+fn then_real_agent_exit_code(_world: &mut QuectoWorld, code: i32) {
+    let run = REAL_AGENT_RUN.lock().unwrap();
+    let run = run.as_ref().expect("the real agent ran");
+    assert_eq!(
+        run.exit_code,
+        Some(code),
+        "stdout: {}\nstderr: {}",
+        run.stdout,
         run.stderr
     );
 }

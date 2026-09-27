@@ -244,7 +244,10 @@ pub fn build_container_status(
     Arc::new(ContainerStatus::new(
         Arc::new(EmbeddedStandardAssets),
         super::container_configs::build_container_config_roster(base_dir, Some(selection.clone())),
-        super::environments::build_container_config_lookup(base_dir, Some(selection.clone())),
+        super::environments::build_refreshing_container_config_lookup(
+            base_dir,
+            Some(selection.clone()),
+        ),
         super::environments::build_container_runtime_preflight(),
     ))
 }

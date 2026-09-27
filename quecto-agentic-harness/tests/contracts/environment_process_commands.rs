@@ -75,15 +75,28 @@ async fn cleanup_is_best_effort_and_never_runs_an_empty_argv() {
     let temp = tempfile::tempdir().unwrap();
     let log = temp.path().join("cleanup.log");
     let port = port();
-    port.run_retained_cleanup("env-contract", &logging(temp.path(), "c.sh", &log, 1))
+    // A failing cleanup still ran once, and says it failed (#2206).
+    let failed = port
+        .run_retained_cleanup("env-contract", &logging(temp.path(), "c.sh", &log, 1))
         .await;
+    assert!(failed.is_err(), "a non-zero exit is reported");
     assert_eq!(
         std::fs::read_to_string(&log).unwrap().trim(),
         "env-contract"
     );
-    port.run_retained_cleanup("env-contract", &[]).await;
-    port.run_retained_cleanup("env-contract", &["/definitely/not/a/cleanup".into()])
-        .await;
+    port.run_retained_cleanup("env-contract", &logging(temp.path(), "ok.sh", &log, 0))
+        .await
+        .expect("a zero exit is success");
+    let err = port
+        .run_retained_cleanup("env-contract", &[])
+        .await
+        .unwrap_err();
+    assert!(err.contains("no retained cleanup argv"), "{err}");
+    assert!(
+        port.run_retained_cleanup("env-contract", &["/definitely/not/a/cleanup".into()])
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]

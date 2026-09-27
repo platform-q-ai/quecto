@@ -197,7 +197,7 @@ Some crates also have BDD test targets and package-specific quality scripts. Bef
 - Runtime manager: [quecto-runtime-manager/README.md](quecto-runtime-manager/README.md)
 - Shared line/framing I/O: [quecto-line-io/README.md](quecto-line-io/README.md)
 - Docker harness for local TUI development: [docs/docker-harness.md](docs/docker-harness.md)
-- Container runtimes for subagents: [docs/container-runtimes.md](docs/container-runtimes.md) (canonical script set: [scripts/container-runtime/](scripts/container-runtime/))
+- Container runtimes for subagents: [docs/container-runtimes.md](docs/container-runtimes.md) (canonical script set: [scripts/container-runtime/](scripts/container-runtime/)). A plain container child's box goes for good when its owner ends it — an `agent_cmd kill`, or a one-shot `quecto agent -m` parent whose run finishes (or hits `--max-time`) — while a failed run or a crashed or killed parent leaves it for `quecto container kill <ref>` (which also removes a `stopped` one) or `quecto container gc`; a swarm's box lives until its owner closes the run.
 
 ## Contributing, security, and license
 

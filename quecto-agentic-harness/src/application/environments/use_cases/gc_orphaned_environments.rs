@@ -671,7 +671,9 @@ impl GcOrphanedEnvironments {
                 description: format!("hosts swarm run {} ({})", run.id, run.describe()),
                 run: Some(format!("{} ({})", run.id, run.describe())),
             }),
-            SwarmRunObservation::Run(_) | SwarmRunObservation::NoStore => None,
+            SwarmRunObservation::Run(_)
+            | SwarmRunObservation::NoStore
+            | SwarmRunObservation::NoStoreUnverified => None,
             SwarmRunObservation::Unreadable(error) => Some(Hosting {
                 description: format!("hosts a coordination store that could not be read ({error})"),
                 run: None,

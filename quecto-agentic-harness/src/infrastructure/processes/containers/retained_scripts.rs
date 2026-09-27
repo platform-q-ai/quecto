@@ -88,6 +88,17 @@ pub fn run_inspect_sync_bounded(
 /// success; `Err` carries the script's own account (or why it could not
 /// be started — typically a full pid cgroup).
 pub fn run_cleanup_sync(environment_id: &str, argv: &[String]) -> Result<(), String> {
+    run_cleanup_sync_bounded(environment_id, argv, Duration::MAX)
+}
+
+/// [`run_cleanup_sync`] killed at `bound` and reported failed (#2206): a
+/// harness that waits on a cleanup — an owner's end of a plain container
+/// child — is never parked behind a runtime that hangs on its remove.
+pub fn run_cleanup_sync_bounded(
+    environment_id: &str,
+    argv: &[String],
+    bound: Duration,
+) -> Result<(), String> {
     let Some((program, args)) = argv.split_first() else {
         return Err("no retained cleanup argv".to_string());
     };
@@ -95,7 +106,7 @@ pub fn run_cleanup_sync(environment_id: &str, argv: &[String]) -> Result<(), Str
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd.env(ENVIRONMENT_ID_VAR, environment_id);
-    match run_sync_capturing_stderr_tail(cmd, ScriptStdout::Discard, Duration::MAX) {
+    match run_sync_capturing_stderr_tail(cmd, ScriptStdout::Discard, bound) {
         Ok(output) if output.status.success() => Ok(()),
         Ok(output) => Err(output.failure_message("cleanup")),
         Err(error) => Err(format!(

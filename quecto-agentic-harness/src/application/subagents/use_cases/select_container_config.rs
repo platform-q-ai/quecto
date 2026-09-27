@@ -121,6 +121,7 @@ impl SelectContainerConfig {
             match self.integrity.verify(&script) {
                 StandardScriptVerdict::NotStandard | StandardScriptVerdict::Intact => {}
                 verdict @ (StandardScriptVerdict::Differs
+                | StandardScriptVerdict::Outdated
                 | StandardScriptVerdict::Missing
                 | StandardScriptVerdict::Refused(_)) => {
                     return Err(SelectContainerConfigError::StandardScriptAltered {

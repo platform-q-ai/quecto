@@ -12,6 +12,17 @@
 //! 4. only when every member settled, run the retained `kill` exactly once
 //!    and commit `stopped` on its success.
 //!
+//! A `stopped` environment (#2206) has no members and its retained kill
+//! already ran — or its container was found gone — but its container and
+//! state directory may still be on disk. Its kill is a removal instead:
+//! the runtime must affirm, through the retained `inspect`, that its
+//! container is not running (a record wrongly `stopped` while another
+//! session still runs the box is refused, nothing touched); then, under the
+//! same exclusive claim, the retained `cleanup` runs once and the record is
+//! forgotten only after it succeeded. The claim is taken before the runtime
+//! is asked, and released untouched on a refusal. A removal whose cleanup
+//! failed stays owed: the next kill retries the removal, never the kill.
+//!
 //! Anything else leaves a truthful, retryable `cleanup-failed` state under
 //! the claim: an unsettled member (a termination still executing on it did
 //! not settle within the bound, or its own fallback could not end it, its
@@ -31,14 +42,21 @@ use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentTarget,
 };
 
+use super::super::dto::EnvironmentLiveness;
+
 use super::super::ports::{
-    EnvironmentMemberShutdown, EnvironmentProcessCommands, MemberShutdownReport,
+    EnvironmentMemberShutdown, EnvironmentProcessCommands, HostedSwarmRunObservation,
+    MemberShutdownReport,
 };
+use crate::domain::environment_retention::SwarmRunObservation;
 
 pub struct KillEnvironment {
     registry: EnvironmentRegistry,
     members: Arc<dyn EnvironmentMemberShutdown>,
     commands: Arc<dyn EnvironmentProcessCommands>,
+    /// What a stopped environment's checkout hosts, judged before its
+    /// leftovers are removed (#2206 round 4, the collector's own rule).
+    hosted: Arc<dyn HostedSwarmRunObservation>,
 }
 
 impl fmt::Debug for KillEnvironment {
@@ -55,14 +73,19 @@ impl fmt::Debug for KillEnvironment {
 pub struct KilledEnvironment {
     pub record: EnvironmentRecord,
     pub members: MemberShutdownReport,
+    /// A `stopped` environment's leftovers were removed and its record
+    /// forgotten (#2206), rather than a live environment killed.
+    pub removed_stopped: bool,
 }
 
 /// Every error names the state the registry was left in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KillEnvironmentError {
-    /// Refused before any claim or effect: unknown/ambiguous target, a
-    /// stopped or already-claimed environment, or a script set without a
-    /// retained `kill`. The environment is as it was.
+    /// Refused before any claim or effect: unknown/ambiguous target, an
+    /// already-claimed environment, a script set without a retained `kill`
+    /// (or, for a `stopped` one, without a retained `cleanup`), or a
+    /// `stopped` one whose container the runtime does not report gone. The
+    /// environment is as it was.
     Refused(String),
     /// Members whose end could not be settled; the environment is
     /// `cleanup-failed` with its claim released for a retry.
@@ -109,16 +132,27 @@ impl fmt::Display for KillEnvironmentError {
 
 impl std::error::Error for KillEnvironmentError {}
 
+/// How a kill of a removable environment went (#2206).
+enum Removal {
+    /// Its leftovers were removed and its record forgotten.
+    Removed(KilledEnvironment),
+    /// An owed removal whose container runs again: the ordinary kill ends
+    /// it instead.
+    OrdinaryKill(EnvironmentRecord),
+}
+
 impl KillEnvironment {
     pub fn new(
         registry: EnvironmentRegistry,
         members: Arc<dyn EnvironmentMemberShutdown>,
         commands: Arc<dyn EnvironmentProcessCommands>,
+        hosted: Arc<dyn HostedSwarmRunObservation>,
     ) -> Self {
         Self {
             registry,
             members,
             commands,
+            hosted,
         }
     }
 
@@ -126,10 +160,18 @@ impl KillEnvironment {
         &self,
         target: &EnvironmentTarget,
     ) -> Result<KilledEnvironment, KillEnvironmentError> {
-        let resolved = self
+        let mut resolved = self
             .registry
             .resolve(target)
             .map_err(|e| KillEnvironmentError::Refused(e.to_string()))?;
+        if resolved.removable() {
+            match self.remove_stopped(resolved).await? {
+                Removal::Removed(killed) => return Ok(killed),
+                // An owed removal whose container runs again: its end is
+                // the ordinary kill's (#2206 round 3).
+                Removal::OrdinaryKill(record) => resolved = record,
+            }
+        }
         // Refuse before claiming: a script set with no `kill` must leave the
         // environment Running and its members untouched, so joins keep
         // working and final-member exit still runs the retained cleanup
@@ -177,7 +219,11 @@ impl KillEnvironment {
         {
             Ok(()) => {
                 self.registry.complete_kill(claim);
-                Ok(KilledEnvironment { record, members })
+                Ok(KilledEnvironment {
+                    record,
+                    members,
+                    removed_stopped: false,
+                })
             }
             Err(detail) => {
                 self.registry.fail_kill(claim, &detail);
@@ -186,6 +232,101 @@ impl KillEnvironment {
                     detail,
                 })
             }
+        }
+    }
+
+    /// Remove a `stopped` environment's leftovers (#2206). Refused, with no
+    /// claim and no effect, unless its script set retained a `cleanup` and
+    /// the runtime affirms its container is gone.
+    async fn remove_stopped(
+        &self,
+        record: EnvironmentRecord,
+    ) -> Result<Removal, KillEnvironmentError> {
+        debug_assert!(record.removable());
+        debug_assert!(record.members.is_empty(), "a stopped record has no members");
+        let environment_ref = record.environment_ref.clone();
+        if record.retained_cleanup_argv.is_empty() {
+            return Err(KillEnvironmentError::Refused(format!(
+                "environment {environment_ref} is stopped and its script set retained no cleanup; `quecto container gc` collects what it left"
+            )));
+        }
+        // Claimed before the runtime is asked, so no kill or other removal
+        // acts on the record between the answer and the cleanup.
+        let claim = self
+            .registry
+            .begin_removal(&environment_ref)
+            .map_err(|e| KillEnvironmentError::Refused(e.to_string()))?;
+        let refusal = match self.commands.observe_liveness(&record).await {
+            EnvironmentLiveness::Gone => None,
+            EnvironmentLiveness::Running if record.removal_pending() => {
+                self.registry.abandon_removal(claim);
+                let record = self.registry.get(&environment_ref).ok_or_else(|| {
+                    KillEnvironmentError::Refused(format!(
+                        "environment {environment_ref} left the registry while it was being judged"
+                    ))
+                })?;
+                return Ok(Removal::OrdinaryKill(record));
+            }
+            EnvironmentLiveness::Running => Some(format!(
+                "environment {environment_ref} is stopped in the registry, but its container is running — another session may still use it; nothing was removed"
+            )),
+            EnvironmentLiveness::Unknown(reason) => Some(format!(
+                "environment {environment_ref} is stopped, but whether its container still runs could not be checked ({reason}); nothing was removed"
+            )),
+        };
+        // The collector's own rule (#2206 round 4): a stopped box whose
+        // checkout hosts a swarm run its owner has not closed — or a board
+        // that cannot be read — is the run's, not leftovers.
+        let refusal = match refusal {
+            Some(refusal) => Some(refusal),
+            None => self.unfinished_run(&record).await,
+        };
+        if let Some(refusal) = refusal {
+            self.registry.release_removal(claim);
+            return Err(KillEnvironmentError::Refused(refusal));
+        }
+        match self
+            .commands
+            .run_retained_cleanup(&record.environment_id, &record.retained_cleanup_argv)
+            .await
+        {
+            Ok(()) => {
+                self.registry.complete_removal(claim);
+                Ok(Removal::Removed(KilledEnvironment {
+                    record,
+                    members: MemberShutdownReport::default(),
+                    removed_stopped: true,
+                }))
+            }
+            Err(detail) => {
+                self.registry.fail_removal(claim, &detail);
+                Err(KillEnvironmentError::KillFailed {
+                    environment_ref,
+                    detail,
+                })
+            }
+        }
+    }
+
+    /// Why a removable environment's leftovers are not leftovers: its
+    /// checkout hosts a created swarm run its owner has not closed, or a
+    /// board that cannot be read. `None` for no board, the placeholder, a
+    /// closed run, or a workspace the host cannot see (nothing to read —
+    /// the explicit kill is the owner's word, as for a retained box).
+    async fn unfinished_run(&self, record: &EnvironmentRecord) -> Option<String> {
+        let environment_ref = &record.environment_ref;
+        match self.hosted.observe_hosted_swarm_run(record).await {
+            SwarmRunObservation::Run(run) if run.keeps_environment() => Some(format!(
+                "environment {environment_ref} is stopped, but its checkout hosts unfinished swarm run {} ({}); close the run first (`swarm_control close` from its supervisor), then kill it again; nothing was removed",
+                run.id,
+                run.describe()
+            )),
+            SwarmRunObservation::Unreadable(reason) => Some(format!(
+                "environment {environment_ref} is stopped, but its checkout's swarm board could not be read ({reason}); a live run may still need it, so nothing was removed — remove it by hand once you know it is done"
+            )),
+            SwarmRunObservation::Run(_)
+            | SwarmRunObservation::NoStore
+            | SwarmRunObservation::NoStoreUnverified => None,
         }
     }
 }
