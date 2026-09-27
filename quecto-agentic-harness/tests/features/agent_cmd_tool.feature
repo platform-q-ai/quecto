@@ -236,6 +236,20 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd result should contain '"unchanged":true'
     And the agent_cmd result should not contain "FINAL REPORT"
 
+  @issue-2218 @serial
+  Scenario: a finished child's report is complete and a second read is unchanged
+    Given a real spawned child agent "w1" that finished its task with the report "FINAL REPORT 2218"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "FINAL REPORT 2218"
+    And the agent_cmd result should not contain "reportIncomplete"
+    And the agent_cmd result should not contain "pending_persistence"
+    When I acknowledge delivery of agent_cmd result for '{"agent_id":"w1","command":"get_messages"}'
+    And I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain '"unchanged":true'
+    And the agent_cmd result should not contain "FINAL REPORT 2218"
+
   Scenario: successful clear_history delivery resets default unread report state
     Given an AgentCmdTool whose child "w1" has a completed transcript
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'

@@ -58,7 +58,7 @@ async fn default_get_messages_backfills_gap_before_shaping() {
     registry.lock().unwrap().insert("w1".to_string(), entry);
     let tool = AgentCmdTool::new(registry);
     let first =
-        serde_json::json!({"success": true, "data": {"before":"before-cursor", "messages": [
+        serde_json::json!({"success": true, "data": {"before":"before-cursor", "hasMoreBefore": true, "messages": [
             {"role":"assistant","content":"tail","ordinal":12}
         ]}})
         .to_string();
@@ -86,7 +86,8 @@ async fn default_get_messages_backfill_failure_is_marked_incomplete() {
     entry.delivered_message_ordinal = Some(10);
     registry.lock().unwrap().insert("w1".to_string(), entry);
     let tool = AgentCmdTool::new(registry.clone());
-    let first = serde_json::json!({"success": true, "data": {"messages": [
+    // Older history exists but the page names no cursor to reach it.
+    let first = serde_json::json!({"success": true, "data": {"hasMoreBefore": true, "messages": [
         {"role":"assistant","content":"tail","ordinal":12}
     ]}})
     .to_string();
@@ -654,13 +655,13 @@ fn incomplete_default_get_messages_delivery_keeps_pending_without_commit() {
 #[test]
 fn first_contact_backfill_not_needed_when_newest_page_has_assistant() {
     let messages = vec![serde_json::json!({"role":"assistant","content":"latest","ordinal":9})];
-    assert!(!super::needs_default_report_backfill(&messages, 0));
+    assert!(!super::needs_default_report_backfill(&messages, 0, true));
 }
 
 #[test]
 fn later_delta_backfill_needed_when_gap_before_newest_page() {
     let messages = vec![serde_json::json!({"role":"assistant","content":"later","ordinal":37})];
-    assert!(super::needs_default_report_backfill(&messages, 10));
+    assert!(super::needs_default_report_backfill(&messages, 10, true));
 }
 
 #[test]
@@ -733,3 +734,6 @@ fn unpersisted_report_does_not_advance_the_durable_delivery_watermark() {
     assert_eq!(value["data"]["cursorNeutral"], true);
     assert_eq!(value["data"]["messages"][0]["id"], "current");
 }
+
+#[path = "agent_cmd_report_backfill_tests.rs"]
+mod backfill_tests;

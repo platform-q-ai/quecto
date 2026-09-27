@@ -305,6 +305,8 @@ pub struct QuectoWorld {
     pub one_broker: admission_one_broker_steps::OneBrokerState,
     /// #2024 S3 real-process reset / restart recovery (root vs child).
     pub admission_recovery: admission_recovery_steps::AdmissionRecoveryState,
+    /// #2218 a real spawned child that finished its task, and its mock provider.
+    pub finished_child: finished_child_report_steps::FinishedChildState,
     /// #1934 subagent teardown contract state (transaction, routing, edge).
     pub teardown: subagent_teardown_steps::TeardownState,
     /// #1935 launch-bound parent control and owned-child supervisor state.
@@ -1455,6 +1457,7 @@ mod event_log_steps;
 mod exec_tool_steps;
 mod extension_steps;
 mod find_steps;
+mod finished_child_report_steps;
 mod fleet_entry_point_steps;
 mod fleet_teardown_steps;
 mod grep_steps;

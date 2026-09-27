@@ -374,6 +374,8 @@ Always target the UUID returned by `spawn`, never its UI display label (except `
 
 First bare `get_messages` (omit/null `count` and `before`) returns the latest substantive assistant message, not the entire transcript. Subsequent bare calls return unread deltas across roles; when nothing new is available, `data` is `{ "unchanged": true }`. The report cursor advances only when the result is successfully delivered to the parent model, not merely fetched. Explicit non-null `count` and/or `before` requests are cursor-neutral history pages; `before` pages backward. Reports are bounded; a busy snapshot can lag the active turn.
 
+A finished child's report is complete. The child saves its session after every turn it runs, before the turn's `agent_end` — including the `follow_up` that carries its spawn task, which is also saved before its turn starts — so the messages it serves once a turn has ended carry durable ordinals: the first bare read returns the report, and once it is delivered the next bare read is `unchanged` (#2218). `"ordinalStatus": "pending_persistence"` with `"reportIncomplete": true` and `"cursorNeutral": true` means only that a turn still running published messages its save has not numbered yet; read again once the child is idle. A page that holds the child's whole transcript (no older history) is always complete, whatever its ordinals' order: the recall notice at its head is numbered after the task saved before it.
+
 ```json
 {
   "type": "object",

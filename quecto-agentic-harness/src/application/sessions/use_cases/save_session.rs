@@ -1,23 +1,20 @@
-//! Save current session (#1860): the one transaction every persistence
-//! trigger of a loop runs — after a turn, before a turn's user prompt runs,
-//! on an explicit `persist_session`, around a session transition and on
-//! the loop's ordinary exit.
+//! Save current session (#1860): the one transaction every persistence trigger of a loop runs —
+//! after a turn, before a turn's user prompt runs, on an explicit `persist_session`, around a
+//! session transition and on the loop's ordinary exit.
 //!
-//! The transaction owns the order and every state change: it strips the
-//! injected system prompt from what is written and re-injects it after,
-//! assigns the durable ordinals, drains the agent's sticky dirty latch into
-//! the session state, resets the watermark when history shrank, normalises
-//! the restore reason (an unknown reason is the legacy one; an armed
-//! killing exit wins), snapshots the workflow run and the historical
-//! roster (empty on a killing exit), chooses a full save or a clean delta,
-//! and advances the watermark and drains the latch only once the store
-//! succeeded. The store performs locking, atomic replacement and fsync;
-//! the ports are observations of the runtime, never mutations.
+//! The transaction owns the order and every state change: it strips the injected system prompt from
+//! what is written and re-injects it after, assigns the durable ordinals (withdrawn unless the write
+//! commits, which also has the next save verify the file, #2218), drains the agent's sticky dirty
+//! latch into the session state, resets the watermark when history shrank, normalises the restore
+//! reason (an unknown reason is the legacy one; an armed killing exit wins), snapshots the workflow
+//! run and the historical roster (empty on a killing exit), chooses a full save or a clean delta,
+//! and advances the watermark and drains the latch only once the store succeeded. The store performs
+//! locking, atomic replacement and fsync; the ports are observations of the runtime, never
+//! mutations.
 //!
-//! One transaction runs at a time per loop: the barrier serialises
-//! concurrent requests so a later save always sees the watermark the
-//! earlier one committed. Readers of the active session are never blocked
-//! on store I/O — the state lock is held only to read inputs and to commit.
+//! One transaction runs at a time per loop: the barrier serialises concurrent requests so a later
+//! save always sees the watermark the earlier one committed. Readers of the active session are
+//! never blocked on store I/O — the state lock is held only to read inputs and to commit.
 use crate::application::sessions::session_home::SessionHomeContext;
 use std::sync::Arc;
 
@@ -29,7 +26,7 @@ use crate::application::sessions::ports::{
 use crate::domain::conversation_view::{inject_system_prompt, remove_injected_system_prompt};
 use crate::domain::message::Message;
 use crate::domain::session::{
-    PersistedSubagentRosterEntry, Session, SubagentRestoreReason, assign_missing_ordinals,
+    PersistedSubagentRosterEntry, SubagentRestoreReason, assign_missing_ordinals,
 };
 use crate::domain::session_identity::SessionIdentity;
 
@@ -38,11 +35,11 @@ pub struct SaveSession {
     store: Arc<dyn SessionStore>,
     durable_prefix: Arc<dyn DurablePrefixObservation>,
     workflow: Option<Arc<dyn WorkflowRunSource>>,
-    /// `None` when the loop tracks no sub-agent roster: a clean delta may
-    /// then omit the roster; a tracked roster is always written whole.
+    /// `None` when the loop tracks no sub-agent roster; a tracked one is always written whole.
     roster: Option<Arc<dyn HistoricalRosterSource>>,
     /// A `--no-session` run: every save is affirmatively a no-op.
     ephemeral: bool,
+    unsettled: save_session_ordinals::Unsettled,
     barrier: tokio::sync::Mutex<()>,
     home: Option<SessionHomeContext>,
 }
@@ -71,6 +68,7 @@ impl SaveSession {
             workflow,
             roster,
             ephemeral,
+            unsettled: Default::default(),
             barrier: tokio::sync::Mutex::new(()),
             home: None,
         }
@@ -95,13 +93,13 @@ impl SaveSession {
         save_session_home::prepare_home(self.home.as_ref(), self.store.as_ref(), &inputs.identity)
             .await?;
         remove_injected_system_prompt(messages, &inputs.injected_prompt);
-        assign_missing_ordinals(messages);
+        let mut stamped = Stamped::stamp(messages, &self.unsettled);
         // Drain the agent's latch into the session state before the store is
         // touched: a failed or cancelled save keeps the observation and the
         // reset watermark, so the next save reconciles instead of appending
         // against a prefix that changed.
-        let taken = self.durable_prefix.take_durable_prefix_dirty();
-        let shrank = messages.len() < inputs.watermark;
+        let taken = self.durable_prefix.take_durable_prefix_dirty() | self.unsettled.take();
+        let shrank = stamped.messages().len() < inputs.watermark;
         let dirty = {
             let mut state = self.state.write().await;
             if taken {
@@ -129,38 +127,29 @@ impl SaveSession {
         } else {
             SaveMode::CleanDelta
         };
-        let result = match mode {
-            SaveMode::Full => {
-                self.store
-                    .save(&Session {
-                        key: inputs.identity,
-                        messages: messages.clone(),
-                        workflow_run,
-                        subagent_roster: roster.unwrap_or_default(),
-                    })
-                    .await
-            }
-            SaveMode::CleanDelta => {
-                self.store
-                    .save_clean_delta(&inputs.identity, messages, watermark, workflow_run)
-                    .await
-            }
+        let write = Write {
+            mode,
+            verified: false,
+            identity: &inputs.identity,
+            messages: stamped.messages(),
+            watermark,
+            workflow_run,
+            roster,
         };
-        let persisted = messages.len();
-        inject_system_prompt(messages, &inputs.injected_prompt);
-        result.map_err(SaveSessionError::Store)?;
+        let result = save_session_write::write(self.store.as_ref(), write).await;
+        let persisted = stamped.messages().len();
+        inject_system_prompt(stamped.messages(), &inputs.injected_prompt);
+        save_session_ordinals::settle(&self.state, result, stamped).await?;
         self.commit(persisted).await;
         Ok(SaveOutcome::Saved { mode, persisted })
     }
 
-    /// Persist the conversation with `pending` — the user prompt about to
-    /// run — appended, before the turn starts, so the prompt survives an
-    /// ungraceful exit mid-turn. `pending` receives its durable ordinal;
-    /// `messages` is left as the live conversation. The agent's latch is
-    /// not drained here: the durable prefix is verified by the store.
+    /// Persist the conversation with `pending` — the user prompt about to run — appended, before
+    /// the turn starts, so the prompt survives an ungraceful exit mid-turn. `pending` and the live
+    /// `messages` receive their durable ordinals (#2218); the store verifies the durable prefix.
     pub async fn save_with_pending_prompt(
         &self,
-        messages: &[Message],
+        messages: &mut Vec<Message>,
         pending: &mut Message,
     ) -> Result<SaveOutcome, SaveSessionError> {
         let _serialised = self.barrier.lock().await;
@@ -169,41 +158,44 @@ impl SaveSession {
         };
         save_session_home::prepare_home(self.home.as_ref(), self.store.as_ref(), &inputs.identity)
             .await?;
-        let mut persisted = messages.to_vec();
-        remove_injected_system_prompt(&mut persisted, &inputs.injected_prompt);
+        remove_injected_system_prompt(messages, &inputs.injected_prompt);
+        let mut stamped = Stamped::stamp(messages, &self.unsettled);
+        let mut persisted = stamped.messages().clone();
         persisted.push(pending.clone());
         assign_missing_ordinals(&mut persisted);
-        pending.ordinal = persisted.last().and_then(|message| message.ordinal);
-        let workflow_run = self.workflow.as_ref().and_then(|w| w.persisted_run());
-        let mode = if self.roster.is_some() {
+        let roster = self.roster.as_ref().map(|source| {
+            historical_roster(
+                source.roster_rows(),
+                SubagentRestoreReason::LegacyUnspecified,
+            )
+        });
+        let mode = if roster.is_some() {
             SaveMode::Full
         } else {
             SaveMode::CleanDelta
         };
-        let result = match &self.roster {
-            Some(source) => {
-                self.store
-                    .save(&Session {
-                        key: inputs.identity,
-                        subagent_roster: historical_roster(
-                            source.roster_rows(),
-                            SubagentRestoreReason::LegacyUnspecified,
-                        ),
-                        messages: persisted.clone(),
-                        workflow_run,
-                    })
-                    .await
-            }
-            None => {
-                self.store
-                    .save_delta(&inputs.identity, &persisted, inputs.watermark, workflow_run)
-                    .await
-            }
+        let write = Write {
+            mode,
+            verified: true,
+            identity: &inputs.identity,
+            messages: &mut persisted,
+            watermark: inputs.watermark,
+            workflow_run: self.workflow.as_ref().and_then(|w| w.persisted_run()),
+            roster,
         };
-        result.map_err(SaveSessionError::Store)?;
-        let persisted = persisted.len();
-        self.state.write().await.set_persisted_watermark(persisted);
-        Ok(SaveOutcome::Saved { mode, persisted })
+        let result = save_session_write::write(self.store.as_ref(), write).await;
+        inject_system_prompt(stamped.messages(), &inputs.injected_prompt);
+        save_session_ordinals::settle(&self.state, result, stamped).await?;
+        // Only an ordinal the store now holds is handed out (#2218).
+        pending.ordinal = persisted.last().and_then(|message| message.ordinal);
+        self.state
+            .write()
+            .await
+            .set_persisted_watermark(persisted.len());
+        Ok(SaveOutcome::Saved {
+            mode,
+            persisted: persisted.len(),
+        })
     }
 
     /// Read the transaction's inputs and move the killing-exit state an
@@ -277,6 +269,12 @@ impl std::fmt::Debug for SaveSession {
 mod rig_tests;
 #[path = "save_session_home.rs"]
 mod save_session_home;
+#[path = "save_session_ordinals.rs"]
+mod save_session_ordinals;
+#[path = "save_session_write.rs"]
+mod save_session_write;
+use save_session_ordinals::Stamped;
+use save_session_write::Write;
 #[cfg(test)]
 #[path = "save_session_tests.rs"]
 mod tests;

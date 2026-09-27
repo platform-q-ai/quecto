@@ -210,6 +210,10 @@ async fn interrupted_append_preserves_last_completed_session() {
     assert_eq!(loaded.messages[1].content, "response");
 }
 
+/// A delta whose watermark lies past the end of the file (the file was
+/// replaced by a shorter one) never appends onto it — the loader would
+/// reject that record and every later one. The writer's live transcript is
+/// authoritative and is written whole, never mixed with the file's (#2218).
 #[tokio::test]
 async fn append_delta_from_stale_cached_index_does_not_mix_replaced_history() {
     let tmp = TempDir::new().unwrap();
@@ -244,8 +248,8 @@ async fn append_delta_from_stale_cached_index_does_not_mix_replaced_history() {
         .unwrap();
 
     let loaded = store.load(&id("test:stale")).await.unwrap().unwrap();
-    assert_eq!(loaded.messages.len(), 1);
-    assert_eq!(loaded.messages[0].content, "replacement");
+    let contents: Vec<_> = loaded.messages.iter().map(|m| m.content.as_str()).collect();
+    assert_eq!(contents, ["old 1", "old 2", "stale tail"]);
 }
 
 /// Pins the shrink SHORTCUT (`previously_persisted > messages.len()` inside

@@ -17,6 +17,7 @@ pub struct FileSessionStore {
     layout: FlatSessionLayout,
     ownership: super::session_ownership::SessionOwnershipRegistry,
     summaries: std::sync::Arc<std::sync::Mutex<session_store_list::SummaryCache>>,
+    intact: session_store_write::IntactFiles,
 }
 
 #[path = "session_store_catalogue.rs"]
@@ -29,8 +30,13 @@ pub(in crate::infrastructure::persistence) mod session_store_list;
 mod session_store_ordinals;
 #[path = "session_store_records.rs"]
 mod session_store_records;
+#[path = "session_store_write.rs"]
+mod session_store_write;
 use session_store_ordinals::{assign_missing_ordinals, messages_with_assigned_ordinals};
 use session_store_records::*;
+use session_store_write::{append_known_delta, append_or_compact, compact_or_append_delta};
+#[cfg(test)]
+use session_store_write::{append_record, persisted_prefix_changed, write_compacted};
 
 impl FileSessionStore {
     /// A store over `layout`'s flat directory.
@@ -39,6 +45,7 @@ impl FileSessionStore {
             layout,
             summaries: Default::default(),
             ownership: super::session_ownership::SessionOwnershipRegistry::default(),
+            intact: Default::default(),
         }
     }
 
@@ -68,18 +75,23 @@ impl FileSessionStore {
         }
         self.ensure_dir().await?;
         let path = self.session_path(identity);
-        let must_compact = previously_persisted == 0
-            || previously_persisted > messages.len()
-            || !path.exists()
-            || !is_jsonl_session_file(&path).await?;
-        compact_or_append_delta(
-            &path,
-            identity,
-            messages,
-            previously_persisted,
-            workflow_run.as_ref(),
-            must_compact,
-        )
+        let target = &path;
+        self.tracked(&path, |appendable| async move {
+            let must_compact = previously_persisted == 0
+                || !appendable
+                || previously_persisted > messages.len()
+                || !target.exists()
+                || !is_jsonl_session_file(target).await?;
+            compact_or_append_delta(
+                target,
+                identity,
+                messages,
+                previously_persisted,
+                workflow_run.as_ref(),
+                must_compact,
+            )
+            .await
+        })
         .await
     }
 
@@ -96,6 +108,7 @@ impl SessionStore for FileSessionStore {
     }
 
     fn release(&self, identity: &SessionIdentity) {
+        self.intact.forget(&self.session_path(identity));
         self.ownership.release(identity);
     }
 
@@ -111,18 +124,21 @@ impl SessionStore for FileSessionStore {
             let data = tokio::fs::read_to_string(&path)
                 .await
                 .map_err(|e| DomainError::Session(format!("failed to read session: {}", e)))?;
-            let session = parse_session_data(&data)
+            let (session, intact) = parse_session_records(&data)
                 .map_err(|e| DomainError::Session(format!("failed to parse session: {}", e)))?;
+            match intact {
+                true => self.intact.record(&path, data.len() as u64),
+                false => self.intact.forget(&path),
+            }
             Ok(Some(session))
         })
     }
 
-    fn save(
-        &self,
-        session: &Session,
-    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+    fn save<'a>(
+        &'a self,
+        session: &'a Session,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + 'a>> {
         let path = self.session_path(&session.key);
-        let session = session.clone();
         Box::pin(async move {
             self.claim_key(&session.key)?;
             if session.messages.is_empty()
@@ -132,7 +148,10 @@ impl SessionStore for FileSessionStore {
                 return self.delete_session_file_if_present(&session.key).await;
             }
             self.ensure_dir().await?;
-            append_or_compact(&path, &session).await
+            self.tracked(&path, |appendable| {
+                append_or_compact(&path, session, appendable)
+            })
+            .await
         })
     }
 
@@ -150,13 +169,16 @@ impl SessionStore for FileSessionStore {
                 return self.delete_session_file_if_present(identity).await;
             }
             self.ensure_dir().await?;
-            append_known_delta(
-                &path,
-                identity,
-                messages,
-                previously_persisted,
-                workflow_run.as_ref(),
-            )
+            self.tracked(&path, |appendable| {
+                append_known_delta(
+                    &path,
+                    identity,
+                    messages,
+                    previously_persisted,
+                    workflow_run.as_ref(),
+                    appendable,
+                )
+            })
             .await
         })
     }
@@ -245,9 +267,17 @@ fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Err
 }
 
 fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
+    parse_session_records(data).map(|(session, _)| session)
+}
+
+/// The session `data` holds, and whether every record of it was read and
+/// the last one is terminated: an append may follow only an intact file.
+fn parse_session_records(data: &str) -> Result<(Session, bool), serde_json::Error> {
     if let Ok(file) = serde_json::from_str::<SessionFile>(data) {
-        return Ok(session_from_file(file));
+        // One snapshot line (a legacy plain-JSON file is compacted anyway).
+        return Ok((session_from_file(file), data.ends_with('\n')));
     }
+    let mut intact = data.ends_with('\n');
 
     let mut session: Option<Session> = None;
     let mut parsed_any = false;
@@ -256,6 +286,7 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
             Ok(record) => record,
             Err(err) if parsed_any => {
                 tracing::warn!(error = %err, "ignoring incomplete trailing session record");
+                intact = false;
                 break;
             }
             Err(err) => return Err(err),
@@ -278,6 +309,7 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
                                 current_len = session.messages.len(),
                                 "ignoring out-of-order session append record"
                             );
+                            intact = false;
                             break;
                         }
                     }
@@ -296,9 +328,10 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
             }
         }
     }
-    Ok(session
+    let session = session
         .map(session_store_ordinals::with_assigned_ordinals)
-        .unwrap_or_else(|| Session::new(SessionIdentity::ephemeral())))
+        .unwrap_or_else(|| Session::new(SessionIdentity::ephemeral()));
+    Ok((session, intact))
 }
 
 fn session_from_file(file: SessionFile) -> Session {
@@ -325,185 +358,6 @@ async fn is_jsonl_session_file(path: &Path) -> Result<bool, DomainError> {
         .map_err(|e| DomainError::Session(format!("failed to read session: {e}")))?;
     let prefix = std::str::from_utf8(&prefix[..len]).unwrap_or("");
     Ok(prefix.trim_start().starts_with(r#"{"type":"#))
-}
-
-async fn persisted_prefix_changed(
-    path: &Path,
-    messages: &[Message],
-    previously_persisted: usize,
-) -> Result<bool, DomainError> {
-    if previously_persisted > messages.len() {
-        return Ok(true);
-    }
-    let data = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|e| DomainError::Session(format!("failed to read session: {e}")))?;
-    let persisted = parse_session_data(&data)
-        .map_err(|e| DomainError::Session(format!("failed to parse session: {e}")))?;
-    if persisted.messages.len() < previously_persisted {
-        return Ok(false);
-    }
-    Ok(persisted.messages[..previously_persisted]
-        .iter()
-        .zip(messages_with_assigned_ordinals(&messages[..previously_persisted]).iter())
-        .any(|(left, right)| message_to_record(left) != message_to_record(right)))
-}
-
-async fn append_known_delta(
-    path: &Path,
-    key: &SessionIdentity,
-    messages: &[Message],
-    previously_persisted: usize,
-    workflow_run: Option<&WorkflowRunPersisted>,
-) -> Result<(), DomainError> {
-    let must_compact = previously_persisted == 0
-        || !path.exists()
-        || !is_jsonl_session_file(path).await?
-        || persisted_prefix_changed(path, messages, previously_persisted).await?;
-    compact_or_append_delta(
-        path,
-        key,
-        messages,
-        previously_persisted,
-        workflow_run,
-        must_compact,
-    )
-    .await
-}
-
-async fn compact_or_append_delta(
-    path: &Path,
-    key: &SessionIdentity,
-    messages: &[Message],
-    previously_persisted: usize,
-    workflow_run: Option<&WorkflowRunPersisted>,
-    must_compact: bool,
-) -> Result<(), DomainError> {
-    if must_compact {
-        let subagent_roster = tokio::fs::read_to_string(path)
-            .await
-            .ok()
-            .and_then(|data| parse_session_data(&data).ok())
-            .map(|s| s.subagent_roster)
-            .unwrap_or_default();
-        let session = Session {
-            key: key.clone(),
-            messages: messages_with_assigned_ordinals(messages),
-            workflow_run: workflow_run.cloned(),
-            subagent_roster,
-        };
-        return write_compacted(path, &session).await;
-    }
-    let assigned = messages_with_assigned_ordinals(messages);
-    let record = SessionRecordRef::Append {
-        start_index: Some(previously_persisted),
-        messages: assigned[previously_persisted..]
-            .iter()
-            .map(message_to_record_ref)
-            .collect(),
-        workflow_run,
-        workflow_run_cleared: workflow_run.is_none(),
-        subagent_roster: None,
-    };
-    append_record(path, &record).await
-}
-
-async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainError> {
-    let mut assigned_session;
-    let session = if session.messages.iter().any(|m| m.ordinal.is_none()) {
-        assigned_session = session.clone();
-        assigned_session.messages = messages_with_assigned_ordinals(&assigned_session.messages);
-        &assigned_session
-    } else {
-        session
-    };
-    if !path.exists() || !is_jsonl_session_file(path).await? {
-        return write_compacted(path, session).await;
-    }
-
-    let data = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|e| DomainError::Session(format!("failed to read session: {e}")))?;
-    let previous = parse_session_data(&data)
-        .map_err(|e| DomainError::Session(format!("failed to parse session: {e}")))?;
-    if previous.key != session.key
-        || session.messages.len() < previous.messages.len()
-        || session.messages[..previous.messages.len()]
-            .iter()
-            .map(message_to_record)
-            .zip(previous.messages.iter().map(message_to_record))
-            .any(|(current, saved)| current != saved)
-    {
-        return write_compacted(path, session).await;
-    }
-
-    let added = &session.messages[previous.messages.len()..];
-    let roster_changed = session.subagent_roster != previous.subagent_roster;
-    if added.is_empty() && session.workflow_run == previous.workflow_run && !roster_changed {
-        return Ok(());
-    }
-
-    let record = SessionRecordRef::Append {
-        start_index: Some(previous.messages.len()),
-        messages: added.iter().map(message_to_record_ref).collect(),
-        workflow_run: session.workflow_run.as_ref(),
-        workflow_run_cleared: session.workflow_run.is_none(),
-        subagent_roster: roster_changed.then_some(session.subagent_roster.as_slice()),
-    };
-    append_record(path, &record).await
-}
-
-async fn write_compacted(path: &Path, session: &Session) -> Result<(), DomainError> {
-    let record = SessionRecordRef::Snapshot(SessionFileRef {
-        key: session.key.runtime_key(),
-        messages: session.messages.iter().map(message_to_record_ref).collect(),
-        workflow_run: session.workflow_run.as_ref(),
-        subagent_roster: &session.subagent_roster,
-    });
-    let mut line = serde_json::to_string(&record)
-        .map_err(|e| DomainError::Session(format!("failed to serialize session: {e}")))?;
-    line.push('\n');
-    let tmp_path = path.with_extension("tmp");
-    tokio::fs::write(&tmp_path, line.as_bytes())
-        .await
-        .map_err(|e| DomainError::Session(format!("failed to write session: {e}")))?;
-    tokio::fs::rename(&tmp_path, path)
-        .await
-        .map_err(|e| DomainError::Session(format!("failed to rename session: {e}")))?;
-    Ok(())
-}
-
-async fn append_record(path: &Path, record: &SessionRecordRef<'_>) -> Result<(), DomainError> {
-    use tokio::io::AsyncWriteExt;
-
-    reject_symlink(path).await?;
-    let mut line = serde_json::to_string(record)
-        .map_err(|e| DomainError::Session(format!("failed to serialize session: {e}")))?;
-    line.push('\n');
-    let mut file = tokio::fs::OpenOptions::new()
-        .append(true)
-        .open(path)
-        .await
-        .map_err(|e| DomainError::Session(format!("failed to open session for append: {e}")))?;
-    file.write_all(line.as_bytes())
-        .await
-        .map_err(|e| DomainError::Session(format!("failed to append session: {e}")))?;
-    file.flush()
-        .await
-        .map_err(|e| DomainError::Session(format!("failed to flush session: {e}")))?;
-    Ok(())
-}
-
-async fn reject_symlink(path: &Path) -> Result<(), DomainError> {
-    let metadata = tokio::fs::symlink_metadata(path)
-        .await
-        .map_err(|e| DomainError::Session(format!("failed to inspect session: {e}")))?;
-    if metadata.file_type().is_symlink() {
-        return Err(DomainError::Session(
-            "refusing to append to symlinked session file".to_string(),
-        ));
-    }
-    Ok(())
 }
 
 fn role_to_str(role: &Role) -> &str {
@@ -651,6 +505,9 @@ mod subagent_roster_tests;
 #[cfg(test)]
 #[path = "session_store_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "session_store_torn_tests.rs"]
+mod torn_tests;
 #[cfg(test)]
 #[path = "session_store_workflow_tests.rs"]
 mod workflow_tests;

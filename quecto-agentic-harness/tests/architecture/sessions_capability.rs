@@ -85,6 +85,10 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/use_cases/list_sessions_discover.rs",
     "src/application/sessions/use_cases/list_sessions_observations.rs",
     "src/application/sessions/use_cases/save_session_home.rs",
+    // #2218: the save's ordinal stamping and its withdrawal on a failed write,
+    // and its write (mode and lent transcript).
+    "src/application/sessions/use_cases/save_session_ordinals.rs",
+    "src/application/sessions/use_cases/save_session_write.rs",
     "src/application/sessions/use_cases/resume_saved_session_admission.rs",
     "src/application/sessions/use_cases/resume_saved_session_startup.rs",
     "src/application/sessions/dto/resume_disposition.rs",
@@ -642,10 +646,19 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/application/sessions/use_cases/synchronize_transcript.rs",
         110,
     ),
-    ("src/application/sessions/use_cases/save_session.rs", 282),
+    // #2218 (review 2): the write moved to `save_session_write.rs` (282 → 280).
+    ("src/application/sessions/use_cases/save_session.rs", 280),
     (
         "src/application/sessions/use_cases/save_session_home.rs",
         38,
+    ),
+    (
+        "src/application/sessions/use_cases/save_session_ordinals.rs",
+        123,
+    ),
+    (
+        "src/application/sessions/use_cases/save_session_write.rs",
+        76,
     ),
     (
         "src/application/sessions/use_cases/clear_conversation.rs",
@@ -764,7 +777,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/persistence/session_ownership.rs", 229),
     // R2-H2: the empty-save delete moved beside the home sidecar it now
     // removes (`session_store_home.rs`); the store is back at 687.
-    ("src/infrastructure/persistence/session_store.rs", 656),
+    // #2218: the writes, their fsync and the append-or-compact decisions
+    // and the intactness record moved to `session_store_write.rs` (656 → 513).
+    ("src/infrastructure/persistence/session_store.rs", 513),
+    ("src/infrastructure/persistence/session_store_write.rs", 328),
     (
         "src/infrastructure/persistence/session_store_catalogue.rs",
         23,
@@ -904,7 +920,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // restores the startup effort through it (was 97).
     ("src/interface/cli/uds_session_switch_runtime.rs", 103),
     // #2010 review (R1-H7): the discovery handles' alias is gone (712 → 711).
-    ("src/interface/cli/uds.rs", 711),
+    // #2218: the idle drain's test hooks moved to `uds_turn_test_hooks.rs`
+    // and every turn ends with the one routine save, run by the turn itself
+    // before `agent_end` (711 → 698).
+    ("src/interface/cli/uds.rs", 698),
     ("src/interface/cli/uds_session_history.rs", 205),
     ("src/interface/cli/uds_session_message_range.rs", 290),
     ("src/interface/cli/uds_snapshots.rs", 256),

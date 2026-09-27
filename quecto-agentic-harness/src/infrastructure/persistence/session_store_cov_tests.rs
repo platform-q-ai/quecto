@@ -282,7 +282,7 @@ async fn parse_and_probe_error_mapping_closures_report_corrupt_or_unreadable_jso
         .unwrap();
     let mut session = Session::new(id("bad"));
     session.messages.push(user("replacement"));
-    let err = append_or_compact(&path, &session).await.unwrap_err();
+    let err = append_or_compact(&path, &session, true).await.unwrap_err();
     assert!(err.to_string().contains("failed to parse session"), "{err}");
 
     // persisted_prefix_changed: read_to_string map_err on a directory.
@@ -331,7 +331,9 @@ async fn w5_session_store_remaining_error_and_default_paths() {
     tokio::fs::create_dir(&as_dir).await.unwrap();
     let mut session = Session::new(id("append-dir"));
     session.messages.push(user("body"));
-    let err = append_or_compact(&as_dir, &session).await.unwrap_err();
+    let err = append_or_compact(&as_dir, &session, true)
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("failed to read session"), "{err}");
 }
 

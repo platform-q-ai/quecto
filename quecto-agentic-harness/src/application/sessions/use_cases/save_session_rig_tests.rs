@@ -269,7 +269,8 @@ async fn the_recording_store_records_fails_and_blocks_as_told() {
     );
     assert_eq!(store.started(), 3);
     let gated = RecordingStore::gated();
-    let pending = gated.save(&Session::new(identity.clone()));
+    let session = Session::new(identity.clone());
+    let pending = gated.save(&session);
     assert!(futures::FutureExt::now_or_never(pending).is_none());
     gated.gate.as_ref().unwrap().add_permits(1);
     gated.save(&Session::new(identity)).await.unwrap();

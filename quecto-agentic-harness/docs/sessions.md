@@ -46,8 +46,33 @@ When the agent starts, it claims the session key (a key another live harness
 holds open is refused at startup) and, if a transcript exists, loads it —
 provided its saved home admits the current execution directory (#2009, below).
 All messages are appended to the session during the run. The session is saved
-after each prompt completes, at every session transition, on an explicit
-`persist_session`, and once more on the ordinary exit of the loop. A session
+after every turn the loop runs — a `prompt`, a queued `follow_up` (how `spawn`
+hands a child its task), a drained note or a workflow nudge — before the turn
+publishes its messages or reports its end (`agent_end`) (#2218); a drain that
+runs no turn saves nothing. A `prompt`, and every message drained without an
+admission guard (a queued `follow_up` or steer, a sub-agent note), is also
+saved before its own turn starts, so it survives a crash mid-turn; a workflow
+nudge, admitted only as its turn starts, is not. The session is further saved
+at every session transition, on an explicit `persist_session`, and once more
+on the ordinary exit of the loop. Each save stamps the durable ordinals of the
+messages it writes and withdraws them if the write fails, so a message only
+ever carries an ordinal the store holds.
+
+A loop that tracks a sub-agent roster writes a full save every time, which
+the store verifies against its file before appending; a loop without one
+appends a clean delta. A full save borrows the live transcript rather than
+copying it. A save that fails or is cancelled latches the durable prefix
+dirty, so the next save is a full one. Every append and compaction is fsynced
+(a compaction through a temporary file renamed into place, then the directory).
+The store appends only onto a file it can vouch for: one it last wrote or
+loaded whole and that is still exactly the length it left. It forgets a file
+before each write starts and remembers it only once the write succeeds, and on
+a delete or a release. Any other file is compacted without trusting what is
+read back — after an fsync error the page cache may hold pages that never
+reached the disk — so a write that landed and then failed, a record torn by a
+crash, or a record written by someone else never has a later record appended
+behind it. A file shorter than the saved watermark is rewritten from the live
+transcript, which is authoritative. A session
 that exits with nothing to save leaves no transcript and no home sidecar.
 
 **Legacy records are refused at startup, not claimed and loaded.** A transcript

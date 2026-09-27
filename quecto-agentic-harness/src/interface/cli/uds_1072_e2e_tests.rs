@@ -239,6 +239,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
             cancel_rx,
             notification_rx: &mut notification_rx,
             subagent_registry: &subagent_registry,
+            turn_save: None,
         })
         .await
     };
@@ -376,6 +377,7 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
             cancel_rx,
             notification_rx: &mut notification_rx,
             subagent_registry: &subagent_registry,
+            turn_save: None,
         })
         .await
     };
