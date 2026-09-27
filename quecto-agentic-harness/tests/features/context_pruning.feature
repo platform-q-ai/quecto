@@ -3,8 +3,9 @@ Feature: Context pruning via sliding window and tool-call collapse
 
   Tool outputs remain in full context until either (a) the number of tool
   calls in the session exceeds context_collapse_after_tool_calls (default
-  50), at which point the oldest tool results are collapsed to compact
-  recall() stubs down to the dial's low-water mark (75%, rounded up), or (b) they are dropped by the sliding window when the
+  50), at which point the oldest tool results the model has seen are
+  collapsed to compact recall() stubs down to the dial's low-water mark
+  (75%, rounded up), or (b) they are dropped by the sliding window when the
   conversation exceeds the token budget. The collapse trigger counts tool
   calls cumulatively across prompts within a session rather than turns
   elapsed. Collapse can be disabled entirely. Spill-to-disk still occurs at
@@ -397,14 +398,14 @@ Feature: Context pruning via sliding window and tool-call collapse
     And the stub token estimate is below the original message estimate
 
   Scenario: Budget pressure collapses messages to stubs before dropping anything
-    Given max_context_tokens is set to 185
+    Given max_context_tokens is set to 150
     And recent-turn pinning is set to 1 turns
     And 4 old conversation messages
     And an in-flight user prompt
     When the agent enforces the context ceiling
     Then at least 1 old message is reduced to a recall stub by the ceiling
     And no messages are removed from the conversation
-    And total context is under 139 tokens
+    And total context is under 150 tokens
 
   # #2213: crossing the ceiling demotes down to the low-water mark (75% of
   # the budget, rounded up), not just under the ceiling, so the next turns

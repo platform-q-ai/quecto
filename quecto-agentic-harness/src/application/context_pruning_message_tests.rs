@@ -351,6 +351,8 @@ fn message_stubs_do_not_disturb_the_tool_collapse_trigger() {
     for i in 1..=51 {
         messages.push(tool_call_msg(i));
     }
+    // The model has seen the results (#2213: unseen ones never collapse).
+    messages.push(Message::assistant("seen", vec![]));
     let tool_collapsed = collapse_tool_results_over_limit(&mut messages, 50);
     assert_eq!(
         tool_collapsed, 13,
@@ -612,13 +614,12 @@ fn ladder_skips_tiny_messages_whose_stub_would_not_be_cheaper() {
     tiny.turn = Some(1);
     tiny.spill_id = Some("turn1:msg:user".into());
     let mut messages = vec![tiny];
-    for i in 2..=12u32 {
+    for i in 2..=4u32 {
         messages.push(conv_msg(Role::Assistant, i, i));
     }
     messages.push(Message::user("current question"));
     let total = estimate_total_tokens(&messages);
-    // Slightly over budget: stubbing the large messages reaches the
-    // low-water mark (#2213; hence eleven of them), so the
+    // Slightly over budget: stubbing the large messages suffices, so the
     // second rung never runs and the tiny message's fate is rung 1's alone.
     let budget = total - 20;
     let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 0);

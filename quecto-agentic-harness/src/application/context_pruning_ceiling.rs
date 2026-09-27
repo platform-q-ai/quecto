@@ -33,6 +33,8 @@ const _: () = assert!(LOW_WATER_PERCENT > 0 && LOW_WATER_PERCENT < 100);
 /// The low-water mark of a dial: [`LOW_WATER_PERCENT`] of `limit`, rounded
 /// up so a small count dial keeps at least its share (a one-item dial keeps
 /// its item). Never above `limit`; computed wide so no limit overflows.
+/// Rounding up means count dials of 1 to 3 get no hysteresis (their mark is
+/// the dial itself): they still collapse the overflow on every crossing.
 pub fn low_water(limit: usize) -> usize {
     let wide = (limit as u128 * LOW_WATER_PERCENT as u128).div_ceil(100);
     let mark = usize::try_from(wide).map_or(limit, |mark| mark.min(limit));
@@ -50,6 +52,29 @@ pub fn count_to_collapse(live: usize, limit: usize) -> usize {
     }
 }
 
+/// The tool results a count dial collapses (#2213), as `(to_collapse,
+/// seen_end)`: collapse `to_collapse` live results, oldest first, within
+/// `messages[..seen_end]`. Results after the last assistant message answer
+/// the in-flight provider call and the model has not seen them yet, so a
+/// batch never reaches them (a conversation with no assistant message has
+/// no in-flight call). Results never spilled (`spill_id == None`) would mint
+/// an unresolvable `recall()` stub: they are neither counted nor collapsed.
+pub fn tool_results_to_collapse(messages: &[Message], limit: usize) -> (usize, usize) {
+    let collapsible = |m: &Message| m.role == Role::Tool && !m.is_collapsed && m.spill_id.is_some();
+    let seen_end = messages
+        .iter()
+        .rposition(|m| m.role == Role::Assistant)
+        .map_or(messages.len(), |last| last + 1);
+    let live = messages.iter().filter(|m| collapsible(m)).count();
+    let seen = messages[..seen_end]
+        .iter()
+        .filter(|m| collapsible(m))
+        .count();
+    let to_collapse = count_to_collapse(live, limit).min(seen);
+    debug_assert!(to_collapse <= seen && seen <= live);
+    (to_collapse, seen_end)
+}
+
 /// Outcome of one demotion-ladder ceiling pass (#1046 AC6, #1044 AC1).
 #[derive(Debug, Clone, Default)]
 pub struct CeilingLadderOutcome {
@@ -63,14 +88,16 @@ pub struct CeilingLadderOutcome {
 }
 
 /// Enforce the context ceiling by demoting down the ladder (#1046 AC6).
-/// Nothing moves at or under `max_tokens`; once it is crossed, both rungs
-/// demote down to [`low_water`]`(max_tokens)` so the following turns append
-/// without rewriting the prefix (#2213). First collapse not-yet-collapsed messages to recall stubs (oldest first —
-/// cheap, keeps locality), and only if still over budget remove stubs
-/// entirely (manifest-only; content is already on disk from creation-time
-/// spilling). Pinned/exempt messages are never demoted at any rung; when
-/// they alone exceed the budget the outcome reports `over_budget` so the
-/// caller can warn and audit (#1044).
+/// Nothing moves at or under `max_tokens`. Once it is crossed, first
+/// collapse not-yet-collapsed messages to recall stubs (oldest first —
+/// cheap, keeps locality) down to [`low_water`]`(max_tokens)`, so the
+/// following turns append without rewriting the prefix (#2213). Only if
+/// the ceiling itself is still exceeded remove stubs entirely
+/// (manifest-only; content is already on disk from creation-time
+/// spilling): down to the low-water mark when the exempt set leaves it
+/// reachable, otherwise only down to the ceiling. Pinned/exempt messages
+/// are never demoted at any rung; when they alone exceed the budget the
+/// outcome reports `over_budget` so the caller can warn and audit (#1044).
 pub fn enforce_context_ceiling_ladder(
     messages: &mut Vec<Message>,
     max_tokens: usize,
@@ -128,18 +155,30 @@ pub fn enforce_context_ceiling_ladder(
         total = total.saturating_sub(before) + estimate_message_tokens(msg);
     }
 
-    // Second rung: remove demoted messages entirely, oldest first (content
-    // stays recallable via the spill store and manifest). When the exempt set
-    // keeps the mark out of reach, every demotable message goes; the outcome
-    // still judges the ceiling itself.
-    if total > target {
+    // Second rung, a last resort for the ceiling itself: remove demoted
+    // messages entirely, oldest first (content stays recallable via the
+    // spill store and manifest). It drops to the low-water mark only when
+    // dropping can reach it; when the exempt set alone is above the mark it
+    // drops only down to the ceiling, so no stub is deleted in vain.
+    if total > max_tokens {
         let droppable: Vec<usize> = messages
             .iter()
             .enumerate()
             .filter(|&(i, _)| !exempt[i])
             .map(|(i, _)| i)
             .collect();
-        outcome.dropped = drop_until_under_budget(messages, target, &droppable).len();
+        let exempt_tokens: usize = messages
+            .iter()
+            .zip(&exempt)
+            .filter(|&(_, &keep)| keep)
+            .map(|(m, _)| estimate_message_tokens(m))
+            .sum();
+        let drop_target = if exempt_tokens <= target {
+            target
+        } else {
+            max_tokens
+        };
+        outcome.dropped = drop_until_under_budget(messages, drop_target, &droppable).len();
     }
 
     outcome.over_budget = estimate_total_tokens(messages) > max_tokens;

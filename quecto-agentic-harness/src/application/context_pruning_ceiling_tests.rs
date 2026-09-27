@@ -3,6 +3,7 @@
 //! prefix; below the dial nothing changes.
 
 use super::*;
+use crate::application::context_pruning::estimate_message_tokens;
 use crate::application::context_pruning::messages::collapse_conversation_messages_over_limit;
 use crate::application::context_pruning::{
     collapse_tool_results_over_limit, estimate_total_tokens,
@@ -144,24 +145,50 @@ fn two_consecutive_over_ceiling_appends_rewrite_the_prefix_once() {
 }
 
 #[test]
-fn an_unreachable_low_water_mark_demotes_everything_demotable_and_meets_the_ceiling() {
-    // The exempt in-flight prompt alone is 90% of the budget: the low-water
-    // mark cannot be reached, the ceiling can.
+fn an_unreachable_low_water_mark_drops_only_down_to_the_ceiling() {
+    // The exempt in-flight prompt alone is 97% of the budget: stubbing every
+    // old turn is not enough to meet the ceiling, and the low-water mark
+    // cannot be reached at all. The drop rung then drops only down to the
+    // ceiling, keeping the newest stubs, instead of deleting every stub.
     let old = session(4);
     let old_tokens = estimate_total_tokens(&old[1..]);
     let budget = old_tokens * 5;
-    let prompt = Message::user("p".repeat(4 * (budget * 9 / 10)));
+    let prompt = Message::user("p".repeat(4 * (budget * 97 / 100)));
     let prompt_content = prompt.content.clone();
     let mut messages = vec![prompt];
     messages.extend(old.into_iter().skip(1));
-    assert!(estimate_total_tokens(&messages) > budget);
 
     let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 0);
 
     assert!(!outcome.over_budget, "the ceiling itself is met");
-    assert!(estimate_total_tokens(&messages) > low_water(budget));
-    assert_eq!(messages.len(), 1, "every demotable message is gone");
     assert_eq!(messages[0].content, prompt_content, "the prompt is exempt");
+    assert!(outcome.dropped >= 1, "stubbing alone missed the ceiling");
+    let survivors: Vec<u32> = messages[1..].iter().filter_map(|m| m.turn).collect();
+    assert!(!survivors.is_empty(), "stubs survive an unreachable mark");
+    assert_eq!(survivors.len() + outcome.dropped, 4);
+    let newest: Vec<u32> = (outcome.dropped as u32 + 1..=4).collect();
+    assert_eq!(survivors, newest, "the oldest stubs go first");
+    assert!(messages[1..].iter().all(|m| m.is_collapsed));
+    // Minimal: the oldest dropped stub would not have fit back in.
+    let one_stub = estimate_message_tokens(&messages[1]);
+    assert!(estimate_total_tokens(&messages) + one_stub > budget);
+}
+
+#[test]
+fn stubbing_that_meets_the_ceiling_drops_nothing_even_above_the_mark() {
+    // Four pinned turns dominate: stubbing turns 1 and 2 meets the ceiling
+    // but not the low-water mark. The drop rung is a last resort for the
+    // ceiling, so both stubs stay.
+    let mut messages = session(6);
+    let budget = estimate_total_tokens(&messages) - 1;
+
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 4);
+
+    assert_eq!(outcome.collapsed_to_stubs, 2);
+    assert_eq!(outcome.dropped, 0, "no drop while stubbing met the ceiling");
+    assert!(!outcome.over_budget);
+    let total = estimate_total_tokens(&messages);
+    assert!(low_water(budget) < total && total <= budget, "{total}");
 }
 
 #[test]
@@ -234,4 +261,26 @@ fn the_message_count_dial_collapses_down_to_its_low_water_mark_when_crossed() {
         0,
         "the next message lands in the headroom"
     );
+}
+
+/// An assistant turn that called `calls` tools, followed by their results.
+fn tool_turn(first: u32, calls: u32) -> Vec<Message> {
+    let mut turn = vec![Message::assistant("calling tools", vec![])];
+    turn.extend((first..first + calls).map(spilled_tool_result));
+    turn
+}
+
+#[test]
+fn the_tool_count_dial_never_collapses_results_the_model_has_not_seen() {
+    // Limit 10: two older results, then one turn returning nine in parallel.
+    // Crossing asks for 3 (11 down to 8), but only the two older results
+    // were seen by the model; the fresh nine stay in full.
+    let mut messages = tool_turn(0, 1);
+    messages.extend(tool_turn(1, 1));
+    messages.extend(tool_turn(2, 9));
+
+    assert_eq!(collapse_tool_results_over_limit(&mut messages, 10), 2);
+    let fresh = &messages[messages.len() - 9..];
+    assert!(fresh.iter().all(|m| !m.is_collapsed), "fresh results stay");
+    assert!(messages[1].is_collapsed && messages[3].is_collapsed);
 }

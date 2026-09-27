@@ -574,7 +574,9 @@ default `200000`), the agent applies context pruning:
 2. **Tool output collapsing**: Once the session accumulates more than
    `context_collapse_after_tool_calls` tool calls, the oldest tool outputs are
    replaced with compact recall stubs, down to the dial's low-water mark
-   (75%, rounded up: 38 of 50) in one batch. The trigger counts tool calls
+   (75%, rounded up: 38 of 50) in one batch. Results the model has not seen
+   yet (after the last assistant message) are never collapsed. Dials of 1 to
+   3 get no hysteresis: rounding up makes their mark the dial itself. The trigger counts tool calls
    cumulatively across prompts within a session. Current config default: `50`.
    Set it to `4294967295` (`u32::MAX`) to disable collapse.
 3. **Conversation message collapsing**: An independent dial,
@@ -588,8 +590,10 @@ default `200000`), the agent applies context pruning:
    budget, messages are demoted down a ladder — full content is collapsed to
    recall stubs first (oldest first), and only if the budget is still
    exceeded are stubs removed entirely (their content stays on disk). Once
-   the budget is crossed, both rungs demote down to 75% of it, not just back
-   under it. Pinned
+   the budget is crossed, stubbing continues down to 75% of it, not just back
+   under it. Stubs are removed only when stubbing cannot meet the budget
+   itself, and then down to 75% when the pinned set leaves that reachable,
+   otherwise only down to the budget. Pinned
    and tail-pinned (`pin_recent_turns`, default `2`) content is never
    demoted; if the pinned set alone exceeds the budget, a
    `context_prune` warning is logged and the `ContextPruned` audit event
