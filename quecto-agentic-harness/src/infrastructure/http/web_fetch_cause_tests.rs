@@ -282,7 +282,9 @@ async fn the_redirect_limit_does_not_repeat_the_next_hop_s_secrets() {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut buffer = [0; 4096];
             let _ = socket.read(&mut buffer).await;
-            let next = format!("http://user:pw@localhost:{port}/again?access_token=SECRET123#frag");
+            let next = format!(
+                "http://user:pw@localhost:{port}/again/SECRET456?access_token=SECRET123#frag"
+            );
             let _ = socket.write_all(found(&next).as_bytes()).await;
         }
     });
@@ -294,7 +296,7 @@ async fn the_redirect_limit_does_not_repeat_the_next_hop_s_secrets() {
     assert_eq!(
         detail,
         format!(
-            "too many redirects: {MAX_REDIRECTS} followed, and http://localhost:{port}/again?… would be one more"
+            "too many redirects: {MAX_REDIRECTS} followed, and http://localhost:{port}/again/…?… would be one more"
         )
     );
     peer.abort();

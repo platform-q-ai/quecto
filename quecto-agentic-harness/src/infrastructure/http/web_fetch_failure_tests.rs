@@ -223,6 +223,64 @@ fn credentials_and_queries_are_never_shown() {
     }
 }
 
+/// #2248 round 2 L2: a redirect hop, which the server chose, is named by
+/// its scheme, host, port and first path segment only: a token further
+/// down its path is never shown. The URL asked for, the agent's own input,
+/// keeps its path.
+#[test]
+fn a_hop_is_named_by_its_first_path_segment() {
+    for (hop, expected) in [
+        (
+            "https://example.com/auth/callback/SECRET123",
+            "https://example.com/auth/…",
+        ),
+        ("https://example.com/a/b?x=1", "https://example.com/a/…?…"),
+        (
+            "http://example.com:8080/a/b/",
+            "http://example.com:8080/a/…",
+        ),
+        ("http://example.com/a//", "http://example.com/a/…"),
+        ("http://example.com/a/", "http://example.com/a/"),
+        ("http://example.com/a", "http://example.com/a"),
+        ("http://example.com/", "http://example.com/"),
+        ("http://example.com//x", "http://example.com//…"),
+        ("http://u:p@[::1]:1/cb?code=x#f", "http://[::1]:1/cb?…"),
+    ] {
+        assert_eq!(shown_hop(&url(hop)), expected, "{hop}");
+    }
+    let hop = url("https://example.com/auth/callback/SECRET123?state=x");
+    for detail in [
+        describe(&refused(), Attempt::Hop(&hop)),
+        describe(
+            &chain(&["error sending request"], io(ErrorKind::Other, "odd")),
+            Attempt::Hop(&hop),
+        ),
+    ] {
+        assert!(
+            detail.contains("hop to https://example.com/auth/…?…: "),
+            "{detail}"
+        );
+        assert!(!detail.contains("SECRET123"), "{detail}");
+        assert!(!detail.contains("callback"), "{detail}");
+    }
+    let requested = url("https://example.com/v1/models/list?key=SECRET");
+    let detail = describe(&refused(), Attempt::Requested(&requested));
+    assert!(
+        detail.ends_with(", for url (https://example.com/v1/models/list?…)"),
+        "{detail}"
+    );
+}
+
+/// A long first segment of a hop is cut at the URL bound like any URL.
+#[test]
+fn a_long_hop_segment_is_cut() {
+    let hop = url(&format!("http://example.com/{}/tail", "x".repeat(300)));
+    let named = shown_hop(&hop);
+    assert!(named.len() <= MAX_URL_BYTES, "{}", named.len());
+    assert!(named.ends_with(CUT_MARK), "{named}");
+    assert!(!named.contains("tail"), "{named}");
+}
+
 /// Scheme, host, port and path are shown as they are; an empty query or
 /// fragment adds no marker.
 #[test]

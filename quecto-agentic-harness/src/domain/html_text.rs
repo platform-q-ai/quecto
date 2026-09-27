@@ -1,6 +1,6 @@
 //! Readable text from HTML markup: tags dropped (a line for a block
 //! element, a space before a side-by-side one that would run into the label
-//! before it; #2225), entities decoded as the text is read and whitespace
+//! before it, outside code; #2225), entities decoded as the text is read and whitespace
 //! collapsed. Pure text functions shared by web_fetch's readable views and
 //! web_search's result snippets (#2211); linear in their input.
 
@@ -66,11 +66,25 @@ const SIDE_BY_SIDE_TAGS: &[&str] = &["a", "button", "label", "td", "th"];
 /// is part of an identifier or an expression, never spaced from it.
 const VERBATIM_TAGS: &[&str] = &["pre", "code", "kbd", "samp"];
 
-/// Characters that end a label when an element closes right after them: a
-/// label reading `Home.` or `Menu:`. Straight before a link, with no
-/// element closed between, they are code punctuation (`foo.<a>bar</a>`,
-/// `std::<a>vec</a>`) and end nothing.
-const CLOSED_STOPS: &[char] = &['.', ',', ';', ':', '!', '?', ')', ']', '}'];
+/// Elements side by side in a table row: like a block, a cell bounds any
+/// code markup left open in the one before it (#2248 round 2).
+const CELL_TAGS: &[&str] = &["td", "th"];
+
+/// The verbatim element whose content keeps its layout: code markup left
+/// open inside it holds until it closes.
+const PRE_TAG: &str = "pre";
+
+/// Letters of scripts that separate their words with spaces (#2248 round
+/// 2): Latin-1 Supplement and Latin Extended-A and -B, Greek and Coptic,
+/// Cyrillic and its Supplement, Latin Extended Additional and Greek
+/// Extended. A letter of any other script (CJK, Kana, Hangul, Thai) runs
+/// into the next word as written.
+const SPACED_SCRIPT_LETTERS: &[std::ops::RangeInclusive<char>] = &[
+    '\u{c0}'..='\u{24f}',
+    '\u{370}'..='\u{3ff}',
+    '\u{400}'..='\u{52f}',
+    '\u{1e00}'..='\u{1ffe}',
+];
 
 /// What an element's tag adds to the text around it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,10 +113,26 @@ fn separator(tag_name: &str, opening: bool) -> Separator {
 }
 
 /// Whether text whose last decoded character is `last` runs into a label
-/// that follows unless spaced: a word's last letter or digit always does;
-/// a stop only when an element `closed` after it (#2248 review).
+/// that follows unless spaced: a word's last letter or digit in a spaced
+/// script always does; any visible character does once an element
+/// `closed` after it, a cell reading `50%` or a link reading `«` (#2248
+/// round 2). Code punctuation straight before a link, with nothing closed
+/// between (`foo.<a>bar</a>`, `std::<a>vec</a>`), ends nothing.
 fn ends_a_label(last: Option<char>, closed: bool) -> bool {
-    last.is_some_and(|c| c.is_alphanumeric() || (closed && CLOSED_STOPS.contains(&c)))
+    last.is_some_and(|c| ends_a_spaced_word(c) || (closed && is_visible(c)))
+}
+
+/// Whether `c` is an ASCII letter or digit, or a letter of one of
+/// [`SPACED_SCRIPT_LETTERS`].
+fn ends_a_spaced_word(c: char) -> bool {
+    c.is_ascii_alphanumeric()
+        || (c.is_alphabetic() && SPACED_SCRIPT_LETTERS.iter().any(|range| range.contains(&c)))
+}
+
+/// Whether `c` shows as a mark of its own: a graphic character, neither
+/// space nor a control.
+fn is_visible(c: char) -> bool {
+    !(c.is_whitespace() || c.is_control())
 }
 
 /// Whether the `<` that starts `rest` may open a tag: only when a letter
@@ -116,12 +146,13 @@ fn opens_a_tag(rest: &[u8]) -> bool {
 }
 
 /// Readable text as it is built: the text so far, whether an element
-/// closed since its last character, and how deep in verbatim elements.
+/// closed since its last character, and how many of each of
+/// [`VERBATIM_TAGS`] are open.
 #[derive(Debug, Default)]
 struct ReadableText {
     text: String,
     closed_since_text: bool,
-    verbatim_depth: usize,
+    verbatim_open: [usize; VERBATIM_TAGS.len()],
 }
 
 impl ReadableText {
@@ -137,12 +168,22 @@ impl ReadableText {
 
     /// The tag of `tag_name`: `opening` or closing, `self_closing` or not.
     fn push_tag(&mut self, tag_name: &str, opening: bool, self_closing: bool) {
-        if is_one_of(VERBATIM_TAGS, tag_name) && !self_closing {
-            // Unbalanced markup never goes below the page's own level.
-            self.verbatim_depth = match opening {
-                true => self.verbatim_depth.saturating_add(1),
-                false => self.verbatim_depth.saturating_sub(1),
-            };
+        let verbatim = VERBATIM_TAGS
+            .iter()
+            .position(|tag| tag_name.eq_ignore_ascii_case(tag));
+        match (verbatim, opening, self_closing) {
+            (Some(at), true, false) => {
+                self.verbatim_open[at] = self.verbatim_open[at].saturating_add(1)
+            }
+            // Only an open element closes: a stray end tag changes nothing.
+            (Some(at), false, _) => {
+                self.verbatim_open[at] = self.verbatim_open[at].saturating_sub(1)
+            }
+            (Some(_), true, true) | (None, _, _) => {}
+        }
+        let bounds_code = is_one_of(BLOCK_TAGS, tag_name) || is_one_of(CELL_TAGS, tag_name);
+        if bounds_code && self.open_count(PRE_TAG) == 0 {
+            self.close_open_code();
         }
         match separator(tag_name, opening) {
             Separator::Line => self.text.push('\n'),
@@ -154,11 +195,25 @@ impl ReadableText {
         }
     }
 
+    /// How many `tag` elements, one of [`VERBATIM_TAGS`], are open.
+    fn open_count(&self, tag: &str) -> usize {
+        let at = VERBATIM_TAGS.iter().position(|known| *known == tag);
+        assert!(at.is_some(), "{tag} is not a verbatim element");
+        at.map_or(0, |at| self.verbatim_open[at])
+    }
+
+    /// Code markup left open ends at a block or cell boundary outside
+    /// `pre` (#2248 round 2): it never holds for the rest of the page.
+    fn close_open_code(&mut self) {
+        assert_eq!(self.open_count(PRE_TAG), 0, "code closed inside pre");
+        self.verbatim_open = [0; VERBATIM_TAGS.len()];
+    }
+
     /// Whether a side-by-side element opening now is spaced from the text
     /// before it: outside code, after a label's end.
     fn spaces_a_label(&self) -> bool {
-        self.verbatim_depth == 0
-            && ends_a_label(self.text.chars().next_back(), self.closed_since_text)
+        let outside_code = self.verbatim_open.iter().all(|open| *open == 0);
+        outside_code && ends_a_label(self.text.chars().next_back(), self.closed_since_text)
     }
 }
 
@@ -185,15 +240,8 @@ pub fn markup_to_text(html: &str) -> String {
         // and one that cannot open a tag is never scanned as one.
         match opens_a_tag(rest).then(|| tag_end(rest)) {
             Some(TagEnd::At(end_offset)) => {
-                let tag_content = &html[abs_open + 1..abs_open + end_offset];
-                // An opening tag's name follows its `<` directly.
-                let opening = tag_content.starts_with(|c: char| c.is_ascii_alphabetic());
-                let self_closing = tag_content.trim_end().ends_with('/');
-                let trimmed = tag_content.trim().trim_start_matches('/');
-                let name_end = trimmed
-                    .find(|c: char| c.is_whitespace() || c == '/')
-                    .unwrap_or(trimmed.len());
-                out.push_tag(&trimmed[..name_end], opening, self_closing);
+                let tag = read_tag(&html[abs_open + 1..abs_open + end_offset]);
+                out.push_tag(tag.name, tag.opening, tag.self_closing);
                 pos = abs_open + end_offset + 1;
             }
             Some(TagEnd::Stray(_) | TagEnd::Never) | None => {
@@ -214,6 +262,38 @@ pub fn markup_to_text(html: &str) -> String {
         "readable text outgrew its markup"
     );
     out.text
+}
+
+/// A tag as read from its content between `<` and `>`.
+#[derive(Clone, Copy, Debug)]
+struct Tag<'a> {
+    name: &'a str,
+    opening: bool,
+    self_closing: bool,
+}
+
+/// The tag whose content is `tag_content`. An opening tag's name follows
+/// its `<` directly. It closes itself when its last `/` stands straight
+/// after its name, after whitespace or after a quoted value; a `/` ending
+/// an unquoted value (`data-x=a/`) is part of that value (#2248 round 2).
+fn read_tag(tag_content: &str) -> Tag<'_> {
+    let opening = tag_content.starts_with(|c: char| c.is_ascii_alphabetic());
+    let trimmed = tag_content.trim().trim_start_matches('/');
+    let name_end = trimmed
+        .find(|c: char| c.is_whitespace() || c == '/')
+        .unwrap_or(trimmed.len());
+    let name = &trimmed[..name_end];
+    let before_slash = tag_content.trim_end().strip_suffix('/');
+    let self_closing = opening
+        && before_slash.is_some_and(|before| {
+            before.len() == name.len()
+                || before.ends_with(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+        });
+    Tag {
+        name,
+        opening,
+        self_closing,
+    }
 }
 
 /// Where a tag opened by the `<` at `rest[0]` ends.

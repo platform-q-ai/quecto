@@ -405,7 +405,7 @@ fn authorize_hop(
     authorize_url(url, policy, prefixes).map_err(|reason| {
         FetchFailure::Refused(format!(
             "the redirect to {}: {reason}",
-            failure_detail::shown(url)
+            failure_detail::shown_hop(url)
         ))
     })
 }
@@ -601,7 +601,7 @@ impl ReqwestFetchWebContent {
             if follows == MAX_REDIRECTS {
                 return Err(FetchFailure::Transport(format!(
                     "too many redirects: {MAX_REDIRECTS} followed, and {} would be one more",
-                    failure_detail::shown(&next)
+                    failure_detail::shown_hop(&next)
                 )));
             }
             authorize_hop(&next, self.policy, prefixes)?;

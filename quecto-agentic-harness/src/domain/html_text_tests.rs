@@ -41,25 +41,169 @@ fn only_listed_elements_separate() {
     }
 }
 
-/// A word's last character always ends a label; a stop only when an
-/// element closed after it (#2248 review: code punctuation such as `.` or
-/// `::` right before a link is not a label's end).
+/// A word's last character in a script that spaces its words always ends
+/// a label; once an element closed after it, any visible character does
+/// (#2248 round 2: `50%` or `«` in a cell or a link). Code punctuation with
+/// no element closed after it ends nothing.
 #[test]
-fn a_label_ends_at_a_word_or_at_a_closed_stop() {
-    for last in ['x', 'É', '9'] {
+fn a_label_ends_at_a_spaced_word_or_after_a_close() {
+    for last in ['x', 'Z', 'É', 'ß', '9', 'λ', 'Ж', 'ệ'] {
         assert!(ends_a_label(Some(last), false), "{last:?}");
         assert!(ends_a_label(Some(last), true), "{last:?}");
     }
-    for last in ['.', ',', ';', ':', '!', '?', ')', ']', '}'] {
+    for last in [
+        '.', ',', ';', ':', '!', '?', ')', ']', '}', '(', '%', '«', '»', '"', '\'', '-', '/', '<',
+        '>', '&', '東', 'の', 'カ', '한', 'ไ', '×', '÷', '١',
+    ] {
         assert!(ends_a_label(Some(last), true), "{last:?}");
         assert!(!ends_a_label(Some(last), false), "{last:?}");
     }
-    for last in [' ', '\n', '(', '[', '{', '"', '\'', '-', '/', '<', '>', '&'] {
+    for last in [' ', '\n', '\t', '\u{a0}', '\u{3000}', '\u{7}'] {
         assert!(!ends_a_label(Some(last), true), "{last:?}");
         assert!(!ends_a_label(Some(last), false), "{last:?}");
     }
     assert!(!ends_a_label(None, true));
     assert!(!ends_a_label(None, false));
+}
+
+/// Only letters of scripts written with spaces between words, and ASCII
+/// digits, are a word's end (#2248 round 2 L3): Latin, Greek and Cyrillic.
+#[test]
+fn only_spaced_scripts_end_a_word() {
+    for (c, spaced) in [
+        ('a', true),
+        ('0', true),
+        ('\u{c0}', true),
+        ('\u{24f}', true),
+        ('\u{250}', false),
+        ('\u{bf}', false),
+        ('\u{370}', true),
+        ('\u{3ff}', true),
+        ('\u{400}', true),
+        ('\u{52f}', true),
+        ('\u{530}', false),
+        ('\u{1e00}', true),
+        ('\u{1fff}', false),
+        ('\u{1ffc}', true),
+        ('\u{1dff}', false),
+        ('\u{2000}', false),
+        ('\u{d7}', false),
+        ('\u{f7}', false),
+        ('東', false),
+        ('ア', false),
+        ('한', false),
+        ('ก', false),
+        ('\u{663}', false),
+    ] {
+        assert_eq!(ends_a_spaced_word(c), spaced, "{c:?}");
+    }
+}
+
+/// #2248 round 2 L1: a cell or a link ending in any visible character is
+/// spaced from the next one; code punctuation before a link, with nothing
+/// closed between, is not.
+#[test]
+fn a_closed_label_is_spaced_whatever_it_ends_in() {
+    for (html, expected) in [
+        ("<td>50%</td><td>60%</td>", "50% 60%"),
+        ("<a>\u{ab}</a><a>\u{bb}</a>", "\u{ab} \u{bb}"),
+        ("<th>(a)</th><th>&lt;b&gt;</th>", "(a) <b>"),
+        ("<a>x</a> <a>y</a>", "x y"),
+        ("<a>x</a>\n<a>y</a>", "x\ny"),
+        ("foo.<a>bar</a>", "foo.bar"),
+        ("a(<a>b</a>)", "a(b)"),
+        ("<code><a>x</a>%<a>y</a></code>", "x%y"),
+    ] {
+        assert_eq!(markup_to_text(html), expected, "{html}");
+    }
+}
+
+/// #2248 round 2 L3: a link inside prose of a script written without
+/// spaces is not spaced from it; one in a spaced script is.
+#[test]
+fn a_link_in_unspaced_prose_is_not_spaced() {
+    for (html, expected) in [
+        ("東京の<a>天気</a>", "東京の天気"),
+        ("カタカナ<a>リンク</a>", "カタカナリンク"),
+        ("한국<a>날씨</a>", "한국날씨"),
+        ("ภาษาไทย<a>ลิงก์</a>", "ภาษาไทยลิงก์"),
+        ("Straße<a>x</a>", "Straße x"),
+        ("Ελλάδα<a>x</a>", "Ελλάδα x"),
+        ("Москва<a>x</a>", "Москва x"),
+        ("<td>東京</td><td>大阪</td>", "東京 大阪"),
+    ] {
+        assert_eq!(markup_to_text(html), expected, "{html}");
+    }
+}
+
+/// #2248 round 2 L4: code or typed-input markup left open ends at the next
+/// block or cell boundary outside `pre`; inside `pre` it holds.
+#[test]
+fn unclosed_code_ends_at_a_block_boundary() {
+    for (html, expected) in [
+        ("<code>x</p><p><a>Home</a><a>About</a>", "x\n\nHome About"),
+        ("<kbd>x<div>a<a>b</a></div>", "x\na b\n"),
+        ("<samp>x<li>a<a>b</a>", "x\na b"),
+        ("<code>x<td>a</td><td>b</td>", "x a b"),
+        ("<code>x<th>a<a>b</a></th>", "x a b"),
+        (
+            "<pre><code>a<div>b<a>c</a></div></code></pre>",
+            "\na\nbc\n\n",
+        ),
+        ("<pre>a<p>b<a>c</a></p></pre>", "\na\nbc\n\n"),
+        ("<code>a<pre>b</pre>c<a>d</a>", "a\nb\nc d"),
+        ("<pre><code>a</pre>b<a>c</a>", "\na\nb c"),
+    ] {
+        assert_eq!(markup_to_text(html), expected, "{html}");
+    }
+}
+
+/// #2248 round 2 Q1: a `/` ending an unquoted attribute value does not
+/// make a tag self-closing; one after whitespace, a quoted value or the
+/// name does.
+#[test]
+fn a_slash_in_an_unquoted_value_is_not_self_closing() {
+    for (html, expected) in [
+        ("<code data-x=/>v<a>u8</a></code>", "vu8"),
+        ("<code data-x=a/>v<a>u8</a></code>", "vu8"),
+        ("<code href=a/b/>v<a>u8</a>", "vu8"),
+        ("<code/>a<a>b</a>", "a b"),
+        ("<code />a<a>b</a>", "a b"),
+        ("<code x />a<a>b</a>", "a b"),
+        ("<code x=\"y\"/>a<a>b</a>", "a b"),
+        ("<code x='y'/>a<a>b</a>", "a b"),
+        ("<code\t/>a<a>b</a>", "a b"),
+    ] {
+        assert_eq!(markup_to_text(html), expected, "{html}");
+    }
+    for (content, self_closing) in [
+        ("br/", true),
+        ("br /", true),
+        ("br/ ", true),
+        ("code data-x=/", false),
+        ("code a=b/", false),
+        ("code a=\"b\"/", true),
+        ("code a", false),
+        ("/code", false),
+        ("/br/", false),
+        ("/code /", false),
+    ] {
+        assert_eq!(read_tag(content).self_closing, self_closing, "{content}");
+    }
+}
+
+/// #2248 round 2 Q1: a closing tag of a code element that is not open
+/// leaves every open one as it is.
+#[test]
+fn a_stray_verbatim_close_changes_nothing() {
+    for (html, expected) in [
+        ("<pre>a</code><a>b</a></pre>", "\nab\n"),
+        ("<code>a</kbd><a>b</a></code>c<a>d</a>", "abc d"),
+        ("</code></code><code>a<a>b</a></code>c<a>d</a>", "abc d"),
+        ("<code><code>a</code><a>b</a></code>c<a>d</a>", "abc d"),
+    ] {
+        assert_eq!(markup_to_text(html), expected, "{html}");
+    }
 }
 
 /// Every block element breaks the line, opening and closing; every
