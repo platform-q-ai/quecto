@@ -166,6 +166,31 @@ fn a_failed_write_never_removes_someone_elses_file_in_the_name() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "theirs");
 }
 
+/// #2239 review: a failed write never removes a stranger's file that took
+/// the name meanwhile. The write fails without any permission trick (the
+/// writer writes elsewhere, the read-back catches it), so this holds as
+/// root too.
+#[test]
+fn a_failed_write_never_removes_a_strangers_file_whoever_runs_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("placed");
+    let moved = dir.path().join("moved");
+    let elsewhere: &'static str = Box::leak(
+        dir.path()
+            .join("not-stdout")
+            .to_string_lossy()
+            .into_owned()
+            .into_boxed_str(),
+    );
+    let error = create_new_with(&path, b"ours", Writer::Child { reopen: elsewhere }, || {
+        std::fs::rename(&path, &moved).unwrap();
+        std::fs::write(&path, "theirs").unwrap();
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("wrote elsewhere"), "{error}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "theirs");
+}
+
 /// #2232 review round 3: a writer that exits 0 having written somewhere
 /// else (a missing `/dev/stdout` recreated as a plain file in a writable
 /// `/dev`) is caught by the read-back, never a silently empty file.

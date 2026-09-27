@@ -87,7 +87,7 @@ fn a_directory_that_does_not_exist_is_reported_in_the_writers_words() {
 /// forker, so none outlives its test.
 #[test]
 fn a_panic_in_the_work_stops_and_joins_the_forkers() {
-    let forkers = Forkers::start(2);
+    let forkers = Forkers::start(2, fork_target());
     let stop = forkers.stop.clone();
     let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
         let _forkers = forkers;
@@ -103,4 +103,17 @@ fn a_panic_in_the_work_stops_and_joins_the_forkers() {
         1,
         "every forker thread was joined"
     );
+}
+
+/// #2239 review: a fork target that cannot run creates no load, and the
+/// forkers say so (zero forks) rather than spin unnoticed; the resolved
+/// target runs.
+#[test]
+fn only_forks_that_ran_are_counted() {
+    let dead = Forkers::start(1, "/nonexistent/true");
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    assert_eq!(dead.stop(), 0);
+    let live = Forkers::start(1, fork_target());
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    assert!(live.stop() > 0, "the resolved target forks");
 }

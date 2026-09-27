@@ -138,41 +138,68 @@ fn create_through_child(path: &Path, contents: &[u8]) -> File {
 /// each child holds every descriptor until its exec.
 pub fn while_forking<R>(forkers: usize, work: impl FnOnce() -> R) -> R {
     assert!(forkers > 0, "a stress run needs at least one forker");
-    let forking = Forkers::start(forkers);
+    let forking = Forkers::start(forkers, fork_target());
     let result = work();
-    forking.stop();
+    let forks = forking.stop();
+    assert!(
+        forks > 0,
+        "no fork succeeded while the work ran: the stress created no load"
+    );
     result
+}
+
+/// The program the forkers spawn: the first `true` that runs, tried once.
+/// None is a clear failure, never a loop that spins without forking.
+fn fork_target() -> &'static str {
+    ["/bin/true", "/usr/bin/true", "true"]
+        .into_iter()
+        .find(|program| {
+            Command::new(program)
+                .status()
+                .is_ok_and(|status| status.success())
+        })
+        .expect("no `true` could be spawned (tried /bin/true, /usr/bin/true, PATH): the stress test cannot create fork load")
 }
 
 /// The forker threads of [`while_forking`]. Dropping them, on a panic in
 /// the work too, stops and joins every one: none outlives its test.
 struct Forkers {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    forks: std::sync::Arc<std::sync::atomic::AtomicU64>,
     threads: Vec<std::thread::JoinHandle<()>>,
 }
 
 impl Forkers {
-    fn start(count: usize) -> Self {
+    fn start(count: usize, target: &'static str) -> Self {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let forks = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let threads = (0..count)
             .map(|_| {
-                let stop = stop.clone();
+                let (stop, forks) = (stop.clone(), forks.clone());
                 std::thread::spawn(move || {
                     while !stop.load(Ordering::Relaxed) {
-                        let _ = Command::new("/bin/true").status();
+                        if Command::new(target).status().is_ok() {
+                            forks.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                 })
             })
             .collect();
-        Self { stop, threads }
+        Self {
+            stop,
+            forks,
+            threads,
+        }
     }
 
-    /// Stop and join the threads, reporting a forker that panicked.
-    fn stop(mut self) {
+    /// Stop and join the threads, reporting a forker that panicked; the
+    /// number of spawns that succeeded.
+    fn stop(mut self) -> u64 {
         self.stop.store(true, Ordering::Relaxed);
         for thread in std::mem::take(&mut self.threads) {
             thread.join().expect("a forker thread panicked");
         }
+        self.forks.load(Ordering::Relaxed)
     }
 }
 
