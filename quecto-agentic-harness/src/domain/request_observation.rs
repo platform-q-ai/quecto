@@ -24,8 +24,26 @@ pub struct RequestTrace {
     pub(super) output_cap: std::sync::atomic::AtomicU64,
     /// The request is being dropped (#2210 review): see `mark_dropping`.
     pub(super) dropping: std::sync::atomic::AtomicBool,
+    /// Usage attempts reported before they were cut short (#2249 review):
+    /// tokens the provider counted for a reply that never completed.
+    unfinished_usage: Mutex<Vec<crate::domain::message::UsageInfo>>,
 }
 impl RequestTrace {
+    /// An attempt was cut short after its provider reported `usage` (#2249
+    /// review): those tokens were spent, so they are still counted.
+    pub fn record_unfinished_usage(&self, usage: crate::domain::message::UsageInfo) {
+        self.unfinished_usage
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(usage);
+    }
+    /// The usage every cut-short attempt of this request reported.
+    pub fn unfinished_usage(&self) -> Vec<crate::domain::message::UsageInfo> {
+        self.unfinished_usage
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
     /// A token arrived at `at`; the earliest stays.
     pub fn mark_first_token(&self, at: std::time::Instant) {
         let mut first = self.first_token.lock().unwrap_or_else(|e| e.into_inner());

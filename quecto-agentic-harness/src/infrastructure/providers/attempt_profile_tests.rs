@@ -30,7 +30,6 @@ async fn each_vendor_keeps_its_own_send_and_read_error_wording() {
     assert_eq!(openai.name(), "OpenAI");
     assert_eq!(codex.name(), "Codex");
     assert_eq!(anthropic.name(), "Anthropic");
-    assert!(openai.openai() && !codex.openai() && !anthropic.openai());
 
     let sent = message(openai.send_error(&error));
     assert!(sent.starts_with("HTTP error: "), "{sent}");
@@ -499,4 +498,51 @@ fn a_bare_numeric_402_chunk_is_billing() {
         classify_provider_error(&DomainError::Provider(openai_stream_error(&value))),
         ProviderErrorClass::Billing
     );
+}
+
+/// #2236: a bare string `error` (Ollama's native shape) is an error chunk
+/// nobody typed: the unknown 502, classified exactly as the object form of
+/// an unknown error, so the retry owner retries it before output and keeps
+/// it terminal after. Only an object or a string `error` is an error chunk.
+#[test]
+fn a_bare_string_error_chunk_is_classified_as_the_unknown_object_form() {
+    use super::is_stream_error_chunk;
+    use crate::domain::error::DomainError;
+    use crate::domain::provider_error::classify_provider_error;
+    let string = serde_json::json!({"error": "model crashed"});
+    let object = serde_json::json!({"error": {"message": "model crashed"}});
+    assert_eq!(chunk_status(string.clone()), 502);
+    assert_eq!(chunk_status(object.clone()), 502);
+    let class = |value: &serde_json::Value| {
+        classify_provider_error(&DomainError::Provider(openai_stream_error(value)))
+    };
+    assert_eq!(class(&string), class(&object));
+    assert!(class(&string).is_retryable());
+    assert!(openai_stream_error(&string).contains("model crashed"));
+    for (value, chunk) in [
+        (string, true),
+        (object, true),
+        (serde_json::json!({"error": "x"}), true),
+        (serde_json::json!({"error": {"code": 500}}), true),
+        (serde_json::json!({"error": ""}), false),
+        // Any object is an error (#2249 review round 3): `{}` names no
+        // cause, so it is the unknown, retryable 502.
+        (serde_json::json!({"error": {}}), true),
+        (serde_json::json!({"error": null}), false),
+        (serde_json::json!({"error": 42}), false),
+        (serde_json::json!({"error": true}), false),
+        (serde_json::json!({"error": ["x"]}), false),
+        (serde_json::json!({"message": "no error field"}), false),
+        (serde_json::json!("error"), false),
+    ] {
+        assert_eq!(is_stream_error_chunk(&value), chunk, "{value}");
+    }
+}
+
+/// #2236: only an error chunk renders as a stream error; rendering any
+/// other chunk is a caller bug, refused loudly.
+#[test]
+#[should_panic(expected = "only an error chunk renders as a stream error")]
+fn a_chunk_without_an_error_never_renders_as_a_stream_error() {
+    let _ = openai_stream_error(&serde_json::json!({"error": null}));
 }

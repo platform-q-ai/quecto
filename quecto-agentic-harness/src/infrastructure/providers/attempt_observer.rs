@@ -86,7 +86,9 @@ impl ProtocolObserver {
             let mut state = receipt.0.lock().unwrap();
             state.diagnostics.event_count = state.diagnostics.event_count.saturating_add(1);
         }
-        if matches!(self.vendor, Vendor::OpenAi | Vendor::Codex) && data == "[DONE]" {
+        if matches!(self.vendor, Vendor::OpenAi | Vendor::Codex)
+            && crate::infrastructure::providers::sse_end::is_done_marker(data)
+        {
             self.terminal = true;
             let mut state = receipt.0.lock().unwrap();
             live(&state, 0);
@@ -146,11 +148,7 @@ impl ProtocolObserver {
                         value["type"].as_str().unwrap_or("")
                     };
                     let terminal = match event {
-                        _ if matches!(self.vendor, Vendor::OpenAi)
-                            && value.get("error").is_some_and(serde_json::Value::is_object) =>
-                        {
-                            Some(TerminalEvent::Error)
-                        }
+                        _ if is_error_chunk(self.vendor, &value) => Some(TerminalEvent::Error),
                         "response.completed" => Some(TerminalEvent::ResponseCompleted),
                         "response.failed" => Some(TerminalEvent::ResponseFailed),
                         "response.incomplete" => Some(TerminalEvent::ResponseIncomplete),
@@ -205,15 +203,12 @@ impl ProtocolObserver {
                 return;
             };
             let (failed, completed) = match self.vendor {
-                Vendor::OpenAi => (
-                    value.get("error").is_some_and(serde_json::Value::is_object),
-                    false,
-                ),
+                Vendor::OpenAi => (is_error_chunk(self.vendor, &value), false),
                 Vendor::Codex => (
                     matches!(
                         value["type"].as_str(),
                         Some("response.failed" | "response.incomplete" | "error")
-                    ),
+                    ) || is_error_chunk(self.vendor, &value),
                     value["type"].as_str() == Some("response.completed"),
                 ),
                 Vendor::Anthropic => unreachable!("Anthropic dispatch handled above"),
@@ -244,5 +239,17 @@ fn live(state: &State, output: u64) {
             || state.diagnostics.generated_tool_call
             || state.diagnostics.generated_thinking;
         trace.observe_event(std::time::Instant::now(), output, token);
+    }
+}
+
+/// Whether `value` is an untyped mid-stream error chunk for `vendor`'s
+/// protocol: any OpenAI-compatible error chunk (#2236), or a Responses
+/// chunk with no `type` carrying one (#2249 review). Anthropic's errors
+/// are named by their `event:` line, never by this shape.
+fn is_error_chunk(vendor: Vendor, value: &serde_json::Value) -> bool {
+    match vendor {
+        Vendor::OpenAi => super::super::attempt_profile::is_stream_error_chunk(value),
+        Vendor::Codex => super::super::attempt_profile::is_untyped_error_chunk(value),
+        Vendor::Anthropic => false,
     }
 }

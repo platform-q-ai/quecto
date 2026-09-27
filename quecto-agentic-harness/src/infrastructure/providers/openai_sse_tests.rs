@@ -45,7 +45,8 @@ async fn handler_emits_explicit_reasoning_as_thinking_without_token_leakage() {
         StreamEvent::TextDelta(text) => assert_eq!(text, "answer"),
         other => panic!("unexpected event: {other:?}"),
     }
-    handler.on_eof(&tx).await;
+    let outcome = handler.process_line("data: [DONE]", &tx).await;
+    assert!(matches!(outcome, SseLineOutcome::Done));
     match rx.recv().await.unwrap() {
         StreamEvent::Done(response) => {
             assert_eq!(response.content.as_deref(), Some("answer"));
@@ -56,7 +57,7 @@ async fn handler_emits_explicit_reasoning_as_thinking_without_token_leakage() {
 }
 
 #[tokio::test]
-async fn handler_ignores_non_data_and_malformed_json_then_finishes_on_eof() {
+async fn handler_ignores_non_data_and_malformed_json_then_ends_cut_short_at_eof() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(2);
     let mut handler = OpenAiSseHandler::new();
 
@@ -70,9 +71,12 @@ async fn handler_ignores_non_data_and_malformed_json_then_finishes_on_eof() {
     ));
     assert!(rx.try_recv().is_err());
 
+    // Neither line was a terminal signal: the body was cut short (#2236).
     handler.on_eof(&tx).await;
+    // Closed, so a missing event fails the test instead of hanging it.
+    drop(tx);
     match rx.recv().await.unwrap() {
-        StreamEvent::Done(response) => assert!(response.content.is_none()),
+        StreamEvent::Error(error) => assert_eq!(error, OPENAI_CUT_SHORT),
         other => panic!("unexpected event: {other:?}"),
     }
 }
@@ -97,7 +101,8 @@ async fn handler_captures_usage_chunk_into_response() {
             .await;
     assert!(matches!(outcome, SseLineOutcome::Continue));
 
-    handler.on_eof(&tx).await;
+    let outcome = handler.process_line("data: [DONE]", &tx).await;
+    assert!(matches!(outcome, SseLineOutcome::Done));
     match rx.recv().await.unwrap() {
         StreamEvent::Done(response) => {
             let usage = response.usage.expect("usage should be captured");
@@ -182,4 +187,56 @@ async fn handler_rejects_over_limit_reasoning_without_done() {
         other => panic!("unexpected event: {other:?}"),
     }
     assert!(rx.try_recv().is_err());
+}
+
+/// #2236: without admission the handler itself ends the stream at a
+/// mid-stream error chunk, bare string or object, as the same status-typed
+/// error the admitted path renders; the partial text before it is never
+/// sent as a `Done` reply.
+#[tokio::test]
+async fn handler_ends_the_stream_as_an_error_at_an_error_chunk_of_either_shape() {
+    for (error, status) in [
+        (r#"{"error":"model crashed"}"#, "HTTP 502 "),
+        (r#"{"error":{"message":"model crashed"}}"#, "HTTP 502 "),
+        (r#"{"error":{"code":"rate_limit_exceeded"}}"#, "HTTP 429 "),
+        (r#"{"error":{"type":"invalid_request_error"}}"#, "HTTP 400 "),
+    ] {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let mut handler = OpenAiSseHandler::new();
+        assert!(matches!(
+            handler
+                .process_line(r#"data: {"choices":[{"delta":{"content":"part"}}]}"#, &tx)
+                .await,
+            SseLineOutcome::Continue
+        ));
+        assert!(matches!(
+            handler.process_line(&format!("data: {error}"), &tx).await,
+            SseLineOutcome::Done
+        ));
+        drop(tx);
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        assert!(
+            matches!(&events[..], [StreamEvent::TextDelta(t), StreamEvent::Error(e)]
+                if t == "part" && e.starts_with(status) && e.contains("OpenAI stream error")),
+            "{error}: {events:?}"
+        );
+    }
+}
+
+/// #2236: an `error` field that is neither an object nor a string is not an
+/// error chunk; the stream goes on.
+#[tokio::test]
+async fn handler_reads_only_object_or_string_errors_as_error_chunks() {
+    for other in [r#"{"error":null}"#, r#"{"error":42}"#, r#"{"error":false}"#] {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let mut handler = OpenAiSseHandler::new();
+        assert!(matches!(
+            handler.process_line(&format!("data: {other}"), &tx).await,
+            SseLineOutcome::Continue
+        ));
+        assert!(rx.try_recv().is_err(), "{other}");
+    }
 }

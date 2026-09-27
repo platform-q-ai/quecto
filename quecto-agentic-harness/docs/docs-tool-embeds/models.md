@@ -61,6 +61,7 @@ From a running session the same record is `set_model {"model":"openai-api/gpt-5.
 
 - Add a model to an existing provider: append to its `models` array (`id`, optional `name`, `contextWindow`, `maxTokens`, `reasoning`).
 - Add a provider on a runnable transport: `"api": "openai-completions"` or `"anthropic-messages"`, `baseUrl`, `"auth": {"mode":"apiKey","apiKey":"$MY_KEY"}` (an `$ENV` reference — a literal secret in `overrides` is rejected) or `{"mode":"oauth","oauthProvider":"openai"|"anthropic"}`. `google-generative-ai` is recognised but not runnable in this build.
+- A compatible endpoint must end every streamed reply the way its protocol says: `anthropic-messages` with `message_stop`; `openai-completions` with `data: [DONE]` or a `finish_reason`. A stream that closes without it is a reply cut short (`… ended without completion: connection closed before …`), never taken as whole.
 - Fix stale metadata: top-level `"overrides": {"openai-api/gpt-5.5": {"contextWindow": 999000}}`.
 - Refresh a provider's model list from its OpenAI-compatible `/models` endpoint: `quecto models discover <provider-key>` — `<provider-key>` is a `models.json` provider with `"api": "openai-completions"` and a `baseUrl`; built-in slots are refused (`no refreshable catalogue source named 'openai-api'`). It rewrites only that provider's `models` array, atomically; `--watch --interval 3600` keeps it fresh.
 

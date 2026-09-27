@@ -390,23 +390,31 @@ impl CodexProvider {
     }
 
     /// Parse SSE stream from the Responses API and assemble a complete response.
+    #[cfg(any(test, feature = "test-support"))]
     fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
+        Self::parse_sse_reply(raw).map_err(super::sse_end::UnfinishedReply::into_error)
+    }
+
+    /// [`Self::parse_sse_response`], keeping the usage a reply cut short
+    /// before its terminal event reported, to be accounted (#2249 review).
+    fn parse_sse_reply(raw: &str) -> Result<LlmResponse, super::sse_end::UnfinishedReply> {
         let mut acc = SseAccumulator::default();
         let mut saw_terminal = false;
+        let mut saw_event = false;
 
         for line in raw.lines() {
             let line = line.trim();
-            if !line.starts_with("data: ") {
+            let Some(data) = line.strip_prefix("data: ") else {
                 continue;
-            }
-            let data = &line[6..];
-            if data == "[DONE]" {
+            };
+            saw_event = true;
+            if super::sse_end::is_done_marker(data) {
                 saw_terminal = true;
                 break;
             }
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
                 if let Some(error) = Self::format_stream_failure(&event) {
-                    return Err(DomainError::Provider(error));
+                    return Err(DomainError::Provider(error).into());
                 }
                 acc.handle_event(&event)?;
                 if event["type"].as_str() == Some("response.completed") {
@@ -416,43 +424,68 @@ impl CodexProvider {
             }
         }
 
-        if !saw_terminal && !acc.has_observable_output() {
-            return Err(DomainError::Provider(
-                "Responses stream ended without completion".to_string(),
-            ));
+        // Only a terminal event ends a reply whole: output without one is a
+        // reply cut short, and no event at all an empty stream (#2249
+        // review), never taken as a whole answer.
+        if !saw_terminal {
+            return Err(super::sse_end::UnfinishedReply {
+                error: DomainError::Provider(super::sse_end::ended_early(
+                    saw_event,
+                    RESPONSES_CUT_SHORT,
+                )),
+                usage: acc.into_response().usage,
+            });
         }
 
         Ok(acc.into_response())
     }
 
+    /// The error a Responses event ends the stream with, if it is one: a
+    /// typed failure (`response.failed`, `response.incomplete`, `error`)
+    /// or an untyped error chunk (#2249 review), which reads as `error`.
+    /// An `error` event carries its fields nested (`error.type`,
+    /// `error.code`, `error.message`) or, as OpenAI documents it, at the
+    /// top level (`code`, `message`); both are read. A `response.*`
+    /// failure keeps its established rendering (type and message).
     fn format_stream_failure(event: &serde_json::Value) -> Option<String> {
-        match event["type"].as_str()? {
-            "response.failed" | "response.incomplete" | "error" => {
-                let mut parts = vec![format!(
-                    "Responses stream {}",
-                    event["type"].as_str().unwrap()
-                )];
-                if let Some(status) = event["response"]["status"].as_str() {
-                    parts.push(format!("status={status}"));
-                }
-                if let Some(reason) = event["response"]["incomplete_details"]["reason"].as_str() {
-                    parts.push(format!("reason={reason}"));
-                }
-                let error = if event["type"].as_str() == Some("error") {
-                    &event["error"]
-                } else {
-                    &event["response"]["error"]
-                };
-                if let Some(kind) = error["type"].as_str() {
-                    parts.push(format!("type={kind}"));
-                }
-                if let Some(message) = error["message"].as_str() {
-                    parts.push(message.to_string());
-                }
-                Some(parts.join(": "))
-            }
-            _ => None,
+        let kind = match event["type"].as_str() {
+            Some(kind @ ("response.failed" | "response.incomplete" | "error")) => kind,
+            None if super::attempt_profile::is_untyped_error_chunk(event) => "error",
+            _ => return None,
+        };
+        let mut parts = vec![format!("Responses stream {kind}")];
+        if let Some(status) = event["response"]["status"].as_str() {
+            parts.push(format!("status={status}"));
         }
+        if let Some(reason) = event["response"]["incomplete_details"]["reason"].as_str() {
+            parts.push(format!("reason={reason}"));
+        }
+        // An `error` event's own top-level fields; no other kind has any.
+        let top = match kind {
+            "error" => event,
+            _ => &serde_json::Value::Null,
+        };
+        let error = match kind {
+            "error" => &event["error"],
+            _ => &event["response"]["error"],
+        };
+        if let Some(error_type) = error["type"].as_str() {
+            parts.push(format!("type={error_type}"));
+        }
+        if kind == "error" {
+            if let Some(code) = error["code"].as_str().or_else(|| top["code"].as_str()) {
+                parts.push(format!("code={code}"));
+            }
+        }
+        // A bare string `error` (#2236) is the message itself.
+        if let Some(message) = error
+            .as_str()
+            .or_else(|| error["message"].as_str())
+            .or_else(|| top["message"].as_str())
+        {
+            parts.push(message.to_string());
+        }
+        Some(parts.join(": "))
     }
 
     /// Sanitize a session key for use as `prompt_cache_key`.
@@ -624,6 +657,7 @@ mod codex_sse_handler;
 #[cfg(test)]
 use super::sse_common::{SseHandler, SseLineOutcome};
 use codex_sse_handler::CodexSseHandler;
+pub(crate) use codex_sse_handler::RESPONSES_CUT_SHORT;
 
 #[cfg(any(test, feature = "test-support"))]
 #[path = "codex_test_support.rs"]
@@ -651,3 +685,7 @@ mod cov_tests;
 #[cfg(test)]
 #[path = "codex_2162_tests.rs"]
 mod issue_2162_tests;
+
+#[cfg(test)]
+#[path = "codex_stream_end_tests.rs"]
+mod stream_end_tests;

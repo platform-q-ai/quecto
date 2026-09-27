@@ -280,7 +280,12 @@ async fn how_each_attempt_ended_is_recorded() {
     let chunk = r#"{"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}"#;
     let (_server, provider) = served(&format!("data: {chunk}\n\n")).await;
     let (_, attempts) = incremental(&provider).await;
-    assert_eq!(attempts[0].termination, Termination::Eof, "{attempts:?}");
+    // No `[DONE]` and no finish reason: cut short (#2249 review).
+    assert_eq!(
+        attempts[0].termination,
+        Termination::CutShort,
+        "{attempts:?}"
+    );
 
     let (_server, provider) = served(&format!("data: {chunk}\n\ndata: [DONE]\n\n")).await;
     let (_, attempts) = incremental(&provider).await;
@@ -568,4 +573,34 @@ async fn an_error_body_that_cannot_be_read_ends_as_a_read_error() {
         format!("{:?}", untraced(&provider).await),
         "observation changed handling"
     );
+}
+
+/// #2236: end to end without admission, partial text then a mid-stream
+/// error chunk of either shape, then end of file: the caller's last event
+/// is the error, and no `Done` carries the partial text as a whole answer.
+#[tokio::test]
+async fn a_reply_cut_short_by_an_error_chunk_is_never_a_whole_answer() {
+    use crate::domain::attempt_diagnostics::TerminalEvent;
+    use crate::domain::provider::StreamEvent;
+    let text = r#"{"choices":[{"index":0,"delta":{"content":"half"}}]}"#;
+    for error in [
+        r#"{"error":"model crashed"}"#,
+        r#"{"error":{"message":"model crashed"}}"#,
+    ] {
+        let (_server, provider) = served(&format!("data: {text}\n\ndata: {error}\n\n")).await;
+        let (events, attempts) = incremental(&provider).await;
+        assert!(
+            !events.iter().any(|e| matches!(e, StreamEvent::Done(_))),
+            "{error}: {events:?}"
+        );
+        assert!(
+            matches!(events.last(), Some(StreamEvent::Error(e)) if e.starts_with("HTTP 502 ")),
+            "{error}: {events:?}"
+        );
+        assert_eq!(
+            attempts[0].terminal_event,
+            Some(TerminalEvent::Error),
+            "{attempts:?}"
+        );
+    }
 }

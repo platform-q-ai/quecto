@@ -38,7 +38,7 @@ async fn pump_sse_openai_wire_stream_handles_split_lines_and_done() {
 }
 
 #[tokio::test]
-async fn pump_sse_anthropic_wire_stream_finalizes_on_eof() {
+async fn pump_sse_anthropic_wire_stream_cut_before_message_stop_is_an_error() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/anthropic"))
@@ -63,8 +63,9 @@ async fn pump_sse_anthropic_wire_stream_finalizes_on_eof() {
     pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
 
     assert!(matches!(rx.recv().await.unwrap(), StreamEvent::TextDelta(t) if t == "split"));
+    // No `message_stop`: the reply was cut short (#2249 review).
     match rx.recv().await.unwrap() {
-        StreamEvent::Done(done) => assert_eq!(done.content.as_deref(), Some("split")),
+        StreamEvent::Error(error) => assert!(error.contains("ended without completion"), "{error}"),
         other => panic!("unexpected event: {other:?}"),
     }
 }

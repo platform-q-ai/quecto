@@ -114,6 +114,19 @@ fn protocol_dispatch_matches_each_vendors_terminal_vocabulary() {
             true,
             true,
         ),
+        // #2236: a bare string error (Ollama's and some OpenAI-compatible
+        // servers' shape) ends the attempt as a failure too; an `error`
+        // field of any other shape is not an error chunk.
+        (
+            Vendor::OpenAi,
+            "",
+            r#"{"error":"model crashed"}"#,
+            true,
+            true,
+        ),
+        (Vendor::OpenAi, "", r#"{"error":null}"#, false, false),
+        (Vendor::OpenAi, "", r#"{"error":42}"#, false, false),
+        (Vendor::OpenAi, "", r#"{"error":["x"]}"#, false, false),
         (
             Vendor::Codex,
             "",
@@ -149,6 +162,41 @@ fn protocol_dispatch_matches_each_vendors_terminal_vocabulary() {
             true,
             true,
         ),
+        // #2249 review: an untyped error chunk fails a Responses attempt
+        // too, `{}` included; an empty string `error`, or one on a typed
+        // event, is no failure.
+        (
+            Vendor::Codex,
+            "",
+            r#"{"error":"model crashed"}"#,
+            true,
+            true,
+        ),
+        (
+            Vendor::Codex,
+            "",
+            r#"{"error":{"message":"model crashed"}}"#,
+            true,
+            true,
+        ),
+        (
+            Vendor::Codex,
+            "",
+            r#"{"type":null,"error":{"message":"model crashed"}}"#,
+            true,
+            true,
+        ),
+        (Vendor::Codex, "", r#"{"error":""}"#, false, false),
+        (Vendor::Codex, "", r#"{"error":{}}"#, true, true),
+        (
+            Vendor::Codex,
+            "",
+            r#"{"type":"response.created","error":"x"}"#,
+            false,
+            false,
+        ),
+        (Vendor::OpenAi, "", r#"{"error":""}"#, false, false),
+        (Vendor::OpenAi, "", r#"{"error":{}}"#, true, true),
         (
             Vendor::Anthropic,
             "ignored",
@@ -456,4 +504,48 @@ fn a_billing_http_error_never_throttles_admission() {
     let receipt = diagnostic_receipt();
     receipt.http_error(429, r#"{"error":{"type":"rate_limit_error"}}"#);
     assert!(receipt.0.lock().unwrap().hinted);
+}
+
+/// #2236: through admission, a mid-stream error chunk of either shape ends
+/// the stream as an error after the partial text, never as a `Done` reply,
+/// and the end of file after it cannot turn the partial text into a whole
+/// answer.
+#[tokio::test]
+async fn an_error_chunk_of_either_shape_ends_an_admitted_stream_as_an_error() {
+    use super::super::attempt_profile::Surface;
+    let text = r#"data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}"#;
+    for (error, status) in [
+        (r#"{"error":"model crashed"}"#, "HTTP 502 "),
+        (r#"{"error":{"message":"model crashed"}}"#, "HTTP 502 "),
+        (r#"{"error":{"type":"invalid_request_error"}}"#, "HTTP 400 "),
+    ] {
+        let receipt = diagnostic_receipt();
+        let profile = Profile::new(Vendor::OpenAi, Surface::Incremental, Default::default());
+        let mut handler = ObservedHandler {
+            inner: super::super::openai::openai_sse::OpenAiSseHandler::with_model("m"),
+            receipt: receipt.clone(),
+            protocol: ProtocolObserver::new(profile),
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        assert!(matches!(
+            handler.process_line(text, &tx).await,
+            SseLineOutcome::Continue
+        ));
+        assert!(matches!(
+            handler.process_line(&format!("data: {error}"), &tx).await,
+            SseLineOutcome::Done
+        ));
+        drop(tx);
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        assert!(
+            matches!(&events[..], [StreamEvent::TextDelta(t), StreamEvent::Error(e)]
+                if t == "partial" && e.starts_with(status)),
+            "{error}: {events:?}"
+        );
+        let state = receipt.0.lock().unwrap();
+        assert_eq!(state.diagnostics.terminal_event, Some(TerminalEvent::Error));
+    }
 }

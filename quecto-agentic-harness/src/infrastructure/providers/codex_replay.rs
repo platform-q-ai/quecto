@@ -104,7 +104,8 @@ impl CodexProvider {
                 builder,
                 Profile::new(Vendor::Codex, Surface::Assembled, self.stream_idle),
                 |raw| {
-                    let mut parsed = Self::parse_sse_response(raw)?;
+                    let mut parsed = Self::parse_sse_reply(raw)
+                        .map_err(|cut| cut.account(call.trace.as_deref(), &call.model))?;
                     Self::finish_response(&mut parsed, &call.model, &call.origin);
                     Ok(parsed)
                 },
@@ -150,7 +151,8 @@ impl CodexProvider {
                 }
             })?,
         };
-        let parsed = Self::parse_sse_response(&raw);
+        let parsed = Self::parse_sse_reply(&raw)
+            .map_err(|cut| cut.account(call.trace.as_deref(), &call.model));
         attempt.iter().for_each(|a| a.parsed(&parsed));
         let mut parsed = parsed?;
         Self::finish_response(&mut parsed, &call.model, &call.origin);
@@ -204,7 +206,8 @@ impl CodexProvider {
         body: serde_json::Value,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
     ) {
-        let handler = CodexSseHandler::with_model(&call.model, &call.origin);
+        let handler =
+            CodexSseHandler::with_model(&call.model, &call.origin).with_trace(call.trace.clone());
         match &self.attempt_admission {
             Some(gate) => {
                 let builder = self

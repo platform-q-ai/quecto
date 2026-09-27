@@ -1,6 +1,7 @@
 //! The Responses API also emits top-level error fields, not only nested
-//! response.failed payloads. Preserve its established display while forwarding
-//! the structured throttle receipt from the real wire event.
+//! response.failed payloads. Its display carries the top-level `code` and
+//! `message` (#2249 review), and the structured throttle receipt is
+//! forwarded from the real wire event.
 // One copy per crate (clippy::duplicate_mod): the fixture is loaded by
 // `inference_admission_feedback_transport` / `inference_admission_openai_sse`.
 use crate::inference_admission_feedback_transport::fixture;
@@ -31,7 +32,7 @@ async fn check(leaf: Leaf, post_text: bool) {
             post: post_text,
             enabled: true,
             throttle: true,
-            error: "Responses stream error",
+            error: "Responses stream error: code=rate_limit_exceeded: opaque fixture",
         },
     ));
 }

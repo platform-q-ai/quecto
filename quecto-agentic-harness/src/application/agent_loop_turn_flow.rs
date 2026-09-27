@@ -121,12 +121,21 @@ impl AgentLoopImpl {
             Ok(response) => (Ok(response), false),
             Err(failure) => (Err(failure.error), failure.emitted_event),
         };
-        if let Ok(response) = &result {
-            if let Some(usage) = &response.usage {
-                self.unreported_usage
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .record(usage);
+        {
+            let mut unreported = self
+                .unreported_usage
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            // Tokens attempts reported before they were cut short were
+            // spent all the same (#2249 review): counted first, so the
+            // reply's own usage sets the context occupancy last.
+            for usage in observation.trace().unfinished_usage() {
+                unreported.record(&usage);
+            }
+            if let Ok(response) = &result {
+                if let Some(usage) = &response.usage {
+                    unreported.record(usage);
+                }
             }
         }
         let record = observation.finish(&result);

@@ -12,6 +12,7 @@ pub mod router;
 pub mod single_attempt_client;
 pub use single_attempt_client::{CONNECT_TIMEOUT, SingleAttemptClient, default_client_builder};
 pub mod sse_common;
+pub(crate) mod sse_end;
 pub(crate) mod sse_limits;
 pub mod stream_idle;
 pub mod usage;
@@ -465,3 +466,6 @@ mod output_cap_provider_tests;
 #[cfg(test)]
 #[path = "output_cap_eof_tests.rs"]
 mod output_cap_eof_tests;
+#[cfg(test)]
+#[path = "stream_end_2249_tests.rs"]
+mod stream_end_2249_tests;

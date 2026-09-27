@@ -314,7 +314,7 @@ pub(super) async fn text<T>(
             Ok(body) => body?,
             Err(late) => return Err(receipt.timed_out(late)),
         };
-        receipt.accepted(parse(&body), Termination::Completed)
+        receipt.accepted(parse(&body))
     })
     .await
     .map_err(AttemptError::into_domain)
@@ -359,15 +359,18 @@ pub(super) async fn assembled<T>(
         if let Some(capped) = receipt.capped() {
             return Err(DomainError::Provider(receipt.output_capped(capped)));
         }
-        receipt.accepted(parse(&String::from_utf8_lossy(&body)), Termination::Eof)
+        receipt.accepted(parse(&String::from_utf8_lossy(&body)))
     })
     .await
     .map_err(AttemptError::into_domain)
 }
+/// An admitted attempt's SSE handler: every line is observed, then handled
+/// by `inner` unchanged. The inner handler owns the protocol, a mid-stream
+/// error chunk included (`OpenAiSseHandler` ends the stream at one, #2236),
+/// so a line means the same with admission and without.
 struct ObservedHandler<H> {
     inner: H,
     receipt: Receipt,
-    openai_errors: bool,
     protocol: ProtocolObserver,
 }
 
@@ -417,20 +420,6 @@ async fn forward(
 impl<H: SseHandler> SseHandler for ObservedHandler<H> {
     async fn process_line(&mut self, line: &str, tx: &Sender) -> SseLineOutcome {
         self.protocol.observe(line, &self.receipt);
-        if self.openai_errors {
-            if let Some(data) = line.strip_prefix("data: ") {
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
-                    if value.get("error").is_some_and(serde_json::Value::is_object) {
-                        let _ = tx
-                            .send(StreamEvent::Error(
-                                super::attempt_profile::openai_stream_error(&value),
-                            ))
-                            .await;
-                        return SseLineOutcome::Done;
-                    }
-                }
-            }
-        }
         let outcome = self.inner.process_line(line, tx).await;
         if matches!(outcome, SseLineOutcome::Done) {
             self.receipt.refused();
@@ -438,9 +427,35 @@ impl<H: SseHandler> SseHandler for ObservedHandler<H> {
         outcome
     }
     async fn on_eof(&mut self, tx: &Sender) {
-        self.receipt.termination(Termination::Eof);
-        self.inner.on_eof(tx).await;
+        end_at_eof(&mut self.inner, tx, &self.receipt).await;
     }
+}
+
+/// End a stream at end of file through `inner`, recording how the attempt
+/// ended from what `inner` sent (#2249 review): a reply (an OpenAI reply
+/// that named its `finish_reason`) completed it; an error means the body
+/// ended before its terminal event, cut short, and fails the attempt.
+async fn end_at_eof<H: SseHandler>(inner: &mut H, tx: &Sender, receipt: &Receipt) {
+    let (ending, mut sent) = tokio::sync::mpsc::channel(1);
+    let finish = async move {
+        inner.on_eof(&ending).await;
+    };
+    let relay = async {
+        while let Some(event) = sent.recv().await {
+            match &event {
+                StreamEvent::Done(_) => receipt.termination(Termination::Completed),
+                StreamEvent::Error(_) => {
+                    receipt.fail();
+                    receipt.termination(Termination::CutShort);
+                }
+                _ => {}
+            }
+            if tx.send(event).await.is_err() {
+                return;
+            }
+        }
+    };
+    tokio::join!(finish, relay);
 }
 
 pub(super) async fn stream<H: SseHandler>(
@@ -461,7 +476,6 @@ pub(super) async fn stream<H: SseHandler>(
         let mut handler = ObservedHandler {
             inner: handler,
             receipt: receipt.clone(),
-            openai_errors: profile.openai(),
             protocol: ProtocolObserver::new(profile),
         };
         let (local_tx, rx) = tokio::sync::mpsc::channel(1);

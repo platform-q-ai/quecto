@@ -11,6 +11,13 @@ use super::OpenAiProvider;
 use super::openai_sse_parser::{MAX_OPENAI_SSE_CONTENT_BYTES, append_with_limit};
 use crate::domain::visible_thinking::append_visible_thinking;
 
+/// The error an OpenAI chat-completions body ends with when it ends before a
+/// terminal signal (`[DONE]` or a chunk naming a `finish_reason`), output or
+/// not (#2236): a reply cut short, worded as the transport cut it is, so the
+/// retry classifier reads it as a retryable network failure.
+pub(crate) const OPENAI_CUT_SHORT: &str =
+    "OpenAI SSE stream ended without completion: connection closed before [DONE]";
+
 /// SSE line handler for OpenAI chat completions.
 pub(crate) struct OpenAiSseHandler {
     content: String,
@@ -23,6 +30,16 @@ pub(crate) struct OpenAiSseHandler {
     model: Option<String>,
     /// The latest `finish_reason` seen on any chunk (#2116).
     stop_reason: Option<crate::domain::message::StopReason>,
+    /// A choice named a non-empty `finish_reason` (#2236): the reply is
+    /// whole even if the body then ends without `[DONE]`, as some
+    /// OpenAI-compatible servers end it.
+    finished: bool,
+    /// `[DONE]` ended the stream; the pump never reads past it.
+    saw_done: bool,
+    /// Whether any `data:` event came: a body with none is an empty stream.
+    saw_event: bool,
+    /// Where usage reported before a cut is recorded (#2249 review).
+    trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
 }
 
 impl OpenAiSseHandler {
@@ -35,7 +52,20 @@ impl OpenAiSseHandler {
             delta_scratch: String::new(),
             model: None,
             stop_reason: None,
+            finished: false,
+            saw_done: false,
+            saw_event: false,
+            trace: None,
         }
+    }
+
+    /// Record usage a cut-short reply reported on `trace` (#2249 review).
+    pub(crate) fn with_trace(
+        mut self,
+        trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
+    ) -> Self {
+        self.trace = trace;
+        self
     }
 
     pub(crate) fn with_model(model: impl Into<String>) -> Self {
@@ -81,11 +111,22 @@ impl SseHandler for OpenAiSseHandler {
         let Some(data) = line.strip_prefix("data: ") else {
             return SseLineOutcome::Continue;
         };
-        if data == "[DONE]" {
+        self.saw_event = true;
+        if crate::infrastructure::providers::sse_end::is_done_marker(data) {
+            self.saw_done = true;
             let _ = tx.send(StreamEvent::Done(self.take_response())).await;
             return SseLineOutcome::Done;
         }
         if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
+            // A mid-stream error chunk ends the stream as an error (#2236),
+            // on this path too, which runs without admission: never skipped,
+            // or end of file would send the partial reply as a whole one.
+            if crate::infrastructure::providers::attempt_profile::is_stream_error_chunk(&chunk) {
+                let message =
+                    crate::infrastructure::providers::attempt_profile::openai_stream_error(&chunk);
+                let _ = tx.send(StreamEvent::Error(message)).await;
+                return SseLineOutcome::Done;
+            }
             // Final usage chunk (requested via stream_options.include_usage).
             // Emitted with an empty `choices` array and a populated `usage`.
             if let Some(usage) = chunk.get("usage").and_then(|u| u.as_object()) {
@@ -102,6 +143,7 @@ impl SseHandler for OpenAiSseHandler {
                     if let Some(reason) = super::openai_sse_parser::choice_stop_reason(choice) {
                         self.stop_reason = Some(reason);
                     }
+                    self.finished |= super::openai_sse_parser::is_finishing_choice(choice);
                     let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
                     if let Some(text) = delta
                         .get("reasoning")
@@ -146,7 +188,30 @@ impl SseHandler for OpenAiSseHandler {
     }
 
     async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
-        let _ = tx.send(StreamEvent::Done(self.take_response())).await;
+        // The pump ends the body here only when no line ended the stream,
+        // so `[DONE]` never came (#2236).
+        assert!(
+            !self.saw_done,
+            "an OpenAI stream ends at end of file only without [DONE]"
+        );
+        // Only a terminal signal ends a reply whole: a chunk naming its
+        // finish reason is one. Without it, whatever output came, the reply
+        // was cut short, or, with no event at all, the stream was empty.
+        if self.finished {
+            let _ = tx.send(StreamEvent::Done(self.take_response())).await;
+        } else {
+            // Tokens a usage chunk already reported were spent all the same.
+            crate::infrastructure::providers::sse_end::record_unfinished_usage(
+                self.trace.as_deref(),
+                self.usage.take(),
+                self.model.as_deref().unwrap_or_default(),
+            );
+            let error = crate::infrastructure::providers::sse_end::ended_early(
+                self.saw_event,
+                OPENAI_CUT_SHORT,
+            );
+            let _ = tx.send(StreamEvent::Error(error)).await;
+        }
     }
 }
 
@@ -169,18 +234,11 @@ pub(crate) async fn pump_sse_bytes(
 pub(crate) async fn pump_sse_bytes_for_model(
     response: &mut reqwest::Response,
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-    model: &str,
+    handler: OpenAiSseHandler,
     attempt: Option<super::super::attempt_transport::PassiveAttempt>,
     idle: super::super::stream_idle::StreamIdle,
 ) {
-    super::super::attempt_transport::pump_observed(
-        response,
-        tx,
-        OpenAiSseHandler::with_model(model),
-        attempt,
-        idle,
-    )
-    .await;
+    super::super::attempt_transport::pump_observed(response, tx, handler, attempt, idle).await;
 }
 
 /// Consume an owned OpenAI SSE byte stream, emitting `StreamEvent`s per delta.
@@ -192,13 +250,16 @@ pub(crate) async fn pump_sse_bytes_for_model(
 pub(crate) async fn pump_sse_response_for_model(
     mut response: reqwest::Response,
     tx: tokio::sync::mpsc::Sender<StreamEvent>,
-    model: String,
+    handler: OpenAiSseHandler,
     attempt: Option<super::super::attempt_transport::PassiveAttempt>,
     idle: super::super::stream_idle::StreamIdle,
 ) {
-    pump_sse_bytes_for_model(&mut response, &tx, &model, attempt, idle).await;
+    pump_sse_bytes_for_model(&mut response, &tx, handler, attempt, idle).await;
 }
 
+#[cfg(test)]
+#[path = "openai_sse_end_tests.rs"]
+mod end_tests;
 #[cfg(test)]
 #[path = "openai_finish_reason_tests.rs"]
 mod finish_reason_tests;

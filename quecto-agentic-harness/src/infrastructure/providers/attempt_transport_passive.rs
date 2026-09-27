@@ -140,21 +140,16 @@ impl PassiveAttempt {
     }
 
     /// A whole SSE body read by [`Self::read_sse`] was parsed: accepted, it
-    /// ended as its terminal event said or at end of file; refused, it was
-    /// rejected.
+    /// completed; refused because it ended before its terminal event, it
+    /// was cut short (#2249 review); refused otherwise, it was rejected.
     pub(in crate::infrastructure::providers) fn parsed<T>(&self, parsed: &Result<T, DomainError>) {
-        match parsed {
-            Ok(_) => self.eof(),
-            Err(_) => self.rejected(),
-        }
-    }
-
-    /// The body ended; unless a terminal event already ended the stream, it
-    /// ended at end of file.
-    fn eof(&self) {
-        let mut state = self.receipt.0.lock().unwrap_or_else(|e| e.into_inner());
-        if state.diagnostics.termination == Termination::Dropped {
-            state.diagnostics.termination = Termination::Eof;
+        match super::diagnostic_sse::whole_read_termination(parsed) {
+            Termination::Completed => self.completed(),
+            Termination::CutShort => {
+                self.receipt.fail();
+                self.receipt.termination(Termination::CutShort);
+            }
+            _ => self.rejected(),
         }
     }
 
@@ -195,10 +190,10 @@ impl<H: SseHandler> SseHandler for Observed<H> {
     }
 
     async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
-        if let Some(attempt) = &self.attempt {
-            attempt.eof();
+        match &self.attempt {
+            Some(attempt) => super::end_at_eof(&mut self.inner, tx, &attempt.receipt).await,
+            None => self.inner.on_eof(tx).await,
         }
-        self.inner.on_eof(tx).await
     }
 }
 

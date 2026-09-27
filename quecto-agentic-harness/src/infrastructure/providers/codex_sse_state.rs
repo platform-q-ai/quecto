@@ -119,10 +119,6 @@ pub(super) fn append_reasoning_with_limit(
 }
 
 impl SseAccumulator {
-    pub(super) fn has_observable_output(&self) -> bool {
-        !self.content.is_empty() || !self.tool_calls.is_empty() || !self.reasoning.is_empty()
-    }
-
     pub(super) fn parse_response_status(status: &str) -> StopReason {
         match status {
             "completed" => StopReason::EndTurn,
@@ -270,6 +266,15 @@ impl SseAccumulator {
                             tc.arguments = arguments.to_string();
                         }
                     }
+                }
+            }
+            // An in-flight response may report usage so far (#2249 review):
+            // kept, so a reply cut short still accounts it.
+            Some("response.created" | "response.in_progress") => {
+                if let Some(usage) = event["response"]["usage"].as_object() {
+                    self.usage = Some(crate::infrastructure::providers::usage::parse_codex_usage(
+                        usage,
+                    ));
                 }
             }
             Some("response.completed") => {

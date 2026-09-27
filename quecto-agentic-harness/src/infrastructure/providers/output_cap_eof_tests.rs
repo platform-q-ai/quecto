@@ -1,9 +1,8 @@
 //! #2210 PR review: a reply whose last output delta has no final newline.
 //! A whole-body read parses that last line, so its output is delivered and
 //! must count against the cap at end of file: crossing the cap there fails
-//! as `OutputCapped`, never `Ok`. A pump hands its handler only complete
-//! lines, so there the unterminated delta is never delivered, and what is
-//! delivered stays within the cap.
+//! as `OutputCapped`, never `Ok`. A pump hands its handler that last line
+//! too (#2249 review), so there it fails as `OutputCapped` as well.
 use super::output_cap_provider_tests::{CAP, DELTA, capped_trace, is_cap_error};
 use super::stream_idle::tests::{LIVE, bounded, servers};
 use super::stream_idle_provider_tests::{Vendor, request, terminations};
@@ -57,33 +56,38 @@ async fn a_whole_read_ending_in_an_unterminated_delta_past_its_cap_is_output_cap
 }
 
 /// The pumps: every vendor's incremental stream, gated or not, and OpenAI
-/// `chat_stream` (its events collected), gated or not. The unterminated delta never reaches the
-/// caller, so nothing past the cap does.
+/// `chat_stream` (its events collected), gated or not. A pump hands the
+/// unterminated last line to its handler like any line (#2249 review), so
+/// it counts against the cap there too: the attempt fails as
+/// `OutputCapped`, the caller's last event the cap error.
 #[tokio::test]
-async fn a_pump_never_delivers_an_unterminated_delta_past_its_cap() {
+async fn a_pump_holds_an_unterminated_last_delta_to_its_cap() {
     for vendor in Vendor::ALL {
         for gated in [false, true] {
             let url = servers::trickling(&[&body_ending_unterminated(vendor)]).await;
             let provider = vendor.provider(url, gated, LIVE);
             let messages = vec![Message::system("sys"), Message::user("hi")];
             let trace = capped_trace();
-            let delivered = bounded(async {
+            let last = bounded(async {
                 let mut rx = provider
                     .chat_stream_incremental(request(&messages, &trace))
                     .await;
-                let mut delivered = 0u64;
+                let mut last = None;
                 while let Some(event) = rx.recv().await {
-                    if let StreamEvent::TextDelta(text) = event {
-                        delivered += text.len() as u64;
-                    }
+                    last = Some(event);
                 }
-                delivered
+                last
             })
             .await;
-            assert!(delivered <= CAP, "{vendor:?} gated={gated}: {delivered}");
-            let attempts = trace.attempt_diagnostics();
-            assert!(attempts[0].output_bytes <= CAP, "{vendor:?} gated={gated}");
-            assert_ne!(attempts[0].termination, Termination::OutputCapped);
+            assert!(
+                matches!(&last, Some(StreamEvent::Error(m)) if is_cap_error(m)),
+                "{vendor:?} gated={gated}: {last:?}"
+            );
+            assert_eq!(
+                terminations(&trace),
+                [Termination::OutputCapped],
+                "{vendor:?} gated={gated}"
+            );
         }
     }
     for gated in [false, true] {
@@ -92,10 +96,13 @@ async fn a_pump_never_delivers_an_unterminated_delta_past_its_cap() {
         let messages = vec![Message::system("sys"), Message::user("hi")];
         let trace = capped_trace();
         let result = bounded(provider.chat_stream(request(&messages, &trace))).await;
-        let delivered = result.map_or(0, |reply| reply.content.unwrap_or_default().len() as u64);
-        assert!(delivered <= CAP, "gated={gated}: {delivered}");
         assert!(
-            trace.attempt_diagnostics()[0].output_bytes <= CAP,
+            matches!(&result, Err(DomainError::Provider(m)) if is_cap_error(m)),
+            "gated={gated}: {result:?}"
+        );
+        assert_eq!(
+            terminations(&trace),
+            [Termination::OutputCapped],
             "gated={gated}"
         );
     }
