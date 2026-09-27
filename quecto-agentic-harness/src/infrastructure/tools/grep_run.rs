@@ -271,7 +271,7 @@ impl MatchLines {
 }
 
 /// Aborts a task when dropped, so it never outlives the call that owns it.
-struct AbortOnDrop(tokio::task::AbortHandle);
+pub(super) struct AbortOnDrop(pub(super) tokio::task::AbortHandle);
 
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {

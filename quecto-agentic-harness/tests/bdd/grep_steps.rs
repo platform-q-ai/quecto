@@ -162,6 +162,36 @@ fn given_grep_file_long_lines(
     std::fs::write(ws.join(&filename), content).expect("failed to write long-line grep file");
 }
 
+/// One line of `a` with `word` `offset` bytes into it, and as much `a`
+/// after it (#2201).
+#[given(
+    regex = r#"^a grep workspace file "([^"]+)" with "([^"]+)" (\d+) bytes into one long line$"#
+)]
+fn given_grep_file_one_long_line(
+    world: &mut QuectoWorld,
+    filename: String,
+    word: String,
+    offset: usize,
+) {
+    let ws = ensure_grep_workspace(world);
+    let line = format!("{}{word}{}\n", "a".repeat(offset), "a".repeat(offset));
+    std::fs::write(ws.join(&filename), line).expect("failed to write the long-line grep file");
+}
+
+/// A file rg finds binary (NUL bytes) that holds `word` (#2202).
+#[given(regex = r#"^a grep workspace binary file "([^"]+)" holding "([^"]+)"$"#)]
+fn given_grep_binary_file(world: &mut QuectoWorld, filename: String, word: String) {
+    let ws = ensure_grep_workspace(world);
+    let path = ws.join(&filename);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).expect("failed to create the binary file's directory");
+    }
+    let mut content = b"\x7fELF\x00\x01".to_vec();
+    content.extend_from_slice(word.as_bytes());
+    content.extend_from_slice(b"\x00\n");
+    std::fs::write(path, content).expect("failed to write the binary grep file");
+}
+
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------

@@ -84,17 +84,20 @@ fn test_format_grep_output_match_limit() {
 }
 
 #[test]
-fn test_truncate_line_short() {
-    let (result, was_truncated) = truncate_line("hello", 500);
+fn test_show_line_short() {
+    let (result, was_truncated) = show_line("hello", &[], 500);
     assert_eq!(result, "hello");
     assert!(!was_truncated);
 }
 
 #[test]
-fn test_truncate_line_long() {
+fn test_show_line_long() {
     let long = "x".repeat(600);
-    let (result, was_truncated) = truncate_line(&long, 500);
-    assert!(result.contains("…"), "expected ellipsis");
+    let (result, was_truncated) = show_line(&long, &[], 500);
+    assert!(
+        result.contains("…[100 bytes]…"),
+        "the text left out is counted"
+    );
     assert!(result.len() < 600);
     assert!(was_truncated);
 }
@@ -594,7 +597,13 @@ async fn a_descendant_holding_the_pipes_cannot_hold_the_results() {
 #[test]
 fn rg_runs_without_a_users_config() {
     let request = grep_request::parse_request(&serde_json::json!({"pattern": "x"})).unwrap();
-    let cmd = build_rg_command("rg", Path::new("/ws"), Path::new("/ws"), &request);
+    let cmd = build_rg_command(
+        "rg",
+        Path::new("/ws"),
+        Path::new("/ws"),
+        &request,
+        Pass::Search,
+    );
     let args: Vec<String> = cmd
         .as_std()
         .get_args()

@@ -103,7 +103,8 @@ Feature: Grep Tool
     Given a grep workspace file "long_lines.txt" with 10 lines of 600 chars containing "target"
     When I grep for pattern "target" with limit 3
     Then the grep result should contain "3 matches limit reached"
-    And the grep result should contain "Use read tool to see full lines"
+    And the grep result should contain "Lines over 500 bytes are cut to that"
+    And the grep result should contain "cut -b"
     And the grep result should not be an error
 
   @done
@@ -306,3 +307,38 @@ Feature: Grep Tool
     And search 1 in the search log should record ranking "ranked"
     And search 2 in the search log should be "files" output that found 1
     And search 3 in the search log should be "refused" output that found 0
+
+  # ─── long lines and binary files (QA 2026-09-27) ───
+
+  @done @issue-2201
+  Scenario: A match deep in a long line is shown around it, with where it is
+    Given a grep workspace file "oneline.txt" with "needle" 1048576 bytes into one long line
+    When I grep with arguments:
+      """
+      {"pattern": "needle", "path": "oneline.txt"}
+      """
+    Then the grep result should contain "aaaneedleaaa"
+    And the grep result should contain "oneline.txt:1: …[1048329 bytes]…"
+    And the grep result should contain "[line is 2.0MB; match at byte 1048576]"
+    And the grep result should not be an error
+
+  @done @issue-2202
+  Scenario: A directory search says which skipped binary files hold a match
+    Given a grep workspace binary file "bin/tool" holding "GLIBC_2.34"
+    And a grep workspace file "bin/README" with content:
+      """
+      nothing to see
+      """
+    When I grep with arguments:
+      """
+      {"pattern": "GLIBC", "path": "bin"}
+      """
+    Then the grep result should contain "No matches found"
+    And the grep result should contain "1 binary file holds a match but was skipped: bin/tool. Name it as path to search it"
+    When I grep with arguments:
+      """
+      {"pattern": "GLIBC", "path": "bin/tool", "output": "count"}
+      """
+    Then the grep result should contain "bin/tool: 1"
+    And the grep result should not contain "skipped"
+    And the grep result should not be an error

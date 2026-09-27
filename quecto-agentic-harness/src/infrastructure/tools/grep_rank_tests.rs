@@ -56,6 +56,7 @@ fn workspace() -> (tempfile::TempDir, Vec<RgMatch>) {
             line_count: 1,
             score: None,
             column: None,
+            hits: Vec::new(),
             text: None,
         })
         .collect();
@@ -208,6 +209,7 @@ async fn a_long_neighbouring_line_never_hides_the_match() {
         line_count: 1,
         score: None,
         column: Some(0),
+        hits: Vec::new(),
         text: None,
     }];
     let (ranking, judge) = ranking(Relevance::Scored(vec![Some(0.5)]), 30);
@@ -278,6 +280,7 @@ async fn a_match_far_along_a_long_line_is_what_the_judge_sees() {
         line_count: 1,
         score: None,
         column: Some(450),
+        hits: Vec::new(),
         text: None,
     }];
     let (ranking, judge) = ranking(Relevance::Scored(vec![Some(0.5)]), 30);
@@ -434,6 +437,7 @@ async fn the_judge_sees_the_function_a_matched_comment_documents() {
         line_count: 1,
         score: None,
         column: None,
+        hits: Vec::new(),
         text: None,
     };
     let (judged, judge) = ranking(Relevance::Scored(vec![Some(0.9), Some(0.1)]), 30);
@@ -470,6 +474,7 @@ async fn context_stops_at_the_end_and_long_matches_are_clamped() {
         line_count,
         score: None,
         column: None,
+        hits: Vec::new(),
         text: None,
     };
     let (judged, judge) = ranking(Relevance::Scored(vec![None, None]), 30);
@@ -505,6 +510,7 @@ async fn a_line_cut_by_the_file_cache_is_never_shown() {
         line_count: 1,
         score: None,
         column: None,
+        hits: Vec::new(),
         text: None,
     };
     let (judged, judge) = ranking(Relevance::Scored(vec![Some(0.5)]), 30);
@@ -546,6 +552,7 @@ async fn a_line_ending_just_past_the_cache_cap_is_kept() {
         line_count: 1,
         score: None,
         column: None,
+        hits: Vec::new(),
         text: None,
     };
     let (judged, judge) = ranking(Relevance::Scored(vec![None, None, None]), 30);
