@@ -431,66 +431,6 @@ fn test_small_edit_diff_behavior_is_unchanged_without_truncation_notice() {
     );
 }
 
-// --- normalize_for_fuzzy_match unit tests ---
-
-#[test]
-fn test_fuzzy_normalise_smart_single_quotes() {
-    // U+2018 U+2019 U+201A U+201B → '
-    for ch in ['\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
-        let input = format!("it{ch}s");
-        let result = normalize_for_fuzzy_match(&input);
-        assert_eq!(result, "it's", "char U+{:04X} should become '", ch as u32);
-    }
-}
-
-#[test]
-fn test_fuzzy_normalise_smart_double_quotes() {
-    // U+201C U+201D U+201E U+201F → "
-    for ch in ['\u{201C}', '\u{201D}', '\u{201E}', '\u{201F}'] {
-        let input = format!("{ch}hello{ch}");
-        let result = normalize_for_fuzzy_match(&input);
-        assert_eq!(
-            result, "\"hello\"",
-            "char U+{:04X} should become \"",
-            ch as u32
-        );
-    }
-}
-
-#[test]
-fn test_fuzzy_normalise_unicode_dashes() {
-    // U+2010–U+2015, U+2212 → -
-    for ch in [
-        '\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}', '\u{2014}', '\u{2015}', '\u{2212}',
-    ] {
-        let input = format!("a{ch}b");
-        let result = normalize_for_fuzzy_match(&input);
-        assert_eq!(result, "a-b", "char U+{:04X} should become -", ch as u32);
-    }
-}
-
-#[test]
-fn test_fuzzy_normalise_trailing_whitespace_per_line() {
-    let input = "hello   \nworld  \n";
-    let result = normalize_for_fuzzy_match(input);
-    assert_eq!(result, "hello\nworld\n");
-}
-
-#[test]
-fn test_fuzzy_normalise_special_spaces() {
-    // NBSP and ideographic space → regular space
-    let input = "a\u{00A0}b\u{3000}c";
-    let result = normalize_for_fuzzy_match(input);
-    assert_eq!(result, "a b c");
-}
-
-#[test]
-fn test_fuzzy_normalise_strips_bom_and_crlf() {
-    let input = "\u{FEFF}line1\r\nline2\r\n";
-    let result = normalize_for_fuzzy_match(input);
-    assert_eq!(result, "line1\nline2\n");
-}
-
 #[test]
 fn test_plain_lf_without_bom_normalise_and_restore_are_identity() {
     let plain = "first\nsecond\n";

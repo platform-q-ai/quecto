@@ -3,6 +3,7 @@
 // Note: append_file removed in #118 (use write or bash >> instead).
 
 mod edit;
+mod edit_match;
 mod ls;
 mod read;
 mod write;

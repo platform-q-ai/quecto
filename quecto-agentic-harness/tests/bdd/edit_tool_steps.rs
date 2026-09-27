@@ -100,7 +100,41 @@ fn when_edit_trailing_whitespace(world: &mut QuectoWorld, filename: String) {
     world.tool_result = Some(result.map_err(|e| e.to_string()));
 }
 
+/// Execute edit with `oldText`/`newText` given as escaped Gherkin strings
+/// (`\n` is a newline), so they can span lines (#2191).
+#[when(expr = "the agent edits {string} replacing {string} with {string}")]
+fn when_agent_edits_replacing(world: &mut QuectoWorld, filename: String, old: String, new: String) {
+    let args_json = serde_json::json!({
+        "path": filename,
+        "oldText": crate::agent_tools_steps::interpret_escapes(&old),
+        "newText": crate::agent_tools_steps::interpret_escapes(&new),
+    })
+    .to_string();
+    let registry = world.tool_registry.as_ref().expect("tool registry not set");
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(registry.execute("edit", &args_json));
+    world.tool_result = Some(result.map_err(|e| e.to_string()));
+}
+
 // --- Assertions ---
+
+/// The whole file, byte for byte (escapes interpreted).
+#[then(expr = "the file {string} should read exactly {string}")]
+fn then_file_reads_exactly(world: &mut QuectoWorld, filename: String, expected: String) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    let content = std::fs::read_to_string(ws.join(&filename))
+        .unwrap_or_else(|_| panic!("failed to read {}", filename));
+    assert_eq!(
+        content,
+        crate::agent_tools_steps::interpret_escapes(&expected),
+        "file '{}'",
+        filename
+    );
+}
 
 #[then(expr = "the file {string} should contain CRLF line endings")]
 fn then_file_contains_crlf(world: &mut QuectoWorld, filename: String) {
