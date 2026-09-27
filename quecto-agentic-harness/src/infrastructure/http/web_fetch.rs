@@ -9,11 +9,15 @@
 //!
 //! A proxy configured by `HTTP(S)_PROXY`/`ALL_PROXY` is honoured as before:
 //! through it, only the URL's (and each hop's) literal address is checked,
-//! because the proxy resolves names and connects on its own.
+//! because the proxy resolves names and connects on its own. The proxies'
+//! own names are resolved here unfiltered (reqwest reaches a proxy through
+//! this resolver), so a fetch of a URL naming the proxy host itself, when
+//! `NO_PROXY` sends it direct, is not filtered either.
 use crate::application::agent_turn::use_cases::web_fetch::{
     FetchFailure, FetchOutcome, FetchRequest, FetchWebContent, HttpStatus,
 };
 use crate::domain::network_destination::{NonPublicAddress, authorize_destination};
+use crate::infrastructure::http::proxy_env::{ProxyEnvironment, proxy_environment};
 use std::{future::Future, net::IpAddr, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 const MAX_RAW_BYTES: usize = 5 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -33,25 +37,39 @@ impl ReqwestFetchWebContent {
     /// Over the shared client recipe (headers, TLS trust, timeouts), with
     /// destination enforcement laid over it last.
     pub fn new(builder: reqwest::ClientBuilder) -> Self {
-        Self::with_policy(builder, authorize_destination)
+        Self::with_environment(builder, authorize_destination, process_proxies())
     }
 
     /// Tests' local servers listen on 127.0.0.1: this adapter admits that one
     /// address beyond public space, and is never compiled into production.
     #[cfg(any(test, feature = "test-support"))]
     pub fn allowing_loopback_for_tests(builder: reqwest::ClientBuilder) -> Self {
-        Self::with_policy(builder, loopback_or_public)
+        Self::with_environment(builder, loopback_or_public, process_proxies())
     }
 
-    fn with_policy(builder: reqwest::ClientBuilder, policy: DestinationPolicy) -> Self {
-        warn_once_when_proxied(|name| std::env::var(name).ok());
-        // Proxies are kept (#1942 changes no proxy behaviour without
-        // approval). Through a proxy the resolver below is not consulted:
-        // the proxy resolves names and connects, so only address literals
-        // (the URL's, checked in `fetch`, and each hop's, checked by the
-        // redirect policy) are enforced.
+    fn with_environment(
+        builder: reqwest::ClientBuilder,
+        policy: DestinationPolicy,
+        proxies: ProxyEnvironment,
+    ) -> Self {
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        if let Some(warning) = proxies.warning() {
+            WARNED.call_once(|| tracing::warn!("{warning}"));
+        }
+        // Proxies are kept as before (#1942 changes no proxy behaviour
+        // without approval). reqwest reaches a proxy through this same
+        // resolver, so the proxies' own names are passed unfiltered: an
+        // internal proxy (`proxy.corp` on 10.x, `localhost`) keeps working.
+        // Through a proxy, the fetched URL's name is resolved by the proxy,
+        // not here, so only address literals (the URL's, checked in
+        // `fetch`, and each hop's, checked by the redirect policy) are
+        // enforced.
+        let resolver = AuthorizingResolver {
+            policy,
+            proxy_names: proxies.proxy_names().into(),
+        };
         let client = builder
-            .dns_resolver(Arc::new(AuthorizingResolver { policy }))
+            .dns_resolver(Arc::new(resolver))
             .redirect(authorizing_redirects(policy))
             .build()
             .map_err(|e| format!("the web-fetch client could not be built: {e}"));
@@ -59,51 +77,16 @@ impl ReqwestFetchWebContent {
     }
 }
 
+/// The proxies this process's environment configures for reqwest.
+fn process_proxies() -> ProxyEnvironment {
+    proxy_environment(|name| std::env::var(name).ok())
+}
+
 #[cfg(any(test, feature = "test-support"))]
 fn loopback_or_public(address: IpAddr) -> Result<(), NonPublicAddress> {
     match address {
         IpAddr::V4(v4) if v4 == std::net::Ipv4Addr::LOCALHOST => Ok(()),
         _ => authorize_destination(address),
-    }
-}
-
-/// The proxy variable reqwest will use, found the way reqwest (through
-/// hyper-util's `Matcher::from_env`) finds it: the first of each upper/lower
-/// case pair that is set, in effect when non-empty; `HTTP_PROXY` is ignored
-/// under CGI (`REQUEST_METHOD` set). Platform proxy settings (macOS,
-/// Windows) are not seen here.
-fn proxy_variable_in_effect(lookup: impl Fn(&str) -> Option<String>) -> Option<&'static str> {
-    let cgi = lookup("REQUEST_METHOD").is_some();
-    let pairs: [(&'static str, &'static str, bool); 3] = [
-        ("ALL_PROXY", "all_proxy", true),
-        ("HTTPS_PROXY", "https_proxy", true),
-        ("HTTP_PROXY", "http_proxy", !cgi),
-    ];
-    pairs
-        .into_iter()
-        .filter(|(_, _, honoured)| *honoured)
-        .find_map(|(upper, lower, _)| {
-            let (name, value) = [upper, lower]
-                .into_iter()
-                .find_map(|name| lookup(name).map(|value| (name, value)))?;
-            (!value.is_empty()).then_some(name)
-        })
-}
-
-/// What web_fetch says when a proxy variable is in effect.
-fn proxy_warning(lookup: impl Fn(&str) -> Option<String>) -> Option<String> {
-    proxy_variable_in_effect(lookup).map(|name| {
-        format!(
-            "web_fetch: {name} is set; fetches through an HTTP(S) proxy are checked only on the URL's literal address; the proxy resolves names"
-        )
-    })
-}
-
-/// Logs [`proxy_warning`] the first time a web-fetch adapter is built.
-fn warn_once_when_proxied(lookup: impl Fn(&str) -> Option<String>) {
-    static WARNED: std::sync::Once = std::sync::Once::new();
-    if let Some(warning) = proxy_warning(lookup) {
-        WARNED.call_once(|| tracing::warn!("{warning}"));
     }
 }
 
@@ -156,19 +139,39 @@ fn authorizing_redirects(policy: DestinationPolicy) -> reqwest::redirect::Policy
 /// answer is the connected one.
 struct AuthorizingResolver {
     policy: DestinationPolicy,
+    /// The configured proxies' own names, passed unfiltered.
+    proxy_names: Arc<[String]>,
 }
 impl reqwest::dns::Resolve for AuthorizingResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let policy = self.policy;
+        let proxy_names = self.proxy_names.clone();
         Box::pin(async move {
             let host = name.as_str().to_owned();
             let answers: Vec<SocketAddr> =
                 tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
-            let admitted = authorized_answers(&host, answers, policy)?;
+            let admitted = admitted_answers(&host, answers, policy, &proxy_names)?;
             assert!(!admitted.is_empty(), "an admitted answer is never empty");
             let addresses: reqwest::dns::Addrs = Box::new(admitted.into_iter());
             Ok(addresses)
         })
+    }
+}
+
+/// Every answer for a configured proxy's own name (the proxy is the
+/// operator's choice, reached as before); otherwise [`authorized_answers`].
+fn admitted_answers(
+    host: &str,
+    answers: Vec<SocketAddr>,
+    policy: DestinationPolicy,
+    proxy_names: &[String],
+) -> Result<Vec<SocketAddr>, Refused> {
+    let is_proxy = proxy_names
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case(host));
+    match is_proxy && !answers.is_empty() {
+        true => Ok(answers),
+        false => authorized_answers(host, answers, policy),
     }
 }
 

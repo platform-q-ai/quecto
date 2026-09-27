@@ -7,6 +7,12 @@
 //! default. IPv6 forms that stand for an IPv4 address (IPv4-mapped, NAT64,
 //! 6to4, Teredo) are judged by the IPv4 address they reach, so a private
 //! IPv4 address cannot be smuggled in an IPv6 spelling. Pure; no I/O.
+//!
+//! Residual risk: only the well-known NAT64 prefix `64:ff9b::/96` is
+//! recognised. A network-specific NAT64 prefix (RFC 6052) inside allocated
+//! registry space looks like any public IPv6 address, so on an IPv6-only
+//! host behind such a translator an embedded private IPv4 address could be
+//! reached through it.
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// A refused destination: the address as written and, when it is an IPv6

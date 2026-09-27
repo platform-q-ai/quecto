@@ -90,9 +90,13 @@ async fn a_refused_dns_answer_is_never_connected_even_beside_an_allowed_one() {
     // `localhost` answers 127.0.0.1 (refused here) and, where configured,
     // ::1 (allowed, nothing listening): whatever happens to ::1, the
     // refused 127.0.0.1 is never connected.
-    let _ = ReqwestFetchWebContent::with_policy(reqwest::Client::builder(), ipv6_loopback_only)
-        .fetch(&request(&format!("http://localhost:{port}/")))
-        .await;
+    let _ = ReqwestFetchWebContent::with_environment(
+        reqwest::Client::builder(),
+        ipv6_loopback_only,
+        Default::default(),
+    )
+    .fetch(&request(&format!("http://localhost:{port}/")))
+    .await;
     assert_eq!(accepted.load(Ordering::SeqCst), 0);
     peer.abort();
 }
@@ -242,58 +246,75 @@ async fn a_proxy_on_the_injected_builder_is_used_and_resolves_names_itself() {
     proxy.abort();
 }
 
-#[test]
-fn a_proxy_variable_is_found_the_way_reqwest_finds_it() {
-    let env = |pairs: &'static [(&'static str, &'static str)]| {
-        move |name: &str| {
-            pairs
-                .iter()
-                .find(|(key, _)| *key == name)
-                .map(|(_, value)| value.to_string())
-        }
+/// The environment reqwest would read for `HTTPS_PROXY=http://localhost:<port>`
+/// (and the same for plain HTTP): the builder below carries that proxy, as
+/// reqwest would take it from these variables.
+fn localhost_proxy_environment() -> crate::infrastructure::http::proxy_env::ProxyEnvironment {
+    crate::infrastructure::http::proxy_env::proxy_environment(|name| {
+        matches!(name, "HTTP_PROXY" | "HTTPS_PROXY").then(|| "http://localhost:3128".to_owned())
+    })
+}
+
+/// #1942 review: reqwest reaches a proxy through the same connector, so the
+/// proxy's own name goes through the resolver. A proxy named by a
+/// non-public name (`localhost`, `proxy.corp` on 10.x) is passed unfiltered,
+/// so it keeps working as before; every other name is still filtered.
+#[tokio::test]
+async fn a_proxy_given_by_a_non_public_name_is_still_reached() {
+    let (port, direct, peer) = counting_peer(ok).await;
+    let (proxy_port, proxied, proxy) = counting_peer(ok).await;
+    let builder = || {
+        reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all(format!("http://localhost:{proxy_port}")).unwrap())
     };
-    assert_eq!(proxy_variable_in_effect(env(&[])), None);
+    let adapter = ReqwestFetchWebContent::with_environment(
+        builder(),
+        authorize_destination,
+        localhost_proxy_environment(),
+    );
+    let result = adapter
+        .fetch(&request(&format!("http://fetch.example:{port}/")))
+        .await;
+    assert!(
+        matches!(result, Ok(FetchOutcome::SuccessBody { .. })),
+        "{result:?}"
+    );
+    assert_eq!(proxied.load(Ordering::SeqCst), 1, "sent to the named proxy");
+    assert_eq!(direct.load(Ordering::SeqCst), 0);
+    // Without the exemption the proxy's own name is refused, which is why
+    // the exemption exists.
+    let unexempted = ReqwestFetchWebContent::with_environment(
+        builder(),
+        authorize_destination,
+        Default::default(),
+    )
+    .fetch(&request(&format!("http://fetch.example:{port}/")))
+    .await;
+    assert!(refused(unexempted).starts_with("localhost resolves to no public address"),);
     assert_eq!(
-        proxy_variable_in_effect(env(&[("https_proxy", "http://p:1")])),
-        Some("https_proxy")
+        proxied.load(Ordering::SeqCst),
+        1,
+        "never reached unexempted"
+    );
+    peer.abort();
+    proxy.abort();
+}
+
+#[test]
+fn only_a_proxy_name_is_passed_unfiltered() {
+    let v4: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let proxies = ["localhost".to_owned()];
+    assert_eq!(
+        admitted_answers("localhost", vec![v4], authorize_destination, &proxies),
+        Ok(vec![v4])
     );
     assert_eq!(
-        proxy_variable_in_effect(env(&[("HTTP_PROXY", "http://p:1")])),
-        Some("HTTP_PROXY")
+        admitted_answers("LOCALHOST", vec![v4], authorize_destination, &proxies),
+        Ok(vec![v4]),
+        "names compare case-insensitively"
     );
-    assert_eq!(
-        proxy_variable_in_effect(env(&[("ALL_PROXY", "socks5://p:1")])),
-        Some("ALL_PROXY")
-    );
-    // The upper-case name wins even when empty, as in reqwest: no proxy.
-    assert_eq!(
-        proxy_variable_in_effect(env(&[("HTTPS_PROXY", ""), ("https_proxy", "http://p:1")])),
-        None
-    );
-    // Under CGI, HTTP_PROXY is ignored (httpoxy); HTTPS_PROXY is not.
-    assert_eq!(
-        proxy_variable_in_effect(env(&[
-            ("REQUEST_METHOD", "GET"),
-            ("HTTP_PROXY", "http://p:1")
-        ])),
-        None
-    );
-    assert_eq!(
-        proxy_variable_in_effect(env(&[
-            ("REQUEST_METHOD", "GET"),
-            ("HTTPS_PROXY", "http://p:1")
-        ])),
-        Some("HTTPS_PROXY")
-    );
-    // NO_PROXY alone configures no proxy.
-    assert_eq!(proxy_variable_in_effect(env(&[("NO_PROXY", "*")])), None);
-    assert_eq!(
-        proxy_warning(env(&[("http_proxy", "http://p:1")])).as_deref(),
-        Some(
-            "web_fetch: http_proxy is set; fetches through an HTTP(S) proxy are checked only on the URL's literal address; the proxy resolves names"
-        )
-    );
-    assert_eq!(proxy_warning(env(&[])), None);
+    assert!(admitted_answers("other.test", vec![v4], authorize_destination, &proxies).is_err());
+    assert!(admitted_answers("localhost", vec![], authorize_destination, &proxies).is_err());
 }
 
 #[tokio::test]

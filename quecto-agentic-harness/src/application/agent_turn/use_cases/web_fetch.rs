@@ -274,16 +274,15 @@ fn classify(url: url::Url) -> ExecutionGate {
     }
 }
 /// Why the URL's own host may not be fetched, if it may not. An address
-/// literal must be public (#1942); a name is checked again, address by
-/// address, when it is resolved.
+/// literal must be public (#1942): that allowlist is the security boundary,
+/// applied again by the adapter to every address a name resolves to and to
+/// every redirect hop.
 fn restriction(url: &url::Url) -> Option<String> {
     let address = match url.host() {
         Some(url::Host::Ipv4(v4)) => IpAddr::V4(v4),
         Some(url::Host::Ipv6(v6)) => IpAddr::V6(v6),
         Some(url::Host::Domain(name)) => {
-            return LOCAL_NAMES
-                .contains(&name)
-                .then(|| format!("{name} is a local name"));
+            return is_local_name(name).then(|| format!("{name} is a local name"));
         }
         None => return Some("the URL names no host".to_owned()),
     };
@@ -291,14 +290,22 @@ fn restriction(url: &url::Url) -> Option<String> {
         .err()
         .map(|refused| refused.to_string())
 }
-/// Names that reach this machine or its cloud metadata service without DNS
-/// saying so.
-const LOCAL_NAMES: &[&str] = &[
-    "localhost",
-    "localhost.",
-    "metadata.google.internal",
-    "metadata.google.internal.",
-];
+/// A courtesy, not the security boundary: names that mean this machine or a
+/// cloud metadata service, refused early with a plain reason. Without a
+/// proxy it adds nothing (every address such a name resolves to is refused
+/// by the allowlist anyway); through an HTTP(S) proxy, which resolves names
+/// itself, it is the only name check there is, and a denylist of names can
+/// never be complete.
+fn is_local_name(name: &str) -> bool {
+    const LOCAL_NAMES: &[&str] = &[
+        "localhost",
+        "metadata",
+        "metadata.goog",
+        "metadata.google.internal",
+    ];
+    let bare = name.strip_suffix('.').unwrap_or(name);
+    LOCAL_NAMES.contains(&bare) || bare.ends_with(".localhost")
+}
 fn truncate_output(content: String, kb: u32) -> String {
     let max = kb as usize * 1024;
     if content.len() <= max {

@@ -55,6 +55,11 @@ async fn accepted_baseline_hosts_call_port_once() {
         "http://8.8.8.8",
         "http://[2606:4700:4700::1111]",
         "http://[::ffff:8.8.8.8]",
+        // Only whole labels: these merely contain a local name.
+        "http://notlocalhost/",
+        "http://localhost.example.com/",
+        "http://metadata.example.com/",
+        "http://goog.metadata.example/",
     ] {
         let (f, u) = use_case(FetchOutcome::SuccessBody {
             body: b"ok".to_vec(),
@@ -104,6 +109,14 @@ async fn non_public_address_literals_in_any_spelling_never_call_port() {
         ("http://127.1/", "127.0.0.1 is not a public address"),
         ("http://localhost./", "localhost. is a local name"),
         ("http://LOCALHOST/", "localhost is a local name"),
+        ("http://foo.localhost/", "foo.localhost is a local name"),
+        ("http://a.b.localhost./", "a.b.localhost. is a local name"),
+        ("http://metadata/", "metadata is a local name"),
+        ("http://metadata.goog./", "metadata.goog. is a local name"),
+        (
+            "http://metadata.google.internal/",
+            "metadata.google.internal is a local name",
+        ),
     ] {
         let (f, u) = use_case(FetchOutcome::SuccessBody {
             body: vec![],
