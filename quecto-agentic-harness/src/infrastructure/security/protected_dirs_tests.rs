@@ -21,14 +21,18 @@ fn mac() -> HostContext {
 
 fn blocked(host: &HostContext, cmd: &str) {
     match check_with(cmd, host) {
-        Err(v) => assert_eq!(v.rule, "rm-protected-dir", "{cmd}: {}", v.rule),
+        Err(v) => assert_eq!(v.rule.id(), "rm-protected-dir", "{cmd}: {}", v.rule.id()),
         Ok(()) => panic!("expected `{cmd}` to be blocked"),
     }
 }
 
 fn allowed(host: &HostContext, cmd: &str) {
     if let Err(v) = check_with(cmd, host) {
-        panic!("expected `{cmd}` allowed, got {} at `{}`", v.rule, v.site);
+        panic!(
+            "expected `{cmd}` allowed, got {} at `{}`",
+            v.rule.id(),
+            v.site
+        );
     }
 }
 

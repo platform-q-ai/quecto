@@ -376,8 +376,7 @@ fn view() -> TailView {
         by_bytes: true,
         capture_cut: false,
         combined_len: 90,
-        tail_lines: 2000,
-        tail_bytes: 51200,
+        long_lines: None,
     }
 }
 
@@ -392,6 +391,28 @@ fn the_truncation_hint_says_where_the_rest_went() {
     let unsaved = truncation_hint(None, &view());
     assert!(unsaved.contains("could not be saved"), "{unsaved}");
     assert!(unsaved.contains("output_file"), "{unsaved}");
+    assert!(unsaved.contains("Showing lines 3-9 of 9"), "{unsaved}");
+}
+
+/// #2196: cut lines are named in the note, saved or not.
+#[test]
+fn the_truncation_hint_names_cut_lines() {
+    let view = TailView {
+        long_lines: Some("line 9 is 60000 bytes".into()),
+        ..view()
+    };
+    assert_eq!(
+        truncation_hint(Some("/t/x.log"), &view),
+        "\n[Showing lines 3-9 of 9 (50KB limit); line 9 is 60000 bytes. `read` the saved file for \
+         lines up to 50KB whole, or reformat the output with `jq .` / `fold -w 200`. Full output \
+         (90 bytes) saved to: /t/x.log]"
+    );
+    let unsaved = truncation_hint(None, &view);
+    assert!(
+        unsaved.contains("; line 9 is 60000 bytes. Reformat the output with `jq .`"),
+        "{unsaved}"
+    );
+    assert!(unsaved.contains("could not be saved"), "{unsaved}");
 }
 
 /// #2167 review: the real entry point saves into the per-user, owner-only

@@ -21,18 +21,20 @@ const NAME_SUFFIX: &str = ".log";
 const NAME_RANDOM_LEN: usize = 6;
 
 /// The directory's name; each user has their own (`<name>-<uid>`), so no
-/// user can squat another's (#2167 review). Unit tests save under their own
-/// name so a test run never prunes the real directory.
-#[cfg(not(test))]
+/// user can squat another's (#2167 review). Tests — unit tests, and the
+/// BDD and integration suites, which link the `test-support` build — save
+/// under their own name, so a test run never writes to or prunes the real
+/// directory.
+#[cfg(not(any(test, feature = "test-support")))]
 const DIR_NAME: &str = "quecto-bash-output";
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 const DIR_NAME: &str = "quecto-bash-output-lib-tests";
 
 /// The directory every user shared before it was per user: the files this
 /// user saved there are swept away, the directory itself is left alone.
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 const LEGACY_DIR_NAME: &str = "quecto-bash-output";
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 const LEGACY_DIR_NAME: &str = "quecto-bash-output-lib-tests-legacy";
 
 /// The old shared directory keeps a day of this user's files, so a session
@@ -51,35 +53,43 @@ pub(super) struct TailView {
     /// The capture itself already dropped part of the middle.
     pub capture_cut: bool,
     pub combined_len: usize,
-    pub tail_lines: usize,
-    pub tail_bytes: usize,
+    /// The note on over-long lines shown cut to their start and end (#2196).
+    pub long_lines: Option<String>,
 }
 
-/// The note after a cut output's tail: where the rest was saved, or that it
-/// could not be (#2167 review).
+/// The note after a cut output's tail: which lines it shows, which of them
+/// are cut and how to see them whole (#2196), and where the rest was saved,
+/// or that it could not be (#2167 review). The saved path ends the note.
 pub(super) fn truncation_hint(saved_to: Option<&str>, view: &TailView) -> String {
+    let limit_note = if view.by_bytes { " (50KB limit)" } else { "" };
+    let long_note = match (&view.long_lines, saved_to) {
+        (Some(note), Some(_)) => format!(
+            "; {note}. `read` the saved file for lines up to 50KB whole, or reformat the output \
+             with `jq .` / `fold -w 200`"
+        ),
+        (Some(note), None) => format!(
+            "; {note}. Reformat the output with `jq .` / `fold -w 200` to see such lines whole"
+        ),
+        (None, _) => String::new(),
+    };
+    let shown = format!(
+        "Showing lines {}-{} of {}{limit_note}{long_note}",
+        view.start_line, view.end_line, view.total
+    );
     match saved_to {
         Some(path) => {
-            let limit_note = if view.by_bytes { " (50KB limit)" } else { "" };
             // A capture that dropped its middle is not the full output.
             let saved = match view.capture_cut {
                 true => "Output (start and end; middle omitted)",
                 false => "Full output",
             };
             format!(
-                "\n[Showing lines {}-{} of {}{}. {} ({} bytes) saved to: {}]",
-                view.start_line,
-                view.end_line,
-                view.total,
-                limit_note,
-                saved,
-                view.combined_len,
-                path
+                "\n[{shown}. {saved} ({} bytes) saved to: {path}]",
+                view.combined_len
             )
         }
         None => format!(
-            "\n[Output truncated to last {} lines / {} bytes; the full output could not be saved: rerun with \"output_file\" to keep it]",
-            view.tail_lines, view.tail_bytes
+            "\n[{shown}. The full output could not be saved: rerun with \"output_file\" to keep it]"
         ),
     }
 }

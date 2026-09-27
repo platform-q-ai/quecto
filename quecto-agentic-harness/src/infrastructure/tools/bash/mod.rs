@@ -18,8 +18,6 @@ use crate::domain::error::DomainError;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
-use crate::infrastructure::tools::truncate::{TruncatedBy, truncate_tail};
-
 /// Default per-command capture cap (10 MiB). Output beyond this is truncated.
 const MAX_CAPTURE_BYTES: usize = 10 * 1024 * 1024;
 /// Grace window for draining stdout/stderr after a timed-out child is killed.
@@ -36,11 +34,16 @@ const BACKGROUND_NOTE: &str = "[a background process still holds this command's 
      returned without waiting for it, and its later output is discarded. Redirect it to keep it, \
      e.g. `cmd > out.log 2>&1 &`]";
 
+mod binary;
 mod capture;
+mod inline_output;
+mod long_lines;
 mod saved_output;
-use capture::StreamReader;
 #[cfg(test)]
 use capture::read_stream_limited;
+use capture::{Stream, StreamReader};
+use inline_output::truncate_output;
+#[cfg(test)]
 use saved_output::save_to_temp_file;
 
 #[derive(Debug, Clone)]
@@ -214,11 +217,11 @@ impl ExecTool {
         let stdout_task = child
             .stdout
             .take()
-            .map(|pipe| StreamReader::spawn(pipe, self.max_capture_bytes));
+            .map(|pipe| StreamReader::spawn(pipe, self.max_capture_bytes, Stream::Stdout));
         let stderr_task = child
             .stderr
             .take()
-            .map(|pipe| StreamReader::spawn(pipe, self.max_capture_bytes));
+            .map(|pipe| StreamReader::spawn(pipe, self.max_capture_bytes, Stream::Stderr));
 
         let stream_tasks = StreamTasks {
             stdout_task,
@@ -423,12 +426,8 @@ async fn run_child_with_timeout(
     }
 }
 
-/// Collect stdout + stderr, truncate, and append Quecto-format path hint if needed.
-///
-/// Truncation notice format (matching Quecto's bash.ts):
-/// - Byte-truncated:  `[Showing lines X-Y of Z (50KB limit). Full output: PATH]`
-/// - Line-truncated:  `[Showing lines X-Y of Z. Full output: PATH]`
-/// - Save fails:      `[Output truncated to last N lines / N bytes; the full output could not be saved, …]`
+/// Collect stdout + stderr, truncate, and append the note on what is shown
+/// (see [`inline_output::truncate_output`]).
 #[cfg(test)]
 async fn collect_and_truncate_output(stream_tasks: &mut StreamTasks) -> String {
     let (output, capture_cut, _) = collect_after_exit(stream_tasks).await;
@@ -469,42 +468,6 @@ fn combine(stdout: String, stderr: String) -> String {
     } else {
         format!("{}\n{}", stdout, stderr)
     }
-}
-
-/// The inline tail of `combined`, saving the whole to a temp file when cut;
-/// `capture_cut` says the capture itself already dropped part of the middle.
-async fn truncate_output(combined: String, capture_cut: bool) -> String {
-    const TAIL_MAX_LINES: usize = 2000;
-    const TAIL_MAX_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
-
-    let tr = truncate_tail(&combined, TAIL_MAX_LINES, TAIL_MAX_BYTES);
-    if !tr.truncated {
-        return tr.content;
-    }
-
-    // Compute which lines are shown (tail slice).
-    let total = tr.total_lines;
-    let shown = tr.output_lines;
-    let start_line = total.saturating_sub(shown) + 1;
-    let end_line = total;
-    let combined_len = combined.len();
-
-    let view = saved_output::TailView {
-        start_line,
-        end_line,
-        total,
-        by_bytes: tr.truncated_by == Some(TruncatedBy::Bytes),
-        capture_cut,
-        combined_len,
-        tail_lines: TAIL_MAX_LINES,
-        tail_bytes: TAIL_MAX_BYTES,
-    };
-    let saved_to = save_to_temp_file(combined).await;
-    let hint = saved_output::truncation_hint(saved_to.as_deref(), &view);
-
-    let mut output = tr.content;
-    output.push_str(&hint);
-    output
 }
 
 struct OutputTarget {
@@ -677,8 +640,10 @@ impl Tool for ExecTool {
             name: "bash".into(),
             description: format!("Execute a bash command in the workspace root. Returns stdout \
                           and stderr. Output is truncated to last 2000 lines or 50KB (whichever is \
-                          hit first). If truncated, the output is saved to a stable temp file (very \
-                          long output keeps its start and end). A background job (`cmd &`) that \
+                          hit first); past 50KB, a line over 8KB shows only its first and last \
+                          2KB. Binary output is named with its size, not shown. If anything is left \
+                          out, the output is saved to a stable temp file (very long output keeps \
+                          its start and end). A background job (`cmd &`) that \
                           keeps the output open is not waited for: redirect its output to keep it. \
                           Each call runs in a fresh shell in the workspace root: `cd` and \
                           `export` do not carry over to the next call, so chain dependent steps \
@@ -726,3 +691,6 @@ mod capture_tests;
 
 #[cfg(test)]
 mod saved_output_tests;
+
+#[cfg(test)]
+mod read_hint_tests;

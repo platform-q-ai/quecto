@@ -3,12 +3,30 @@
 //! output runs, the true end — a test run's summary, an exit message — is
 //! kept, and the dropped middle is named. The capture is shared with the
 //! caller, which can take what has arrived so far when it stops waiting.
+use super::binary::{Content, binary_notice, classify};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+/// Which of a command's streams a capture holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Stream {
+    Stdout,
+    Stderr,
+}
+
+impl Stream {
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+        }
+    }
+}
+
 /// The bytes of one stream kept within `head_cap + tail_cap`.
 pub(super) struct Capture {
+    stream: Stream,
     head: Vec<u8>,
     tail: VecDeque<u8>,
     head_cap: usize,
@@ -20,9 +38,10 @@ pub(super) struct Capture {
 }
 
 impl Capture {
-    pub(super) fn new(max_capture_bytes: usize) -> Self {
+    pub(super) fn new(max_capture_bytes: usize, stream: Stream) -> Self {
         let head_cap = max_capture_bytes / 4;
         Self {
+            stream,
             head: Vec::new(),
             tail: VecDeque::new(),
             head_cap,
@@ -69,14 +88,18 @@ impl Capture {
                 &tail[leading_continuations(&tail)..],
             ),
         };
-        let mut bytes = head.to_vec();
+        let mut bytes = Vec::with_capacity(head.len() + tail.len());
+        bytes.extend_from_slice(head);
+        bytes.extend_from_slice(tail);
+        // Output that is not text is named, not decoded (#2197).
+        if let Content::Binary(cause) = classify(&bytes) {
+            return (binary_notice(self.total, self.stream, cause), dropped > 0);
+        }
         if dropped > 0 {
             let omitted = self.total - head.len() - tail.len();
-            bytes.extend_from_slice(
-                format!("\n[... {omitted} bytes of output omitted ...]\n").as_bytes(),
-            );
+            let marker = format!("\n[... {omitted} bytes of output omitted ...]\n");
+            bytes.splice(head.len()..head.len(), marker.into_bytes());
         }
-        bytes.extend_from_slice(tail);
         let text = match String::from_utf8(bytes) {
             Ok(valid) => valid,
             Err(err) => String::from_utf8_lossy(err.as_bytes()).into_owned(),
@@ -137,7 +160,7 @@ pub(super) async fn read_stream_limited<R>(pipe: R, max_capture_bytes: usize) ->
 where
     R: tokio::io::AsyncRead + Unpin,
 {
-    let capture = Arc::new(Mutex::new(Capture::new(max_capture_bytes)));
+    let capture = Arc::new(Mutex::new(Capture::new(max_capture_bytes, Stream::Stdout)));
     read_into(pipe, &capture).await;
     let capture = capture.lock().unwrap_or_else(|e| e.into_inner());
     capture.render()
@@ -182,11 +205,11 @@ enum Source {
 const QUIET_POLL: Duration = Duration::from_millis(25);
 
 impl StreamReader {
-    pub(super) fn spawn<R>(pipe: R, max_capture_bytes: usize) -> Self
+    pub(super) fn spawn<R>(pipe: R, max_capture_bytes: usize, stream: Stream) -> Self
     where
         R: tokio::io::AsyncRead + Unpin + Send + 'static,
     {
-        let capture = Arc::new(Mutex::new(Capture::new(max_capture_bytes)));
+        let capture = Arc::new(Mutex::new(Capture::new(max_capture_bytes, stream)));
         let shared = capture.clone();
         let done = tokio::spawn(async move { read_into(pipe, &shared).await });
         Self {

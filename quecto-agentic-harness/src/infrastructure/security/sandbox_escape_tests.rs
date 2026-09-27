@@ -15,7 +15,7 @@ fn dangerous(sb: &Sandbox, cmd: &str) {
         result
             .unwrap_err()
             .to_string()
-            .contains("dangerous pattern"),
+            .contains("blocked by command policy"),
         "{cmd}"
     );
 }

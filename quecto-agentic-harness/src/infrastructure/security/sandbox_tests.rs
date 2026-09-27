@@ -1,4 +1,5 @@
 use super::*;
+use crate::infrastructure::security::policy_rule::PolicyRule;
 
 fn sandbox(workspace: &str) -> Sandbox {
     Sandbox::new(Some(std::path::PathBuf::from(workspace)))
@@ -44,8 +45,8 @@ fn test_dangerous_command_rm_rf() {
     let result = sb.validate_command("rm -rf /");
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("dangerous pattern"), "{msg}");
-    assert!(msg.contains("rm-root"), "{msg}");
+    assert!(msg.contains("blocked by command policy"), "{msg}");
+    assert!(msg.contains("(rule rm-root)"), "{msg}");
     assert!(msg.contains("`rm -rf /`"), "{msg}");
 }
 
@@ -96,16 +97,50 @@ fn test_prose_mentioning_dangerous_words_is_allowed() {
 
 #[test]
 fn test_error_display_formats() {
-    let e = SandboxError::DangerousPattern {
+    let e = SandboxError::Refused {
         command: "reboot".into(),
-        rule: "power-state".into(),
+        rule: PolicyRule::PowerState,
         site: "reboot".into(),
     };
     assert_eq!(
         e.to_string(),
-        "command 'reboot' matches dangerous pattern 'power-state' at `reboot`"
+        format!(
+            "command 'reboot' blocked by command policy (rule power-state) at `reboot`: {}. \
+             Instead: {}. Getting the same effect another way is not allowed; if the task needs \
+             it, tell the user.",
+            PolicyRule::PowerState.reason(),
+            PolicyRule::PowerState.instead()
+        )
     );
-    assert!(format!("{e:?}").contains("DangerousPattern"));
+    assert!(format!("{e:?}").contains("Refused"));
+}
+
+#[test]
+fn a_refusal_explains_itself_and_offers_a_way_forward() {
+    let sb = sandbox("/tmp/quecto-test");
+    let msg = sb.validate_command("/bin/ech? hi").unwrap_err().to_string();
+    assert!(!msg.contains("dangerous pattern"), "{msg}");
+    assert!(msg.contains("(rule glob-command-name)"), "{msg}");
+    assert!(msg.contains("`/bin/ech? hi`"), "{msg}");
+    assert!(msg.contains(&PolicyRule::GlobCommandName.reason()), "{msg}");
+    assert!(
+        msg.contains(&PolicyRule::GlobCommandName.instead()),
+        "{msg}"
+    );
+    assert!(msg.contains("checked again"), "{msg}");
+    assert!(msg.contains("tell the user"), "{msg}");
+}
+
+/// #2198: a blanket rule says so, so a read-only form is not a surprise.
+#[test]
+fn a_blanket_rule_says_it_covers_every_form() {
+    let sb = sandbox("/tmp/quecto-test");
+    let msg = sb
+        .validate_command("mkfs --version")
+        .unwrap_err()
+        .to_string();
+    assert!(msg.contains("(rule mkfs)"), "{msg}");
+    assert!(msg.contains("do not run here in any form"), "{msg}");
 }
 
 #[test]
@@ -117,6 +152,8 @@ fn test_fallback_scan_error_names_the_reason() {
         .to_string();
     assert!(msg.contains("fallback scan"), "{msg}");
     assert!(msg.contains("dynamic command name"), "{msg}");
+    assert!(msg.contains("(rule fallback-scan)"), "{msg}");
+    assert!(msg.contains("`rm -rf /`"), "the text the scan found: {msg}");
 }
 
 #[test]
