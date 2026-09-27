@@ -70,11 +70,12 @@ pub fn readable_html(html: &str) -> String {
     // The whole page's text beyond the title and the landmark (measured as
     // the page is): what is dropped.
     let shown = main.text_bytes + title.as_deref().map_or(0, text_bytes);
-    with_title(
-        title.as_deref(),
-        text_bytes(&whole).saturating_sub(shown),
-        &main.text,
-    )
+    match text_bytes(&whole).saturating_sub(shown) {
+        // A landmark holding all the text drops nothing: the whole page,
+        // with no note (#2248 review).
+        0 => whole,
+        dropped => with_title(title.as_deref(), dropped, &main.text),
+    }
 }
 
 /// The kept landmark: its text, and its [`text_bytes`] measured as the

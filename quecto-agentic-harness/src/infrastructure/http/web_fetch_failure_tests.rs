@@ -63,9 +63,9 @@ fn refused() -> Layer {
 fn the_cause_chain_is_joined_under_a_plain_reason() {
     let at = url("http://example.com:1/");
     assert_eq!(
-        describe(&refused(), &at, &at),
-        "connection refused: error sending request for url (http://example.com:1/): \
-         client error (Connect): tcp connect error: Connection refused (os error 111)"
+        describe(&refused(), Attempt::Requested(&at)),
+        "connection refused: error sending request: client error (Connect): \
+         tcp connect error: Connection refused (os error 111), for url (http://example.com:1/)"
     );
 }
 
@@ -80,8 +80,8 @@ fn a_cause_already_said_is_not_repeated() {
         }),
     );
     assert_eq!(
-        describe(&error, &at, &at),
-        "error sending request for url (http://example.com/): client error (Connect)"
+        describe(&error, Attempt::Requested(&at)),
+        "error sending request: client error (Connect), for url (http://example.com/)"
     );
 }
 
@@ -161,7 +161,7 @@ fn each_known_cause_has_its_plain_reason() {
         ),
     ];
     for (error, reason) in cases {
-        let detail = describe(&error, &at, &at);
+        let detail = describe(&error, Attempt::Requested(&at));
         assert!(detail.starts_with(&format!("{reason}: ")), "{detail}");
     }
 }
@@ -175,16 +175,15 @@ fn an_unknown_cause_has_no_plain_reason() {
         io(ErrorKind::PermissionDenied, "denied"),
     );
     assert_eq!(
-        describe(&error, &at, &at),
-        "error sending request for url (http://example.com/): denied"
+        describe(&error, Attempt::Requested(&at)),
+        "error sending request: denied, for url (http://example.com/)"
     );
 }
 
 #[test]
 fn a_failure_on_a_redirect_hop_names_the_hop() {
-    let requested = url("https://httpbin.org/redirect-to?url=http://127.0.0.1:1/");
     let hop = url("http://127.0.0.1:1/");
-    let detail = describe(&refused(), &requested, &hop);
+    let detail = describe(&refused(), Attempt::Hop(&hop));
     assert!(
         detail.starts_with(
             "connection refused on the redirect hop to http://127.0.0.1:1/: error sending request: "
@@ -193,30 +192,106 @@ fn a_failure_on_a_redirect_hop_names_the_hop() {
     );
     let unknown = chain(&["error sending request"], io(ErrorKind::Other, "odd"));
     assert_eq!(
-        describe(&unknown, &requested, &hop),
+        describe(&unknown, Attempt::Hop(&hop)),
         "failed on the redirect hop to http://127.0.0.1:1/: error sending request: odd"
     );
 }
 
-/// Credentials carried to a hop and a fragment do not make it a hop, and
-/// no URL is shown with its userinfo.
+/// No URL is shown with its userinfo, its query or its fragment, on the
+/// URL asked for or on a hop (#2248 review M3).
 #[test]
-fn credentials_are_never_shown_and_never_make_a_hop() {
-    let requested = url("http://user:secret@example.com/a#part");
-    let attempted = url("http://user:secret@example.com/a");
-    let detail = describe(&refused(), &requested, &attempted);
+fn credentials_and_queries_are_never_shown() {
+    let requested = url("http://user:secret@example.com/a?access_token=SECRET123#part");
+    let detail = describe(&refused(), Attempt::Requested(&requested));
     assert!(
-        !detail.contains("secret") && !detail.contains("user@"),
+        detail.ends_with(", for url (http://example.com/a?…)"),
         "{detail}"
     );
-    assert!(!detail.contains("redirect hop"), "{detail}");
-    assert!(detail.contains("(http://example.com/a#part)"), "{detail}");
-    let hop = url("http://user:secret@other.example/");
-    let detail = describe(&refused(), &requested, &hop);
+    let hop = url("http://user:secret@other.example/cb?code=SECRET123&state=x#frag");
+    let detail = describe(&refused(), Attempt::Hop(&hop));
     assert!(
-        detail.contains("redirect hop to http://other.example/") && !detail.contains("secret"),
+        detail.starts_with("connection refused on the redirect hop to http://other.example/cb?…: "),
         "{detail}"
     );
+    for leaked in ["secret", "SECRET123", "user@", "part", "frag", "state"] {
+        for detail in [
+            describe(&refused(), Attempt::Requested(&requested)),
+            describe(&refused(), Attempt::Hop(&hop)),
+        ] {
+            assert!(!detail.contains(leaked), "{leaked}: {detail}");
+        }
+    }
+}
+
+/// Scheme, host, port and path are shown as they are; an empty query or
+/// fragment adds no marker.
+#[test]
+fn a_url_keeps_its_scheme_host_port_and_path() {
+    assert_eq!(
+        shown(&url("https://u:p@example.com:8443/a/b?x=1#f")),
+        "https://example.com:8443/a/b?…"
+    );
+    assert_eq!(
+        shown(&url("http://example.com/a?#")),
+        "http://example.com/a"
+    );
+    assert_eq!(shown(&url("http://[::1]:1/")), "http://[::1]:1/");
+}
+
+/// #2248 review M2: a URL is shown at most [`MAX_URL_BYTES`] long, cut on a
+/// character boundary, so the cause after it always survives the bound.
+#[test]
+fn a_long_url_never_pushes_the_cause_out() {
+    for filler in ["x", "é", "€"] {
+        let long = url(&format!(
+            "http://example.com/{}?q={}",
+            filler.repeat(300),
+            "y".repeat(600)
+        ));
+        let shown_url = shown(&long);
+        assert!(shown_url.len() <= MAX_URL_BYTES, "{}", shown_url.len());
+        assert!(shown_url.len() > MAX_URL_BYTES - 4, "{}", shown_url.len());
+        assert!(shown_url.ends_with(CUT_MARK), "{shown_url}");
+        let unknown = chain(
+            &["error sending request"],
+            io(ErrorKind::Other, "the real cause"),
+        );
+        for detail in [
+            describe(&unknown, Attempt::Requested(&long)),
+            describe(&unknown, Attempt::Hop(&long)),
+            describe(&refused(), Attempt::Hop(&long)),
+        ] {
+            assert!(detail.len() <= MAX_DETAIL_BYTES, "{}", detail.len());
+            assert!(
+                detail.contains("the real cause")
+                    || detail.contains("Connection refused (os error 111)"),
+                "{detail}"
+            );
+        }
+    }
+    let query = url(&format!("http://example.com/?q={}", "y".repeat(600)));
+    let unknown = chain(
+        &["error sending request"],
+        io(ErrorKind::Other, "the real cause"),
+    );
+    assert_eq!(
+        describe(&unknown, Attempt::Requested(&query)),
+        "error sending request: the real cause, for url (http://example.com/?…)"
+    );
+}
+
+/// #2248 review L2: a hint added after the detail stays within the bound,
+/// the detail cut to make room for it.
+#[test]
+fn a_hint_stays_within_the_bound() {
+    let hint = "(a hint)";
+    let long = "x".repeat(MAX_DETAIL_BYTES);
+    let hinted = with_hint(&long, hint);
+    assert!(hinted.len() <= MAX_DETAIL_BYTES, "{}", hinted.len());
+    assert!(hinted.ends_with(&format!("{CUT_MARK} {hint}")), "{hinted}");
+    assert_eq!(with_hint("short", hint), "short (a hint)");
+    let exact = "e".repeat(MAX_DETAIL_BYTES - hint.len() - 1);
+    assert_eq!(with_hint(&exact, hint), format!("{exact} {hint}"));
 }
 
 #[test]
@@ -227,12 +302,12 @@ fn a_long_detail_is_cut_on_a_character_boundary() {
             &["error sending request"],
             io(ErrorKind::Other, &filler.repeat(600)),
         );
-        let detail = describe(&error, &at, &at);
+        let detail = describe(&error, Attempt::Requested(&at));
         assert!(detail.len() <= MAX_DETAIL_BYTES, "{}", detail.len());
         assert!(detail.len() > MAX_DETAIL_BYTES - 4, "{}", detail.len());
         assert!(detail.ends_with(CUT_MARK), "{detail}");
     }
-    let short = describe(&refused(), &at, &at);
+    let short = describe(&refused(), Attempt::Requested(&at));
     assert!(!short.ends_with(CUT_MARK), "{short}");
     let exact = "e".repeat(MAX_DETAIL_BYTES);
     assert_eq!(bounded(exact.clone()), exact);
@@ -244,7 +319,7 @@ fn an_empty_cause_adds_nothing() {
     let at = url("http://example.com/");
     let error = chain(&["error sending request", ""], io(ErrorKind::Other, "odd"));
     assert_eq!(
-        describe(&error, &at, &at),
-        "error sending request for url (http://example.com/): odd"
+        describe(&error, Attempt::Requested(&at)),
+        "error sending request: odd, for url (http://example.com/)"
     );
 }

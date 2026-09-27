@@ -55,7 +55,7 @@ fn the_note_counts_the_bytes_dropped() {
 /// all of it.
 #[test]
 fn any_substantial_share_is_kept() {
-    for (inside, outside) in [(34, 66), (50, 50), (91, 9), (99, 1), (100, 0)] {
+    for (inside, outside) in [(34, 66), (50, 50), (91, 9), (99, 1)] {
         let html = format!(
             "<main>{}</main>{}",
             words(inside, "in"),
@@ -95,4 +95,26 @@ fn an_empty_title_gives_no_line() {
     let text = readable_html(&html);
     assert!(text.starts_with(MAIN_CONTENT_NOTE_LEAD), "{text:?}");
     assert!(text.contains(&main_content_note(40)), "{text}");
+}
+
+/// #2248 review L1: a landmark holding all the page's text drops nothing,
+/// so the whole page is returned with no note, as `strip_html` reads it.
+#[test]
+fn a_landmark_holding_all_the_text_gives_the_whole_page() {
+    for html in [
+        format!("<main>{}</main>", words(100, "in")),
+        format!("<main>{}</main> \n\t<p> </p>", words(3, "in")),
+        format!(
+            "<html><head><title>T</title></head><body><main>{}</main></body></html>",
+            words(5, "in")
+        ),
+        format!("<article>{}</article><div>&nbsp;</div>", words(5, "in")),
+    ] {
+        let text = readable_html(&html);
+        assert_eq!(text, strip_html(&html), "{html}");
+        assert!(!text.contains(MAIN_CONTENT_NOTE_LEAD), "{text}");
+    }
+    // One byte outside is dropped, and said.
+    let text = readable_html(&format!("<main>{}</main>x", words(5, "in")));
+    assert!(text.starts_with(&main_content_note(1)), "{text}");
 }

@@ -448,3 +448,41 @@ async fn test_brave_markup_and_entities_read_as_plain_text() {
     let long_line = result.content.lines().nth(3).unwrap().trim();
     assert_eq!(long_line, "b".repeat(MAX_WEB_SEARCH_RESULT_TEXT_CHARS));
 }
+
+/// #2248 review: a Brave title that is only markup (or blank) reads as the
+/// missing-title placeholder, never as an empty title.
+#[tokio::test]
+async fn test_brave_title_of_only_markup_reads_as_the_placeholder() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let response = serde_json::json!({
+        "web": {"results": [
+            {"title": "<strong></strong>", "url": "https://example.com/a", "description": "d"},
+            {"title": " &nbsp; ", "url": "https://example.com/b", "description": "e"},
+            {"title": "Kept", "url": "https://example.com/c", "description": "f"}
+        ]}
+    });
+    Mock::given(method("GET"))
+        .and(path("/res/v1/web/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+        .mount(&server)
+        .await;
+
+    let tool =
+        WebSearchTool::with_base_urls(Some("test-key".to_string()), &server.uri(), "http://unused");
+    let result = tool.execute(r#"{"query":"rust"}"#).await.unwrap();
+    assert!(!result.is_error);
+    for expected in [
+        "1. ? - https://example.com/a\n",
+        "2. ? - https://example.com/b\n",
+        "3. Kept - https://example.com/c\n",
+    ] {
+        assert!(
+            result.content.contains(expected),
+            "{expected}: {}",
+            result.content
+        );
+    }
+}

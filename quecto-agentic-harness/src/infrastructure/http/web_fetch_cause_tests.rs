@@ -50,11 +50,10 @@ async fn a_refused_connection_says_so() {
     let url = format!("http://localhost:{port}/x");
     let detail = transport(adapter().fetch(&request(&url)).await);
     assert!(
-        detail.starts_with(&format!(
-            "connection refused: error sending request for url ({url})"
-        )),
+        detail.starts_with("connection refused: error sending request: "),
         "{detail}"
     );
+    assert!(detail.ends_with(&format!(", for url ({url})")), "{detail}");
     assert!(detail.contains("Connection refused"), "{detail}");
     assert!(detail.len() <= failure_detail::MAX_DETAIL_BYTES, "{detail}");
 }
@@ -163,7 +162,7 @@ async fn a_broken_body_says_why() {
         Err(FetchFailure::Read(detail)) => detail,
         other => panic!("not a read failure: {other:?}"),
     };
-    assert!(detail.contains(&format!("for url ({url}): ")), "{detail}");
+    assert!(detail.ends_with(&format!(", for url ({url})")), "{detail}");
     assert!(detail.contains("Invalid chunk size"), "{detail}");
     peer.abort();
 
@@ -208,5 +207,151 @@ async fn a_broken_body_names_its_url_once_without_credentials() {
         "{detail}"
     );
     assert_eq!(detail.matches("for url (").count(), 1, "{detail}");
+    peer.abort();
+}
+
+fn found(location: &str) -> String {
+    format!(
+        "HTTP/1.1 302 Found\r\nConnection: close\r\nLocation: {location}\r\nContent-Length: 0\r\n\r\n"
+    )
+}
+
+/// #2248 review L3: a redirect back to the URL asked for (A to B to A)
+/// that fails at A failed on a hop, and says so, though its URL is A's.
+#[tokio::test]
+async fn a_redirect_loop_back_to_the_start_fails_on_a_hop() {
+    let a_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let a = a_listener.local_addr().unwrap().port();
+    let b_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let b = b_listener.local_addr().unwrap().port();
+    let start = format!("http://localhost:{a}/start");
+    // Each answers once, then closes: the loop back to A is refused.
+    let serve = |listener: TcpListener, response: String| {
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            drop(listener);
+            let mut buffer = [0; 4096];
+            let _ = socket.read(&mut buffer).await;
+            let _ = socket.write_all(response.as_bytes()).await;
+        })
+    };
+    let a_peer = serve(a_listener, found(&format!("http://localhost:{b}/middle")));
+    let b_peer = serve(b_listener, found(&start));
+    let detail = transport(adapter().fetch(&request(&start)).await);
+    assert!(
+        detail.starts_with(&format!(
+            "connection refused on the redirect hop to {start}: "
+        )),
+        "{detail}"
+    );
+    assert!(!detail.contains("for url ("), "{detail}");
+    a_peer.abort();
+    b_peer.abort();
+}
+
+/// #2248 review M3: a hop's credentials, query and fragment are never
+/// repeated in a failure on it, nor in the too-many-redirects failure.
+#[tokio::test]
+async fn a_hop_s_secrets_are_not_repeated_in_a_failure() {
+    let dead = closed_port().await;
+    let hop = format!("http://user:pw@localhost:{dead}/cb?access_token=SECRET123#frag");
+    let (port, peer) = answering(found(&hop)).await;
+    let detail = transport(
+        adapter()
+            .fetch(&request(&format!("http://localhost:{port}/start")))
+            .await,
+    );
+    assert!(
+        detail.starts_with(&format!(
+            "connection refused on the redirect hop to http://localhost:{dead}/cb?…: "
+        )),
+        "{detail}"
+    );
+    for leaked in ["SECRET123", "pw", "user@", "frag"] {
+        assert!(!detail.contains(leaked), "{leaked}: {detail}");
+    }
+    peer.abort();
+}
+
+#[tokio::test]
+async fn the_redirect_limit_does_not_repeat_the_next_hop_s_secrets() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let peer = tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            let _ = socket.read(&mut buffer).await;
+            let next = format!("http://user:pw@localhost:{port}/again?access_token=SECRET123#frag");
+            let _ = socket.write_all(found(&next).as_bytes()).await;
+        }
+    });
+    let detail = transport(
+        adapter()
+            .fetch(&request(&format!("http://localhost:{port}/start")))
+            .await,
+    );
+    assert_eq!(
+        detail,
+        format!(
+            "too many redirects: {MAX_REDIRECTS} followed, and http://localhost:{port}/again?… would be one more"
+        )
+    );
+    peer.abort();
+}
+
+/// #2248 review L2: the proxy hint is inside the bound, however long the
+/// detail before it.
+#[tokio::test]
+async fn a_hinted_failure_stays_within_the_bound() {
+    let port = closed_port().await;
+    let hinted = ReqwestFetchWebContent {
+        proxies_ignored: true,
+        ..adapter()
+    };
+    let url = format!("http://localhost:{port}/{}", "p".repeat(600));
+    let detail = transport(hinted.fetch(&request(&url)).await);
+    assert!(
+        detail.len() <= failure_detail::MAX_DETAIL_BYTES,
+        "{}",
+        detail.len()
+    );
+    assert!(detail.ends_with(&format!(" {PROXY_HINT}")), "{detail}");
+    assert!(detail.contains("Connection refused"), "{detail}");
+    let long = FetchFailure::Transport("x".repeat(2 * failure_detail::MAX_DETAIL_BYTES));
+    match hinted.hinted(long) {
+        FetchFailure::Transport(message) => {
+            assert!(
+                message.len() <= failure_detail::MAX_DETAIL_BYTES,
+                "{}",
+                message.len()
+            );
+            assert!(message.ends_with(&format!(" {PROXY_HINT}")), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A refused redirect names its hop as a failure does: no credentials,
+/// query or fragment.
+#[tokio::test]
+async fn a_refused_hop_s_secrets_are_not_repeated() {
+    let hop = "http://user:pw@[::ffff:127.0.0.1]:1/cb?access_token=SECRET123#frag";
+    let (port, peer) = answering(found(hop)).await;
+    let result = adapter()
+        .fetch(&request(&format!("http://localhost:{port}/start")))
+        .await;
+    match result {
+        Err(FetchFailure::Refused(message)) => {
+            assert!(
+                message.starts_with("the redirect to http://[::ffff:7f00:1]:1/cb?…: "),
+                "{message}"
+            );
+            for leaked in ["SECRET123", "pw", "user@", "frag"] {
+                assert!(!message.contains(leaked), "{leaked}: {message}");
+            }
+        }
+        other => panic!("not refused: {other:?}"),
+    }
     peer.abort();
 }

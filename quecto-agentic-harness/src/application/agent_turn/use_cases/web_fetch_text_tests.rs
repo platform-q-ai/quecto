@@ -59,15 +59,19 @@ fn inline_elements_in_prose_are_unchanged() {
     }
 }
 
-/// A link right after a word or a sentence's end starts a new label.
+/// A link right after a word, or after an element that ended with a
+/// stop, starts a new label; a stop straight before a link is code
+/// punctuation (`foo.<a>bar</a>`) and is not spaced (#2248 review).
 #[test]
-fn a_link_after_a_word_or_a_stop_is_spaced() {
+fn a_link_after_a_word_or_a_closed_stop_is_spaced() {
     for (html, expected) in [
         ("Home<a>Docs</a>", "Home Docs"),
-        ("End.<a>Next</a>", "End. Next"),
+        ("<span>End.</span><a>Next</a>", "End. Next"),
         ("<a>A</a><a>B</a><a>C</a>", "A B C"),
-        ("Menu:<a>One</a>", "Menu: One"),
-        ("(x)<a>y</a>", "(x) y"),
+        ("<b>Menu:</b><a>One</a>", "Menu: One"),
+        ("<i>(x)</i><a>y</a>", "(x) y"),
+        ("End.<a>Next</a>", "End.Next"),
+        ("x::<a>y</a>", "x::y"),
     ] {
         assert_eq!(strip_html(html), expected, "{html}");
     }

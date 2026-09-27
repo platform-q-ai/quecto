@@ -1,5 +1,5 @@
 //! Application-owned web fetch policy, orchestration, and content transformation.
-use crate::domain::html_text::{decode_entities, push_collapsed_line, tags_to_text};
+use crate::domain::html_text::{markup_to_text, push_collapsed_line};
 use crate::domain::network_destination::{authorize_destination, is_fetchable_name};
 use std::{future::Future, net::IpAddr, pin::Pin, sync::Arc};
 
@@ -327,19 +327,16 @@ fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
 /// Strategy:
 /// 1. Remove `<script>`, `<style>`, `<nav>`, `<footer>`, `<header>`,
 ///    `<noscript>` blocks entirely
-/// 2. Convert block-closing tags to newlines
-/// 3. Strip remaining tags
-/// 4. Decode common HTML entities
-/// 5. Collapse whitespace
+/// 2. Convert block tags to newlines and space side-by-side labels
+/// 3. Strip remaining tags, decoding entities in the text between them
+/// 4. Collapse whitespace
 pub fn strip_html(html: &str) -> String {
     text_of_markup(&remove_configured_tag_blocks(html))
 }
 
-/// Steps 2-5 of [`strip_html`], for markup whose stripped blocks are gone.
+/// Steps 2-4 of [`strip_html`], for markup whose stripped blocks are gone.
 fn text_of_markup(stripped: &str) -> String {
-    let text = tags_to_text(stripped);
-    let text = decode_entities(&text);
-    collapse_whitespace(&text)
+    collapse_whitespace(&markup_to_text(stripped))
 }
 
 const STRIPPED_BLOCK_TAGS: &[&str] = &["script", "style", "nav", "footer", "header", "noscript"];

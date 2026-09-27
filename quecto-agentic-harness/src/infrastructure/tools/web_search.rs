@@ -131,10 +131,13 @@ impl WebSearchTool {
                 {
                     // Brave marks matches with `<strong>` and escapes
                     // text as HTML: read as plain text, then cut (#2211).
+                    // A title that reads as nothing is as good as none.
                     let title = item
                         .get("title")
                         .and_then(|v| v.as_str())
-                        .map_or_else(|| "?".to_owned(), inline_text);
+                        .map(inline_text)
+                        .filter(|title| !title.is_empty())
+                        .unwrap_or_else(|| "?".to_owned());
                     let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("?");
                     let desc = item
                         .get("description")

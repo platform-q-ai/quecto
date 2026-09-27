@@ -1,15 +1,15 @@
 //! Readable text from HTML markup: tags dropped (a line for a block
-//! element, a space before a side-by-side one that would run into the word
-//! before it; #2225), entities decoded and whitespace collapsed. Pure text
-//! functions shared by web_fetch's readable views and web_search's result
-//! snippets (#2211); linear in their input.
+//! element, a space before a side-by-side one that would run into the label
+//! before it; #2225), entities decoded as the text is read and whitespace
+//! collapsed. Pure text functions shared by web_fetch's readable views and
+//! web_search's result snippets (#2211); linear in their input.
 
 /// A fragment of inline markup (a search result's title or snippet) as one
 /// plain line: tags dropped, entities decoded, whitespace collapsed
 /// (#2211). Nothing is removed with its content: a snippet has no blocks.
 pub fn inline_text(markup: &str) -> String {
     let mut line = String::with_capacity(markup.len());
-    push_collapsed_line(&mut line, &decode_entities(&tags_to_text(markup)));
+    push_collapsed_line(&mut line, &markup_to_text(markup));
     line
 }
 
@@ -59,8 +59,18 @@ const BLOCK_TAGS: &[&str] = &[
 ];
 
 /// Elements laid out side by side, each its own label or cell (#2225): one
-/// starting straight after a word or a stop is spaced from it.
+/// starting straight after a label is spaced from it.
 const SIDE_BY_SIDE_TAGS: &[&str] = &["a", "button", "label", "td", "th"];
+
+/// Elements whose text is code or typed input (#2248 review): a link in it
+/// is part of an identifier or an expression, never spaced from it.
+const VERBATIM_TAGS: &[&str] = &["pre", "code", "kbd", "samp"];
+
+/// Characters that end a label when an element closes right after them: a
+/// label reading `Home.` or `Menu:`. Straight before a link, with no
+/// element closed between, they are code punctuation (`foo.<a>bar</a>`,
+/// `std::<a>vec</a>`) and end nothing.
+const CLOSED_STOPS: &[char] = &['.', ',', ';', ':', '!', '?', ')', ']', '}'];
 
 /// What an element's tag adds to the text around it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,69 +80,140 @@ enum Separator {
     Nothing,
 }
 
+/// Whether `tag_name` is one of `tags`, whatever its case.
+fn is_one_of(tags: &[&str], tag_name: &str) -> bool {
+    tags.iter().any(|tag| tag_name.eq_ignore_ascii_case(tag))
+}
+
 /// What the tag of `tag_name` adds: a line for a block element, opening or
 /// closing; a space for a side-by-side element's opening tag.
 fn separator(tag_name: &str, opening: bool) -> Separator {
-    let is = |tags: &[&str]| tags.iter().any(|tag| tag_name.eq_ignore_ascii_case(tag));
-    match (is(BLOCK_TAGS), is(SIDE_BY_SIDE_TAGS) && opening) {
+    match (
+        is_one_of(BLOCK_TAGS, tag_name),
+        is_one_of(SIDE_BY_SIDE_TAGS, tag_name) && opening,
+    ) {
         (true, _) => Separator::Line,
         (false, true) => Separator::Space,
         (false, false) => Separator::Nothing,
     }
 }
 
-/// Whether text ending in `last` runs into what follows unless spaced: a
-/// word's last character or a stop. An opening bracket or quote does not.
-fn ends_a_label(last: Option<char>) -> bool {
-    last.is_some_and(|c| {
-        c.is_alphanumeric() || matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}')
-    })
+/// Whether text whose last decoded character is `last` runs into a label
+/// that follows unless spaced: a word's last letter or digit always does;
+/// a stop only when an element `closed` after it (#2248 review).
+fn ends_a_label(last: Option<char>, closed: bool) -> bool {
+    last.is_some_and(|c| c.is_alphanumeric() || (closed && CLOSED_STOPS.contains(&c)))
 }
 
-/// Convert HTML tags to text: block tags become newlines, side-by-side
-/// elements are spaced from a word before them, others are stripped.
+/// Whether the `<` that starts `rest` may open a tag: only when a letter
+/// (an element), `/` (its end), `!` (a comment or doctype) or `?` (a
+/// processing instruction) follows (#2248 review). Any other `<`, as in
+/// `a < b` or `<3`, is text.
+fn opens_a_tag(rest: &[u8]) -> bool {
+    debug_assert_eq!(rest.first(), Some(&b'<'), "not at a `<`");
+    rest.get(1)
+        .is_some_and(|next| next.is_ascii_alphabetic() || matches!(next, b'/' | b'!' | b'?'))
+}
+
+/// Readable text as it is built: the text so far, whether an element
+/// closed since its last character, and how deep in verbatim elements.
+#[derive(Debug, Default)]
+struct ReadableText {
+    text: String,
+    closed_since_text: bool,
+    verbatim_depth: usize,
+}
+
+impl ReadableText {
+    /// Text between tags, its entities decoded now so that what a label
+    /// ends in is the character shown, not its escape.
+    fn push_text(&mut self, raw: &str) {
+        if raw.is_empty() {
+            return;
+        }
+        self.text.push_str(&decode_entities(raw));
+        self.closed_since_text = false;
+    }
+
+    /// The tag of `tag_name`: `opening` or closing, `self_closing` or not.
+    fn push_tag(&mut self, tag_name: &str, opening: bool, self_closing: bool) {
+        if is_one_of(VERBATIM_TAGS, tag_name) && !self_closing {
+            // Unbalanced markup never goes below the page's own level.
+            self.verbatim_depth = match opening {
+                true => self.verbatim_depth.saturating_add(1),
+                false => self.verbatim_depth.saturating_sub(1),
+            };
+        }
+        match separator(tag_name, opening) {
+            Separator::Line => self.text.push('\n'),
+            Separator::Space if self.spaces_a_label() => self.text.push(' '),
+            Separator::Space | Separator::Nothing => {}
+        }
+        if !opening {
+            self.closed_since_text = true;
+        }
+    }
+
+    /// Whether a side-by-side element opening now is spaced from the text
+    /// before it: outside code, after a label's end.
+    fn spaces_a_label(&self) -> bool {
+        self.verbatim_depth == 0
+            && ends_a_label(self.text.chars().next_back(), self.closed_since_text)
+    }
+}
+
+/// Convert HTML markup to text: block tags become newlines, side-by-side
+/// elements are spaced from a label before them, others are stripped, and
+/// entities are decoded (once, as the text is read).
 ///
 /// Uses `eq_ignore_ascii_case` per tag to avoid allocating a lowercase copy
 /// for every tag in the document. All text between tags is copied as UTF-8
 /// substrings, so multibyte characters (e.g. `é`) are preserved.
-pub fn tags_to_text(html: &str) -> String {
-    let mut result = String::with_capacity(html.len());
+pub fn markup_to_text(html: &str) -> String {
+    let mut out = ReadableText {
+        text: String::with_capacity(html.len()),
+        ..ReadableText::default()
+    };
     let mut pos = 0;
 
     while let Some(open) = html[pos..].find('<') {
         let abs_open = pos + open;
-        result.push_str(&html[pos..abs_open]);
+        out.push_text(&html[pos..abs_open]);
+        let rest = &html.as_bytes()[abs_open..];
 
-        // Past quoted attribute values (#2165 review); a stray `<` is text.
-        if let TagEnd::At(end_offset) = tag_end(&html.as_bytes()[abs_open..]) {
-            let tag_content = &html[abs_open + 1..abs_open + end_offset];
-            // An opening tag's name follows its `<` directly.
-            let opening = tag_content.starts_with(|c: char| c.is_ascii_alphabetic());
-            let trimmed = tag_content.trim().trim_start_matches('/');
-            let tag_end = trimmed
-                .find(|c: char| c.is_whitespace() || c == '/')
-                .unwrap_or(trimmed.len());
-            let tag_name = &trimmed[..tag_end];
-
-            match separator(tag_name, opening) {
-                Separator::Line => result.push('\n'),
-                Separator::Space if ends_a_label(result.chars().next_back()) => {
-                    result.push(' ');
-                }
-                Separator::Space | Separator::Nothing => {}
+        // Past quoted attribute values (#2165 review); a stray `<` is text,
+        // and one that cannot open a tag is never scanned as one.
+        match opens_a_tag(rest).then(|| tag_end(rest)) {
+            Some(TagEnd::At(end_offset)) => {
+                let tag_content = &html[abs_open + 1..abs_open + end_offset];
+                // An opening tag's name follows its `<` directly.
+                let opening = tag_content.starts_with(|c: char| c.is_ascii_alphabetic());
+                let self_closing = tag_content.trim_end().ends_with('/');
+                let trimmed = tag_content.trim().trim_start_matches('/');
+                let name_end = trimmed
+                    .find(|c: char| c.is_whitespace() || c == '/')
+                    .unwrap_or(trimmed.len());
+                out.push_tag(&trimmed[..name_end], opening, self_closing);
+                pos = abs_open + end_offset + 1;
             }
-            pos = abs_open + end_offset + 1;
-        } else {
-            // A stray or unended '<' is a literal character. The next '<'
-            // is where `tag_end` stopped, so every byte is read at most
-            // twice.
-            result.push('<');
-            pos = abs_open + 1;
+            Some(TagEnd::Stray(_) | TagEnd::Never) | None => {
+                // A stray, unended or unopened '<' is a literal character.
+                // The next '<' is where `tag_end` stopped, so every byte is
+                // read at most twice.
+                out.push_text("<");
+                pos = abs_open + 1;
+            }
         }
     }
 
-    result.push_str(&html[pos..]);
-    result
+    out.push_text(&html[pos..]);
+    // Every tag reads as at most one character and every entity as no more
+    // bytes than its escape: text never outgrows its markup.
+    assert!(
+        out.text.len() <= html.len(),
+        "readable text outgrew its markup"
+    );
+    out.text
 }
 
 /// Where a tag opened by the `<` at `rest[0]` ends.
@@ -192,11 +273,11 @@ pub fn tag_end(rest: &[u8]) -> TagEnd {
     }
 }
 
-/// Decode common HTML entities. Operates on `&str` so multibyte characters
-/// are preserved instead of being re-interpreted as Latin-1 bytes.
 /// Longest entity text looked for, `&` to `;` (`&thetasym;` is 10).
 const MAX_ENTITY_BYTES: usize = 12;
 
+/// Decode common HTML entities. Operates on `&str` so multibyte characters
+/// are preserved instead of being re-interpreted as Latin-1 bytes.
 pub fn decode_entities(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut pos = 0;

@@ -411,11 +411,10 @@ fn a_landmark_holding_everything_omits_nothing() {
             words(80, "a"),
             words(15, "comment")
         ));
+        // Nothing dropped: the whole page, with no note (#2248 review).
         let text = readable_html(&html);
-        assert!(
-            text.starts_with(&format!("T\n{}\n\n", main_content_note(0))),
-            "{open}: {text}"
-        );
+        assert_eq!(text, strip_html(&html), "{open}");
+        assert!(!text.contains(MAIN_CONTENT_NOTE_LEAD), "{open}: {text}");
         for kept in ["intro", "a a", "comment"] {
             assert!(text.contains(kept), "{open}: {text}");
         }
