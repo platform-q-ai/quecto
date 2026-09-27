@@ -227,11 +227,18 @@ fn render_listing(window: SortedWindow, offset: usize, limit: usize) -> String {
         return format!("(no entries at offset {offset}; the directory has {total} entries)");
     }
     assert!(page.len() <= limit, "a page holds at most limit entries");
+    // The whole response stays within the cap (#2188 PR review): when a
+    // note will follow, the entries leave room for the longest it can be.
+    let whole = page.iter().map(|name| name.len() + 1).sum::<usize>() - 1;
+    let budget = match (whole <= LS_MAX_BYTES, offset + page.len() < total) {
+        (true, false) => LS_MAX_BYTES,
+        (true, true) | (false, _) => LS_MAX_BYTES - note_reserve(offset, total, limit),
+    };
     let mut output = String::new();
     let mut shown = 0;
     for name in page {
         let separator = usize::from(shown > 0);
-        if output.len() + separator + name.len() <= LS_MAX_BYTES {
+        if output.len() + separator + name.len() <= budget {
             if separator == 1 {
                 output.push('\n');
             }
@@ -241,33 +248,78 @@ fn render_listing(window: SortedWindow, offset: usize, limit: usize) -> String {
             break;
         }
     }
-    assert!(output.len() <= LS_MAX_BYTES, "ls payload cap invariant");
     // A name is at most a few hundred bytes: the first always fits.
     assert!(shown > 0, "a non-empty page shows at least one entry");
     let next = offset + shown;
     if next < total {
-        let reason = if shown < page.len() {
-            "50KB output cap reached".to_string()
-        } else {
-            format!("limit {limit} reached")
-        };
-        let continuation = if next <= LS_MAX_OFFSET {
-            format!(
-                "Next: offset={next}. Or raise limit (max {LS_MAX_LIMIT}), or list a more specific path"
-            )
-        } else {
-            format!(
-                "offset stops at {LS_MAX_OFFSET}: use find with a pattern and this path for later entries"
-            )
-        };
         // shown > 0: the page's entries are above the note.
         output.push('\n');
-        output.push_str(&format!(
-            "[Entries {}-{next} of {total} shown (sorted case-insensitively; {reason}). {continuation}]",
-            offset + 1
-        ));
+        output.push_str(&note(offset, next, total, shown < page.len(), limit));
     }
+    assert!(output.len() <= LS_MAX_BYTES, "ls response cap invariant");
     output
+}
+
+/// What a page left out, and how to see it.
+fn note(offset: usize, next: usize, total: usize, capped: bool, limit: usize) -> String {
+    composed_note(
+        offset,
+        next,
+        total,
+        &reason(capped, limit),
+        &continuation(next),
+    )
+}
+
+fn composed_note(
+    offset: usize,
+    next: usize,
+    total: usize,
+    reason: &str,
+    continuation: &str,
+) -> String {
+    format!(
+        "[Entries {}-{next} of {total} shown (sorted case-insensitively; {reason}). {continuation}]",
+        offset + 1
+    )
+}
+
+fn reason(capped: bool, limit: usize) -> String {
+    match capped {
+        true => "50KB output cap reached".to_string(),
+        false => format!("limit {limit} reached"),
+    }
+}
+
+fn continuation(next: usize) -> String {
+    match next <= LS_MAX_OFFSET {
+        true => format!(
+            "Next: offset={next}. Or raise limit (max {LS_MAX_LIMIT}), or list a more specific path"
+        ),
+        false => format!(
+            "offset stops at {LS_MAX_OFFSET}: use find with a pattern and this path for later entries"
+        ),
+    }
+}
+
+/// Room for the newline and the longest note this page can end with: the
+/// next entry is at most `total` (and at most `LS_MAX_OFFSET` where it is
+/// named as an offset), and every reason and continuation is measured.
+fn note_reserve(offset: usize, total: usize, limit: usize) -> usize {
+    let continuations = [
+        continuation(total.min(LS_MAX_OFFSET)),
+        continuation(LS_MAX_OFFSET + 1),
+    ];
+    let longest = [reason(true, limit), reason(false, limit)]
+        .iter()
+        .flat_map(|reason| {
+            continuations
+                .iter()
+                .map(|continuation| composed_note(offset, total, total, reason, continuation).len())
+        })
+        .max()
+        .expect("notes were measured");
+    1 + longest
 }
 
 fn listing_result(content: String, is_error: bool) -> ToolResult {

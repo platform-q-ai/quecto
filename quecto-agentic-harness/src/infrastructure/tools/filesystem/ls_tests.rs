@@ -374,8 +374,10 @@ async fn the_byte_cap_keeps_whole_entries_and_names_the_next_offset() {
         "no partial entry"
     );
     let body: usize = shown.iter().map(|line| line.len() + 1).sum::<usize>() - 1;
-    assert!(body <= LS_MAX_BYTES);
-    assert!(body + 204 > LS_MAX_BYTES, "as many whole entries as fit");
+    let budget = LS_MAX_BYTES - note_reserve(0, 400, 400);
+    assert!(body <= budget);
+    assert!(body + 204 > budget, "as many whole entries as fit");
+    assert!(result.content.len() <= LS_MAX_BYTES, "the note fits too");
     let note = format!(
         "[Entries 1-{0} of 400 shown (sorted case-insensitively; 50KB output cap reached). Next: offset={0}.",
         shown.len()
@@ -489,4 +491,61 @@ fn the_description_says_the_whole_directory_is_read() {
         "{}",
         def.description
     );
+}
+
+/// PR #2233 review: the note counts toward the cap, so the whole response
+/// stays within 50 KB (5001 entries of 11 bytes, limit 5000).
+#[tokio::test]
+async fn the_whole_response_stays_within_the_cap() {
+    let (ws, sb, tmp) = test_tools();
+    for i in 0..5001 {
+        std::fs::write(tmp.path().join(format!("{i:011}")), "").unwrap();
+    }
+    let tool = LsTool::new(ws, sb);
+    let result = tool.execute(r#"{"limit": 5000}"#).await.unwrap();
+    assert!(
+        result.content.len() <= LS_MAX_BYTES,
+        "{}",
+        result.content.len()
+    );
+    let shown = listed(&result.content).len();
+    assert!(
+        result.content.ends_with(&format!(
+            "[Entries 1-{shown} of 5001 shown (sorted case-insensitively; 50KB output cap reached). Next: offset={shown}. Or raise limit (max 5000), or list a more specific path]"
+        )),
+        "{}",
+        &result.content[result.content.len() - 200..]
+    );
+}
+
+/// At the exact boundary: entries filling the room left for the note are
+/// all shown, and one byte more moves the last to the next page.
+#[test]
+fn entries_exactly_filling_the_room_before_the_note_are_shown() {
+    let budget = LS_MAX_BYTES - note_reserve(0, 3, 2);
+    for (first, shown) in [(budget - 2, 2), (budget - 1, 1)] {
+        let mut window = SortedWindow::new(2);
+        window.offer("a".repeat(first));
+        window.offer("b".into());
+        window.offer("c".into());
+        let output = render_listing(window, 0, 2);
+        assert!(output.len() <= LS_MAX_BYTES, "{}", output.len());
+        assert_eq!(
+            output.lines().filter(|line| !line.starts_with('[')).count(),
+            shown
+        );
+        assert!(
+            output.contains(&format!("[Entries 1-{shown} of 3 shown")),
+            "{first}"
+        );
+    }
+}
+
+/// With no note to follow, the entries may use the whole cap.
+#[test]
+fn without_a_note_the_entries_use_the_whole_cap() {
+    let mut window = SortedWindow::new(2);
+    window.offer("a".repeat(LS_MAX_BYTES - 2));
+    window.offer("b".into());
+    assert_eq!(render_listing(window, 0, 2).len(), LS_MAX_BYTES);
 }
