@@ -7,7 +7,7 @@ use crate::domain::session::PendingMessageReport;
 use crate::domain::turn_origin::{TurnOrigin, report_index};
 use crate::domain::unread_report::{
     ReportedMessage, UnreadSelection, acknowledged_report_index, later_than, needs_backfill,
-    select_unread, select_unread_without_report,
+    select_unread, select_unread_without_report, skipped_unread,
 };
 
 pub(crate) fn mint_default_report_receipt() -> String {
@@ -75,6 +75,7 @@ pub(crate) fn plan_default_report(response: &str, delivered: u64) -> DefaultRepo
     // report says so (#2246): it delivers the window it holds instead.
     let no_report_found = data.get("reportFound").and_then(|v| v.as_bool()) == Some(false);
     let older_unread_skipped = data.get("olderUnreadSkipped").cloned();
+    let before = data.get("before").cloned();
     let Some(messages) = data.get_mut("messages").and_then(|v| v.as_array_mut()) else {
         return unchanged(response.to_string());
     };
@@ -152,7 +153,19 @@ pub(crate) fn plan_default_report(response: &str, delivered: u64) -> DefaultRepo
             if let Some(skipped) = older_unread_skipped {
                 data["olderUnreadSkipped"] = skipped;
             }
+            // A window without a report is acknowledged up to its newest
+            // message: every unread one it did not deliver (older than it
+            // held, or cut to the budget) is named, still readable (#2246).
             if no_report_found {
+                let sent: Vec<u64> = report.messages.iter().filter_map(ordinal_of).collect();
+                let ranges: Vec<serde_json::Value> = skipped_unread(delivered, &sent)
+                    .into_iter()
+                    .map(|(from, to)| serde_json::json!({"fromOrdinal": from, "toOrdinal": to}))
+                    .collect();
+                if !ranges.is_empty() {
+                    data["olderUnreadSkipped"] =
+                        serde_json::json!({"ranges": ranges, "before": before});
+                }
                 data["reportFound"] = serde_json::json!(false);
             }
             let content = envelope.to_string();
@@ -237,7 +250,8 @@ pub(crate) enum PageReport {
 pub(crate) struct NamedReport {
     pub id: String,
     ordinal: serde_json::Value,
-    turn_origin: serde_json::Value,
+    /// Its origin's name, when it named one (#2246: never a `null` one).
+    turn_origin: Option<String>,
 }
 
 impl NamedReport {
@@ -247,8 +261,12 @@ impl NamedReport {
     /// for reading again: the report budget cuts it once, with its notice.
     pub(crate) fn with_text(&self, text: String, length: usize) -> serde_json::Value {
         debug_assert!(text.len() == length || text.len() > FINAL_REPORT_BUDGET_BYTES);
-        serde_json::json!({"id": self.id, "role": "assistant", "content": text,
-            "ordinal": self.ordinal, "turnOrigin": self.turn_origin, "contentLength": length})
+        let mut report = serde_json::json!({"id": self.id, "role": "assistant",
+            "content": text, "ordinal": self.ordinal, "contentLength": length});
+        if let Some(origin) = &self.turn_origin {
+            report["turnOrigin"] = serde_json::json!(origin);
+        }
+        report
     }
 
     /// Put the report, read whole, into `messages`: in place of its collapsed
@@ -302,7 +320,10 @@ pub(crate) fn page_report(messages: &[serde_json::Value], data: &serde_json::Val
     PageReport::OffPage(NamedReport {
         id: id.to_string(),
         ordinal: named.get("ordinal").cloned().unwrap_or_default(),
-        turn_origin: named.get("turnOrigin").cloned().unwrap_or_default(),
+        turn_origin: named
+            .get("turnOrigin")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
     })
 }
 
@@ -317,7 +338,10 @@ pub(crate) fn needs_default_report_backfill(
     // unmarked (#2226). A page from a child older than #2226 marks nothing:
     // any assistant message stops it, as before, so an old child is not
     // paged back to the cap.
-    let marked = messages.iter().any(|m| m.get("turnOrigin").is_some());
+    let marked = messages.iter().any(|m| {
+        m.get("turnOrigin")
+            .is_some_and(serde_json::Value::is_string)
+    });
     let holds_answer = messages.iter().any(|m| match marked {
         true => is_substantive_assistant(m) && turn_origin_of(m).answers(),
         false => m.get("role").and_then(|v| v.as_str()) == Some("assistant"),

@@ -184,8 +184,16 @@ pub fn report_to_keep(messages: &[Message]) -> Option<usize> {
 
 /// A message that opens a turn: a user message the loop did not append
 /// inside a turn (a prompt, a task, a nudge, a note, a steer).
-fn opens_turn(message: &Message) -> bool {
+pub fn opens_turn(message: &Message) -> bool {
     message.role == Role::User && message.turn.is_none()
+}
+
+/// The index of the latest message of `messages` that opens a turn: the
+/// prompt a context region starts from.
+pub fn latest_opener(messages: &[Message]) -> Option<usize> {
+    let opener = messages.iter().rposition(opens_turn);
+    debug_assert!(opener.is_none_or(|index| opens_turn(&messages[index])));
+    opener
 }
 
 /// Where the turn in flight starts: at the latest opener while its turn is
@@ -198,14 +206,16 @@ fn opens_turn(message: &Message) -> bool {
 /// its turn is taken to be running. A resumed transcript pruned before its
 /// next prompt is thus finished throughout (#2246).
 fn turn_in_flight_start(messages: &[Message]) -> usize {
-    let Some(opener) = messages.iter().rposition(opens_turn) else {
+    let Some(opener) = latest_opener(messages) else {
         return messages.len();
     };
     let finished = messages[opener].turn_origin.is_stamped()
         && messages[opener + 1..]
             .iter()
             .all(|message| message.turn_origin.is_stamped());
-    if finished { messages.len() } else { opener }
+    let start = if finished { messages.len() } else { opener };
+    debug_assert!(start <= messages.len());
+    start
 }
 
 /// What a page says of the report it names: never its text (#2226).

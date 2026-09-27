@@ -336,3 +336,32 @@ async fn an_owed_report_the_read_never_reached_is_never_acknowledged_past() {
         "the page alone stops the paging"
     );
 }
+
+/// #2246 cold review L1: a report the child names without a turn origin
+/// (never stamped) is delivered, read by id, without one: no `null` origin
+/// is invented, and a `null` origin never marks a page.
+#[tokio::test]
+async fn an_unmarked_named_report_is_delivered_without_a_turn_origin() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock = tmp.path().join("child.sock");
+    let _seen = serve_child(&sock, vec![(None, json!({}))], vec![("m2", "REPORT")]);
+    let tool = tool_over(&sock);
+    let newest = json!({"before": "m3", "hasMoreBefore": true, "messages": fixture()[2..],
+        "report": {"id":"m2","ordinal":2,"contentLength":6}});
+    let expanded = first_read(&tool, &sock, newest).await;
+    let (report, pending) = planned(&expanded, 0);
+    assert_eq!(contents(&report), ["REPORT"]);
+    let delivered = report["data"]["messages"][0].as_object().unwrap();
+    assert!(!delivered.contains_key("turnOrigin"), "{report}");
+    assert_eq!(pending, Some(2));
+
+    let nulls = [
+        json!({"role":"user","content":"task","ordinal":5,"turnOrigin":null}),
+        json!({"role":"assistant","content":"","ordinal":6,"turnOrigin":null,
+            "toolCalls":[{"id":"c","name":"bash","arguments":"{}"}]}),
+    ];
+    assert!(
+        !needs_default_report_backfill(&nulls, 0, true),
+        "a page of null origins is unmarked: any assistant message ends the paging"
+    );
+}

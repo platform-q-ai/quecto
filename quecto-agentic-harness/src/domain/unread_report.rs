@@ -79,7 +79,42 @@ pub fn select_unread_without_report(
     delivered: u64,
     report_incomplete: bool,
 ) -> UnreadSelection {
-    select(messages, delivered, report_incomplete, FirstRead::Window)
+    let selection = select(messages, delivered, report_incomplete, FirstRead::Window);
+    debug_assert!(
+        delivered == 0
+            || selection == select(messages, delivered, report_incomplete, FirstRead::Report),
+        "the window rule only changes a first read"
+    );
+    selection
+}
+
+/// The unread ordinals a delivery of `delivered` acknowledges without
+/// delivering them (#2246): every ordinal above the `watermark`, up to the
+/// newest delivered, that is not itself delivered, as inclusive ranges in
+/// order. The supervisor can still read them with explicit pages.
+pub fn skipped_unread(watermark: u64, delivered: &[u64]) -> Vec<(u64, u64)> {
+    let mut sent: Vec<u64> = delivered
+        .iter()
+        .copied()
+        .filter(|&o| o > watermark)
+        .collect();
+    // A repeated ordinal (pages overlapping) opens no gap: it is at most
+    // the one before it.
+    sent.sort_unstable();
+    let mut ranges = Vec::new();
+    let mut next = watermark + 1;
+    for ordinal in sent {
+        if ordinal > next {
+            ranges.push((next, ordinal - 1));
+        }
+        next = ordinal + 1;
+    }
+    debug_assert!(
+        ranges
+            .iter()
+            .all(|&(from, to)| watermark < from && from <= to)
+    );
+    ranges
 }
 
 fn select(

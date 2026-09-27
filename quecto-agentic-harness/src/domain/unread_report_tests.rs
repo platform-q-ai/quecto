@@ -318,3 +318,24 @@ fn a_first_read_without_a_report_delivers_its_window() {
         );
     }
 }
+
+/// #2246 cold review L3: the unread ordinals a delivery acknowledges without
+/// delivering them, as inclusive ranges: every ordinal above the watermark
+/// up to the newest delivered that is not itself delivered.
+#[test]
+fn skipped_ranges_cover_every_unread_ordinal_not_delivered() {
+    use super::skipped_unread;
+    assert_eq!(skipped_unread(0, &[8, 9, 10]), [(1, 7)]);
+    assert_eq!(
+        skipped_unread(0, &[500, 501, 502, 1000, 1001, 1002, 501]),
+        [(1, 499), (503, 999)]
+    );
+    assert_eq!(skipped_unread(4, &[5, 6]), []);
+    assert_eq!(skipped_unread(4, &[7, 5]), [(6, 6)]);
+    assert_eq!(skipped_unread(0, &[]), []);
+    assert_eq!(
+        skipped_unread(9, &[3, 12]),
+        [(10, 11)],
+        "read ordinals are never skipped"
+    );
+}

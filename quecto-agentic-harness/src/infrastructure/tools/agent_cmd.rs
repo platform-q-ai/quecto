@@ -323,7 +323,14 @@ impl AgentCmdTool {
             _ => false,
         };
         let mut older_unread_skipped = None;
-        let mut report_found = true;
+        // A child naming no report (`report: null`) has given no
+        // substantive reply: a first read delivers the window it holds
+        // instead of nothing (#2246).
+        let mut report_found = match (delivered, &page) {
+            (0, PageReport::NamesNone) => false,
+            (_, PageReport::Unnamed | PageReport::NamesNone)
+            | (_, PageReport::OnPage | PageReport::OffPage(_)) => true,
+        };
         // Only a page that says older history exists is paged back from
         // (#2218); one without it holds the whole transcript.
         while !named
@@ -681,6 +688,9 @@ impl Tool for AgentCmdTool {
     }
 }
 
+#[cfg(test)]
+#[path = "agent_cmd_answerless_report_tests.rs"]
+mod answerless_report_tests;
 #[cfg(test)]
 #[path = "agent_cmd_definition_tests.rs"]
 mod definition_tests;

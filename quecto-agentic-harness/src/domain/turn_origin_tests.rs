@@ -289,3 +289,23 @@ fn an_unmarked_opener_is_taken_as_in_flight() {
     let messages = [Message::user("note"), spilled("reply", X, 1)];
     assert_eq!(super::report_to_keep(&messages), None);
 }
+
+/// #2246 cold review N3: one rule finds the latest opener, for the ceiling's
+/// region and for the report to keep: a user message the loop did not
+/// append inside a turn.
+#[test]
+fn the_latest_opener_is_the_latest_user_message_outside_a_turn() {
+    let mut feedback = Message::user("Your reply was cut off.");
+    feedback.turn = Some(1);
+    let messages = [
+        instruction("task".into()),
+        reply("status"),
+        progress_nudge("continue".into()),
+        feedback,
+        reply("done"),
+    ];
+    assert_eq!(super::latest_opener(&messages), Some(2));
+    assert_eq!(super::latest_opener(&messages[..2]), Some(0));
+    assert_eq!(super::latest_opener(&messages[1..2]), None);
+    assert_eq!(super::latest_opener(&[]), None);
+}
