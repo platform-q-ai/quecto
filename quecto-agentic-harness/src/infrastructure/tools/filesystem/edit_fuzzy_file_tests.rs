@@ -180,10 +180,40 @@ async fn a_trailing_space_mid_line_replaces_the_files_space() {
     .await;
 }
 
-/// The whole whitespace run at a mid-line edge goes with the match.
+/// Mid-line, the match takes only as much of the file's whitespace run as
+/// oldText ends with: the rest stays, as the exact path would leave it.
 #[tokio::test]
-async fn a_trailing_space_mid_line_takes_the_whole_run() {
-    assert_edit("it\u{2019}s foo \t bar\n", "it's foo ", "X ", "X bar\n").await;
+async fn a_trailing_space_mid_line_takes_only_old_texts_whitespace() {
+    assert_edit("it\u{2019}s foo \t bar\n", "it's foo ", "X ", "X \t bar\n").await;
+    assert_edit("foo\u{2019}s  bar", "foo's ", "X ", "X  bar").await;
+}
+
+/// oldText's trailing whitespace that the file's run does not start with,
+/// mid-line, is no match.
+#[tokio::test]
+async fn a_different_whitespace_run_mid_line_is_not_a_match() {
+    let file = "it\u{2019}s foo\t bar\n";
+    let (result, after) = edit_file(file, "it's foo ", "X ").await;
+    assert!(result.content.contains("not found"), "{}", result.content);
+    assert_eq!(after, file);
+}
+
+/// A shorter indent in oldText's last line keeps the rest of the file's.
+#[tokio::test]
+async fn a_shorter_indent_in_old_text_keeps_the_rest_of_the_files() {
+    assert_edit(
+        "it\u{2019}s\n        deep\n",
+        "it's\n    ",
+        "done\n    ",
+        "done\n        deep\n",
+    )
+    .await;
+}
+
+/// Trailing whitespace at a line end is taken whole, whatever its length.
+#[tokio::test]
+async fn trailing_whitespace_at_a_line_end_is_taken_whole() {
+    assert_edit("a\u{2019}\t  \nz\n", "a' ", "b ", "b \nz\n").await;
 }
 
 /// A trailing tab mid-line.
@@ -230,6 +260,28 @@ async fn only_matches_whose_edges_fit_are_counted() {
         "it's foo ",
         "X ",
         "it\u{2019}s foobar\nX bar\n",
+    )
+    .await;
+}
+
+/// A whitespace-only first line of oldText must stand for whitespace in the
+/// file (or a line that is empty): it never joins onto the end of a line.
+#[tokio::test]
+async fn a_whitespace_only_first_line_does_not_merge_lines() {
+    let file = "  foo();\n    return x\u{2019};\n";
+    let (result, after) = edit_file(file, "    \n    return x';", "    return y;").await;
+    assert!(result.content.contains("not found"), "{}", result.content);
+    assert_eq!(after, file);
+}
+
+/// ... but it does match an empty line.
+#[tokio::test]
+async fn a_whitespace_only_first_line_matches_an_empty_line() {
+    assert_edit(
+        "a\n\nreturn x\u{2019};\n",
+        "  \nreturn x';",
+        "\nreturn y;",
+        "a\n\nreturn y;\n",
     )
     .await;
 }

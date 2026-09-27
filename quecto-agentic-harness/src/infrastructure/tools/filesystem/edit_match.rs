@@ -73,56 +73,85 @@ fn is_line_space(c: char) -> bool {
     c.is_whitespace() && c != '\n'
 }
 
-/// The whitespace at the edges of `oldText` that fuzzy normalisation drops.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Edges {
-    /// The first line of `oldText` is whitespace only (and a newline follows):
-    /// it stands for the file's trailing whitespace before the matched newline.
-    before: bool,
-    /// `oldText` ends in whitespace: it stands for the file's whitespace run
-    /// right after the match, or for a line end.
-    after: bool,
+/// Byte length of the in-line whitespace run at the front of `chars`.
+fn line_space_len(chars: impl Iterator<Item = char>) -> usize {
+    chars
+        .take_while(|c| is_line_space(*c))
+        .map(char::len_utf8)
+        .sum()
 }
 
-impl Edges {
-    fn of(old: &str) -> Self {
+/// The whitespace at the edges of `oldText` that fuzzy normalisation drops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Edges<'a> {
+    /// The first line of `oldText` is whitespace only (and a newline follows):
+    /// it stands for the file's trailing whitespace before the matched
+    /// newline, or for an empty line.
+    before: bool,
+    /// The whitespace `oldText` ends with (empty when it ends otherwise): it
+    /// stands for the same whitespace in the file right after the match, or
+    /// for trailing whitespace up to a line end.
+    after: &'a str,
+}
+
+impl<'a> Edges<'a> {
+    fn of(old: &'a str) -> Self {
         let before = old
             .split_once('\n')
             .is_some_and(|(first, _)| !first.is_empty() && first.chars().all(is_line_space));
-        let after = old.chars().next_back().is_some_and(is_line_space);
+        let core_len = old.trim_end_matches(is_line_space).len();
+        let after = old.get(core_len..).unwrap_or_default();
         Self { before, after }
     }
 
     /// Widen the core match over the file's whitespace at the edges where
-    /// `oldText` has whitespace. `None` when `oldText` ends in whitespace but
-    /// the file has neither whitespace nor a line end there: not a match.
+    /// `oldText` has whitespace, or `None` when the edges do not fit.
     fn fit(self, content: &str, core: Range<usize>) -> Option<Range<usize>> {
-        let before_core = content.get(..core.start)?;
-        let after_core = content.get(core.end..)?;
         let start = if self.before {
-            let run: usize = before_core
-                .chars()
-                .rev()
-                .take_while(|c| is_line_space(*c))
-                .map(char::len_utf8)
-                .sum();
-            core.start - run
+            self.fit_start(content, core.start)?
         } else {
             core.start
         };
-        let end = if self.after {
-            let run: usize = after_core
-                .chars()
-                .take_while(|c| is_line_space(*c))
-                .map(char::len_utf8)
-                .sum();
-            let is_line_end = after_core.is_empty() || after_core.starts_with('\n');
-            let fits = run > 0 || is_line_end;
-            fits.then_some(core.end + run)?
-        } else {
+        let end = if self.after.is_empty() {
             core.end
+        } else {
+            self.fit_end(content, core.end)?
         };
         content.get(start..end).map(|_| start..end)
+    }
+
+    /// The core starts at a newline. Take the file's trailing whitespace
+    /// before it; with none there, the newline must end an empty line (or
+    /// start the file), else oldText's blank line would join two lines.
+    fn fit_start(self, content: &str, core_start: usize) -> Option<usize> {
+        let before_core = content.get(..core_start)?;
+        let run = line_space_len(before_core.chars().rev());
+        let start = core_start.checked_sub(run)?;
+        let line_before = content.get(..start)?;
+        let is_line_start = line_before.is_empty() || line_before.ends_with('\n');
+        (run > 0 || is_line_start).then_some(start)
+    }
+
+    /// A run that reaches the line end is trailing whitespace: take it whole.
+    /// Otherwise take exactly oldText's trailing whitespace from the front of
+    /// the file's run (compared after `fuzzy_char`), or the edge does not fit.
+    fn fit_end(self, content: &str, core_end: usize) -> Option<usize> {
+        let after_core = content.get(core_end..)?;
+        let run = line_space_len(after_core.chars());
+        let rest = after_core.get(run..)?;
+        let is_trailing = rest.is_empty() || rest.starts_with('\n');
+        if is_trailing {
+            return core_end.checked_add(run);
+        }
+        let mut file_run = after_core.chars();
+        let mut taken = 0usize;
+        for wanted in self.after.chars() {
+            let got = file_run
+                .next()
+                .filter(|c| is_line_space(*c) && fuzzy_char(*c) == fuzzy_char(wanted))?;
+            taken += got.len_utf8();
+        }
+        core_end.checked_add(taken)
     }
 }
 
@@ -224,18 +253,51 @@ fn fuzzy_char(c: char) -> char {
 /// Every start offset of `needle` in `haystack`, OVERLAPPING ones included:
 /// `aa` is in `aaa` twice, and either could be the one meant, so that edit
 /// is ambiguous (#2191). An empty needle occurs nowhere.
+///
+/// One linear pass (Knuth-Morris-Pratt over bytes): the fuzzy search reads
+/// every candidate and may reject most of them at their edges, so restarting
+/// a substring search after each one would be quadratic on periodic text.
+/// A UTF-8 needle only matches UTF-8 text on character boundaries.
 fn occurrences<'a>(haystack: &'a str, needle: &'a str) -> impl Iterator<Item = usize> + 'a {
-    let step = needle.chars().next().map_or(0, char::len_utf8);
-    let mut from = (step > 0).then_some(0usize);
+    let pattern = needle.as_bytes();
+    let fallback = kmp_fallback(pattern);
+    let mut text = haystack.as_bytes().iter().enumerate();
+    let mut matched = 0usize;
     std::iter::from_fn(move || {
-        let start = from?;
-        let found = haystack
-            .get(start..)
-            .and_then(|rest| rest.find(needle))
-            .map(|pos| start + pos);
-        from = found.map(|at| at + step);
-        found
+        let last = pattern.len().checked_sub(1)?;
+        for (at, byte) in text.by_ref() {
+            while matched > 0 && pattern.get(matched) != Some(byte) {
+                matched = fallback.get(matched - 1).copied()?;
+            }
+            if pattern.get(matched) == Some(byte) {
+                matched += 1;
+            }
+            if matched == pattern.len() {
+                matched = fallback.get(last).copied()?;
+                return Some(at - last);
+            }
+        }
+        None
     })
+}
+
+/// For each prefix of `pattern`, the length of its longest proper prefix
+/// that is also its suffix.
+fn kmp_fallback(pattern: &[u8]) -> Vec<usize> {
+    let mut fallback = vec![0usize; pattern.len()];
+    let mut len = 0usize;
+    for at in 1..pattern.len() {
+        while len > 0 && pattern.get(at) != pattern.get(len) {
+            len = fallback.get(len - 1).copied().unwrap_or(0);
+        }
+        if pattern.get(at) == pattern.get(len) {
+            len += 1;
+        }
+        if let Some(slot) = fallback.get_mut(at) {
+            *slot = len;
+        }
+    }
+    fallback
 }
 
 #[cfg(test)]

@@ -151,7 +151,7 @@ fn file_whitespace_at_an_edge_goes_with_the_match_when_old_text_has_some() {
     let content = "pad  \nfoo  \nbar\n";
     assert_eq!(unique(content, "foo\t"), 6..11);
     assert_eq!(unique(content, "\t\nfoo"), 3..9);
-    assert_eq!(unique("a\u{2019}\u{00A0}\tb", "a' "), 0..7);
+    assert_eq!(unique("a\u{2019}\u{00A0}\tb", "a' "), 0..6);
 }
 
 #[test]
@@ -166,17 +166,17 @@ fn old_text_ending_in_whitespace_needs_file_whitespace_or_a_line_end() {
 
 #[test]
 fn edges_are_read_from_old_text() {
-    let edges = |old: &str| {
+    fn edges(old: &str) -> (bool, &str) {
         let e = Edges::of(old);
         (e.before, e.after)
-    };
-    assert_eq!(edges("a"), (false, false));
-    assert_eq!(edges("a \n"), (false, false));
-    assert_eq!(edges(" a\nb"), (false, false));
-    assert_eq!(edges("\na"), (false, false));
-    assert_eq!(edges(" \t\na"), (true, false));
-    assert_eq!(edges("a\n\u{00A0}"), (false, true));
-    assert_eq!(edges("  \na\t"), (true, true));
+    }
+    assert_eq!(edges("a"), (false, ""));
+    assert_eq!(edges("a \n"), (false, ""));
+    assert_eq!(edges(" a\nb"), (false, ""));
+    assert_eq!(edges("\na"), (false, ""));
+    assert_eq!(edges(" \t\na"), (true, ""));
+    assert_eq!(edges("a\n\u{00A0}"), (false, "\u{00A0}"));
+    assert_eq!(edges("  \na \t"), (true, " \t"));
 }
 
 #[test]
@@ -200,7 +200,27 @@ fn a_mapped_range_that_does_not_normalise_to_the_needle_is_refused() {
     assert_eq!(prove_fuzzy_range("\u{2019}b", &(0..4), "'b"), Ok(()));
 }
 
-// --- property: fuzzy edits never touch bytes outside the matched text ---
+// --- cost ---
+
+/// #2191 review: candidates that do not fit must not make the search
+/// quadratic. A periodic 1 MiB file with a long needle that matches
+/// everywhere except at its whitespace edge.
+#[test]
+fn a_periodic_file_is_searched_in_linear_time() {
+    let content = "ab".repeat(512 * 1024);
+    let old = format!("{}a ", "ab".repeat(5_000));
+    let started = std::time::Instant::now();
+    let location = locate(&content, &old);
+    let took = started.elapsed();
+    assert_eq!(location, Ok(Location::NotFound));
+    assert!(took < std::time::Duration::from_secs(1), "took {took:?}");
+}
+
+// --- property: every fuzzy edit replaces exactly what the spec says ---
+//
+// The oracle below is written from the spec, independently of the code
+// under test: its own whitespace set, its own normaliser (a plain char loop)
+// and a brute-force search over every range of the file.
 
 const ALPHABET: &[&str] = &[
     "a",
@@ -228,6 +248,137 @@ const ALPHABET: &[&str] = &[
     "\u{1F680}",
 ];
 
+/// The alphabet's in-line whitespace, listed by hand.
+fn spec_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\u{00A0}' | '\u{2003}' | '\u{3000}')
+}
+
+/// The alphabet's look-alikes, listed by hand.
+fn spec_char(c: char) -> char {
+    match c {
+        '\u{2018}' | '\u{2019}' => '\'',
+        '\u{201C}' | '\u{201D}' => '"',
+        '\u{2013}' | '\u{2014}' => '-',
+        '\u{00A0}' | '\u{2003}' | '\u{3000}' => ' ',
+        other => other,
+    }
+}
+
+/// Spec normaliser: per line, drop trailing in-line whitespace, then map
+/// look-alikes. A plain loop over chars.
+fn spec_normalise(text: &str) -> String {
+    let mut out = String::new();
+    let mut pending = String::new();
+    for c in text.chars() {
+        if c == '\n' {
+            pending.clear();
+            out.push('\n');
+        } else if spec_space(c) {
+            pending.push(spec_char(c));
+        } else {
+            out.push_str(&pending);
+            pending.clear();
+            out.push(spec_char(c));
+        }
+    }
+    out
+}
+
+fn spec_boundaries(text: &str) -> Vec<usize> {
+    text.char_indices()
+        .map(|(i, _)| i)
+        .chain(std::iter::once(text.len()))
+        .collect()
+}
+
+/// Byte length of the leading run of spec whitespace.
+fn spec_run(chars: impl Iterator<Item = char>) -> usize {
+    let mut len = 0;
+    for c in chars {
+        if !spec_space(c) {
+            break;
+        }
+        len += c.len_utf8();
+    }
+    len
+}
+
+/// Is `slice` a "core" match: it normalises to the needle and does not
+/// carry whitespace that normalisation drops at either edge?
+fn spec_is_core(slice: &str, needle: &str) -> bool {
+    let first_line_blank = match slice.find('\n') {
+        Some(nl) => nl > 0 && slice[..nl].chars().all(spec_space),
+        None => false,
+    };
+    let ends_in_space = slice.chars().last().is_some_and(spec_space);
+    !slice.is_empty() && !first_line_blank && !ends_in_space && spec_normalise(slice) == needle
+}
+
+/// Widen a core range at the edges where `old` has whitespace, per the spec.
+fn spec_fit(content: &str, core: Range<usize>, old: &str) -> Option<Range<usize>> {
+    let mut start = core.start;
+    let old_first_line_blank = match old.find('\n') {
+        Some(nl) => nl > 0 && old[..nl].chars().all(spec_space),
+        None => false,
+    };
+    if old_first_line_blank {
+        let run = spec_run(content[..core.start].chars().rev());
+        start = core.start - run;
+        let line_start = start == 0 || content[..start].ends_with('\n');
+        if run == 0 && !line_start {
+            return None;
+        }
+    }
+    let old_tail: Vec<char> = old.chars().rev().take_while(|c| spec_space(*c)).collect();
+    let mut end = core.end;
+    if !old_tail.is_empty() {
+        let after = &content[core.end..];
+        let run = spec_run(after.chars());
+        let reaches_line_end = after[run..].is_empty() || after[run..].starts_with('\n');
+        if reaches_line_end {
+            end += run;
+        } else {
+            let file: Vec<char> = after.chars().take(old_tail.len()).collect();
+            let wanted = old_tail.iter().rev();
+            let same = file.len() == old_tail.len()
+                && file
+                    .iter()
+                    .zip(wanted)
+                    .all(|(f, w)| spec_space(*f) && spec_char(*f) == spec_char(*w));
+            if !same {
+                return None;
+            }
+            end += file.iter().map(|c| c.len_utf8()).sum::<usize>();
+        }
+    }
+    Some(start..end)
+}
+
+/// Brute force: what `locate` must return, from the spec.
+fn spec_locate(content: &str, old: &str) -> Location {
+    let bounds = spec_boundaries(content);
+    let exact: Vec<Range<usize>> = bounds
+        .iter()
+        .filter(|s| !old.is_empty() && content[**s..].starts_with(old))
+        .map(|s| *s..*s + old.len())
+        .collect();
+    let needle = spec_normalise(old);
+    let fitting: Vec<Range<usize>> = match exact.is_empty() && !needle.is_empty() {
+        true => bounds
+            .iter()
+            .flat_map(|s| bounds.iter().map(move |e| *s..*e))
+            .filter(|r| r.start < r.end && spec_is_core(&content[r.clone()], &needle))
+            .filter_map(|core| spec_fit(content, core, old))
+            .collect(),
+        false => exact,
+    };
+    match fitting.as_slice() {
+        [] => Location::NotFound,
+        [one] => Location::Unique(one.clone()),
+        many => Location::Ambiguous(many.len().min(2)),
+    }
+}
+
 fn random_text(rng: &mut StdRng, max_chars: usize) -> String {
     let len = rng.gen_range(0..=max_chars);
     (0..len)
@@ -235,16 +386,16 @@ fn random_text(rng: &mut StdRng, max_chars: usize) -> String {
         .collect()
 }
 
-/// Rewrite `region` the way a model might retype it: swap quotes, dashes and
-/// spaces for look-alikes, add or drop trailing spaces before newlines
-/// (which also covers a whitespace-only first line), and add or drop
-/// whitespace at the end.
+/// Rewrite `region` the way a model might retype it: swap look-alikes, add
+/// or drop trailing spaces before newlines (which also covers a blank first
+/// line), and cut, drop or add whitespace at the end.
 fn retype(rng: &mut StdRng, region: &str) -> String {
     let mut out = String::new();
     for c in region.chars() {
         if c == '\n' && rng.gen_bool(0.3) {
-            let trimmed = out.trim_end_matches(is_line_space).len();
-            out.truncate(trimmed);
+            while out.ends_with(spec_space) {
+                out.pop();
+            }
             out.push_str(&" ".repeat(rng.gen_range(0..3)));
         }
         let swap = rng.gen_bool(0.5);
@@ -260,118 +411,49 @@ fn retype(rng: &mut StdRng, region: &str) -> String {
         };
         out.push(retyped);
     }
-    if rng.gen_bool(0.25) {
-        let trimmed = out.trim_end_matches(is_line_space).len();
-        out.truncate(trimmed);
-    }
-    if rng.gen_bool(0.25) {
-        out.push_str([" ", "\t", "  ", " \t"][rng.gen_range(0..4)]);
+    match rng.gen_range(0..4) {
+        0 => {
+            while out.ends_with(spec_space) {
+                out.pop();
+            }
+        }
+        1 if out.ends_with(spec_space) => {
+            out.pop();
+        }
+        2 => out.push_str([" ", "\t", "  ", " \t"][rng.gen_range(0..4)]),
+        _ => {}
     }
     out
 }
 
-fn char_boundaries(text: &str) -> Vec<usize> {
-    text.char_indices()
-        .map(|(i, _)| i)
-        .chain(std::iter::once(text.len()))
-        .collect()
-}
-
-fn line_space_len(chars: impl Iterator<Item = char>) -> usize {
-    chars
-        .take_while(|c| is_line_space(*c))
-        .map(char::len_utf8)
-        .sum()
-}
-
-/// Oracle, independent of `locate`: the range a fuzzy edit of `old`, typed
-/// from `content[i..j]`, must replace. The region's own edge whitespace is
-/// dropped; where `old` has edge whitespace, the file's whitespace run there
-/// is taken instead. `None` when `old` ends in whitespace but the file has
-/// neither whitespace nor a line end after the region: that is no match.
-fn expected_range(content: &str, i: usize, j: usize, old: &str) -> Option<Range<usize>> {
-    let region = &content[i..j];
-    let start = match old.split_once('\n') {
-        Some((first, _)) if first.chars().all(is_line_space) => {
-            let newline = i + region.find('\n').expect("region keeps its newlines");
-            let run = line_space_len(content[..newline].chars().rev());
-            if first.is_empty() {
-                newline
-            } else {
-                newline - run
-            }
-        }
-        _ => i,
-    };
-    let core_end = i + region.trim_end_matches(is_line_space).len();
-    let end = if old.ends_with(is_line_space) {
-        let after = &content[core_end..];
-        let run = line_space_len(after.chars());
-        let fits = run > 0 || after.is_empty() || after.starts_with('\n');
-        fits.then_some(core_end + run)?
-    } else {
-        core_end
-    };
-    Some(start..end)
-}
-
 #[test]
-fn fuzzy_edits_replace_exactly_the_intended_text_and_never_panic() {
+fn every_edit_location_matches_the_brute_force_spec() {
     let mut rng = StdRng::seed_from_u64(0x2191);
-    let (mut checked, mut widened) = (0usize, 0usize);
-    for _ in 0..30_000 {
-        let content = random_text(&mut rng, 40);
-        let bounds = char_boundaries(&content);
+    let (mut fuzzy_unique, mut widened, mut ambiguous) = (0usize, 0usize, 0usize);
+    for _ in 0..6_000 {
+        let content = random_text(&mut rng, 24);
+        let bounds = spec_boundaries(&content);
         let i = bounds[rng.gen_range(0..bounds.len())];
         let j = bounds[rng.gen_range(0..bounds.len())];
         let (i, j) = (i.min(j), i.max(j));
         let old = retype(&mut rng, &content[i..j]);
-        let needle = fuzzy_normalise(&old).unwrap().text;
-        let is_exact = !old.is_empty() && content.contains(old.as_str());
-        let expected = expected_range(&content, i, j, &old);
-        let case = format!("{content:?} / {old:?} from {i}..{j}");
+        let case = format!("{content:?} / {old:?}");
 
-        let location = locate(&content, &old).unwrap_or_else(|_| panic!("unmappable: {case}"));
-        let range = match location {
-            Location::Unique(range) => range,
-            Location::Ambiguous(_) => continue,
-            Location::NotFound => {
-                let may_miss = needle.is_empty() || expected.is_none();
-                assert!(may_miss && !is_exact, "not found: {case}");
-                continue;
-            }
-        };
-        let replaced = content
-            .get(range.clone())
-            .expect("range on char boundaries");
-        let edited = splice_for_test(&content, &range, "<NEW>");
-        assert_eq!(edited.get(..range.start), content.get(..range.start));
-        assert!(edited.ends_with(&content[range.end..]));
-        if is_exact {
-            assert_eq!(replaced, old, "{case}");
-            continue;
+        let got = locate(&content, &old).unwrap_or_else(|_| panic!("unmappable: {case}"));
+        assert_eq!(got, spec_locate(&content, &old), "{case}");
+
+        if let Location::Unique(range) = &got {
+            let edited = format!("{}<NEW>{}", &content[..range.start], &content[range.end..]);
+            assert!(edited.starts_with(&content[..range.start]), "{case}");
+            assert!(edited.ends_with(&content[range.end..]), "{case}");
+            let is_fuzzy = content[range.clone()] != old;
+            fuzzy_unique += usize::from(is_fuzzy);
+            let trimmed_end = range.start + content[range.clone()].trim_end().len();
+            widened += usize::from(is_fuzzy && (range.end > trimmed_end));
         }
-        assert_eq!(fuzzy_normalise(replaced).unwrap().text, needle, "{case}");
-        let Some(expected) = expected else {
-            continue;
-        };
-        assert_eq!(range, expected, "{case}");
-        checked += 1;
-        let region_core = i + content[i..j].trim_end_matches(is_line_space).len();
-        widened += usize::from(range.start < i || range.end > region_core);
+        ambiguous += usize::from(matches!(got, Location::Ambiguous(_)));
     }
-    assert!(checked > 2_000, "too few fuzzy edits checked: {checked}");
-    assert!(
-        widened > 200,
-        "too few edge-whitespace edits checked: {widened}"
-    );
-}
-
-fn splice_for_test(content: &str, range: &Range<usize>, new: &str) -> String {
-    format!(
-        "{}{}{}",
-        &content[..range.start],
-        new,
-        &content[range.end..]
-    )
+    assert!(fuzzy_unique > 500, "too few fuzzy edits: {fuzzy_unique}");
+    assert!(widened > 50, "too few edge-widened edits: {widened}");
+    assert!(ambiguous > 200, "too few ambiguous cases: {ambiguous}");
 }
