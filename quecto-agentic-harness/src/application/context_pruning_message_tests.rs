@@ -259,7 +259,7 @@ fn message_collapse_disabled_by_sentinel() {
 
     // Control: the identical session DOES collapse at a finite limit.
     let collapsed = collapse_conversation_messages_over_limit(&mut messages, 50, 0);
-    assert_eq!(collapsed, 50);
+    assert_eq!(collapsed, 62, "down to the low-water mark of 38 (#2213)");
 }
 
 // --- exemptions (AC3) ---
@@ -343,16 +343,19 @@ fn collapsed_message_stubs_count_toward_the_token_budget() {
 #[test]
 fn message_stubs_do_not_disturb_the_tool_collapse_trigger() {
     // Collapse conversation messages first, marking them is_collapsed. The
-    // tool trigger must still see 51 live tool results and collapse exactly 1.
+    // tool trigger must still see 51 live tool results and collapse exactly 13
+    // (down to its low-water mark of 38, #2213).
     let mut messages = session_with_old_conv_messages(4);
     let collapsed = collapse_conversation_messages_over_limit(&mut messages, 3, 0);
     assert_eq!(collapsed, 1, "positive control: one message stub exists");
     for i in 1..=51 {
         messages.push(tool_call_msg(i));
     }
+    // The model has seen the results (#2213: unseen ones never collapse).
+    messages.push(Message::assistant("seen", vec![]));
     let tool_collapsed = collapse_tool_results_over_limit(&mut messages, 50);
     assert_eq!(
-        tool_collapsed, 1,
+        tool_collapsed, 13,
         "message stubs must not count toward the tool-call trigger"
     );
 }

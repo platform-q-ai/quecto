@@ -154,28 +154,31 @@ fn tool_call_msg(i: u32) -> Message {
 
 #[test]
 fn collapse_over_limit_keeps_most_recent_n_tool_calls() {
-    // 60 tool calls, keep the most recent 50 → collapse the oldest 10.
+    // 60 tool calls over a dial of 50 → collapse down to the low-water mark
+    // (38, #2213): the oldest 22 go, the most recent 38 stay full.
     let mut messages: Vec<Message> = (1..=60).map(tool_call_msg).collect();
     let collapsed = collapse_tool_results_over_limit(&mut messages, 50);
-    assert_eq!(collapsed, 10);
-    for msg in &messages[..10] {
-        assert!(msg.is_collapsed, "oldest 10 tool results must be collapsed");
+    assert_eq!(collapsed, 22);
+    for msg in &messages[..22] {
+        assert!(msg.is_collapsed, "oldest 22 tool results must be collapsed");
     }
-    for msg in &messages[10..] {
+    for msg in &messages[22..] {
         assert!(
             !msg.is_collapsed,
-            "the 50 most recent tool results must stay full"
+            "the 38 most recent tool results must stay full"
         );
     }
 }
 
 #[test]
 fn collapse_over_limit_triggers_at_one_past_the_threshold() {
-    // Exactly threshold+1 tool calls → the single oldest is collapsed.
+    // Exactly threshold+1 tool calls → collapse down to the low-water mark
+    // (38 of 50, #2213): the oldest 13 go in one batch.
     let mut messages: Vec<Message> = (1..=51).map(tool_call_msg).collect();
     let collapsed = collapse_tool_results_over_limit(&mut messages, 50);
-    assert_eq!(collapsed, 1);
-    assert!(messages[0].is_collapsed);
+    assert_eq!(collapsed, 13);
+    assert!(messages[..13].iter().all(|m| m.is_collapsed));
+    assert!(!messages[13].is_collapsed);
 }
 
 #[test]
@@ -187,26 +190,27 @@ fn collapse_over_limit_no_collapse_at_or_under_threshold() {
     assert!(messages.iter().all(|m| !m.is_collapsed));
 
     // Positive control: the SAME message set with one more tool call must
-    // collapse exactly one, so this test can distinguish the real trigger
-    // from a no-op implementation.
+    // collapse a batch down to the low-water mark (#2213), so this test can
+    // distinguish the real trigger from a no-op implementation.
     messages.push(tool_call_msg(51));
     let collapsed = collapse_tool_results_over_limit(&mut messages, 50);
-    assert_eq!(collapsed, 1);
+    assert_eq!(collapsed, 13);
     assert!(messages[0].is_collapsed);
 }
 
 #[test]
 fn collapse_over_limit_honors_non_default_threshold() {
     // The threshold is configurable, not hard-coded to 50: at limit 10,
-    // 10 tool calls collapse nothing but 11 collapse exactly one.
+    // 10 tool calls collapse nothing but 11 collapse down to the low-water
+    // mark of 8 (#2213).
     let mut at_limit: Vec<Message> = (1..=10).map(tool_call_msg).collect();
     assert_eq!(collapse_tool_results_over_limit(&mut at_limit, 10), 0);
     assert!(at_limit.iter().all(|m| !m.is_collapsed));
 
     let mut over_limit: Vec<Message> = (1..=11).map(tool_call_msg).collect();
-    assert_eq!(collapse_tool_results_over_limit(&mut over_limit, 10), 1);
-    assert!(over_limit[0].is_collapsed);
-    assert!(over_limit[1..].iter().all(|m| !m.is_collapsed));
+    assert_eq!(collapse_tool_results_over_limit(&mut over_limit, 10), 3);
+    assert!(over_limit[..3].iter().all(|m| m.is_collapsed));
+    assert!(over_limit[3..].iter().all(|m| !m.is_collapsed));
 }
 
 #[test]
@@ -223,9 +227,10 @@ fn collapse_over_limit_is_cumulative_across_prompts() {
         messages.push(Message::user("prompt"));
         messages.push(tool_call_msg((i % 3) + 1)); // turns reset again
     }
-    // 55 tool calls total, threshold 50 → oldest 5 collapse.
+    // 55 tool calls total, threshold 50 → the oldest 17 collapse, down to
+    // the low-water mark of 38 (#2213).
     let collapsed = collapse_tool_results_over_limit(&mut messages, 50);
-    assert_eq!(collapsed, 5);
+    assert_eq!(collapsed, 17);
 }
 
 #[test]
@@ -239,9 +244,9 @@ fn collapse_over_limit_disabled_by_sentinel() {
 
     // Control: the identical message set DOES collapse at a finite limit,
     // so only the sentinel short-circuit can explain the 0 above (a pure
-    // count check would have collapsed 50 here too).
+    // count check would have collapsed down to the low-water mark here too).
     let collapsed = collapse_tool_results_over_limit(&mut messages, 50);
-    assert_eq!(collapsed, 50);
+    assert_eq!(collapsed, 62);
 }
 
 #[test]

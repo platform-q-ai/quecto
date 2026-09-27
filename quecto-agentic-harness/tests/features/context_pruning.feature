@@ -3,8 +3,9 @@ Feature: Context pruning via sliding window and tool-call collapse
 
   Tool outputs remain in full context until either (a) the number of tool
   calls in the session exceeds context_collapse_after_tool_calls (default
-  50), at which point the oldest tool results are collapsed to compact
-  recall() stubs, or (b) they are dropped by the sliding window when the
+  50), at which point the oldest tool results the model has seen are
+  collapsed to compact recall() stubs down to the dial's low-water mark
+  (75%, rounded up), or (b) they are dropped by the sliding window when the
   conversation exceeds the token budget. The collapse trigger counts tool
   calls cumulatively across prompts within a session rather than turns
   elapsed. Collapse can be disabled entirely. Spill-to-disk still occurs at
@@ -44,14 +45,30 @@ Feature: Context pruning via sliding window and tool-call collapse
   Scenario: Tool outputs collapse after the configured number of tool calls
     Given context_collapse_after_tool_calls is set to 50
     When the agent has executed 51 tool calls in the session
-    Then the oldest tool result is collapsed to a recall() stub
-    And the 50 most recent tool results remain in full context
+    Then the oldest 13 tool results are collapsed to recall() stubs
+    And the 38 most recent tool results remain in full context
+
+  # #2213: a collapse rewrites the cached prompt prefix; collapsing down to
+  # the low-water mark leaves headroom, so the next tool calls rewrite nothing.
+  Scenario: The tool calls after a collapse land in the headroom
+    Given context_collapse_after_tool_calls is set to 50
+    When the agent has executed 51 tool calls in the session
+    And the agent executes 12 more tool calls in a later prompt
+    Then 0 tool results are collapsed to recall() stubs
+
+  # #2213: results the model has not seen yet are never collapsed, even when
+  # the batch down to the low-water mark would reach them.
+  Scenario: Tool results the model has not seen are never collapsed
+    Given context_collapse_after_tool_calls is set to 10
+    When the agent has run 2 tool calls then 9 unseen parallel tool calls
+    Then 2 tool results are collapsed to recall() stubs
+    And the 9 most recent tool results remain in full context
 
   Scenario: Collapse count is cumulative across prompts within a session
     Given context_collapse_after_tool_calls is set to 50
     And the agent has already executed 30 tool calls in an earlier prompt
     When the agent executes 25 more tool calls in a later prompt
-    Then 5 tool results are collapsed to recall() stubs
+    Then 17 tool results are collapsed to recall() stubs
 
   Scenario: Collapse can be disabled
     Given context collapse is disabled
@@ -289,6 +306,14 @@ Feature: Context pruning via sliding window and tool-call collapse
     Then 1 conversation message is collapsed to a recall stub
     And the oldest conversation message is a one-line recall stub
 
+  # #2213: at a dial of 50 the low-water mark (38) differs from the dial.
+  Scenario: Crossing the message dial collapses down to its low-water mark
+    Given context_collapse_after_messages is set to 50
+    And 51 old conversation messages
+    And an in-flight user prompt
+    When the agent trims old conversation messages
+    Then 13 conversation messages are collapsed to recall stubs
+
   Scenario: Message collapse triggers at one past the threshold, not at it
     Given context_collapse_after_messages is set to 3
     And 3 old conversation messages
@@ -397,6 +422,19 @@ Feature: Context pruning via sliding window and tool-call collapse
     Then at least 1 old message is reduced to a recall stub by the ceiling
     And no messages are removed from the conversation
     And total context is under 150 tokens
+
+  # #2213: crossing the ceiling demotes down to the low-water mark (75% of
+  # the budget, rounded up), not just under the ceiling, so the next turns
+  # append without rewriting the cached prompt prefix.
+  Scenario: Crossing the ceiling demotes down to the low-water mark
+    Given max_context_tokens is set to 170
+    And recent-turn pinning is set to 0 turns
+    And 4 old conversation messages
+    And an in-flight user prompt
+    When the agent enforces the context ceiling
+    Then at least 1 old message is reduced to a recall stub by the ceiling
+    And no messages are removed from the conversation
+    And total context is under 128 tokens
 
   Scenario: Budget pressure removes stubs entirely only when stubbing is not enough
     Given max_context_tokens is set to 5

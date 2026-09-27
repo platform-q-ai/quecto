@@ -11,25 +11,15 @@
 // retention writer, D9 #1978). Never imports infrastructure, never reaches
 // the retention store.
 
-use super::{
-    COLLAPSE_DISABLED, collapse_message, drop_until_under_budget, estimate_message_tokens,
-    estimate_tokens, estimate_total_tokens, truncate_utf8_safe,
-};
+use super::{COLLAPSE_DISABLED, estimate_tokens, truncate_utf8_safe};
 use crate::application::sessions::use_cases::RetainContext;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::SpillEntry;
 
-/// Outcome of one demotion-ladder ceiling pass (#1046 AC6, #1044 AC1).
-#[derive(Debug, Clone, Default)]
-pub struct CeilingLadderOutcome {
-    /// Full conversation messages demoted to recall stubs (first rung).
-    pub collapsed_to_stubs: usize,
-    /// Stubs removed entirely, manifest-only (second rung).
-    pub dropped: usize,
-    /// True when the budget is still exceeded after full demotion — the
-    /// pinned/exempt set alone is over budget (#1044).
-    pub over_budget: bool,
-}
+// #2213: the demotion-ladder ceiling and its low-water mark.
+#[path = "context_pruning_ceiling.rs"]
+pub(super) mod ceiling;
+pub use ceiling::{CeilingLadderOutcome, enforce_context_ceiling_ladder};
 
 /// Format the one-liner stub for a collapsed conversation message, e.g.
 /// `[assistant: "<preview>" (840 tokens) — recall("turn12:msg:assistant")]`.
@@ -95,7 +85,7 @@ fn collapse_conversation_message(msg: &mut Message, spill_id: &str) {
 /// of tail-pinning between prompts instead (pinned by
 /// `ceiling_ladder_tail_fallback_protects_previous_prompt_turns`).
 /// The count trigger does not use the fallback: it
-/// already keeps the most recent N messages in full by construction, and its
+/// already keeps the most recent messages in full by construction, and its
 /// whole point is ageing out earlier prompts' prose.
 fn exempt_flags(messages: &[Message], pin_recent_turns: u32, tail_fallback: bool) -> Vec<bool> {
     let region_start = messages
@@ -134,11 +124,11 @@ fn exempt_flags(messages: &[Message], pin_recent_turns: u32, tail_fallback: bool
 
 /// Collapse the oldest live conversation (assistant + user, one combined
 /// count) messages to recall stubs once their number exceeds `max_messages`
-/// (#1046 AC2). Exempt from the count and never collapsed: system prompt,
-/// manifest, the in-flight user prompt, and messages within the
-/// `pin_recent_turns` tail. Tool results are excluded — the tool dial
-/// (`context_collapse_after_tool_calls`) is independent.
-/// `max_messages == COLLAPSE_DISABLED` disables. Returns collapsed count.
+/// (#1046 AC2), down to its low-water mark in one batch (#2213). Exempt
+/// from the count and never collapsed: system prompt, manifest, the
+/// in-flight user prompt, and messages within the `pin_recent_turns` tail.
+/// Tool results are excluded — the tool dial (`context_collapse_after_tool_calls`)
+/// is independent. `max_messages == COLLAPSE_DISABLED` disables; returns the count.
 pub fn collapse_conversation_messages_over_limit(
     messages: &mut [Message],
     max_messages: u32,
@@ -159,7 +149,7 @@ pub fn collapse_conversation_messages_over_limit(
         })
         .map(|(i, _)| i)
         .collect();
-    let to_collapse = live.len().saturating_sub(max_messages as usize);
+    let to_collapse = ceiling::count_to_collapse(live.len(), max_messages as usize);
     for &i in &live[..to_collapse] {
         // `live` filtered to spill_id.is_some(); skip defensively otherwise.
         let Some(spill_id) = messages[i].spill_id.clone() else {
@@ -168,83 +158,6 @@ pub fn collapse_conversation_messages_over_limit(
         collapse_conversation_message(&mut messages[i], &spill_id);
     }
     to_collapse
-}
-
-/// Enforce the context ceiling by demoting down the ladder (#1046 AC6):
-/// first collapse not-yet-collapsed messages to recall stubs (oldest first —
-/// cheap, keeps locality), and only if still over budget remove stubs
-/// entirely (manifest-only; content is already on disk from creation-time
-/// spilling). Pinned/exempt messages are never demoted at any rung; when
-/// they alone exceed the budget the outcome reports `over_budget` so the
-/// caller can warn and audit (#1044).
-pub fn enforce_context_ceiling_ladder(
-    messages: &mut Vec<Message>,
-    max_tokens: usize,
-    pin_recent_turns: u32,
-) -> CeilingLadderOutcome {
-    let mut outcome = CeilingLadderOutcome::default();
-    let mut total = estimate_total_tokens(messages);
-    if total <= max_tokens {
-        return outcome;
-    }
-    let exempt = exempt_flags(messages, pin_recent_turns, true);
-
-    // First rung: demote full messages to stubs, oldest first. A message
-    // whose stub would be no cheaper than its content (tiny messages) is
-    // skipped — it goes straight to the second rung instead.
-    for (i, msg) in messages.iter_mut().enumerate() {
-        if total <= max_tokens {
-            break;
-        }
-        if exempt[i] || msg.is_collapsed {
-            continue;
-        }
-        // Unspilled content (spill_id == None: a spill-append failure or a
-        // missing store at creation — conversation and tool results alike) is
-        // never stubbed: its recall() would be unresolvable. It falls through
-        // to the second rung's plain drop, as the pre-#1046 ceiling did.
-        if msg.spill_id.is_none() {
-            continue;
-        }
-        let before = estimate_message_tokens(msg);
-        let stub_tokens = estimate_tokens(&message_collapse_stub(
-            msg.role.as_str(),
-            &msg.content,
-            before,
-            msg.spill_id.as_deref().unwrap_or("unknown"),
-        ));
-        if stub_tokens >= before {
-            continue;
-        }
-        match msg.role {
-            Role::Tool => collapse_message(msg),
-            Role::User | Role::Assistant => {
-                // Guarded above: conversation messages here have a spill_id.
-                let Some(spill_id) = msg.spill_id.clone() else {
-                    continue;
-                };
-                collapse_conversation_message(msg, &spill_id);
-            }
-            Role::System => continue,
-        }
-        outcome.collapsed_to_stubs += 1;
-        total = total.saturating_sub(before) + estimate_message_tokens(msg);
-    }
-
-    // Second rung: remove demoted messages entirely, oldest first (content
-    // stays recallable via the spill store and manifest).
-    if total > max_tokens {
-        let droppable: Vec<usize> = messages
-            .iter()
-            .enumerate()
-            .filter(|&(i, _)| !exempt[i])
-            .map(|(i, _)| i)
-            .collect();
-        outcome.dropped = drop_until_under_budget(messages, max_tokens, &droppable).len();
-    }
-
-    outcome.over_budget = estimate_total_tokens(messages) > max_tokens;
-    outcome
 }
 
 /// Spill a conversation (assistant/user) message to the store at creation

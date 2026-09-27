@@ -89,14 +89,15 @@ fn collapse_message(msg: &mut Message) {
 }
 
 /// Collapse the oldest tool results once the number of tool calls in the
-/// session exceeds `max_tool_calls`, keeping only the most recent
-/// `max_tool_calls` tool results in full context (#1017).
+/// session exceeds `max_tool_calls` (#1017), down to its low-water mark in one
+/// batch so the next results append without a prefix rewrite (#2213).
 ///
 /// The trigger is the cumulative **number of un-collapsed tool-result messages**
 /// in the conversation, so it accumulates across prompts within a session
 /// (message history persists) rather than resetting each `run_loop` invocation.
 /// Already-collapsed results are not counted (they no longer weigh on context),
 /// so the collapse front advances monotonically as new tool calls arrive.
+/// Results after the last assistant message are never collapsed.
 ///
 /// `max_tool_calls == COLLAPSE_DISABLED` (`u32::MAX`) disables collapse.
 /// Returns the number of tool results collapsed.
@@ -104,20 +105,15 @@ pub fn collapse_tool_results_over_limit(messages: &mut [Message], max_tool_calls
     if max_tool_calls == COLLAPSE_DISABLED {
         return 0;
     }
-    // spill_id == None means the output never reached the spill store (append
-    // failure / missing store): collapsing it would mint an unresolvable
-    // recall() stub, so such results are excluded from both the count and the
-    // collapse front (same rule as the conversation-message trigger).
-    let live_tool_calls = messages
-        .iter()
-        .filter(|m| m.role == Role::Tool && !m.is_collapsed && m.spill_id.is_some())
-        .count();
-    let mut to_collapse = live_tool_calls.saturating_sub(max_tool_calls as usize);
+    // Unspilled results are excluded from the count and the front, and
+    // results the model has not seen yet are never reached (#2213).
+    let (mut to_collapse, seen_end) =
+        messages::ceiling::tool_results_to_collapse(messages, max_tool_calls as usize);
     if to_collapse == 0 {
         return 0;
     }
     let mut collapsed = 0;
-    for msg in messages.iter_mut() {
+    for msg in messages[..seen_end].iter_mut() {
         if to_collapse == 0 {
             break;
         }

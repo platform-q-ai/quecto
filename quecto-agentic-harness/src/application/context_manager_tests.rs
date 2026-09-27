@@ -219,3 +219,36 @@ async fn tokens_sent_with_every_request_shrink_the_message_budget() {
     assert!(!plan.over_budget);
     assert!(context_pruning::estimate_total_tokens(&messages) <= budget);
 }
+
+/// #2213: once the ceiling is crossed the plan prunes down to the low-water
+/// mark, so the next over-ceiling append lands in the headroom and the
+/// durable prefix is rewritten once, not on every turn.
+#[tokio::test]
+async fn two_consecutive_over_ceiling_appends_latch_the_prefix_dirty_once() {
+    let manager = manager(190_000);
+    let mut messages = vec![Message::user("current prompt")];
+    messages.extend((1..=8).map(long_message));
+    let per_turn = context_pruning::estimate_total_tokens(&[long_message(9)]);
+    let budget = context_pruning::estimate_total_tokens(&messages) + per_turn / 2;
+
+    let mut latches = 0;
+    let mut sent_after_turn_9: Vec<String> = Vec::new();
+    for turn in [9, 10] {
+        messages.push(long_message(turn));
+        let plan = manager
+            .prepare_provider_context(&mut messages, budget, false)
+            .await;
+        assert!(!plan.over_budget);
+        latches += usize::from(plan.durable_prefix_dirty);
+        if turn == 9 {
+            sent_after_turn_9 = messages.iter().map(|m| m.content.clone()).collect();
+        }
+    }
+    assert_eq!(latches, 1, "one prefix rewrite per batch, not per turn");
+    // Turn 10's request starts with turn 9's, byte for byte: the cache hits.
+    let prefix: Vec<String> = messages[..sent_after_turn_9.len()]
+        .iter()
+        .map(|m| m.content.clone())
+        .collect();
+    assert_eq!(prefix, sent_after_turn_9);
+}
