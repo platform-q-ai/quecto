@@ -207,10 +207,10 @@ async fn test_read_stream_limited_keeps_start_and_end_over_cap() {
 #[test]
 fn a_capture_is_the_same_however_the_stream_is_chunked() {
     let data: Vec<u8> = (0..=255u8).cycle().take(5000).collect();
-    let mut whole = capture::Capture::new(1000);
+    let mut whole = capture::Capture::new(1000, capture::Stream::Stdout);
     whole.push(&data);
     for size in [1, 7, 249, 250, 251, 999, 1000, 1001, 4999] {
-        let mut chunked = capture::Capture::new(1000);
+        let mut chunked = capture::Capture::new(1000, capture::Stream::Stdout);
         for chunk in data.chunks(size) {
             chunked.push(chunk);
         }
@@ -227,7 +227,7 @@ fn a_cut_never_splits_a_character() {
         (format!("x{}", "é".repeat(100)), 100),
         ("日本語".repeat(50), 97),
     ] {
-        let mut capture = capture::Capture::new(cap);
+        let mut capture = capture::Capture::new(cap, capture::Stream::Stdout);
         capture.push(text.as_bytes());
         let (rendered, cut) = capture.render();
         assert!(cut);
@@ -283,7 +283,7 @@ async fn a_stream_gone_quiet_gives_what_arrived_so_far() {
     use tokio::io::AsyncWriteExt;
     let (mut writer, reader) = tokio::io::duplex(64);
     writer.write_all(b"partial").await.unwrap();
-    let reader = capture::StreamReader::spawn(reader, 1024);
+    let reader = capture::StreamReader::spawn(reader, 1024, capture::Stream::Stdout);
     let ((s, cut), open) = await_stream_output_within(
         Some(reader),
         Duration::from_millis(100),
@@ -311,7 +311,7 @@ async fn a_stream_that_keeps_producing_is_awaited_up_to_the_ceiling() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     });
-    let reader = capture::StreamReader::spawn(reader, 1 << 20);
+    let reader = capture::StreamReader::spawn(reader, 1 << 20, capture::Stream::Stdout);
     let started = std::time::Instant::now();
     let ((s, _), open) = await_stream_output_within(
         Some(reader),
@@ -338,7 +338,7 @@ async fn a_stream_producing_steadily_is_read_to_its_end() {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     });
-    let reader = capture::StreamReader::spawn(reader, 1 << 20);
+    let reader = capture::StreamReader::spawn(reader, 1 << 20, capture::Stream::Stdout);
     let ((s, _), open) = await_stream_output_within(
         Some(reader),
         Duration::from_millis(500),
@@ -354,7 +354,7 @@ async fn a_stream_producing_steadily_is_read_to_its_end() {
 /// no capture.
 #[test]
 fn a_released_capture_keeps_nothing_more() {
-    let mut capture = capture::Capture::new(1024);
+    let mut capture = capture::Capture::new(1024, capture::Stream::Stdout);
     capture.push(b"before");
     let (text, _) = capture.render();
     assert_eq!(text, "before");

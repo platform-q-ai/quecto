@@ -1,9 +1,10 @@
 use super::denylist::check;
 use super::legacy_scan::{expand_bash_escapes, legacy_substring_scan};
+use super::policy_rule::PolicyRule;
 
 fn blocked(cmd: &str) -> String {
     match check(cmd) {
-        Err(v) => v.rule,
+        Err(v) => v.rule.id().to_string(),
         Ok(()) => panic!("expected `{cmd}` to be blocked"),
     }
 }
@@ -12,7 +13,8 @@ fn allowed(cmd: &str) {
     if let Err(v) = check(cmd) {
         panic!(
             "expected `{cmd}` to be allowed, blocked by {} at `{}`",
-            v.rule, v.site
+            v.rule.id(),
+            v.site
         );
     }
 }
@@ -354,7 +356,7 @@ fn dynamic_command_position_falls_back_to_substring_scan() {
         assert!(check(c).is_err(), "{c}");
     }
     let v = check("cmd='rm -rf /'; $cmd").unwrap_err();
-    assert_eq!(v.rule, "rm -rf /");
+    assert_eq!(v.rule, PolicyRule::Fallback("rm -rf /"));
     assert!(v.site.contains("fallback scan"));
     assert!(v.site.contains("dynamic command name"));
 }
@@ -403,7 +405,7 @@ fn escape_bypasses_are_caught_structurally() {
 #[test]
 fn violation_reports_site_and_rule() {
     let v = check("echo start; sudo rm -rf / ; echo end").unwrap_err();
-    assert_eq!(v.rule, "rm-root");
+    assert_eq!(v.rule, PolicyRule::RmRoot);
     assert_eq!(v.site, "sudo rm -rf /");
 }
 

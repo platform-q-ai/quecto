@@ -1,6 +1,7 @@
 pub(crate) mod ansi_c;
 pub(crate) mod denylist;
 pub(crate) mod legacy_scan;
+pub mod policy_rule;
 pub(crate) mod protected_dirs;
 pub mod sandbox;
 pub(crate) mod shell_ast;
@@ -21,3 +22,7 @@ mod denylist_tests;
 #[cfg(test)]
 #[path = "protected_dirs_tests.rs"]
 mod protected_dirs_tests;
+
+#[cfg(test)]
+#[path = "policy_rule_tests.rs"]
+mod policy_rule_tests;

@@ -22,7 +22,16 @@ Feature: Command Safety Policy
   Scenario: Dangerous commands are blocked
     When the agent tries to validate command "rm -rf /"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
+
+  Scenario: A refusal says why, and what to do instead (#2198)
+    When the agent tries to validate command "/bin/ech? hi"
+    Then the validation should be an error
+    And the error should mention "(rule glob-command-name)"
+    And the error should mention "glob in the program name"
+    And the error should mention "name the program literally"
+    And the error should mention "checked again"
+    And the error should mention "tell the user"
 
   Scenario Outline: Dangerous command patterns are blocked
     When the agent tries to validate command "<command>"
@@ -39,17 +48,17 @@ Feature: Command Safety Policy
   Scenario: Dangerous command check is case-insensitive
     When the agent tries to validate command "ReBoOt"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
   Scenario: Dangerous rm wildcard variant is blocked
     When the agent tries to validate command "rm -rf /*"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
   Scenario: chown targeting system root is blocked
     When the agent tries to validate command "chown -R root:root /"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
   Scenario: chown scoped to workspace is allowed
     When the agent tries to validate command "chown -R user:group ./src"

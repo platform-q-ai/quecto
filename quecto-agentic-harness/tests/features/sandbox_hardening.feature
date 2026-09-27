@@ -36,7 +36,7 @@ Feature: Command Policy Hardening
     Given a sandbox with default command policy
     When the agent tries to validate command "echo start; sudo rm -rf / ; echo end"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
     And the error should mention "rm-root"
     And the error should mention "sudo rm -rf /"
 
@@ -45,14 +45,14 @@ Feature: Command Policy Hardening
     Given a sandbox with default command policy
     When the agent tries to validate command "rm  -rf /"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
   @security-pr1
   Scenario: Dangerous command with split rm flags is rejected
     Given a sandbox with default command policy
     When the agent tries to validate command "rm -r -f /"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
   # --- Issue #301: Bash encoding/escaping bypass prevention ---
 
@@ -60,37 +60,37 @@ Feature: Command Policy Hardening
     Given a sandbox with default command policy
     When the agent tries to validate command "$'\x72\x6d' -rf /"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
   Scenario: Octal escape bypass of dangerous command is blocked
     Given a sandbox with default command policy
     When the agent tries to validate command "$'\162\155' -rf /"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
   Scenario: Variable indirection bypass is blocked
     Given a sandbox with default command policy
     When the agent tries to validate command "cmd='rm -rf /'; $cmd"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
   Scenario: Unicode escape bypass is blocked
     Given a sandbox with default command policy
     When the agent tries to validate command "$'\u0072\u006d' -rf /"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
   Scenario: Mixed escape and literal bypass is blocked
     Given a sandbox with default command policy
     When the agent tries to validate command "$'\x72'm -rf /"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
   Scenario: Hex escape of reboot is blocked
     Given a sandbox with default command policy
     When the agent tries to validate command "$'\x72\x65\x62\x6f\x6f\x74'"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
   # --- Issue #1620: dangerous invocations through wrappers, substitutions and nested shells ---
 
@@ -98,7 +98,7 @@ Feature: Command Policy Hardening
     Given a sandbox with default command policy
     When the agent tries to validate command "<command>"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
     Examples:
       | command                          |
@@ -118,7 +118,7 @@ Feature: Command Policy Hardening
     Given a sandbox with default command policy
     When the agent tries to validate command "<command>"
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
     Examples:
       | command                      |
@@ -132,7 +132,7 @@ Feature: Command Policy Hardening
     Given a sandbox with default command policy
     When the agent tries to validate raw command <command>
     Then the validation should be an error
-    And the error should mention "dangerous pattern"
+    And the error should mention "blocked by command policy"
 
     Examples:
       | command                          |

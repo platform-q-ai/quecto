@@ -111,11 +111,29 @@ help: `'re'boot` and `$'\x72\x6d' -rf /` are recognised after quote removal.
 
 ### Error reporting
 
-A rejection names the rule and the simple command it matched at:
+A refusal names the rule id (for the logs), the simple command it matched
+at, why the rule refuses it, and what to do instead (#2198):
 
 ```
-command 'echo start; sudo rm -rf / ; echo end' matches dangerous pattern 'rm-root' at `sudo rm -rf /`
+command 'echo start; sudo rm -rf / ; echo end' blocked by command policy (rule rm-root) at `sudo rm -rf /`: a recursive delete of the filesystem root (`/`, `/*`) would destroy the whole system: every program, configuration file and user's data. Instead: name only the specific paths the task needs, below the top level (e.g. `/tmp/build`). Getting the same effect another way is not allowed; if the task needs it, tell the user.
 ```
+
+Each rule's reason and way forward live beside its id in
+`src/infrastructure/security/policy_rule.rs`; the match there is exhaustive,
+so a new rule cannot ship without them. A way forward is always a narrower
+command the task may need (specific paths, a regular file), never another
+route to the refused effect, and every refusal closes by saying that getting
+the same effect another way is not allowed and that the user is to be told
+if the task needs it. Rules that refuse named programs in every form
+(`mkfs`, `power-state`) name those programs, and they and `fork-bomb` offer
+no alternative: the policy is compiled in, not configured per agent, so a
+genuinely needed `mkfs` or reboot is the user's to run. `dd-device-source`
+names the wipe risk and points at the allowed ways to fill a regular file
+(`head -c <size> /dev/zero > file`, `truncate -s <size> file`); a device
+target is refused by `dd-block-device` / `block-device-write` in any case. The two rules that refuse a *form*
+rather than an effect (`glob-command-name`, `fallback-scan`) say that the
+readable form is checked again by the same rules. The harness logs each
+refusal at `info` with the rule id and site.
 
 ## Explicit fallback for unresolved syntax
 
@@ -123,10 +141,11 @@ Some constructs cannot be resolved statically: a parameter expansion in
 command position (`cmd='rm -rf /'; $cmd`, `$CARGO build`), an unbalanced
 quote, or nesting deeper than the parser follows. In those cases the filter
 does not guess. It runs the pre-#1620 whole-string substring scan over the
-original command and reports the match as a fallback:
+original command and reports the match as a fallback, with the rule id
+`fallback-scan` and the text it found:
 
 ```
-command 'cmd='rm -rf /'; $cmd' matches dangerous pattern 'rm -rf /' at `fallback scan; unresolved syntax: dynamic command name in `$cmd``
+command 'cmd='rm -rf /'; $cmd' blocked by command policy (rule fallback-scan) at `fallback scan; unresolved syntax: dynamic command name in `$cmd``: the command has syntax the policy cannot resolve before it runs, so it was scanned as text, and the text contains `rm -rf /`. Instead: if the words are only data, write the `$…` part (program or script) literally so the policy can parse it; if the command would really run it, stop and tell the user. Written so the policy can read it, the command is checked again; getting a refused effect another way is not allowed; if the task needs it, tell the user.
 ```
 
 This keeps every protection the old scan provided for dynamic commands at
@@ -135,7 +154,7 @@ present. `msg='please reboot'; $ECHO "$msg"` is still rejected, for example.
 Writing the program name literally avoids the fallback.
 
 A shell reading a script from stdin reports the nested rule with the shell as
-the site, for example `bash <<EOF … EOF` → `'rm-root' at \`bash (script on stdin)\``.
+the site, for example `bash <<EOF … EOF` → `(rule rm-root) at \`bash (script on stdin)\``.
 
 ## Known gaps
 
@@ -173,7 +192,8 @@ mistakes the filter for a boundary.
   rather than one spelling: `rm -r /` without `-f`, `sudo reboot`,
   `bash -c 'reboot'`, `curl -fsSL url | bash`, writes to any raw block
   device, and `systemctl poweroff` are all now blocked.
-- **Error messages changed shape.** They still contain the phrase
-  `dangerous pattern`, and now also carry the rule id and the matched site.
+- **Error messages changed shape.** They carry the rule id and the matched
+  site. Since #2198 they read `blocked by command policy (rule <id>)`, with a
+  reason and a way forward, instead of `matches dangerous pattern '<id>'`.
 - **Globs in the program word are rejected outright.** `/usr/bin/l?` used
   to pass; it is now blocked because it cannot be checked.

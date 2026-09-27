@@ -15,6 +15,7 @@
 // already-enabled bash tool; the container runtime is the actual boundary.
 
 use super::legacy_scan::legacy_substring_scan;
+use super::policy_rule::PolicyRule;
 use super::protected_dirs::{HostContext, is_protected_target};
 use super::shell_parse::{
     self, FETCH_PROGRAMS, ParseBudget, Parsed, SimpleCommand, Word, basename_lower,
@@ -23,9 +24,9 @@ use super::shell_parse::{
 /// A denylist hit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Violation {
-    /// Stable rule identifier (e.g. `rm-root`) or, for the fallback scan, the
-    /// matched legacy pattern.
-    pub rule: String,
+    /// The rule that matched; for the fallback scan, with the legacy pattern
+    /// it found.
+    pub rule: PolicyRule,
     /// The simple command that matched, as written.
     pub site: String,
 }
@@ -49,7 +50,7 @@ pub(crate) fn check_with(command: &str, host: &HostContext) -> Result<(), Violat
 
     if let Some(site) = ctx.glob_commands.first() {
         return Err(Violation {
-            rule: "glob-command-name".to_string(),
+            rule: PolicyRule::GlobCommandName,
             site: site.clone(),
         });
     }
@@ -60,7 +61,7 @@ pub(crate) fn check_with(command: &str, host: &HostContext) -> Result<(), Violat
         && let Some(pattern) = legacy_substring_scan(command)
     {
         return Err(Violation {
-            rule: pattern.to_string(),
+            rule: PolicyRule::Fallback(pattern),
             site: format!(
                 "fallback scan; unresolved syntax: {}",
                 ctx.unresolved.join(", ")
@@ -435,9 +436,9 @@ fn looks_like_assignment(t: &str) -> bool {
 // Rules
 // ---------------------------------------------------------------------------
 
-fn violation(rule: &str, cmd: &SimpleCommand) -> Violation {
+fn violation(rule: PolicyRule, cmd: &SimpleCommand) -> Violation {
     Violation {
-        rule: rule.to_string(),
+        rule,
         site: cmd.site.clone(),
     }
 }
@@ -455,7 +456,7 @@ fn check_effective(cmds: &[Effective], host: &HostContext) -> Result<(), Violati
         // Writes to raw block devices via redirection.
         for r in &cmd.redirects {
             if r.writes_target() && is_block_device(r.target.static_prefix()) {
-                return Err(violation("block-device-write", cmd));
+                return Err(violation(PolicyRule::BlockDeviceWrite, cmd));
             }
         }
 
@@ -478,10 +479,10 @@ fn check_effective(cmds: &[Effective], host: &HostContext) -> Result<(), Violati
                         .iter()
                         .any(|w| is_root_target(w.static_prefix()))
                 {
-                    return Err(violation("rm-root", cmd));
+                    return Err(violation(PolicyRule::RmRoot, cmd));
                 }
                 if args.has_long("no-preserve-root") {
-                    return Err(violation("rm-no-preserve-root", cmd));
+                    return Err(violation(PolicyRule::RmNoPreserveRoot, cmd));
                 }
                 if recursive
                     && args
@@ -489,28 +490,28 @@ fn check_effective(cmds: &[Effective], host: &HostContext) -> Result<(), Violati
                         .iter()
                         .any(|w| is_protected_target(w.static_prefix(), host))
                 {
-                    return Err(violation("rm-protected-dir", cmd));
+                    return Err(violation(PolicyRule::RmProtectedDir, cmd));
                 }
             }
             p if p.starts_with("mkfs") || p == "mke2fs" || p == "mkswap" => {
-                return Err(violation("mkfs", cmd));
+                return Err(violation(PolicyRule::Mkfs, cmd));
             }
             "dd" => {
                 for w in &args.positionals {
                     if let Some(src) = w.text.strip_prefix("if=")
                         && matches!(src, "/dev/zero" | "/dev/random" | "/dev/urandom")
                     {
-                        return Err(violation("dd-device-source", cmd));
+                        return Err(violation(PolicyRule::DdDeviceSource, cmd));
                     }
                     if let Some(dst) = w.static_prefix().strip_prefix("of=")
                         && is_block_device(dst)
                     {
-                        return Err(violation("dd-block-device", cmd));
+                        return Err(violation(PolicyRule::DdBlockDevice, cmd));
                     }
                 }
             }
             "shutdown" | "reboot" | "halt" | "poweroff" => {
-                return Err(violation("power-state", cmd));
+                return Err(violation(PolicyRule::PowerState, cmd));
             }
             "systemctl" => {
                 if args
@@ -518,7 +519,7 @@ fn check_effective(cmds: &[Effective], host: &HostContext) -> Result<(), Violati
                     .iter()
                     .any(|w| matches!(w.text.as_str(), "reboot" | "poweroff" | "halt" | "kexec"))
                 {
-                    return Err(violation("power-state", cmd));
+                    return Err(violation(PolicyRule::PowerState, cmd));
                 }
             }
             "init" | "telinit" => {
@@ -527,7 +528,7 @@ fn check_effective(cmds: &[Effective], host: &HostContext) -> Result<(), Violati
                     .iter()
                     .any(|w| w.text == "0" || w.text == "6")
                 {
-                    return Err(violation("power-state", cmd));
+                    return Err(violation(PolicyRule::PowerState, cmd));
                 }
             }
             "chmod" => {
@@ -539,7 +540,7 @@ fn check_effective(cmds: &[Effective], host: &HostContext) -> Result<(), Violati
                         .skip(1)
                         .any(|w| is_root_target(w.static_prefix()))
                 {
-                    return Err(violation("chmod-root", cmd));
+                    return Err(violation(PolicyRule::ChmodRoot, cmd));
                 }
             }
             "chown" => {
@@ -561,7 +562,7 @@ fn check_effective(cmds: &[Effective], host: &HostContext) -> Result<(), Violati
                         .iter()
                         .any(|w| is_root_target(w.static_prefix()));
                     if root_owner || root_target {
-                        return Err(violation("chown-root", cmd));
+                        return Err(violation(PolicyRule::ChownRoot, cmd));
                     }
                 }
             }
@@ -571,13 +572,13 @@ fn check_effective(cmds: &[Effective], host: &HostContext) -> Result<(), Violati
                 if e.words.iter().skip(1).any(|w| w.fetch_subst)
                     || cmd.redirects.iter().any(|r| r.target.fetch_subst)
                 {
-                    return Err(violation("fetch-to-shell", cmd));
+                    return Err(violation(PolicyRule::FetchToShell, cmd));
                 }
                 if e.shell_reads_stdin {
                     let upstream = || cmds[..idx].iter().filter(|prev| upstream_of(prev, cmd));
                     // `curl … | sh`: any earlier command in the same pipeline fetches.
                     if upstream().any(|prev| FETCH_PROGRAMS.contains(&prev.program().as_str())) {
-                        return Err(violation("fetch-to-shell", cmd));
+                        return Err(violation(PolicyRule::FetchToShell, cmd));
                     }
                     // `bash <<EOF … EOF`, `bash <<< "…"`, `cat <<EOF … EOF | sh`:
                     // the shell executes heredoc / here-string data.
@@ -609,7 +610,7 @@ fn check_effective(cmds: &[Effective], host: &HostContext) -> Result<(), Violati
                     && next.words.first().map(|w| w.text.as_str()) == Some(e.words[0].text.as_str())
             })
         {
-            return Err(violation("fork-bomb", cmd));
+            return Err(violation(PolicyRule::ForkBomb, cmd));
         }
     }
     Ok(())

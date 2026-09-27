@@ -63,6 +63,71 @@ Feature: ExecTool (bash) — Quecto compatibility
     And the [ToolResult] should not contain "50KB limit"
 
   @done
+  Scenario: A long line within the 50KB budget comes back whole (#2196)
+    When the agent executes tool "bash" with args:
+      | command | printf 'j%.0s' {1..15000} |
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] should not contain "omitted"
+    And the [ToolResult] should not contain "Showing lines"
+
+  @done
+  Scenario: An over-long single line shows its start and end, and says so (#2196)
+    When the agent executes tool "bash" with args:
+      | command | printf 'b%.0s' {1..60000} |
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] should contain "bytes of line 1 omitted"
+    And the [ToolResult] should contain "Showing lines 1-1 of 1 (50KB limit); line 1 is 60000 bytes, of which the first and last 2KB are shown"
+    And the [ToolResult] should contain "`read` the saved file for lines up to 50KB whole"
+    And the [ToolResult] should contain "Full output (60000 bytes) saved to:"
+    And the [ToolResult] should be shorter than 6000 characters
+
+  # --- Binary output ---
+
+  @done
+  Scenario: Binary output is named with its size, not decoded (#2197)
+    When the agent executes tool "bash" with args:
+      | command | head -c 500 /dev/urandom |
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] should contain "[binary output on stdout (500 bytes, not UTF-8 text) not shown."
+    And the [ToolResult] should contain "od -c"
+    And the [ToolResult] should not contain "�"
+
+  @done
+  Scenario: Text with a stray byte stays text (#2197)
+    When the agent executes tool "bash" with args:
+      | command | printf 'caf\351 menu\n' |
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] should contain "caf� menu"
+    And the [ToolResult] should not contain "binary output"
+
+  @done
+  Scenario: NUL-separated names stay text (#2197)
+    When the agent executes tool "bash" with args:
+      | command | printf './a\0./b\0' |
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] should contain "./b"
+    And the [ToolResult] should not contain "binary output"
+
+  # --- Command policy ---
+
+  @done
+  Scenario: A command-policy refusal says why and what to do instead (#2198)
+    When the agent executes tool "bash" with args:
+      | command | /bin/ech? hi |
+    Then the tool call should fail with "blocked by command policy (rule glob-command-name)"
+    And the tool call should fail with "name the program literally"
+    And the tool call should fail with "checked again"
+    And the tool call should fail with "tell the user"
+
+  @done
+  Scenario: A blanket refusal says no other way is allowed (#2198)
+    When the agent executes tool "bash" with args:
+      | command | mkfs --version |
+    Then the tool call should fail with "blocked by command policy (rule mkfs)"
+    And the tool call should fail with "do not run here in any form"
+    And the tool call should fail with "Getting the same effect another way is not allowed; if the task needs it, tell the user."
+
+  @done
   Scenario: output_file writes full combined output and returns a summary
     When the agent executes bash with output_file "snapshots/out.txt" and command "printf 'out\\n'; printf 'err\\n' >&2; exit 7"
     Then the [ToolResult] should be an error

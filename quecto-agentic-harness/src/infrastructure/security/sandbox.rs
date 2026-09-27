@@ -10,6 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use super::denylist;
+use super::policy_rule::PolicyRule;
 use super::protected_dirs::HostContext;
 
 /// Shared path-policy hook plus the dangerous-command denylist.
@@ -76,22 +77,26 @@ impl Sandbox {
     /// waved through.
     pub fn validate_command(&self, command: &str) -> Result<(), SandboxError> {
         let host = HostContext::from_host(self.workspace.as_deref());
-        denylist::check_with(command, &host).map_err(|v| SandboxError::DangerousPattern {
-            command: command.to_string(),
-            rule: v.rule,
-            site: v.site,
+        denylist::check_with(command, &host).map_err(|v| {
+            // The rule id is for the logs; the model reads the explanation.
+            tracing::info!(rule = v.rule.id(), site = %v.site, "command refused by command policy");
+            SandboxError::Refused {
+                command: command.to_string(),
+                rule: v.rule,
+                site: v.site,
+            }
         })
     }
 }
 
 #[derive(Debug)]
 pub enum SandboxError {
-    /// Command matches a dangerous pattern.
-    DangerousPattern {
+    /// A command-policy rule refused the command.
+    Refused {
         /// The full command as submitted.
         command: String,
-        /// Rule identifier, or the legacy pattern when the fallback scan matched.
-        rule: String,
+        /// The rule that matched (its id is logged; its explanation is shown).
+        rule: PolicyRule,
         /// The simple command the rule matched at, or a fallback-scan note.
         site: String,
     },
@@ -100,13 +105,19 @@ pub enum SandboxError {
 impl std::fmt::Display for SandboxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SandboxError::DangerousPattern {
+            // #2198: what matched, why it is refused, and a way forward.
+            SandboxError::Refused {
                 command,
                 rule,
                 site,
             } => write!(
                 f,
-                "command '{command}' matches dangerous pattern '{rule}' at `{site}`"
+                "command '{command}' blocked by command policy (rule {}) at `{site}`: {}. \
+                 Instead: {}. {}",
+                rule.id(),
+                rule.reason(),
+                rule.instead(),
+                rule.closing()
             ),
         }
     }
