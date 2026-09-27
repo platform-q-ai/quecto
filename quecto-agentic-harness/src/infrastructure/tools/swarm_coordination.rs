@@ -260,10 +260,6 @@ impl crate::application::providers::ports::RequestAccounting for SwarmContext {
     }
 }
 
-/// The run's deadline as Unix seconds (#2125): now plus
-/// `deadline_in_seconds` when given (it wins over `deadline`, so a
-/// placeholder `deadline` never hides it), else `deadline`. A model need not
-/// know the current time; the store still checks the result.
 /// The run's `constraints` (#2205): optional, so an omitted list — or an
 /// explicit `null`, which JSON callers send for "none" — is empty. Any
 /// other value goes to the store as given, which refuses anything but a
@@ -275,6 +271,10 @@ fn run_constraints(input: &Value) -> Value {
     }
 }
 
+/// The run's deadline as Unix seconds (#2125): now plus
+/// `deadline_in_seconds` when given (it wins over `deadline`, so a
+/// placeholder `deadline` never hides it), else `deadline`. A model need not
+/// know the current time; the store still checks the result.
 fn absolute_deadline(input: &Value) -> Result<Value, DomainError> {
     const SEVEN_DAYS: f64 = 604_800.0;
     match (input.get("deadline_in_seconds"), input.get("deadline")) {

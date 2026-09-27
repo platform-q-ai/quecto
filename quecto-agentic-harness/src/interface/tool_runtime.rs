@@ -190,30 +190,16 @@ pub(crate) struct ToolRuntimeBuild {
 }
 
 /// Report persisted `tools.policy` entries that matched no registered tool
-/// (#2217). Each is kept and ignored, as the config documents; only one no
-/// bundled tool ever had — most likely a typo, a restriction that never
-/// applies — is worth a start-up warning.
-fn report_unmatched_policy_entries(stable_ids: &[String], stderr: &mut String) {
-    use crate::domain::tool_policy_catalogue::{
-        UnmatchedPolicyEntry, classify_unmatched_policy_entry,
-    };
-    for stable_id in stable_ids {
-        match classify_unmatched_policy_entry(stable_id) {
-            UnmatchedPolicyEntry::Unknown => stderr.push_str(&format!(
-                "WARNING: tools.policy: no tool has stable id '{stable_id}', so its entry never applies; fix or remove it under tools.policy.entries\n"
-            )),
-            UnmatchedPolicyEntry::BundledElsewhere => tracing::debug!(
-                target: "tool_policy",
-                stable_id = %stable_id,
-                "tools.policy entry names a bundled tool this entrypoint does not build; kept for the others"
-            ),
-            UnmatchedPolicyEntry::Retired { removed_by } => tracing::debug!(
-                target: "tool_policy",
-                stable_id = %stable_id,
-                removed_by,
-                "tools.policy entry names a retired tool; ignored and safe to delete"
-            ),
-        }
+/// (#2217): the application's one triage; only a typo — a restriction that
+/// never applies — is a start-up warning.
+fn report_unmatched_policy_entries(stable_ids: Vec<String>, stderr: &mut String) {
+    use crate::application::tools::unmatched_policy::split_unmatched_policy_entries;
+    use crate::domain::tool_policy_catalogue::unknown_policy_entry_warning;
+    for stable_id in split_unmatched_policy_entries(stable_ids).unknown {
+        stderr.push_str(&format!(
+            "WARNING: {}\n",
+            unknown_policy_entry_warning(&stable_id)
+        ));
     }
 }
 
@@ -471,7 +457,7 @@ pub(crate) fn build_tool_runtime(
     }
 
     let persisted_unknown = registry.apply_persisted_tool_policy(&config.tools.policy);
-    report_unmatched_policy_entries(&persisted_unknown, stderr);
+    report_unmatched_policy_entries(persisted_unknown, stderr);
 
     // Apply explicit startup restrictions after every startup provider has had a
     // chance to register, so descriptors remain available while model-visible

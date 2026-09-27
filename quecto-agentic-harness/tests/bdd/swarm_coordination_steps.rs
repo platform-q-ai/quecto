@@ -157,12 +157,7 @@ async fn reject_workflow(world: &mut QuectoWorld) {
     world.swarm_result = Some(
         tool.execute(r#"{"agent_id":"worker","workflow":true}"#)
             .await
-            .unwrap_or_else(|error| quecto::domain::tool::ToolResult {
-                content: format!("Error: {error}"),
-                is_error: true,
-                image_blocks: vec![],
-                delivery_metadata: None,
-            }),
+            .unwrap_or_else(|error| quecto::domain::tool::ToolResult::from_error(&error)),
     );
 }
 

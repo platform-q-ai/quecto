@@ -25,8 +25,10 @@ For **this repository** (writes `./.quecto/config.json`, creates it, records tru
 ```
 quecto config set agents.defaults.model '"openai-api/gpt-5.6-luna"'
 quecto config set agents.defaults.effort '"high"'     # only for a model with effort levels (docs models)
-quecto config set tools.policy.entries.native:bash '{"scope":"parent"}'
+quecto config set tools.policy.entries.tool.v1:bundled-native:21:quecto:official-tools:bash '{"scope":"parent"}'
 ```
+
+A tool-policy entry is keyed by the tool's whole stable id (`tool.v1:<source>:<length>:<provider>:<name>`, as the tool catalogue lists it): everything after `tools.policy.entries.` is that one key, dots and all, and the value is the whole entry, `{"scope":"both"|"parent"|"child"|"none"}`. A key that is not a stable id is refused; `quecto config unset tools.policy.entries.<key>` removes any entry.
 
 Expected: `set agents.defaults.model in /repo/.quecto/config.json (created) (trusted)`, exit 0 (`(created)` only when the file did not exist). The writer validates the *file*, not the model id against the catalogue nor the effort against the model: prove the pair runs (`docs {"name": "models"}`, Verify).
 

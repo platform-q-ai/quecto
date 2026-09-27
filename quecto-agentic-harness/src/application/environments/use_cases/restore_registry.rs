@@ -288,14 +288,20 @@ impl RestoreRegistry {
         let mut restored = Vec::with_capacity(records.len());
         let mut probe = ResidueProbe::new(self.process.as_ref());
         for record in records {
+            // Whether this restore speaks for the record (#2247 round 2
+            // L4): what it says of it goes to the report, or to the debug
+            // log when it is another session's to report.
+            let spoken = speaks_for(&record, reporting);
             if Self::left_nothing(&record, &mut probe, report) {
-                self.forget(record, mode, report, &mut restored);
+                self.forget(record, mode, spoken, report, &mut restored);
                 continue;
             }
             let loaded_status = record.status.clone();
             let loaded_label = record.status_label();
             let mut judged = record;
+            let retained_before = report.retained.len();
             let corrected = self.judge(&mut judged, report);
+            withhold_unspoken_retained(report, retained_before, spoken);
             if !corrected {
                 restored.push(judged);
                 continue;
@@ -306,11 +312,15 @@ impl RestoreRegistry {
                     .as_deref()
                     .or_else(|| judged.metadata.get("retained").and_then(|v| v.as_str()))
                     .unwrap_or("corrected");
-                report.diagnostics.push(format!(
-                    "{} would be recorded {} ({why}); not written: this restore only observes",
-                    judged.environment_ref,
-                    judged.status_label(),
-                ));
+                tell(
+                    report,
+                    format!(
+                        "{} would be recorded {} ({why}); not written: this restore only observes",
+                        judged.environment_ref,
+                        judged.status_label(),
+                    ),
+                    spoken,
+                );
                 restored.push(judged);
                 continue;
             }
@@ -324,10 +334,14 @@ impl RestoreRegistry {
                 }
                 Ok(CorrectionOutcome::Forgotten) => {}
                 Err(error) => {
-                    report.diagnostics.push(format!(
-                        "{} could not be corrected in the durable registry: {error}",
-                        judged.environment_ref
-                    ));
+                    tell(
+                        report,
+                        format!(
+                            "{} could not be corrected in the durable registry: {error}",
+                            judged.environment_ref
+                        ),
+                        spoken,
+                    );
                     restored.push(judged);
                 }
             }
@@ -365,23 +379,32 @@ impl RestoreRegistry {
         &self,
         record: EnvironmentRecord,
         mode: RestoreMode,
+        spoken: bool,
         report: &mut RestoredRegistry,
         restored: &mut Vec<EnvironmentRecord>,
     ) {
         if mode == RestoreMode::Observe {
-            report.diagnostics.push(format!(
-                "{} would be forgotten (stopped; nothing left on disk or in the runtime); not written: this restore only observes",
-                record.environment_ref
-            ));
+            tell(
+                report,
+                format!(
+                    "{} would be forgotten (stopped; nothing left on disk or in the runtime); not written: this restore only observes",
+                    record.environment_ref
+                ),
+                spoken,
+            );
             return;
         }
         match self.store.forget(&record) {
             Ok(()) => report.forgotten.push(record.environment_ref),
             Err(error) => {
-                report.diagnostics.push(format!(
-                    "{} could not be forgotten in the durable registry: {error}",
-                    record.environment_ref
-                ));
+                tell(
+                    report,
+                    format!(
+                        "{} could not be forgotten in the durable registry: {error}",
+                        record.environment_ref
+                    ),
+                    spoken,
+                );
                 restored.push(record);
             }
         }
@@ -526,16 +549,40 @@ fn report_overtaken(
         current.environment_ref,
         current.status_label()
     );
-    let reported = match audience {
+    tell(report, line, speaks_for(current, (session, audience)));
+}
+
+/// Whether a restore reporting to `audience` as `session` speaks for
+/// `record` (#2190, #2247 round 2 L4): a fleet-wide command for every
+/// environment, a session for the ones it created.
+fn speaks_for(record: &EnvironmentRecord, (session, audience): (&str, OvertakenAudience)) -> bool {
+    match audience {
         OvertakenAudience::Fleet => true,
         OvertakenAudience::OwnEnvironments => {
-            crate::domain::environment_listing::created_by_session(current, session)
+            crate::domain::environment_listing::created_by_session(record, session)
         }
-    };
-    match reported {
+    }
+}
+
+/// A line about one record: the report's when the restore speaks for it,
+/// else the debug log's (it is another session's to report).
+fn tell(report: &mut RestoredRegistry, line: String, spoken: bool) {
+    match spoken {
         true => report.diagnostics.push(line),
+        false => tracing::debug!(target: "environments", "{line}"),
+    }
+}
+
+/// The `retained` notes judging one record added from `from` on: kept when
+/// the restore speaks for it, else moved to the debug log.
+fn withhold_unspoken_retained(report: &mut RestoredRegistry, from: usize, spoken: bool) {
+    debug_assert!(from <= report.retained.len(), "notes are only appended");
+    match spoken {
+        true => {}
         false => {
-            tracing::debug!(target: "environments", created_by = %current.created_by, "{line}");
+            for (environment_ref, reason) in report.retained.drain(from..) {
+                tracing::debug!(target: "environments", environment_ref, %reason, "retained at restore");
+            }
         }
     }
 }

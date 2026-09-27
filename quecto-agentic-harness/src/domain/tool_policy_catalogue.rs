@@ -3,12 +3,14 @@
 //! A policy entry is keyed by a tool's stable id. One this entrypoint
 //! registers no tool for is kept and ignored, which is right for a bundled
 //! tool another entrypoint builds and for a tool a release retired, but
-//! hides a typo: a restriction that never applies. This catalogue tells the
-//! three apart. It is the one list of bundled tools; a drift test builds
-//! every entrypoint's registry and checks each bundled registration is here.
+//! hides a typo: a restriction that never applies. This catalogue tells
+//! them apart by the namespace the id was minted in: a UDS extension's or a
+//! runtime tool's entry awaits its registration; a bundled-native id is
+//! checked against the one list of bundled tools (a drift test builds every
+//! entrypoint's registry and checks each bundled registration is here).
 
 use super::tool_descriptor::ToolSource;
-use super::tool_id::stable_tool_id;
+use super::tool_id::{parse_stable_tool_id, stable_tool_id};
 
 /// Every bundled tool any entrypoint may build: `(provider id, name)`.
 pub const BUNDLED_TOOLS: &[(&str, &str)] = &[
@@ -41,7 +43,11 @@ pub enum UnmatchedPolicyEntry {
     BundledElsewhere,
     /// A tool a release removed: the entry is dead.
     Retired { removed_by: &'static str },
-    /// No bundled tool, current or retired: most likely a typo.
+    /// A tool of a namespace that registers after start-up (a UDS
+    /// extension, a runtime tool): the entry applies when it registers.
+    AwaitingRegistration { source: ToolSource },
+    /// A bundled-native id no bundled tool has, current or retired, or no
+    /// stable id at all: most likely a typo.
     Unknown,
 }
 
@@ -50,8 +56,28 @@ pub fn bundled_stable_id(provider_id: &str, name: &str) -> String {
     stable_tool_id(ToolSource::BundledNative, provider_id, name)
 }
 
-/// Classify a policy entry that matched no registered tool.
+/// Classify a policy entry that matched no registered tool, by the
+/// namespace its stable id was minted in (#2247 round 2 L2).
 pub fn classify_unmatched_policy_entry(stable_id: &str) -> UnmatchedPolicyEntry {
+    match parse_stable_tool_id(stable_id).map(|parsed| parsed.source) {
+        Some(ToolSource::BundledNative) => classify_bundled(stable_id),
+        Some(source @ (ToolSource::Uds | ToolSource::Runtime)) => {
+            UnmatchedPolicyEntry::AwaitingRegistration { source }
+        }
+        None => UnmatchedPolicyEntry::Unknown,
+    }
+}
+
+/// The warning for one unknown entry (a typo), without a severity prefix:
+/// every entrypoint and a reload's reply word it the same.
+pub fn unknown_policy_entry_warning(stable_id: &str) -> String {
+    format!(
+        "tools.policy: no tool has stable id '{stable_id}', so its entry never applies; fix or remove it under tools.policy.entries"
+    )
+}
+
+/// A bundled-native id: current, retired, or neither (a typo).
+fn classify_bundled(stable_id: &str) -> UnmatchedPolicyEntry {
     let bundled = BUNDLED_TOOLS
         .iter()
         .any(|(provider_id, name)| bundled_stable_id(provider_id, name) == stable_id);

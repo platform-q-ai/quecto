@@ -369,15 +369,14 @@ impl AgentLoopImpl {
         };
         let duration_ms = start.elapsed().as_millis() as u64;
 
-        let (content, image_blocks, delivery_metadata, is_err) = match tool_result {
-            Ok(tr) => (
-                tr.content,
-                tr.image_blocks,
-                tr.delivery_metadata,
-                tr.is_error,
-            ),
-            Err(e) => (format!("Error: {}", e), vec![], None, true),
-        };
+        let tr =
+            tool_result.unwrap_or_else(|error| crate::domain::tool::ToolResult::from_error(&error));
+        let (content, image_blocks, delivery_metadata, is_err) = (
+            tr.content,
+            tr.image_blocks,
+            tr.delivery_metadata,
+            tr.is_error,
+        );
 
         // Emit ToolFinished so the REPL can replace the spinner line.
         // Build the bounded preview inside notify so headless runs allocate none.

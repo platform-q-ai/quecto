@@ -199,11 +199,32 @@ fn merge_container_configs(base: &mut Value, overlay: Value) {
     }
 }
 
+/// The map keyed by stable tool ids (#2247 round 2 L1).
+const POLICY_ENTRIES: [&str; 3] = ["tools", "policy", "entries"];
+
 /// Split a dotted key path into its segments; empty paths and empty
-/// segments are rejected.
+/// segments are rejected. One explicit rule for one map: under
+/// `tools.policy.entries.` everything after the prefix is a single segment,
+/// the entry's key — a stable tool id carries `.` (`tool.v1:…`), and an
+/// entry is written whole (`{"scope": …}`), never below its key.
 pub fn key_segments(key_path: &str) -> Option<Vec<&str>> {
-    let segments: Vec<&str> = key_path.split('.').collect();
-    (!key_path.is_empty() && segments.iter().all(|segment| !segment.is_empty())).then_some(segments)
+    let segments: Vec<&str> = match key_path.strip_prefix("tools.policy.entries.") {
+        Some(entry_id) => POLICY_ENTRIES.iter().copied().chain([entry_id]).collect(),
+        None => key_path.split('.').collect(),
+    };
+    let complete = !key_path.is_empty() && segments.iter().all(|segment| !segment.is_empty());
+    complete.then_some(segments)
+}
+
+/// The entry key a `tools.policy.entries.<id>` path addresses, if that is
+/// what `segments` address.
+pub fn policy_entry_id<'a>(segments: &[&'a str]) -> Option<&'a str> {
+    match segments {
+        [tools, policy, entries, entry_id] if [*tools, *policy, *entries] == POLICY_ENTRIES => {
+            Some(entry_id)
+        }
+        _ => None,
+    }
 }
 
 /// The value at `key_path`, if every segment resolves through objects.

@@ -663,10 +663,5 @@ fn then_image_blocks_empty(world: &mut QuectoWorld) {
 fn spawn_outcome(
     result: Result<quecto::domain::tool::ToolResult, quecto::domain::error::DomainError>,
 ) -> quecto::domain::tool::ToolResult {
-    result.unwrap_or_else(|error| quecto::domain::tool::ToolResult {
-        content: format!("Error: {error}"),
-        is_error: true,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    })
+    result.unwrap_or_else(|error| quecto::domain::tool::ToolResult::from_error(&error))
 }

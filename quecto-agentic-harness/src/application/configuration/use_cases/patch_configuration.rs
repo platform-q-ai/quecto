@@ -32,13 +32,14 @@ use crate::application::configuration::dto::{
     ConfigLayer, ConfigPatch, ConfigPatchError, ConfigPatchReceipt, ConfigSelection, ConfigUnset,
 };
 use crate::application::configuration::overlay_policy::{
-    global_only_path, global_only_values, key_segments, remove_path, set_path,
+    global_only_path, global_only_values, key_segments, policy_entry_id, remove_path, set_path,
 };
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, OverlayDocument, OverlayTrust,
     OverlayTrustStore,
 };
 use crate::application::configuration::use_cases::ResolveEffectiveConfig;
+use crate::domain::tool_id::parse_stable_tool_id;
 
 pub struct PatchConfiguration {
     store: Arc<dyn ConfigDocumentStore>,
@@ -72,6 +73,7 @@ impl PatchConfiguration {
             key_path,
             value,
         } = patch;
+        admit_policy_entry_id(&key_path)?;
         self.cycle(&selection, layer, &key_path, |document, path| {
             set_path(document, &key_path, value).map_err(|at| ConfigPatchError::NotAnObject {
                 path: path.to_path_buf(),
@@ -284,6 +286,25 @@ impl std::fmt::Debug for PatchConfiguration {
     }
 }
 
+/// A `set` under `tools.policy.entries` admits only an entry keyed by a
+/// stable tool id (#2247 round 2 L1, an allowlist: the grammar the ids are
+/// minted by). Any other key path is not a policy entry and passes.
+fn admit_policy_entry_id(key_path: &str) -> Result<(), ConfigPatchError> {
+    let entry_id = key_segments(key_path)
+        .as_deref()
+        .and_then(policy_entry_id)
+        .map(str::to_owned);
+    match entry_id {
+        Some(entry_id) if parse_stable_tool_id(&entry_id).is_some() => Ok(()),
+        Some(entry_id) => Err(ConfigPatchError::InvalidPolicyEntryId { entry_id }),
+        None => Ok(()),
+    }
+}
+
 #[cfg(test)]
 #[path = "patch_configuration_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "patch_configuration_policy_tests.rs"]
+mod policy_tests;

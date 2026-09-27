@@ -491,7 +491,7 @@ fn an_observing_restore_seeds_its_corrections_in_memory_and_writes_none() {
     ]);
     let process = process(|_| EnvironmentLiveness::Gone);
     let (registry, report) =
-        RestoreRegistry::new(store.clone(), process, no_hosted()).observe("cli");
+        RestoreRegistry::new(store.clone(), process, no_hosted()).observe("cli:one");
     assert_eq!(report.stopped, ["C1"]);
     assert!(
         report.diagnostics.iter().any(|d| d.starts_with("C1 ")

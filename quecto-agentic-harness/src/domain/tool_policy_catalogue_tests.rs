@@ -1,4 +1,6 @@
 use super::*;
+use crate::domain::tool_descriptor::ToolSource;
+use crate::domain::tool_id::stable_tool_id;
 
 #[test]
 fn a_bundled_tool_is_bundled_elsewhere() {
@@ -23,20 +25,69 @@ fn python_lab_is_retired_by_1684() {
     );
 }
 
+/// An id in the bundled-native namespace that no bundled tool has, current
+/// or retired, is a typo; so is anything that is not a stable id at all.
 #[test]
-fn a_misspelt_or_foreign_id_is_unknown() {
+fn a_misspelt_bundled_id_or_a_non_stable_id_is_unknown() {
     for stable_id in [
         "tool.v1:bundled-native:21:quecto:official-tools:bsah",
         // A bundled name under another provider is not the bundled tool.
         "tool.v1:bundled-native:9:elsewhere:bash",
-        "tool.v1:uds:10:uds:runtime:bash",
+        // Not the stable-id grammar: a bare name, a legacy id, a wrong
+        // length, an unknown namespace, nothing.
         "bash",
+        "tool.name.v0:bash",
+        "tool.v1:uds:10:uds:runtime:bash",
+        "tool.v1:plugin:3:ext:bash",
         "",
     ] {
         assert_eq!(
             classify_unmatched_policy_entry(stable_id),
             UnmatchedPolicyEntry::Unknown,
             "{stable_id}"
+        );
+    }
+}
+
+/// A UDS extension's or a runtime tool's id names a tool that registers
+/// after start-up: its entry applies when it does, so it is no typo.
+#[test]
+fn an_extension_or_runtime_id_awaits_its_registration() {
+    for (stable_id, source) in [
+        ("tool.v1:uds:12:uds:client-a:weather", ToolSource::Uds),
+        (
+            "tool.v1:runtime:15:com.example.ext:fetch-page",
+            ToolSource::Runtime,
+        ),
+    ] {
+        assert_eq!(
+            classify_unmatched_policy_entry(stable_id),
+            UnmatchedPolicyEntry::AwaitingRegistration { source },
+            "{stable_id}"
+        );
+    }
+}
+
+/// Every namespace the grammar defines is classified affirmatively: the
+/// bundled one against the catalogue, every other one as awaiting its
+/// registration. A new `ToolSource` must be placed here.
+#[test]
+fn every_namespace_is_classified() {
+    for source in [
+        ToolSource::BundledNative,
+        ToolSource::Uds,
+        ToolSource::Runtime,
+    ] {
+        let expected = match source {
+            ToolSource::BundledNative => UnmatchedPolicyEntry::Unknown,
+            ToolSource::Uds | ToolSource::Runtime => {
+                UnmatchedPolicyEntry::AwaitingRegistration { source }
+            }
+        };
+        assert_eq!(
+            classify_unmatched_policy_entry(&stable_tool_id(source, "p", "never_built")),
+            expected,
+            "{source:?}"
         );
     }
 }
@@ -49,4 +100,13 @@ fn no_tool_is_both_bundled_and_retired() {
             "{provider_id}:{name} is listed as bundled and retired"
         );
     }
+}
+
+/// The one warning line every entrypoint prints for a typo.
+#[test]
+fn the_warning_names_the_id_and_where_to_fix_it() {
+    assert_eq!(
+        unknown_policy_entry_warning("tool.v1:bundled-native:3:web:serch"),
+        "tools.policy: no tool has stable id 'tool.v1:bundled-native:3:web:serch', so its entry never applies; fix or remove it under tools.policy.entries"
+    );
 }

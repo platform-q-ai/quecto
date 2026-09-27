@@ -56,7 +56,7 @@ fn a_running_record_gone_whose_checkout_hosts_an_unfinished_run_is_retained_not_
     ]);
     let process = process(|_| EnvironmentLiveness::Gone);
     let (registry, report) =
-        RestoreRegistry::new(store.clone(), process, hosted.clone()).execute("s");
+        RestoreRegistry::new(store.clone(), process, hosted.clone()).execute("cli:one");
     assert!(report.stopped.is_empty(), "{report:?}");
     let expected_c1 = unfinished_run_reason(&run("run-1", RunStatus::Running, None));
     assert_eq!(
@@ -130,7 +130,8 @@ fn a_running_record_gone_with_a_closed_run_a_placeholder_or_no_store_is_stopped(
         ),
     ]);
     let process = process(|_| EnvironmentLiveness::Gone);
-    let (registry, report) = RestoreRegistry::new(store.clone(), process, hosted).execute("s");
+    let (registry, report) =
+        RestoreRegistry::new(store.clone(), process, hosted).execute("cli:one");
     assert_eq!(report.stopped, ["C2", "C3", "C4"]);
     assert_eq!(
         report.retained,
@@ -167,7 +168,7 @@ fn an_unreadable_hosted_store_retains_as_the_finalizer_would() {
         SwarmRunObservation::Unreadable("database is locked".into()),
     )]);
     let process = process(|_| EnvironmentLiveness::Gone);
-    let (registry, report) = RestoreRegistry::new(store, process, hosted).execute("s");
+    let (registry, report) = RestoreRegistry::new(store, process, hosted).execute("cli:one");
     let seeded = registry.get("C1").unwrap();
     assert_eq!(seeded.status, EnvironmentStatus::Retained);
     let reason = seeded.metadata["retained"].as_str().unwrap();
@@ -204,7 +205,8 @@ fn the_hosted_store_is_asked_only_of_a_running_record_whose_container_is_gone() 
         "C1" => EnvironmentLiveness::Running,
         _ => EnvironmentLiveness::Gone,
     });
-    let (registry, report) = RestoreRegistry::new(store, process, hosted.clone()).execute("s");
+    let (registry, report) =
+        RestoreRegistry::new(store, process, hosted.clone()).execute("cli:one");
     assert_eq!(hosted.asked.lock().unwrap().as_slice(), ["C4"]);
     assert_eq!(report.restored, ["C1"]);
     // A failed explicit kill was the operator's intent: gone means stopped;
@@ -228,7 +230,8 @@ fn an_observing_restore_seeds_the_retained_relabel_without_writing_it() {
         SwarmRunObservation::Run(run("run-1", RunStatus::Running, None)),
     )]);
     let process = process(|_| EnvironmentLiveness::Gone);
-    let (registry, report) = RestoreRegistry::new(store.clone(), process, hosted).observe("cli");
+    let (registry, report) =
+        RestoreRegistry::new(store.clone(), process, hosted).observe("cli:one");
     assert_eq!(
         registry.get("C1").unwrap().status,
         EnvironmentStatus::Retained
@@ -266,7 +269,7 @@ fn a_retained_record_an_older_build_relabelled_stopped_is_restored_retained() {
     let hosted = hosted(vec![]);
     let process = process(|_| panic!("a stopped record is not inspected"));
     let (registry, report) =
-        RestoreRegistry::new(store.clone(), process, hosted.clone()).execute("s");
+        RestoreRegistry::new(store.clone(), process, hosted.clone()).execute("cli:one");
     assert!(
         hosted.asked.lock().unwrap().is_empty(),
         "no store read either"
@@ -304,7 +307,7 @@ fn the_older_build_relabel_is_undone_in_memory_only_by_an_observing_restore() {
     let store = store_with(vec![relabelled_by_older_build("C1")]);
     let process = process(|_| panic!("a stopped record is not inspected"));
     let (registry, report) =
-        RestoreRegistry::new(store.clone(), process, hosted(vec![])).observe("cli");
+        RestoreRegistry::new(store.clone(), process, hosted(vec![])).observe("cli:one");
     assert_eq!(
         registry.get("C1").unwrap().status,
         EnvironmentStatus::Retained
@@ -330,7 +333,7 @@ fn a_failed_retained_kill_that_went_gone_keeps_its_error_and_is_not_resurrected(
     let store = store_with(vec![failed]);
     let process = process(|_| EnvironmentLiveness::Gone);
     let (registry, report) =
-        RestoreRegistry::new(store.clone(), process, hosted(vec![])).execute("s");
+        RestoreRegistry::new(store.clone(), process, hosted(vec![])).execute("cli:one");
     assert_eq!(report.stopped, ["C1"]);
     let c1 = registry.get("C1").unwrap();
     assert_eq!(c1.status, EnvironmentStatus::Stopped);
@@ -343,7 +346,7 @@ fn a_failed_retained_kill_that_went_gone_keeps_its_error_and_is_not_resurrected(
         self::process(|_| panic!("a stopped record is not inspected")),
         hosted(vec![]),
     )
-    .execute("s");
+    .execute("cli:one");
     assert_eq!(
         registry.get("C1").unwrap().status,
         EnvironmentStatus::Stopped

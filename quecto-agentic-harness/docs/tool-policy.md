@@ -9,13 +9,15 @@ Example:
   "tools": {
     "policy": {
       "entries": {
-        "tool.v1:native:21:quecto:official-tools:web_search": { "scope": "both" },
-        "tool.v1:native:21:quecto:official-tools:swarm": { "scope": "none" }
+        "tool.v1:bundled-native:3:web:web_search": { "scope": "both" },
+        "tool.v1:bundled-native:21:quecto:official-tools:swarm": { "scope": "none" }
       }
     }
   }
 }
 ```
+
+Set one entry with the whole stable id as the last key (everything after `tools.policy.entries.` is that one key; a key that is not a stable id is refused): `quecto config set tools.policy.entries.tool.v1:bundled-native:21:quecto:official-tools:swarm '{"scope":"none"}'`.
 
 Unknown or removed stable ids are safe: config load succeeds, the entry is kept in the file, and the running registry ignores/reports it until a matching tool is available again.
 
@@ -27,7 +29,7 @@ Effective availability is an intersection, never a union:
 
 Persisted preferences are user defaults, not authority. They cannot widen startup ceilings such as `--disable-tool`, spawn inherited restrictions, read-only child restrictions, or runtime absence. If a persisted entry asks for `both` but the session ceiling is `none`, the tool remains unavailable and the catalogue explains the restriction. Live `set_tool_policy` mutations can narrow the current session further; persisted entries are applied on process startup as the configured/profile baseline. An explicit UDS/API `reload` reparses `tools.policy.entries`, reapplies that persisted baseline, and clears live-only AgentLoop overlays so edits/removals in config become visible without restarting.
 
-A persisted entry whose stable id matches no tool registered on this entrypoint is kept and ignored. What happens at start-up depends on the id (#2217): a bundled tool this entrypoint does not build (`workflow` on the one-shot CLI) is kept quietly for the entrypoints that do; a retired bundled tool (`python_lab`, removed in #1684) is ignored quietly and its entry is safe to delete; any other id, most likely a typo whose restriction never applies, prints `WARNING: tools.policy: no tool has stable id '<id>' …` on stderr, naming `tools.policy.entries` as the place to fix it (a `reload` logs the same warning).
+A persisted entry whose stable id matches no tool registered on this entrypoint is kept and ignored. What happens at start-up depends on the id (#2217): a bundled tool this entrypoint does not build (`workflow` on the one-shot CLI) is kept quietly for the entrypoints that do; a retired bundled tool (`python_lab`, removed in #1684) is ignored quietly and its entry is safe to delete; an id in a namespace whose tools register after start-up (`tool.v1:uds:` for a UDS extension, `tool.v1:runtime:`) is kept quietly and applies when the tool registers (logged at debug); any other `tool.v1:bundled-native:` id, or a key that is not a stable id at all, is most likely a typo whose restriction never applies, and prints `WARNING: tools.policy: no tool has stable id '<id>' …` on stderr, naming `tools.policy.entries` as the place to fix it (a `reload` logs the same warning).
 
 ## Inheritance by spawned children
 

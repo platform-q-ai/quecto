@@ -180,15 +180,23 @@ fn an_entry_the_overlay_defines_is_refused_naming_the_overlay_and_the_remedy() {
     std::fs::create_dir_all(overlay.parent().unwrap()).unwrap();
     std::fs::write(
         &overlay,
-        r#"{"tools":{"policy":{"entries":{"native:bash":{"scope":"parent"}}}}}"#,
+        r#"{"tools":{"policy":{"entries":{"tool.v1:bundled-native:21:quecto:official-tools:bash":{"scope":"parent"}}}}}"#,
     )
     .unwrap();
     let persist =
         tool_policy_persistence_for(tmp.path(), config_path.clone(), Some(overlay.clone()));
-    let error = persist(&applied("native:bash", ProfileAvailabilityScope::Both)).unwrap_err();
+    let error = persist(&applied(
+        "tool.v1:bundled-native:21:quecto:official-tools:bash",
+        ProfileAvailabilityScope::Both,
+    ))
+    .unwrap_err();
     assert!(error.contains(&overlay.display().to_string()), "{error}");
+    // The remedy is a command `quecto config set` takes as written (#2247
+    // round 2 L1): the whole id as the last key, the requested entry as JSON.
     assert!(
-        error.contains("quecto config set tools.policy.entries.native:bash"),
+        error.contains(
+            r#"change it with `quecto config set tools.policy.entries.tool.v1:bundled-native:21:quecto:official-tools:bash '{"scope":"both"}'` instead"#
+        ),
         "{error}"
     );
     assert_eq!(
@@ -197,14 +205,23 @@ fn an_entry_the_overlay_defines_is_refused_naming_the_overlay_and_the_remedy() {
         "nothing written"
     );
 
-    persist(&applied("native:docs", ProfileAvailabilityScope::Both)).unwrap();
+    persist(&applied(
+        "tool.v1:bundled-native:21:quecto:official-tools:docs",
+        ProfileAvailabilityScope::Both,
+    ))
+    .unwrap();
     let parsed: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
     assert_eq!(
-        parsed["tools"]["policy"]["entries"]["native:docs"]["scope"],
+        parsed["tools"]["policy"]["entries"]["tool.v1:bundled-native:21:quecto:official-tools:docs"]
+            ["scope"],
         "both"
     );
 
     std::fs::remove_file(&overlay).unwrap();
-    persist(&applied("native:bash", ProfileAvailabilityScope::Both)).unwrap();
+    persist(&applied(
+        "tool.v1:bundled-native:21:quecto:official-tools:bash",
+        ProfileAvailabilityScope::Both,
+    ))
+    .unwrap();
 }

@@ -131,7 +131,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             // runtime; the reply is the presenter's rendering of the outcome.
             let outcome = super::super::uds_dispatch_reload::force_reload(ctx).await;
             let ev = match crate::interface::uds::catalogue::reload_presenter::render(&outcome) {
-                Ok(()) => AgentEvent::ok(id.as_deref(), &type_name, None),
+                Ok(data) => AgentEvent::ok(id.as_deref(), &type_name, data),
                 Err(error) => AgentEvent::err(id.as_deref(), &type_name, error),
             };
             emit_event_to_broadcast_or_writer(ctx, &ev).await;

@@ -98,3 +98,68 @@ fn equivalent_policy_inputs_expand_raw_and_legacy_names() {
         BTreeSet::from(["weather".to_string(), "tool.name.v0:weather".to_string()])
     );
 }
+
+/// Round-trip: every id `stable_tool_id` mints parses back to its parts
+/// (#2247 round 2 L1/L2), including a provider id carrying `:` and `.`.
+#[test]
+fn a_minted_stable_id_parses_back_to_its_parts() {
+    for (source, provider_id, name) in [
+        (ToolSource::BundledNative, "quecto:official-tools", "bash"),
+        (ToolSource::Uds, "uds:client-a", "weather_v2"),
+        (ToolSource::Runtime, "com.example.ext", "fetch-page"),
+    ] {
+        let id = stable_tool_id(source, provider_id, name);
+        assert_eq!(
+            parse_stable_tool_id(&id),
+            Some(StableToolId {
+                source,
+                provider_id,
+                name
+            }),
+            "{id}"
+        );
+    }
+}
+
+/// The grammar is an allowlist: anything but
+/// `tool.v1:<source>:<len>:<provider of len bytes>:<name>` with a known
+/// source and a name of `[A-Za-z0-9_-]` is not a stable id.
+#[test]
+fn only_the_stable_id_grammar_parses() {
+    for id in [
+        "",
+        "bash",
+        "tool.name.v0:bash",
+        "tool.v2:bundled-native:21:quecto:official-tools:bash",
+        "tool.v1:plugin:21:quecto:official-tools:bash",
+        "tool.v1:bundled-native:22:quecto:official-tools:bash",
+        "tool.v1:bundled-native:20:quecto:official-tools:bash",
+        "tool.v1:bundled-native:+21:quecto:official-tools:bash",
+        "tool.v1:bundled-native::quecto:official-tools:bash",
+        "tool.v1:bundled-native:0::bash",
+        "tool.v1:bundled-native:99999999999999999999999:x:bash",
+        "tool.v1:bundled-native:21:quecto:official-tools:",
+        "tool.v1:bundled-native:21:quecto:official-tools:ba.sh",
+        "tool.v1:bundled-native:21:quecto:official-tools:ba sh",
+        "tool.v1:bundled-native:21:quecto:official-tools:bash:x",
+        "tool.v1:bundled-native:21:quecto:official-tools",
+        "tool.v1:bundled-native:3:é:bash",
+        "tool.v1:bundled-native:1:é:bash",
+    ] {
+        assert_eq!(parse_stable_tool_id(id), None, "{id:?}");
+    }
+}
+
+#[test]
+fn a_tool_source_parses_only_from_its_own_label() {
+    for source in [
+        ToolSource::BundledNative,
+        ToolSource::Uds,
+        ToolSource::Runtime,
+    ] {
+        assert_eq!(ToolSource::parse(source.as_str()), Some(source));
+    }
+    for label in ["", "bundled", "UDS", "runtime ", "plugin"] {
+        assert_eq!(ToolSource::parse(label), None, "{label:?}");
+    }
+}
