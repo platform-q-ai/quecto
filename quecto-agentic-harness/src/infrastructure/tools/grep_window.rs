@@ -2,11 +2,23 @@
 //! line as windows around its matches, any other line from its start. Text
 //! left out is marked `…[N bytes]…`, so every byte of the line is either
 //! shown or counted, and the line's size and first match's byte offset
-//! follow, so the agent can find the match with bash.
+//! follow, so the agent can find the match with bash. A line that is not
+//! UTF-8 is shown decoded, but every offset and count the agent is told is
+//! in its raw bytes, as rg and `cut -b` count them (#2251 review).
 
 use std::ops::Range;
 
 use crate::infrastructure::tools::truncate::format_size;
+
+use super::grep_text::Decoded;
+
+/// One match on a line: where it is in the raw bytes (what the agent is
+/// told) and in the decoded text (where it is shown).
+#[derive(Debug, Clone)]
+struct Hit {
+    raw: Range<usize>,
+    shown: Range<usize>,
+}
 
 /// The most windows one line is shown in.
 pub(super) const MAX_WINDOWS: usize = 4;
@@ -14,21 +26,23 @@ pub(super) const MAX_WINDOWS: usize = 4;
 /// closer than twice this share a window.
 const MIN_CONTEXT: usize = 40;
 
-/// `line` with at most `budget` bytes of its text: whole when it fits;
-/// otherwise around `hits` (the byte ranges of its matches), or from its
-/// start when it has none. Also whether it was cut.
-pub(super) fn show_line(line: &str, hits: &[Range<usize>], budget: usize) -> (String, bool) {
-    if line.len() <= budget {
-        return (line.to_string(), false);
+/// `line` with at most `budget` bytes of its (decoded) text: whole when it
+/// fits; otherwise around `hits` (the raw byte ranges of its matches), or
+/// from its start when it has none. Also whether it was cut.
+pub(super) fn show_line(line: &Decoded, hits: &[Range<usize>], budget: usize) -> (String, bool) {
+    let text = line.text.as_str();
+    if text.len() <= budget {
+        return (text.to_string(), false);
     }
     let hits = usable(line, hits);
-    let windows = match hits.as_slice() {
+    let shown: Vec<Range<usize>> = hits.iter().map(|hit| hit.shown.clone()).collect();
+    let windows = match shown.as_slice() {
         [] => std::iter::once(0..budget).collect(),
-        hits => around(line.len(), hits, budget),
+        shown => around(text.len(), shown, budget),
     };
     let windows: Vec<Range<usize>> = windows
         .into_iter()
-        .map(|window| on_boundaries(line, window))
+        .map(|window| on_boundaries(text, window))
         .collect();
     let kept: usize = windows.iter().map(ExactSizeIterator::len).sum();
     assert!(
@@ -38,20 +52,26 @@ pub(super) fn show_line(line: &str, hits: &[Range<usize>], budget: usize) -> (St
     (render(line, &windows, &hits), true)
 }
 
-/// `hits` on `line`: sorted, on character boundaries, clamped to the line;
-/// a hit starting past it (an offset rg cannot have meant) is dropped. On
-/// a line that is not UTF-8, rg's offsets are into its raw bytes, which
-/// the lossy decoding lengthens, so windows there may sit a little early.
-fn usable(line: &str, hits: &[Range<usize>]) -> Vec<Range<usize>> {
-    let mut kept: Vec<Range<usize>> = hits
+/// `hits` (raw byte ranges) on `line`: sorted, clamped to the line, and
+/// placed in its decoded text on character boundaries; a hit starting past
+/// the line (an offset rg cannot have meant) is dropped.
+fn usable(line: &Decoded, hits: &[Range<usize>]) -> Vec<Hit> {
+    let raw_len = line.raw_len();
+    let text = line.text.as_str();
+    let mut kept: Vec<Hit> = hits
         .iter()
-        .filter(|hit| hit.start <= line.len())
+        .filter(|hit| hit.start <= raw_len)
         .map(|hit| {
-            let start = floor_boundary(line, hit.start);
-            start..floor_boundary(line, hit.end.min(line.len())).max(start)
+            let raw = hit.start..hit.end.clamp(hit.start, raw_len);
+            let start = floor_boundary(text, line.shown_at(raw.start));
+            let end = floor_boundary(text, line.shown_at(raw.end)).max(start);
+            Hit {
+                raw,
+                shown: start..end,
+            }
         })
         .collect();
-    kept.sort_by_key(|hit| hit.start);
+    kept.sort_by_key(|hit| hit.raw.start);
     kept
 }
 
@@ -129,35 +149,41 @@ fn floor_boundary(line: &str, at: usize) -> usize {
     at
 }
 
-/// The windows of `line`, the text between them marked with its size,
-/// then the line's size and where its matches are.
-fn render(line: &str, windows: &[Range<usize>], hits: &[Range<usize>]) -> String {
+/// The windows of `line`, the raw bytes between them counted, then the
+/// line's raw size and where its matches are in its raw bytes.
+fn render(line: &Decoded, windows: &[Range<usize>], hits: &[Hit]) -> String {
+    let raw_len = line.raw_len();
     let mut shown = String::new();
     let mut at = 0;
     for window in windows {
-        if window.start > at {
-            shown.push_str(&format!("…[{} bytes]…", window.start - at));
+        let start = line.raw_at(window.start);
+        if start > at {
+            shown.push_str(&format!("…[{} bytes]…", start - at));
         }
-        shown.push_str(&line[window.clone()]);
-        at = window.end;
+        shown.push_str(&line.text[window.clone()]);
+        at = line.raw_at(window.end);
     }
-    if at < line.len() {
-        shown.push_str(&format!("…[{} bytes]…", line.len() - at));
+    if at < raw_len {
+        shown.push_str(&format!("…[{} bytes]…", raw_len - at));
     }
-    let size = format_size(line.len());
+    let size = format_size(raw_len);
     let shown_hits = hits
         .iter()
-        .filter(|hit| windows.iter().any(|window| holds(window, hit)))
+        .filter(|hit| windows.iter().any(|window| holds(window, &hit.shown)))
         .count();
     let hidden = hits.len() - shown_hits;
     let located = match (hits, hidden) {
         ([], _) => String::new(),
-        ([only], _) => format!("; match at byte {}", only.start),
-        ([first, ..], 0) => format!("; {} matches, first at byte {}", hits.len(), first.start),
+        ([only], _) => format!("; match at byte {}", only.raw.start),
+        ([first, ..], 0) => format!(
+            "; {} matches, first at byte {}",
+            hits.len(),
+            first.raw.start
+        ),
         ([first, ..], hidden) => format!(
             "; {} matches, first at byte {}; {hidden} not shown",
             hits.len(),
-            first.start
+            first.raw.start
         ),
     };
     format!("{shown} [line is {size}{located}]")

@@ -133,6 +133,8 @@ fn submatches_on_undecodable_lines_are_located() {
     let matches = parse_rg_matches(&json);
     assert_eq!(matches[0].hits, vec![one(3..9)]);
     assert_eq!(matches[0].line_count, 1);
+    // The judge's column is in the decoded text: two U+FFFD, then a space.
+    assert_eq!(matches[0].column, Some(7));
 }
 
 /// A block's own match is shown around its hits even when the map of
@@ -166,7 +168,7 @@ fn a_blocks_own_long_line_is_shown_around_its_hits() {
         line_count: 1,
         score: None,
         column: None,
-        text: Some(vec![line]),
+        text: Some(vec![Decoded::new(line.as_bytes())]),
         hits: vec![one(900..906)],
     };
     assert!(format_match_block(
@@ -181,4 +183,135 @@ fn a_blocks_own_long_line_is_shown_around_its_hits() {
     assert!(shown.contains("aneedleb"), "{shown}");
     assert!(shown.ends_with("; match at byte 900]"), "{shown}");
     assert!(state.lines_truncated);
+}
+
+/// A workspace holding one file of raw `bytes`.
+fn grep_raw(name: &str, bytes: &[u8]) -> (GrepTool, TempDir) {
+    let (tool, tmp) = grep_in(&[]);
+    std::fs::write(tmp.path().join(name), bytes).unwrap();
+    (tool, tmp)
+}
+
+/// Every raw byte of a shown line is either shown or counted: the shown
+/// text less its `…[N bytes]…` marks and the line note, each U+FFFD taken
+/// as `per_replacement` raw bytes, plus every N.
+fn raw_accounted(shown: &str, per_replacement: usize) -> usize {
+    let body = &shown[..shown.rfind(" [line is ").expect("a line note")];
+    let mut total = 0;
+    let mut rest = body;
+    while let Some(open) = rest.find("…[") {
+        total += text_bytes(&rest[..open], per_replacement);
+        let after = &rest[open + "…[".len()..];
+        let close = after.find(" bytes]…").expect("a closed mark");
+        total += after[..close].parse::<usize>().expect("a byte count");
+        rest = &after[close + " bytes]…".len()..];
+    }
+    total + text_bytes(rest, per_replacement)
+}
+
+fn text_bytes(text: &str, per_replacement: usize) -> usize {
+    text.chars()
+        .map(|c| match c {
+            char::REPLACEMENT_CHARACTER => per_replacement,
+            other => other.len_utf8(),
+        })
+        .sum()
+}
+
+/// The line `name:1: ` shows, from the search's output.
+fn shown_line<'a>(out: &'a str, name: &str) -> &'a str {
+    let prefix = format!("{name}:1: ");
+    let line = out
+        .lines()
+        .find(|line| line.starts_with(&prefix))
+        .unwrap_or_else(|| panic!("no line 1 of {name}: {out}"));
+    &line[prefix.len()..]
+}
+
+/// #2251 review (M2): 400 invalid bytes before the match each decode to
+/// three: the window still lands on the match, and offsets and counts are
+/// in raw bytes, as `cut -b` counts them.
+#[tokio::test]
+async fn a_match_after_many_invalid_bytes_is_shown_at_its_raw_offset() {
+    let mut raw = vec![0xE9; 400];
+    raw.extend_from_slice(b"needle");
+    raw.extend_from_slice(&[b'a'; 1000]);
+    raw.push(b'\n');
+    let (tool, _tmp) = grep_raw("latin1.txt", &raw);
+    let out = search(
+        &tool,
+        serde_json::json!({"pattern": "needle", "path": "latin1.txt"}),
+    )
+    .await;
+    let line = shown_line(&out, "latin1.txt");
+    assert!(line.contains("\u{FFFD}needleaaa"), "{line}");
+    assert!(line.starts_with("…[318 bytes]…"), "{line}");
+    assert!(
+        line.ends_with("…[753 bytes]… [line is 1.4KB; match at byte 400]"),
+        "{line}"
+    );
+    assert_eq!(raw_accounted(line, 1), 1406, "{line}");
+}
+
+/// Invalid bytes between two matches: both are shown, neither is counted
+/// as hidden, and every raw byte is accounted for.
+#[tokio::test]
+async fn invalid_bytes_between_two_matches_keep_both_in_view() {
+    let mut raw = b"alpha".to_vec();
+    raw.extend_from_slice(&[0xFF; 2000]);
+    raw.extend_from_slice(b"omega");
+    raw.extend_from_slice(&[b'z'; 100]);
+    raw.push(b'\n');
+    let (tool, _tmp) = grep_raw("two.bin.txt", &raw);
+    let out = search(
+        &tool,
+        serde_json::json!({"patterns": ["alpha", "omega"], "path": "two.bin.txt"}),
+    )
+    .await;
+    let line = shown_line(&out, "two.bin.txt");
+    assert!(line.starts_with("alpha\u{FFFD}"), "{line}");
+    assert!(line.contains("\u{FFFD}omegazz"), "{line}");
+    assert!(
+        line.ends_with("[line is 2.1KB; 2 matches, first at byte 0]"),
+        "{line}"
+    );
+    assert_eq!(raw_accounted(line, 1), 2110, "{line}");
+}
+
+/// Valid multibyte text and invalid bytes mixed before the match.
+#[tokio::test]
+async fn mixed_multibyte_and_invalid_bytes_keep_raw_offsets() {
+    let mut raw = "é".repeat(300).into_bytes();
+    raw.extend_from_slice(&[0xE9; 100]);
+    raw.extend_from_slice(b"needle");
+    raw.extend_from_slice(&[b'a'; 1000]);
+    raw.push(b'\n');
+    let (tool, _tmp) = grep_raw("mixed.txt", &raw);
+    let out = search(
+        &tool,
+        serde_json::json!({"pattern": "needle", "path": "mixed.txt"}),
+    )
+    .await;
+    let line = shown_line(&out, "mixed.txt");
+    assert!(line.contains("\u{FFFD}needleaaa"), "{line}");
+    assert!(line.ends_with("; match at byte 700]"), "{line}");
+    assert_eq!(raw_accounted(line, 1), 1706, "{line}");
+}
+
+/// A long context line that is not UTF-8 is counted in raw bytes too.
+#[tokio::test]
+async fn a_long_context_line_that_is_not_utf8_counts_raw_bytes() {
+    let mut raw = vec![0xE9; 900];
+    raw.extend_from_slice(b"\nneedle here\n");
+    let (tool, _tmp) = grep_raw("ctx.txt", &raw);
+    let out = search(
+        &tool,
+        serde_json::json!({"pattern": "needle", "path": "ctx.txt", "context": 1}),
+    )
+    .await;
+    let expected = format!(
+        "ctx.txt-1- {}…[734 bytes]… [line is 900B]",
+        "\u{FFFD}".repeat(166)
+    );
+    assert!(out.contains(&expected), "{out}");
 }

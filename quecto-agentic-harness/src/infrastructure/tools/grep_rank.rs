@@ -301,7 +301,7 @@ fn whole_lines(path: &Path) -> Vec<String> {
     if cut {
         lines.pop();
     }
-    lines
+    lines.into_iter().map(|line| line.text).collect()
 }
 
 /// One match's excerpt from its file's lines; `None` when its line is not
@@ -353,8 +353,8 @@ fn reported_excerpt(m: &RgMatch) -> Option<Excerpt> {
         .take(CANDIDATE_MATCH_LINES)
         .enumerate()
         .map(|(offset, line)| match (offset, m.column) {
-            (0, Some(column)) => around(line, column),
-            (_, _) => line.chars().take(CANDIDATE_LINE_CHARS).collect(),
+            (0, Some(column)) => around(&line.text, column),
+            (_, _) => line.text.chars().take(CANDIDATE_LINE_CHARS).collect(),
         })
         .collect::<Vec<String>>()
         .join("\n");

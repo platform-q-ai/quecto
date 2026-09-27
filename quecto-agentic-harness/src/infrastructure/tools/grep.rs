@@ -30,6 +30,8 @@ mod grep_request;
 mod grep_run;
 #[path = "grep_search.rs"]
 mod grep_search;
+#[path = "grep_text.rs"]
+mod grep_text;
 #[path = "grep_window.rs"]
 mod grep_window;
 
@@ -40,6 +42,7 @@ use grep_run::RG_TIMEOUT;
 #[cfg(test)]
 use grep_run::run_rg;
 use grep_search::{PendingRecord, SearchContext, SearchFacts, search};
+use grep_text::{Decoded, line_hits, reported_block, reported_lines, spanned_lines, split_lines};
 use grep_window::show_line;
 
 use crate::application::search::ports::{RelevanceJudge, SearchLog};
@@ -209,8 +212,10 @@ fn base_definition() -> ToolDefinition {
                  Returns file:line: content matches with optional context lines (file-N- format), \
                  capped at {} matches (or files) or {}KB. Use output=files or output=count to scope \
                  a search cheaply before reading matches. A line over {} bytes is shown around its \
-                 matches, with their byte offsets. A directory search skips binary files; a note \
-                 counts those holding a match (name one as path to search it). \
+                 matches, with their byte offsets. A directory search skips binary files (a NUL \
+                 byte): when it finds nothing, a note names those holding a match; name one as \
+                 path to search it. It stops reading a file at a NUL byte after a match (content \
+                 output notes it; count output leaves the file out). \
                  Example: {{\"pattern\": \"search_term\", \"type\": [\"rust\"]}}",
                 DEFAULT_MATCH_LIMIT,
                 MAX_OUTPUT_BYTES / 1024,
@@ -267,9 +272,9 @@ fn with_rank_by(mut definition: ToolDefinition) -> ToolDefinition {
 enum Pass {
     /// The search itself.
     Search,
-    /// Which binary files the search skips hold a match (#2202): the same
-    /// search with `--binary`, one match per file, in JSON, whose `end`
-    /// records say which files held binary data.
+    /// Which binary files a directory search that found nothing skipped
+    /// hold a match (#2202): the same search with `--binary`, listing
+    /// paths only (#2251 review).
     BinaryCheck,
 }
 
@@ -293,7 +298,10 @@ fn build_rg_command(
         .arg("--color=never")
         .arg("--hidden");
     match (pass, request.output) {
-        (Pass::BinaryCheck, _) => cmd.arg("--json").arg("--binary").args(["--max-count", "1"]),
+        (Pass::BinaryCheck, _) => cmd
+            .arg("--binary")
+            .arg("--files-with-matches")
+            .arg("--null"),
         (Pass::Search, OutputMode::Content) => cmd.arg("--json"),
         (Pass::Search, OutputMode::Files) => cmd.arg("--files-with-matches").arg("--null"),
         (Pass::Search, OutputMode::Count) => cmd
@@ -347,15 +355,17 @@ struct RgMatch {
     line_count: usize,
     /// Its relevance to `rank_by`, when judged (#2136 slice B).
     score: Option<f64>,
-    /// Where the match starts in its first line (a byte offset), as rg
-    /// reports it: a long line is shown to the judge around this.
+    /// Where the match starts in its first line's text (a byte offset,
+    /// moved as the line's decoding moved it): a long line is shown to the
+    /// judge around this.
     column: Option<usize>,
     /// The lines the match spans, as rg reported them (#2163): shown for the
     /// match however far into its file it is, where the file cache holds
-    /// only the first 1 MB (and is used for context).
-    text: Option<Vec<String>>,
-    /// Where the match lies on each line it spans, as byte ranges (#2201):
-    /// a long line is shown around them.
+    /// only the first 1 MB (and is used for context). Decoded lossily when
+    /// not UTF-8, with where the decoding moved rg's offsets (#2251 review).
+    text: Option<Vec<Decoded>>,
+    /// Where the match lies on each line it spans, as raw byte ranges
+    /// (#2201): a long line is shown around them.
     hits: Vec<Vec<Range<usize>>>,
 }
 
@@ -390,92 +400,21 @@ fn parse_rg_matches(json_output: &str) -> Vec<RgMatch> {
             line_number: line_number as usize,
             line_count,
             score: None,
+            // Where the match starts in its first line's decoded text.
             column: event["data"]["submatches"][0]["start"]
                 .as_u64()
-                .and_then(|start| usize::try_from(start).ok()),
+                .and_then(|start| usize::try_from(start).ok())
+                .map(
+                    |start| match text.as_ref().and_then(|lines| lines.first()) {
+                        Some(line) => line.shown_at(start),
+                        None => start,
+                    },
+                ),
             text,
             hits,
         });
     }
     matches
-}
-
-/// The lines rg reports a match spanning, as bytes: its `text`, or its
-/// base64 `bytes` when they are not valid UTF-8.
-fn reported_block(lines: &serde_json::Value) -> Option<Vec<u8>> {
-    use base64::Engine as _;
-    match (lines["text"].as_str(), lines["bytes"].as_str()) {
-        (Some(text), _) => Some(text.as_bytes().to_vec()),
-        (None, Some(encoded)) => base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .ok(),
-        (None, None) => None,
-    }
-}
-
-/// The reported lines without their line breaks (decoded lossily when
-/// not valid UTF-8).
-fn reported_lines(block: Option<&[u8]>) -> Option<Vec<String>> {
-    let text = String::from_utf8_lossy(block?);
-    let text = text.strip_suffix('\n').unwrap_or(&text);
-    Some(
-        text.split('\n')
-            .map(|line| line.trim_end_matches('\r').to_string())
-            .collect(),
-    )
-}
-
-/// How many lines a match spans (one when rg reported none).
-fn spanned_lines(block: Option<&[u8]>) -> usize {
-    let newlines = block.map_or(0, |bytes| {
-        let trimmed = bytes.strip_suffix(b"\n").unwrap_or(bytes);
-        trimmed.iter().filter(|b| **b == b'\n').count()
-    });
-    newlines + 1
-}
-
-/// Each of rg's submatches as byte ranges on the lines of `block` it lies
-/// on (#2201). rg's offsets are into the whole block, so a multiline
-/// match's ranges are split at its line breaks.
-fn line_hits(block: Option<&[u8]>, submatches: &serde_json::Value) -> Vec<Vec<Range<usize>>> {
-    let Some(block) = block else {
-        return Vec::new();
-    };
-    let block = block.strip_suffix(b"\n").unwrap_or(block);
-    let starts: Vec<usize> = std::iter::once(0)
-        .chain(
-            block
-                .iter()
-                .enumerate()
-                .filter_map(|(at, byte)| (*byte == b'\n').then_some(at + 1)),
-        )
-        .collect();
-    let mut hits = vec![Vec::new(); starts.len()];
-    let ranges = submatches
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|sub| {
-            let start = usize::try_from(sub["start"].as_u64()?).ok()?;
-            let end = usize::try_from(sub["end"].as_u64()?).ok()?;
-            (start <= end && end <= block.len() + 1).then_some(start..end)
-        });
-    for range in ranges {
-        // The line the submatch starts on, then each it runs into.
-        let first = starts.partition_point(|line_start| *line_start <= range.start) - 1;
-        for (index, line_start) in starts.iter().enumerate().skip(first) {
-            match index == first || *line_start < range.end {
-                true => {
-                    let line_end = starts.get(index + 1).map_or(block.len(), |next| next - 1);
-                    let from = range.start.max(*line_start);
-                    let to = range.end.min(line_end).max(from);
-                    hits[index].push(from - line_start..to - line_start);
-                }
-                false => break,
-            }
-        }
-    }
-    hits
 }
 
 /// How matches are formatted: bounds and where paths are relative to.
@@ -551,7 +490,7 @@ async fn format_matches(all_matches: Vec<RgMatch>, a: &MatchFormat<'_>) -> Strin
             .map(|m| m.file_path.clone())
             .collect()
     };
-    let mut file_cache: HashMap<PathBuf, Vec<String>> = HashMap::new();
+    let mut file_cache: HashMap<PathBuf, Vec<Decoded>> = HashMap::new();
     for path in unique_paths {
         let p = path.clone();
         let lines = tokio::task::spawn_blocking(move || read_file_for_cache(&p))
@@ -618,14 +557,14 @@ async fn format_matches(all_matches: Vec<RgMatch>, a: &MatchFormat<'_>) -> Strin
 
 /// Read a file into a line vector for the context cache.
 /// Caps at `MAX_FILE_CACHE_BYTES` to prevent OOM from large files.
-fn read_file_for_cache(path: &Path) -> Vec<String> {
+fn read_file_for_cache(path: &Path) -> Vec<Decoded> {
     read_capped_lines(path).0
 }
 
 /// A file's lines up to `MAX_FILE_CACHE_BYTES`, and whether the last of
 /// them was cut part-way by that cap: decided from the bytes read (one past
 /// the cap), never from a second look at a file that may have changed.
-fn read_capped_lines(path: &Path) -> (Vec<String>, bool) {
+fn read_capped_lines(path: &Path) -> (Vec<Decoded>, bool) {
     use std::io::Read;
     let Ok(f) = std::fs::File::open(path) else {
         return (Vec::new(), false);
@@ -645,13 +584,7 @@ fn read_capped_lines(path: &Path) -> (Vec<String>, bool) {
         None => false,
     };
     buf.truncate(MAX_FILE_CACHE_BYTES);
-    let lines = String::from_utf8_lossy(&buf)
-        .replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .lines()
-        .map(str::to_string)
-        .collect();
-    (lines, cut)
+    (split_lines(&buf), cut)
 }
 
 // ===========================================================================

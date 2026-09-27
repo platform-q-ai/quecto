@@ -85,7 +85,7 @@ fn test_format_grep_output_match_limit() {
 
 #[test]
 fn test_show_line_short() {
-    let (result, was_truncated) = show_line("hello", &[], 500);
+    let (result, was_truncated) = show_line(&Decoded::new(b"hello"), &[], 500);
     assert_eq!(result, "hello");
     assert!(!was_truncated);
 }
@@ -93,7 +93,7 @@ fn test_show_line_short() {
 #[test]
 fn test_show_line_long() {
     let long = "x".repeat(600);
-    let (result, was_truncated) = show_line(&long, &[], 500);
+    let (result, was_truncated) = show_line(&Decoded::new(long.as_bytes()), &[], 500);
     assert!(
         result.contains("…[100 bytes]…"),
         "the text left out is counted"

@@ -323,7 +323,7 @@ Feature: Grep Tool
     And the grep result should not be an error
 
   @done @issue-2202
-  Scenario: A directory search says which skipped binary files hold a match
+  Scenario: A directory search that finds nothing says which skipped binary files hold a match
     Given a grep workspace binary file "bin/tool" holding "GLIBC_2.34"
     And a grep workspace file "bin/README" with content:
       """
@@ -334,7 +334,15 @@ Feature: Grep Tool
       {"pattern": "GLIBC", "path": "bin"}
       """
     Then the grep result should contain "No matches found"
-    And the grep result should contain "1 binary file holds a match but was skipped: bin/tool. Name it as path to search it"
+    And the grep result should contain "1 binary file holds a match but was skipped: "
+    And the grep result should contain "bin/tool"
+    And the grep result should contain "Name it as path to see its matches"
+    When I grep with arguments:
+      """
+      {"pattern": "nothing", "path": "bin"}
+      """
+    Then the grep result should contain "bin/README:1: nothing to see"
+    And the grep result should not contain "binary"
     When I grep with arguments:
       """
       {"pattern": "GLIBC", "path": "bin/tool", "output": "count"}
