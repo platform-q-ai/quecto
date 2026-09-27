@@ -204,6 +204,22 @@ Feature: Web Fetch Tool
     Then the [ToolResult] should be an error
     And the [ToolResult] should contain "restricted"
 
+  @done
+  Scenario: IPv4-mapped cloud metadata address is blocked
+    Given a tool workspace with a web_fetch tool backed by a mock server
+    When the agent executes tool "web_fetch" with args:
+      | url | http://[::ffff:a9fe:a9fe]/latest/meta-data/ |
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "refused: 169.254.169.254 (via ::ffff:169.254.169.254) is not a public address"
+
+  @done
+  Scenario: Redirect to a restricted address is refused before it is followed
+    Given a tool workspace with a web_fetch tool backed by a mock server
+    And the mock web server redirects to itself through an IPv4-mapped address
+    When the agent executes tool "web_fetch" with mock URL
+    Then the tool call should fail with "restricted address; refused: the redirect to http://[::ffff:7f00:1]:"
+    And the mock web server should have received 1 request
+
   # ─── Plain text passthrough ─────────────────────────────────────────────────
 
   @done

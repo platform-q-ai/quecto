@@ -398,7 +398,7 @@ pub(crate) fn build_agent_from_config(
             "web-fetch factory missing"
         );
         flags.web_fetch_tool_factory.expect("checked")(
-            http_client.clone(),
+            crate::interface::shared::http_client_builder(),
             config.tools.web.fetch.max_response_kb,
         )
     });

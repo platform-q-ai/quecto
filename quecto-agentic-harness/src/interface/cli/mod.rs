@@ -133,7 +133,7 @@ pub struct CliOutput {
 
 /// Runtime context for CLI commands, allowing override of paths for testing.
 pub type WebFetchToolFactory =
-    fn(reqwest::Client, u32) -> std::sync::Arc<dyn crate::application::tools::ports::Tool>;
+    fn(reqwest::ClientBuilder, u32) -> std::sync::Arc<dyn crate::application::tools::ports::Tool>;
 
 /// What the agent-control use cases are built over (#1936, #1939): the
 /// launcher registry the spawn tool populates, the event stream their

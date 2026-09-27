@@ -1,4 +1,5 @@
 //! Application-owned web fetch policy, orchestration, and content transformation.
+use crate::domain::network_destination::authorize_destination;
 use std::{future::Future, net::IpAddr, pin::Pin, sync::Arc};
 
 #[path = "web_fetch_main_content.rs"]
@@ -47,6 +48,10 @@ pub enum FetchFailure {
     },
     Read(String),
     Transport(String),
+    /// A destination the fetch would have reached is not a permitted one:
+    /// an address a name resolved to, or a redirect hop (#1942). Nothing was
+    /// sent to it.
+    Refused(String),
 }
 pub trait FetchWebContent: Send + Sync {
     fn fetch<'a>(
@@ -260,36 +265,40 @@ fn document_opening(text: &str) -> &str {
 
 fn classify(url: url::Url) -> ExecutionGate {
     if matches!(url.scheme(), "http" | "https") {
-        let host = url.host_str().unwrap_or_default();
-        if restricted_host(host) {
-            ExecutionGate::RestrictedInitialHost(host.to_owned())
-        } else {
-            ExecutionGate::Allowed(ParsedHttpUrl(url))
+        match restriction(&url) {
+            Some(reason) => ExecutionGate::RestrictedInitialHost(reason),
+            None => ExecutionGate::Allowed(ParsedHttpUrl(url)),
         }
     } else {
         ExecutionGate::UnsupportedScheme
     }
 }
-fn restricted_host(host: &str) -> bool {
-    let bare = host
-        .strip_prefix('[')
-        .and_then(|v| v.strip_suffix(']'))
-        .unwrap_or(host);
-    match bare.parse::<IpAddr>() {
-        Ok(IpAddr::V4(ip)) => {
-            ip.is_loopback()
-                || ip.is_private()
-                || ip.is_link_local()
-                || ip.is_unspecified()
-                || ip.is_broadcast()
+/// Why the URL's own host may not be fetched, if it may not. An address
+/// literal must be public (#1942); a name is checked again, address by
+/// address, when it is resolved.
+fn restriction(url: &url::Url) -> Option<String> {
+    let address = match url.host() {
+        Some(url::Host::Ipv4(v4)) => IpAddr::V4(v4),
+        Some(url::Host::Ipv6(v6)) => IpAddr::V6(v6),
+        Some(url::Host::Domain(name)) => {
+            return LOCAL_NAMES
+                .contains(&name)
+                .then(|| format!("{name} is a local name"));
         }
-        Ok(IpAddr::V6(ip)) => ip.is_loopback() || ip.is_unspecified(),
-        Err(_) => matches!(
-            bare,
-            "localhost" | "metadata.google.internal" | "metadata.google.internal."
-        ),
-    }
+        None => return Some("the URL names no host".to_owned()),
+    };
+    authorize_destination(address)
+        .err()
+        .map(|refused| refused.to_string())
 }
+/// Names that reach this machine or its cloud metadata service without DNS
+/// saying so.
+const LOCAL_NAMES: &[&str] = &[
+    "localhost",
+    "localhost.",
+    "metadata.google.internal",
+    "metadata.google.internal.",
+];
 fn truncate_output(content: String, kb: u32) -> String {
     let max = kb as usize * 1024;
     if content.len() <= max {

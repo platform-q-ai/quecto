@@ -68,6 +68,28 @@ fn every_fetch_failure_becomes_a_tool_error_naming_what_went_wrong() {
         message(FetchFailure::Transport("dns".into())),
         "Fetch failed: dns"
     );
+    assert_eq!(
+        message(FetchFailure::Refused(
+            "the redirect to http://10.0.0.1/: 10.0.0.1 is not a public address".into()
+        )),
+        "Blocked: https://x.test/ reaches a restricted address; refused: the redirect to http://10.0.0.1/: 10.0.0.1 is not a public address"
+    );
+}
+
+/// #1942: a refused address literal says what it reaches and why.
+#[tokio::test]
+async fn a_restricted_literal_is_refused_naming_the_address_it_reaches() {
+    let fetcher: Arc<dyn FetchWebContent> = Arc::new(StatusFetcher(HttpStatus::new(200, None)));
+    let tool = WebFetchTool::new(Arc::new(WebFetchUseCase::new(fetcher, 32)));
+    let result = tool
+        .execute(r#"{"url":"http://[::ffff:a9fe:a9fe]/latest/meta-data/"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert_eq!(
+        result.content,
+        "Blocked: URL points to a restricted address; refused: 169.254.169.254 (via ::ffff:169.254.169.254) is not a public address"
+    );
 }
 
 /// #2165: binary content is named, with its type and size, and is not an

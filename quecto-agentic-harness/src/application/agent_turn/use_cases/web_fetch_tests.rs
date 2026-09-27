@@ -53,7 +53,8 @@ async fn accepted_baseline_hosts_call_port_once() {
     for url in [
         "https://example.com",
         "http://8.8.8.8",
-        "http://[2001:db8::1]",
+        "http://[2606:4700:4700::1111]",
+        "http://[::ffff:8.8.8.8]",
     ] {
         let (f, u) = use_case(FetchOutcome::SuccessBody {
             body: b"ok".to_vec(),
@@ -64,6 +65,56 @@ async fn accepted_baseline_hosts_call_port_once() {
             WebFetchResult::Success("ok".into())
         );
         assert_eq!(f.calls.load(Ordering::SeqCst), 1);
+    }
+}
+/// #1942: every spelling of a non-public address is refused before the
+/// port is called, naming the address it reaches.
+#[tokio::test]
+async fn non_public_address_literals_in_any_spelling_never_call_port() {
+    for (url, reason) in [
+        (
+            "http://[::ffff:127.0.0.1]:1/",
+            "127.0.0.1 (via ::ffff:127.0.0.1) is not a public address",
+        ),
+        (
+            "http://[::ffff:a9fe:a9fe]/",
+            "169.254.169.254 (via ::ffff:169.254.169.254) is not a public address",
+        ),
+        (
+            "http://[64:ff9b::a9fe:a9fe]/",
+            "169.254.169.254 (via 64:ff9b::a9fe:a9fe) is not a public address",
+        ),
+        (
+            "http://[2002:a9fe:a9fe::1]/",
+            "169.254.169.254 (via 2002:a9fe:a9fe::1) is not a public address",
+        ),
+        ("http://[fd00::1]/", "fd00::1 is not a public address"),
+        ("http://[fe80::1]/", "fe80::1 is not a public address"),
+        (
+            "http://[2001:db8::1]/",
+            "2001:db8::1 is not a public address",
+        ),
+        ("http://100.64.0.1/", "100.64.0.1 is not a public address"),
+        ("http://198.18.0.1/", "198.18.0.1 is not a public address"),
+        ("http://0x7f.1/", "127.0.0.1 is not a public address"),
+        (
+            "http://2852039166/",
+            "169.254.169.254 is not a public address",
+        ),
+        ("http://127.1/", "127.0.0.1 is not a public address"),
+        ("http://localhost./", "localhost. is a local name"),
+        ("http://LOCALHOST/", "localhost is a local name"),
+    ] {
+        let (f, u) = use_case(FetchOutcome::SuccessBody {
+            body: vec![],
+            content_type: None,
+        });
+        assert_eq!(
+            u.execute(url, false).await.unwrap(),
+            WebFetchResult::RestrictedInitialHost(reason.into()),
+            "{url}"
+        );
+        assert_eq!(f.calls.load(Ordering::SeqCst), 0, "{url}");
     }
 }
 #[tokio::test]

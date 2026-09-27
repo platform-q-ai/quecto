@@ -150,7 +150,10 @@ fn test_build_native_extensions_brave_enabled() {
         &web,
         &client,
         web.fetch.enabled.then(|| {
-            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+            crate::composition::web_fetch::build(
+                reqwest::Client::builder(),
+                web.fetch.max_response_kb,
+            )
         }),
     );
     assert_eq!(exts.len(), 1);
@@ -166,7 +169,10 @@ fn test_build_native_extensions_ddg_enabled() {
         &web,
         &client,
         web.fetch.enabled.then(|| {
-            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+            crate::composition::web_fetch::build(
+                reqwest::Client::builder(),
+                web.fetch.max_response_kb,
+            )
         }),
     );
     assert_eq!(exts.len(), 1);
@@ -182,7 +188,10 @@ fn test_build_native_extensions_all_disabled() {
         &web,
         &client,
         web.fetch.enabled.then(|| {
-            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+            crate::composition::web_fetch::build(
+                reqwest::Client::builder(),
+                web.fetch.max_response_kb,
+            )
         }),
     );
     assert!(exts.is_empty());
@@ -196,7 +205,10 @@ fn test_build_native_extensions_brave_enabled_no_key_falls_back() {
         &web,
         &client,
         web.fetch.enabled.then(|| {
-            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+            crate::composition::web_fetch::build(
+                reqwest::Client::builder(),
+                web.fetch.max_response_kb,
+            )
         }),
     );
     assert_eq!(exts.len(), 1);
@@ -210,7 +222,10 @@ fn test_build_native_extensions_fetch_enabled() {
         &web,
         &client,
         web.fetch.enabled.then(|| {
-            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+            crate::composition::web_fetch::build(
+                reqwest::Client::builder(),
+                web.fetch.max_response_kb,
+            )
         }),
     );
     assert_eq!(exts.len(), 1);
@@ -227,7 +242,10 @@ fn test_build_native_extensions_search_and_fetch() {
         &web,
         &client,
         web.fetch.enabled.then(|| {
-            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+            crate::composition::web_fetch::build(
+                reqwest::Client::builder(),
+                web.fetch.max_response_kb,
+            )
         }),
     );
     assert_eq!(exts.len(), 1);
@@ -244,7 +262,10 @@ fn test_build_native_extensions_fetch_disabled() {
         &web,
         &client,
         web.fetch.enabled.then(|| {
-            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+            crate::composition::web_fetch::build(
+                reqwest::Client::builder(),
+                web.fetch.max_response_kb,
+            )
         }),
     );
     assert!(has_tool(&exts, "web_search"));

@@ -4745,6 +4745,14 @@ fn web_fetch_application_external_dependencies_are_allowlisted() {
     for item in syntax.items {
         if let syn::Item::Use(item_use) = item {
             let root = match item_use.tree {
+                // The crate's own pure domain (#1942: the destination
+                // policy), and nothing else of the crate.
+                syn::UseTree::Path(path)
+                    if path.ident == "crate"
+                        && matches!(&*path.tree, syn::UseTree::Path(inner) if inner.ident == "domain") =>
+                {
+                    continue;
+                }
                 syn::UseTree::Path(path) => path.ident.to_string(),
                 syn::UseTree::Name(name) => name.ident.to_string(),
                 _ => continue,

@@ -108,7 +108,7 @@ fn build_and_register_native_extensions_registers_web_fetch() {
         &client,
         config.tools.web.fetch.enabled.then(|| {
             crate::composition::web_fetch::build(
-                client.clone(),
+                reqwest::Client::builder(),
                 config.tools.web.fetch.max_response_kb,
             )
         }),
@@ -164,15 +164,18 @@ async fn production_registry_preserves_injected_client_default_headers() {
         "x-quecto-client-sentinel",
         HeaderValue::from_static("preserved"),
     );
-    let client = reqwest::Client::builder()
-        .default_headers(headers)
-        .no_proxy()
-        .build()
-        .unwrap();
+    let recipe = || {
+        reqwest::Client::builder()
+            .default_headers(headers.clone())
+            .no_proxy()
+    };
+    let client = recipe().build().unwrap();
     let mut config = crate::infrastructure::config::Config::default();
     config.tools.web.fetch.enabled = true;
-    let graph = crate::composition::web_fetch::build(
-        client.clone(),
+    // The production graph over the injected recipe; only the destination
+    // policy admits the local peer (#1942).
+    let graph = crate::composition::web_fetch::build_allowing_loopback_for_tests(
+        recipe(),
         config.tools.web.fetch.max_response_kb,
     );
     let extensions = build_and_register_native_extensions(&config, &client, Some(graph));
@@ -219,15 +222,16 @@ async fn production_registry_preserves_injected_private_ca_tls_trust() {
             .unwrap();
     });
     let certificate = reqwest::Certificate::from_der(cert_der.as_ref()).unwrap();
-    let client = reqwest::Client::builder()
-        .add_root_certificate(certificate)
-        .no_proxy()
-        .build()
-        .unwrap();
+    let recipe = || {
+        reqwest::Client::builder()
+            .add_root_certificate(certificate.clone())
+            .no_proxy()
+    };
+    let client = recipe().build().unwrap();
     let mut config = crate::infrastructure::config::Config::default();
     config.tools.web.fetch.enabled = true;
-    let graph = crate::composition::web_fetch::build(
-        client.clone(),
+    let graph = crate::composition::web_fetch::build_allowing_loopback_for_tests(
+        recipe(),
         config.tools.web.fetch.max_response_kb,
     );
     let extensions = build_and_register_native_extensions(&config, &client, Some(graph));
@@ -254,7 +258,7 @@ fn build_and_register_native_extensions_empty_when_no_web_tools() {
         &client,
         config.tools.web.fetch.enabled.then(|| {
             crate::composition::web_fetch::build(
-                client.clone(),
+                reqwest::Client::builder(),
                 config.tools.web.fetch.max_response_kb,
             )
         }),
@@ -447,7 +451,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
                 http_client: &client,
                 web_fetch_tool: config.tools.web.fetch.enabled.then(|| {
                     crate::composition::web_fetch::build(
-                        client.clone(),
+                        reqwest::Client::builder(),
                         config.tools.web.fetch.max_response_kb,
                     )
                 }),

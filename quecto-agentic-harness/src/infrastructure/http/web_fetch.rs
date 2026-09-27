@@ -1,38 +1,192 @@
+//! The web-fetch port over reqwest, reaching only authorized destinations
+//! (#1942).
+//!
+//! Every address a fetch could reach is checked by one policy before any
+//! byte is sent to it: the URL's own address literal, every address a name
+//! resolves to (resolved once, here, and only the checked addresses are
+//! handed to the connector, so a second, different answer cannot be
+//! connected), and every redirect hop before it is followed. Proxies are
+//! switched off: a proxy would resolve and connect on its own.
 use crate::application::agent_turn::use_cases::web_fetch::{
     FetchFailure, FetchOutcome, FetchRequest, FetchWebContent, HttpStatus,
 };
-use std::{future::Future, pin::Pin, time::Duration};
+use crate::domain::network_destination::{NonPublicAddress, authorize_destination};
+use std::{future::Future, net::IpAddr, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 const MAX_RAW_BYTES: usize = 5 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// reqwest's default redirect limit, kept (#1942 changes only who is reached).
+const MAX_REDIRECTS: usize = 10;
+
+/// Which addresses may be reached: production admits public space only.
+type DestinationPolicy = fn(IpAddr) -> Result<(), NonPublicAddress>;
+
 #[derive(Clone, Debug)]
 pub struct ReqwestFetchWebContent {
-    client: reqwest::Client,
+    /// The client, or why it could not be built: a fetch then fails closed.
+    client: Result<reqwest::Client, String>,
+    policy: DestinationPolicy,
 }
 impl ReqwestFetchWebContent {
-    pub fn new(client: reqwest::Client) -> Self {
-        Self { client }
+    /// Over the shared client recipe (headers, TLS trust, timeouts), with
+    /// destination enforcement laid over it last.
+    pub fn new(builder: reqwest::ClientBuilder) -> Self {
+        Self::with_policy(builder, authorize_destination)
+    }
+
+    /// Tests' local servers listen on 127.0.0.1: this adapter admits that one
+    /// address beyond public space, and is never compiled into production.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn allowing_loopback_for_tests(builder: reqwest::ClientBuilder) -> Self {
+        Self::with_policy(builder, loopback_or_public)
+    }
+
+    fn with_policy(builder: reqwest::ClientBuilder, policy: DestinationPolicy) -> Self {
+        let client = builder
+            .no_proxy()
+            .dns_resolver(Arc::new(AuthorizingResolver { policy }))
+            .redirect(authorizing_redirects(policy))
+            .build()
+            .map_err(|e| format!("the web-fetch client could not be built: {e}"));
+        Self { client, policy }
     }
 }
+
+#[cfg(any(test, feature = "test-support"))]
+fn loopback_or_public(address: IpAddr) -> Result<(), NonPublicAddress> {
+    match address {
+        IpAddr::V4(v4) if v4 == std::net::Ipv4Addr::LOCALHOST => Ok(()),
+        _ => authorize_destination(address),
+    }
+}
+
+/// A destination refused by the policy, and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Refused(String);
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for Refused {}
+
+/// Why `url`'s own address may not be reached, if it may not. A name is
+/// left to [`AuthorizingResolver`], which checks every address it resolves
+/// to.
+fn authorize_url(url: &url::Url, policy: DestinationPolicy) -> Result<(), String> {
+    let address = match (url.scheme(), url.host()) {
+        ("http" | "https", Some(url::Host::Domain(_))) => return Ok(()),
+        ("http" | "https", Some(url::Host::Ipv4(v4))) => IpAddr::V4(v4),
+        ("http" | "https", Some(url::Host::Ipv6(v6))) => IpAddr::V6(v6),
+        ("http" | "https", None) => return Err("the URL names no host".into()),
+        _ => return Err("only http and https are fetched".into()),
+    };
+    policy(address).map_err(|refused| refused.to_string())
+}
+
+fn authorize_hop(url: &url::Url, policy: DestinationPolicy) -> Result<(), Refused> {
+    authorize_url(url, policy).map_err(|reason| Refused(format!("the redirect to {url}: {reason}")))
+}
+
+/// reqwest's default redirect handling (the same statuses, at most
+/// [`MAX_REDIRECTS`] follows), with every hop authorized before it is
+/// followed.
+fn authorizing_redirects(policy: DestinationPolicy) -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(move |attempt| {
+        // `previous` starts with the original URL, as in reqwest's limit.
+        if attempt.previous().len() > MAX_REDIRECTS {
+            return attempt.error("too many redirects");
+        }
+        match authorize_hop(attempt.url(), policy) {
+            Ok(()) => attempt.follow(),
+            Err(refused) => attempt.error(refused),
+        }
+    })
+}
+
+/// Resolves a name once and hands the connector only the addresses the
+/// policy admits: the connector never resolves again, so the checked
+/// answer is the connected one.
+struct AuthorizingResolver {
+    policy: DestinationPolicy,
+}
+impl reqwest::dns::Resolve for AuthorizingResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let policy = self.policy;
+        Box::pin(async move {
+            let host = name.as_str().to_owned();
+            let answers: Vec<SocketAddr> =
+                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+            let admitted = authorized_answers(&host, answers, policy)?;
+            assert!(!admitted.is_empty(), "an admitted answer is never empty");
+            let addresses: reqwest::dns::Addrs = Box::new(admitted.into_iter());
+            Ok(addresses)
+        })
+    }
+}
+
+/// The answers `policy` admits, or a refusal naming every refused answer
+/// when none is admitted.
+fn authorized_answers(
+    host: &str,
+    answers: Vec<SocketAddr>,
+    policy: DestinationPolicy,
+) -> Result<Vec<SocketAddr>, Refused> {
+    if answers.is_empty() {
+        return Err(Refused(format!("{host} resolves to no address")));
+    }
+    let (admitted, refused): (Vec<_>, Vec<_>) = answers
+        .into_iter()
+        .map(|answer| (answer, policy(answer.ip())))
+        .partition(|(_, verdict)| verdict.is_ok());
+    if admitted.is_empty() {
+        let reasons: Vec<String> = refused
+            .iter()
+            .filter_map(|(_, verdict)| verdict.err().map(|refused| refused.to_string()))
+            .collect();
+        return Err(Refused(format!(
+            "{host} resolves to no public address: {}",
+            reasons.join("; ")
+        )));
+    }
+    Ok(admitted.into_iter().map(|(answer, _)| answer).collect())
+}
+
+/// A refusal anywhere in `error`'s chain, or else a timeout or transport
+/// failure.
+fn failure(error: reqwest::Error) -> FetchFailure {
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+    while let Some(current) = cause {
+        if let Some(refused) = current.downcast_ref::<Refused>() {
+            return FetchFailure::Refused(refused.0.clone());
+        }
+        cause = current.source();
+    }
+    if error.is_timeout() {
+        FetchFailure::TimedOut
+    } else {
+        FetchFailure::Transport(error.to_string())
+    }
+}
+
 impl FetchWebContent for ReqwestFetchWebContent {
     fn fetch<'a>(
         &'a self,
         request: &'a FetchRequest,
     ) -> Pin<Box<dyn Future<Output = Result<FetchOutcome, FetchFailure>> + Send + 'a>> {
         Box::pin(async move {
-            let response = self
+            let client = self
                 .client
-                .get(request.url.as_url().clone())
+                .as_ref()
+                .map_err(|e| FetchFailure::Transport(e.clone()))?;
+            let url = request.url.as_url();
+            authorize_url(url, self.policy).map_err(FetchFailure::Refused)?;
+            let response = client
+                .get(url.clone())
                 .timeout(REQUEST_TIMEOUT)
                 .header("User-Agent", concat!("quecto/", env!("CARGO_PKG_VERSION")))
                 .send()
                 .await
-                .map_err(|e| {
-                    if e.is_timeout() {
-                        FetchFailure::TimedOut
-                    } else {
-                        FetchFailure::Transport(e.to_string())
-                    }
-                })?;
+                .map_err(failure)?;
             if !response.status().is_success() {
                 let status = response.status();
                 return Ok(FetchOutcome::NonSuccessStatus(HttpStatus::new(
@@ -77,6 +231,9 @@ async fn read_body(mut response: reqwest::Response, max: usize) -> Result<Vec<u8
     Ok(out)
 }
 
+#[cfg(test)]
+#[path = "web_fetch_destination_tests.rs"]
+mod destination_tests;
 #[cfg(test)]
 #[path = "web_fetch_tests.rs"]
 mod tests;

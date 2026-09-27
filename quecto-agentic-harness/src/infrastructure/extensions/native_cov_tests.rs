@@ -64,7 +64,10 @@ async fn build_native_extensions_combines_search_and_fetch_in_one_web_extension(
         &web,
         &client,
         web.fetch.enabled.then(|| {
-            crate::composition::web_fetch::build(client.clone(), web.fetch.max_response_kb)
+            crate::composition::web_fetch::build(
+                reqwest::Client::builder(),
+                web.fetch.max_response_kb,
+            )
         }),
     );
 
