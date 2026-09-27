@@ -86,6 +86,19 @@ fn proxy_names_are_the_hosts_of_the_proxies_in_effect() {
         ["all.proxy", "tls.proxy"]
     );
     assert_eq!(names(&[("ALL_PROXY", "http://one:1")]), ["one"]);
+    assert_eq!(
+        names(&[
+            ("HTTP_PROXY", "http://plain.proxy:1"),
+            ("ALL_PROXY", "http://all.proxy:1")
+        ]),
+        ["plain.proxy", "all.proxy"],
+        "HTTPS falls back to ALL_PROXY too"
+    );
+    // A socks URL keeps its host's case in `url`: names are lower-cased.
+    assert_eq!(
+        names(&[("ALL_PROXY", "socks5h://Proxy.Corp:1080")]),
+        ["proxy.corp"]
+    );
     // An address literal needs no name exemption.
     assert_eq!(
         names(&[("HTTPS_PROXY", "http://10.0.0.1:3128")]),
