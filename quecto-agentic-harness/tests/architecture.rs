@@ -1142,6 +1142,19 @@ fn query_dependencies_allowed(content: &str) -> bool {
                     | "Debug"
                     | "registry"
                     | "self"
+                    // The bounded listing (#2220): the domain's pure
+                    // selection over the same snapshot, for the
+                    // registry's session, with the diagnostics above.
+                    | "crate::domain::environment_listing::EnvironmentListing"
+                    | "crate::domain::environment_listing::ListingScope"
+                    | "crate::domain::environment_listing::select_listing"
+                    | "EnvironmentListing"
+                    | "ListingScope"
+                    | "select_listing"
+                    | "usize"
+                    | "scope"
+                    | "limit"
+                    | "listing"
             )
         })
     })

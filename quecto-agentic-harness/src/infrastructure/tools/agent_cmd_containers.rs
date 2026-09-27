@@ -7,11 +7,12 @@
 
 use std::sync::Arc;
 
+use super::agent_cmd_container_listing as listing;
 use crate::application::environments::dto::ContainerConfigInventory;
 use crate::application::environments::use_cases::{
     KillEnvironment, KilledEnvironment, ListContainerConfigs, ListEnvironmentsQuery,
 };
-use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentTarget};
+use crate::domain::environment_registry::EnvironmentTarget;
 use crate::domain::tool::ToolResult;
 
 /// The environment control use cases `agent_cmd` invokes (#1369, #1939):
@@ -61,7 +62,18 @@ pub(super) async fn execute_container_command(
     }
     match args.get("command").and_then(|v| v.as_str()) {
         Some("get_containers") => match list_environments {
-            Some(query) => encode_listing(query.execute(), query.diagnostics()),
+            Some(query) => match listing::decode_scope(args) {
+                Ok(scope) => ToolResult {
+                    content: listing::encode_listing(
+                        &query.listing(scope, listing::MAX_LISTED_ENVIRONMENTS),
+                    )
+                    .to_string(),
+                    is_error: false,
+                    image_blocks: vec![],
+                    delivery_metadata: None,
+                },
+                Err(reason) => error(reason),
+            },
             None => error("environment listing is not available in this session".to_string()),
         },
         Some("get_container_configs") => match list_container_configs {
@@ -142,45 +154,6 @@ fn kill_container_result_json(killed: &KilledEnvironment) -> serde_json::Value {
             .collect::<Vec<_>>()
     );
     result
-}
-
-/// `{"containers":[..]}`, plus `"diagnostics":[..]` when the inventory
-/// may be incomplete (round 2 F-B, #2033: the durable registry could not be
-/// read, so the model is told rather than shown an empty fleet).
-fn encode_listing(records: Vec<EnvironmentRecord>, diagnostics: Vec<String>) -> ToolResult {
-    let containers: Vec<serde_json::Value> = records
-        .iter()
-        .map(|record| {
-            serde_json::json!({
-                "ref": record.environment_ref,
-                "name": record.name,
-                "status": record.status_label(),
-                "workspace": record.workspace_path.display().to_string(),
-                "repository": record.repository,
-                "environment_uuid": record.environment_uuid,
-                "members": record.members,
-                "metadata": record.metadata,
-                "last_error": record.last_error,
-                // Provenance (#2024 S4d): an environment another (or an
-                // earlier) session created, reachable here for a join or
-                // a kill but never torn down by a joiner's exit.
-                "restored": record.origin == crate::domain::environment_registry::EnvironmentOrigin::Restored,
-                "session": record.created_by,
-                "config": record.script_name,
-                "created_at": record.created_at,
-            })
-        })
-        .collect();
-    let mut listing = serde_json::json!({"containers": containers});
-    if !diagnostics.is_empty() {
-        listing["diagnostics"] = serde_json::json!(diagnostics);
-    }
-    ToolResult {
-        content: listing.to_string(),
-        is_error: false,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    }
 }
 
 /// `{"container_configs":[{name, default, source, repository, problem,

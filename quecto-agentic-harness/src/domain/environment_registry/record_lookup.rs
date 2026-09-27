@@ -24,6 +24,15 @@ pub enum EnvironmentStatus {
     Retained,
 }
 
+impl EnvironmentStatus {
+    /// Whether `{"mode":"existing"}` admits a join (#2220): the allowlist
+    /// [`super::EnvironmentRegistry::resolve_joinable`] applies — live, or
+    /// retained for inspection.
+    pub fn is_joinable(&self) -> bool {
+        matches!(self, Self::Running | Self::Retained)
+    }
+}
+
 /// How a caller addresses an existing environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnvironmentTarget {
@@ -63,3 +72,7 @@ impl std::fmt::Display for EnvironmentLookupError {
 }
 
 impl std::error::Error for EnvironmentLookupError {}
+
+#[cfg(test)]
+#[path = "record_lookup_tests.rs"]
+mod tests;

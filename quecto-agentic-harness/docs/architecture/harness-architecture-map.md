@@ -203,7 +203,11 @@ journal-only for a spawned child) and `build_container_inventory` (the
 `ContainerInventoryHandles` the interface declares in
 `interface/cli/container_handles.rs`); `interface/cli/container_inventory.rs`
 parses `container ls|kill|gc` and presents. `agent_cmd get_containers`
-carries `restored`, `session`, `config`, `created_at`.
+asks `ListEnvironmentsQuery::listing` for a bounded listing (#2220:
+joinable plus own by default, `all` for every record, ref-number order,
+capped with counts) and `infrastructure/tools/agent_cmd_container_listing.rs`
+encodes compact rows (`own`, `session`, `restored`, `config`,
+`created_at`, `checkout`).
 
 ## Persistence and session recovery
 

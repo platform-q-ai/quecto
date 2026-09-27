@@ -1,3 +1,4 @@
+use crate::domain::environment_listing::{EnvironmentListing, ListingScope, select_listing};
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};
 
 /// Synchronous, side-effect-free snapshot query over the session inventory.
@@ -39,6 +40,15 @@ impl ListEnvironmentsQuery {
             .collect()
     }
 
+    /// A bounded listing for a model-facing caller (#2220): the snapshot
+    /// selected by [`select_listing`] for this registry's session, with
+    /// the inventory's diagnostics.
+    pub fn listing(&self, scope: ListingScope, limit: usize) -> EnvironmentListing {
+        let mut listing = select_listing(self.execute(), self.registry.session(), scope, limit);
+        listing.diagnostics = self.diagnostics();
+        listing
+    }
+
     /// Returns a detached snapshot in the registry's existing iteration order.
     pub fn execute(&self) -> Vec<EnvironmentRecord> {
         #[cfg(test)]
@@ -47,3 +57,7 @@ impl ListEnvironmentsQuery {
         self.registry.entries()
     }
 }
+
+#[cfg(test)]
+#[path = "list_environments_listing_tests.rs"]
+mod listing_tests;
