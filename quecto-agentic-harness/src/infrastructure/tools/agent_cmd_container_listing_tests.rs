@@ -244,7 +244,12 @@ fn free_text_is_redacted_before_it_is_clipped() {
 #[test]
 fn a_plain_container_name_passes_whole_and_anything_else_is_dropped() {
     for (name, kept) in [
-        ("myproj-task-runner01", true),
+        ("myproj-worker01", true),
+        // Secret-shaped: dropped, even where the shape is a false positive
+        // (`task-runner01` holds `sk-runner01`).
+        ("sk-abcdefghijkl", false),
+        ("AKIAIOSFODNN7EXAMPLE", false),
+        ("myproj-task-runner01", false),
         ("quecto-env-AbCdEfGhIj", true),
         ("a", true),
         ("a.b_c-d", true),
@@ -268,7 +273,9 @@ fn a_plain_container_name_passes_whole_and_anything_else_is_dropped() {
             false => assert!(row.get("metadata").is_none(), "{name:?}: {row}"),
         }
     }
-    assert!(is_container_name("sk-abcdefghijkl"));
+    assert!(!is_container_name("sk-abcdefghijkl"));
+    assert!(!is_container_name("AKIAIOSFODNN7EXAMPLE"));
+    assert!(is_container_name("quecto-env-AbCdEfGhIj"));
     assert!(!is_container_name(&"x".repeat(129)));
 }
 
@@ -496,6 +503,28 @@ fn a_foreign_row_with_no_session_key_names_no_session() {
     let row = &listing["containers"][0];
     assert_eq!(row["own"], false);
     assert!(row.get("session").is_none(), "{row}");
+}
+
+#[test]
+fn the_checkout_is_secret_redacted_but_an_ordinary_path_is_untouched() {
+    let registry = EnvironmentRegistry::new();
+    let ordinary = "/home/qa/.quecto/containers/standard/state/env-q000000001/workspace/repo";
+    let mut plain = qa_record(1, "", EnvironmentStatus::Running);
+    plain.metadata["checkout"] = serde_json::json!(ordinary);
+    registry.commit(plain);
+    let mut leaky = qa_record(2, "", EnvironmentStatus::Running);
+    leaky.metadata["checkout"] =
+        serde_json::json!("/repo?token=ghp_abcdefghijklmnopqrstuvwxyz0123");
+    registry.commit(leaky);
+    let mut userinfo = qa_record(3, "", EnvironmentStatus::Running);
+    userinfo.metadata["checkout"] = serde_json::json!("/srv/git://mirror@host/repo");
+    registry.commit(userinfo);
+    let (_, listing) = listed(registry, serde_json::json!({}));
+    let rows = listing["containers"].as_array().unwrap();
+    assert_eq!(rows[0]["checkout"], ordinary);
+    assert_eq!(rows[1]["checkout"], "/repo?[REDACTED]");
+    // No URL-userinfo rewriting: a path is not a URL.
+    assert_eq!(rows[2]["checkout"], "/srv/git://mirror@host/repo");
 }
 
 #[test]

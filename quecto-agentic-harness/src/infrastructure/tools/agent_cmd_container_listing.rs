@@ -218,10 +218,10 @@ fn encode_row(
         "config": clip(&safe_label(&record.script_name), MAX_LABEL_CHARS),
         "members": record.members.len(),
         "own": row.own,
-        // Clipped, never redacted: it is the path the members work in and
-        // the model hands on verbatim; redaction could corrupt it (like a
-        // container name), and a path is no place a secret is reported.
-        "checkout": clip(&checkout(record), MAX_TEXT_CHARS),
+        // The path the members work in, handed on verbatim: known secret
+        // shapes are redacted (a create script may report anything), but
+        // URL userinfo is not rewritten, so an ordinary path is unchanged.
+        "checkout": clip(&redact_secrets(&checkout(record)), MAX_TEXT_CHARS),
     });
     if let Some(name) = &record.name {
         value["name"] = serde_json::json!(clip(&safe_label(name), MAX_LABEL_CHARS));
@@ -287,13 +287,17 @@ fn listed_container(record: &EnvironmentRecord) -> Option<&str> {
     }
 }
 
-/// `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`: a name a runtime accepts for a
-/// container, and nothing that could carry anything else.
+/// A name passed through verbatim: `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`
+/// (a name a runtime accepts for a container) and no known secret shape
+/// (`redact_secrets` leaves it unchanged). The character allowlist alone
+/// admits a key such as `AKIA…`; a name that fails either is dropped,
+/// never rewritten, since a rewritten name would name nothing.
 fn is_container_name(name: &str) -> bool {
     let mut bytes = name.bytes();
     let first_ok = bytes.next().is_some_and(|b| b.is_ascii_alphanumeric());
     let rest_ok = bytes.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'));
-    first_ok && rest_ok && name.len() <= 128
+    let plain = first_ok && rest_ok && name.len() <= 128;
+    plain && redact_secrets(name) == name
 }
 
 /// Free text for the model: URL userinfo and known secret shapes

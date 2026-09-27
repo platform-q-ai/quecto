@@ -106,8 +106,9 @@ Two session-level `agent_cmd` commands expose it (use `agent_id: "*"`):
   --all`) and says when metadata was left out. Each row carries `ref`, `status`, `config` (the container
   config), `members` (a count), `own` (the caller's session created it),
   `checkout` (the create result's absolute `metadata.checkout`, else the
-  workspace — clipped at 400 characters but never redacted: it is the
-  path the model hands on verbatim, which redaction could corrupt), and
+  workspace — known secret shapes redacted, but no URL-userinfo
+  rewriting, so an ordinary path is unchanged; clipped at 400
+  characters), and
   when set `name`, `created_at` (epoch seconds) and `last_error`; a row
   not the caller's own carries `session` (its creator, left out when the
   creator ran without a session key), and every row restored from the
@@ -124,7 +125,8 @@ Two session-level `agent_cmd` commands expose it (use `agent_id: "*"`):
   listed, as text — secrets and URL userinfo redacted, clipped like
   `last_error` at 400 characters (`name`, `config` and `session` at 200)
   — and `container`, the runtime's container name, verbatim when it is a
-  plain name (`[A-Za-z0-9][A-Za-z0-9_.-]{0,127}`), otherwise not at all;
+  plain name (`[A-Za-z0-9][A-Za-z0-9_.-]{0,127}`) holding no known
+  secret shape, otherwise not at all;
   the create script's other keys repeat the row's fields. The shipped
   scripts name the container `quecto-<environment_id>`, and an
   environment id is `env-XXXXXXXXXX`, so `quecto-env-<id>` in the log
