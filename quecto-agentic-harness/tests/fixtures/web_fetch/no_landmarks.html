@@ -1,0 +1,59 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<HTML>
+<HEAD>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=utf-8">
+<TITLE>MA2104 Lecture 4: Lagrange multipliers</TITLE>
+<LINK REL="stylesheet" HREF="../course.css" TYPE="text/css">
+</HEAD>
+<BODY BGCOLOR="#FFFFFF">
+<TABLE WIDTH="100%" BORDER="0" CELLPADDING="0" CELLSPACING="0">
+<TR><TD COLSPAN="3" CLASS="banner"><IMG SRC="../img/crest.gif" ALT="Department of Mathematics" WIDTH="120" HEIGHT="60"> <FONT SIZE="+2"><B>MA2104 Multivariable Calculus</B></FONT><BR>Michaelmas term</TD></TR>
+<TR>
+<TD WIDTH="180" VALIGN="top" CLASS="leftnav">
+<A HREF="#">Home</A><BR>
+<A HREF="#">Course outline</A><BR>
+<A HREF="#">Lecture timetable</A><BR>
+<A HREF="#">Lecture 1: Partial derivatives</A><BR>
+<A HREF="#">Lecture 2: The chain rule</A><BR>
+<A HREF="#">Lecture 3: Taylor's theorem in two variables</A><BR>
+<A HREF="#">Lecture 4: Lagrange multipliers</A><BR>
+<A HREF="#">Lecture 5: Double integrals</A><BR>
+<A HREF="#">Lecture 6: Change of variables</A><BR>
+<A HREF="#">Lecture 7: Line integrals</A><BR>
+<A HREF="#">Lecture 8: Green's theorem</A><BR>
+<A HREF="#">Example sheet 1</A><BR>
+<A HREF="#">Example sheet 2</A><BR>
+<A HREF="#">Example sheet 3</A><BR>
+<A HREF="#">Example sheet 4</A><BR>
+<A HREF="#">Past papers</A><BR>
+<A HREF="#">Contact the lecturer</A><BR>
+<A HREF="#">Department home page</A><BR>
+<BR><HR><SMALL>Last updated 14 October</SMALL>
+</TD>
+<TD VALIGN="top" CLASS="content">
+<!-- article-start -->
+<H1>Lecture 4: Lagrange multipliers</H1>
+<P>These are the notes for the fourth lecture of the course. They cover the method of Lagrange multipliers for constrained optimisation and are intended to be read alongside chapter 7 of the set text.
+<P>Suppose we wish to find the maximum of f(x, y) subject to the constraint g(x, y) = c. At a constrained maximum the level curve of f through the point must be tangent to the constraint curve, for otherwise we could move along the constraint and increase f.
+<P>Tangency of the two curves means their normals are parallel, so the gradients satisfy grad f = lambda grad g for some scalar lambda, the Lagrange multiplier. Together with the constraint itself this gives three equations in the three unknowns x, y and lambda.
+<H2>Worked examples</H2>
+<P>Example 1. Maximise f(x, y) = xy subject to x + y = 10. The gradient condition gives y = lambda and x = lambda, so x = y, and the constraint gives x = y = 5. The maximum value is 25.
+<P>Example 2. Find the point on the plane x + 2y + 2z = 9 nearest the origin. Minimise the squared distance x^2 + y^2 + z^2; the gradient condition gives (2x, 2y, 2z) = lambda (1, 2, 2), so the point is (1, 2, 2) and its distance from the origin is 3.
+<H2>Remarks</H2>
+<P>The multiplier has a useful interpretation: lambda is the rate at which the optimal value of f changes as the constraint level c is relaxed. In economics it is the shadow price of the constrained resource.
+<P>With several constraints g1 = c1, ..., gk = ck the condition becomes grad f = lambda1 grad g1 + ... + lambdak grad gk, provided the constraint gradients are linearly independent at the point. When they are not, the method can miss the optimum, as the exercises show.
+<P>Second-order conditions, which distinguish maxima from minima and saddle points, use the bordered Hessian. We will not need them this term; for the problems on the sheet it is enough to compare the values of f at each critical point and, where the constraint set is unbounded, to check the behaviour at infinity.
+<P>Exercises for the supervision: questions 3, 4, 7 and 9 from sheet 4. Question 9 is harder than it looks; think about what happens where the gradient of the constraint vanishes.
+<!-- article-end -->
+</TD>
+<TD WIDTH="160" VALIGN="top" CLASS="rightcol">
+<B>Announcements</B><BR>
+<P>The Friday lecture on 18 October is cancelled; notes will be posted here.
+<P>Supervision groups are on the notice board outside room 2.14.
+<P>Example sheet 4 is due at the start of week 6.
+</TD>
+</TR>
+<TR><TD COLSPAN="3" CLASS="footer"><HR><SMALL>&copy; Department of Mathematics. Page maintained by the course lecturer. <A HREF="#">Accessibility</A> | <A HREF="#">Privacy</A></SMALL></TD></TR>
+</TABLE>
+</BODY>
+</HTML>

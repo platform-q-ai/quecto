@@ -14,12 +14,20 @@ impl FetchWebContent for Fixed {
 }
 
 async fn fetched(body: &[u8], content_type: Option<&str>, raw: bool) -> WebFetchResult {
+    let view = match raw {
+        true => HtmlView::Markup,
+        false => HtmlView::MainContent,
+    };
+    viewed(body, content_type, view).await
+}
+
+async fn viewed(body: &[u8], content_type: Option<&str>, view: HtmlView) -> WebFetchResult {
     let fetcher = Arc::new(Fixed(FetchOutcome::SuccessBody {
         body: body.to_vec(),
         content_type: content_type.map(str::to_owned),
     }));
     WebFetchUseCase::new(fetcher, 32)
-        .execute("https://example.com/x", raw)
+        .execute("https://example.com/x", view)
         .await
         .unwrap()
 }
@@ -189,4 +197,29 @@ async fn binary_octet_stream_and_unknown_are_sniffed() {
             "{content_type}"
         );
     }
+}
+
+/// #2165 part 3: a page that marks its main content reads from it, and raw
+/// still returns the page as served.
+#[tokio::test]
+async fn html_reads_its_main_content_and_raw_keeps_the_page() {
+    let page = include_str!("../../../../tests/fixtures/web_fetch/docs_with_main.html");
+    let WebFetchResult::Success(text) = fetched(page.as_bytes(), Some("text/html"), false).await
+    else {
+        panic!("not text");
+    };
+    assert!(text.contains(main_content::MAIN_CONTENT_NOTE), "{text}");
+    assert!(!text.contains("Array.prototype.copyWithin()"), "{text}");
+    let raw = fetched(page.as_bytes(), Some("text/html"), true).await;
+    assert_eq!(raw, WebFetchResult::Success(page.to_owned()));
+}
+
+/// #2165 review: `main_only: false` reads the whole page, and the note
+/// says so.
+#[tokio::test]
+async fn the_whole_page_is_one_option_away() {
+    let page = include_str!("../../../../tests/fixtures/web_fetch/docs_with_main.html");
+    let whole = viewed(page.as_bytes(), Some("text/html"), HtmlView::WholePage).await;
+    assert_eq!(whole, WebFetchResult::Success(strip_html(page)));
+    assert!(main_content::MAIN_CONTENT_NOTE.contains("main_only: false"));
 }

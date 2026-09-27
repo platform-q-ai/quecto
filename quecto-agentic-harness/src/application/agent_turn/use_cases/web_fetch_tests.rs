@@ -35,7 +35,7 @@ async fn rejection_categories_never_call_port() {
             body: vec![],
             content_type: None,
         });
-        let got = u.execute(url, false).await;
+        let got = u.execute(url, HtmlView::MainContent).await;
         match expected {
             "error" => assert!(got.is_err()),
             "scheme" => assert_eq!(got.unwrap(), WebFetchResult::UnsupportedScheme),
@@ -60,7 +60,7 @@ async fn accepted_baseline_hosts_call_port_once() {
             content_type: None,
         });
         assert_eq!(
-            u.execute(url, true).await.unwrap(),
+            u.execute(url, HtmlView::Markup).await.unwrap(),
             WebFetchResult::Success("ok".into())
         );
         assert_eq!(f.calls.load(Ordering::SeqCst), 1);
@@ -73,7 +73,9 @@ async fn non_success_is_preserved_without_body_shape() {
         Some("Not Found".into()),
     )));
     assert_eq!(
-        u.execute("https://example.com", false).await.unwrap(),
+        u.execute("https://example.com", HtmlView::MainContent)
+            .await
+            .unwrap(),
         WebFetchResult::NonSuccessStatus(HttpStatus::new(404, Some("Not Found".into())))
     );
 }

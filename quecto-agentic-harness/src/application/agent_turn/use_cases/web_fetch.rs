@@ -1,6 +1,9 @@
 //! Application-owned web fetch policy, orchestration, and content transformation.
 use std::{future::Future, net::IpAddr, pin::Pin, sync::Arc};
 
+#[path = "web_fetch_main_content.rs"]
+pub mod main_content;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedHttpUrl(url::Url);
 impl ParsedHttpUrl {
@@ -68,6 +71,17 @@ pub enum WebFetchResult {
     RestrictedInitialHost(String),
     NonSuccessStatus(HttpStatus),
 }
+/// How an HTML body is returned (#2165).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HtmlView {
+    /// Readable text of the page's main content when it marks one, else of
+    /// the whole page.
+    MainContent,
+    /// Readable text of the whole page.
+    WholePage,
+    /// The markup as served.
+    Markup,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ExecutionGate {
     Allowed(ParsedHttpUrl),
@@ -86,7 +100,11 @@ impl WebFetchUseCase {
             max_response_kb,
         }
     }
-    pub async fn execute(&self, url: &str, raw: bool) -> Result<WebFetchResult, WebFetchError> {
+    pub async fn execute(
+        &self,
+        url: &str,
+        view: HtmlView,
+    ) -> Result<WebFetchResult, WebFetchError> {
         let parsed = url::Url::parse(url).map_err(|e| WebFetchError::InvalidUrl(e.to_string()))?;
         let request = match classify(parsed) {
             ExecutionGate::Allowed(url) => FetchRequest { url },
@@ -103,18 +121,23 @@ impl WebFetchUseCase {
         {
             FetchOutcome::NonSuccessStatus(status) => Ok(WebFetchResult::NonSuccessStatus(status)),
             FetchOutcome::SuccessBody { body, content_type } => {
-                // By what was served (#2165): HTML is made readable (unless
-                // raw), other text comes back as it is, anything else is
-                // named rather than decoded into noise.
-                let content = match (kind_of(content_type.as_deref(), &body), raw) {
+                // By what was served (#2165): HTML is returned in the view
+                // asked for, other text comes back as it is, anything else
+                // is named rather than decoded into noise.
+                let content = match (kind_of(content_type.as_deref(), &body), view) {
                     (BodyKind::Binary, _) => {
                         return Ok(WebFetchResult::Binary {
                             content_type,
                             bytes: body.len(),
                         });
                     }
-                    (BodyKind::Html, false) => strip_html(decoded(&body).as_ref()),
-                    (BodyKind::Html, true) | (BodyKind::Text, _) => decoded(&body).into_owned(),
+                    (BodyKind::Html, HtmlView::MainContent) => {
+                        main_content::readable_html(decoded(&body).as_ref())
+                    }
+                    (BodyKind::Html, HtmlView::WholePage) => strip_html(decoded(&body).as_ref()),
+                    (BodyKind::Html, HtmlView::Markup) | (BodyKind::Text, _) => {
+                        decoded(&body).into_owned()
+                    }
                 };
                 Ok(WebFetchResult::Success(truncate_output(
                     content,
@@ -297,8 +320,12 @@ fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
 /// 4. Decode common HTML entities
 /// 5. Collapse whitespace
 pub fn strip_html(html: &str) -> String {
-    let stripped = remove_configured_tag_blocks(html);
-    let text = tags_to_text(&stripped);
+    text_of_markup(&remove_configured_tag_blocks(html))
+}
+
+/// Steps 2-5 of [`strip_html`], for markup whose stripped blocks are gone.
+fn text_of_markup(stripped: &str) -> String {
+    let text = tags_to_text(stripped);
     let text = decode_entities(&text);
     collapse_whitespace(&text)
 }
@@ -311,6 +338,12 @@ const STRIPPED_BLOCK_TAGS: &[&str] = &["script", "style", "nav", "footer", "head
 /// will leave content after the first closing tag. This is acceptable for
 /// readability stripping (not security sanitisation).
 fn remove_configured_tag_blocks(html: &str) -> String {
+    remove_tag_blocks(html, STRIPPED_BLOCK_TAGS)
+}
+
+/// Remove all occurrences of `<tag ...>...</tag>` blocks for the given tags,
+/// as [`remove_configured_tag_blocks`] does for its own.
+fn remove_tag_blocks(html: &str, stripped: &[&'static str]) -> String {
     let mut result = String::with_capacity(html.len());
     let mut pos = 0;
     // Tags with no close anywhere after some point have none after any later
@@ -324,7 +357,7 @@ fn remove_configured_tag_blocks(html: &str) -> String {
             break;
         };
         let tag_start = pos + tag_start_rel;
-        let Some(tag) = configured_open_tag_at(html, tag_start) else {
+        let Some(tag) = open_tag_of(stripped, html, tag_start) else {
             result.push_str(&html[pos..=tag_start]);
             pos = tag_start + 1;
             continue;
@@ -354,8 +387,8 @@ fn remove_configured_tag_blocks(html: &str) -> String {
     result
 }
 
-fn configured_open_tag_at(html: &str, tag_start: usize) -> Option<&'static str> {
-    STRIPPED_BLOCK_TAGS
+fn open_tag_of(stripped: &[&'static str], html: &str, tag_start: usize) -> Option<&'static str> {
+    stripped
         .iter()
         .copied()
         .find(|tag| specific_open_tag_at(html, tag_start, tag))
@@ -383,14 +416,23 @@ fn find_configured_close_tag(html: &str, mut pos: usize, tag: &str) -> Option<us
     None
 }
 
+/// `</tag>` at `tag_start`, with optional whitespace before its `>`
+/// (#2165 review). The whitespace run is read once per `</tag`, so the
+/// callers' scans stay linear.
 fn specific_close_tag_at(html: &str, tag_start: usize, tag: &str) -> bool {
     let after_slash = tag_start + 2;
     let after_name = after_slash + tag.len();
+    let closes = || {
+        html.get(after_name..).is_some_and(|rest| {
+            rest.trim_start_matches(|c: char| c.is_ascii_whitespace())
+                .starts_with('>')
+        })
+    };
     html.as_bytes().get(tag_start..after_slash) == Some(b"</")
         && html
             .get(after_slash..after_name)
             .is_some_and(|name| name.eq_ignore_ascii_case(tag))
-        && html.as_bytes().get(after_name) == Some(&b'>')
+        && closes()
 }
 
 /// Convert HTML tags to text: block tags become newlines, others are stripped.
@@ -416,20 +458,13 @@ fn tags_to_text(html: &str) -> String {
 
     let mut result = String::with_capacity(html.len());
     let mut pos = 0;
-    // Once no `>` follows, none follows any later `<` either: stop looking,
-    // so many stray `<` stay linear (#2177 review).
-    let mut no_more_ends = false;
 
     while let Some(open) = html[pos..].find('<') {
         let abs_open = pos + open;
         result.push_str(&html[pos..abs_open]);
 
-        let end = match no_more_ends {
-            true => None,
-            false => html[abs_open..].find('>'),
-        };
-        no_more_ends = end.is_none();
-        if let Some(end_offset) = end {
+        // Past quoted attribute values (#2165 review); a stray `<` is text.
+        if let TagEnd::At(end_offset) = tag_end(&html.as_bytes()[abs_open..]) {
             let tag_content = &html[abs_open + 1..abs_open + end_offset];
             let trimmed = tag_content.trim().trim_start_matches('/');
             let tag_end = trimmed
@@ -444,7 +479,9 @@ fn tags_to_text(html: &str) -> String {
             }
             pos = abs_open + end_offset + 1;
         } else {
-            // Unclosed '<' — treat it as a literal character and continue.
+            // A stray or unended '<' is a literal character. The next '<'
+            // is where `tag_end` stopped, so every byte is read at most
+            // twice.
             result.push('<');
             pos = abs_open + 1;
         }
@@ -452,6 +489,63 @@ fn tags_to_text(html: &str) -> String {
 
     result.push_str(&html[pos..]);
     result
+}
+
+/// Where a tag opened by the `<` at `rest[0]` ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TagEnd {
+    /// Its `>`.
+    At(usize),
+    /// Another `<` came first, outside quotes: the first was stray.
+    Stray(usize),
+    /// Neither follows: no whole tag does.
+    Never,
+}
+
+/// Find a tag's `>` in one forward pass, past quoted attribute values (a
+/// quote opens a value only after `=`; #2165 review).
+///
+/// A quote that never closes is no value: the tag then ends at the first
+/// `>`, or the next starts at the first `<`, after its start, whatever the
+/// quotes. Both lie past that quote, and that quote character appears
+/// nowhere after it, so no later tag reads to the end for it again: at
+/// most two such reads a page, one per quote character, so linear.
+fn tag_end(rest: &[u8]) -> TagEnd {
+    let mut quote = None;
+    let mut after_equals = false;
+    let mut first_bracket = None;
+    for (at, &byte) in rest.iter().enumerate().skip(1) {
+        if first_bracket.is_none() {
+            first_bracket = match byte {
+                b'>' => Some(TagEnd::At(at)),
+                b'<' => Some(TagEnd::Stray(at)),
+                _ => None,
+            };
+        }
+        if let Some(open) = quote {
+            if byte == open {
+                quote = None;
+            }
+            continue;
+        }
+        match byte {
+            b'>' => return TagEnd::At(at),
+            b'<' => return TagEnd::Stray(at),
+            b'"' | b'\'' if after_equals => {
+                quote = Some(byte);
+                after_equals = false;
+                continue;
+            }
+            _ => {}
+        }
+        after_equals = byte == b'=' || (after_equals && byte.is_ascii_whitespace());
+    }
+    // Brackets inside values that closed were values; only an unclosed
+    // quote falls back to the first bracket.
+    match quote {
+        Some(_) => first_bracket.unwrap_or(TagEnd::Never),
+        None => TagEnd::Never,
+    }
 }
 
 /// Decode common HTML entities. Operates on `&str` so multibyte characters

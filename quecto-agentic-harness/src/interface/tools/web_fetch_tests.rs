@@ -99,3 +99,85 @@ async fn binary_content_is_named_not_shown() {
         "https://example.com/a.png is binary content (image/png, 2048 bytes), not shown: web_fetch returns text and HTML only"
     );
 }
+
+struct HtmlFetcher(&'static str);
+impl FetchWebContent for HtmlFetcher {
+    fn fetch<'a>(
+        &'a self,
+        _: &'a FetchRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<FetchOutcome, FetchFailure>> + Send + 'a>> {
+        let body = self.0.as_bytes().to_vec();
+        Box::pin(async move {
+            Ok(FetchOutcome::SuccessBody {
+                body,
+                content_type: Some("text/html".into()),
+            })
+        })
+    }
+}
+
+/// #2165 review: HTML reads its main content by default; `main_only:
+/// false` reads the whole page; `raw` still wins over both. The schema and
+/// the description name the option.
+#[tokio::test]
+async fn main_only_chooses_between_the_main_content_and_the_whole_page() {
+    let page = "<html><head><title>T</title></head><body><p>side side side side side side</p><main><p>in in in in in in in in in in in in in in in in in in in in</p></main></body></html>";
+    let fetcher: Arc<dyn FetchWebContent> = Arc::new(HtmlFetcher(page));
+    let tool = WebFetchTool::new(Arc::new(WebFetchUseCase::new(fetcher, 32)));
+    let read = |args: &'static str| {
+        let tool = &tool;
+        async move { tool.execute(args).await.unwrap().content }
+    };
+    let main = read(r#"{"url":"https://example.com"}"#).await;
+    assert!(
+        main.contains("main_only: false") && !main.contains("side"),
+        "{main}"
+    );
+    let whole = read(r#"{"url":"https://example.com","main_only":false}"#).await;
+    assert!(
+        whole.contains("side") && !whole.contains("main_only"),
+        "{whole}"
+    );
+    let raw = read(r#"{"url":"https://example.com","raw":true,"main_only":true}"#).await;
+    assert_eq!(raw, page);
+    let definition = tool.definition();
+    assert!(definition.parameters_schema.contains("\"main_only\""));
+    assert!(definition.description.contains("main_only"));
+}
+
+/// #2165 review: `raw` and `main_only` take booleans; anything else is an
+/// error naming the argument, never a silent default.
+#[tokio::test]
+async fn non_boolean_flags_are_refused() {
+    let fetcher: Arc<dyn FetchWebContent> = Arc::new(HtmlFetcher("<p>x</p>"));
+    let tool = WebFetchTool::new(Arc::new(WebFetchUseCase::new(fetcher, 32)));
+    for (args, name) in [
+        (
+            r#"{"url":"https://example.com","main_only":"false"}"#,
+            "main_only",
+        ),
+        (
+            r#"{"url":"https://example.com","main_only":0}"#,
+            "main_only",
+        ),
+        (r#"{"url":"https://example.com","raw":"true"}"#, "raw"),
+        (r#"{"url":"https://example.com","raw":1}"#, "raw"),
+    ] {
+        match tool.execute(args).await {
+            Err(crate::domain::error::DomainError::Tool(message)) => {
+                assert!(
+                    message.contains(name) && message.contains("boolean"),
+                    "{args}: {message}"
+                );
+            }
+            other => panic!("{args}: expected a tool error, got {other:?}"),
+        }
+    }
+    // Absent or null is the default.
+    for args in [
+        r#"{"url":"https://example.com"}"#,
+        r#"{"url":"https://example.com","raw":null,"main_only":null}"#,
+    ] {
+        assert!(tool.execute(args).await.is_ok(), "{args}");
+    }
+}
