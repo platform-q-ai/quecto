@@ -56,6 +56,14 @@ Feature: Context pruning via sliding window and tool-call collapse
     And the agent executes 12 more tool calls in a later prompt
     Then 0 tool results are collapsed to recall() stubs
 
+  # #2213: results the model has not seen yet are never collapsed, even when
+  # the batch down to the low-water mark would reach them.
+  Scenario: Tool results the model has not seen are never collapsed
+    Given context_collapse_after_tool_calls is set to 10
+    When the agent has run 2 tool calls then 9 unseen parallel tool calls
+    Then 2 tool results are collapsed to recall() stubs
+    And the 9 most recent tool results remain in full context
+
   Scenario: Collapse count is cumulative across prompts within a session
     Given context_collapse_after_tool_calls is set to 50
     And the agent has already executed 30 tool calls in an earlier prompt
@@ -297,6 +305,14 @@ Feature: Context pruning via sliding window and tool-call collapse
     When the agent trims old conversation messages
     Then 1 conversation message is collapsed to a recall stub
     And the oldest conversation message is a one-line recall stub
+
+  # #2213: at a dial of 50 the low-water mark (38) differs from the dial.
+  Scenario: Crossing the message dial collapses down to its low-water mark
+    Given context_collapse_after_messages is set to 50
+    And 51 old conversation messages
+    And an in-flight user prompt
+    When the agent trims old conversation messages
+    Then 13 conversation messages are collapsed to recall stubs
 
   Scenario: Message collapse triggers at one past the threshold, not at it
     Given context_collapse_after_messages is set to 3

@@ -150,6 +150,24 @@ fn when_executed_tool_calls_in_session(world: &mut QuectoWorld, n: u32) {
     run_collapse(world);
 }
 
+/// #2213: `seen` results the model has read, then one assistant message
+/// calling `unseen` tools in parallel and their results, not yet seen.
+#[when(expr = "the agent has run {int} tool calls then {int} unseen parallel tool calls")]
+fn when_executed_seen_then_unseen_tool_calls(world: &mut QuectoWorld, seen: u32, unseen: u32) {
+    append_tool_calls(world, seen);
+    let calls = (0..unseen)
+        .map(|i| quecto::domain::message::ToolCall {
+            id: format!("parallel_{i}"),
+            name: "bash".to_string(),
+            arguments: "{}".to_string(),
+        })
+        .collect();
+    let messages = world.context_messages.as_mut().unwrap();
+    messages.push(Message::assistant("calling tools in parallel", calls));
+    append_tool_calls(world, unseen);
+    run_collapse(world);
+}
+
 #[when(expr = "the agent executes {int} more tool calls in a later prompt")]
 fn when_executes_more_tool_calls(world: &mut QuectoWorld, n: u32) {
     append_tool_calls(world, n);

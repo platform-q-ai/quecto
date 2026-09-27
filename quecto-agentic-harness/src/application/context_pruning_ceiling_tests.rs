@@ -94,6 +94,14 @@ fn crossing_the_ceiling_prunes_down_to_the_low_water_mark() {
         "a batch, not just the overflow"
     );
     assert_eq!(outcome.dropped, 0, "stubbing alone reaches the mark");
+    // Rung 1 stops at the mark: the newest message is still full, and
+    // un-stubbing the last stub would put the total back above the mark.
+    let original = session(20);
+    assert!(!messages.last().is_some_and(|m| m.is_collapsed));
+    let last_stub = messages.iter().rposition(|m| m.is_collapsed).unwrap();
+    let restored = estimate_total_tokens(&messages) - estimate_message_tokens(&messages[last_stub])
+        + estimate_message_tokens(&original[last_stub]);
+    assert!(restored > low_water(budget), "stubbed past the mark");
 }
 
 #[test]
@@ -302,4 +310,54 @@ fn the_tool_count_dial_never_collapses_results_the_model_has_not_seen() {
     let fresh = &messages[messages.len() - 9..];
     assert!(fresh.iter().all(|m| !m.is_collapsed), "fresh results stay");
     assert!(messages[1].is_collapsed && messages[3].is_collapsed);
+}
+
+/// The #2213 review probe: the prompt, an old seen result, the assistant's
+/// tool call and the fresh result it has not seen yet.
+fn in_flight_tool_call() -> Vec<Message> {
+    let mut old = spilled_tool_result(1);
+    old.content = "old ".repeat(40);
+    let call = crate::domain::message::ToolCall {
+        id: "call-2".to_string(),
+        name: "bash".to_string(),
+        arguments: "{}".to_string(),
+    };
+    let mut fresh = spilled_tool_result(2);
+    fresh.content = "fresh ".repeat(200);
+    let mut messages = vec![
+        Message::user("current prompt"),
+        Message::assistant("reading", vec![]),
+        old,
+        Message::assistant("calling bash", vec![call]),
+        fresh,
+    ];
+    for (msg, turn) in messages[1..].iter_mut().zip([1, 1, 2, 2]) {
+        msg.turn = Some(turn);
+    }
+    messages
+}
+
+#[test]
+fn the_ladder_never_stubs_a_result_the_model_has_not_seen() {
+    let mut messages = in_flight_tool_call();
+    let budget = estimate_total_tokens(&messages) - 20;
+
+    enforce_context_ceiling_ladder(&mut messages, budget, 0);
+
+    assert!(messages[2].is_collapsed, "the seen result is stubbed");
+    assert!(!messages[4].is_collapsed, "the fresh result stays in full");
+    assert!(messages[4].content.starts_with("fresh "));
+}
+
+#[test]
+fn the_drop_rung_keeps_the_in_flight_tool_call_and_its_result() {
+    let mut messages = in_flight_tool_call();
+
+    let outcome = enforce_context_ceiling_ladder(&mut messages, 10, 0);
+
+    assert!(outcome.over_budget, "the in-flight pair alone is over 10");
+    let tail = &messages[messages.len() - 2..];
+    assert_eq!(tail[0].tool_calls.len(), 1, "the tool call stays");
+    assert!(tail[1].content.starts_with("fresh "), "its result stays");
+    assert!(!tail[1].is_collapsed);
 }

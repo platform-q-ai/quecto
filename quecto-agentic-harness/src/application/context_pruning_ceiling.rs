@@ -52,19 +52,28 @@ pub fn count_to_collapse(live: usize, limit: usize) -> usize {
     }
 }
 
+/// Where the in-flight exchange starts (#2213): the model has not seen the
+/// messages after its last assistant message yet (the results of that
+/// message's tool calls), and a tool-calling last assistant message must
+/// keep its results paired, so it is in flight too. With no assistant
+/// message nothing is in flight. Neither count dial nor ladder rung demotes
+/// an in-flight message: a stubbed unseen result would only be recalled.
+fn in_flight_start(messages: &[Message]) -> usize {
+    match messages.iter().rposition(|m| m.role == Role::Assistant) {
+        Some(last) if messages[last].tool_calls.is_empty() => last + 1,
+        Some(last) => last,
+        None => messages.len(),
+    }
+}
+
 /// The tool results a count dial collapses (#2213), as `(to_collapse,
 /// seen_end)`: collapse `to_collapse` live results, oldest first, within
-/// `messages[..seen_end]`. Results after the last assistant message answer
-/// the in-flight provider call and the model has not seen them yet, so a
-/// batch never reaches them (a conversation with no assistant message has
-/// no in-flight call). Results never spilled (`spill_id == None`) would mint
-/// an unresolvable `recall()` stub: they are neither counted nor collapsed.
+/// `messages[..seen_end]`, which ends where the in-flight exchange starts.
+/// Results never spilled (`spill_id == None`) would mint an unresolvable
+/// `recall()` stub: they are neither counted nor collapsed.
 pub fn tool_results_to_collapse(messages: &[Message], limit: usize) -> (usize, usize) {
     let collapsible = |m: &Message| m.role == Role::Tool && !m.is_collapsed && m.spill_id.is_some();
-    let seen_end = messages
-        .iter()
-        .rposition(|m| m.role == Role::Assistant)
-        .map_or(messages.len(), |last| last + 1);
+    let seen_end = in_flight_start(messages);
     let live = messages.iter().filter(|m| collapsible(m)).count();
     let seen = messages[..seen_end]
         .iter()
@@ -95,7 +104,8 @@ pub struct CeilingLadderOutcome {
 /// the ceiling itself is still exceeded remove stubs entirely
 /// (manifest-only; content is already on disk from creation-time
 /// spilling): down to the low-water mark when the exempt set leaves it
-/// reachable, otherwise only down to the ceiling. Pinned/exempt messages
+/// reachable, otherwise only down to the ceiling. The in-flight exchange
+/// (see `in_flight_start`) is exempt like the pinned set. Pinned/exempt messages
 /// are never demoted at any rung; when they alone exceed the budget the
 /// outcome reports `over_budget` so the caller can warn and audit (#1044).
 pub fn enforce_context_ceiling_ladder(
@@ -111,7 +121,10 @@ pub fn enforce_context_ceiling_ladder(
     // Crossed: demote down to the low-water mark, not just under the ceiling.
     let target = low_water(max_tokens);
     debug_assert!(target <= max_tokens);
-    let exempt = exempt_flags(messages, pin_recent_turns, true);
+    let mut exempt = exempt_flags(messages, pin_recent_turns, true);
+    // Whatever the pinning, the in-flight exchange is exempt at both rungs.
+    let in_flight = in_flight_start(messages);
+    exempt[in_flight..].fill(true);
 
     // First rung: demote full messages to stubs, oldest first. A message
     // whose stub would be no cheaper than its content (tiny messages) is

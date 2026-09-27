@@ -85,7 +85,7 @@ fn collapse_conversation_message(msg: &mut Message, spill_id: &str) {
 /// of tail-pinning between prompts instead (pinned by
 /// `ceiling_ladder_tail_fallback_protects_previous_prompt_turns`).
 /// The count trigger does not use the fallback: it
-/// already keeps the most recent N messages in full by construction, and its
+/// already keeps the most recent messages in full by construction, and its
 /// whole point is ageing out earlier prompts' prose.
 fn exempt_flags(messages: &[Message], pin_recent_turns: u32, tail_fallback: bool) -> Vec<bool> {
     let region_start = messages

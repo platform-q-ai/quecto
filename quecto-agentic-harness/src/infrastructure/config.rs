@@ -326,8 +326,8 @@ fn default_pin_recent_turns() -> u32 {
     2
 }
 fn default_context_collapse_after_messages() -> u32 {
-    // Keep the 50 most recent conversation (assistant+user) messages in full;
-    // older ones collapse to recall() stubs — mirrors the tool-call default.
+    // Past 50 live conversation (assistant+user) messages, the oldest collapse
+    // to recall() stubs down to a low-water mark (#2213) — mirrors the tool dial.
     50
 }
 fn default_max_context_tokens() -> usize {
