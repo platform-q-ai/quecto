@@ -21,7 +21,7 @@ fn test_subagent_note_reaches_input_as_trailing_user_turn() {
         "Sub-agent 'researcher' ended a turn (status: idle).".into(),
         true,
     )
-    .into_message();
+    .into_message(&[]);
     let messages = vec![
         Message::system("REAL SYSTEM PROMPT"),
         Message::user("go"),

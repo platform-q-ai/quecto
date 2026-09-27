@@ -67,6 +67,19 @@ pub(super) fn make_completed_feature_workflow() -> WorkflowStateHandle {
     workflow
 }
 
+/// Show `agent`'s model the workflow tool over `workflow`, as a composed
+/// workflow agent is: its auto-continue nudges go out only while the model
+/// is shown that tool (#2226).
+fn show_workflow_tool(
+    agent: &mut crate::application::agent_loop::AgentLoopImpl,
+    workflow: &WorkflowStateHandle,
+) {
+    use crate::infrastructure::tools::workflow_tool::{WORKFLOW_TOOL_NAME, WorkflowTool};
+    let shown = agent.is_tool_model_visible(WORKFLOW_TOOL_NAME)
+        || agent.register_runtime_tool(std::sync::Arc::new(WorkflowTool::new(workflow.clone())));
+    assert!(shown && agent.is_tool_model_visible(WORKFLOW_TOOL_NAME));
+}
+
 /// The canonical agent-loop config for dispatch tests, parameterised by
 /// provider so scripted providers slot in without copying the literal.
 pub(super) fn make_dispatch_test_agent(
@@ -133,7 +146,8 @@ impl DispatchTestEnv {
         provider: std::sync::Arc<dyn crate::application::providers::ports::LlmProvider>,
     ) -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
-        let agent = make_dispatch_test_agent(provider);
+        let mut agent = make_dispatch_test_agent(provider);
+        show_workflow_tool(&mut agent, &workflow);
         let latch = agent.durable_prefix_latch();
         // The file store of `tmp`, the `list_sessions` handle, the active
         // session and the save transaction are one composed graph, so they
@@ -183,6 +197,7 @@ impl DispatchTestEnv {
     /// save transaction still drains what its pruning latched.
     pub(super) fn set_agent(&mut self, mut agent: crate::application::agent_loop::AgentLoopImpl) {
         agent.adopt_durable_prefix_latch(self.latch.clone());
+        show_workflow_tool(&mut agent, &self.workflow);
         self.agent = agent;
     }
 

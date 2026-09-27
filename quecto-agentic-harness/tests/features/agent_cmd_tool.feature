@@ -250,6 +250,21 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd result should contain '"unchanged":true'
     And the agent_cmd result should not contain "FINAL REPORT 2218"
 
+  # #2226: a workflow child's replies to its engine's nudges come after its
+  # answer, but never replace it as the report its supervisor reads.
+  @issue-2226 @serial
+  Scenario: a workflow child's nudge replies never replace its report
+    Given a real spawned workflow child agent "w1" that answered its task with "ANSWER 2226" and was then nudged
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "ANSWER 2226"
+    And the agent_cmd result should not contain "NUDGE REPLY 2226"
+    And the agent_cmd result should not contain "reportIncomplete"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":20}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "NUDGE REPLY 2226"
+    And the agent_cmd result should contain "progressNudge"
+
   Scenario: successful clear_history delivery resets default unread report state
     Given an AgentCmdTool whose child "w1" has a completed transcript
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'

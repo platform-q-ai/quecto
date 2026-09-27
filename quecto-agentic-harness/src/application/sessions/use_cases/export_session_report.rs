@@ -1,9 +1,10 @@
 //! Export a retained session report (#1859): the latest eligible assistant
 //! report of the active session — the newest assistant message that is
-//! neither a tool-call step nor blank, resolved through the ledger's full
-//! copy so a context-collapsed stub is never reported as the text — with
-//! its bounded preview and recovery ref, and, on request, a raw export of
-//! every retained message and every available spill entry.
+//! neither a tool-call step nor blank, preferring an answer to an
+//! instruction over a workflow nudge's reply (#2226), resolved through the
+//! ledger's full copy so a context-collapsed stub is never reported as the
+//! text — with its bounded preview and recovery ref, and, on request, a raw
+//! export of every retained message and every available spill entry.
 //!
 //! The export is one transaction of the use case: the records are read
 //! under one consistent view, the spill entries after it, and the artifact
@@ -22,8 +23,9 @@ use crate::application::sessions::dto::{
 };
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::sessions::ports::export::SessionExportPort;
-use crate::domain::message::{Message, Role};
+use crate::domain::message::Message;
 use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::turn_origin::{is_substantive_reply, transcript_report_index};
 
 /// How many raw exports may run at once, per composed loop (one loop per
 /// process today: `uds_lifecycle.rs`, single or multi client), so the
@@ -67,11 +69,7 @@ impl ExportSessionReport {
         messages: &'a [Message],
         full_copy: impl Fn(&str) -> Option<&'a Message>,
     ) -> Option<ReportPreview> {
-        let candidate = messages.iter().rev().find(|message| {
-            message.role == Role::Assistant
-                && message.tool_calls.is_empty()
-                && !message.content.trim().is_empty()
-        })?;
+        let candidate = &messages[transcript_report_index(messages, is_substantive_reply)?];
         let id = candidate.id().to_string();
         Some(ReportPreview::of(full_copy(&id).unwrap_or(candidate)))
     }

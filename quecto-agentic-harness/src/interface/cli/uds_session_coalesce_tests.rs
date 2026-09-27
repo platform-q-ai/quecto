@@ -15,7 +15,7 @@ fn burst_of_completions_coalesces_to_single_note() {
     let pending: Vec<PendingMessage> = (0..5).map(|i| note(&format!("basic-{i}"))).collect();
     let out = coalesce_pending(pending);
     assert_eq!(out.len(), 1, "K>1 notes must collapse to one, got {out:?}");
-    let content = out.into_iter().next().unwrap().into_message().content;
+    let content = out.into_iter().next().unwrap().into_message(&[]).content;
     assert!(
         content.contains("5 sub-agents ended a turn (status: idle)"),
         "got: {content}"
@@ -41,7 +41,7 @@ fn coalesced_note_caps_name_list() {
     let pending: Vec<PendingMessage> = (0..13).map(|i| note(&format!("w{i}"))).collect();
     let out = coalesce_pending(pending);
     assert_eq!(out.len(), 1);
-    let content = out.into_iter().next().unwrap().into_message().content;
+    let content = out.into_iter().next().unwrap().into_message(&[]).content;
     assert!(
         content.contains("13 sub-agents ended a turn (status: idle)"),
         "got: {content}"
@@ -75,7 +75,7 @@ fn coalesced_note_cap_boundary() {
         .into_iter()
         .next()
         .unwrap()
-        .into_message()
+        .into_message(&[])
         .content;
     assert!(
         content.contains("10 sub-agents ended a turn (status: idle)"),
@@ -90,7 +90,7 @@ fn coalesced_note_cap_boundary() {
         .into_iter()
         .next()
         .unwrap()
-        .into_message()
+        .into_message(&[])
         .content;
     assert!(
         content.contains("11 sub-agents ended a turn (status: idle)"),
@@ -188,7 +188,7 @@ fn user_messages_are_preserved() {
         "one user msg + one coalesced note, got {out:?}"
     );
     assert!(matches!(out[0], PendingMessage::User(_)));
-    let content = out[1].clone().into_message().content;
+    let content = out[1].clone().into_message(&[]).content;
     assert!(
         content.contains("2 sub-agents ended a turn (status: idle)"),
         "got: {content}"

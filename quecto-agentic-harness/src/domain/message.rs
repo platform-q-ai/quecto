@@ -52,6 +52,8 @@ pub struct Message {
     pub is_manifest: bool,
     /// Whether this tool result has already been collapsed.
     pub is_collapsed: bool,
+    /// What opened this message's turn, stamped when it is appended (#2226).
+    pub turn_origin: crate::domain::turn_origin::TurnOrigin,
     /// Tool name for tool result messages.
     pub tool_name: Option<String>,
     /// First chars of tool input (for collapse preview).
@@ -165,6 +167,7 @@ impl Clone for Message {
             is_pinned: self.is_pinned,
             is_manifest: self.is_manifest,
             is_collapsed: self.is_collapsed,
+            turn_origin: self.turn_origin,
             tool_name: self.tool_name.clone(),
             input_preview: self.input_preview.clone(),
             spill_id: self.spill_id.clone(),

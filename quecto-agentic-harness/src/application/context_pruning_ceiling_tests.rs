@@ -361,3 +361,101 @@ fn the_drop_rung_keeps_the_in_flight_tool_call_and_its_result() {
     assert!(tail[1].content.starts_with("fresh "), "its result stays");
     assert!(!tail[1].is_collapsed);
 }
+
+/// Review 3 M3 (#2226): a long nudge phase pushes the context past its
+/// ceiling. The ladder may stub the agent's answer, but never removes it,
+/// so the answer stays the report every history page names, and its text
+/// stays recallable by id.
+#[test]
+fn the_ceiling_never_removes_the_agents_report() {
+    use crate::application::sessions::history_paging::newest_window;
+    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    let mut answer = Message::assistant(format!("ANSWER {}", "a".repeat(400)), vec![]);
+    answer.turn = Some(1);
+    answer.turn_origin = TurnOrigin::Instruction;
+    answer.spill_id = Some("turn1:msg:assistant".into());
+    let answer_id = answer.id();
+    let mut messages = vec![instruction("task".into()), answer];
+    for turn in 2..=40 {
+        let mut nudge = progress_nudge("Workflow incomplete.".into());
+        nudge.turn = Some(turn);
+        let mut reply = turn_message(turn);
+        reply.turn_origin = TurnOrigin::ProgressNudge;
+        messages.extend([nudge, reply]);
+    }
+    messages.push(progress_nudge("Workflow incomplete.".into()));
+    let budget = estimate_total_tokens(&messages) / 4;
+
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 2);
+
+    assert!(outcome.dropped > 0, "the ladder removed messages");
+    let kept = messages.iter().find(|m| m.id() == answer_id);
+    assert!(kept.is_some(), "the answer is never removed");
+    let page = newest_window(&messages, "", 4);
+    assert_eq!(
+        page.report.map(|report| report.id),
+        Some(answer_id.to_string()),
+        "the page still names the answer, not a nudge reply"
+    );
+}
+
+/// A long nudge phase after `answer`, then a nudge in flight.
+fn nudged_after(answer: Message, turns: u32) -> Vec<Message> {
+    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    let mut messages = vec![instruction("task".into()), answer];
+    for turn in 2..=turns {
+        let mut nudge = progress_nudge("Workflow incomplete.".into());
+        nudge.turn = Some(turn);
+        let mut reply = turn_message(turn);
+        reply.turn_origin = TurnOrigin::ProgressNudge;
+        messages.extend([nudge, reply]);
+    }
+    messages.push(progress_nudge("Workflow incomplete.".into()));
+    messages
+}
+
+/// Review 4 probe C1 (M2): a report that was never spilled cannot be
+/// stubbed, only removed; keeping it would hold the context over its
+/// ceiling for good, so the ceiling may remove it and is met.
+#[test]
+fn r4_c1_an_unspilled_huge_report_never_holds_the_ceiling_unmet() {
+    let mut answer = Message::assistant(format!("ANSWER {}", "a".repeat(1_000_000)), vec![]);
+    answer.turn = Some(1);
+    answer.turn_origin = crate::domain::turn_origin::TurnOrigin::Instruction;
+    answer.spill_id = None;
+    let mut messages = nudged_after(answer, 40);
+    let budget = 50_000;
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 2);
+    assert!(!outcome.over_budget, "the ceiling is met");
+    assert!(estimate_total_tokens(&messages) <= budget);
+    let again = enforce_context_ceiling_ladder(&mut messages, budget, 2);
+    assert!(!again.over_budget && again.dropped == 0);
+}
+
+/// Review 4 probe C2 (L1): the report kept is one of a finished turn, never
+/// a reply of the turn in flight. In a session saved before #2226 (nothing
+/// marked) its answer and the nudge replies after it rank alike, so the
+/// latest finished reply is kept, not necessarily the answer (a documented
+/// limitation: no effort is spent on such sessions).
+#[test]
+fn r4_c2_the_kept_report_is_of_a_finished_turn() {
+    let mut answer = Message::assistant(format!("LEGACY {}", "a".repeat(400)), vec![]);
+    answer.turn = Some(1);
+    answer.spill_id = None;
+    let mut messages = vec![Message::user("task"), answer];
+    messages.extend((2..=30).map(turn_message));
+    let last_finished = messages.last().unwrap().id();
+    let mut nudge = crate::domain::turn_origin::progress_nudge("Workflow incomplete.".into());
+    nudge.turn = None;
+    messages.push(nudge);
+    let mut status = Message::assistant("status", vec![]);
+    status.turn = Some(1);
+    messages.push(status);
+    let budget = estimate_total_tokens(&messages) / 4;
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 1);
+    assert!(outcome.dropped > 0);
+    assert!(
+        messages.iter().any(|m| m.id() == last_finished),
+        "the latest finished reply is kept, not the in-flight one"
+    );
+}

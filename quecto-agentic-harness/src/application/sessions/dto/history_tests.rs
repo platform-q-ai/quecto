@@ -8,6 +8,7 @@ fn page(n: usize, has_more_before: bool) -> HistoryPage {
     let before = has_more_before.then(|| MessageId::from(messages[0].id().to_string()));
     HistoryPage {
         messages,
+        report: None,
         before,
         has_more_before,
     }
@@ -91,4 +92,15 @@ fn keeping_none_of_a_non_empty_page_still_keeps_its_newest_message() {
         Some(MessageId::from(kept.messages[0].id().to_string())),
         "a reported older history always carries its cursor"
     );
+}
+
+/// #2226: trimming a page never loses the transcript's report.
+#[test]
+fn keeping_newest_keeps_the_report() {
+    let mut kept = page(4, false);
+    let report = crate::domain::turn_origin::ReportRef::of(&Message::assistant("REPORT", vec![]));
+    kept.report = Some(report.clone());
+    let kept = kept.keeping_newest(1);
+    assert_eq!(kept.messages.len(), 1);
+    assert_eq!(kept.report, Some(report));
 }

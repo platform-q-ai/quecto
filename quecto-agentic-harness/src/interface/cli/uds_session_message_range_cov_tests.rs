@@ -62,3 +62,15 @@ fn tool_call_arguments_range_returns_slice_metadata_and_none_for_missing_call() 
         tool_call_arguments_to_json_range_for_response(&msg, "missing", None, None, None).is_none()
     );
 }
+
+/// #2226: `get_message` carries the message's turn origin, as `get_messages`
+/// does; an unstamped message carries none.
+#[test]
+fn message_to_json_range_carries_the_turn_origin() {
+    let mut msg = Message::assistant("REPORT", vec![]);
+    let json = message_to_json_range_for_response(&msg, None, None, None, None);
+    assert!(json["turnOrigin"].is_null());
+    msg.turn_origin = crate::domain::turn_origin::TurnOrigin::ProgressNudge;
+    let json = message_to_json_range_for_response(&msg, Some(0), None, Some(2), None);
+    assert_eq!(json["turnOrigin"], "progressNudge");
+}

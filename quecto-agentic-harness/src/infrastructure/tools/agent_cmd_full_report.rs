@@ -11,7 +11,10 @@
 //! incomplete (not acknowledged). A read the child refused, or answered
 //! outside the protocol, would fail the same way again, so the preview is
 //! delivered with a notice pointing at `export_raw`.
-use super::super::agent_cmd_report::{FINAL_REPORT_BUDGET_BYTES, FINAL_REPORT_NOTICE};
+use super::super::agent_cmd_report::{
+    FINAL_REPORT_BUDGET_BYTES, FINAL_REPORT_NOTICE, NamedReport, holds_whole,
+    is_substantive_assistant,
+};
 use super::*;
 
 /// Bound on ranged reads for one message.
@@ -29,6 +32,44 @@ pub(crate) const READ_REFUSED_NOTICE: &str = "Only a preview of this report is a
 /// gone, or cannot be framed). Any other refusal — a busy ancestor's
 /// "capacity exhausted", say — is treated as a moment's unavailability.
 const PERMANENT_READ_ERRORS: [&str; 2] = ["message not found", "exceeds the protocol frame limit"];
+
+/// The unread ordinals `from..=to` a later read skipped, as ranges around
+/// the report it delivered by id (`report`), which is not skipped.
+fn skipped_ranges(from: u64, to: u64, report: Option<u64>) -> Vec<serde_json::Value> {
+    let range = |from: u64, to: u64| {
+        (from <= to).then(|| serde_json::json!({"fromOrdinal": from, "toOrdinal": to}))
+    };
+    match report {
+        Some(ordinal) if (from..=to).contains(&ordinal) => {
+            [range(from, ordinal - 1), range(ordinal + 1, to)]
+                .into_iter()
+                .flatten()
+                .collect()
+        }
+        _ => range(from, to).into_iter().collect(),
+    }
+}
+
+/// How a page holds a message's text (#2226 review 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Held {
+    /// All of it.
+    Whole,
+    /// A preview of a message too large for the page: the start of its
+    /// text, marked `truncated`.
+    Preview,
+    /// A context-collapsed recall stub (`collapsed` alone): none of it.
+    Stub,
+}
+
+fn held(message: &serde_json::Value) -> Held {
+    let flag = |name: &str| message.get(name).and_then(|v| v.as_bool());
+    match (flag("truncated"), flag("collapsed")) {
+        (Some(true), _) => Held::Preview,
+        (None | Some(false), Some(true)) => Held::Stub,
+        (None | Some(false), None | Some(false)) => Held::Whole,
+    }
+}
 
 /// Why the rest of a message could not be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +89,96 @@ impl ReadFailure {
     }
 }
 
+/// What the default read's backfill cap decides on (#2226).
+pub(crate) struct CapRead<'a> {
+    /// The supervisor's watermark: 0 on a first read.
+    pub delivered: u64,
+    /// The oldest page's cursor, from which skipped history can be paged.
+    pub before: Option<serde_json::Value>,
+    /// The report the child named, unread and off its newest page.
+    pub named: Option<&'a NamedReport>,
+    /// A named report a first read failed to read: still owed.
+    pub owed: Option<&'a NamedReport>,
+}
+
+/// What the cap decided: whether the read is complete (acknowledgeable),
+/// and the unread history a later read skipped.
+pub(crate) struct CapOutcome {
+    pub complete: bool,
+    pub skipped: Option<serde_json::Value>,
+}
+
 impl AgentCmdTool {
+    /// The report the child named, read whole by id (never a stand-in).
+    pub(super) async fn read_named_report(
+        &self,
+        socket_path: &std::path::Path,
+        routed_target_id: Option<&str>,
+        report: &NamedReport,
+    ) -> Result<serde_json::Value, ReadFailure> {
+        Self::read_message_text(
+            socket_path,
+            routed_target_id,
+            &report.id,
+            FINAL_REPORT_BUDGET_BYTES,
+        )
+        .await
+        .map(|(text, length)| report.with_text(text, length))
+    }
+
+    /// The default read reached its backfill cap with `messages` (#2226):
+    /// - a named report a first read failed to read is still owed, so the
+    ///   read is incomplete and acknowledges nothing (the next read retries);
+    /// - a first read still looking for an answer reports the latest reply
+    ///   it holds;
+    /// - a later read delivers the newest window it holds and the named
+    ///   report (read by id when not held whole), naming the unread history
+    ///   it skipped; a named report it cannot read leaves it incomplete.
+    pub(super) async fn at_backfill_cap(
+        &self,
+        socket_path: &std::path::Path,
+        routed_target_id: Option<&str>,
+        messages: &mut Vec<serde_json::Value>,
+        read: CapRead<'_>,
+    ) -> CapOutcome {
+        let incomplete = CapOutcome {
+            complete: false,
+            skipped: None,
+        };
+        if read.owed.is_some() {
+            return incomplete;
+        }
+        if read.delivered == 0 {
+            return CapOutcome {
+                complete: messages.iter().any(is_substantive_assistant),
+                skipped: None,
+            };
+        }
+        let oldest = messages
+            .iter()
+            .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
+            .min();
+        let mut delivered_report = None;
+        if let Some(report) = read.named.filter(|r| !holds_whole(messages, &r.id)) {
+            match self
+                .read_named_report(socket_path, routed_target_id, report)
+                .await
+            {
+                Ok(whole) => {
+                    delivered_report = whole.get("ordinal").and_then(|v| v.as_u64());
+                    report.place(messages, whole);
+                }
+                Err(_) => return incomplete,
+            }
+        }
+        let to = oldest.map_or(read.delivered, |ordinal| ordinal.saturating_sub(1));
+        let ranges = skipped_ranges(read.delivered + 1, to, delivered_report);
+        CapOutcome {
+            complete: true,
+            skipped: Some(serde_json::json!({"ranges": ranges, "before": read.before})),
+        }
+    }
+
     /// The first `cap + 1` bytes (at most) of `message_id`'s text, read
     /// from the child in ranges: `(text, full content length)`.
     async fn read_message_text(
@@ -121,11 +251,12 @@ impl AgentCmdTool {
             .unwrap_or(Err(Unreachable))
     }
 
-    /// For a default `get_messages` response: when the unread final
-    /// assistant message (the one the report planner delivers whole) is a
-    /// collapsed preview, replace it with its text. A failed read marks the
-    /// response incomplete, so the report is not acknowledged and a later
-    /// read tries again.
+    /// For a default `get_messages` response: when the unread report (the
+    /// message the report planner delivers whole) is not held whole — a page
+    /// preview or a context-collapsed stub — replace it with its text read
+    /// by id. A failed read of a stub withholds it and marks the response
+    /// incomplete (#2226 review 4); of a preview, only an unreachable child
+    /// does, so the report is not acknowledged and a later read tries again.
     pub(super) async fn expand_collapsed_final_report(
         &self,
         socket_path: &std::path::Path,
@@ -154,14 +285,20 @@ impl AgentCmdTool {
                 .and_then(|v| v.as_u64())
                 .is_none_or(|ordinal| ordinal > delivered)
         };
-        let Some(index) = messages.iter().rposition(|m| {
-            unread(m) && super::super::agent_cmd_report::is_substantive_assistant(m)
-        }) else {
+        // The message the report planner delivers whole: the report among
+        // the unread messages (#2226), by the planner's own rule.
+        let unread_indices: Vec<usize> = (0..messages.len())
+            .filter(|&i| unread(&messages[i]))
+            .collect();
+        let unread_messages: Vec<serde_json::Value> = unread_indices
+            .iter()
+            .map(|&i| messages[i].clone())
+            .collect();
+        let Some(index) = super::super::agent_cmd_report::report_position(&unread_messages)
+            .map(|position| unread_indices[position])
+        else {
             return response;
         };
-        if messages[index].get("truncated").and_then(|v| v.as_bool()) != Some(true) {
-            return response;
-        }
         let Some(message_id) = messages[index]
             .get("id")
             .and_then(|v| v.as_str())
@@ -169,6 +306,14 @@ impl AgentCmdTool {
         else {
             return response;
         };
+        // A report held whole is delivered as it is. Otherwise it is a page
+        // preview (`truncated`: the start of its text) or a context-collapsed
+        // recall stub (`collapsed` alone: not its text at all, #2226 review
+        // 4), and its text is read from the child by id.
+        let holding = held(&messages[index]);
+        if holding == Held::Whole {
+            return response;
+        }
         let read = Self::read_message_text(
             socket_path,
             routed_target_id,
@@ -178,6 +323,7 @@ impl AgentCmdTool {
         .await;
         let message = &mut messages[index];
         let unreachable = read == Err(ReadFailure::Unreachable);
+        let read_failed = read.is_err();
         match read {
             Ok((text, length)) => {
                 let whole = text.len() == length;
@@ -190,6 +336,7 @@ impl AgentCmdTool {
                         obj.remove("truncated");
                     }
                 }
+                debug_assert!(!whole || held(message) == Held::Whole);
                 if !whole {
                     message["contentNotice"] = serde_json::json!(FINAL_REPORT_NOTICE);
                 }
@@ -198,9 +345,17 @@ impl AgentCmdTool {
                 message["contentNotice"] = serde_json::json!(failure.notice());
             }
         }
-        // Only an unreachable child is worth reading again: keep the report
-        // unacknowledged. A refusal would repeat, so the preview is final.
-        if unreachable && let Some(data) = envelope.get_mut("data") {
+        // A stub is never delivered as the report: an unread one leaves the
+        // read incomplete (unacknowledged), and is withheld. Of a preview
+        // only an unreachable child is worth reading again; a refusal would
+        // repeat, so the preview is final.
+        let failed_stub = holding == Held::Stub && read_failed;
+        if failed_stub {
+            messages.remove(index);
+        }
+        if (unreachable || failed_stub)
+            && let Some(data) = envelope.get_mut("data")
+        {
             data["reportIncomplete"] = serde_json::json!(true);
         }
         envelope.to_string()

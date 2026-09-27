@@ -249,3 +249,45 @@ fn a_one_shot_run_stopped_at_its_max_time_still_ends_its_plain_container_child()
     assert!(stderr.contains("max-time exceeded"), "{stderr}");
     child.assert_ended_for_good();
 }
+
+/// #2226 review 2: a one-shot run's prompt is an instruction and every
+/// message the run appended is saved with that turn origin, so a parent
+/// reading the saved transcript takes the run's answer as its report.
+#[test]
+fn a_one_shot_run_saves_every_message_as_its_instruction_turn() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let child = launched_child(tmp.path());
+    let server_rt = tokio::runtime::Runtime::new().unwrap();
+    let server = server_rt.block_on(wiremock::MockServer::start());
+    server_rt.block_on(
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "id": "chatcmpl-origin", "object": "chat.completion",
+                    "choices": [{"index": 0, "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "the answer"}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+                })),
+            )
+            .mount(&server),
+    );
+    let agent = agent_at(tmp.path(), &format!("{}/v1", server.uri()));
+    let flags = test_flags(Some("hello"), Some("origin-2226"), None);
+
+    let (code, stderr) = child.run(tmp.path(), agent, &flags);
+
+    assert_eq!(code, 0, "the run finished: {stderr}");
+    let saved: Vec<serde_json::Value> = std::fs::read_dir(tmp.path().join("sessions"))
+        .unwrap()
+        .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+        .flat_map(|text| text.lines().map(str::to_owned).collect::<Vec<_>>())
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
+        .flat_map(|record| record["messages"].as_array().cloned().unwrap_or_default())
+        .collect();
+    let origins: Vec<&serde_json::Value> = saved.iter().map(|m| &m["turn_origin"]).collect();
+    assert_eq!(saved.len(), 2, "the prompt and the answer: {saved:?}");
+    assert!(
+        origins.iter().all(|origin| *origin == "instruction"),
+        "{saved:?}"
+    );
+}

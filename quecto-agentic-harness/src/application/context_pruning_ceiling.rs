@@ -1,8 +1,6 @@
 // #1046 / #2213: the demotion-ladder context ceiling (full → stub → removed).
-//
-// Split from `context_pruning_messages.rs` (the 750-line cap and its
-// decrease-only ceiling). Pure policy over the message list: no retention
-// handle, no store.
+// Split from `context_pruning_messages.rs` (line cap). Pure policy over the
+// message list: no retention handle, no store.
 
 use super::{collapse_conversation_message, exempt_flags, message_collapse_stub};
 use crate::application::context_pruning::{
@@ -10,6 +8,7 @@ use crate::application::context_pruning::{
     estimate_total_tokens,
 };
 use crate::domain::message::{Message, Role};
+use crate::domain::turn_origin::report_to_keep;
 
 /// The low-water mark of every pruning dial, in percent of the dial (#2213).
 ///
@@ -23,18 +22,15 @@ use crate::domain::message::{Message, Role};
 /// five 12k-token tool results (or recalls) on the QA session's 250k budget
 /// before the next pass, so the miss is paid once per batch, while three
 /// quarters of the working context stay in full and few stubs need a recall
-/// round-trip. A lower mark buys longer batches with more stubbed context; a
-/// higher one drifts back towards a miss per turn.
+/// round-trip. A lower mark buys longer batches, a higher one more misses.
 pub const LOW_WATER_PERCENT: usize = 75;
 
-// A mark of 0 would empty the context; 100 is the old per-turn pruning.
-const _: () = assert!(LOW_WATER_PERCENT > 0 && LOW_WATER_PERCENT < 100);
+const _: () = assert!(LOW_WATER_PERCENT > 0 && LOW_WATER_PERCENT < 100); // 0 empties; 100 is per-turn
 
 /// The low-water mark of a dial: [`LOW_WATER_PERCENT`] of `limit`, rounded
 /// up so a small count dial keeps at least its share (a one-item dial keeps
 /// its item). Never above `limit`; computed wide so no limit overflows.
-/// Rounding up means count dials of 1 to 3 get no hysteresis (their mark is
-/// the dial itself): they still collapse the overflow on every crossing.
+/// Count dials of 1 to 3 so get no hysteresis: they collapse every crossing.
 pub fn low_water(limit: usize) -> usize {
     let wide = (limit as u128 * LOW_WATER_PERCENT as u128).div_ceil(100);
     let mark = usize::try_from(wide).map_or(limit, |mark| mark.min(limit));
@@ -91,8 +87,8 @@ pub struct CeilingLadderOutcome {
     pub collapsed_to_stubs: usize,
     /// Stubs removed entirely, manifest-only (second rung).
     pub dropped: usize,
-    /// True when the budget is still exceeded after full demotion — the
-    /// pinned/exempt set alone is over budget (#1044).
+    /// The budget is still exceeded after full demotion: the pinned/exempt
+    /// set alone, the kept report among it (#2226), is over it (#1044).
     pub over_budget: bool,
 }
 
@@ -170,10 +166,14 @@ pub fn enforce_context_ceiling_ladder(
 
     // Second rung, a last resort for the ceiling itself: remove demoted
     // messages entirely, oldest first (content stays recallable via the
-    // spill store and manifest). It drops to the low-water mark only when
-    // dropping can reach it; when the exempt set alone is above the mark it
-    // drops only down to the ceiling, so no stub is deleted in vain.
+    // spill store and manifest), to the low-water mark when dropping can
+    // reach it, else only to the ceiling, so no stub is deleted in vain. A
+    // recallable report is only ever stubbed, never removed: its supervisor
+    // must still find it among the messages (#2226, `report_to_keep`).
     if total > max_tokens {
+        if let Some(report) = report_to_keep(messages) {
+            exempt[report] = true;
+        }
         let droppable: Vec<usize> = messages
             .iter()
             .enumerate()

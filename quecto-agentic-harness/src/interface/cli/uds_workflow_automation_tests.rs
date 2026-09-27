@@ -133,7 +133,34 @@ async fn workflow_nudge_message_waits_for_selected_template() {
         .unwrap();
     let nudge = super::workflow_nudge_message(&ctx).await.unwrap();
     assert!(nudge.is_auto_continue());
-    assert!(nudge.into_message(false).contains("Workflow incomplete"));
+    assert!(
+        nudge
+            .into_message(false)
+            .content
+            .contains("Workflow incomplete")
+    );
+}
+
+/// #2226: an auto-continue nudge, standard or corrective, opens a progress
+/// nudge turn; the completion nudge asks for the report, an ordinary turn.
+#[test]
+fn only_auto_continue_nudges_are_progress_nudges() {
+    use crate::domain::turn_origin::TurnOrigin;
+    let auto = || crate::interface::cli::uds_workflow_nudge::WorkflowNudge::AutoContinue {
+        standard: "standard".into(),
+        corrective: "corrective".into(),
+    };
+    let standard = auto().into_message(false);
+    assert_eq!(standard.content, "standard");
+    assert_eq!(standard.turn_origin, TurnOrigin::ProgressNudge);
+    let corrective = auto().into_message(true);
+    assert_eq!(corrective.content, "corrective");
+    assert_eq!(corrective.turn_origin, TurnOrigin::ProgressNudge);
+    let completion =
+        crate::interface::cli::uds_workflow_nudge::WorkflowNudge::Completion("report".into())
+            .into_message(true);
+    assert_eq!(completion.content, "report");
+    assert_eq!(completion.turn_origin, TurnOrigin::Instruction);
 }
 
 #[tokio::test]
@@ -432,3 +459,6 @@ fn workflow_progress_fingerprint_changes_with_step_progress() {
     let after = super::workflow_progress_fingerprint(&ctx).unwrap();
     assert_ne!(before, after);
 }
+
+#[path = "uds_nudge_report_tests.rs"]
+mod nudge_report_tests;

@@ -2,8 +2,8 @@
 //!
 //! A page is a chronological window of the user-visible transcript ending
 //! at a stable-id cursor (or at the newest message), with the cursor a
-//! client continues from and whether older history remains. The values
-//! are domain messages; the transport encodes and budgets them.
+//! client continues from and whether older history remains; the transport
+//! encodes and budgets its domain messages.
 use crate::domain::error::DomainError;
 use crate::domain::ids::MessageId;
 use crate::domain::message::Message;
@@ -26,25 +26,25 @@ impl HistoryQuery {
     }
 }
 
-/// A chronological history window.
-///
-/// `before` names the oldest INCLUDED message and is present exactly when
-/// `has_more_before`: a client pages backward by asking for the window
-/// ending at it. An empty window (count 0) reports no cursor.
+/// A chronological history window. `before` names the oldest INCLUDED
+/// message and is present exactly when `has_more_before`: a client pages
+/// backward by asking for the window ending at it. An empty window (count
+/// 0) reports no cursor.
 #[derive(Debug, Clone)]
 pub struct HistoryPage {
     pub messages: Vec<Message>,
+    /// The transcript's report (#2226), wherever it lies, so a reader
+    /// finds it without paging back.
+    pub report: Option<crate::domain::turn_origin::ReportRef>,
     pub before: Option<MessageId>,
     pub has_more_before: bool,
 }
 
 impl HistoryPage {
-    /// The page keeping only its newest `keep` messages: when a transport
-    /// budget cannot carry the whole window, the dropped older messages are
-    /// still history, so the cursor moves to the oldest kept message and
-    /// older history is reported. A `keep` at or above the length is the
-    /// page unchanged; a non-empty page always keeps at least its newest
-    /// message, so `before` and `has_more_before` stay consistent.
+    /// The page keeping only its newest `keep` messages (a transport budget
+    /// cannot carry the window): the dropped ones are still history, so the
+    /// cursor moves to the oldest kept message and older history is
+    /// reported. A non-empty page always keeps its newest message.
     pub fn keeping_newest(mut self, keep: usize) -> Self {
         if keep >= self.messages.len() {
             return self;
@@ -64,9 +64,8 @@ impl HistoryPage {
 #[derive(Debug)]
 pub enum HistoryError {
     /// The cursor names no message of the conversation: stale (rewound or
-    /// cleared away) or never issued. Refused rather than silently restarted
-    /// at the newest page, which a client would prepend and duplicate as
-    /// "older" history.
+    /// cleared away) or never issued. Refused, never silently restarted at
+    /// the newest page, which a client would duplicate as "older" history.
     UnknownCursor(MessageId),
     /// A persisted transcript read named a session the store does not hold.
     TranscriptNotFound,

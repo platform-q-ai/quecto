@@ -55,6 +55,7 @@ fn message_to_json_with_content_and_thinking(
         "toolName": msg.tool_name,
         "isError": msg.is_error,
         "collapsed": msg.is_collapsed,
+        "turnOrigin": crate::infrastructure::turn_origin_names::origin_name(msg.turn_origin),
     });
     if include_thinking && has_visible_thinking(&msg.thinking_blocks) {
         value["thinking"] =

@@ -72,9 +72,8 @@ pub(crate) fn run_agent_session(
         rt.block_on(agent.prune_resumed_context(&mut messages));
     }
 
-    // System prompt is injected at call time, never persisted. Track its
-    // message ID, not its position: mid-run pruning can shift indices left,
-    // making a positional `remove(idx)` delete the wrong message (#1073).
+    // System prompt is injected at call time, never persisted. Track its ID:
+    // mid-run pruning shifts positions, so `remove(idx)` would miss (#1073).
     let system_prompt_id = flags.system_prompt.as_deref().map(|sp| {
         let msg = Message::system(sp.to_string());
         let id = msg.id();
@@ -83,7 +82,7 @@ pub(crate) fn run_agent_session(
     });
 
     let message = flags.message.as_deref().unwrap_or("");
-    let prompt = Message::user(message.to_string());
+    let prompt = crate::domain::turn_origin::instruction(message.to_string());
     let run_start = prompt.id();
     messages.push(prompt);
 
@@ -93,8 +92,9 @@ pub(crate) fn run_agent_session(
             DeadlineResult::TimedOut => {
                 // Saved first: the settling below can take a minute, and a
                 // process killed meanwhile must not lose it (#2173).
-                let saving = TranscriptSave::new(&rt, &sessions, system_prompt_id, ephemeral);
-                saving.stopped(&mut messages, run_start, secs, out);
+                let saving =
+                    TranscriptSave::new(&rt, &sessions, (system_prompt_id, run_start), ephemeral);
+                saving.stopped(&mut messages, secs, out);
                 settle_stopped_run(&rt, &agent, secs);
                 out.stderr.push_str("max-time exceeded\n");
                 handles.retention.recall.scrub_ephemeral(ephemeral);
@@ -109,7 +109,7 @@ pub(crate) fn run_agent_session(
 
     match agent_result {
         Ok(result) => {
-            TranscriptSave::new(&rt, &sessions, system_prompt_id, ephemeral)
+            TranscriptSave::new(&rt, &sessions, (system_prompt_id, run_start), ephemeral)
                 .save(&mut messages, out);
             out.stdout.push_str(&result.response);
             out.stdout.push('\n');

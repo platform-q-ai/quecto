@@ -286,6 +286,7 @@ fn get_messages_snapshot_line_matches_agent_event_envelope() {
             "messages": msgs_json,
             "snapshot": true,
             "hasMoreBefore": false,
+            "report": null,
         })),
     );
     let want: serde_json::Value =

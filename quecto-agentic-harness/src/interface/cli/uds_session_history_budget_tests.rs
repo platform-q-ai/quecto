@@ -1,4 +1,5 @@
-use super::{HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES, HISTORY_PAGE_JSON_BUDGET, messages_page_json};
+use super::super::messages_page_json;
+use super::{HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES, HISTORY_PAGE_JSON_BUDGET};
 use crate::domain::message::{Message, ToolCall};
 
 fn message_content<'a>(message: &'a serde_json::Value, field: &str) -> &'a str {
@@ -373,4 +374,65 @@ fn encrypted_only_thinking_adds_no_thinking_field() {
         let json = super::message_to_json_for_history_page(&message);
         assert!(json.get("thinking").is_none(), "{json}");
     }
+}
+
+/// #2226: each message carries its turn's origin (none when never stamped),
+/// and every page names the transcript's report with a preview, even when
+/// the report lies on an older page.
+#[test]
+fn messages_carry_their_turn_origin_and_the_page_names_the_report() {
+    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    let mut answer = Message::assistant("REPORT", vec![]);
+    answer.turn_origin = TurnOrigin::Instruction;
+    answer.ordinal = Some(2);
+    let mut status = Message::assistant("status", vec![]);
+    status.turn_origin = TurnOrigin::ProgressNudge;
+    let messages = vec![
+        instruction("task".into()),
+        answer.clone(),
+        progress_nudge("continue".into()),
+        status,
+        Message::assistant("unstamped", vec![]),
+    ];
+    let whole = messages_page_json(&messages, 5, None);
+    let marks: Vec<Option<&str>> = page_messages(&whole)
+        .iter()
+        .map(|m| m.get("turnOrigin").and_then(|v| v.as_str()))
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            Some("instruction"),
+            Some("instruction"),
+            Some("progressNudge"),
+            Some("progressNudge"),
+            None
+        ]
+    );
+    let newest = messages_page_json(&messages, 1, None);
+    assert_eq!(page_messages(&newest)[0]["content"], "unstamped");
+    let report = &newest["report"];
+    assert_eq!(report["id"], answer.id().to_string());
+    assert_eq!(report["ordinal"], 2);
+    assert_eq!(report["turnOrigin"], "instruction");
+    assert_eq!(report["contentLength"], 6);
+    let none = messages_page_json(&messages[..1], 1, None);
+    assert!(none["report"].is_null());
+}
+
+/// #2226: the report a page names is small whatever the report's size, and
+/// the page keeps room for it within its budget.
+#[test]
+fn the_named_report_is_small_and_fits_the_page_budget() {
+    let long = "r".repeat(HISTORY_PAGE_JSON_BUDGET * 2);
+    let mut messages = vec![Message::assistant(long, vec![])];
+    messages.push(Message::assistant(
+        "x".repeat(HISTORY_PAGE_JSON_BUDGET),
+        vec![],
+    ));
+    let page = messages_page_json(&messages, 2, None);
+    let hint = page["report"].to_string();
+    assert!(hint.len() < super::REPORT_HINT_RESERVE_BYTES, "{hint}");
+    assert_eq!(page["report"]["contentLength"], HISTORY_PAGE_JSON_BUDGET);
+    assert!(serde_json::to_vec(&page).unwrap().len() <= HISTORY_PAGE_JSON_BUDGET);
 }

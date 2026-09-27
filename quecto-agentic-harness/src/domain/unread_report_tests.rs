@@ -2,12 +2,30 @@ use super::{
     ReportedMessage, UnreadSelection, acknowledged_report_index, needs_backfill, select_unread,
 };
 use crate::domain::session::PendingMessageReport;
+use crate::domain::turn_origin::TurnOrigin;
 use std::collections::VecDeque;
 
 fn numbered(ordinal: u64, substantive: bool) -> ReportedMessage {
     ReportedMessage {
         ordinal: Some(ordinal),
         substantive_assistant: substantive,
+        origin: TurnOrigin::Instruction,
+    }
+}
+
+/// A message of a workflow progress-nudge turn (#2226).
+fn nudged(ordinal: u64, substantive: bool) -> ReportedMessage {
+    ReportedMessage {
+        origin: TurnOrigin::ProgressNudge,
+        ..numbered(ordinal, substantive)
+    }
+}
+
+fn unnumbered(substantive: bool, origin: TurnOrigin) -> ReportedMessage {
+    ReportedMessage {
+        ordinal: None,
+        substantive_assistant: substantive,
+        origin,
     }
 }
 
@@ -63,33 +81,18 @@ fn later_reads_cover_every_unread_message_and_stay_unchanged_below_the_watermark
 fn unnumbered_messages_defer_to_pending_persistence() {
     let messages = [
         numbered(1, true),
-        ReportedMessage {
-            ordinal: None,
-            substantive_assistant: true,
-        },
-        ReportedMessage {
-            ordinal: None,
-            substantive_assistant: false,
-        },
+        unnumbered(true, TurnOrigin::Instruction),
+        unnumbered(false, TurnOrigin::Instruction),
+        unnumbered(true, TurnOrigin::ProgressNudge),
     ];
     assert_eq!(
         select_unread(&messages, 0, false),
-        UnreadSelection::PendingPersistence {
-            latest_substantive: Some(1)
-        }
+        UnreadSelection::PendingPersistence { report: Some(1) },
+        "a live nudge turn's reply does not replace the report either"
     );
     assert_eq!(
-        select_unread(
-            &[ReportedMessage {
-                ordinal: None,
-                substantive_assistant: false
-            }],
-            5,
-            true
-        ),
-        UnreadSelection::PendingPersistence {
-            latest_substantive: None
-        }
+        select_unread(&[unnumbered(false, TurnOrigin::Instruction)], 5, true),
+        UnreadSelection::PendingPersistence { report: None }
     );
 }
 
@@ -169,4 +172,121 @@ fn acknowledgement_matches_by_receipt_then_by_unique_content() {
         "an ambiguous content match acknowledges nothing"
     );
     assert_eq!(acknowledged_report_index(&pending, None, "body"), None);
+}
+
+/// #2226: a first read reports the child's answer to its instruction, not
+/// the replies to the workflow nudges that followed it.
+#[test]
+fn a_first_read_reports_the_answer_not_a_later_nudge_reply() {
+    let messages = [
+        numbered(1, false),
+        numbered(2, true),
+        nudged(3, false),
+        nudged(4, true),
+        nudged(5, false),
+        nudged(6, true),
+    ];
+    assert_eq!(
+        select_unread(&messages, 0, false),
+        UnreadSelection::Unread {
+            indices: vec![1],
+            max_ordinal: 6
+        }
+    );
+    // A later instruction's answer is the report again.
+    let answered_again = [
+        numbered(1, true),
+        nudged(2, true),
+        numbered(3, false),
+        numbered(4, true),
+    ];
+    assert_eq!(
+        select_unread(&answered_again, 0, false),
+        UnreadSelection::Unread {
+            indices: vec![3],
+            max_ordinal: 4
+        }
+    );
+}
+
+/// #2226: a child that never answered an instruction still reports: its
+/// latest nudge reply.
+#[test]
+fn a_first_read_with_only_nudge_replies_reports_the_latest_of_them() {
+    let messages = [numbered(1, false), nudged(2, true), nudged(3, true)];
+    assert_eq!(
+        select_unread(&messages, 0, false),
+        UnreadSelection::Unread {
+            indices: vec![2],
+            max_ordinal: 3
+        }
+    );
+    // Later reads still cover every unread message, nudge replies included.
+    assert_eq!(
+        select_unread(&messages, 1, false),
+        UnreadSelection::Unread {
+            indices: vec![1, 2],
+            max_ordinal: 3
+        }
+    );
+}
+
+/// #2226: the first read maps the report's position among the unread
+/// messages back to its index in the page: a message at the watermark
+/// (ordinal 0 here) is not unread, so the two differ.
+#[test]
+fn a_first_read_reports_the_answer_by_its_index_in_the_page() {
+    let messages = [
+        numbered(0, true),
+        numbered(1, false),
+        numbered(2, true),
+        nudged(3, true),
+    ];
+    assert_eq!(
+        select_unread(&messages, 0, false),
+        UnreadSelection::Unread {
+            indices: vec![2],
+            max_ordinal: 3
+        }
+    );
+}
+
+/// Review probe P2 (#2226): while a nudge turn is still unsaved, a read
+/// after the answer was acknowledged reports the new progress, never the
+/// acknowledged answer again.
+#[test]
+fn a_pending_read_never_brings_back_an_acknowledged_answer() {
+    let messages = [
+        numbered(1, false),
+        numbered(2, true),
+        nudged(3, false),
+        nudged(4, true),
+        unnumbered(false, TurnOrigin::ProgressNudge),
+    ];
+    assert_eq!(
+        select_unread(&messages, 2, false),
+        UnreadSelection::PendingPersistence { report: Some(3) }
+    );
+    // Nothing unread but the live nudge: no report.
+    assert_eq!(
+        select_unread(&messages, 4, false),
+        UnreadSelection::PendingPersistence { report: None }
+    );
+    // Before any acknowledgement the answer is the report.
+    assert_eq!(
+        select_unread(&messages, 0, false),
+        UnreadSelection::PendingPersistence { report: Some(1) }
+    );
+}
+
+#[test]
+fn later_than_counts_the_messages_after_the_report() {
+    let messages = [
+        numbered(1, false),
+        numbered(2, true),
+        nudged(3, false),
+        nudged(4, true),
+    ];
+    assert_eq!(super::later_than(&messages, 1), 2);
+    assert_eq!(super::later_than(&messages, 3), 0);
 }

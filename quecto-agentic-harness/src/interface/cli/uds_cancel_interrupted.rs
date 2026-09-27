@@ -30,6 +30,7 @@ pub(super) async fn settle_interrupted_turn(turn: InterruptedTurn<'_, '_>) {
     } = turn;
     let finalized =
         crate::interface::cli::uds_cancel_history::finalize_interrupted_turn(messages, prompt_id);
+    crate::domain::turn_origin::stamp_turn(messages, prompt_id); // #2226
     save_turn(turn_save, messages).await;
     if let Some(session) = active_session {
         let visible = user_visible_messages(messages, system_prompt);
@@ -57,9 +58,9 @@ pub(super) async fn save_turn(
 }
 
 /// Give every full copy the ledger holds of a live message the durable
-/// ordinal the save stamped on it, so `get_message` by id serves the same
-/// ordinal `get_messages` does (#2235 review). The copies stay full; only
-/// their ordinal changes.
+/// ordinal the save stamped on it and its turn origin (#2226), so
+/// `get_message` by id serves what `get_messages` does (#2235 review). The
+/// copies stay full; only their stamps change.
 pub(super) fn restamp_ledger(
     state: &mut crate::application::sessions::active_session::ActiveSessionState,
     live: &[Message],
@@ -69,9 +70,11 @@ pub(super) fn restamp_ledger(
         .filter_map(|message| {
             let ordinal = message.ordinal?;
             let copy = state.conversation().lookup(&message.id().to_string())?;
-            (copy.ordinal != Some(ordinal)).then(|| {
+            let stale = (copy.ordinal, copy.turn_origin) != (Some(ordinal), message.turn_origin);
+            stale.then(|| {
                 let mut copy = copy.clone();
                 copy.ordinal = Some(ordinal);
+                copy.turn_origin = message.turn_origin;
                 copy
             })
         })

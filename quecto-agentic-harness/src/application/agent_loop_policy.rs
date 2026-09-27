@@ -149,6 +149,14 @@ impl AgentLoopImpl {
         entries
     }
 
+    /// Whether the model is shown the tool `name` now, under the live tool
+    /// policy (#2226): what a nudge naming that tool must first establish.
+    pub fn is_tool_model_visible(&self, name: &str) -> bool {
+        self.current_tool_definitions()
+            .iter()
+            .any(|definition| definition.name.as_ref() == name)
+    }
+
     pub(super) fn current_tool_definitions(&self) -> Vec<ToolDefinition> {
         let catalogue_entries = self.tool_catalogue_entries();
         let policy = self

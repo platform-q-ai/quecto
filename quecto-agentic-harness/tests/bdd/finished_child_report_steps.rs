@@ -51,22 +51,39 @@ impl Drop for FinishedChildState {
 
 /// A mock OpenAI-compatible provider whose every reply is `report`.
 fn start_mock(report: &str) -> (String, tokio::runtime::Runtime) {
+    let report = report.to_string();
+    start_replying_mock(move |_| report.clone())
+}
+
+/// The content of the last user message of a chat-completions request.
+fn last_user_content(body: &serde_json::Value) -> Option<String> {
+    body.get("messages")?
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|m| m.get("role").and_then(serde_json::Value::as_str) == Some("user"))?
+        .get("content")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// A mock OpenAI-compatible provider replying `reply(request body)`.
+fn start_replying_mock(
+    reply: impl Fn(&serde_json::Value) -> String + Send + Sync + 'static,
+) -> (String, tokio::runtime::Runtime) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
         .build()
         .unwrap();
-    let report = report.to_string();
     let uri = rt.block_on(async move {
         let server = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/chat/completions"))
             .respond_with(move |request: &wiremock::Request| {
-                let streaming = request
-                    .body_json::<serde_json::Value>()
-                    .ok()
-                    .and_then(|body| body.get("stream").and_then(serde_json::Value::as_bool))
-                    == Some(true);
+                let body = request.body_json::<serde_json::Value>().unwrap_or_default();
+                let streaming = body.get("stream").and_then(serde_json::Value::as_bool) == Some(true);
+                let report = reply(&body);
                 let usage = serde_json::json!({"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6});
                 if streaming {
                     let chunk = serde_json::json!({"choices": [{"index": 0,
@@ -102,12 +119,13 @@ fn write_config(base: &Path, mock: &str) {
     std::fs::write(base.join("config.json"), config.to_string()).unwrap();
 }
 
-fn launch_child(base: &Path, socket: &Path) -> (Child, UnixStream) {
+fn launch_child(base: &Path, socket: &Path, extra: &[&std::ffi::OsStr]) -> (Child, UnixStream) {
     let stderr_path = base.join("child.stderr");
     let mut child = Command::new(env!("CARGO_BIN_EXE_quecto"))
         .args(["agent", "--mode", "uds", "--spawned", "-s", CHILD_SESSION])
         .arg("--socket")
         .arg(socket)
+        .args(extra)
         .env("QUECTO_BASE_DIR", base)
         .env("HOME", base)
         .current_dir(base.join("workspace"))
@@ -138,6 +156,12 @@ fn launch_child(base: &Path, socket: &Path) -> (Child, UnixStream) {
 /// fires on: the turn is saved before it is sent (#2218), so a read right
 /// after it already sees the finished report.
 fn run_task_to_idle(stream: &UnixStream, task: &str) {
+    run_task_until(stream, task, "agent_end");
+}
+
+/// Hand the child its task and wait on the same connection for the first
+/// `until` event.
+fn run_task_until(stream: &UnixStream, task: &str, until: &str) {
     stream.set_read_timeout(Some(LIMIT)).unwrap();
     let request = serde_json::json!({"type": "follow_up", "id": "task-2218", "message": task});
     (&*stream)
@@ -158,7 +182,7 @@ fn run_task_to_idle(stream: &UnixStream, task: &str) {
         let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
         };
-        if event["type"] == "agent_end" {
+        if event["type"] == until {
             return;
         }
     }
@@ -173,7 +197,7 @@ fn given_finished_child(world: &mut QuectoWorld, agent_id: String, report: Strin
     let (mock, runtime) = start_mock(&report);
     write_config(&base, &mock);
     let socket = base.join("c.sock");
-    let (child, holder) = launch_child(&base, &socket);
+    let (child, holder) = launch_child(&base, &socket, &[]);
     world.finished_child = FinishedChildState {
         _temp: Some(temp),
         child: Some(child),
@@ -181,6 +205,57 @@ fn given_finished_child(world: &mut QuectoWorld, agent_id: String, report: Strin
         _runtime: Some(runtime),
     };
     run_task_to_idle(&holder, "reply ok");
+    world.finished_child._holder = Some(holder);
+
+    let registry = AgentCmdTool::new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert(agent_id, SubagentEntry::new(socket, 0));
+    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_registry = Some(registry);
+}
+
+/// The reply of the workflow child in the #2226 scenario to each engine
+/// nudge; its task gets the scenario's answer.
+pub const NUDGE_REPLY: &str = "NUDGE REPLY 2226";
+
+/// #2226: a real spawned child bound to a one-step workflow answers its
+/// task, then its engine nudges it to continue: it replies to each nudge
+/// without checking the step off, until the no-progress tolerance ends the
+/// drain (`workflow_idle`). Its transcript then ends with nudge replies.
+#[given(
+    expr = "a real spawned workflow child agent {string} that answered its task with {string} and was then nudged"
+)]
+fn given_nudged_workflow_child(world: &mut QuectoWorld, agent_id: String, answer: String) {
+    const TASK: &str = "reply ok";
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path().to_path_buf();
+    let (mock, runtime) =
+        start_replying_mock(move |body| match last_user_content(body).as_deref() {
+            Some(TASK) => answer.clone(),
+            _ => NUDGE_REPLY.to_string(),
+        });
+    write_config(&base, &mock);
+    let spec = base.join("spec.json");
+    std::fs::write(
+        &spec,
+        r#"{"template":{"id":"one-step","label":"One step","description":"d","steps":[{"key":"do","label":"Do it","phase":"work"}]}}"#,
+    )
+    .unwrap();
+    let socket = base.join("c.sock");
+    let (child, holder) = launch_child(
+        &base,
+        &socket,
+        &["--workflow-spec".as_ref(), spec.as_os_str()],
+    );
+    world.finished_child = FinishedChildState {
+        _temp: Some(temp),
+        child: Some(child),
+        _holder: None,
+        _runtime: Some(runtime),
+    };
+    run_task_until(&holder, TASK, "workflow_idle");
     world.finished_child._holder = Some(holder);
 
     let registry = AgentCmdTool::new_registry();

@@ -262,8 +262,10 @@ impl AgentCmdTool {
 #[cfg(test)]
 use super::agent_cmd_parse::SUPPORTED_COMMANDS;
 use super::agent_cmd_report::{
-    DeliveryDecision, needs_default_report_backfill, plan_default_report, plan_delivery,
+    DeliveryDecision, PageReport, holds_whole, needs_default_report_backfill, page_report,
+    plan_default_report, plan_delivery,
 };
+use full_report::CapRead;
 
 impl AgentCmdTool {
     async fn expand_default_get_messages_response(
@@ -292,15 +294,60 @@ impl AgentCmdTool {
         const MAX_DEFAULT_REPORT_BACKFILL_PAGES: usize = 16;
         let mut backfill_complete = true;
         let mut backfill_pages = 0;
+        // The report the child's page names, if the supervisor has yet to
+        // read it and the page does not hold it whole (#2226).
+        let page = match envelope.get("data") {
+            Some(data) => page_report(&messages, data),
+            None => PageReport::Unnamed,
+        };
+        let unread_named = match &page {
+            PageReport::OffPage(report) if report.is_unread(delivered) => Some(report.clone()),
+            _ => None,
+        };
+        // A first read reads the named report by id instead of paging back.
+        // A read that fails falls back to the page path, and the report stays
+        // owed: the read never acknowledges past it (review 3). A stand-in
+        // for the text is never delivered.
+        let mut owed_report = None;
+        let named = match (&page, &unread_named) {
+            _ if delivered > 0 => false,
+            (PageReport::NamesNone | PageReport::OnPage, _) => true,
+            (_, Some(report)) => {
+                let read = self
+                    .read_named_report(socket_path, routed_target_id, report)
+                    .await;
+                read.map(|text| report.place(&mut messages, text))
+                    .map_err(|_| owed_report = Some(report.clone()))
+                    .is_ok()
+            }
+            _ => false,
+        };
+        let mut older_unread_skipped = None;
         // Only a page that says older history exists is paged back from
         // (#2218); one without it holds the whole transcript.
-        while needs_default_report_backfill(
-            &messages,
-            delivered,
-            envelope.pointer("/data/hasMoreBefore") == Some(&serde_json::Value::Bool(true)),
-        ) {
+        while !named
+            && needs_default_report_backfill(
+                &messages,
+                delivered,
+                envelope.pointer("/data/hasMoreBefore") == Some(&serde_json::Value::Bool(true)),
+            )
+        {
             if backfill_pages >= MAX_DEFAULT_REPORT_BACKFILL_PAGES {
-                backfill_complete = false;
+                let cap = self
+                    .at_backfill_cap(
+                        socket_path,
+                        routed_target_id,
+                        &mut messages,
+                        CapRead {
+                            delivered,
+                            before: envelope.pointer("/data/before").cloned(),
+                            named: unread_named.as_ref(),
+                            owed: owed_report.as_ref(),
+                        },
+                    )
+                    .await;
+                backfill_complete = cap.complete;
+                older_unread_skipped = cap.skipped;
                 break;
             }
             backfill_pages += 1;
@@ -339,10 +386,21 @@ impl AgentCmdTool {
             messages.splice(0..0, older_messages);
             envelope = older;
         }
+        // A named report the first read could not read stays owed until it
+        // is held whole: paging that reached only its stub, or not at all,
+        // leaves the read incomplete (#2226 review 4).
+        match &owed_report {
+            Some(report) if holds_whole(&messages, &report.id) => {}
+            Some(_) => backfill_complete = false,
+            None => {}
+        }
         if let Some(data) = envelope.get_mut("data") {
             data["messages"] = serde_json::Value::Array(messages);
             if !backfill_complete {
                 data["reportIncomplete"] = serde_json::json!(true);
+            }
+            if let Some(skipped) = older_unread_skipped {
+                data["olderUnreadSkipped"] = skipped;
             }
         }
         envelope.to_string()
@@ -632,6 +690,12 @@ mod full_report_tests;
 #[cfg(test)]
 #[path = "agent_cmd_get_subagents_all_tests.rs"]
 mod get_subagents_all_tests;
+#[cfg(test)]
+#[path = "agent_cmd_named_report_tests.rs"]
+mod named_report_tests;
+#[cfg(test)]
+#[path = "agent_cmd_nudge_report_tests.rs"]
+mod nudge_report_tests;
 #[cfg(test)]
 #[path = "agent_cmd_recovery_tests.rs"]
 mod recovery_tests;
