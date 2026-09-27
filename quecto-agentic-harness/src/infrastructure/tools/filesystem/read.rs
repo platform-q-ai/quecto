@@ -18,6 +18,8 @@ use crate::infrastructure::tools::truncate::{
     DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncatedBy, format_size,
 };
 
+use super::{dangling_link_target, shell_escape_single};
+
 pub struct ReadTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
@@ -151,7 +153,7 @@ impl Tool for ReadTool {
             const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
             let raw_bytes = match tokio::fs::read(&resolved).await {
                 Ok(bytes) => bytes,
-                Err(error) => return Err(read_failure(&resolved, &error).await),
+                Err(error) => return read_failure(&resolved, path, &error).await,
             };
 
             // Magic-byte MIME detection. Extension-only fallback is intentionally
@@ -243,11 +245,6 @@ impl Tool for ReadTool {
             })
         })
     }
-}
-
-/// Wrap a path in single quotes for use in a shell command hint.
-fn shell_escape_single(path: &str) -> String {
-    format!("'{}'", path.replace('\'', "'\\''"))
 }
 
 /// Parse optional line-count tool arg from an already-decoded JSON value.
@@ -590,48 +587,30 @@ fn truncate_head_from_offset(
     }
 }
 
-/// Why a read failed: a dangling symbolic link names the path that does not
-/// exist, following a chain of links and resolving relative targets against
-/// each link's own directory (#2166); anything else is the system's own
-/// error.
-async fn read_failure(path: &std::path::Path, error: &std::io::Error) -> DomainError {
-    let mut link = path.to_path_buf();
-    let mut missing = None;
-    if error.kind() == std::io::ErrorKind::NotFound {
-        // Bounded: a loop of links is reported by the system as such.
-        for _ in 0..32 {
-            let Ok(target) = tokio::fs::read_link(&link).await else {
-                break;
-            };
-            let target = match link.parent() {
-                Some(dir) if target.is_relative() => dir.join(target),
-                Some(_) | None => target,
-            };
-            match tokio::fs::symlink_metadata(&target).await {
-                Ok(meta) if meta.file_type().is_symlink() => link = target,
-                Ok(_) => break,
-                Err(_) => {
-                    // Shown plainly: its directory exists, so resolve it.
-                    let plain = match (target.parent(), target.file_name()) {
-                        (Some(dir), Some(name)) => tokio::fs::canonicalize(dir)
-                            .await
-                            .map_or_else(|_| target.clone(), |dir| dir.join(name)),
-                        _ => target.clone(),
-                    };
-                    missing = Some(plain);
-                    break;
-                }
-            }
-        }
-    }
-    match missing {
-        Some(target) => DomainError::Tool(format!(
-            "read failed: {} is a symbolic link to {}, which does not exist",
-            path.display(),
-            target.display()
-        )),
-        None => DomainError::Tool(format!("read failed: {error}")),
-    }
+/// Why a read failed. A missing file, or a symbolic link (or chain of
+/// them) whose target is missing, is a refusal the model can act on
+/// (#2166, #2193); anything else is the system's own error.
+async fn read_failure(
+    full_path: &std::path::Path,
+    path: &str,
+    error: &std::io::Error,
+) -> Result<ToolResult, DomainError> {
+    let content = match error.kind() {
+        std::io::ErrorKind::NotFound => match dangling_link_target(full_path).await {
+            Some(target) => format!(
+                "{path} is a symbolic link to {}, which does not exist",
+                target.display()
+            ),
+            None => format!("file not found: {path}. Check the path with ls or find."),
+        },
+        _ => return Err(DomainError::Tool(format!("read failed: {error}"))),
+    };
+    Ok(ToolResult {
+        content,
+        is_error: true,
+        image_blocks: vec![],
+        delivery_metadata: None,
+    })
 }
 
 #[cfg(test)]

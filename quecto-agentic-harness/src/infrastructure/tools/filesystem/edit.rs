@@ -1,43 +1,34 @@
 // EditTool — tool name: "edit"
 // Two-stage exact→fuzzy matching, CRLF/BOM preservation, no-op detection,
-// LCS-based unified diff via the `similar` crate.
+// LCS-based unified diff (edit_diff.rs).
 
 use std::borrow::Cow;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
-
-use similar::{ChangeTag, TextDiff};
 
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
+use super::edit_diff::{Change, make_edit_diff};
 use super::edit_match::{Location, Unmappable, locate};
+use super::edit_refusal::{
+    FileLines, ambiguous, edit_refused, load_text, not_found, write_refusal,
+};
 use super::resolve_and_validate;
 
-const MAX_EDIT_FILE_BYTES: u64 = 1024 * 1024;
+pub(super) const MAX_EDIT_FILE_BYTES: u64 = 1024 * 1024;
 // The fuzzy matcher's offset map stores `u32` offsets (edit_match.rs).
 const _: () = assert!(MAX_EDIT_FILE_BYTES <= u32::MAX as u64);
-const DIFF_MAX_BYTES: usize = 4096;
-const DIFF_CONTEXT_LINES: usize = 4;
 
 const EDIT_EXAMPLE: &str = "{\"path\": \"file.txt\", \"oldText\": \"old\", \"newText\": \"new\"}";
 
 fn missing_edit_arg(param: &str) -> ToolResult {
     ToolResult {
         content: format!("missing '{}' argument. Example: {}", param, EDIT_EXAMPLE),
-        is_error: true,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    }
-}
-
-fn edit_refused(content: String) -> ToolResult {
-    ToolResult {
-        content,
         is_error: true,
         image_blocks: vec![],
         delivery_metadata: None,
@@ -64,21 +55,6 @@ fn splice(content: &str, range: std::ops::Range<usize>, new: &str) -> Option<Str
     out.push_str(new);
     out.push_str(after);
     Some(out)
-}
-
-async fn enforce_edit_file_size_limit(full_path: &Path) -> Result<(), DomainError> {
-    let metadata = tokio::fs::metadata(full_path)
-        .await
-        .map_err(|e| DomainError::Tool(format!("metadata check failed: {}", e)))?;
-    if metadata.len() > MAX_EDIT_FILE_BYTES {
-        return Err(DomainError::Tool(format!(
-            "file '{}' exceeds maximum allowed size for editing ({} > {} bytes)",
-            full_path.display(),
-            metadata.len(),
-            MAX_EDIT_FILE_BYTES
-        )));
-    }
-    Ok(())
 }
 
 pub struct EditTool {
@@ -157,12 +133,10 @@ impl Tool for EditTool {
             }
 
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
-            enforce_edit_file_size_limit(&full_path).await?;
-
-            // Read raw bytes so we can preserve BOM and detect original line endings.
-            let raw = tokio::fs::read_to_string(&full_path)
-                .await
-                .map_err(|e| DomainError::Tool(format!("edit read failed: {}", e)))?;
+            let raw = match load_text(&full_path, path).await {
+                Ok(raw) => raw,
+                Err(refusal) => return Ok(refusal),
+            };
 
             // Detect original line ending BEFORE normalisation.
             let original_ending = detect_line_ending(&raw);
@@ -179,20 +153,18 @@ impl Tool for EditTool {
             let range = match locate(&content, &base_old) {
                 Ok(Location::Unique(range)) => range,
                 Ok(Location::NotFound) => {
-                    return Ok(edit_refused(format!("oldText not found in {}", path)));
+                    let lines = FileLines::of(&raw);
+                    return Ok(not_found(&content, &lines, &base_old, path));
                 }
-                Ok(Location::Ambiguous(count)) => {
-                    return Ok(edit_refused(format!(
-                        "oldText matches {} times in {} — it must match exactly once to avoid \
-                         ambiguous edits. Add more context to make it unique.",
-                        count, path
-                    )));
+                Ok(Location::Ambiguous(matches)) => {
+                    let lines = FileLines::of(&raw);
+                    return Ok(ambiguous(&lines, path, &matches));
                 }
                 Err(Unmappable) => return Ok(unmappable_match(path)),
             };
 
             let normalised_new = base_normalise(new_text);
-            let Some(updated_lf) = splice(&content, range, &normalised_new) else {
+            let Some(updated_lf) = splice(&content, range.clone(), &normalised_new) else {
                 return Ok(unmappable_match(path));
             };
 
@@ -210,14 +182,15 @@ impl Tool for EditTool {
             }
 
             // Produce diff before restoring line endings (work in LF space).
-            let diff = make_edit_diff(path, &content, &updated_lf);
+            let change = Change::of_splice(&content, &updated_lf, range, normalised_new.len());
+            let diff = make_edit_diff(path, &content, &updated_lf, &change);
 
             // Restore original line endings and BOM before writing.
             let write_content = restore_file_format(&updated_lf, original_ending, has_bom);
 
-            tokio::fs::write(&full_path, write_content.as_bytes())
-                .await
-                .map_err(|e| DomainError::Tool(format!("edit write failed: {}", e)))?;
+            if let Err(error) = tokio::fs::write(&full_path, write_content.as_bytes()).await {
+                return Ok(write_refusal(path, &error));
+            }
 
             Ok(ToolResult {
                 content: diff,
@@ -261,7 +234,7 @@ fn restore_file_format(lf_content: &str, ending: LineEnding, has_bom: bool) -> C
 }
 
 /// Strip UTF-8 BOM and normalise CRLF → LF in a single pass.
-fn base_normalise(s: &str) -> Cow<'_, str> {
+pub(super) fn base_normalise(s: &str) -> Cow<'_, str> {
     let s = s.strip_prefix('\u{FEFF}').unwrap_or(s);
     if !s.contains('\r') {
         return Cow::Borrowed(s);
@@ -279,185 +252,6 @@ fn base_normalise(s: &str) -> Cow<'_, str> {
         }
     }
     Cow::Owned(out)
-}
-
-/// Produce a unified-diff snippet using LCS-based line diffing via `similar`.
-///
-/// Context window is [`DIFF_CONTEXT_LINES`] lines on each side of each hunk.
-/// If the rendered diff exceeds [`DIFF_MAX_BYTES`], a bounded prefix of concrete
-/// diff lines is returned with a truncation notice instead of dropping all diff
-/// context.
-/// Generate a Quecto-style diff with per-line numbers and context ellipsis.
-///
-/// Output format (matching Quecto's `generateDiffString`):
-/// ```text
-///  11 context line
-/// -12 removed line
-/// +12 added line
-///     ...
-/// ```
-fn make_edit_diff(path: &str, old_content: &str, new_content: &str) -> String {
-    let diff = TextDiff::from_lines(old_content, new_content);
-    let max_line = old_content.lines().count().max(new_content.lines().count());
-    let num_width = if max_line == 0 {
-        1
-    } else {
-        max_line.to_string().len()
-    };
-
-    let ops = diff.grouped_ops(DIFF_CONTEXT_LINES);
-    let total_hunks = ops.len();
-    let mut changed_lines_total = 0usize;
-    let mut output = Vec::new();
-    let mut hunk_end_line_indexes = Vec::new();
-
-    for (group_idx, group) in ops.iter().enumerate() {
-        for op in group {
-            for change in diff.iter_changes(op) {
-                let line = change.value().trim_end_matches('\n');
-                match change.tag() {
-                    ChangeTag::Delete => {
-                        changed_lines_total += 1;
-                        let n = change.old_index().unwrap_or(0) + 1;
-                        output.push(format!("-{:>width$} {}", n, line, width = num_width));
-                    }
-                    ChangeTag::Insert => {
-                        changed_lines_total += 1;
-                        let n = change.new_index().unwrap_or(0) + 1;
-                        output.push(format!("+{:>width$} {}", n, line, width = num_width));
-                    }
-                    ChangeTag::Equal => {
-                        let n = change.old_index().unwrap_or(0) + 1;
-                        output.push(format!(" {:>width$} {}", n, line, width = num_width));
-                    }
-                }
-            }
-        }
-        hunk_end_line_indexes.push(output.len());
-        // Add ellipsis between hunks (not after the last one).
-        if group_idx + 1 < total_hunks {
-            output.push(format!(" {:>width$} ...", "", width = num_width));
-        }
-    }
-
-    render_bounded_edit_diff(
-        path,
-        output,
-        hunk_end_line_indexes,
-        total_hunks,
-        changed_lines_total,
-    )
-}
-
-fn render_bounded_edit_diff(
-    path: &str,
-    diff_lines: Vec<String>,
-    hunk_end_line_indexes: Vec<usize>,
-    total_hunks: usize,
-    changed_lines_total: usize,
-) -> String {
-    let full = format!("Successfully edited {}\n\n{}", path, diff_lines.join("\n"));
-    if full.len() <= DIFF_MAX_BYTES {
-        return full;
-    }
-
-    let mut shown = Vec::new();
-    for line in &diff_lines {
-        shown.push(line.clone());
-        let hunks_shown = count_complete_hunks_shown(shown.len(), &hunk_end_line_indexes);
-        let notice = diff_truncated_notice(hunks_shown, total_hunks, changed_lines_total);
-        let prefix = truncated_success_prefix(path, notice.len(), 1);
-        let candidate = format!("{}{}\n{}", prefix, shown.join("\n"), notice);
-        if candidate.len() > DIFF_MAX_BYTES {
-            shown.pop();
-            break;
-        }
-    }
-
-    let mut hunks_shown = count_complete_hunks_shown(shown.len(), &hunk_end_line_indexes);
-    let notice = diff_truncated_notice(hunks_shown, total_hunks, changed_lines_total);
-    if shown.is_empty() {
-        shown = truncated_first_change_pair(path, &diff_lines, notice.len());
-        hunks_shown = count_complete_hunks_shown(shown.len(), &hunk_end_line_indexes);
-    }
-    let notice = diff_truncated_notice(hunks_shown, total_hunks, changed_lines_total);
-    let prefix = truncated_success_prefix(path, notice.len(), shown.join("\n").len());
-    format!("{}{}\n{}", prefix, shown.join("\n"), notice)
-}
-
-fn truncated_first_change_pair(
-    path: &str,
-    diff_lines: &[String],
-    notice_len: usize,
-) -> Vec<String> {
-    let Some(first_line) = diff_lines.first() else {
-        return Vec::new();
-    };
-    let second_change_line = diff_lines
-        .iter()
-        .skip(1)
-        .find(|line| line.starts_with('+') || line.starts_with('-'));
-    let reserved_second_len = second_change_line
-        .map(|line| line.len().min(8))
-        .unwrap_or_default();
-    let reserved_diff_len =
-        first_line.len().min(16) + reserved_second_len + usize::from(second_change_line.is_some());
-    let prefix = truncated_success_prefix(path, notice_len, reserved_diff_len);
-    let mut budget = DIFF_MAX_BYTES.saturating_sub(prefix.len() + notice_len + 1);
-
-    let mut shown = Vec::new();
-    let first_budget =
-        budget.saturating_sub(reserved_second_len + usize::from(second_change_line.is_some()));
-    shown.push(truncate_to_byte_budget(first_line, first_budget));
-    budget = budget.saturating_sub(shown[0].len());
-
-    if let Some(second_line) = second_change_line {
-        budget = budget.saturating_sub(1);
-        let second = truncate_to_byte_budget(second_line, budget);
-        if !second.is_empty() {
-            shown.push(second);
-        }
-    }
-
-    shown
-}
-
-fn truncated_success_prefix(path: &str, notice_len: usize, diff_len: usize) -> String {
-    let boilerplate_len = "Successfully edited \n\n\n".len();
-    let path_budget = DIFF_MAX_BYTES.saturating_sub(boilerplate_len + notice_len + diff_len);
-    format!(
-        "Successfully edited {}\n\n",
-        truncate_to_byte_budget(path, path_budget)
-    )
-}
-
-fn count_complete_hunks_shown(shown_lines: usize, hunk_end_line_indexes: &[usize]) -> usize {
-    hunk_end_line_indexes
-        .iter()
-        .take_while(|end| shown_lines >= **end)
-        .count()
-}
-
-fn truncate_to_byte_budget(line: &str, budget: usize) -> String {
-    line.char_indices()
-        .map(|(idx, _)| idx)
-        .chain(std::iter::once(line.len()))
-        .take_while(|idx| *idx <= budget)
-        .last()
-        .and_then(|end| line.get(..end))
-        .map(str::to_string)
-        .unwrap_or_default()
-}
-
-fn diff_truncated_notice(
-    hunks_shown: usize,
-    total_hunks: usize,
-    changed_lines_total: usize,
-) -> String {
-    format!(
-        "[diff truncated: {} of {} hunks shown, {} lines changed total]",
-        hunks_shown, total_hunks, changed_lines_total
-    )
 }
 
 #[cfg(test)]

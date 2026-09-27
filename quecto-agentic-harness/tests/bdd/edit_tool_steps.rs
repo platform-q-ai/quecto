@@ -26,6 +26,33 @@ fn given_bom_file(world: &mut QuectoWorld, filename: String, content: String) {
     std::fs::write(ws.join(&filename), with_bom.as_bytes()).expect("write bom file");
 }
 
+/// A file that is not UTF-8 text (#2193).
+#[given(expr = "a binary file {string} exists")]
+fn given_binary_file(world: &mut QuectoWorld, filename: String) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    std::fs::write(ws.join(&filename), [0u8, 159, 146, 150, 255, 1]).expect("write binary file");
+}
+
+/// One long line: `count` copies of `unit`, then `tail` (#2194).
+#[given(expr = "a file {string} exists with {int} {string} characters then {string}")]
+fn given_long_line_file(
+    world: &mut QuectoWorld,
+    filename: String,
+    count: usize,
+    unit: String,
+    tail: String,
+) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    let content = format!("{}{tail}", unit.repeat(count));
+    std::fs::write(ws.join(&filename), content).expect("write long-line file");
+}
+
 /// Execute edit with oldText containing a smart right single quote (U+2019).
 #[when(expr = "the agent executes tool \"edit\" with smart-single-quote oldText on {string}")]
 fn when_edit_smart_single_quote(world: &mut QuectoWorld, filename: String) {

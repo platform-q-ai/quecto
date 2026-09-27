@@ -322,116 +322,6 @@ async fn test_edit_diff_uses_minus_plus_markers() {
 }
 
 #[test]
-fn test_over_cap_edit_diff_returns_bounded_concrete_context_and_notice() {
-    let old = (0..900)
-        .map(|i| format!("old line {i:03}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let new = (0..900)
-        .map(|i| format!("new line {i:03}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let diff = make_edit_diff("large.txt", &old, &new);
-
-    assert!(
-        diff.len() <= DIFF_MAX_BYTES,
-        "diff exceeded cap: {}",
-        diff.len()
-    );
-    assert!(diff.starts_with("Successfully edited large.txt\n\n-  1 old line 000"));
-    assert!(diff.contains("-  2 old line 001"));
-    assert!(diff.contains("[diff truncated: 0 of 1 hunks shown, 1800 lines changed total]"));
-    assert_ne!(diff, "Successfully edited large.txt");
-}
-
-#[test]
-fn test_over_cap_multihunk_notice_counts_completed_hunks() {
-    let old_lines = (0..240).map(|i| format!("line {i:03}")).collect::<Vec<_>>();
-    let mut new_lines = old_lines.clone();
-    new_lines[10] = "changed first hunk".to_string();
-    new_lines[80] = "changed second hunk".to_string();
-    new_lines[160] = format!("changed large hunk {}", "z".repeat(DIFF_MAX_BYTES));
-
-    let diff = make_edit_diff("multi.txt", &old_lines.join("\n"), &new_lines.join("\n"));
-
-    assert!(
-        diff.len() <= DIFF_MAX_BYTES,
-        "diff exceeded cap: {}",
-        diff.len()
-    );
-    assert!(diff.contains("- 11 line 010"));
-    assert!(diff.contains("+ 11 changed first hunk"));
-    assert!(diff.contains("[diff truncated: 2 of 3 hunks shown, 6 lines changed total]"));
-}
-
-#[test]
-fn test_single_over_cap_line_still_shows_concrete_diff_prefix() {
-    let old = format!("old {}\n", "x".repeat(DIFF_MAX_BYTES));
-    let new = format!("new {}\n", "y".repeat(DIFF_MAX_BYTES));
-
-    let diff = make_edit_diff("long-line.txt", &old, &new);
-
-    assert!(
-        diff.len() <= DIFF_MAX_BYTES,
-        "diff exceeded cap: {}",
-        diff.len()
-    );
-    assert!(diff.starts_with("Successfully edited long-line.txt\n\n-1 old xxx"));
-    assert!(diff.contains("\n+1 new y"));
-    assert!(diff.contains("[diff truncated: 1 of 1 hunks shown, 2 lines changed total]"));
-    assert_ne!(diff, "Successfully edited long-line.txt");
-}
-
-#[test]
-fn test_multibyte_over_cap_diff_truncates_on_char_boundary() {
-    let multibyte = "界".repeat(DIFF_MAX_BYTES);
-    let old = format!("old {multibyte}\n");
-    let new = format!("new {multibyte}\n");
-    let path = format!("emoji-{}", "🚀".repeat(DIFF_MAX_BYTES));
-
-    let diff = make_edit_diff(&path, &old, &new);
-
-    assert!(
-        diff.len() <= DIFF_MAX_BYTES,
-        "diff exceeded cap: {}",
-        diff.len()
-    );
-    assert!(diff.is_char_boundary(diff.len()));
-    assert!(diff.contains("\n\n-1 old 界"));
-    assert!(diff.contains("\n+1 new"));
-    assert!(diff.contains("[diff truncated: 1 of 1 hunks shown, 2 lines changed total]"));
-}
-
-#[test]
-fn test_long_path_over_cap_diff_stays_bounded_with_notice() {
-    let long_path = "p".repeat(DIFF_MAX_BYTES);
-    let old = format!("old {}\n", "x".repeat(DIFF_MAX_BYTES));
-    let new = format!("new {}\n", "y".repeat(DIFF_MAX_BYTES));
-
-    let diff = make_edit_diff(&long_path, &old, &new);
-
-    assert!(
-        diff.len() <= DIFF_MAX_BYTES,
-        "diff exceeded cap: {}",
-        diff.len()
-    );
-    assert!(diff.starts_with("Successfully edited ppp"));
-    assert!(diff.contains("\n\n-1 old x"));
-    assert!(diff.contains("[diff truncated: 1 of 1 hunks shown, 2 lines changed total]"));
-}
-
-#[test]
-fn test_small_edit_diff_behavior_is_unchanged_without_truncation_notice() {
-    let diff = make_edit_diff("small.txt", "line1\nline2\n", "line1\nCHANGED\n");
-
-    assert_eq!(
-        diff,
-        "Successfully edited small.txt\n\n 1 line1\n-2 line2\n+2 CHANGED"
-    );
-}
-
-#[test]
 fn test_plain_lf_without_bom_normalise_and_restore_are_identity() {
     let plain = "first\nsecond\n";
     assert_eq!(&*base_normalise(plain), plain);
@@ -472,6 +362,7 @@ async fn test_edit_allows_file_at_size_limit() {
     assert_eq!(edited.len(), 1_048_576);
 }
 
+/// #2193: too large to edit is a refusal with a way forward.
 #[tokio::test]
 async fn test_edit_rejects_oversized_file() {
     let (ws, sb, tmp) = test_tools();
@@ -480,14 +371,17 @@ async fn test_edit_rejects_oversized_file() {
     std::fs::write(tmp.path().join("big-edit.txt"), large_content).unwrap();
     let result = tool
         .execute(r#"{"path": "big-edit.txt", "oldText": "a", "newText": "b"}"#)
-        .await;
-    assert!(result.is_err());
+        .await
+        .unwrap();
+    assert!(result.is_error);
     assert!(
         result
-            .unwrap_err()
-            .to_string()
-            .contains("exceeds maximum allowed size")
+            .content
+            .contains("big-edit.txt is too large to edit (1.0MB; edit takes files up to 1.0MB)"),
+        "{}",
+        result.content
     );
+    assert!(result.content.contains("sed"), "{}", result.content);
 }
 
 #[tokio::test]
@@ -556,5 +450,281 @@ async fn an_old_text_of_only_a_bom_is_refused_as_empty() {
         result.content.contains("oldText must not be empty"),
         "{}",
         result.content
+    );
+}
+
+async fn edit(tool: &EditTool, path: &str, old: &str, new: &str) -> ToolResult {
+    let args = serde_json::json!({"path": path, "oldText": old, "newText": new});
+    tool.execute(&args.to_string()).await.unwrap()
+}
+
+/// #2193 (B11): three matches are reported as three, with their lines.
+#[tokio::test]
+async fn every_match_is_counted_and_placed() {
+    let (ws, sb, tmp) = test_tools();
+    std::fs::write(tmp.path().join("triple.txt"), "triple triple triple\n").unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "triple.txt", "triple", "x").await;
+    assert!(result.is_error);
+    assert!(
+        result
+            .content
+            .starts_with("oldText matches 3 times in triple.txt, all on line 1 —"),
+        "{}",
+        result.content
+    );
+    assert!(result.content.contains("surrounding"), "{}", result.content);
+}
+
+#[tokio::test]
+async fn many_matches_name_the_lines_of_the_first_three() {
+    let (ws, sb, tmp) = test_tools();
+    std::fs::write(tmp.path().join("f.txt"), "x\ny\nx\nx\ny\nx\n").unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "f.txt", "x", "z").await;
+    assert!(
+        result
+            .content
+            .starts_with("oldText matches 4 times in f.txt, the first 3 on lines 1, 3 and 4 —"),
+        "{}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn overlapping_matches_are_named_as_such() {
+    let (ws, sb, tmp) = test_tools();
+    std::fs::write(tmp.path().join("f.txt"), "aaa\n").unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "f.txt", "aa", "b").await;
+    assert!(
+        result
+            .content
+            .starts_with("oldText matches 2 times in f.txt (overlapping), all on line 1 —"),
+        "{}",
+        result.content
+    );
+}
+
+/// #2193: line numbers count the file's lines, CRLF or not.
+#[tokio::test]
+async fn match_lines_are_file_lines_in_a_crlf_file() {
+    let (ws, sb, tmp) = test_tools();
+    std::fs::write(tmp.path().join("f.txt"), "\u{feff}a\r\nkey\r\nb\r\nkey\r\n").unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "f.txt", "key", "k").await;
+    assert!(
+        result
+            .content
+            .contains("2 times in f.txt, on lines 2 and 4"),
+        "{}",
+        result.content
+    );
+}
+
+/// #2193 (B16): a missing file is named, with the tool that creates one.
+#[tokio::test]
+async fn a_missing_file_is_named_with_the_way_to_create_it() {
+    let (ws, sb, _tmp) = test_tools();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "sub/missing.txt", "a", "b").await;
+    assert!(result.is_error);
+    assert_eq!(
+        result.content,
+        "file not found: sub/missing.txt. edit changes an existing file; \
+         use write to create a new one."
+    );
+}
+
+#[tokio::test]
+async fn a_dangling_symlink_is_named_as_one() {
+    let (ws, sb, tmp) = test_tools();
+    std::os::unix::fs::symlink("/nonexistent/target", tmp.path().join("link")).unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "link", "a", "b").await;
+    assert!(result.is_error);
+    assert!(
+        result
+            .content
+            .contains("link is a symbolic link to /nonexistent/target"),
+        "{}",
+        result.content
+    );
+}
+
+/// #2193 (B17): a binary file is refused as not UTF-8 text, as read does.
+#[tokio::test]
+async fn a_binary_file_is_refused_as_not_text() {
+    let (ws, sb, tmp) = test_tools();
+    std::fs::write(tmp.path().join("blob.dat"), [0u8, 159, 146, 150, 255, 1]).unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "blob.dat", "a", "b").await;
+    assert!(result.is_error);
+    assert!(
+        result
+            .content
+            .starts_with("blob.dat is not UTF-8 text (6B): binary"),
+        "{}",
+        result.content
+    );
+    assert!(
+        result.content.contains("xxd 'blob.dat'"),
+        "{}",
+        result.content
+    );
+    assert_eq!(
+        std::fs::read(tmp.path().join("blob.dat")).unwrap(),
+        [0u8, 159, 146, 150, 255, 1]
+    );
+}
+
+#[tokio::test]
+async fn a_directory_is_refused_as_one() {
+    let (ws, sb, tmp) = test_tools();
+    std::fs::create_dir(tmp.path().join("dir")).unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "dir", "a", "b").await;
+    assert!(result.is_error);
+    assert!(
+        result.content.starts_with("dir is a directory"),
+        "{}",
+        result.content
+    );
+    assert!(result.content.contains("ls"), "{}", result.content);
+}
+
+/// #2193 (B13): a match with other indentation is pointed out.
+#[tokio::test]
+async fn an_indentation_mismatch_names_the_files_indentation() {
+    let (ws, sb, tmp) = test_tools();
+    std::fs::write(tmp.path().join("indent.txt"), "top\n\tindented text\n").unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "indent.txt", "    indented text", "x").await;
+    assert!(result.is_error);
+    assert_eq!(
+        result.content,
+        "oldText not found in indent.txt, but it matches at line 2 if indentation is \
+         ignored; line 2 is indented with 1 tab in the file, 4 spaces in oldText. \
+         Copy the indentation from the file."
+    );
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("indent.txt")).unwrap(),
+        "top\n\tindented text\n"
+    );
+}
+
+/// With no near miss, "not found" still says what to do next.
+#[tokio::test]
+async fn not_found_says_to_copy_the_text_from_the_file() {
+    let (ws, sb, tmp) = test_tools();
+    std::fs::write(tmp.path().join("f.txt"), "hello\n").unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "f.txt", "goodbye", "x").await;
+    assert_eq!(
+        result.content,
+        "oldText not found in f.txt. Read the file and copy oldText from it exactly, \
+         whitespace included."
+    );
+}
+
+/// #2193 review: a chain of links names the target that is missing, not
+/// the next link.
+#[tokio::test]
+async fn a_chain_of_links_names_the_missing_target() {
+    let (ws, sb, tmp) = test_tools();
+    std::os::unix::fs::symlink("b", tmp.path().join("a")).unwrap();
+    std::os::unix::fs::symlink("gone", tmp.path().join("b")).unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "a", "x", "y").await;
+    let gone = tmp.path().canonicalize().unwrap().join("gone");
+    assert!(
+        result.content.starts_with(&format!(
+            "a is a symbolic link to {}, which",
+            gone.display()
+        )),
+        "{}",
+        result.content
+    );
+}
+
+/// #2193 review: a file that cannot be written is a refusal that names it.
+#[tokio::test]
+async fn a_read_only_file_is_refused_and_left_unchanged() {
+    use std::os::unix::fs::PermissionsExt;
+    let (ws, sb, tmp) = test_tools();
+    let file = tmp.path().join("locked.txt");
+    std::fs::write(&file, "hello\n").unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o444)).unwrap();
+    if std::fs::OpenOptions::new().write(true).open(&file).is_ok() {
+        return; // Running as root: permissions do not stop the write.
+    }
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "locked.txt", "hello", "bye").await;
+    assert!(result.is_error);
+    assert!(
+        result
+            .content
+            .starts_with("permission denied: cannot write locked.txt, so nothing was written."),
+        "{}",
+        result.content
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "hello\n");
+}
+
+/// #2193 review: a lone carriage return starts no line, as read shows it.
+#[tokio::test]
+async fn match_lines_ignore_a_lone_carriage_return() {
+    let (ws, sb, tmp) = test_tools();
+    std::fs::write(tmp.path().join("f.txt"), "a\rb\nkey\nc\rkey\n").unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "f.txt", "key", "k").await;
+    assert!(
+        result
+            .content
+            .contains("2 times in f.txt, on lines 2 and 3"),
+        "{}",
+        result.content
+    );
+    std::fs::write(tmp.path().join("g.txt"), "a\rb\n\tindented\n").unwrap();
+    let result = edit(&tool, "g.txt", "  indented", "x").await;
+    assert!(
+        result.content.contains("matches at line 2 if indentation"),
+        "{}",
+        result.content
+    );
+}
+
+/// #2193 review: the hint gives where the match starts and, apart, the
+/// line whose indentation differs.
+#[tokio::test]
+async fn the_hint_names_the_match_start_and_the_differing_line() {
+    let (ws, sb, tmp) = test_tools();
+    let content = "fn a() {\n    keep();\n\tchange();\n}\n";
+    std::fs::write(tmp.path().join("f.rs"), content).unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "f.rs", "fn a() {\n    keep();\n    change();", "x").await;
+    assert!(
+        result.content.contains(
+            "matches at line 1 if indentation is ignored; line 3 is indented with 1 tab \
+             in the file, 4 spaces in oldText"
+        ),
+        "{}",
+        result.content
+    );
+}
+
+/// #2193 review 2: an indentation hint that matches in several places lists
+/// them and asks for more context.
+#[tokio::test]
+async fn an_ambiguous_indentation_hint_lists_every_line() {
+    let (ws, sb, tmp) = test_tools();
+    std::fs::write(tmp.path().join("f.txt"), "\tfoo\n\tfoo\n").unwrap();
+    let tool = EditTool::new(ws, sb);
+    let result = edit(&tool, "f.txt", "  foo", "x").await;
+    assert_eq!(
+        result.content,
+        "oldText not found in f.txt, but it matches at lines 1 and 2 if indentation is \
+         ignored; line 1 is indented with 1 tab in the file, 2 spaces in oldText. Copy the \
+         indentation from the file and add surrounding lines to make it unique."
     );
 }
