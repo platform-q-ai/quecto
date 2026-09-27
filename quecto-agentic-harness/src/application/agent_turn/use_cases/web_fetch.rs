@@ -1,4 +1,5 @@
 //! Application-owned web fetch policy, orchestration, and content transformation.
+use crate::domain::html_text::{markup_to_text, push_collapsed_line};
 use crate::domain::network_destination::{authorize_destination, is_fetchable_name};
 use std::{future::Future, net::IpAddr, pin::Pin, sync::Arc};
 
@@ -326,19 +327,16 @@ fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
 /// Strategy:
 /// 1. Remove `<script>`, `<style>`, `<nav>`, `<footer>`, `<header>`,
 ///    `<noscript>` blocks entirely
-/// 2. Convert block-closing tags to newlines
-/// 3. Strip remaining tags
-/// 4. Decode common HTML entities
-/// 5. Collapse whitespace
+/// 2. Convert block tags to newlines and space side-by-side labels
+/// 3. Strip remaining tags, decoding entities in the text between them
+/// 4. Collapse whitespace
 pub fn strip_html(html: &str) -> String {
     text_of_markup(&remove_configured_tag_blocks(html))
 }
 
-/// Steps 2-5 of [`strip_html`], for markup whose stripped blocks are gone.
+/// Steps 2-4 of [`strip_html`], for markup whose stripped blocks are gone.
 fn text_of_markup(stripped: &str) -> String {
-    let text = tags_to_text(stripped);
-    let text = decode_entities(&text);
-    collapse_whitespace(&text)
+    collapse_whitespace(&markup_to_text(stripped))
 }
 
 const STRIPPED_BLOCK_TAGS: &[&str] = &["script", "style", "nav", "footer", "header", "noscript"];
@@ -446,197 +444,6 @@ fn specific_close_tag_at(html: &str, tag_start: usize, tag: &str) -> bool {
         && closes()
 }
 
-/// Convert HTML tags to text: block tags become newlines, others are stripped.
-///
-/// Uses `eq_ignore_ascii_case` per tag to avoid allocating a lowercase copy
-/// for every tag in the document. All text between tags is copied as UTF-8
-/// substrings, so multibyte characters (e.g. `é`) are preserved.
-fn tags_to_text(html: &str) -> String {
-    const BLOCK_TAGS: &[&str] = &[
-        "p",
-        "div",
-        "li",
-        "tr",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "blockquote",
-        "pre",
-    ];
-
-    let mut result = String::with_capacity(html.len());
-    let mut pos = 0;
-
-    while let Some(open) = html[pos..].find('<') {
-        let abs_open = pos + open;
-        result.push_str(&html[pos..abs_open]);
-
-        // Past quoted attribute values (#2165 review); a stray `<` is text.
-        if let TagEnd::At(end_offset) = tag_end(&html.as_bytes()[abs_open..]) {
-            let tag_content = &html[abs_open + 1..abs_open + end_offset];
-            let trimmed = tag_content.trim().trim_start_matches('/');
-            let tag_end = trimmed
-                .find(|c: char| c.is_whitespace() || c == '/')
-                .unwrap_or(trimmed.len());
-            let tag_name = &trimmed[..tag_end];
-
-            if tag_name.eq_ignore_ascii_case("br")
-                || BLOCK_TAGS.iter().any(|t| tag_name.eq_ignore_ascii_case(t))
-            {
-                result.push('\n');
-            }
-            pos = abs_open + end_offset + 1;
-        } else {
-            // A stray or unended '<' is a literal character. The next '<'
-            // is where `tag_end` stopped, so every byte is read at most
-            // twice.
-            result.push('<');
-            pos = abs_open + 1;
-        }
-    }
-
-    result.push_str(&html[pos..]);
-    result
-}
-
-/// Where a tag opened by the `<` at `rest[0]` ends.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TagEnd {
-    /// Its `>`.
-    At(usize),
-    /// Another `<` came first, outside quotes: the first was stray.
-    Stray(usize),
-    /// Neither follows: no whole tag does.
-    Never,
-}
-
-/// Find a tag's `>` in one forward pass, past quoted attribute values (a
-/// quote opens a value only after `=`; #2165 review).
-///
-/// A quote that never closes is no value: the tag then ends at the first
-/// `>`, or the next starts at the first `<`, after its start, whatever the
-/// quotes. Both lie past that quote, and that quote character appears
-/// nowhere after it, so no later tag reads to the end for it again: at
-/// most two such reads a page, one per quote character, so linear.
-fn tag_end(rest: &[u8]) -> TagEnd {
-    let mut quote = None;
-    let mut after_equals = false;
-    let mut first_bracket = None;
-    for (at, &byte) in rest.iter().enumerate().skip(1) {
-        if first_bracket.is_none() {
-            first_bracket = match byte {
-                b'>' => Some(TagEnd::At(at)),
-                b'<' => Some(TagEnd::Stray(at)),
-                _ => None,
-            };
-        }
-        if let Some(open) = quote {
-            if byte == open {
-                quote = None;
-            }
-            continue;
-        }
-        match byte {
-            b'>' => return TagEnd::At(at),
-            b'<' => return TagEnd::Stray(at),
-            b'"' | b'\'' if after_equals => {
-                quote = Some(byte);
-                after_equals = false;
-                continue;
-            }
-            _ => {}
-        }
-        after_equals = byte == b'=' || (after_equals && byte.is_ascii_whitespace());
-    }
-    // Brackets inside values that closed were values; only an unclosed
-    // quote falls back to the first bracket.
-    match quote {
-        Some(_) => first_bracket.unwrap_or(TagEnd::Never),
-        None => TagEnd::Never,
-    }
-}
-
-/// Decode common HTML entities. Operates on `&str` so multibyte characters
-/// are preserved instead of being re-interpreted as Latin-1 bytes.
-/// Longest entity text looked for, `&` to `;` (`&thetasym;` is 10).
-const MAX_ENTITY_BYTES: usize = 12;
-
-fn decode_entities(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let mut pos = 0;
-
-    while let Some(amp) = text[pos..].find('&') {
-        let abs_amp = pos + amp;
-        result.push_str(&text[pos..abs_amp]);
-
-        // An entity is short: look for its `;` only within reach, so many
-        // `&` with a far `;` stay linear (#2177 review).
-        let reach = text.len().min(abs_amp + MAX_ENTITY_BYTES);
-        let window = text.get(abs_amp..reach).unwrap_or("");
-        if let Some(semi) = window.find(';') {
-            let entity = &text[abs_amp + 1..abs_amp + semi];
-            if let Some(decoded) = decode_entity(entity) {
-                result.push(decoded);
-                pos = abs_amp + semi + 1;
-                continue;
-            }
-        }
-        result.push('&');
-        pos = abs_amp + 1;
-    }
-
-    result.push_str(&text[pos..]);
-    result
-}
-
-/// Decode a single HTML entity (without & and ;).
-fn decode_entity(entity: &str) -> Option<char> {
-    match entity {
-        "amp" => Some('&'),
-        "lt" => Some('<'),
-        "gt" => Some('>'),
-        "quot" => Some('"'),
-        "apos" | "#39" => Some('\''),
-        "nbsp" => Some(' '),
-        _ if entity.starts_with('#') => {
-            let num_str = &entity[1..];
-            if let Some(hex) = num_str
-                .strip_prefix('x')
-                .or_else(|| num_str.strip_prefix('X'))
-            {
-                u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
-            } else {
-                num_str.parse::<u32>().ok().and_then(char::from_u32)
-            }
-        }
-        _ => None,
-    }
-}
-
-/// Append `line` to `out` with runs of whitespace collapsed to single spaces,
-/// leading/trailing whitespace trimmed. No per-line allocation.
-fn push_collapsed_line(out: &mut String, line: &str) {
-    let mut prev_space = true; // true = trim leading spaces
-    for ch in line.chars() {
-        if ch.is_whitespace() {
-            if !prev_space {
-                out.push(' ');
-                prev_space = true;
-            }
-        } else {
-            out.push(ch);
-            prev_space = false;
-        }
-    }
-    // Trim trailing space
-    if out.ends_with(' ') {
-        out.pop();
-    }
-}
-
 /// Collapse runs of whitespace into single spaces, blank lines into single
 /// blank lines, and trim each line. Writes directly into a single output
 /// buffer to avoid per-line heap allocations.
@@ -683,3 +490,6 @@ mod content_tests;
 #[cfg(test)]
 #[path = "web_fetch_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "web_fetch_text_tests.rs"]
+mod text_tests;

@@ -307,6 +307,13 @@ fn a_redirect_is_authorized_by_scheme_and_address_and_a_name_is_left_to_dns() {
             "the redirect to http://10.0.0.1/: 10.0.0.1 is not a public address".into()
         ))
     );
+    // A hop is named by its first path segment only (#2248 round 2).
+    assert_eq!(
+        hop("http://10.0.0.1/cb/SECRET123"),
+        Err(FetchFailure::Refused(
+            "the redirect to http://10.0.0.1/cb/…: 10.0.0.1 is not a public address".into()
+        ))
+    );
     // A hop is held to the courtesy local-name check, as the first URL is.
     assert_eq!(
         hop("http://metadata.google.internal./computeMetadata/"),

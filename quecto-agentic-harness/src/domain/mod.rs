@@ -18,6 +18,7 @@ mod environment_retention_tests;
 pub mod error;
 pub mod extension_tool;
 pub mod harness_lifetime;
+pub mod html_text;
 pub mod ids;
 pub mod message;
 pub mod nat64_prefix;

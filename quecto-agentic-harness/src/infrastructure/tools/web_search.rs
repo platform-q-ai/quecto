@@ -6,6 +6,7 @@ use std::pin::Pin;
 
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
+use crate::domain::html_text::inline_text;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 
 const MAX_WEB_SEARCH_OUTPUT_BYTES: usize = 16 * 1024;
@@ -128,13 +129,22 @@ impl WebSearchTool {
                     .take(self.brave_max_results as usize)
                     .enumerate()
                 {
-                    let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+                    // Brave marks matches with `<strong>` and escapes
+                    // text as HTML: read as plain text, then cut (#2211).
+                    // A title that reads as nothing is as good as none.
+                    let title = item
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .map(inline_text)
+                        .filter(|title| !title.is_empty())
+                        .unwrap_or_else(|| "?".to_owned());
                     let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("?");
                     let desc = item
                         .get("description")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let desc = truncate_result_text(desc);
+                        .map(inline_text)
+                        .unwrap_or_default();
+                    let desc = truncate_result_text(&desc);
                     output.push_str(&format!("{}. {} - {}\n   {}\n", i + 1, title, url, desc));
                 }
                 Ok(output)

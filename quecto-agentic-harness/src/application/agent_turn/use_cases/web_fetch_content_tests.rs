@@ -208,7 +208,10 @@ async fn html_reads_its_main_content_and_raw_keeps_the_page() {
     else {
         panic!("not text");
     };
-    assert!(text.contains(main_content::MAIN_CONTENT_NOTE), "{text}");
+    assert!(
+        text.contains(main_content::MAIN_CONTENT_NOTE_LEAD),
+        "{text}"
+    );
     assert!(!text.contains("Array.prototype.copyWithin()"), "{text}");
     let raw = fetched(page.as_bytes(), Some("text/html"), true).await;
     assert_eq!(raw, WebFetchResult::Success(page.to_owned()));
@@ -221,5 +224,5 @@ async fn the_whole_page_is_one_option_away() {
     let page = include_str!("../../../../tests/fixtures/web_fetch/docs_with_main.html");
     let whole = viewed(page.as_bytes(), Some("text/html"), HtmlView::WholePage).await;
     assert_eq!(whole, WebFetchResult::Success(strip_html(page)));
-    assert!(main_content::MAIN_CONTENT_NOTE.contains("main_only: false"));
+    assert!(main_content::main_content_note(0).contains("main_only: false"));
 }
