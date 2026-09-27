@@ -163,13 +163,16 @@ pub(super) fn is_throttle_chunk(value: &serde_json::Value) -> bool {
 /// 1. a billing error type or code is 402 (never retried);
 /// 2. an allowlisted client error type or code is its 4xx (never retried);
 /// 3. a typed throttle is 429, or 529 when overloaded;
-/// 4. a numeric `error.code` (OpenRouter's shape) is that status when the
+/// 4. a known server error type or code is its 5xx (retried);
+/// 5. a numeric `error.code` (OpenRouter's shape) is that status when the
 ///    retry classifier knows it; a 408 is a gateway timeout (504) and any
 ///    other 5xx (Cloudflare's 520-524) a bad gateway (502), both retried;
-///    another 4xx gives the known server types below their chance, then
-///    stands as itself (never retried);
-/// 5. a known server error type or code is its 5xx;
+///    another 4xx stands as itself (never retried);
 /// 6. anything else is 502: retryable.
+///
+/// Typed fields always win over a numeric code: a named failure says more
+/// than a status a gateway may have wrapped it in (a client type in a 5xx,
+/// #935, stays a client error).
 ///
 /// The chunk ends the attempt: the text already streamed stays streamed (it
 /// was shown once, and the retry owner never replays a reply after output),
@@ -209,22 +212,21 @@ pub(super) fn stream_error_status(value: &serde_json::Value) -> u16 {
             429
         };
     }
+    if let Some(status) = named(SERVER_ERRORS) {
+        return status;
+    }
     let numeric = error["code"]
         .as_u64()
         .filter(|code| (400..=599).contains(code))
         .and_then(|code| u16::try_from(code).ok());
-    let unnamed_client_status = match numeric {
+    match numeric {
         Some(status) if ProviderErrorClass::from_status(status) != ProviderErrorClass::Unknown => {
-            return status;
+            status
         }
-        Some(REQUEST_TIMEOUT) => return GATEWAY_TIMEOUT,
-        Some(500..=599) => return UNKNOWN_ERROR_STATUS,
-        Some(status @ 400..=499) => Some(status),
-        _ => None,
-    };
-    named(SERVER_ERRORS)
-        .or(unnamed_client_status)
-        .unwrap_or(UNKNOWN_ERROR_STATUS)
+        Some(REQUEST_TIMEOUT) => GATEWAY_TIMEOUT,
+        Some(status @ 400..=499) => status,
+        _ => UNKNOWN_ERROR_STATUS,
+    }
 }
 
 #[cfg(test)]

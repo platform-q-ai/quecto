@@ -444,3 +444,59 @@ fn every_billing_name_is_billing_everywhere() {
         }
     }
 }
+
+/// #2155 PR review: a typed server error wins over a known numeric 4xx, so
+/// the chunk is retried; a client type still wins over a numeric 5xx (#935).
+#[test]
+fn a_typed_server_error_wins_over_a_numeric_client_code() {
+    use crate::domain::error::DomainError;
+    use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+    for (error, status, class) in [
+        (
+            serde_json::json!({"type": "server_error", "code": 400}),
+            500,
+            ProviderErrorClass::Server,
+        ),
+        (
+            serde_json::json!({"type": "api_error", "code": 404}),
+            500,
+            ProviderErrorClass::Server,
+        ),
+        (
+            serde_json::json!({"type": "timeout_error", "code": 422}),
+            504,
+            ProviderErrorClass::Server,
+        ),
+        (
+            serde_json::json!({"type": "invalid_request_error", "code": 503}),
+            400,
+            ProviderErrorClass::Client,
+        ),
+    ] {
+        let value = serde_json::json!({ "error": error });
+        assert_eq!(chunk_status(value.clone()), status, "{value}");
+        let classified =
+            classify_provider_error(&DomainError::Provider(openai_stream_error(&value)));
+        assert_eq!(classified, class, "{value}");
+        assert_eq!(
+            classified.is_retryable(),
+            class == ProviderErrorClass::Server,
+            "{value}"
+        );
+    }
+}
+
+/// #2155 PR review: a bare numeric 402 (OpenRouter's "Insufficient
+/// credits") is a billing failure: never retried.
+#[test]
+fn a_bare_numeric_402_chunk_is_billing() {
+    use crate::domain::error::DomainError;
+    use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+    let value = serde_json::json!({"error": {"code": 402, "message": "Insufficient credits"}});
+    assert_eq!(chunk_status(value.clone()), 402);
+    assert!(!super::is_throttle_chunk(&value));
+    assert_eq!(
+        classify_provider_error(&DomainError::Provider(openai_stream_error(&value))),
+        ProviderErrorClass::Billing
+    );
+}

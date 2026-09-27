@@ -106,17 +106,34 @@ async fn check(error: serde_json::Value, post: bool, retries: bool) {
     ));
     // A retry resends the request unchanged; the malformed-request recovery
     // a client error goes to would change it (#2155).
-    let bodies: Vec<_> = server
+    let bodies: Vec<serde_json::Value> = server
         .received_requests()
         .await
         .unwrap()
         .into_iter()
-        .map(|request| request.body)
+        .map(|request| serde_json::from_slice(&request.body).unwrap())
         .collect();
+    match retries {
+        true => assert!(bodies.len() >= 2, "a retry sends again: {}", bodies.len()),
+        false => assert_eq!(bodies.len(), 1, "no retry sends once"),
+    }
     assert!(
-        bodies.windows(2).all(|pair| pair[0] == pair[1]),
+        bodies.iter().all(|body| body == &bodies[0]),
         "a retry resends the request unchanged"
     );
+    // Every request sent is the original: its conversation ends with the
+    // user's message, never with feedback appended by a recovery.
+    for body in &bodies {
+        let last = body["messages"]
+            .as_array()
+            .and_then(|messages| messages.last())
+            .expect("a chat request carries messages");
+        assert_eq!(
+            (last["role"].as_str(), last["content"].as_str()),
+            (Some("user"), Some("hello")),
+            "{body}"
+        );
+    }
 }
 fn rate_limit(code: Option<&str>) -> serde_json::Value {
     let message = if code.is_some() {

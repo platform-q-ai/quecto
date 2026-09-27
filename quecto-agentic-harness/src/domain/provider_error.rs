@@ -36,6 +36,8 @@ impl ProviderErrorClass {
     pub fn from_status(status: u16) -> Self {
         match status {
             401 | 403 => Self::Auth,
+            // Payment required: a billing failure, never retried (#2155).
+            402 => Self::Billing,
             429 => Self::RateLimit,
             400 | 404 | 405 | 406 | 409 | 410 | 422 => Self::Client,
             500 | 502 | 503 | 504 | 529 => Self::Server,
