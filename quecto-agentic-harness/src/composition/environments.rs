@@ -168,7 +168,8 @@ pub fn build_environment_registry(
 
 /// Print a session's restore account. The report already holds only what
 /// this session speaks for (#2247 round 2 L4): the restore routed another
-/// session's retained, uncorrected or unforgotten records to the debug log.
+/// session's retained, unverified, uncorrected or unforgotten records to the
+/// debug log.
 fn report_restore(report: &RestoredRegistry) {
     if let Some(read_error) = &report.read_error {
         // The session starts with an empty registry and every container
@@ -277,3 +278,7 @@ impl EnvironmentMemberShutdown for NoReachableMembers {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "environments_tests.rs"]
+mod tests;

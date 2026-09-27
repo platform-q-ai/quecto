@@ -158,3 +158,31 @@ fn what_an_observing_restore_would_write_is_reported_to_its_audience_only() {
         assert_eq!(report.diagnostics, expected, "{session} {audience:?}");
     }
 }
+
+/// #2247 review F2: a record the runtime cannot answer about, or a kill in
+/// flight, is reported unverified only to its audience.
+#[test]
+fn an_unverified_record_is_reported_to_its_audience_only() {
+    for ((session, audience), spoken) in audiences() {
+        let report = restore_as(
+            store_with(vec![
+                record("C1", EnvironmentStatus::Running),
+                record("C2", EnvironmentStatus::Killing),
+            ]),
+            process(|_| EnvironmentLiveness::Unknown("inspect timed out".into())),
+            Arc::new(FakeHosted {
+                by_ref: Mutex::new(vec![]),
+                asked: Mutex::new(vec![]),
+            }),
+            (session, RestoreMode::Correct, audience),
+        );
+        let expected: Vec<(String, String)> = match spoken {
+            true => vec![
+                ("C1".into(), "inspect timed out".into()),
+                ("C2".into(), super::KILL_IN_FLIGHT.into()),
+            ],
+            false => vec![],
+        };
+        assert_eq!(report.unverified, expected, "{session} {audience:?}");
+    }
+}

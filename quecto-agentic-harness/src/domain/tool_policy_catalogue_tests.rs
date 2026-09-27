@@ -39,6 +39,7 @@ fn a_misspelt_bundled_id_or_a_non_stable_id_is_unknown() {
         "tool.name.v0:bash",
         "tool.v1:uds:10:uds:runtime:bash",
         "tool.v1:plugin:3:ext:bash",
+        "tool.v1:bundled-native:021:quecto:official-tools:bash",
         "",
     ] {
         assert_eq!(

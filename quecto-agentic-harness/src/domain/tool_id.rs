@@ -91,11 +91,7 @@ pub fn parse_stable_tool_id(id: &str) -> Option<StableToolId<'_>> {
     let (label, rest) = rest.split_once(':')?;
     let source = ToolSource::parse(label)?;
     let (length, rest) = rest.split_once(':')?;
-    let length = length
-        .bytes()
-        .all(|byte| byte.is_ascii_digit())
-        .then(|| length.parse::<usize>().ok())
-        .flatten()?;
+    let length = canonical_length(length)?;
     let provider_id = rest.get(..length).filter(|provider| !provider.is_empty())?;
     let name = rest.get(length..)?.strip_prefix(':')?;
     let name_allowed = !name.is_empty()
@@ -113,6 +109,17 @@ pub fn parse_stable_tool_id(id: &str) -> Option<StableToolId<'_>> {
         "a parsed stable id is exactly the id its parts mint"
     );
     Some(parsed)
+}
+
+/// A provider-id length as [`stable_tool_id`] writes it, and only so
+/// (#2247 review F1): `[1-9][0-9]*` — no leading zero, sign or blank, and
+/// never `0` (a provider id is not empty). A padded `021` would name the
+/// same parts as `21` under a different id.
+fn canonical_length(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let canonical = matches!(bytes.first(), Some(b'1'..=b'9'))
+        && bytes.iter().all(|byte| byte.is_ascii_digit());
+    canonical.then(|| text.parse().ok()).flatten()
 }
 
 pub fn legacy_name_tool_id(name: &str) -> String {

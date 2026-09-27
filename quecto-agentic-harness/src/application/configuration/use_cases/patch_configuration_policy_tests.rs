@@ -36,6 +36,8 @@ fn a_set_refuses_an_entry_that_is_not_a_stable_id() {
         "native:bash",
         "tool.name.v0:bash",
         "tool.v1:bundled-native:21:quecto:official-tools:bash.scope",
+        // A zero-padded length is not the id the tool registers under.
+        "tool.v1:bundled-native:021:quecto:official-tools:bash",
     ] {
         let key_path = format!("tools.policy.entries.{entry_id}");
         let error = use_case

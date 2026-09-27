@@ -218,7 +218,7 @@ fn live_records_are_restored_without_members_gone_ones_stopped_and_unknown_kept(
         other => panic!("stopped records are never inspected: {other}"),
     });
     let (registry, report) =
-        RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:two");
+        RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:one");
     assert_eq!(report.restored, ["C1"]);
     assert_eq!(report.stopped, ["C2"]);
     assert_eq!(
@@ -226,7 +226,7 @@ fn live_records_are_restored_without_members_gone_ones_stopped_and_unknown_kept(
         [("C3".to_string(), "script missing".to_string())]
     );
     assert!(report.diagnostics.is_empty());
-    assert_eq!(registry.session(), "cli:two");
+    assert_eq!(registry.session(), "cli:one");
     assert!(registry.is_durable());
     let c1 = registry.get("C1").unwrap();
     assert_eq!(c1.origin, EnvironmentOrigin::Restored);
@@ -268,7 +268,8 @@ fn live_records_are_restored_without_members_gone_ones_stopped_and_unknown_kept(
 fn a_kill_in_flight_is_reported_not_relabelled_and_an_explicit_kill_retries_it() {
     let store = store_with(vec![record("C1", EnvironmentStatus::Killing)]);
     let process = process(|_| panic!("a killing record is not inspected"));
-    let (registry, report) = RestoreRegistry::new(store.clone(), process, no_hosted()).execute("s");
+    let (registry, report) =
+        RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:one");
     assert!(report.restored.is_empty(), "{report:?}");
     assert_eq!(report.unverified.len(), 1, "{report:?}");
     assert_eq!(report.unverified[0].0, "C1");
@@ -458,7 +459,8 @@ fn a_correction_another_session_overtook_is_not_written_and_their_state_is_seede
 fn a_retained_record_whose_container_exited_stays_retained_and_is_reported() {
     let store = store_with(vec![record("C1", EnvironmentStatus::Retained)]);
     let process = process(|_| EnvironmentLiveness::Gone);
-    let (registry, report) = RestoreRegistry::new(store.clone(), process, no_hosted()).execute("s");
+    let (registry, report) =
+        RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:one");
     assert!(report.stopped.is_empty(), "{report:?}");
     assert!(report.restored.is_empty(), "{report:?}");
     assert_eq!(
@@ -476,7 +478,7 @@ fn a_retained_record_whose_container_exited_stays_retained_and_is_reported() {
     // A retained record whose container still runs is restored as live.
     let store = store_with(vec![record("C2", EnvironmentStatus::Retained)]);
     let live = self::process(|_| EnvironmentLiveness::Running);
-    let (_, report) = RestoreRegistry::new(store, live, no_hosted()).execute("s");
+    let (_, report) = RestoreRegistry::new(store, live, no_hosted()).execute("cli:one");
     assert_eq!(report.restored, ["C2"]);
 }
 

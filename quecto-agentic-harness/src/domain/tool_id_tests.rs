@@ -145,6 +145,14 @@ fn only_the_stable_id_grammar_parses() {
         "tool.v1:bundled-native:21:quecto:official-tools",
         "tool.v1:bundled-native:3:é:bash",
         "tool.v1:bundled-native:1:é:bash",
+        // Only the canonical length text `stable_tool_id` mints: no leading
+        // zero, sign or blank (#2247 review F1).
+        "tool.v1:bundled-native:021:quecto:official-tools:bash",
+        "tool.v1:bundled-native:0021:quecto:official-tools:bash",
+        "tool.v1:bundled-native:03:web:web_search",
+        "tool.v1:bundled-native: 21:quecto:official-tools:bash",
+        "tool.v1:bundled-native:-21:quecto:official-tools:bash",
+        "tool.v1:bundled-native:0:x:bash",
     ] {
         assert_eq!(parse_stable_tool_id(id), None, "{id:?}");
     }

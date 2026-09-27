@@ -299,9 +299,9 @@ impl RestoreRegistry {
             let loaded_status = record.status.clone();
             let loaded_label = record.status_label();
             let mut judged = record;
-            let retained_before = report.retained.len();
+            let noted_before = (report.retained.len(), report.unverified.len());
             let corrected = self.judge(&mut judged, report);
-            withhold_unspoken_retained(report, retained_before, spoken);
+            withhold_unspoken_notes(report, noted_before, spoken);
             if !corrected {
                 restored.push(judged);
                 continue;
@@ -573,15 +573,26 @@ fn tell(report: &mut RestoredRegistry, line: String, spoken: bool) {
     }
 }
 
-/// The `retained` notes judging one record added from `from` on: kept when
-/// the restore speaks for it, else moved to the debug log.
-fn withhold_unspoken_retained(report: &mut RestoredRegistry, from: usize, spoken: bool) {
-    debug_assert!(from <= report.retained.len(), "notes are only appended");
+/// The `retained` and `unverified` notes judging one record added from
+/// `from` on: kept when the restore speaks for it, else moved to the debug
+/// log (#2247 review F2) — another session's to report.
+fn withhold_unspoken_notes(
+    report: &mut RestoredRegistry,
+    (retained_from, unverified_from): (usize, usize),
+    spoken: bool,
+) {
+    debug_assert!(
+        retained_from <= report.retained.len() && unverified_from <= report.unverified.len(),
+        "notes are only appended"
+    );
     match spoken {
         true => {}
         false => {
-            for (environment_ref, reason) in report.retained.drain(from..) {
+            for (environment_ref, reason) in report.retained.drain(retained_from..) {
                 tracing::debug!(target: "environments", environment_ref, %reason, "retained at restore");
+            }
+            for (environment_ref, reason) in report.unverified.drain(unverified_from..) {
+                tracing::debug!(target: "environments", environment_ref, %reason, "restored environment could not be verified against the runtime");
             }
         }
     }
