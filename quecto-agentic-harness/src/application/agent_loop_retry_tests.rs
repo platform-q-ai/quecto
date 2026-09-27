@@ -402,3 +402,123 @@ async fn long_reset_horizon_prevents_stream_initiation_retry() {
     );
     assert_eq!(provider.request_count(), 1);
 }
+
+/// #2210 review: a stream the provider stopped sending is re-initiated once,
+/// not to the full budget, and the failure says what happened rather than
+/// blaming connectivity.
+#[tokio::test]
+async fn a_stalled_stream_is_retried_once_with_its_own_guidance() {
+    use crate::domain::provider::StreamEvent;
+    use crate::domain::provider_error::STREAM_IDLE_TIMEOUT;
+    let stall = format!(
+        "{STREAM_IDLE_TIMEOUT}the provider sent nothing for 300 s; the request was abandoned"
+    );
+    let provider = Arc::new(MockStreamingProvider::new(vec![
+        vec![StreamEvent::Error(stall.clone())],
+        vec![StreamEvent::Error(stall.clone())],
+        vec![StreamEvent::Done(text_response("too late"))],
+    ]));
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: provider.clone(),
+        tool_registry: Box::new(MockRegistry::default()),
+        model: "test".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        retention: None,
+        session_key: "stall-retry-test".into(),
+        context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: true,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+    })
+    .with_max_tool_iterations(1);
+
+    let err = agent
+        .process(&mut vec![Message::user("hello")])
+        .await
+        .unwrap_err()
+        .to_string();
+    assert_eq!(provider.request_count(), 2, "one retry only");
+    assert!(err.contains(&stall), "{err}");
+    assert!(
+        err.contains("Stalled: the provider stopped sending"),
+        "{err}"
+    );
+    assert!(!err.contains("check connectivity"), "{err}");
+    assert!(!err.contains("retried"), "claims only what is known: {err}");
+}
+
+fn streaming_agent(provider: Arc<MockStreamingProvider>) -> AgentLoopImpl {
+    AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(MockRegistry::default()),
+        model: "test".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        retention: None,
+        session_key: "stall-test".into(),
+        context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: true,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+    })
+    .with_max_tool_iterations(1)
+}
+
+/// #2210 review: a stall after output began is never replayed, and the
+/// failure claims no retry.
+#[tokio::test]
+async fn a_stall_after_output_is_not_retried_and_claims_no_retry() {
+    use crate::domain::provider::StreamEvent;
+    use crate::domain::provider_error::STREAM_IDLE_TIMEOUT;
+    let stall = format!("{STREAM_IDLE_TIMEOUT}the provider sent nothing for 300 s");
+    let provider = Arc::new(MockStreamingProvider::new(vec![vec![
+        StreamEvent::TextDelta("partial".to_string()),
+        StreamEvent::Error(stall.clone()),
+    ]]));
+    let mut agent = streaming_agent(provider.clone());
+    let err = agent
+        .process(&mut vec![Message::user("hello")])
+        .await
+        .unwrap_err()
+        .to_string();
+    assert_eq!(provider.request_count(), 1);
+    assert!(
+        err.contains("Stalled: the provider stopped sending"),
+        "{err}"
+    );
+    assert!(!err.contains("retried"), "{err}");
+}
+
+/// #2210 review: the stall cap counts stalls, not attempts: a stall after
+/// a network failure is still re-initiated once, within the budget.
+#[tokio::test]
+async fn a_stall_after_a_network_failure_is_still_retried_once() {
+    use crate::domain::provider::StreamEvent;
+    use crate::domain::provider_error::STREAM_IDLE_TIMEOUT;
+    let stall = format!("{STREAM_IDLE_TIMEOUT}the provider sent nothing for 300 s");
+    let provider = Arc::new(MockStreamingProvider::new(vec![
+        vec![StreamEvent::Error("connection reset by peer".to_string())],
+        vec![StreamEvent::Error(stall)],
+        vec![StreamEvent::Done(text_response("recovered"))],
+    ]));
+    let mut agent = streaming_agent(provider.clone());
+    let result = agent
+        .process(&mut vec![Message::user("hello")])
+        .await
+        .unwrap();
+    assert_eq!(result.response, "recovered");
+    assert_eq!(provider.request_count(), 3);
+}

@@ -80,6 +80,7 @@ mod transport_tests {
             protocol: ProtocolObserver::new(Profile::new(
                 Vendor::Codex,
                 crate::infrastructure::providers::attempt_profile::Surface::Assembled,
+                Default::default(),
             )),
         };
         observer.push(
@@ -118,7 +119,7 @@ mod transport_tests {
             .await;
         let gate: Arc<dyn AttemptAdmission> = Arc::new(Gate);
         let surface = crate::infrastructure::providers::attempt_profile::Surface::Assembled;
-        let profile = Profile::new(Vendor::OpenAi, surface);
+        let profile = Profile::new(Vendor::OpenAi, surface, Default::default());
         let refuse =
             |_: &str| -> Result<(), DomainError> { Err(DomainError::Provider("bad".into())) };
         let accept = |_: &str| -> Result<(), DomainError> { Ok(()) };
@@ -176,6 +177,7 @@ mod transport_tests {
                 &mut response,
                 &tx,
                 &mut ReadingHandler,
+                Default::default(),
             )
             .await;
             drop(tx);
@@ -326,6 +328,7 @@ mod transport_tests {
                 Profile::new(
                     Vendor::Codex,
                     crate::infrastructure::providers::attempt_profile::Surface::Incremental,
+                    Default::default(),
                 ),
                 tx,
                 DoneHandler,
@@ -373,6 +376,7 @@ mod transport_tests {
                 Profile::new(
                     Vendor::OpenAi,
                     crate::infrastructure::providers::attempt_profile::Surface::Incremental,
+                    Default::default(),
                 ),
                 tx,
                 RefusingHandler,
@@ -431,6 +435,7 @@ mod transport_tests {
                 Profile::new(
                     Vendor::Codex,
                     crate::infrastructure::providers::attempt_profile::Surface::Assembled,
+                    Default::default(),
                 ),
                 |_| Ok(()),
             )

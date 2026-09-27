@@ -139,6 +139,8 @@ pub trait SseHandler: Send {
 /// - Guard against unbounded line growth ([`MAX_SSE_LINE_BYTES`])
 /// - UTF-8 decoding of complete lines (skipping malformed lines)
 /// - Stream read errors (emitted as `StreamEvent::Error`)
+/// - A stream silent for the whole `idle` bound (emitted as the idle error,
+///   #2210): each read waits at most that long for the next bytes
 /// - Clean EOF (delegates to `handler.on_eof()`)
 ///
 /// Lines are right-trimmed only (`\n`, `\r`), not fully trimmed, per the
@@ -148,17 +150,22 @@ pub async fn pump_sse<H: SseHandler>(
     response: &mut reqwest::Response,
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     handler: &mut H,
+    idle: super::stream_idle::StreamIdle,
 ) {
     let mut carry: Vec<u8> = Vec::new();
 
     loop {
-        let bytes = match response.chunk().await {
-            Ok(Some(b)) => b,
-            Ok(None) => break,
-            Err(e) => {
+        let bytes = match idle.within(response.chunk()).await {
+            Ok(Ok(Some(b))) => b,
+            Ok(Ok(None)) => break,
+            Ok(Err(e)) => {
                 let _ = tx
                     .send(StreamEvent::Error(format!("stream read error: {e}")))
                     .await;
+                return;
+            }
+            Err(silent) => {
+                let _ = tx.send(StreamEvent::Error(silent.to_string())).await;
                 return;
             }
         };
@@ -270,7 +277,7 @@ mod pump_tests {
             done_on: None,
         };
 
-        pump_sse(&mut response, &tx, &mut handler).await;
+        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
 
         assert_eq!(
             *lines.lock().unwrap(),
@@ -295,7 +302,7 @@ mod pump_tests {
             done_on: Some("stop".into()),
         };
 
-        pump_sse(&mut response, &tx, &mut handler).await;
+        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
 
         assert_eq!(
             *lines.lock().unwrap(),
@@ -318,7 +325,7 @@ mod pump_tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
         let mut handler = RecordingHandler::default();
 
-        pump_sse(&mut response, &tx, &mut handler).await;
+        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
 
         assert!(
             matches!(rx.recv().await, Some(StreamEvent::Error(message)) if message.contains("exceeds"))
@@ -343,7 +350,7 @@ mod pump_tests {
             done_on: None,
         };
 
-        pump_sse(&mut response, &tx, &mut handler).await;
+        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
 
         assert_eq!(lines.lock().unwrap().len(), 3);
         assert!(matches!(rx.recv().await, Some(StreamEvent::TextDelta(eof)) if eof == "eof"));
@@ -362,7 +369,7 @@ mod pump_tests {
             done_on: None,
         };
 
-        pump_sse(&mut response, &tx, &mut handler).await;
+        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
 
         assert_eq!(*lines.lock().unwrap(), vec!["ok".to_string()]);
         assert!(
@@ -388,7 +395,7 @@ mod pump_tests {
             done_on: None,
         };
 
-        pump_sse(&mut response, &tx, &mut handler).await;
+        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
 
         assert_eq!(*lines.lock().unwrap(), vec!["ok".to_string()]);
         assert!(matches!(rx.recv().await, Some(StreamEvent::TextDelta(text)) if text == "eof"));
@@ -451,7 +458,7 @@ mod pump_w5_cov_tests {
             lines: lines.clone(),
         };
 
-        pump_sse(&mut response, &tx, &mut handler).await;
+        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
 
         assert_eq!(
             *lines.lock().expect("lines mutex is not poisoned"),

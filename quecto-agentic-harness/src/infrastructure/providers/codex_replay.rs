@@ -13,6 +13,7 @@ use crate::domain::message::{LlmResponse, Message, ThinkingBlock};
 use crate::domain::provider::{CancelFlag, StreamEvent};
 use crate::domain::request_observation::RequestTrace;
 use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
+use crate::infrastructure::providers::stream_idle::BodyError;
 
 /// Everything one request's sends share.
 #[derive(Clone)]
@@ -100,7 +101,7 @@ impl CodexProvider {
                 call.trace.clone(),
                 call.cancel.as_ref(),
                 builder,
-                Profile::new(Vendor::Codex, Surface::Assembled),
+                Profile::new(Vendor::Codex, Surface::Assembled, self.stream_idle),
                 |raw| {
                     let mut parsed = Self::parse_sse_response(raw)?;
                     Self::finish_response(&mut parsed, &call.model, &call.origin);
@@ -109,23 +110,28 @@ impl CodexProvider {
             )
             .await;
         }
-        let resp = builder.send().await.map_err(|e| {
-            DomainError::Provider(format!(
-                "Codex request failed: {}",
-                super::super::sse_common::format_send_error(&e)
-            ))
-        })?;
+        let idle = self.stream_idle;
+        let resp = match idle.within(builder.send()).await {
+            Ok(sent) => sent.map_err(|e| {
+                DomainError::Provider(format!(
+                    "Codex request failed: {}",
+                    super::super::sse_common::format_send_error(&e)
+                ))
+            })?,
+            Err(silent) => return Err(DomainError::Provider(silent.to_string())),
+        };
         let status = resp.status().as_u16();
         if status != 200 {
-            let error_body = resp.text().await.unwrap_or_default();
+            let error_body =
+                crate::infrastructure::providers::stream_idle::error_text(idle.text(resp).await);
             return Err(DomainError::Provider(format!(
                 "HTTP {status} from Codex: {error_body}"
             )));
         }
-        let raw = resp
-            .text()
-            .await
-            .map_err(|e| DomainError::Provider(format!("failed to read response: {e}")))?;
+        let raw = idle.text(resp).await.map_err(|e| match e {
+            BodyError::Idle(silent) => DomainError::Provider(silent.to_string()),
+            BodyError::Read(e) => DomainError::Provider(format!("failed to read response: {e}")),
+        })?;
         let mut parsed = Self::parse_sse_response(&raw)?;
         Self::finish_response(&mut parsed, &call.model, &call.origin);
         Ok(parsed)
@@ -188,7 +194,7 @@ impl CodexProvider {
                     gate,
                     (call.trace.clone(), call.cancel.as_ref()),
                     builder,
-                    Profile::new(Vendor::Codex, Surface::Incremental),
+                    Profile::new(Vendor::Codex, Surface::Incremental, self.stream_idle),
                     tx,
                     handler,
                 )

@@ -24,9 +24,9 @@ fn message(error: DomainError) -> String {
 #[tokio::test]
 async fn each_vendor_keeps_its_own_send_and_read_error_wording() {
     let error = send_error().await;
-    let openai = Profile::new(Vendor::OpenAi, Surface::Chat);
-    let codex = Profile::new(Vendor::Codex, Surface::Incremental);
-    let anthropic = Profile::new(Vendor::Anthropic, Surface::Assembled);
+    let openai = Profile::new(Vendor::OpenAi, Surface::Chat, Default::default());
+    let codex = Profile::new(Vendor::Codex, Surface::Incremental, Default::default());
+    let anthropic = Profile::new(Vendor::Anthropic, Surface::Assembled, Default::default());
     assert_eq!(openai.name(), "OpenAI");
     assert_eq!(codex.name(), "Codex");
     assert_eq!(anthropic.name(), "Anthropic");
@@ -53,7 +53,9 @@ async fn each_vendor_keeps_its_own_send_and_read_error_wording() {
         format!("failed to read stream: {error}")
     );
     assert_eq!(
-        message(Profile::new(Vendor::Anthropic, Surface::Chat).read_error(&error)),
+        message(
+            Profile::new(Vendor::Anthropic, Surface::Chat, Default::default()).read_error(&error)
+        ),
         format!("failed to read response: {error}")
     );
     assert_eq!(
@@ -64,11 +66,16 @@ async fn each_vendor_keeps_its_own_send_and_read_error_wording() {
 
 #[test]
 fn the_chat_surfaces_of_openai_and_anthropic_are_strict_about_error_bodies() {
-    assert!(Profile::new(Vendor::OpenAi, Surface::Chat).strict_error_body());
-    assert!(Profile::new(Vendor::Anthropic, Surface::Chat).strict_error_body());
-    assert!(!Profile::new(Vendor::Codex, Surface::Chat).strict_error_body());
-    assert!(!Profile::new(Vendor::OpenAi, Surface::Incremental).strict_error_body());
-    assert!(!Profile::new(Vendor::Anthropic, Surface::Assembled).strict_error_body());
+    assert!(Profile::new(Vendor::OpenAi, Surface::Chat, Default::default()).strict_error_body());
+    assert!(Profile::new(Vendor::Anthropic, Surface::Chat, Default::default()).strict_error_body());
+    assert!(!Profile::new(Vendor::Codex, Surface::Chat, Default::default()).strict_error_body());
+    assert!(
+        !Profile::new(Vendor::OpenAi, Surface::Incremental, Default::default()).strict_error_body()
+    );
+    assert!(
+        !Profile::new(Vendor::Anthropic, Surface::Assembled, Default::default())
+            .strict_error_body()
+    );
 }
 
 #[test]
@@ -113,4 +120,26 @@ fn the_openai_stream_error_status_comes_from_typed_fields_never_the_message() {
         rendered.ends_with(r#"OpenAI stream error: {"error":{"type":"rate_limit_error"}}"#),
         "{rendered}"
     );
+}
+
+/// #2210: only a streaming reply's steps are bounded, by the provider's own
+/// bound; a whole non-streaming reply sends nothing until complete.
+#[tokio::test(start_paused = true)]
+async fn only_streaming_surfaces_bound_a_silent_step() {
+    use crate::infrastructure::providers::stream_idle::{STREAM_IDLE_LIMIT, StreamIdle};
+    use std::time::Duration;
+    let bound = StreamIdle::new(Duration::from_secs(5));
+    for (surface, streams) in [
+        (Surface::Chat, false),
+        (Surface::Assembled, true),
+        (Surface::Incremental, true),
+    ] {
+        let profile = Profile::new(Vendor::Codex, surface, Default::default());
+        assert_eq!(profile.idle.limit(), STREAM_IDLE_LIMIT);
+        let profile = Profile::new(Vendor::Codex, surface, bound);
+        assert_eq!(profile.idle, bound);
+        assert_eq!(profile.streams(), streams);
+        let late = tokio::time::sleep(Duration::from_secs(6));
+        assert_eq!(profile.within(late).await.is_ok(), !streams, "{streams}");
+    }
 }

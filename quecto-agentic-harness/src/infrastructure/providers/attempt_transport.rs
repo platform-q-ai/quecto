@@ -264,47 +264,6 @@ async fn run<T, F: Future<Output = Result<T, DomainError>>>(
     }
 }
 
-async fn send(
-    builder: reqwest::RequestBuilder,
-    receipt: &Receipt,
-    profile: Profile,
-) -> Result<reqwest::Response, DomainError> {
-    let response = builder.send().await.map_err(|error| {
-        receipt.termination(Termination::SendError);
-        profile.send_error(&error)
-    })?;
-    receipt.headers(&response);
-    Ok(response)
-}
-async fn error_body(
-    response: reqwest::Response,
-    receipt: &Receipt,
-    profile: Profile,
-) -> DomainError {
-    let status = response.status().as_u16();
-    let suffix = profile.suffix(response.headers());
-    let text = match response.text().await {
-        Ok(text) => text,
-        Err(error) if profile.strict_error_body() => {
-            receipt.termination(Termination::ReadError);
-            return profile.read_error(&error);
-        }
-        Err(_) => {
-            receipt.termination(Termination::ReadError);
-            String::new()
-        }
-    };
-    if receipt.0.lock().unwrap().diagnostics.termination == Termination::Dropped {
-        receipt.termination(Termination::HttpError);
-    }
-    receipt.http_error(status, &text);
-    let text = profile.error_body(text);
-    DomainError::Provider(format!(
-        "HTTP {status} from {}: {text}{suffix}",
-        profile.name()
-    ))
-}
-
 pub(super) async fn text<T>(
     gate: &Arc<dyn AttemptAdmission>,
     trace: Option<Arc<RequestTrace>>,
@@ -314,14 +273,21 @@ pub(super) async fn text<T>(
     parse: impl FnOnce(&str) -> Result<T, DomainError>,
 ) -> Result<T, DomainError> {
     run(gate, trace, cancel, None, |receipt| async move {
-        let response = send(builder, &receipt, profile).await?;
-        if response.status().as_u16() != 200 {
-            return Err(error_body(response, &receipt, profile).await);
-        }
-        let body = response.text().await.map_err(|e| {
-            receipt.termination(Termination::ReadError);
-            DomainError::Provider(format!("failed to read response: {e}"))
-        })?;
+        // A whole reply sends nothing until complete: bounded in total.
+        let read = async {
+            let response = diagnostic_sse::send(builder, &receipt, profile).await?;
+            if response.status().as_u16() != 200 {
+                return Err(diagnostic_sse::error_body(response, &receipt, profile).await);
+            }
+            response.text().await.map_err(|e| {
+                receipt.termination(Termination::ReadError);
+                DomainError::Provider(format!("failed to read response: {e}"))
+            })
+        };
+        let body = match profile.idle.whole(read).await {
+            Ok(body) => body?,
+            Err(late) => return Err(receipt.timed_out(late)),
+        };
         receipt.accepted(parse(&body), Termination::Completed)
     })
     .await
@@ -339,9 +305,9 @@ pub(super) async fn assembled<T>(
     parse: impl FnOnce(&str) -> Result<T, DomainError>,
 ) -> Result<T, DomainError> {
     run(gate, trace, cancel, None, |receipt| async move {
-        let mut response = send(builder, &receipt, profile).await?;
+        let mut response = diagnostic_sse::send(builder, &receipt, profile).await?;
         if response.status().as_u16() != 200 {
-            return Err(error_body(response, &receipt, profile).await);
+            return Err(diagnostic_sse::error_body(response, &receipt, profile).await);
         }
         let mut body = Vec::new();
         let mut observer = LineObserver {
@@ -349,10 +315,16 @@ pub(super) async fn assembled<T>(
             carry: Vec::new(),
             oversized: false,
         };
-        while let Some(bytes) = response.chunk().await.map_err(|error| {
-            receipt.termination(Termination::ReadError);
-            profile.read_error(&error)
-        })? {
+        loop {
+            let bytes = match profile.within(response.chunk()).await {
+                Ok(Ok(Some(bytes))) => bytes,
+                Ok(Ok(None)) => break,
+                Ok(Err(error)) => {
+                    receipt.termination(Termination::ReadError);
+                    return Err(profile.read_error(&error));
+                }
+                Err(silent) => return Err(receipt.idle(silent)),
+            };
             observer.push(&bytes, &receipt);
             body.extend_from_slice(&bytes);
         }
@@ -662,9 +634,9 @@ pub(super) async fn stream<H: SseHandler>(
     let (trace, cancel) = observation;
     let output = tx.clone();
     let result = run(gate, trace, cancel, Some(&tx), |receipt| async move {
-        let mut response = send(builder, &receipt, profile).await?;
+        let mut response = diagnostic_sse::send(builder, &receipt, profile).await?;
         if response.status().as_u16() != 200 {
-            return Err(error_body(response, &receipt, profile).await);
+            return Err(diagnostic_sse::error_body(response, &receipt, profile).await);
         }
         let mut handler = ObservedHandler {
             inner: handler,
@@ -674,7 +646,8 @@ pub(super) async fn stream<H: SseHandler>(
         };
         let (local_tx, rx) = tokio::sync::mpsc::channel(1);
         let pump = async {
-            diagnostic_sse::pump_sse(&receipt, &mut response, &local_tx, &mut handler).await;
+            let idle = profile.idle;
+            diagnostic_sse::pump_sse(&receipt, &mut response, &local_tx, &mut handler, idle).await;
             drop(local_tx);
         };
         let (_, terminal) = tokio::join!(pump, forward(rx, &output, &receipt));

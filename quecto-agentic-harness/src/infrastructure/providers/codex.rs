@@ -54,6 +54,8 @@ pub struct CodexProvider {
     /// which must never reach a session file, not even as a digest (#2162
     /// swarm review). Empty for ChatGPT OAuth, whose account identifies it.
     key_origin: String,
+    /// The bound on a silent streaming reply (#2210).
+    stream_idle: super::stream_idle::StreamIdle,
 }
 
 impl CodexProvider {
@@ -93,6 +95,7 @@ impl CodexProvider {
             attempt_admission: None,
             replay_refused: Default::default(),
             key_origin: String::new(),
+            stream_idle: Default::default(),
             auth: ResponsesAuth::ChatGptOAuth { account_id },
         }
     }
@@ -111,6 +114,7 @@ impl CodexProvider {
             attempt_admission: None,
             replay_refused: Default::default(),
             key_origin: uuid::Uuid::new_v4().to_string(),
+            stream_idle: Default::default(),
             auth: ResponsesAuth::ApiKey,
         }
     }
@@ -492,14 +496,12 @@ impl CodexProvider {
         session: Option<&str>,
         mut handler: CodexSseHandler,
     ) {
-        let mut response = match self
+        let builder = self
             .apply_headers(self.client.post(url), session)
-            .json(&body)
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
+            .json(&body);
+        let mut response = match self.stream_idle.within(builder.send()).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
                 let _ = tx
                     .send(StreamEvent::Error(format!(
                         "Codex request failed: {}",
@@ -508,11 +510,15 @@ impl CodexProvider {
                     .await;
                 return;
             }
+            Err(silent) => {
+                let _ = tx.send(StreamEvent::Error(silent.to_string())).await;
+                return;
+            }
         };
         let status = response.status().as_u16();
         if status != 200 {
-            let text =
-                super::sse_common::truncate_error_body(response.text().await.unwrap_or_default());
+            let read = self.stream_idle.text(response).await;
+            let text = super::sse_common::truncate_error_body(super::stream_idle::error_text(read));
             let _ = tx
                 .send(StreamEvent::Error(format!(
                     "HTTP {status} from Codex: {text}"
@@ -520,7 +526,7 @@ impl CodexProvider {
                 .await;
             return;
         }
-        super::sse_common::pump_sse(&mut response, &tx, &mut handler).await;
+        super::sse_common::pump_sse(&mut response, &tx, &mut handler, self.stream_idle).await;
     }
 
     #[cfg(test)]
@@ -529,7 +535,7 @@ impl CodexProvider {
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
     ) {
         let mut handler = CodexSseHandler::new();
-        super::sse_common::pump_sse(&mut response, &tx, &mut handler).await;
+        super::sse_common::pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
     }
 
     /// Public accessor for `parse_sse_response` (for BDD/integration tests).

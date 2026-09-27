@@ -100,7 +100,13 @@ async fn sync_credentials_to_manager(credentials_path: &std::path::Path) {
     if url.trim().is_empty() {
         return;
     }
+    let token = std::env::var("QUECTO_CREDENTIAL_SYNC_TOKEN").ok();
+    sync_credentials_to(&url, token, credentials_path).await;
+}
 
+/// Push the local `credentials.json` to the manager at `url`, abandoning the
+/// push after [`CREDENTIAL_SYNC_TIMEOUT`]; best-effort, as above.
+async fn sync_credentials_to(url: &str, token: Option<String>, credentials_path: &std::path::Path) {
     let credentials_json = match tokio::fs::read_to_string(credentials_path).await {
         Ok(contents) => contents,
         Err(e) => {
@@ -109,18 +115,8 @@ async fn sync_credentials_to_manager(credentials_path: &std::path::Path) {
         }
     };
 
-    let mut request = reqwest::Client::new()
-        .put(&url)
-        .json(&serde_json::json!({ "credentials_json": credentials_json }));
-
-    if let Ok(token) = std::env::var("QUECTO_CREDENTIAL_SYNC_TOKEN") {
-        let token = token.trim();
-        if !token.is_empty() {
-            request = request.bearer_auth(token);
-        }
-    }
-
-    match request.send().await {
+    let pushed = push_credentials(url, token, credentials_json, CREDENTIAL_SYNC_TIMEOUT).await;
+    match pushed {
         Ok(resp) if resp.status().is_success() => {
             tracing::info!("credential sync: pushed refreshed credentials to runtime manager");
         }
@@ -131,6 +127,29 @@ async fn sync_credentials_to_manager(credentials_path: &std::path::Path) {
             tracing::warn!(error = %e, "credential sync: request to manager failed");
         }
     }
+}
+
+/// How long pushing refreshed credentials to the runtime manager may take in
+/// all (#2210 review): it is a small local request, so ten seconds is ample,
+/// and a manager that never answers must not hold the refresh path for ever.
+const CREDENTIAL_SYNC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// PUT `credentials_json` to the manager at `url`, bearer-authenticated when
+/// a non-blank `token` is given, abandoning the request after `timeout`.
+async fn push_credentials(
+    url: &str,
+    token: Option<String>,
+    credentials_json: String,
+    timeout: std::time::Duration,
+) -> Result<reqwest::Response, reqwest::Error> {
+    let mut request = reqwest::Client::new()
+        .put(url)
+        .timeout(timeout)
+        .json(&serde_json::json!({ "credentials_json": credentials_json }));
+    if let Some(token) = token.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        request = request.bearer_auth(token);
+    }
+    request.send().await
 }
 
 /// Build a [`ProviderFactory`] that re-creates a provider with a new API key.

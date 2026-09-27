@@ -14,6 +14,10 @@ pub enum ProviderErrorClass {
     Server,
     /// Locally detected empty terminal stream, not an observed HTTP failure.
     EmptyStream,
+    /// The harness abandoned a reply the provider stopped sending (#2210):
+    /// a stream silent for its idle bound, or a whole reply over its total
+    /// bound. Retryable, but at most once ([`Self::max_failures`]).
+    Stalled,
     Client,
     Network,
     Cancelled,
@@ -38,8 +42,20 @@ impl ProviderErrorClass {
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            Self::RateLimit | Self::Server | Self::Network | Self::EmptyStream
+            Self::RateLimit | Self::Server | Self::Network | Self::EmptyStream | Self::Stalled
         )
+    }
+
+    /// The most failures of this class one request may meet before a retry
+    /// loop gives up, when the class is capped below the loop's own budget
+    /// ([`CappedFailures`] counts them). A stalled reply is retried once:
+    /// each stall costs its whole bound, and a provider that stalled once
+    /// tends to stall again (#2210 review).
+    pub fn max_failures(&self) -> Option<u32> {
+        match self {
+            Self::Stalled => Some(2),
+            _ => None,
+        }
     }
 
     pub fn as_str(&self) -> &'static str {
@@ -49,11 +65,35 @@ impl ProviderErrorClass {
             Self::Auth => "auth",
             Self::Server => "server",
             Self::EmptyStream => "empty_stream",
+            Self::Stalled => "stalled",
             Self::Client => "client",
             Self::Network => "network",
             Self::Cancelled => "cancelled",
             Self::Admission => "admission",
             Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// The failures one request has met of the capped class (#2210 review), so
+/// the cap counts stalls, never other classes' attempts. `Stalled` is the
+/// one class [`ProviderErrorClass::max_failures`] caps; the retry loop's own
+/// attempt budget still bounds the total.
+#[derive(Debug, Default)]
+pub struct CappedFailures {
+    stalls: u32,
+}
+
+impl CappedFailures {
+    /// Record a failure of `class`: whether its cap, if it has one, still
+    /// allows another attempt.
+    pub fn allows_another(&mut self, class: &ProviderErrorClass) -> bool {
+        match (class, class.max_failures()) {
+            (ProviderErrorClass::Stalled, Some(cap)) => {
+                self.stalls = self.stalls.saturating_add(1);
+                self.stalls < cap
+            }
+            _ => true,
         }
     }
 }
@@ -64,6 +104,13 @@ impl std::fmt::Display for ProviderErrorClass {
     }
 }
 
+/// How an abandoned silent stream's error begins (#2210): the provider sent
+/// nothing for the stream's idle bound.
+pub const STREAM_IDLE_TIMEOUT: &str = "stream idle timeout: ";
+/// How an abandoned whole reply's error begins (#2210 review): a
+/// non-streaming reply did not arrive within its total bound.
+pub const REPLY_TIMEOUT: &str = "reply timeout: ";
+
 pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
     let msg = match err {
         DomainError::Provider(msg) => msg.as_str(),
@@ -72,6 +119,13 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
 
     if msg.starts_with("stream completed without assistant output: synthetic=empty_stream") {
         return ProviderErrorClass::EmptyStream;
+    }
+
+    if [STREAM_IDLE_TIMEOUT, REPLY_TIMEOUT]
+        .iter()
+        .any(|prefix| msg.starts_with(prefix))
+    {
+        return ProviderErrorClass::Stalled;
     }
 
     if let Some(class) = classify_admission_error(msg) {

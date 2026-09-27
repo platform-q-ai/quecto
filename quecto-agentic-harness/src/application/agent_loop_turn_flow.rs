@@ -92,6 +92,7 @@ impl AgentLoopImpl {
 
         // Streaming initiation *is* retried here: the decorator forwards
         // `chat_stream` without retry, so this loop owns stream re-initiation.
+        let mut capped = crate::domain::provider_error::CappedFailures::default();
         for attempt in 1..=MAX_PROVIDER_ATTEMPTS {
             // The logical request was admitted above; only re-initiations
             // re-check, so streaming never pays a second first-attempt check.
@@ -120,7 +121,10 @@ impl AgentLoopImpl {
                 Ok(response) => return Ok(response),
                 Err(err) => {
                     let class = classify_provider_error(&err);
-                    if attempt == MAX_PROVIDER_ATTEMPTS || !class.is_retryable() {
+                    if attempt == MAX_PROVIDER_ATTEMPTS
+                        || !class.is_retryable()
+                        || !capped.allows_another(&class)
+                    {
                         return Err(enhance_provider_error(err));
                     }
                     tracing::warn!(

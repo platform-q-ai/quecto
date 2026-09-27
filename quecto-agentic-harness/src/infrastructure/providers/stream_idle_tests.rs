@@ -1,0 +1,291 @@
+//! #2210: a silent provider stream is abandoned after its idle bound; a
+//! slow one that keeps sending is not. Tests with sockets use a short bound
+//! in real time (a paused clock races loopback I/O); the rest pause it.
+use super::*;
+use crate::domain::error::DomainError;
+use crate::domain::provider::StreamEvent;
+use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+/// The bound for a stream that goes silent: short, as only its expiry is
+/// awaited.
+pub(crate) const SILENT: Duration = Duration::from_millis(200);
+/// The bound for a stream that keeps sending: far longer than its gaps, so
+/// a loaded machine never mistakes a gap for silence.
+pub(crate) const LIVE: Duration = Duration::from_millis(1500);
+/// A gap between the events of a stream that keeps sending.
+pub(crate) const GAP: Duration = Duration::from_millis(100);
+
+/// Local HTTP servers that misbehave in time, for the idle-bound tests.
+pub(crate) mod servers {
+    use super::*;
+
+    /// One chunk of a chunked HTTP/1.1 body.
+    fn chunk(data: &str) -> String {
+        format!("{:x}\r\n{data}\r\n", data.len())
+    }
+
+    const HEAD: &str = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\
+                        transfer-encoding: chunked\r\n\r\n";
+
+    /// Serve every connection: after reading the request, wait `late`, write
+    /// `head`, then each step waits its delay and writes its raw bytes; `None`
+    /// for the head writes nothing at all. When `silent` the connection is
+    /// then held open, sending nothing, for ever; otherwise it closes.
+    async fn serve(
+        late: Duration,
+        head: Option<String>,
+        steps: Vec<(Duration, String)>,
+        silent: bool,
+    ) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let (head, steps) = (head.clone(), steps.clone());
+                tokio::spawn(async move {
+                    let mut request = vec![0u8; 64 * 1024];
+                    let _ = socket.read(&mut request).await;
+                    tokio::time::sleep(late).await;
+                    if let Some(head) = head {
+                        socket.write_all(head.as_bytes()).await.unwrap();
+                        for (delay, data) in steps {
+                            tokio::time::sleep(delay).await;
+                            socket.write_all(data.as_bytes()).await.unwrap();
+                        }
+                    }
+                    if silent {
+                        std::future::pending::<()>().await;
+                    }
+                });
+            }
+        });
+        format!("http://{address}")
+    }
+
+    /// Answers with a head and `sent`, then sends nothing more.
+    pub(crate) async fn silent_after(sent: &str) -> String {
+        let steps = vec![(Duration::ZERO, chunk(sent))];
+        serve(Duration::ZERO, Some(HEAD.into()), steps, true).await
+    }
+
+    /// Reads the request and never answers.
+    pub(crate) async fn never_answering() -> String {
+        serve(Duration::ZERO, None, Vec::new(), true).await
+    }
+
+    /// Sends each event [`GAP`] after the last, then ends the body.
+    pub(crate) async fn trickling(events: &[&str]) -> String {
+        let mut steps: Vec<_> = events.iter().map(|e| (GAP, chunk(e))).collect();
+        steps.push((Duration::ZERO, "0\r\n\r\n".into()));
+        serve(Duration::ZERO, Some(HEAD.into()), steps, false).await
+    }
+
+    /// Answers 500 with part of the body it promises, then goes silent.
+    pub(crate) async fn silent_error_body() -> String {
+        let head = "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 100\r\n\r\n";
+        let steps = vec![(Duration::ZERO, "{\"err".to_owned())];
+        serve(Duration::ZERO, Some(head.into()), steps, true).await
+    }
+
+    /// Answers a whole JSON `body` only after `late`.
+    pub(crate) async fn answering_late(late: Duration, body: &str) -> String {
+        let head = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        serve(late, Some(head), Vec::new(), false).await
+    }
+}
+
+/// The timeout error for a `total` bound.
+pub(crate) fn timed_out_message(total: Duration) -> String {
+    TimedOut(total).to_string()
+}
+
+/// The idle error for a `limit` bound.
+pub(crate) fn idle_message(limit: Duration) -> String {
+    Idle(limit).to_string()
+}
+
+/// Await `step`, failing the test when nothing bounded it: an unbounded
+/// silent stream would otherwise wait for ever.
+pub(crate) async fn bounded<F: std::future::Future>(step: F) -> F::Output {
+    tokio::time::timeout(Duration::from_secs(20), step)
+        .await
+        .expect("the silent stream was bounded")
+}
+
+#[test]
+fn an_expiry_reads_as_a_stall_retried_once() {
+    let message = Idle(STREAM_IDLE_LIMIT).to_string();
+    assert_eq!(
+        message,
+        "stream idle timeout: the provider sent nothing for 300 s; the request was abandoned"
+    );
+    let late = TimedOut(REPLY_TOTAL_LIMIT).to_string();
+    assert_eq!(
+        late,
+        "reply timeout: the provider sent no whole reply within 1200 s; the request was abandoned"
+    );
+    for message in [message, late] {
+        let class = classify_provider_error(&DomainError::Provider(message));
+        assert_eq!(class, ProviderErrorClass::Stalled);
+        assert!(class.is_retryable());
+        assert_eq!(class.max_failures(), Some(2));
+    }
+    let short = Idle(SILENT);
+    assert_eq!(
+        short.to_string(),
+        "stream idle timeout: the provider sent nothing for 200 ms; the request was abandoned"
+    );
+    assert_eq!(BodyError::Idle(short).to_string(), short.to_string());
+}
+
+#[test]
+fn a_provider_bound_is_the_limit_unless_chosen() {
+    assert_eq!(StreamIdle::default().limit(), STREAM_IDLE_LIMIT);
+    assert_eq!(StreamIdle::default().total(), REPLY_TOTAL_LIMIT);
+    let chosen = StreamIdle::new(SILENT);
+    assert_eq!(
+        (chosen.limit(), chosen.total()),
+        (SILENT, REPLY_TOTAL_LIMIT)
+    );
+    let chosen = chosen.with_total(LIVE);
+    assert_eq!((chosen.limit(), chosen.total()), (SILENT, LIVE));
+    assert!(std::panic::catch_unwind(|| StreamIdle::new(Duration::ZERO)).is_err());
+    let zero_total = || StreamIdle::default().with_total(Duration::ZERO);
+    assert!(std::panic::catch_unwind(zero_total).is_err());
+}
+
+#[test]
+fn an_abandoned_error_body_is_marked_and_a_failed_one_is_empty() {
+    let marker = "(error body abandoned: stream idle timeout after 300 s)";
+    assert_eq!(Idle(STREAM_IDLE_LIMIT).body_marker(), marker);
+    assert_eq!(
+        error_text(Err(BodyError::Idle(Idle(STREAM_IDLE_LIMIT)))),
+        marker
+    );
+    assert_eq!(error_text(Ok("{\"error\":1}".into())), "{\"error\":1}");
+}
+
+/// A whole exchange is bounded in total, however it spends the time.
+#[tokio::test(start_paused = true)]
+async fn a_whole_exchange_over_the_total_bound_times_out() {
+    let bound = StreamIdle::default();
+    let started = tokio::time::Instant::now();
+    let never = bound.whole(std::future::pending::<()>()).await;
+    assert_eq!(never, Err(TimedOut(REPLY_TOTAL_LIMIT)));
+    assert_eq!(started.elapsed(), REPLY_TOTAL_LIMIT);
+    let slow = async {
+        tokio::time::sleep(REPLY_TOTAL_LIMIT - Duration::from_millis(1)).await;
+        7
+    };
+    assert_eq!(bound.whole(slow).await, Ok(7));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_step_that_waits_the_whole_bound_is_idle() {
+    let idle = StreamIdle::default();
+    let started = tokio::time::Instant::now();
+    let silent = idle.within(std::future::pending::<()>()).await;
+    assert_eq!(silent, Err(Idle(STREAM_IDLE_LIMIT)));
+    assert_eq!(started.elapsed(), STREAM_IDLE_LIMIT);
+    assert_eq!(idle.within(async { 7 }).await, Ok(7));
+    let slow = async {
+        tokio::time::sleep(STREAM_IDLE_LIMIT - Duration::from_millis(1)).await;
+        7
+    };
+    assert_eq!(idle.within(slow).await, Ok(7));
+}
+
+#[tokio::test]
+async fn a_whole_body_that_goes_silent_is_idle() {
+    let url = servers::silent_after("data: partial\n").await;
+    let response = reqwest::Client::new().get(url).send().await.unwrap();
+    let read = bounded(StreamIdle::new(SILENT).text(response)).await;
+    assert!(
+        matches!(read, Err(BodyError::Idle(Idle(SILENT)))),
+        "{read:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_whole_body_that_keeps_sending_is_read_past_the_bound() {
+    let events = ["data: 1\n"; 16];
+    let bound = LIVE;
+    let url = servers::trickling(&events).await;
+    let started = std::time::Instant::now();
+    let response = reqwest::Client::new().get(url).send().await.unwrap();
+    let read = bounded(StreamIdle::new(bound).text(response)).await;
+    assert_eq!(read.unwrap(), events.concat());
+    assert!(started.elapsed() > bound, "the total is not bounded");
+}
+
+/// A handler recording lines; its end of file sends a marker.
+#[derive(Default)]
+struct Lines(Vec<String>);
+impl super::super::sse_common::SseHandler for Lines {
+    async fn process_line(
+        &mut self,
+        line: &str,
+        _: &tokio::sync::mpsc::Sender<StreamEvent>,
+    ) -> super::super::sse_common::SseLineOutcome {
+        self.0.push(line.to_owned());
+        super::super::sse_common::SseLineOutcome::Continue
+    }
+    async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
+        let _ = tx.send(StreamEvent::TextDelta("eof".into())).await;
+    }
+}
+
+#[tokio::test]
+async fn the_shared_pump_ends_a_silent_stream_with_the_idle_error() {
+    let url = servers::silent_after("data: one\n").await;
+    let mut response = reqwest::Client::new().get(url).send().await.unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let mut handler = Lines::default();
+    let idle = StreamIdle::new(SILENT);
+    bounded(super::super::sse_common::pump_sse(
+        &mut response,
+        &tx,
+        &mut handler,
+        idle,
+    ))
+    .await;
+    drop(tx);
+    assert_eq!(handler.0, vec!["data: one".to_owned()]);
+    let expected = Idle(SILENT).to_string();
+    assert!(
+        matches!(rx.recv().await, Some(StreamEvent::Error(m)) if m == expected),
+        "the stream fails with the idle error"
+    );
+    assert!(rx.recv().await.is_none(), "and nothing after it");
+}
+
+#[tokio::test]
+async fn the_shared_pump_reads_a_slow_stream_past_the_bound() {
+    let events = ["data: one\n"; 16];
+    let url = servers::trickling(&events).await;
+    let bound = LIVE;
+    let started = std::time::Instant::now();
+    let mut response = reqwest::Client::new().get(url).send().await.unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let mut handler = Lines::default();
+    let idle = StreamIdle::new(bound);
+    super::super::sse_common::pump_sse(&mut response, &tx, &mut handler, idle).await;
+    assert_eq!(handler.0, ["data: one"; 16]);
+    assert!(matches!(rx.recv().await, Some(StreamEvent::TextDelta(e)) if e == "eof"));
+    assert!(started.elapsed() > bound, "the total is not bounded");
+}
+
+#[tokio::test]
+async fn a_send_no_response_head_answers_is_idle() {
+    let url = servers::never_answering().await;
+    let started = std::time::Instant::now();
+    let idle = StreamIdle::new(SILENT);
+    let sent = bounded(idle.within(reqwest::Client::new().get(url).send())).await;
+    assert!(matches!(sent, Err(Idle(SILENT))));
+    assert!(started.elapsed() >= SILENT);
+}

@@ -158,3 +158,43 @@ fn make_provider_factory_retries_codex_with_default_base_for_bad_custom_base() {
     let provider = factory(&jwt_with_account_id("acct-fallback"));
     assert_eq!(provider.name(), "codex");
 }
+
+/// #2210 review: a manager that never answers cannot hold the credential
+/// push for ever; the request is abandoned at its timeout.
+#[tokio::test]
+async fn a_credential_push_to_a_silent_manager_times_out() {
+    use crate::infrastructure::providers::stream_idle::tests::{bounded, servers};
+    let url = servers::never_answering().await;
+    let timeout = std::time::Duration::from_millis(200);
+    let started = std::time::Instant::now();
+    let pushed = bounded(push_credentials(
+        &url,
+        Some("t".into()),
+        "{}".into(),
+        timeout,
+    ))
+    .await;
+    let error = pushed.expect_err("a silent manager never answers");
+    assert!(error.is_timeout(), "{error}");
+    assert!(started.elapsed() >= timeout);
+    assert_eq!(CREDENTIAL_SYNC_TIMEOUT, std::time::Duration::from_secs(10));
+}
+
+/// The sync itself passes [`CREDENTIAL_SYNC_TIMEOUT`]: against a manager
+/// that never answers it returns once that long has passed (paused clock).
+#[tokio::test(start_paused = true)]
+async fn the_credential_sync_gives_up_after_its_timeout() {
+    use crate::infrastructure::providers::stream_idle::tests::{bounded, servers};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credentials.json");
+    std::fs::write(&path, "{}").unwrap();
+    let url = servers::never_answering().await;
+    let started = tokio::time::Instant::now();
+    bounded(sync_credentials_to(&url, None, &path)).await;
+    let waited = started.elapsed();
+    assert!(waited >= CREDENTIAL_SYNC_TIMEOUT, "{waited:?}");
+    assert!(
+        waited < CREDENTIAL_SYNC_TIMEOUT + std::time::Duration::from_secs(1),
+        "{waited:?}"
+    );
+}

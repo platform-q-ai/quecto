@@ -60,7 +60,7 @@ async fn pump_sse_anthropic_wire_stream_finalizes_on_eof() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let mut handler = AnthropicSseHandler::new_for_test(None);
 
-    pump_sse(&mut response, &tx, &mut handler).await;
+    pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
 
     assert!(matches!(rx.recv().await.unwrap(), StreamEvent::TextDelta(t) if t == "split"));
     match rx.recv().await.unwrap() {

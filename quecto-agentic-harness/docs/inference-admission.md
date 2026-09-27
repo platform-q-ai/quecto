@@ -204,7 +204,8 @@ is the caller's own `cancelled`. `admission transport failure: …` and
 waited) are retryable `network`: the retry is a fresh attempt that acquires
 at the gate again over the link's reconnect, never a resend around it. The
 `admission` class is additive on the audit wire
-(`AuditEvent::ProviderError.class`), like `empty_stream`. The parent sees
+(`AuditEvent::ProviderError.class`), like `empty_stream` and `stalled`
+(#2210, a reply abandoned because the provider stopped sending). The parent sees
 the child's `agent_error`, the forwarded `admission_state_changed` with
 `authorityStatus: "unavailable"`, and `agent_cmd get_state` with the same plus
 `counters.refused`; it spawns a replacement (its own link re-registers first,

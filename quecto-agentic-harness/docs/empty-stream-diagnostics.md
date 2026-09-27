@@ -40,5 +40,13 @@ that case must not be interpreted as an HTTP or overload signal. Attempt start
 currently means permit acquired, not admission queue entry or socket send time.
 
 The `empty_stream` error class is additive: consumers that exhaustively deserialize
-error classes must be updated before reading new records. Stop reasons are mapped
+error classes must be updated before reading new records.
+
+The `stalled` error class (#2210) is additive in the same way, in both
+`AuditEvent::ProviderError.class` and `RequestObservation.error_class`: a reply
+the harness abandoned because the provider stopped sending. So are two
+`attempt_diagnostics.termination` values: `Idle`, a streaming reply that sent
+nothing for the stream idle limit (300 s), and `TimedOut`, a non-streaming reply
+that did not arrive within the reply total limit (20 min). Both limits are
+described under "Stalled replies" in `runtime-models-providers.md`. Stop reasons are mapped
 to a closed enum; unknown provider reasons retain only `Unknown`, never their text.

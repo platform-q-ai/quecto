@@ -157,7 +157,13 @@ pub(crate) async fn pump_sse_bytes(
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
 ) {
     let mut handler = OpenAiSseHandler::new();
-    crate::infrastructure::providers::sse_common::pump_sse(response, tx, &mut handler).await;
+    crate::infrastructure::providers::sse_common::pump_sse(
+        response,
+        tx,
+        &mut handler,
+        Default::default(),
+    )
+    .await;
 }
 
 pub(crate) async fn pump_sse_bytes_for_model(
@@ -165,12 +171,14 @@ pub(crate) async fn pump_sse_bytes_for_model(
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     model: &str,
     attempt: Option<super::super::attempt_transport::PassiveAttempt>,
+    idle: super::super::stream_idle::StreamIdle,
 ) {
     super::super::attempt_transport::pump_observed(
         response,
         tx,
         OpenAiSseHandler::with_model(model),
         attempt,
+        idle,
     )
     .await;
 }
@@ -186,8 +194,9 @@ pub(crate) async fn pump_sse_response_for_model(
     tx: tokio::sync::mpsc::Sender<StreamEvent>,
     model: String,
     attempt: Option<super::super::attempt_transport::PassiveAttempt>,
+    idle: super::super::stream_idle::StreamIdle,
 ) {
-    pump_sse_bytes_for_model(&mut response, &tx, &model, attempt).await;
+    pump_sse_bytes_for_model(&mut response, &tx, &model, attempt, idle).await;
 }
 
 #[cfg(test)]

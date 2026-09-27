@@ -165,6 +165,7 @@ impl LlmProvider for RetryingProvider {
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
         Box::pin(async move {
             let mut attempt: u32 = 1;
+            let mut capped = crate::domain::provider_error::CappedFailures::default();
             loop {
                 // The loop already admitted the logical request; only retries
                 // re-check, so a first attempt never pays an extra admission
@@ -183,7 +184,10 @@ impl LlmProvider for RetryingProvider {
                     Ok(response) => return Ok(response),
                     Err(err) => {
                         let class = classify_provider_error(&err);
-                        if !class.is_retryable() || attempt >= self.config.max_attempts {
+                        if !class.is_retryable()
+                            || attempt >= self.config.max_attempts
+                            || !capped.allows_another(&class)
+                        {
                             return Err(err);
                         }
                         let Some(delay) = crate::domain::provider_retry::bounded_delay(

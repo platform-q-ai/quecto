@@ -19,8 +19,9 @@
 /// admission-owned single-attempt client, so both carry the same timeouts.
 pub fn default_client_builder() -> reqwest::ClientBuilder {
     // No overall timeout: SSE streams legitimately run for minutes. The
-    // connect timeout gates the handshake; per-request timeouts are set at
-    // the call site when needed.
+    // connect timeout gates the handshake; a streaming reply that goes
+    // silent is bounded by each provider's `stream_idle` bound (#2210),
+    // whatever client it was given.
     reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10))
 }
 
