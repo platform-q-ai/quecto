@@ -12,14 +12,13 @@ async fn uncomposed_tool_refuses_a_real_launch_and_registers_nothing() {
         .with_socket_dir(dir.path().to_path_buf())
         .with_registry(registry.clone());
     assert!(!tool.lifecycle_composed());
-    let result = tool
+    let refused = tool
         .execute(r#"{"agent_id":"worker","task":"t"}"#)
         .await
-        .expect("the tool answers");
-    assert!(result.is_error, "{}", result.content);
+        .expect_err("the tool refuses");
     assert_eq!(
-        result.content,
-        format!("Failed to spawn subagent: {}", super::NO_LIFECYCLE_COMPOSED)
+        refused.to_string(),
+        format!("tool error: {}", super::NO_LIFECYCLE_COMPOSED)
     );
     assert!(registry.lock().unwrap().is_empty());
 
@@ -29,4 +28,29 @@ async fn uncomposed_tool_refuses_a_real_launch_and_registers_nothing() {
         .await
         .expect("the stub answers");
     assert!(!result.is_error, "{}", result.content);
+}
+
+/// A frozen harness refuses a spawn as a tool error, stub and launch path
+/// alike: every spawn refusal carries the one prefix (#2221).
+#[tokio::test]
+async fn a_frozen_harness_refuses_a_spawn_as_a_tool_error() {
+    let lifecycle = super::super::harness_lifecycle::new_shared_harness_lifecycle();
+    *lifecycle.lock().unwrap() = crate::domain::subagent_teardown::HarnessLifecycleState::Frozen;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let tools = [
+        SpawnTool::new(vec![]).with_harness_lifecycle(lifecycle.clone()),
+        SpawnTool::with_base_dir(vec![], dir.path().to_path_buf())
+            .with_harness_lifecycle(lifecycle.clone()),
+    ];
+    for tool in tools {
+        let refused = tool
+            .execute(r#"{"agent_id":"worker","task":"t"}"#)
+            .await
+            .expect_err("a frozen harness admits no child");
+        assert_eq!(
+            refused.to_string(),
+            "tool error: spawn refused: the harness is Frozen and admits no new subagent"
+        );
+        assert!(tool.registry().lock().unwrap().is_empty());
+    }
 }

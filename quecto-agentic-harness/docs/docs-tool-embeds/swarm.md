@@ -65,7 +65,7 @@ Call `swarm` with `op=create` and these fields:
 | Field | Type and constraints |
 |---|---|
 | `goal` | Nonempty string |
-| `constraints` | `list[str]` |
+| `constraints` | Optional `list[str]`; omitted or `null` is an empty list |
 | `criteria` | Nonempty list of objects: `id`, `description`, `kind` (`command` or `review`) |
 | `member_limit` | Integer 1–25; coordinator and idle/reserved workers count |
 | `deadline_in_seconds` | Seconds from now, at most seven days; use this instead of `deadline` when you do not know the current Unix time |

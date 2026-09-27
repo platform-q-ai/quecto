@@ -397,15 +397,13 @@ async fn built_spawn_tool_admits_against_the_returned_harness_lifecycle() {
         .expect("spawn tool");
     *built.harness_lifecycle.lock().unwrap() =
         crate::domain::subagent_teardown::HarnessLifecycleState::Frozen;
-    let result = spawn
+    let refused = spawn
         .execute(r#"{"agent_id":"late","task":"wait"}"#)
         .await
-        .unwrap();
-    assert!(result.is_error);
+        .expect_err("a frozen harness refuses the spawn");
     assert!(
-        result.content.contains("spawn refused"),
-        "{}",
-        result.content
+        refused.to_string().starts_with("tool error: spawn refused"),
+        "{refused}"
     );
     assert!(built.subagent_registry.lock().unwrap().is_empty());
 }

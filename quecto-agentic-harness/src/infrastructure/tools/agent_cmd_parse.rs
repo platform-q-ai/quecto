@@ -34,18 +34,27 @@ pub(super) const WILDCARD_COMMANDS: &[&str] = &[
 /// Commands `build_command` accepts beyond the model-facing list.
 const UNLISTED_COMMANDS: &[&str] = &["get_messages_tail", "get_tool_catalogue", "list_tools"];
 
+/// What an admitted `agent_id` names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Target {
+    /// The synthetic `*` of an inventory command: no sub-agent.
+    Inventory,
+    /// One sub-agent's id, still to pass the syntax check.
+    Agent,
+}
+
 /// Admit `agent_id` as the target of `command`: `*` only for an inventory
 /// command (#2221). A per-agent command given `*` is told what it needs
 /// instead of failing the character-set check.
-pub(super) fn admit_target(command: &str, agent_id: &str) -> Result<(), String> {
+pub(super) fn admit_target(command: &str, agent_id: &str) -> Result<Target, String> {
     match agent_id {
-        "*" if WILDCARD_COMMANDS.contains(&command) => Ok(()),
+        "*" if WILDCARD_COMMANDS.contains(&command) => Ok(Target::Inventory),
         "*" => Err(format!(
             "{command} needs one sub-agent's UUID, as returned by spawn; \"*\" works only with \
              the inventory commands {} (use get_subagents_all to list sub-agents)",
             WILDCARD_COMMANDS.join(", ")
         )),
-        _ => Ok(()),
+        _ => Ok(Target::Agent),
     }
 }
 
@@ -74,15 +83,15 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
         ));
     }
 
-    // The synthetic `*` target first (#2221), then the id's syntax (same
-    // rules as spawn). get_subagents_all takes `*` and nothing else.
-    admit_target(&command, &agent_id)?;
-    match (command.as_str(), agent_id.as_str()) {
-        ("get_subagents_all", "*") => {}
-        ("get_subagents_all", _) => {
+    // The synthetic `*` target first (#2221): every inventory command takes
+    // it, as `admit_target` decides. Any other id must pass the syntax
+    // check (same rules as spawn); get_subagents_all takes `*` alone.
+    match (admit_target(&command, &agent_id)?, command.as_str()) {
+        (Target::Inventory, _) => {}
+        (Target::Agent, "get_subagents_all") => {
             return Err("get_subagents_all requires agent_id '*'".to_string());
         }
-        _ => validate_agent_id_format(&agent_id)?,
+        (Target::Agent, _) => validate_agent_id_format(&agent_id)?,
     }
 
     // Build the framed JSON command. Control commands (prompt/steer/

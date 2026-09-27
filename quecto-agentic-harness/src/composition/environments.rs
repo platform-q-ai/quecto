@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::configuration::dto::ConfigSelection;
-use crate::application::environments::dto::{RestoreMode, RestoredRegistry};
+use crate::application::environments::dto::{OvertakenAudience, RestoreMode, RestoredRegistry};
 use crate::application::environments::ports::{
     ContainerConfigLookup, ContainerRuntimeInventory, ContainerRuntimePreflight,
     EnvironmentMemberShutdown, EnvironmentProcess, EnvironmentRegistryStore, MemberShutdownReport,
@@ -224,11 +224,10 @@ pub fn build_container_inventory(
     // The restore's account (diagnostics, a read error) is the handles'
     // to carry: the command's presenter reports it and refuses on the
     // read error; composition prints nothing.
-    let restore = build_restore_registry(base_dir);
-    let (registry, restore) = match mode {
-        RestoreMode::Correct => restore.execute("cli"),
-        RestoreMode::Observe => restore.observe("cli"),
-    };
+    // A fleet-wide command created none of the environments it lists, so
+    // it reports every correction another quecto process overtook (#2190).
+    let (registry, restore) =
+        build_restore_registry(base_dir).restore("cli", mode, OvertakenAudience::Fleet);
     ContainerInventoryHandles {
         list: Arc::new(ListEnvironmentsQuery::new(registry.clone())),
         kill: Arc::new(KillEnvironment::new(

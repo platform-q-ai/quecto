@@ -264,13 +264,14 @@ impl crate::application::providers::ports::RequestAccounting for SwarmContext {
 /// `deadline_in_seconds` when given (it wins over `deadline`, so a
 /// placeholder `deadline` never hides it), else `deadline`. A model need not
 /// know the current time; the store still checks the result.
-/// The run's `constraints` (#2205): optional, an omitted list is empty. A
-/// value that is given goes to the store as given, which refuses anything
-/// but a list of strings — so a wrong type is still named as one.
+/// The run's `constraints` (#2205): optional, so an omitted list — or an
+/// explicit `null`, which JSON callers send for "none" — is empty. Any
+/// other value goes to the store as given, which refuses anything but a
+/// list of strings — so a wrong type is still named as one.
 fn run_constraints(input: &Value) -> Value {
     match input.get("constraints") {
+        None | Some(Value::Null) => json!([]),
         Some(given) => given.clone(),
-        None => json!([]),
     }
 }
 

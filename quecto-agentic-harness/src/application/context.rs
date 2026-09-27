@@ -81,7 +81,8 @@ pub(crate) struct ContextPlan {
     pub tokens_before: usize,
     pub total_tokens: usize,
     pub tool_results_collapsed: usize,
-    pub messages_stubbed: usize,
+    pub messages_collapsed: usize,
+    pub ladder_stubbed: usize,
     pub messages_dropped: usize,
     pub over_budget: bool,
     pub durable_prefix_dirty: bool,
@@ -292,15 +293,14 @@ impl ContextManager {
             }
         }
         let total_tokens = context_pruning::estimate_total_tokens(messages);
-        let messages_stubbed = msg_collapsed + outcome.collapsed_to_stubs;
-        let durable_prefix_dirty =
-            collapsed > 0 || messages_stubbed > 0 || outcome.dropped > 0 || manifest_shifted;
-
+        let durable_prefix_dirty = manifest_shifted
+            || collapsed + msg_collapsed + outcome.collapsed_to_stubs + outcome.dropped > 0;
         ContextPlan {
             tokens_before,
             total_tokens,
             tool_results_collapsed: collapsed,
-            messages_stubbed,
+            messages_collapsed: msg_collapsed,
+            ladder_stubbed: outcome.collapsed_to_stubs,
             messages_dropped: outcome.dropped,
             over_budget: outcome.over_budget,
             durable_prefix_dirty,

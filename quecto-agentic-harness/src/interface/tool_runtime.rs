@@ -189,6 +189,34 @@ pub(crate) struct ToolRuntimeBuild {
     pub catalogue_entries: Vec<crate::domain::tool_descriptor::ToolCatalogueEntry>,
 }
 
+/// Report persisted `tools.policy` entries that matched no registered tool
+/// (#2217). Each is kept and ignored, as the config documents; only one no
+/// bundled tool ever had — most likely a typo, a restriction that never
+/// applies — is worth a start-up warning.
+fn report_unmatched_policy_entries(stable_ids: &[String], stderr: &mut String) {
+    use crate::domain::tool_policy_catalogue::{
+        UnmatchedPolicyEntry, classify_unmatched_policy_entry,
+    };
+    for stable_id in stable_ids {
+        match classify_unmatched_policy_entry(stable_id) {
+            UnmatchedPolicyEntry::Unknown => stderr.push_str(&format!(
+                "WARNING: tools.policy: no tool has stable id '{stable_id}', so its entry never applies; fix or remove it under tools.policy.entries\n"
+            )),
+            UnmatchedPolicyEntry::BundledElsewhere => tracing::debug!(
+                target: "tool_policy",
+                stable_id = %stable_id,
+                "tools.policy entry names a bundled tool this entrypoint does not build; kept for the others"
+            ),
+            UnmatchedPolicyEntry::Retired { removed_by } => tracing::debug!(
+                target: "tool_policy",
+                stable_id = %stable_id,
+                removed_by,
+                "tools.policy entry names a retired tool; ignored and safe to delete"
+            ),
+        }
+    }
+}
+
 /// Build the complete shared tool runtime/catalogue for CLI, UDS and REPL.
 ///
 /// All production entrypoints use this pipeline to register bundled-native
@@ -442,18 +470,8 @@ pub(crate) fn build_tool_runtime(
         }
     }
 
-    // An entry naming no tool registered here is kept and ignored, as the
-    // config documents (#2217): a bundled tool this entrypoint does not
-    // build (`workflow` on the one-shot CLI) or one no build knows any more
-    // (`python_lab`, #1684). Nothing to act on at start-up, so debug only.
     let persisted_unknown = registry.apply_persisted_tool_policy(&config.tools.policy);
-    for stable_id in &persisted_unknown {
-        tracing::debug!(
-            target: "tool_policy",
-            stable_id = %stable_id,
-            "tools.policy entry names no tool registered on this entrypoint; kept and ignored"
-        );
-    }
+    report_unmatched_policy_entries(&persisted_unknown, stderr);
 
     // Apply explicit startup restrictions after every startup provider has had a
     // chance to register, so descriptors remain available while model-visible

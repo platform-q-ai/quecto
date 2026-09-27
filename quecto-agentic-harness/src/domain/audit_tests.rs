@@ -93,7 +93,8 @@ fn context_pruned_round_trip() {
         tokens_before: 195_000,
         tokens_after: 142_000,
         budget_unmet: false,
-        messages_stubbed: 3,
+        messages_collapsed: 4,
+        ladder_stubbed: 3,
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AuditEvent = serde_json::from_str(&json).unwrap();
@@ -110,7 +111,8 @@ fn context_pruned_round_trip_preserves_unmet_budget() {
         tokens_before: 300,
         tokens_after: 300,
         budget_unmet: true,
-        messages_stubbed: 0,
+        messages_collapsed: 0,
+        ladder_stubbed: 0,
     };
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"budget_unmet\":true"), "got: {json}");
@@ -120,18 +122,21 @@ fn context_pruned_round_trip_preserves_unmet_budget() {
 
 #[test]
 fn context_pruned_records_the_messages_it_stubbed() {
-    // #2214: the ladder's first rung stubs messages; a serializer that
-    // dropped the count would still round-trip 0 (via #[serde(default)]).
+    // #2214: the count-based collapse and the ladder's first rung stub
+    // messages, each counted apart; a serializer that dropped a count would
+    // still round-trip 0 (via #[serde(default)]).
     let event = AuditEvent::ContextPruned {
         messages_dropped: 0,
         tool_results_collapsed: 0,
         tokens_before: 252_433,
         tokens_after: 240_205,
         budget_unmet: false,
-        messages_stubbed: 1,
+        messages_collapsed: 2,
+        ladder_stubbed: 1,
     };
     let json = serde_json::to_string(&event).unwrap();
-    assert!(json.contains("\"messages_stubbed\":1"), "got: {json}");
+    assert!(json.contains("\"messages_collapsed\":2"), "got: {json}");
+    assert!(json.contains("\"ladder_stubbed\":1"), "got: {json}");
     let back: AuditEvent = serde_json::from_str(&json).unwrap();
     assert_eq!(event, back);
 }
@@ -148,7 +153,8 @@ fn a_context_pruned_record_from_before_2214_reads_as_nothing_stubbed() {
             tokens_before: 10,
             tokens_after: 5,
             budget_unmet: false,
-            messages_stubbed: 0,
+            messages_collapsed: 0,
+            ladder_stubbed: 0,
         }
     );
 }

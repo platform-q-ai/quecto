@@ -285,7 +285,10 @@ async fn without_provider_usage_the_ceiling_decides_on_the_heuristic() {
         )
         .await;
 
-    assert_eq!(plan.messages_stubbed + plan.messages_dropped, 0);
+    assert_eq!(
+        plan.messages_collapsed + plan.ladder_stubbed + plan.messages_dropped,
+        0
+    );
 }
 
 #[tokio::test]
@@ -308,7 +311,7 @@ async fn with_provider_usage_the_ceiling_decides_on_calibrated_occupancy() {
         .await;
 
     assert!(
-        plan.messages_stubbed > 0,
+        plan.ladder_stubbed > 0,
         "calibrated occupancy (2x the estimate) is over the budget"
     );
     let kept = context_pruning::estimate_total_tokens(&messages);
@@ -430,7 +433,7 @@ async fn prune_at_ninety_percent(messages: &mut Vec<Message>) -> (usize, usize, 
 async fn a_dense_tail_does_not_erode_the_low_water_mark() {
     let mut messages = prose_head_dense_tail(800);
     let (real_after, budget, plan) = prune_at_ninety_percent(&mut messages).await;
-    assert!(plan.messages_stubbed > 0);
+    assert!(plan.ladder_stubbed > 0);
     assert_eq!(plan.messages_dropped, 0);
     assert!(
         real_after * 100 <= budget * 76,
@@ -453,9 +456,42 @@ async fn a_dense_tail_does_not_erode_the_low_water_mark() {
 async fn a_pinned_tail_near_the_low_water_mark_is_the_floor() {
     let mut messages = prose_head_dense_tail(1_200);
     let (real_after, budget, plan) = prune_at_ninety_percent(&mut messages).await;
-    assert_eq!(plan.messages_stubbed, 6, "every unpinned message is a stub");
+    assert_eq!(plan.ladder_stubbed, 6, "every unpinned message is a stub");
     assert_eq!(plan.messages_dropped, 0);
     assert!(!plan.over_budget);
     assert!(real_after <= budget);
     assert!(real_after * 100 <= budget * 78, "{real_after} of {budget}");
+}
+
+/// #2214: the count-based collapse (`context_collapse_after_messages`) and
+/// the ceiling ladder are counted apart: a collapse under a roomy budget
+/// stubs by count alone, and the ladder stubs nothing.
+#[tokio::test]
+async fn the_count_based_collapse_is_counted_apart_from_the_ladder() {
+    let manager = ContextManager::new(ContextManagerConfig {
+        retention: Some(crate::composition::retention::context_retention_over(
+            Arc::new(MemSpillStore::default()),
+        )),
+        session_key: SessionIdentity::from_persisted_key("test-session"),
+        context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 190_000,
+        pin_recent_turns: 1,
+        context_collapse_after_messages: 1,
+        model_context_window: None,
+    });
+    let mut messages = vec![
+        long_message(1),
+        long_message(2),
+        long_message(3),
+        long_message(4),
+        Message::user("current prompt"),
+    ];
+
+    let plan = manager
+        .prepare_provider_context(&mut messages, manager.effective_max_context_tokens(), false)
+        .await;
+
+    assert!(plan.messages_collapsed > 0, "{plan:?}");
+    assert_eq!(plan.ladder_stubbed, 0, "{plan:?}");
+    assert!(plan.durable_prefix_dirty);
 }

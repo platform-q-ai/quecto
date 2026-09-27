@@ -130,14 +130,35 @@ fn a_per_agent_command_given_the_wildcard_asks_for_one_sub_agents_uuid() {
 
 #[test]
 fn every_inventory_command_admits_the_wildcard_and_every_id_is_left_to_the_syntax_check() {
-    use super::super::agent_cmd_parse::{WILDCARD_COMMANDS, admit_target};
+    use super::super::agent_cmd_parse::{Target, WILDCARD_COMMANDS, admit_target};
     for command in WILDCARD_COMMANDS {
-        assert_eq!(admit_target(command, "*"), Ok(()), "{command}");
+        assert_eq!(
+            admit_target(command, "*"),
+            Ok(Target::Inventory),
+            "{command}"
+        );
     }
     for command in ["get_state", "get_subagents_all", "kill"] {
-        assert_eq!(admit_target(command, "w1"), Ok(()), "{command}");
+        assert_eq!(admit_target(command, "w1"), Ok(Target::Agent), "{command}");
     }
     assert!(admit_target("get_state", "*").is_err());
+}
+
+/// #2221: `build_command` admits `*` for every inventory command exactly as
+/// `admit_target` does — past the syntax check, to the command's own
+/// answer (each is handled locally, never sent over UDS).
+#[test]
+fn build_command_admits_the_wildcard_for_every_inventory_command() {
+    for command in super::super::agent_cmd_parse::WILDCARD_COMMANDS {
+        let error = super::super::agent_cmd_parse::build_command(
+            &serde_json::json!({"agent_id": "*", "command": command}),
+        )
+        .unwrap_err();
+        assert!(
+            error.ends_with("is handled locally, not via UDS"),
+            "{command}: {error}"
+        );
+    }
 }
 
 #[test]

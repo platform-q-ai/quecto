@@ -59,14 +59,16 @@ impl AgentLoopImpl {
             self.latch_durable_prefix_dirty();
         }
         if plan.tool_results_collapsed > 0
-            || plan.messages_stubbed > 0
+            || plan.messages_collapsed > 0
+            || plan.ladder_stubbed > 0
             || plan.messages_dropped > 0
             || plan.over_budget
         {
             tracing::info!(
                 target: "context_prune",
                 collapsed = plan.tool_results_collapsed,
-                messages_stubbed = plan.messages_stubbed,
+                messages_collapsed = plan.messages_collapsed,
+                ladder_stubbed = plan.ladder_stubbed,
                 dropped = plan.messages_dropped,
                 budget_unmet = plan.over_budget,
                 estimate_scale_permille = self.context_manager.estimate_scale().permille(),
@@ -83,7 +85,8 @@ impl AgentLoopImpl {
                     tokens_before: plan.tokens_before.saturating_add(fixed_tokens),
                     tokens_after: plan.total_tokens.saturating_add(fixed_tokens),
                     budget_unmet: plan.over_budget,
-                    messages_stubbed: plan.messages_stubbed,
+                    messages_collapsed: plan.messages_collapsed,
+                    ladder_stubbed: plan.ladder_stubbed,
                 },
             )
             .await;

@@ -492,15 +492,7 @@ impl SpawnTool {
             | DisplayNameResolveError::NoLiveMatch { display_name },
         ) = duplicate
         {
-            return Ok(ToolResult {
-                content: format!(
-                    "Failed to spawn subagent: duplicate live subagent display label '{}'",
-                    display_name
-                ),
-                is_error: true,
-                image_blocks: vec![],
-                delivery_metadata: None,
-            });
+            return Err(DomainError::Tool(duplicate_label_refusal(&display_name)));
         }
         SubagentLaunchUseCase::new(super::spawn_launch_ports::SpawnLaunchPorts::new(self))
             .execute(config)
@@ -621,27 +613,16 @@ impl Tool for SpawnTool {
             // no child. The authoritative check is repeated under the
             // registry lock at registration (#1938).
             if let Err(refused) = super::harness_lifecycle::admit_spawn(&self.harness_lifecycle) {
-                return Ok(ToolResult {
-                    content: format!("Failed to spawn subagent: {refused}"),
-                    is_error: true,
-                    image_blocks: vec![],
-                    delivery_metadata: None,
-                });
+                return Err(DomainError::Tool(refused.to_string()));
             }
             // A real launch reports its exit through the composed lifecycle
             // use cases; a tool nobody composed refuses before any process
             // exists (the stub path below launches nothing).
             let launches_process = !self.base_dir.as_os_str().is_empty();
             if launches_process && !self.lifecycle_composed() {
-                return Ok(ToolResult {
-                    content: format!(
-                        "Failed to spawn subagent: {}",
-                        super::spawn_lifecycle::NO_LIFECYCLE_COMPOSED
-                    ),
-                    is_error: true,
-                    image_blocks: vec![],
-                    delivery_metadata: None,
-                });
+                return Err(DomainError::Tool(
+                    super::spawn_lifecycle::NO_LIFECYCLE_COMPOSED.to_string(),
+                ));
             }
             match self.parse_args(&args) {
                 Ok(config) => {
@@ -655,15 +636,9 @@ impl Tool for SpawnTool {
                                     && entry.status
                                         != super::subagent_registry::SubagentStatus::Exited
                             }) {
-                                return Ok(ToolResult {
-                                    content: format!(
-                                        "Failed to spawn subagent: duplicate live subagent display label '{}'",
-                                        session_name
-                                    ),
-                                    is_error: true,
-                                    image_blocks: vec![],
-                                    delivery_metadata: None,
-                                });
+                                return Err(DomainError::Tool(duplicate_label_refusal(
+                                    session_name,
+                                )));
                             }
                         }
 
@@ -686,20 +661,15 @@ impl Tool for SpawnTool {
                             environment_ref: None,
                             process_owner: super::process_tree::ProcessOwner::DirectPid,
                         });
-                        if let Err(e) = register_and_broadcast(
+                        // A refused registration is a tool error, like
+                        // every other spawn refusal (#2221).
+                        register_and_broadcast(
                             &self.registry,
                             self.broadcast_tx.as_ref(),
                             session_name,
                             stub_entry,
                             &self.harness_lifecycle,
-                        ) {
-                            return Ok(ToolResult {
-                                content: format!("Failed to spawn subagent: {e}"),
-                                is_error: true,
-                                image_blocks: vec![],
-                                delivery_metadata: None,
-                            });
-                        }
+                        )?;
 
                         let msg = format!(
                             "Subagent '{}' is running (uuid={}). Use agent_cmd to interact.",
@@ -715,12 +685,18 @@ impl Tool for SpawnTool {
                         self.launch_uds_agent(&config).await
                     }
                 }
-                // A refused request is a tool error (#2221): one prefix
-                // with every other spawn refusal the launch path returns.
+                // Every spawn refusal is a tool error (#2221): the model
+                // sees one prefix whichever check refused.
                 Err(e) => Err(DomainError::Tool(e)),
             }
         })
     }
+}
+
+/// The refusal for a spawn whose display label is already live. Both the
+/// stub and the launch path refuse with this one reason (#2221).
+pub(super) fn duplicate_label_refusal(display_name: &str) -> String {
+    format!("duplicate live subagent display label '{display_name}'")
 }
 
 #[cfg(test)]

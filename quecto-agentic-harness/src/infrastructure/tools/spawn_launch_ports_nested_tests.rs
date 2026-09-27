@@ -1,11 +1,14 @@
 use super::*;
 use std::sync::Arc;
 
-fn tool() -> SpawnTool {
-    let dir = tempfile::tempdir().unwrap().keep();
-    crate::composition::subagent_lifecycle::compose_launcher(
-        SpawnTool::new(vec![]).with_socket_dir(dir),
-    )
+/// The tool and the socket directory it launches into: the caller holds
+/// the directory, so it is removed when the test ends.
+fn tool() -> (SpawnTool, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = crate::composition::subagent_lifecycle::compose_launcher(
+        SpawnTool::new(vec![]).with_socket_dir(dir.path().to_path_buf()),
+    );
+    (tool, dir)
 }
 
 fn config() -> SubagentConfig {
@@ -40,7 +43,8 @@ async fn a_nested_container_refusal_follows_the_launchers_swarm_participation() 
             crate::infrastructure::tools::spawn_container::NESTED_CONTAINER_SWARM_MEMBER,
         ),
     ] {
-        let tool = tool()
+        let (tool, _socket_dir) = tool();
+        let tool = tool
             .with_swarm_context(Some(
                 crate::infrastructure::tools::swarm_bridge::SwarmContext {
                     checkout: std::env::temp_dir(),

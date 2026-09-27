@@ -617,7 +617,8 @@ async fn a_nested_container_is_refused_inside_a_container_by_the_real_condition(
     for container in [new(), existing()] {
         assert_eq!(
             refusal(false, container).await,
-            "tool error: agents inside a container cannot start another container; \
+            "tool error: agents inside an isolated-PID (swarm-capable) container \
+             cannot start another container; \
              spawn a local sub-agent (omit container) instead"
         );
     }

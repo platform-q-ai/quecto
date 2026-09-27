@@ -866,8 +866,11 @@ any other `libc::kill`, `kill(`, `start_kill`, process-group signal or
 Spawning with a display label that is already live returns an error:
 
 ```
-Failed to spawn subagent: duplicate live subagent display label 'worker-1'
+Error: tool error: duplicate live subagent display label 'worker-1'
 ```
+
+Every spawn refusal (a bad request, a frozen harness, a duplicate live label,
+a failed registration) is a tool error with this one `tool error:` prefix.
 
 Wait for the existing agent to finish (check with `agent_cmd get_state`) or
 `abort` it before spawning a new one with the same ID.

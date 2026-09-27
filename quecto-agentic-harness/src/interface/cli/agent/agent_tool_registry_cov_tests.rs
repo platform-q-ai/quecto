@@ -1,7 +1,7 @@
 use super::*;
 use crate::interface::cli::agent::flag_parse::AgentFlags;
 
-fn flags() -> AgentFlags {
+pub(super) fn flags() -> AgentFlags {
     AgentFlags {
         session_name: Some("dev".to_string()),
         no_session: false,
@@ -454,57 +454,4 @@ fn build_tool_registry_registers_web_tools_as_bundled_native_official_tools() {
             "{name} must remain model-visible"
         );
     }
-}
-
-/// #2217: persisted `tools.policy` entries this entrypoint registers no tool
-/// for — a bundled tool built only on another entrypoint (`workflow` on the
-/// one-shot CLI), or an id no build knows any more (`python_lab`, #1684) —
-/// are kept and ignored as the config documents, without a start-up warning
-/// on every run.
-#[test]
-fn unmatched_persisted_policy_entries_print_no_startup_warning() {
-    use crate::domain::tool_descriptor::ProfileAvailabilityScope;
-    use crate::infrastructure::config::ToolPolicyEntryConfig;
-    let tmp = tempfile::TempDir::new().unwrap();
-    let mut config = Config::default();
-    for stable_id in [
-        "tool.v1:bundled-native:15:quecto:workflow:workflow",
-        "tool.v1:bundled-native:21:quecto:official-tools:python_lab",
-    ] {
-        config.tools.policy.entries.insert(
-            stable_id.to_string(),
-            ToolPolicyEntryConfig {
-                scope: ProfileAvailabilityScope::Both,
-            },
-        );
-    }
-    let http = reqwest::Client::new();
-    let mut flags = flags();
-    flags.no_session = true;
-    let mut stderr = String::new();
-
-    build_tool_registry(ToolRegistryArgs {
-        base_dir: tmp.path(),
-        effort_control: crate::composition::catalogue::build_catalogue_handles(
-            std::path::Path::new("/nonexistent-catalogue"),
-            None,
-        )
-        .effort,
-        container_configs: crate::composition::container_configs::build_container_config_handles(
-            std::path::Path::new("/nonexistent-base"),
-            None,
-        ),
-        config_path: tmp.path(),
-        config: &config,
-        http_client: &http,
-        web_fetch_tool: None,
-        flags: &flags,
-        stderr: &mut stderr,
-        broadcast_tx: None,
-        cwd: tmp.path(),
-        home_dir: Some(tmp.path()),
-    })
-    .unwrap();
-
-    assert!(stderr.is_empty(), "stderr: {stderr}");
 }

@@ -92,9 +92,8 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         | Err(DisplayNameResolveError::NoLiveMatch { display_name }) =
             assert_display_name_available_for_spawn(&resolution_entries, &session_name)
         {
-            return Err(DomainError::Tool(format!(
-                "duplicate live subagent display label '{}'",
-                display_name
+            return Err(DomainError::Tool(super::spawn::duplicate_label_refusal(
+                &display_name,
             )));
         }
         drop(entries);

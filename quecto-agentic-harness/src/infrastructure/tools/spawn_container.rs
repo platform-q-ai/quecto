@@ -31,8 +31,10 @@ pub(super) use prepared::{PreparedChild, run_cleanup_once};
 /// The child command a launch adapter must run (or hand to a create script):
 /// binary, final CLI args, and the parent's base directory.
 pub(super) struct ChildCommand<'a> {
-    /// The container's swarm bridge: every agent the container runtime
-    /// launches carries it (its launch contract, #2204), a swarm run or not.
+    /// The container's swarm bridge: every agent launched inside an
+    /// isolated-PID (swarm-capable) container carries it (the runtime's
+    /// `isolated-pid-v1` launch contract, #2204), a swarm run or not; an
+    /// agent in any other container, or on the host, has none.
     pub swarm_context: Option<&'a super::swarm_bridge::SwarmContext>,
     /// Whether the launching agent takes part in a created swarm run
     /// (#1715): only ever true with a `swarm_context`.
@@ -99,9 +101,9 @@ pub(super) async fn spawn_prepared_child(
     }
 }
 
-/// An agent inside a container may start only local sub-agents (#2204):
-/// worded by why — a swarm member's shared container and fixed pool, or
-/// just the container every agent inside one shares.
+/// An agent inside an isolated-PID (swarm-capable) container may start only
+/// local sub-agents (#2204): worded by why — a swarm member's shared
+/// container and fixed pool, or just the swarm-capable container it is in.
 fn nested_container_refusal(swarm_member: bool) -> DomainError {
     DomainError::Tool(
         match swarm_member {
@@ -112,7 +114,7 @@ fn nested_container_refusal(swarm_member: bool) -> DomainError {
     )
 }
 
-pub(super) const NESTED_CONTAINER_INSIDE_CONTAINER: &str = "agents inside a container cannot start another container; spawn a local sub-agent (omit container) instead";
+pub(super) const NESTED_CONTAINER_INSIDE_CONTAINER: &str = "agents inside an isolated-PID (swarm-capable) container cannot start another container; spawn a local sub-agent (omit container) instead";
 pub(super) const NESTED_CONTAINER_SWARM_MEMBER: &str = "swarm members must reuse their shared container and fixed pool; nested containers cannot reset admission";
 
 pub(super) const NO_CONTAINER_CONFIG_SELECTION_COMPOSED: &str =

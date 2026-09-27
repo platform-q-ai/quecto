@@ -504,16 +504,18 @@ async fn a_prune_that_stubbed_a_message_records_it_in_the_context_pruned_event()
         "positive control: the old message must be stubbed, not dropped"
     );
     let events = sink.events.lock().unwrap();
-    let stubbed: Vec<(usize, usize, usize)> = events
+    let stubbed: Vec<(usize, usize, usize, usize)> = events
         .iter()
         .filter_map(|e| match e {
             AuditEvent::ContextPruned {
-                messages_stubbed,
+                messages_collapsed,
+                ladder_stubbed,
                 messages_dropped,
                 tool_results_collapsed,
                 ..
             } => Some((
-                *messages_stubbed,
+                *messages_collapsed,
+                *ladder_stubbed,
                 *messages_dropped,
                 *tool_results_collapsed,
             )),
@@ -522,7 +524,7 @@ async fn a_prune_that_stubbed_a_message_records_it_in_the_context_pruned_event()
         .collect();
     assert_eq!(
         stubbed.first(),
-        Some(&(1, 0, 0)),
+        Some(&(0, 1, 0, 0)),
         "the first prune stubbed one message and dropped none: {stubbed:?}"
     );
 }

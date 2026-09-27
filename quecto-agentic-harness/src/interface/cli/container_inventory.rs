@@ -447,6 +447,10 @@ mod hosted_tests;
 #[cfg(test)]
 #[path = "container_inventory_kill_stopped_tests.rs"]
 mod kill_stopped_tests;
+
+#[cfg(test)]
+#[path = "container_inventory_overtaken_tests.rs"]
+mod overtaken_tests;
 #[cfg(test)]
 #[path = "container_inventory_tests.rs"]
 mod tests;

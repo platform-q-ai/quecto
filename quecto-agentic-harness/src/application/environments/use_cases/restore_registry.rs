@@ -49,7 +49,9 @@ use crate::domain::environment_registry::{
 
 use crate::domain::environment_retention::{HostedSwarmRun, SwarmRunObservation};
 
-use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, RestoreMode, RestoredRegistry};
+use super::super::dto::{
+    CorrectionOutcome, EnvironmentLiveness, OvertakenAudience, RestoreMode, RestoredRegistry,
+};
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore, HostedSwarmRunInspection};
 use super::box_residue::{Residue, ResidueProbe};
 
@@ -114,7 +116,12 @@ impl RestoreRegistry {
     /// panic — the session keeps its in-memory registry. A write made with
     /// an expected status is the store's conditional `correct` (review F5):
     /// applied only while the record on file still has that status.
-    fn journal(&self, mode: RestoreMode, session: &str) -> EnvironmentJournal {
+    fn journal(
+        &self,
+        mode: RestoreMode,
+        session: &str,
+        audience: OvertakenAudience,
+    ) -> EnvironmentJournal {
         let allocate = Arc::clone(&self.store);
         let record = Arc::clone(&self.store);
         let forget = Arc::clone(&self.store);
@@ -132,7 +139,7 @@ impl RestoreRegistry {
                 // been then; the account goes to the log, there being
                 // no report to carry it.
                 let mut report = RestoredRegistry::default();
-                let seeded = reload.seed(records, mode, &reload_session, &mut report);
+                let seeded = reload.seed(records, mode, (&reload_session, audience), &mut report);
                 for line in &report.diagnostics {
                     tracing::info!(%line, "durable environment registry read late");
                 }
@@ -165,7 +172,7 @@ impl RestoreRegistry {
                             record.correct(entry, expected).map(|outcome| match outcome {
                                 CorrectionOutcome::Applied => JournalWrite::Written,
                                 CorrectionOutcome::Superseded(current) => {
-                                    tracing::info!(environment_ref = %entry.environment_ref, expected = ?expected, current = current.status_label(), "another session moved the environment on; its state stands");
+                                    tracing::info!(environment_ref = %entry.environment_ref, expected = ?expected, current = current.status_label(), "another quecto process changed the environment; its state stands");
                                     JournalWrite::Superseded {
                                         current: current.status,
                                         metadata: current.metadata,
@@ -199,7 +206,14 @@ impl RestoreRegistry {
     /// inherits nothing (a spawned child's registry — the fleet is its
     /// parent's to show).
     pub fn unseeded(&self, session: &str) -> EnvironmentRegistry {
-        EnvironmentRegistry::with_journal(self.journal(RestoreMode::Correct, session), session)
+        EnvironmentRegistry::with_journal(
+            self.journal(
+                RestoreMode::Correct,
+                session,
+                OvertakenAudience::OwnEnvironments,
+            ),
+            session,
+        )
     }
 
     /// Build the durable registry for `session`: seeded with the store's
@@ -210,7 +224,11 @@ impl RestoreRegistry {
     /// nothing this session creates can collide with what it could not
     /// read — creates are refused instead (review F9, #2033).
     pub fn execute(&self, session: &str) -> (EnvironmentRegistry, RestoredRegistry) {
-        self.execute_as(session, RestoreMode::Correct)
+        self.restore(
+            session,
+            RestoreMode::Correct,
+            OvertakenAudience::OwnEnvironments,
+        )
     }
 
     /// [`Self::execute`] without an effect on the store (round 3 H1,
@@ -219,13 +237,21 @@ impl RestoreRegistry {
     /// — a `container gc --dry-run` — so the preview matches the real run
     /// and the document is left byte for byte as it was.
     pub fn observe(&self, session: &str) -> (EnvironmentRegistry, RestoredRegistry) {
-        self.execute_as(session, RestoreMode::Observe)
+        self.restore(
+            session,
+            RestoreMode::Observe,
+            OvertakenAudience::OwnEnvironments,
+        )
     }
 
-    fn execute_as(
+    /// Restore as `mode` says, reporting overtaken corrections to
+    /// `audience` (#2190): a fleet-wide inventory command, which creates
+    /// nothing, reports every environment's.
+    pub fn restore(
         &self,
         session: &str,
         mode: RestoreMode,
+        audience: OvertakenAudience,
     ) -> (EnvironmentRegistry, RestoredRegistry) {
         let mut report = RestoredRegistry::default();
         let records = match self.store.load() {
@@ -236,7 +262,7 @@ impl RestoreRegistry {
                 // #2033): the model's listing shows it and a lookup of
                 // anything this session did not create answers with it.
                 let registry = EnvironmentRegistry::unreadable(
-                    self.journal(mode, session),
+                    self.journal(mode, session, audience),
                     session,
                     &read_error,
                 );
@@ -244,8 +270,9 @@ impl RestoreRegistry {
                 return (registry, report);
             }
         };
-        let registry = EnvironmentRegistry::with_journal(self.journal(mode, session), session);
-        registry.restore(self.seed(records, mode, session, &mut report));
+        let registry =
+            EnvironmentRegistry::with_journal(self.journal(mode, session, audience), session);
+        registry.restore(self.seed(records, mode, (session, audience), &mut report));
         (registry, report)
     }
 
@@ -255,7 +282,7 @@ impl RestoreRegistry {
         &self,
         records: Vec<EnvironmentRecord>,
         mode: RestoreMode,
-        session: &str,
+        reporting: (&str, OvertakenAudience),
         report: &mut RestoredRegistry,
     ) -> Vec<EnvironmentRecord> {
         let mut restored = Vec::with_capacity(records.len());
@@ -292,7 +319,7 @@ impl RestoreRegistry {
             match self.store.correct(&judged, &loaded_status) {
                 Ok(CorrectionOutcome::Applied) => restored.push(judged),
                 Ok(CorrectionOutcome::Superseded(current)) => {
-                    report_overtaken(&current, loaded_label, session, report);
+                    report_overtaken(&current, &judged, loaded_label, reporting, report);
                     restored.push(*current);
                 }
                 Ok(CorrectionOutcome::Forgotten) => {}
@@ -478,31 +505,37 @@ impl RestoreRegistry {
 /// How a store that could not be read is reported.
 const READ_FAILED: &str = "durable environment registry could not be read";
 
-/// Another session wrote `current` between this session's load and its
-/// correction (#2190). What stands is theirs; the race is reported as what
-/// was read then what is on file — only when those differ, and on stderr
-/// only for this session's own environments (anyone else's goes to the
-/// debug log: it is that session's to report).
+/// Another quecto process wrote `current` between this restore's load and
+/// its correction of `judged` (#2190). What stands is theirs. When their
+/// status is this restore's own verdict the two agree and nothing is said;
+/// otherwise the race is reported as the status read, then the status on
+/// file — to `audience`: a session speaks for the environments it created
+/// (anyone else's goes to the debug log), a fleet-wide command for all.
 fn report_overtaken(
     current: &EnvironmentRecord,
+    judged: &EnvironmentRecord,
     loaded_label: &'static str,
-    session: &str,
+    (session, audience): (&str, OvertakenAudience),
     report: &mut RestoredRegistry,
 ) {
-    let current_label = current.status_label();
-    let changed = loaded_label != current_label;
-    let own = crate::domain::environment_listing::created_by_session(current, session);
-    let line = || {
-        format!(
-            "{} changed while it was being checked ({loaded_label} → {current_label}); the other session's state stands",
-            current.environment_ref
-        )
-    };
-    match (changed, own) {
-        (true, true) => report.diagnostics.push(line()),
-        (true, false) => {
-            tracing::debug!(target: "environments", created_by = %current.created_by, "{}", line());
+    if current.status == judged.status {
+        return;
+    }
+    let line = format!(
+        "{} changed while it was being checked ({loaded_label} → {}): another quecto process changed it; its state stands",
+        current.environment_ref,
+        current.status_label()
+    );
+    let reported = match audience {
+        OvertakenAudience::Fleet => true,
+        OvertakenAudience::OwnEnvironments => {
+            crate::domain::environment_listing::created_by_session(current, session)
         }
-        (false, _) => {}
+    };
+    match reported {
+        true => report.diagnostics.push(line),
+        false => {
+            tracing::debug!(target: "environments", created_by = %current.created_by, "{line}");
+        }
     }
 }

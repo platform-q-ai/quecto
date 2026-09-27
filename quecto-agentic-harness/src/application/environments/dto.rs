@@ -170,6 +170,18 @@ pub enum RestoreMode {
     Observe,
 }
 
+/// Whose overtaken corrections a restore reports (#2190): a correction
+/// another quecto process overtook with a different verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OvertakenAudience {
+    /// A session reports the environments it created; anyone else's goes
+    /// to the debug log (it is that session's to report).
+    OwnEnvironments,
+    /// A fleet-wide inventory command (`quecto container ls|kill|gc`)
+    /// creates nothing and speaks for every environment: all are reported.
+    Fleet,
+}
+
 /// What restoring the durable registry into a session found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RestoredRegistry {

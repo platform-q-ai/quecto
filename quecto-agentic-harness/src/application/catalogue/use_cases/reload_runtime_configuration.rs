@@ -111,9 +111,23 @@ impl ReloadRuntimeConfiguration {
             ReloadStep::Ready(configuration) => configuration,
         };
         runtime.swap_provider(configuration.provider);
-        let unknown_policy_tools = runtime.apply_persisted_tool_policy(&configuration.tool_policy);
-        for stable_id in &unknown_policy_tools {
-            tracing::debug!(target: "reload", stable_id = %stable_id, "tools.policy reload entry names no registered tool; kept and ignored (#2217)");
+        use crate::domain::tool_policy_catalogue::{
+            UnmatchedPolicyEntry, classify_unmatched_policy_entry,
+        };
+        let unmatched = runtime.apply_persisted_tool_policy(&configuration.tool_policy);
+        // #2217: only an id no bundled tool ever had is unknown and worth a
+        // warning; a bundled tool not built here or a retired one is not.
+        let mut unknown_policy_tools = Vec::new();
+        for stable_id in unmatched {
+            match classify_unmatched_policy_entry(&stable_id) {
+                UnmatchedPolicyEntry::Unknown => {
+                    tracing::warn!(target: "reload", stable_id = %stable_id, "tools.policy.entries names no tool; the entry never applies");
+                    unknown_policy_tools.push(stable_id);
+                }
+                UnmatchedPolicyEntry::BundledElsewhere | UnmatchedPolicyEntry::Retired { .. } => {
+                    tracing::debug!(target: "reload", stable_id = %stable_id, "tools.policy reload entry names a bundled or retired tool not built here; kept and ignored");
+                }
+            }
         }
         ReloadOutcome::Reloaded {
             unknown_policy_tools,

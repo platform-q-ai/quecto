@@ -105,11 +105,15 @@ fn a_relative_deadline_outside_one_second_to_seven_days_is_refused_by_name() {
 }
 
 /// #2205: `constraints` is optional in meaning and in the schema: omitted
-/// is an empty list; any value given goes to the store as given.
+/// or `null` is an empty list; any other value goes to the store as given.
 #[test]
-fn an_omitted_constraints_list_is_empty_and_a_given_one_is_passed_as_given() {
+fn an_omitted_or_null_constraints_list_is_empty_and_a_given_one_is_passed_as_given() {
     assert_eq!(run_constraints(&json!({"goal": "g"})), json!([]));
-    for given in [json!(["no network"]), json!([]), json!("x"), json!(null)] {
+    assert_eq!(
+        run_constraints(&json!({"goal": "g", "constraints": null})),
+        json!([])
+    );
+    for given in [json!(["no network"]), json!([]), json!("x"), json!(0)] {
         assert_eq!(run_constraints(&json!({"constraints": given})), given);
     }
 }
@@ -145,15 +149,17 @@ fn create_input(constraints: Option<Value>) -> Value {
 
 #[test]
 fn a_run_is_created_without_constraints_but_not_with_a_wrong_typed_value() {
-    let dir = tempfile::tempdir().unwrap();
-    let context = store_member(dir.path());
-    context
-        .create_run(&create_input(None), &this_process(), None)
-        .expect("constraints may be omitted");
-    let summary = context.summary().unwrap();
-    assert_eq!(summary["constraints"], json!([]), "{summary}");
+    for none in [None, Some(json!(null))] {
+        let dir = tempfile::tempdir().unwrap();
+        let context = store_member(dir.path());
+        context
+            .create_run(&create_input(none.clone()), &this_process(), None)
+            .expect("constraints may be omitted or null");
+        let summary = context.summary().unwrap();
+        assert_eq!(summary["constraints"], json!([]), "{none:?}: {summary}");
+    }
 
-    for wrong in [json!("no network"), json!(null), json!([1])] {
+    for wrong in [json!("no network"), json!({}), json!([1])] {
         let dir = tempfile::tempdir().unwrap();
         let context = store_member(dir.path());
         let error = context

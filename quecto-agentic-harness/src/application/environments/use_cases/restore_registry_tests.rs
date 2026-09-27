@@ -444,13 +444,9 @@ fn a_correction_another_session_overtook_is_not_written_and_their_state_is_seede
         "a forgotten record is not resurrected"
     );
     assert_eq!(report.stopped, ["C1", "C2"]);
-    // #2190: what this session loaded, then what the other session wrote.
-    assert!(
-        report.diagnostics.iter().any(|d| d
-            == "C1 changed while it was being checked (running → stopped); \
-                the other session's state stands"),
-        "{report:?}"
-    );
+    // #2190: the other process stopped C1, this restore's own verdict:
+    // they agree, so there is nothing to say.
+    assert!(report.diagnostics.is_empty(), "{report:?}");
 }
 
 /// Round 3 H1 (#2033): a `retained` environment (#1924) is ended by an
