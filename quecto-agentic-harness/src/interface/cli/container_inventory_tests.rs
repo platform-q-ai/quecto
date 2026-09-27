@@ -147,10 +147,14 @@ fn kill_by_ref_or_name_runs_the_retained_kill_and_records_stopped() {
     assert_eq!(output.exit_code, 0, "{output:?}");
     assert_eq!(output.stdout, "killed C1 (name-C1)\n");
     assert_eq!(std::fs::read_to_string(&kill_log).unwrap(), "env-one\n");
+    // #2206: a stopped environment is removed by a kill only through its
+    // retained cleanup; this script set retained none.
     let output = run(&["container", "kill", "C1"], &ctx);
     assert_eq!(output.exit_code, 1, "{output:?}");
     assert!(
-        output.stderr.contains("environment 'C1' is stopped"),
+        output
+            .stderr
+            .contains("environment C1 is stopped and its script set retained no cleanup"),
         "{output:?}"
     );
     let output = run(&["container", "kill", "C9"], &ctx);

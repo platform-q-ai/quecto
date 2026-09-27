@@ -298,14 +298,16 @@ pub(crate) fn cmd_agent(
         build.event_log,
         out.stderr,
     );
-    let code = run_agent_session(
-        &base_dir,
-        sessions,
-        agent,
-        &build.retention,
-        &flags,
-        &mut out,
-    );
+    let handles = crate::interface::cli::run_end_fleet::RunHandles {
+        retention: &build.retention,
+        run_end: crate::interface::cli::run_end_fleet::RunEnd::compose(
+            ctx.run_end_fleet,
+            build.subagent_registry,
+            build.harness_lifecycle,
+            ctx.live_output,
+        ),
+    };
+    let code = run_agent_session(&base_dir, sessions, agent, handles, &flags, &mut out);
     admission_startup::shutdown();
     code
 }
@@ -723,6 +725,9 @@ mod parent_control_startup;
 #[cfg(test)]
 #[path = "agent_2126_route_tests.rs"]
 mod route_2126_tests;
+#[cfg(test)]
+#[path = "agent_run_end_tests.rs"]
+mod run_end_tests;
 #[cfg(test)]
 #[path = "agent_startup_identity_tests.rs"]
 mod startup_identity_tests;

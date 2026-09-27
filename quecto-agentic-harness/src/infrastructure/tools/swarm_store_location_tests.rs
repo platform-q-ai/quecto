@@ -235,9 +235,12 @@ fn a_removed_board_fails_as_missing_where_it_was() {
 }
 
 /// In a git checkout the host reads only the board in the git directory: a
-/// work-tree `.quecto/swarm.sqlite` (committed, left from before #2145, or
-/// planted) is never taken for a run, and a board removed from the git
-/// directory is no run, not a fall back to another file.
+/// work-tree `.quecto/swarm.sqlite` (committed, left from before #2145,
+/// planted, or pinned by a member before a `git init`) is never taken for a
+/// run — but while no board is where the layout places it, it is never
+/// taken for "no swarm" either: the read fails, so the environment is kept
+/// (#2206). A board removed from the git directory is never replaced by
+/// the other file.
 #[test]
 fn the_host_never_reads_a_work_tree_board_in_a_git_checkout() {
     let repo = repository();
@@ -245,7 +248,11 @@ fn the_host_never_reads_a_work_tree_board_in_a_git_checkout() {
     let (board, _) = created_run(elsewhere.path());
     std::fs::copy(board.database(), repo.path().join(".quecto/swarm.sqlite")).unwrap();
     let hosted = super::super::swarm_bridge::HostedStore::at(repo.path().to_path_buf());
-    assert!(hosted.hosted_run().unwrap().is_none());
+    let displaced = hosted.hosted_run().unwrap_err().to_string();
+    assert!(
+        displaced.contains("is not where the checkout's layout now places it"),
+        "{displaced}"
+    );
     let (_, id) = created_run(repo.path());
     let run = hosted
         .hosted_run()
@@ -253,7 +260,7 @@ fn the_host_never_reads_a_work_tree_board_in_a_git_checkout() {
         .expect("the git directory's board");
     assert_eq!(serde_json::Value::from(run.id).to_string(), id);
     std::fs::remove_dir_all(repo.path().join(".git/quecto")).unwrap();
-    assert!(hosted.hosted_run().unwrap().is_none());
+    assert!(hosted.hosted_run().is_err(), "never the other file");
 }
 
 /// The host opens a store only where it really is inside the checkout: a
@@ -290,16 +297,18 @@ fn a_missing_store_names_its_path() {
     assert!(!error.contains("contended"), "{error}");
 }
 
-/// Where the store should be there is no store file (none yet, or a
-/// directory in its place): the host finds no run, and does not try to
-/// open one.
+/// Where no board is, at every place (each answers "no such file"), the
+/// host finds no run and does not try to open one. Anything else at a
+/// board's place — a directory — is not "no board" (#2206 round 2): the
+/// read fails, so the environment is kept, and nothing is opened.
 #[test]
 fn the_host_finds_no_run_where_there_is_no_store_file() {
     let repo = repository();
     let hosted = super::super::swarm_bridge::HostedStore::at(repo.path().to_path_buf());
     assert!(hosted.hosted_run().unwrap().is_none());
-    std::fs::create_dir_all(repo.path().join(".quecto/swarm.sqlite")).unwrap();
-    assert!(hosted.hosted_run().unwrap().is_none());
+    std::fs::create_dir_all(repo.path().join(".git/quecto/swarm.sqlite")).unwrap();
+    let error = hosted.hosted_run().unwrap_err().to_string();
+    assert!(error.contains("is not a regular file"), "{error}");
 }
 
 /// The host pins nothing: once a checkout's layout places a new board (here
@@ -472,4 +481,199 @@ async fn old_executions_are_pruned_beside_the_board() {
         .unwrap()
         .count();
     assert!(kept <= 3, "{kept} execution directories kept");
+}
+
+// ─── #2206: a board the layout no longer names is never "no swarm" ─────────
+
+fn sandbox_record(workspace: &Path) -> crate::domain::environment_registry::EnvironmentRecord {
+    use crate::domain::environment_registry::{
+        EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
+    };
+    EnvironmentRecord {
+        environment_ref: "C1".into(),
+        environment_id: "env-1".into(),
+        environment_uuid: "u1".into(),
+        name: None,
+        workspace_path: workspace.to_path_buf(),
+        repository: String::new(),
+        script_name: "standard".into(),
+        retained_exec_argv: vec!["exec.sh".into()],
+        retained_kill_argv: vec!["kill.sh".into()],
+        retained_cleanup_argv: vec!["cleanup.sh".into()],
+        retained_inspect_argv: vec![],
+        members: vec!["coord".into()],
+        status: EnvironmentStatus::Running,
+        metadata: serde_json::json!({"checkout": workspace.display().to_string()}),
+        last_error: None,
+        origin: EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
+    }
+}
+
+/// Records the scripts the finalizer runs.
+struct Scripts(std::sync::Mutex<Vec<&'static str>>);
+
+impl crate::application::environments::ports::EnvironmentProcessCommands for Scripts {
+    fn run_retained_inspect<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a [String],
+    ) -> crate::application::environments::ports::PortFuture<'a, Result<serde_json::Value, String>>
+    {
+        Box::pin(async { Ok(serde_json::json!({})) })
+    }
+
+    fn run_retained_kill<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a [String],
+    ) -> crate::application::environments::ports::PortFuture<'a, Result<(), String>> {
+        self.0.lock().unwrap().push("kill");
+        Box::pin(async { Ok(()) })
+    }
+
+    fn run_retained_cleanup<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a [String],
+    ) -> crate::application::environments::ports::PortFuture<'a, Result<(), String>> {
+        self.0.lock().unwrap().push("cleanup");
+        Box::pin(async { Ok(()) })
+    }
+
+    fn observe_liveness<'a>(
+        &'a self,
+        _: &'a crate::domain::environment_registry::EnvironmentRecord,
+    ) -> crate::application::environments::ports::PortFuture<
+        'a,
+        crate::application::environments::dto::EnvironmentLiveness,
+    > {
+        Box::pin(async { panic!("a final-member teardown never asks liveness") })
+    }
+}
+
+/// The #2206 round-1 probe: an agent's `git init` in a sandbox checkout (no
+/// clone) moves where the layout places the board, while the coordinator
+/// keeps running on the one it pinned. The host must read that as an
+/// unreadable store — never as a plain container — so neither the owner's
+/// end nor a harness shutdown destroys the live swarm's box.
+#[test]
+fn a_live_swarm_whose_layout_changed_is_never_taken_for_a_plain_container() {
+    use crate::application::environments::ports::HostedSwarmRunInspection;
+    use crate::application::environments::use_cases::FinalizeEnvironmentMember;
+    use crate::domain::environment_registry::{EnvironmentRegistry, EnvironmentStatus};
+    use crate::domain::environment_retention::{
+        MemberFinalizeMode, SwarmRunObservation, ends_plain_environment,
+    };
+    use crate::infrastructure::tools::environment_commands::HostedStoreObservation;
+    for mode in [
+        MemberFinalizeMode::OwnerEnd,
+        MemberFinalizeMode::ParentKill,
+        MemberFinalizeMode::Exit,
+    ] {
+        let state = tempfile::tempdir().unwrap();
+        let workspace = state.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let (_coordinator, _) = created_run(&workspace);
+        let record = sandbox_record(&workspace);
+        let before = HostedStoreObservation.inspect_hosted_run(&record);
+        assert!(
+            matches!(before, SwarmRunObservation::Run(ref run) if run.created()),
+            "{before:?}"
+        );
+        git(&workspace, &["init", "-q"]);
+        let after = HostedStoreObservation.inspect_hosted_run(&record);
+        assert!(
+            matches!(after, SwarmRunObservation::Unreadable(_)),
+            "{mode:?}: {after:?}"
+        );
+        assert!(!ends_plain_environment(mode, &after));
+
+        let registry = EnvironmentRegistry::new();
+        registry.commit(record);
+        let scripts = std::sync::Arc::new(Scripts(Default::default()));
+        let finalize = FinalizeEnvironmentMember::new(
+            registry.clone(),
+            scripts.clone(),
+            std::sync::Arc::new(HostedStoreObservation),
+        );
+        futures::executor::block_on(finalize.finalize_member("C1", "coord", None, mode));
+        assert!(
+            scripts.0.lock().unwrap().is_empty(),
+            "{mode:?}: no cleanup, no kill"
+        );
+        assert_eq!(
+            registry.get("C1").map(|record| record.status),
+            Some(EnvironmentStatus::Retained),
+            "{mode:?}: the box is kept"
+        );
+    }
+}
+
+/// With no board at either location a sandbox checkout is plain, and a
+/// board where the layout places it is read as before.
+#[test]
+fn a_displaced_board_is_found_only_where_the_layout_does_not_place_it() {
+    let plain = tempfile::tempdir().unwrap();
+    assert_eq!(displaced_board(plain.path()), None);
+    let (_context, _) = created_run(plain.path());
+    assert_eq!(
+        displaced_board(plain.path()),
+        None,
+        "it is where the layout says"
+    );
+    git(plain.path(), &["init", "-q"]);
+    assert_eq!(
+        displaced_board(plain.path()),
+        Some(plain.path().join(".quecto/swarm.sqlite"))
+    );
+    assert!(!matches!(
+        board_presence(plain.path()),
+        BoardPresence::Absent
+    ));
+}
+
+/// #2206 round 3: a board where the layout places it now does not hide a
+/// board at a place it no longer names. When the current board holds only
+/// the bootstrap placeholder, the other may hold the live run a member
+/// pinned: the read fails, so the box is kept. A created run at the
+/// current place is read as before.
+#[test]
+fn a_current_placeholder_board_never_hides_a_displaced_one() {
+    let plain = tempfile::tempdir().unwrap();
+    let (_coordinator, _) = created_run(plain.path());
+    git(plain.path(), &["init", "-q"]);
+    // A new member's bootstrap writes a placeholder where the layout now
+    // places the board.
+    let newcomer = context(plain.path());
+    forget_pin(plain.path());
+    std::fs::create_dir_all(plain.path().join(".git/quecto")).unwrap();
+    newcomer
+        .call(
+            "_bootstrap",
+            serde_json::json!([std::process::id(), "1", null]),
+        )
+        .unwrap();
+    assert!(matches!(
+        board_presence(plain.path()),
+        BoardPresence::Current {
+            displaced: Some(_),
+            ..
+        }
+    ));
+    let hosted = super::super::swarm_bridge::HostedStore::at(plain.path().to_path_buf());
+    let error = hosted.hosted_run().unwrap_err().to_string();
+    assert!(
+        error.contains("holds no created run, but another board exists"),
+        "{error}"
+    );
+
+    // A created run at the current place is read, displaced board or not.
+    let repo = repository();
+    std::fs::write(repo.path().join(".quecto/swarm.sqlite"), "stale").unwrap();
+    let (_, id) = created_run(repo.path());
+    let hosted = super::super::swarm_bridge::HostedStore::at(repo.path().to_path_buf());
+    let run = hosted.hosted_run().unwrap().expect("the created run");
+    assert_eq!(serde_json::Value::from(run.id).to_string(), id);
 }

@@ -354,3 +354,38 @@ Feature: Environments outlive sessions
     And the state dir should no longer contain "env-orphan08"
     And the persistent runtime should never have removed the environment of "C5"
     And the durable environment registry should record "C5" with status "stopped" created by "elsewhere"
+
+  # #2206: a one-shot run that finishes is its owner's word for the plain
+  # container child it launched: the box goes for good.
+  @done @issue-2206 @container-env @serial
+  Scenario: A one-shot run that finishes removes its plain container child's box
+    When a real quecto agent driven by a fake provider spawns container true and finishes its run
+    Then the real agent should have exited successfully
+    And the persistent runtime should have cleaned up an environment exactly 1 time
+    And the persistent runtime should have killed an environment exactly 0 times
+    And the durable environment registry should not record "C1"
+    And the state dir should hold no environment
+    And scenario teardown should leave no fixture processes running
+
+  # #2206: a provider error is not the owner's word — closer to a crash —
+  # so the failed run settles nothing and the box is kept for an explicit
+  # kill.
+  @done @issue-2206 @container-env @serial
+  Scenario: A one-shot run whose provider fails keeps its plain container child's box, and container kill removes it once stopped
+    When a real quecto agent driven by a fake provider spawns container true and then its provider fails
+    Then the real agent should have exited with code 1
+    And the persistent runtime should have cleaned up an environment exactly 0 times
+    And the persistent runtime should have killed an environment exactly 0 times
+    And the durable environment registry should record "C1" with status "running" created by "cli:run-end-err"
+    # The kept box's container exits; the next command's restore records it
+    # stopped with its state dir still on disk. An explicit kill removes
+    # what it left, once its own inspect says the container is gone.
+    Given the fake runtime loses the container of "C1" behind the harness's back
+    When I run quecto with arguments "container kill C1"
+    Then the exit code should be 0
+    And the output should contain "removed stopped C1"
+    And the persistent runtime should have cleaned up an environment exactly 1 time
+    And the persistent runtime should have killed an environment exactly 0 times
+    And the durable environment registry should not record "C1"
+    And the state dir should hold no environment
+    And scenario teardown should leave no fixture processes running

@@ -45,8 +45,13 @@ pub enum AssetState {
     Missing,
     /// The file exists with exactly the embedded bytes.
     Identical,
-    /// The file exists with other bytes (an edit, an older version).
+    /// The file exists with other bytes (an edit, an unknown version).
     Differs,
+    /// The file holds exactly the bytes an earlier quecto shipped for this
+    /// bundle script (#2206): not an edit, so `status`, `doctor` and `init`
+    /// refresh it in place — and a launch or a teardown refuses it, never
+    /// runs it and never rewrites it.
+    Outdated,
     /// The destination cannot be judged or written through (a symbolic
     /// link, a directory in a file's place); init refuses it.
     Refused,

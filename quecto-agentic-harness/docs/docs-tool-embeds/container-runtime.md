@@ -27,7 +27,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
    ```
    Expected (`wrote` per file on a first run, `kept` on a re-run):
    ```
-   standard container bundle (version 5) at /repo/.quecto/containers/standard
+   standard container bundle (version 6) at /repo/.quecto/containers/standard
      wrote  /repo/.quecto/containers/standard/Containerfile
      wrote  /repo/.quecto/containers/standard/scripts/create.sh
      wrote  … exec.sh, inspect.sh, kill.sh
@@ -66,7 +66,7 @@ Expected (exit 0; exit 1 — last line `not ready: …` — while a script diffe
 
 ```
 standard container at /repo/.quecto/containers/standard
-  assets:  present (5 of 5, version 5)
+  assets:  present (5 of 5, version 6)
   config:  standard (default, overlay) in the effective configuration; --repo https://github.com/org/app.git
            this repo's default: `spawn container: true` selects it whatever the global file labels
   trust:   trusted (the repo-local overlay is applied)
@@ -121,7 +121,8 @@ Running environments are unaffected until killed (`kill_container`, or `quecto c
 | doctor `! gh  gh is not on PATH …` (warning) | children get no GitHub token | install `gh`, `gh auth login`; harmless if children never push |
 | doctor `✗ state-dir` | `<base_dir>/container-environments` not writable | fix ownership/permissions of the base dir |
 | spawn error `script-managed create failed with status exit status: N: …` | the create's own failure, stderr tail quoted | read the tail; shipped codes 2–8 are the preflight checks (2 usage, 3 runtime, 4 jq, 5 git, 6 image, 7 repo, 8 state dir — the doctor shows the same); 1 = a later step (clone, `podman run`), environment already rolled back |
-| spawn error `container config 'standard' refused: …/scripts/create.sh differs from the standard bundle this quecto embeds …` | a script under `.quecto/containers/standard/` was edited, pulled, or written by an older quecto | `git diff .quecto/containers/standard`, then `quecto container init --refresh` |
+| spawn error `container config 'standard' refused: …/scripts/create.sh differs from the standard bundle this quecto embeds …` | a script under `.quecto/containers/standard/` was edited, pulled, or written by a quecto whose bundle this one does not know (bytes an earlier quecto shipped are refreshed in place only by `status`, `doctor` and `init`) | review the file (`git diff` where the scripts are committed; else compare with a fresh `quecto container init` in an empty directory), then `quecto container init --refresh` |
+| spawn, kill or inspect error `… was written by an earlier quecto; run `quecto container status --project <dir>` …` | a launch or teardown met a script an earlier quecto shipped; neither ever rewrites the bundle | restart any older quecto still running, run `quecto container status --project <dir>` (or `init --refresh`) in the project the error names, then retry |
 | `container: true refused` with `overlay_withheld: true` in `get_container_configs` | untrusted/refused overlay | `diagnostics` names it; `quecto config trust`, retry |
 | `unknown container config` | name not in the effective set | `agent_cmd get_container_configs` lists the live names |
 | `does not support --preflight-only` | a custom create script predating the preflight contract | add the mode to the script (both shipped sets implement it) |
@@ -129,7 +130,7 @@ Running environments are unaffected until killed (`kill_container`, or `quecto c
 
 ## Trust boundary
 
-The overlay's trust covers `.quecto/config.json`, not the scripts it names, and those scripts run **on the host** before any container exists. So the program (first argv element) of every argv the host is about to run is compared with the bytes this binary embeds whenever it lies under `.quecto/containers/standard/`: every script the entry names at create (`spawn container: true`, `container doctor`), the retained exec argv at a join, and the retained inspect/kill/cleanup argv before each runs. One that differs, is missing or is a symbolic link is refused before it runs; a refused kill leaves `cleanup-failed` with the same reason (retry after the refresh); `status` lists the file as `differs`. Review a pulled change to `.quecto/containers/standard/` as you would one to `.quecto/config.json` (`git diff`), then `quecto container init --refresh`. The Containerfile is not run on the host and not checked at launch; it is the project's own file — `status` lists it as `this project's own` and stays `ready`, and `init --refresh` never replaces it.
+The overlay's trust covers `.quecto/config.json`, not the scripts it names, and those scripts run **on the host** before any container exists. So the program (first argv element) of every argv the host is about to run is compared with the bytes this binary embeds whenever it lies under `.quecto/containers/standard/`: every script the entry names at create (`spawn container: true`, `container doctor`), the retained exec argv at a join, and the retained inspect/kill/cleanup argv before each runs. One that differs, is missing or is a symbolic link is refused before it runs; a refused kill leaves `cleanup-failed` with the same reason (retry after the refresh); `status` lists the file as `differs`. Review a change to `.quecto/containers/standard/` as you would one to `.quecto/config.json` (`git diff` where the scripts are committed; where they are local, compare them with a fresh `quecto container init` in an empty directory), then `quecto container init --refresh`. A script holding exactly the bytes an earlier quecto shipped is refreshed in place only by `status`, `doctor` and `init`, with a notice to restart any older quecto still running; a launch and a teardown refuse it instead, since an older quecto may still be using it. A config whose scripts live outside `.quecto/containers/standard/` is not judged and runs as it is. The Containerfile is not run on the host and not checked at launch; it is the project's own file — `status` lists it as `this project's own` and stays `ready`, and `init --refresh` never replaces it.
 
 ## Upgrades
 

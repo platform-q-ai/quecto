@@ -17,9 +17,18 @@ use crate::domain::swarm::RunStatus;
 pub enum MemberFinalizeMode {
     /// The member ended on its own: a post-mortem (inspect runs).
     Exit,
-    /// Parent-initiated termination of ONE member (`kill_container`, an
-    /// operator kill): death by our own hand is not a post-mortem.
+    /// Parent-initiated termination that may not be the owner's word: a
+    /// harness shutdown (which can be a crash) or the member side of an
+    /// environment kill. Death by our own hand is not a post-mortem.
     ParentKill,
+    /// The owner ended this member on purpose (#2206): its own selected
+    /// termination of the one member (`agent_cmd kill`, a kill from the
+    /// owning TUI, one forwarded down the owner's chain), or a one-shot
+    /// parent ending the run it was started for. Toward a swarm it is
+    /// exactly a `ParentKill`: a run its owner has not closed keeps its
+    /// box. A plain container child has nothing to resume, so its
+    /// environment is cleaned up and its record forgotten.
+    OwnerEnd,
     /// The owner explicitly ended everything it owns (#2070): delete-all, or
     /// a session transition that is going to succeed. Its swarms end with it,
     /// so nothing is kept — whatever state their runs are in. A harness that
@@ -38,7 +47,14 @@ impl MemberFinalizeMode {
     /// Whether the mode may withhold the teardown for inspection (#1924):
     /// only an end that leaves something worth inspecting.
     pub const fn inspectable_end(self) -> bool {
-        matches!(self, Self::Exit | Self::ParentKill)
+        matches!(self, Self::Exit | Self::ParentKill | Self::OwnerEnd)
+    }
+
+    /// Whether the owner ended this one member on purpose (#2206). An
+    /// owner's explicit teardown of everything (#2070) is not this: it
+    /// ends every box with the retained kill without reading any store.
+    pub const fn owner_ended_member(self) -> bool {
+        matches!(self, Self::OwnerEnd)
     }
 
     /// Whether the mode is a launch rollback (retained `cleanup`, never
@@ -94,6 +110,12 @@ impl HostedSwarmRun {
         self.created() && !self.closed_by_owner()
     }
 
+    /// The bootstrap placeholder every container carries (#1715): no
+    /// swarm was ever created in it.
+    pub fn placeholder(&self) -> bool {
+        !self.created()
+    }
+
     /// Operator-facing description of the run's state.
     pub fn describe(&self) -> String {
         match (self.status, self.outcome) {
@@ -112,12 +134,33 @@ pub enum SwarmRunObservation {
     /// The environment advertises no coordination store, or none exists yet:
     /// an ordinary container.
     NoStore,
+    /// No board the host could look at (#2206 round 3): the record
+    /// advertises no checkout and its workspace is absent from the host (a
+    /// third-party script set whose workspace lives only in the container).
+    /// Nothing says it hosts no swarm, so it is never a plain container —
+    /// but it is no store the host could read either, so the retained kill
+    /// runs as it always has, except on the owner's end of the member,
+    /// which keeps it (for `container kill` or `gc`).
+    NoStoreUnverified,
     /// The store's run.
     Run(HostedSwarmRun),
     /// A store exists but could not be read (contended, corrupt, no
     /// interpreter). A store exists only where members coordinate, so this
     /// is not proof that no run is live.
     Unreadable(String),
+}
+
+impl SwarmRunObservation {
+    /// A plain container (#2206): it advertises no coordination store, or
+    /// its store holds only the bootstrap placeholder. A created swarm run,
+    /// whatever its state, and a store that cannot be read are not.
+    pub fn plain_container(&self) -> bool {
+        match self {
+            Self::NoStore => true,
+            Self::Run(hosted) => hosted.placeholder(),
+            Self::NoStoreUnverified | Self::Unreadable(_) => false,
+        }
+    }
 }
 
 /// The result of recording a coordinator loss on the store in one operation
@@ -149,9 +192,24 @@ pub fn retains_environment(mode: MemberFinalizeMode, observed: &SwarmRunObservat
     mode.inspectable_end()
         && match observed {
             SwarmRunObservation::NoStore => false,
+            // #2206 round 3: never ended for good on the owner's word —
+            // kept instead; every other end runs the retained kill as
+            // before.
+            SwarmRunObservation::NoStoreUnverified => mode.owner_ended_member(),
             SwarmRunObservation::Run(hosted) => hosted.keeps_environment(),
             SwarmRunObservation::Unreadable(_) => true,
         }
+}
+
+/// Whether an emptied environment is ended for good (#2206): its retained
+/// `cleanup` runs (the container and its state directory go) and, once
+/// that succeeded, its record is forgotten, as a launch rollback does. Only
+/// on the owner's word, and only for a plain container: it hosts no swarm,
+/// so there is nothing to resume or inspect. A swarm — whatever its run's
+/// state — and a store that cannot be read are never ended here; the swarm
+/// rules above decide them.
+pub fn ends_plain_environment(mode: MemberFinalizeMode, observed: &SwarmRunObservation) -> bool {
+    mode.owner_ended_member() && observed.plain_container()
 }
 
 const KEPT: &str = "environment retained for inspection, kill_container to remove";
@@ -163,10 +221,20 @@ pub fn retention_reason(mode: MemberFinalizeMode, observed: &SwarmRunObservation
             "final member gone while the coordination store could not be read ({error}); {KEPT}"
         ),
         SwarmRunObservation::NoStore => format!("final member gone; {KEPT}"),
-        SwarmRunObservation::Run(run) if mode == MemberFinalizeMode::ParentKill => format!(
-            "coordinator killed by supervisor; run {}; {KEPT}",
-            run.describe()
+        SwarmRunObservation::NoStoreUnverified => format!(
+            "final member ended by its owner, but its workspace is not on this host, so whether it hosts a swarm cannot be checked; {KEPT}"
         ),
+        SwarmRunObservation::Run(run)
+            if matches!(
+                mode,
+                MemberFinalizeMode::ParentKill | MemberFinalizeMode::OwnerEnd
+            ) =>
+        {
+            format!(
+                "coordinator killed by supervisor; run {}; {KEPT}",
+                run.describe()
+            )
+        }
         SwarmRunObservation::Run(run) => match (run.status, run.outcome) {
             (RunStatus::Cancelled, _) => format!("run ended: cancelled; {KEPT}"),
             (RunStatus::Paused, Some(outcome)) => {

@@ -42,6 +42,95 @@ pub(super) fn located(checkout: &Path) -> PathBuf {
     }
 }
 
+/// What the host finds at every place a checkout's board may be (#2206).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum BoardPresence {
+    /// Nothing at any of them: each place answered "no such file".
+    Absent,
+    /// Something where the layout places the board now — and, when
+    /// `displaced` is set, also at a place it no longer names (#2206 round
+    /// 3): a live run a member pinned there is hidden unless the current
+    /// board holds a created run of its own.
+    Current {
+        board: PathBuf,
+        displaced: Option<PathBuf>,
+    },
+    /// Something only where the layout does NOT place it now: the work
+    /// tree's `.quecto/swarm.sqlite` once the checkout has a git directory
+    /// (an agent's `git init` in a sandbox with no clone), or the git
+    /// directory's board when the layout now says work tree. A member
+    /// pinned it and may still be running on it.
+    Displaced(PathBuf),
+    /// A place could not be examined (permissions, a symlink loop, I/O, a
+    /// `.git` pointer that does not resolve on this host): never proof
+    /// that there is no board.
+    Unknown(String),
+}
+
+/// Look at every place a checkout's board may be — where its layout places
+/// it now, the work tree's `.quecto/swarm.sqlite` and the git directory's
+/// `.git/quecto/swarm.sqlite` — without following a link. Only a place
+/// that answers "no such file" counts as empty, and "not a directory" only
+/// for `.git/quecto/…` when `.git` is a worktree pointer that resolves on
+/// this host (its board then lives in the git directory it names). Any
+/// other answer is `Unknown` (#2206 rounds 2 and 3).
+pub(super) fn board_presence(checkout: &Path) -> BoardPresence {
+    let dot_git = checkout.join(".git");
+    let pointer_resolved = match std::fs::symlink_metadata(&dot_git) {
+        Ok(meta) if meta.is_file() => match own_git_dir(checkout) {
+            Some(_) => true,
+            None => {
+                return BoardPresence::Unknown(format!(
+                    "{} names no git directory that resolves on this host",
+                    dot_git.display()
+                ));
+            }
+        },
+        Ok(_) => false,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return BoardPresence::Unknown(format!("{}: {error}", dot_git.display())),
+    };
+    let current = located(checkout);
+    let git_place = dot_git.join(GIT_STORE_DIR).join(STORE_FILE);
+    let places = [
+        current.clone(),
+        checkout.join(WORK_TREE_STORE_DIR).join(STORE_FILE),
+        git_place.clone(),
+    ];
+    let mut found: Vec<PathBuf> = Vec::new();
+    for place in places {
+        match std::fs::symlink_metadata(&place) {
+            Ok(_) => found.push(place),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotADirectory
+                    && pointer_resolved
+                    && place == git_place => {}
+            Err(error) => {
+                return BoardPresence::Unknown(format!("{}: {error}", place.display()));
+            }
+        }
+    }
+    let displaced = found.iter().find(|place| **place != current).cloned();
+    match (found.contains(&current), displaced) {
+        (true, displaced) => BoardPresence::Current {
+            board: current,
+            displaced,
+        },
+        (false, Some(displaced)) => BoardPresence::Displaced(displaced),
+        (false, None) => BoardPresence::Absent,
+    }
+}
+
+/// The board found only where the layout no longer places it, if any.
+#[cfg(test)]
+pub(super) fn displaced_board(checkout: &Path) -> Option<PathBuf> {
+    match board_presence(checkout) {
+        BoardPresence::Displaced(place) => Some(place),
+        BoardPresence::Absent | BoardPresence::Current { .. } | BoardPresence::Unknown(_) => None,
+    }
+}
+
 /// A member's coordination store in the container checked out at
 /// `checkout`: the board it found there, or where it will be.
 pub(super) fn member_store_path(checkout: &Path) -> PathBuf {

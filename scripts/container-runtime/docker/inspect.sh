@@ -73,6 +73,34 @@ if [ "$list" = 1 ]; then
   done
   exit 0
 fi
+# Whether the runtime's own words say container $2 does not exist: a
+# line of its error output $1 saying "no such container"/"no such object"
+# (Podman and Docker alike) that names the container.
+says_no_such() {
+  printf '%s\n' "$1" | grep -iE 'no such (container|object)' | grep -qF -- "$2"
+}
+
+# Ask the runtime about one container. The answer is left in `answer`;
+# returns 1 only when the runtime's own words say the container does not
+# exist. Any other failure — a runtime that cannot be reached, a storage
+# lock — is no answer: the inspect fails, so the harness treats the
+# container's state as unknown and never as gone (#2206). No temporary
+# file: the error words are read by asking again, stderr only.
+answer=""
+inspect_container() {
+  local errors
+  if answer="$("$cli" inspect --format "$1" "$2" 2>/dev/null)"; then
+    return 0
+  fi
+  if errors="$("$cli" inspect --format "$1" "$2" 2>&1 >/dev/null)"; then
+    die "$cli inspect $2 failed, then answered: whether it exists is unknown"
+  fi
+  if says_no_such "$errors" "$2"; then
+    return 1
+  fi
+  die "$cli inspect $2 failed, so whether it exists is unknown: $(printf '%s' "$errors" | tr '\n' ' ')"
+}
+
 id="${QUECTO_CONTAINER_ENVIRONMENT_ID:-}"
 [ -n "$id" ] || die "QUECTO_CONTAINER_ENVIRONMENT_ID must be set"
 case "$id" in
@@ -85,13 +113,23 @@ if [ ! -d "$env_dir" ]; then
   # may still run: ask the runtime before calling it dead, so a restore
   # (#2024 S4d) never stops a live environment — and marks a truly gone
   # one stopped instead of keeping it unverified forever.
-  if [ "$("$cli" inspect --format '{{.State.Running}}' "quecto-$id" 2>/dev/null)" = true ]; then
+  # Gone or exited is dead; running is running; any other state is
+  # unknown (#2206).
+  state="dead"
+  if inspect_container '{{.State.Status}}' "quecto-$id"; then
+    state="$answer"
+  fi
+  case "$state" in
+  running)
     jq -cn --arg cli "$cli" --arg container "quecto-$id" \
       '{status: "running", metadata: {runtime: $cli, container: $container, cause: "state-dir-removed"}}'
-  else
+    ;;
+  exited | dead | stopped)
     jq -cn --arg cli "$cli" \
       '{status: "dead", metadata: {runtime: $cli, cause: "environment-removed"}}'
-  fi
+    ;;
+  *) die "container quecto-$id is $state: neither running nor exited, so its state is unknown" ;;
+  esac
   exit 0
 fi
 resolved="$(cd "$env_dir" && pwd -P)"
@@ -102,22 +140,30 @@ case "$resolved" in
 esac
 container="$(cat "$env_dir/container")"
 
-if ! state="$("$cli" inspect --format '{{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}}' "$container" 2>/dev/null)"; then
+if ! inspect_container '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}' "$container"; then
   jq -cn --arg cli "$cli" --arg container "$container" \
     '{status: "dead", metadata: {runtime: $cli, container: $container, cause: "container-removed"}}'
   exit 0
 fi
-read -r running exit_code oom <<<"$state"
-if [ "$running" = "true" ]; then
+read -r state exit_code oom <<<"$answer"
+# Only a container the runtime calls running is running, and only one it
+# calls exited, dead or stopped (Podman) is dead, as `--list` judges it. Any other state — paused, created,
+# stopping, restarting, removing — is neither: the inspect fails, so the
+# harness treats it as unknown and never tears it down as gone (#2206).
+case "$state" in
+running)
   status="running"
   cause="member-connection-lost"
-else
+  ;;
+exited | dead | stopped)
   status="dead"
   if [ "$oom" = "true" ]; then
     cause="oom-killed"
   else
     cause="exit-code-$exit_code"
   fi
-fi
+  ;;
+*) die "container $container is $state: neither running nor exited, so its state is unknown" ;;
+esac
 jq -cn --arg cli "$cli" --arg status "$status" --arg container "$container" --arg cause "$cause" \
   '{status: $status, metadata: {runtime: $cli, container: $container, cause: $cause}}'

@@ -132,17 +132,25 @@ impl EnvironmentProcessCommands for SpyFinalizationPort {
         })
     }
 
+    fn observe_liveness<'a>(
+        &'a self,
+        _record: &'a crate::domain::environment_registry::EnvironmentRecord,
+    ) -> PortFuture<'a, crate::application::environments::dto::EnvironmentLiveness> {
+        Box::pin(async { panic!("a final-member teardown never asks liveness") })
+    }
+
     fn run_retained_cleanup<'a>(
         &'a self,
         environment_id: &'a str,
         argv: &'a [String],
-    ) -> PortFuture<'a, ()> {
+    ) -> PortFuture<'a, Result<(), String>> {
         Box::pin(async move {
             self.events.lock().unwrap().push(ScriptEvent::Cleanup);
             self.cleanups.lock().unwrap().push(ScriptCall {
                 environment_id: environment_id.to_string(),
                 argv: argv.to_vec(),
             });
+            Ok(())
         })
     }
 }

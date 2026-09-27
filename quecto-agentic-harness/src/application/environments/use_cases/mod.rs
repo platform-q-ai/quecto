@@ -30,6 +30,8 @@ pub use restore_registry::{
 };
 
 #[cfg(test)]
+mod finalize_environment_member_owner_end_tests;
+#[cfg(test)]
 mod finalize_environment_member_retention_tests;
 #[cfg(test)]
 mod finalize_environment_member_tests;
@@ -41,6 +43,8 @@ mod gc_orphaned_environments_hosted_tests;
 mod gc_orphaned_environments_scope_tests;
 #[cfg(test)]
 mod gc_orphaned_environments_tests;
+#[cfg(test)]
+mod kill_environment_stopped_tests;
 #[cfg(test)]
 mod kill_environment_tests;
 #[cfg(test)]

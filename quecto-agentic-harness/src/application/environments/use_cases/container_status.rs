@@ -7,7 +7,9 @@
 //! applied, and whether the image is present, asked of the entry's own
 //! create preflight (the S4b contract) so status and doctor never
 //! disagree. A status is a report, never an error: what could not be
-//! established is said in the report's own words.
+//! established is said in the report's own words. A bundle script holding
+//! bytes an earlier quecto wrote is refreshed in place (#2206) and the
+//! report says so.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -54,6 +56,27 @@ impl ContainerStatus {
             .map(|asset| {
                 let path = assets_dir.join(&asset.path);
                 let state = match self.assets.observe(project, &assets_dir, asset) {
+                    // Bytes an earlier quecto wrote (#2206): refreshed in
+                    // place, and the report says so.
+                    Ok(AssetState::Outdated) => {
+                        match self.assets.refresh(project, &assets_dir, asset) {
+                            Ok(_) => {
+                                asset_diagnostics.push(format!(
+                                    "refreshed {}: it held a script an earlier quecto wrote; version {} is now in place — restart any older quecto that is still running, its scripts changed",
+                                    path.display(),
+                                    catalogue.version
+                                ));
+                                AssetState::Identical
+                            }
+                            Err(reason) => {
+                                asset_diagnostics.push(format!(
+                                    "{} was written by an earlier quecto and could not be refreshed: {reason}",
+                                    path.display()
+                                ));
+                                AssetState::Refused
+                            }
+                        }
+                    }
                     Ok(state) => state,
                     // A destination that cannot be judged (a symbolic
                     // link, a directory in a file's place) is not

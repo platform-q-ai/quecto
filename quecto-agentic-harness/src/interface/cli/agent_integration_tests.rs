@@ -8,6 +8,8 @@ use crate::infrastructure::config::Config;
 use crate::infrastructure::security::sandbox::Sandbox;
 use std::path::PathBuf;
 
+use crate::interface::cli::retention_handles::RetentionHandles;
+use crate::interface::cli::run_end_fleet::RunHandles;
 use crate::interface::cli::{CliContext, run_with_output};
 
 pub(super) fn args(s: &str) -> Vec<String> {
@@ -70,7 +72,15 @@ fn write_fake_config(dir: &std::path::Path) {
 }
 
 /// Helper: create default AgentFlags with common overrides.
-fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> AgentFlags {
+fn retention(base_dir: &std::path::Path) -> RetentionHandles {
+    crate::composition::sessions::build_retention_handles(base_dir)
+}
+
+pub(super) fn test_flags(
+    msg: Option<&str>,
+    session: Option<&str>,
+    sys: Option<&str>,
+) -> AgentFlags {
     AgentFlags {
         session_name: session.map(String::from),
         no_session: false,
@@ -115,7 +125,7 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
 
 /// Helper: create a minimal AgentLoopImpl with a fake provider that always fails.
 /// Uses 127.0.0.1:1 which gives immediate connection-refused (fast failure).
-fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
+pub(super) fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
     let config = config_from_str(
         r#"{"providers":{"openai":{"api_key":"sk-test","api_base":"http://127.0.0.1:1"}}}"#,
     );
@@ -377,7 +387,7 @@ fn test_run_agent_session_ephemeral_no_save() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
-        &crate::composition::sessions::build_retention_handles(tmp.path()),
+        RunHandles::without_children(&retention(tmp.path())),
         &flags,
         &mut out,
     );
@@ -413,7 +423,7 @@ fn test_run_agent_session_ephemeral_scrubs_spill_file() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
-        &crate::composition::sessions::build_retention_handles(tmp.path()),
+        RunHandles::without_children(&retention(tmp.path())),
         &flags,
         &mut out,
     );
@@ -452,7 +462,7 @@ fn test_run_agent_session_named_session_keeps_spill_file() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
-        &crate::composition::sessions::build_retention_handles(tmp.path()),
+        RunHandles::without_children(&retention(tmp.path())),
         &flags,
         &mut out,
     );
@@ -477,7 +487,7 @@ fn test_run_agent_session_default_session_key() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
-        &crate::composition::sessions::build_retention_handles(tmp.path()),
+        RunHandles::without_children(&retention(tmp.path())),
         &flags,
         &mut out,
     );
@@ -500,7 +510,7 @@ fn test_run_agent_session_with_system_prompt_injection() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
-        &crate::composition::sessions::build_retention_handles(tmp.path()),
+        RunHandles::without_children(&retention(tmp.path())),
         &flags,
         &mut out,
     );
@@ -524,7 +534,7 @@ fn test_run_agent_session_with_deadline() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
-        &crate::composition::sessions::build_retention_handles(tmp.path()),
+        RunHandles::without_children(&retention(tmp.path())),
         &flags,
         &mut out,
     );
@@ -643,7 +653,7 @@ fn test_run_agent_session_loads_existing_session() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
-        &crate::composition::sessions::build_retention_handles(tmp.path()),
+        RunHandles::without_children(&retention(tmp.path())),
         &flags,
         &mut out,
     );
@@ -682,7 +692,7 @@ fn test_run_agent_session_loads_existing_with_system_prompt() {
         tmp.path(),
         crate::composition::sessions::build_session_handles,
         agent,
-        &crate::composition::sessions::build_retention_handles(tmp.path()),
+        RunHandles::without_children(&retention(tmp.path())),
         &flags,
         &mut out,
     );

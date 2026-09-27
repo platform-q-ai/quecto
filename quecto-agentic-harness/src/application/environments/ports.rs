@@ -42,12 +42,24 @@ pub trait EnvironmentProcessCommands: Send + Sync {
         argv: &'a [String],
     ) -> PortFuture<'a, Result<(), String>>;
 
-    /// Run the retained `cleanup` once (best effort by contract).
+    /// Run the retained `cleanup` once (best effort by contract). `Ok`
+    /// means the script reported success; `Err` carries its account (or
+    /// why it could not be run), so a caller that forgets the environment
+    /// afterwards (#2206) does so only once it is really gone.
     fn run_retained_cleanup<'a>(
         &'a self,
         environment_id: &'a str,
         argv: &'a [String],
-    ) -> PortFuture<'a, ()>;
+    ) -> PortFuture<'a, Result<(), String>>;
+
+    /// Whether `record`'s container still runs, through its retained
+    /// `inspect` (#2206): the check before a `stopped` record's leftovers
+    /// are removed. `Unknown` when the script set has no inspect or the
+    /// runtime could not be asked.
+    fn observe_liveness<'a>(
+        &'a self,
+        record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, EnvironmentLiveness>;
 }
 
 /// What the supervising session can learn about — and record on — the swarm

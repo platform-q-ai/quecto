@@ -75,11 +75,18 @@ impl EnvironmentProcessCommands for SpyCommands {
         })
     }
 
+    fn observe_liveness<'a>(
+        &'a self,
+        _record: &'a crate::domain::environment_registry::EnvironmentRecord,
+    ) -> PortFuture<'a, crate::application::environments::dto::EnvironmentLiveness> {
+        Box::pin(async { panic!("a running environment's kill never asks liveness") })
+    }
+
     fn run_retained_cleanup<'a>(
         &'a self,
         _environment_id: &'a str,
         _argv: &'a [String],
-    ) -> PortFuture<'a, ()> {
+    ) -> PortFuture<'a, Result<(), String>> {
         Box::pin(async { panic!("kill_container never runs cleanup") })
     }
 }
@@ -191,6 +198,7 @@ impl Fixture {
             self.reg.clone(),
             self.members.clone(),
             self.commands.clone(),
+            Arc::new(super::finalize_environment_member_tests::NoHostedStore),
         )
     }
 
@@ -276,7 +284,12 @@ fn a_retry_after_an_unsettled_member_asks_again_and_kills_once() {
         unsettleable: vec![],
         asked: Mutex::new(Vec::new()),
     });
-    let uc = KillEnvironment::new(fx.reg.clone(), members.clone(), fx.commands.clone());
+    let uc = KillEnvironment::new(
+        fx.reg.clone(),
+        members.clone(),
+        fx.commands.clone(),
+        Arc::new(super::finalize_environment_member_tests::NoHostedStore),
+    );
     block_on(uc.kill_container(&fx.target())).unwrap();
     assert_eq!(
         fx.journal(),
@@ -343,6 +356,7 @@ fn concurrent_kill_container_calls_cannot_double_kill() {
         fx.reg.clone(),
         fx.members.clone(),
         commands.clone(),
+        Arc::new(super::finalize_environment_member_tests::NoHostedStore),
     ));
     let (a, b) = block_on(async {
         let ua = uc.clone();
@@ -400,7 +414,12 @@ fn kill_container_and_a_final_member_exit_converge_on_one_claim() {
         gate: Some(gate.clone()),
         ..SpyCommands::new(&fx.journal)
     });
-    let uc = KillEnvironment::new(fx.reg.clone(), fx.members.clone(), commands.clone());
+    let uc = KillEnvironment::new(
+        fx.reg.clone(),
+        fx.members.clone(),
+        commands.clone(),
+        Arc::new(super::finalize_environment_member_tests::NoHostedStore),
+    );
     let target = fx.target();
     let (result, exit_claim) = block_on(async {
         tokio::join!(uc.kill_container(&target), async {

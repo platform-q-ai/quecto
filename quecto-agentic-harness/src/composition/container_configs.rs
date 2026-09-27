@@ -37,6 +37,24 @@ pub fn build_container_config_selection(
     build_container_config_handles(base_dir, launching_agent).selection
 }
 
+/// The selection `container doctor` and `container status` resolve their
+/// target through (#2206 round 3): as the launch's, except that a standard
+/// script holding bytes an earlier quecto shipped is refreshed in place —
+/// these are the explicit commands that may rewrite the bundle; a launch
+/// never does, since an older quecto still running would then find its
+/// own scripts changed.
+pub fn build_refreshing_container_config_selection(
+    base_dir: &Path,
+    launching_agent: Option<ConfigSelection>,
+) -> Arc<SelectContainerConfig> {
+    Arc::new(SelectContainerConfig::new(
+        build_effective_container_configs(base_dir, launching_agent),
+        Arc::new(
+            crate::infrastructure::processes::containers::standard::integrity::RefreshingScriptIntegrity,
+        ),
+    ))
+}
+
 /// The selection AND the discovery query (#2024 S4c) over one effective
 /// container-config adapter, so `container: true`, `get_container_configs`
 /// and the spawn description's roster line read the same layers.
@@ -102,7 +120,9 @@ pub fn build_container_config_roster(
 
 /// The standard bundle's script-integrity port adapter (#2024 S4e): the
 /// launch refuses a materialised standard script that no longer carries
-/// the embedded bytes.
+/// the embedded bytes — including one an earlier quecto wrote, which only
+/// `container status`, `container doctor` or `container init --refresh`
+/// rewrite (#2206 round 3).
 pub fn build_container_script_integrity()
 -> Arc<dyn crate::application::subagents::ports::ContainerScriptIntegrity> {
     Arc::new(

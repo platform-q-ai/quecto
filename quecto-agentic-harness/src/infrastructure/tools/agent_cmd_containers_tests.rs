@@ -39,6 +39,7 @@ fn use_case(registry: EnvironmentRegistry) -> Arc<KillEnvironment> {
         registry,
         Arc::new(SettleAll),
         Arc::new(super::super::environment_commands::ScriptEnvironmentCommands::default()),
+        Arc::new(super::super::environment_commands::HostedStoreObservation),
     ))
 }
 
@@ -180,13 +181,24 @@ fn kill_container_json_caps_long_member_lists() {
     record.members = (1..=25).map(|n| format!("a{n}")).collect();
     let parsed = kill_container_result_json(
         &crate::application::environments::use_cases::KilledEnvironment {
-            record,
+            record: record.clone(),
             members: MemberShutdownReport::default(),
+            removed_stopped: false,
         },
     );
     assert_eq!(parsed["killed"], "C1");
     assert_eq!(parsed["agents"].as_array().unwrap().len(), 20);
     assert_eq!(parsed["omitted_agents"], 5);
+    assert!(parsed.get("removed_stopped").is_none());
+    // #2206: the removal of a stopped environment says so.
+    let removed = kill_container_result_json(
+        &crate::application::environments::use_cases::KilledEnvironment {
+            record,
+            members: MemberShutdownReport::default(),
+            removed_stopped: true,
+        },
+    );
+    assert_eq!(removed["removed_stopped"], true);
 }
 
 #[test]

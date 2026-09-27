@@ -644,7 +644,12 @@ impl StandardContainerStatus {
     pub fn assets_present(&self) -> usize {
         self.assets
             .iter()
-            .filter(|(_, state)| matches!(state, AssetState::Identical | AssetState::Differs))
+            .filter(|(_, state)| {
+                matches!(
+                    state,
+                    AssetState::Identical | AssetState::Differs | AssetState::Outdated
+                )
+            })
             .count()
     }
 

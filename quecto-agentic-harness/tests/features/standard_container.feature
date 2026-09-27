@@ -255,7 +255,7 @@ Feature: The standard container is landed on master
     Then the exit code should be 0
     When I run the real quecto binary under the controlled PATH with arguments "container status"
     Then the exit code should be 1
-    And the output should contain "assets:  present (5 of 5, version 5)"
+    And the output should contain "assets:  present (5 of 5, version 6)"
     And the output should contain "config:  standard (default, overlay) in"
     And the output should contain "trust:   trusted"
     And the output should contain "image:   ✗ image quecto-workspace:local is not present"
@@ -320,7 +320,7 @@ Feature: The standard container is landed on master
     When the project writes its own standard Containerfile
     And I run the real quecto binary under the controlled PATH with arguments "container status"
     Then the exit code should be 0
-    And the output should contain "assets:  present (5 of 5, version 5)"
+    And the output should contain "assets:  present (5 of 5, version 6)"
     And the output should contain "Containerfile: this project's own"
     And the output should contain "ready: spawn"
     And the output should not contain "differ"
@@ -345,7 +345,7 @@ Feature: The standard container is landed on master
     And the materialised standard create script should never have been invoked
     When I run the real quecto binary under the controlled PATH with arguments "container status"
     Then the exit code should be 1
-    And the output should contain "assets:  5 of 5 present, 1 differ from the embedded version 5"
+    And the output should contain "assets:  5 of 5 present, 1 differ from the embedded version 6"
     And the output should contain "differs "
     And the output should contain "image:   unknown — container config 'standard' refused: "
     And the materialised standard create script should never have been invoked
@@ -363,7 +363,7 @@ Feature: The standard container is landed on master
     And the doctor output should show no failed check
     When I run the real quecto binary under the controlled PATH with arguments "container status"
     Then the exit code should be 0
-    And the output should contain "assets:  present (5 of 5, version 5)"
+    And the output should contain "assets:  present (5 of 5, version 6)"
 
   # Review round 2: the retained argv (exec, inspect, kill, cleanup) is
   # judged like the create's before the host runs it. A kill.sh edited after

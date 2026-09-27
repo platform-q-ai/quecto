@@ -208,10 +208,10 @@ impl HostedStore {
     pub fn hosted_run(
         &self,
     ) -> Result<Option<crate::domain::environment_retention::HostedSwarmRun>, DomainError> {
-        match self.contained()? {
-            Found::Store => {}
+        let displaced = match self.contained()? {
+            Found::Store { displaced } => displaced,
             Found::Nothing => return Ok(None),
-        }
+        };
         let status = store_rpc(
             &self.database(),
             &self.checkout,
@@ -219,7 +219,18 @@ impl HostedStore {
             "_status",
             json!([]),
         )?;
-        decode_hosted_run(&status).map(Some)
+        let run = decode_hosted_run(&status)?;
+        // The current board holds no created run, but another place holds
+        // a board a member may still be running on (#2206 round 3): the
+        // box is not proven plain.
+        match (run.created(), displaced) {
+            (false, Some(displaced)) => Err(DomainError::Tool(format!(
+                "swarm board {} holds no created run, but another board exists at {} where a member may still be running",
+                self.database().display(),
+                displaced.display()
+            ))),
+            _ => Ok(Some(run)),
+        }
     }
 
     /// Record the coordinator's loss in one store operation: a run that has
@@ -232,7 +243,7 @@ impl HostedStore {
         coordinator: &str,
     ) -> Result<crate::domain::environment_retention::CoordinatorLoss, DomainError> {
         match self.contained()? {
-            Found::Store => {}
+            Found::Store { .. } => {}
             Found::Nothing => {
                 return Err(DomainError::Tool(format!(
                     "no swarm store at {}",
@@ -258,8 +269,9 @@ impl HostedStore {
 
 /// What the host finds where a container's store should be.
 enum Found {
-    /// A store file, really inside the checkout.
-    Store,
+    /// A store file, really inside the checkout — and a board at a place
+    /// the layout no longer names, if one was also found (#2206 round 3).
+    Store { displaced: Option<PathBuf> },
     /// No store file there (never created, or gone since).
     Nothing,
 }
@@ -275,12 +287,39 @@ impl HostedStore {
     /// linked worktree's git directory is outside its checkout, so the host
     /// cannot read that board and keeps the environment.)
     fn contained(&self) -> Result<Found, DomainError> {
-        let database = self.database();
-        let store = match std::fs::canonicalize(&database) {
-            Ok(store) if store.is_file() => store,
-            Ok(_) => return Ok(Found::Nothing),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Found::Nothing);
+        use super::swarm_store_location::BoardPresence;
+        // "No board" only on every place's own "no such file" (#2206
+        // round 2): a place that cannot be examined, a board only where
+        // the layout no longer places it, or anything but a regular file
+        // at the board's place is never taken for "no swarm".
+        let (database, displaced) = match super::swarm_store_location::board_presence(
+            &self.checkout,
+        ) {
+            BoardPresence::Absent => return Ok(Found::Nothing),
+            BoardPresence::Current { board, displaced } => (board, displaced),
+            BoardPresence::Displaced(displaced) => {
+                return Err(DomainError::Tool(format!(
+                    "swarm board {} is not where the checkout's layout now places it ({}); a member may still be running on it",
+                    displaced.display(),
+                    self.database().display()
+                )));
+            }
+            BoardPresence::Unknown(reason) => {
+                return Err(DomainError::Tool(format!(
+                    "swarm board could not be looked for: {reason}"
+                )));
+            }
+        };
+        let store = std::fs::canonicalize(&database).map_err(|error| {
+            DomainError::Tool(format!("swarm store {}: {error}", database.display()))
+        })?;
+        match std::fs::metadata(&store) {
+            Ok(meta) if meta.is_file() => {}
+            Ok(_) => {
+                return Err(DomainError::Tool(format!(
+                    "swarm store {} is not a regular file",
+                    database.display()
+                )));
             }
             Err(error) => {
                 return Err(DomainError::Tool(format!(
@@ -288,14 +327,14 @@ impl HostedStore {
                     database.display()
                 )));
             }
-        };
+        }
         let checkout = std::fs::canonicalize(&self.checkout).map_err(|e| {
             DomainError::Tool(format!("swarm checkout {}: {e}", self.checkout.display()))
         })?;
         // (A link swapped in between this check and the open is not caught:
         // pinning the directory is #2147.)
         match store.starts_with(&checkout) {
-            true => Ok(Found::Store),
+            true => Ok(Found::Store { displaced }),
             false => Err(DomainError::Tool(format!(
                 "swarm store {} is outside its checkout {}",
                 store.display(),

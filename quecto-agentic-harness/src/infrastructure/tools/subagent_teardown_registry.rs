@@ -297,6 +297,7 @@ fn intent_of(cause: TerminationCause) -> TeardownIntent {
     match cause {
         TerminationCause::Exit(_) => TeardownIntent::Exit,
         TerminationCause::SelectedTermination => TeardownIntent::SelectedTermination,
+        TerminationCause::RunEnd => TeardownIntent::RunEnd,
         TerminationCause::FleetTeardown => TeardownIntent::FleetTeardown,
         TerminationCause::OwnerTeardown => TeardownIntent::OwnerTeardown,
         TerminationCause::EnvironmentKill => TeardownIntent::EnvironmentKill,
@@ -315,6 +316,9 @@ fn effective_cause(entry: &SubagentEntry, cause: TerminationCause) -> Terminatio
             TeardownPhase::Compensating(TeardownIntent::SelectedTermination),
             TerminationCause::Exit(_),
         ) => TerminationCause::SelectedTermination,
+        (TeardownPhase::Compensating(TeardownIntent::RunEnd), TerminationCause::Exit(_)) => {
+            TerminationCause::RunEnd
+        }
         (TeardownPhase::Compensating(TeardownIntent::FleetTeardown), TerminationCause::Exit(_)) => {
             TerminationCause::FleetTeardown
         }
@@ -339,12 +343,17 @@ fn effective_cause(entry: &SubagentEntry, cause: TerminationCause) -> Terminatio
 fn finalize_mode(cause: TerminationCause) -> FinalizeMode {
     match cause {
         TerminationCause::Exit(_) => FinalizeMode::Exit,
+        // #2206: the owner ending this one child — its selected kill, or a
+        // one-shot parent ending its run — is its word: a plain container
+        // child's box goes for good; a swarm it has not closed is kept.
+        TerminationCause::SelectedTermination | TerminationCause::RunEnd => FinalizeMode::OwnerEnd,
         // A harness shutdown can be a crash (a signal, its last client gone,
-        // a lost parent): like a kill of one member, it keeps a swarm that
-        // has not ended (#2070).
-        TerminationCause::SelectedTermination
-        | TerminationCause::FleetTeardown
-        | TerminationCause::EnvironmentKill => FinalizeMode::ParentKill,
+        // a lost parent): it keeps a swarm that has not ended (#2070). The
+        // member side of an environment kill runs under the kill's own
+        // claim.
+        TerminationCause::FleetTeardown | TerminationCause::EnvironmentKill => {
+            FinalizeMode::ParentKill
+        }
         // #2070: delete-all, or a session transition whose target is proven,
         // is the owner ending the swarms it holds; their containers go.
         TerminationCause::OwnerTeardown => FinalizeMode::OwnerTeardown,
@@ -365,6 +374,7 @@ fn exit_kind(cause: TerminationCause) -> ExitSignalKind {
         }
         TerminationCause::Exit(ExitObservation::NeverReachable) => ExitSignalKind::NeverReachable,
         TerminationCause::SelectedTermination
+        | TerminationCause::RunEnd
         | TerminationCause::FleetTeardown
         | TerminationCause::OwnerTeardown
         | TerminationCause::EnvironmentKill

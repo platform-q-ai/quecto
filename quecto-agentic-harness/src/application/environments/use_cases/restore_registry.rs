@@ -419,6 +419,9 @@ impl RestoreRegistry {
                             }
                             None => {
                                 record.status = EnvironmentStatus::Stopped;
+                                // Plainly stopped again: nothing is owed
+                                // (#2206 round 4).
+                                record.clear_removal_pending();
                                 record.last_error = Some(GONE_AT_RESTORE.to_string());
                                 report.stopped.push(environment_ref);
                             }
@@ -427,6 +430,9 @@ impl RestoreRegistry {
                     }
                     (EnvironmentLiveness::Gone, _) => {
                         record.status = EnvironmentStatus::Stopped;
+                        // Plainly stopped again: a removal a failed
+                        // cleanup left owed is owed no more (#2206 round 4).
+                        record.clear_removal_pending();
                         // A failed kill's own error is kept behind the restore
                         // note: it is the operator's diagnosis, and its
                         // presence keeps the "relabelled by an older build"
@@ -460,7 +466,9 @@ impl RestoreRegistry {
             SwarmRunObservation::Run(run) if run.keeps_environment() => {
                 Some(unfinished_run_reason(&run))
             }
-            SwarmRunObservation::Run(_) | SwarmRunObservation::NoStore => None,
+            SwarmRunObservation::Run(_)
+            | SwarmRunObservation::NoStore
+            | SwarmRunObservation::NoStoreUnverified => None,
             SwarmRunObservation::Unreadable(error) => Some(unreadable_store_reason(&error)),
         }
     }

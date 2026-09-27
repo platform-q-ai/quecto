@@ -235,3 +235,22 @@ fn a_record_whose_inspect_cannot_answer_holds_back_no_other_across_restores() {
     assert!(report.forgotten.is_empty());
     assert_eq!(refs(&registry.entries()), ["C2"]);
 }
+
+/// #2206 round 4: a restore that finds an owed removal's container gone
+/// records it plainly `stopped` — and drops the owed-removal mark, so a
+/// later refused removal can never read it back as owed.
+#[test]
+fn a_restore_that_stops_an_owed_removal_drops_its_mark() {
+    use crate::domain::environment_registry::REMOVAL_PENDING;
+    let mut owed = super::restore_registry_tests::record("C3", EnvironmentStatus::CleanupFailed);
+    owed.metadata = serde_json::json!({ REMOVAL_PENDING: true });
+    let store = super::restore_registry_tests::store_with(vec![owed]);
+    let process = super::restore_registry_tests::process(|_| EnvironmentLiveness::Gone);
+    let (registry, report) =
+        RestoreRegistry::new(store, process, super::restore_registry_tests::no_hosted())
+            .execute("cli:two");
+    assert_eq!(report.stopped, ["C3"]);
+    let record = registry.get("C3").unwrap();
+    assert_eq!(record.status, EnvironmentStatus::Stopped);
+    assert!(record.metadata.get(REMOVAL_PENDING).is_none());
+}

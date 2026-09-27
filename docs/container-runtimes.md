@@ -116,12 +116,116 @@ Two session-level `agent_cmd` commands expose it (use `agent_id: "*"`):
   unreachable or slow to exit can take up to ~30 s per member before the
   retained `kill` runs; a member that exits promptly settles in
   milliseconds.
+- `kill_container` of a **`stopped`** environment (#2206) — one whose
+  container has exited but whose container and state directory may still
+  be on disk (for example a restore found its container gone) — removes
+  what it left instead of refusing. It takes the environment's exclusive
+  claim, then asks the runtime through the record's own retained
+  `inspect`; only when that reports the container gone does the retained
+  `cleanup` run once (container and state directory), and once it
+  succeeded the record is forgotten (the JSON result carries
+  `"removed_stopped": true`; `quecto container kill` prints `removed
+  stopped <ref>`). A container the runtime reports running — a record
+  wrongly `stopped` while another live session still uses the box — or
+  one it cannot be asked about is refused, the claim released and nothing
+  touched; so is a script set that retained no `cleanup` (`quecto
+  container gc` collects that). "Gone" is the runtime's own word: the
+  shipped Docker/Podman `inspect.sh` reports `dead` only when the runtime
+  says the container does not exist ("no such container"/"no such
+  object", naming it) or that its state is `exited`/`dead`/`stopped`, and fails —
+  unknown — when the runtime cannot be reached or the container is in any
+  other state (paused, created, stopping). A failed cleanup leaves the record `cleanup-failed`
+  with the script's account and marks the removal owed
+  (`metadata.removal_pending`): the next kill retries the removal —
+  inspect, cleanup, forget — never the ordinary kill; an owed removal
+  whose container is running again is no longer owed, and the kill ends
+  it the ordinary way (members asked, the retained `kill`). A stopped
+  environment is removed by its `ref`; a name no longer resolves to one.
+  A refused removal returns the record to exactly the state it was
+  claimed from, and a restore that records a box `stopped` drops any
+  owed-removal mark. Like the collector, the kill also reads the
+  stopped box's swarm board first: a checkout hosting a run its owner has
+  not closed (or a board that cannot be read) is the run's, not
+  leftovers — the kill refuses, naming the run ("hosts unfinished swarm
+  run <id> (<status>); close the run first …"), and nothing is removed.
 
-When the final member of a live environment exits or is killed, the same
-retained `kill` operation runs exactly once (concurrent final exits cannot
-double-kill). Script sets without a configured `kill` fall back to the
-retained `cleanup` argv for final-member teardown; `kill_container` itself
-refuses such environments up front, leaving every member untouched.
+When the final member of a live environment exits or is killed, its end
+runs exactly once (concurrent final exits cannot double-kill), and **who
+ended it** decides how (#2206):
+
+- **The owner's word ends a plain container for good.** When the owner
+  ends the member on purpose — its own `agent_cmd kill` (or a kill from
+  the owning TUI, or one forwarded down the owner's chain), or a one-shot
+  `quecto agent -m` parent ending the run it was started for the way it
+  meant (the model finished, or `--max-time` — the operator's own bound —
+  stopped it) — and the environment hosts no swarm (no coordination store
+  at either place a member may keep it, or only the bootstrap placeholder),
+  nothing is left to resume: the retained `cleanup` removes
+  the container and its state directory and, once it reported success,
+  the record is forgotten, the way a launch rollback discards it. A failed
+  cleanup leaves the record `cleanup-failed` with the script's account.
+  Its container may still be running, so the next `kill_container` takes
+  the ordinary path — members asked, the retained `kill` run — and leaves
+  the record `stopped`; a second `kill_container` then removes what is
+  left and forgets it (two kills in all). A script set that retained no
+  `cleanup` falls back to the retained `kill` below.
+- **Anything else runs the retained `kill`** and leaves the record listed
+  `stopped`: the child's own exit (indistinguishable from a crash), a
+  harness shutdown (which may be a crash — a signal, its last client gone,
+  a lost parent), the owner's explicit teardown of everything (delete-all,
+  a proven session transition, an announced TUI exit), and the member side
+  of a `kill_container`. Under the shipped scripts that `kill` removes the
+  container and the state directory too, and the next restore forgets the
+  record.
+- **A one-shot run that failed, a crash or a kill of a one-shot parent**
+  settles nothing. A provider error is not the owner's word — it is closer
+  to a crash — and a crash, a signal or a panic runs no code at all: the
+  children run their parent-loss shutdown, their containers exit, and each
+  environment is kept — `stopped` at the next restore (or `retained`, for
+  an unfinished swarm) — until `quecto container kill <ref>` or `quecto
+  container gc` removes it. A one-shot run that does settle writes its
+  answer out first, and waits at most 60 s for its children to settle
+  (naming the ones it still waits for every 5 s); past that it stops
+  waiting and a child still unsettled falls back to its parent-loss
+  shutdown. A container script already running is never orphaned: the
+  process still waits for it as it exits, within that script's own bound
+  (a kill 20 s, a cleanup 120 s).
+- **"No swarm" must be proven.** A box counts as a plain container only
+  when its checkout (`metadata.checkout`, else `<workspace>/repo` or
+  `<workspace>`) resolves at or under its workspace and every place a
+  board may be — where the layout places it now, `.quecto/swarm.sqlite`,
+  `.git/quecto/swarm.sqlite` — answers "no such file". A renamed or
+  unreadable checkout, a symlink loop, a checkout outside the workspace,
+  an unreadable `.quecto`, or anything but a regular file at the board's
+  place is an unreadable store: the box is kept, whoever ended the member.
+  A `.git` pointer whose git directory does not resolve on this host, and
+  a file where a board directory would be, are unreadable too; a board
+  where the layout places it now holding only the bootstrap placeholder
+  does not hide a board at the place it no longer names.
+- **A workspace the host cannot see proves nothing.** Without
+  `metadata.checkout` (older or third-party script sets), a workspace
+  absent from the host — one that lives only in the container — may still
+  host a live swarm. It is never a plain container: the owner's end of its
+  member keeps it (`retained`), and `quecto container kill <ref>` removes
+  it (after which `gc` collects what is left); every other end runs the
+  retained `kill` as before. Script sets that want their plain children
+  removed on the owner's end advertise `metadata.checkout` (or keep the
+  workspace on the host).
+- **A swarm is never ended by any of these.** A run its owner has not
+  closed keeps its box whoever ended the member (see "Swarm environments
+  live as long as the swarm" below): the owner's kill of the coordinator
+  and a one-shot parent's run end are judged exactly as a supervisor kill.
+  The host looks for the board at both places a member may keep it: where
+  the checkout's layout places it now, and where it placed it before (an
+  agent's `git init` in a sandbox with no clone moves the layout from
+  `.quecto/swarm.sqlite` to `.git/quecto/swarm.sqlite` while the
+  coordinator keeps the board it pinned). A board found only at the
+  place the layout no longer names is never read as a run and never as
+  "no swarm": the store counts as unreadable, and the box is kept.
+
+Script sets without a configured `kill` fall back to the retained
+`cleanup` argv for final-member teardown; `kill_container` itself refuses
+such running environments up front, leaving every member untouched.
 
 ### No host signal ever enters a container
 
@@ -208,7 +312,9 @@ environment record moves to `retained` instead of running the retained
 `kill`; the container and its state directory stay so the run can be
 resumed, and an explicit `kill_container` removes them. That holds for the
 coordinator's own socket closing, for an `agent_cmd kill` of that one
-coordinator agent, and for the master's own process shutdown — which can be
+coordinator agent, for a one-shot master ending its run (#2206: its word for
+the plain containers it launched, but no close of any swarm), and for the
+master's own process shutdown — which can be
 a crash (a termination signal, its last client gone, a lost parent), so it
 never counts as the owner's word unless the owning TUI announced its exit
 beforehand. `metadata.retained` says which case
@@ -373,18 +479,24 @@ What a new session can do with a restored environment:
   runs. This is the **concurrent-session** case: the environment's
   container is still up because the session that created it is still
   alive (or the environment is `retained`, whose box has exited and
-  which a join does not revive). Under the shipped adapter a member
-  harness runs its parent-loss shutdown and exits when the harness that
-  launched it dies, and the container exits with it — so once the
-  creating session is gone an ordinary environment is `stopped` at the
-  next restore (its container gone), not joinable. A joiner leaving a
+  which a join does not revive). A one-shot creator that ends its run in
+  an orderly way removes its plain containers and forgets their records
+  (#2206), so nothing is left to join. One that dies instead runs no
+  code: under the shipped adapter a member harness runs its parent-loss
+  shutdown and exits when the harness that launched it dies, and the
+  container exits with it — so an ordinary environment is `stopped` at
+  the next restore (its container gone), not joinable, and `quecto
+  container kill <ref>` removes what it left. A joiner leaving a
   restored environment **never tears it down** (its creating session may
   still hold members this session cannot see); only an explicit kill
   ends it.
 - **kill** — `agent_cmd kill_container` with `ref`/`name`, or `quecto
   container kill <ref|name>`: no members of another session are asked
   (none are recorded), the retained `kill` runs once, `stopped` is written
-  through. The creating session, if still alive, sees its member die and
+  through. A `stopped` ref is removed rather than refused (#2206): once
+  its own retained `inspect` reports the container gone, its retained
+  `cleanup` removes the container and state directory and the record is
+  forgotten; a container still running is refused untouched. The creating session, if still alive, sees its member die and
   runs its own final-member kill after yours — the shipped scripts are
   idempotent.
 - **collect** — `quecto container gc [--dry-run] [--name <config>]
@@ -861,7 +973,15 @@ recorded as `inspect_status` — and judged by the registry restore
 unverified. A missing environment directory is not an error: the shipped
 Docker/Podman script asks the runtime about `quecto-<environment_id>` and
 reports `running` (cause `state-dir-removed`) or a truthful `dead` (cause
-`environment-removed`); the host-local reference reports `dead`. With
+`environment-removed`); the host-local reference reports `dead`. The
+shipped script reports `dead` only on the runtime's own word — the
+container's `{{.State.Status}}` is `exited`, `dead` or `stopped`, or the runtime says
+it does not exist ("no such container"/"no such object", naming it) —
+reports `running` only for `running`, and fails for anything else (a
+paused, created or stopping container) and when the runtime cannot be
+asked (its socket down, a storage lock), so an unreachable runtime or a
+container in between is never taken for a gone one (#2206). It needs no
+writable temporary directory. With
 `--list` appended (no environment id) the script prints one JSON object
 per line for every environment the runtime knows **under this state
 root** (the create labels each container `quecto.state_dir=<root>`) —
@@ -891,7 +1011,11 @@ record's retained argv for a `stopped` record, the selected config's for
 an unrecorded orphan — so it must remove the container **and** the state
 directory, and must succeed when the directory is already gone (the
 shipped `kill.sh --op cleanup` then still removes the container it would
-have named, `quecto-<environment_id>`).
+have named, `quecto-<environment_id>`). The shipped `kill.sh` fails either
+op — and keeps the state directory — when the runtime cannot remove the
+container and does not say it is absent (#2206). The host bounds a
+cleanup at 120 s (a kill at 20 s): a cleanup removes the whole state
+directory, a repository clone included.
 
 ## The standard container (`quecto container init`) (#2024 S4e)
 
@@ -1046,7 +1170,7 @@ as a script of the entry's own. A program that differs, is missing, or is
 a symbolic link refuses the operation naming the file and the way back:
 
 ```
-container config 'standard' refused: /repo/.quecto/containers/standard/scripts/create.sh differs from the standard bundle this quecto embeds (or this quecto embeds a newer bundle than the one that wrote it — run `quecto container init --refresh`); it is a host-side script the launch would run before any container exists, so review the change (git diff) and restore the bundle with `quecto container init --refresh` (or delete the file and run `quecto container init`)
+container config 'standard' refused: /repo/.quecto/containers/standard/scripts/create.sh differs from the standard bundle this quecto embeds (or this quecto embeds a newer bundle than the one that wrote it — run `quecto container init --refresh`); it is a host-side script the launch would run before any container exists, so review what changed in it (the scripts are usually not tracked by git: compare the file with the bundle a fresh `quecto container init` writes in an empty directory) and restore the bundle with `quecto container init --refresh` (or delete the file and run `quecto container init`)
 ```
 
 A refused create or join is a plain tool error and nothing ran. A
@@ -1058,12 +1182,16 @@ kept for retry; a refused cleanup is logged and skipped. In every case
 the altered script did not run: restore the bundle, then retry.
 
 `quecto container status` keeps listing the file as `differs` (and the
-image line carries the same refusal). Review a pulled change to
+image line carries the same refusal). Review a change to
 `.quecto/containers/standard/` exactly as you would review one to
-`.quecto/config.json` — `git diff` the directory before `init --refresh`.
-An entry that names its own scripts elsewhere is vouched for by the
-overlay's trust alone: the integrity check is the standard bundle's, not
-a general one. The Containerfile is not a host-side script and is not
+`.quecto/config.json` before `init --refresh`: where the scripts are
+committed, `git diff` the directory; where they are local (as in this
+repository, which ignores them), compare them with the bundle a fresh
+`quecto container init` writes into an empty directory.
+An entry that names its own scripts elsewhere — any path outside
+`.quecto/containers/standard/` — is judged `NotStandard` and runs as it
+is, vouched for by the overlay's trust alone: the integrity check is the
+standard bundle's, not a general one. The Containerfile is not a host-side script and is not
 checked at launch; it is the project's own file, so `status` lists it as
 `Containerfile: this project's own` (or `yours` beside a drifted script)
 and stays `ready`. Commit `.quecto/containers/standard/Containerfile` so the
@@ -1075,10 +1203,26 @@ repository's Containerfile before you build it**, as you would any build
 script — its `RUN` steps execute in your build, and the image later gets the
 mounted checkout and the GitHub token. Init says so on the `kept` line.
 
-**Upgrades.** The comparison is against *this binary's* bundle, so a
-quecto that embeds a newer bundle than the one that materialised the
-files sees every changed script as `differs` — indistinguishable from an
-edit, and refused the same way (the message says so). After upgrading
+**Upgrades.** The comparison is against *this binary's* bundle. A script
+holding exactly the bytes an earlier quecto shipped (bundle version 5's
+`inspect.sh`/`kill.sh`, and its `create.sh` from before #2173 and #2184 —
+listed by SHA-256 in the binary) is `outdated`, not an edit. Only the
+explicit commands rewrite it: `container status`, `container doctor` and
+`container init` (with or without `--refresh`) replace it with this
+binary's bytes in place (the same atomic rename as `--refresh`) and print
+a notice that any older quecto still running should be restarted — its
+scripts changed under it. A launch never rewrites the bundle (an older
+quecto still running would find its own scripts replaced): it refuses
+with "… was written by an earlier quecto; run `quecto container status
+--project <dir>` (or `quecto container init --refresh --project <dir>`)
+to update it — restart any older quecto that is still running first",
+naming the project the bundle belongs to. A teardown path — the retained
+inspect, kill or cleanup of an existing environment — refuses the same
+way and never runs outdated bytes, leaving the environment
+`cleanup-failed` to retry after the refresh. Any other bytes — an edit,
+or a bundle older than the ones listed — are `differs`,
+indistinguishable from an edit, and refused the same way (the message
+says so). After upgrading
 quecto, run `quecto container init --refresh` in each checkout: it
 renames the embedded bytes over every differing script (never the
 project's Containerfile), reports each as `refreshed`, and a newer quecto's assets replace an older one's. Review
@@ -1144,7 +1288,7 @@ line from the first of these three checks that failed, so it never says
 `ready` for an image the doctor refuses.
 
 `quecto container status` reports, one line each and exit 1 while anything
-is missing: the assets (`present (5 of 5, version 5)`, or which differ or
+is missing: the assets (`present (5 of 5, version 6)`, or which differ or
 are missing), the `standard` entry of the effective set (`default` with a
 `this repo's default` line when the overlay declares it labelled; `default
 by rule` plus a `note:` with the remedy — `quecto container init --refresh`
@@ -1342,7 +1486,9 @@ Design properties:
   destructive operation proves the environment id contains no path
   separators and resolves under the trusted `--state-dir` root, mirroring the
   host-local set. `kill.sh` serves `--op kill` / `--op cleanup` and logs each
-  operation to the state root. Under Podman it bounds the remove's grace to
+  operation to the state root. A container `rm -f` failure fails the op
+  before the state directory is touched, unless the runtime says the
+  container does not exist. Under Podman it bounds the remove's grace to
   one second (`--time 1`): Docker's `rm -f` kills immediately, Podman's would
   otherwise wait the container's ten-second stop timeout, which does not fit
   the parent's signal-driven exit budget.

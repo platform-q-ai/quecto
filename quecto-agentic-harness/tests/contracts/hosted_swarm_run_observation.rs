@@ -85,13 +85,14 @@ async fn an_environment_without_a_store_observes_no_store_and_cannot_record_a_lo
         port.observe_hosted_swarm_run(&record).await,
         SwarmRunObservation::NoStore
     );
-    // A workspace-less record has no host location a store may live at.
+    // A checkout that does not resolve inside the workspace opens nothing
+    // and is never proof of no store (#2206 round 2): unreadable, kept.
     let mut homeless = record.clone();
     homeless.metadata = serde_json::json!({ "checkout": "/definitely/not/here" });
-    assert_eq!(
+    assert!(matches!(
         port.observe_hosted_swarm_run(&homeless).await,
-        SwarmRunObservation::NoStore
-    );
+        SwarmRunObservation::Unreadable(_)
+    ));
     let hosted = quecto::domain::environment_retention::HostedSwarmRun {
         id: "run-contract".into(),
         status: RunStatus::Running,

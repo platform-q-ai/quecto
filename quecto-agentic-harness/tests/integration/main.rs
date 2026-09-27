@@ -18,6 +18,7 @@
 mod docker_create_admission_mask;
 mod docker_create_image_contract;
 mod docker_kill_script;
+mod docker_runtime_answers;
 mod fleet_teardown;
 mod inference_admission_anthropic_malformed_terminal;
 mod inference_admission_attempts;

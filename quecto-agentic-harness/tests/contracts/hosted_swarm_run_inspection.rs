@@ -106,7 +106,7 @@ fn a_record_is_read_at_its_checkout_and_a_bare_state_dir_at_its_workspace() {
 }
 
 #[test]
-fn a_directory_without_a_store_or_with_one_reached_only_through_a_symlink_is_no_store() {
+fn a_directory_without_a_store_is_no_store_and_one_reached_only_through_a_symlink_is_never_read() {
     let temp = tempfile::tempdir().unwrap();
     let port = port();
     let empty = temp.path().join("env-empty");
@@ -125,16 +125,17 @@ fn a_directory_without_a_store_or_with_one_reached_only_through_a_symlink_is_no_
     );
 
     // A `workspace` symlink leading outside the state dir is not followed
-    // into a store the directory does not own.
+    // into a store the directory does not own — and a board seen there is
+    // never "no store" either (#2206 round 2): unreadable, kept.
     let elsewhere = temp.path().join("elsewhere");
     create_run(&elsewhere);
     let linked = temp.path().join("env-linked");
     std::fs::create_dir_all(&linked).unwrap();
     std::os::unix::fs::symlink(&elsewhere, linked.join("workspace")).unwrap();
-    assert_eq!(
+    assert!(matches!(
         port.inspect_hosted_run_at(&linked),
-        SwarmRunObservation::NoStore
-    );
+        SwarmRunObservation::Unreadable(_)
+    ));
 }
 
 #[test]

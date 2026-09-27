@@ -262,6 +262,7 @@ async fn kill_container_after_a_failed_member_kill_re_attempts_and_runs_the_reta
         rig.environments.clone(),
         rig.port.clone(),
         Arc::new(ScriptEnvironmentCommands::inline()),
+        Arc::new(quecto::infrastructure::tools::environment_commands::HostedStoreObservation),
     );
     let killed = kill
         .kill_container(&EnvironmentTarget::Ref(rig.env_ref.clone()))

@@ -60,6 +60,7 @@ pub fn build_environment_control(
             environments,
             member_shutdown,
             Arc::new(ScriptEnvironmentCommands::default()),
+            Arc::new(HostedStoreObservation),
         )),
     }
 }
@@ -74,19 +75,31 @@ pub fn build_container_doctor(
     selection: &ConfigSelection,
 ) -> Arc<DiagnoseContainerRuntime> {
     Arc::new(DiagnoseContainerRuntime::new(
-        build_container_config_lookup(base_dir, Some(selection.clone())),
+        build_refreshing_container_config_lookup(base_dir, Some(selection.clone())),
         build_container_runtime_preflight(),
     ))
 }
 
-/// The lookup port adapter alone, for the contract suite: the doctor's
-/// target resolved through the launch policy's selection.
+/// The lookup port adapter alone, for the contract suite and the
+/// collector: a target resolved through the launch policy's selection.
 pub fn build_container_config_lookup(
     base_dir: &Path,
     selection: Option<ConfigSelection>,
 ) -> Arc<dyn ContainerConfigLookup> {
     Arc::new(SelectedConfigLookup::new(
         super::container_configs::build_container_config_selection(base_dir, selection),
+    ))
+}
+
+/// The lookup `container doctor` and `container status` use (#2206 round
+/// 3): the launch policy's selection, refreshing a standard script an
+/// earlier quecto wrote.
+pub fn build_refreshing_container_config_lookup(
+    base_dir: &Path,
+    selection: Option<ConfigSelection>,
+) -> Arc<dyn ContainerConfigLookup> {
+    Arc::new(SelectedConfigLookup::new(
+        super::container_configs::build_refreshing_container_config_selection(base_dir, selection),
     ))
 }
 
@@ -222,6 +235,7 @@ pub fn build_container_inventory(
             registry.clone(),
             Arc::new(NoReachableMembers),
             Arc::new(ScriptEnvironmentCommands::default()),
+            Arc::new(HostedStoreObservation),
         )),
         gc: Arc::new(GcOrphanedEnvironments::new(
             registry,

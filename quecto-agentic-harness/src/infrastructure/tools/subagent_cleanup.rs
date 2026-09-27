@@ -98,9 +98,10 @@ fn run_cleanup_jobs_sync(jobs: Vec<CleanupJob>, finalizer: MemberFinalizer) {
                 ));
             }
             None => {
-                if let Some((env, argv)) = job.plan {
+                if let Some((env, argv)) = job.plan.filter(|(_, argv)| !argv.is_empty()) {
                     use crate::application::environments::ports::EnvironmentProcessCommands;
-                    futures::executor::block_on(
+                    // Best effort by contract; the adapter reports a failure.
+                    let _ = futures::executor::block_on(
                         ScriptEnvironmentCommands::inline().run_retained_cleanup(&env, &argv),
                     );
                 }

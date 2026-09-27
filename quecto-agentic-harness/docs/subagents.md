@@ -460,7 +460,7 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
 | `get_subagents_all` | With `agent_id: "*"`, list parent/session-wide subagent inventory for cleanup/inspection | No |
 | `get_containers` | With `agent_id: "*"`, list spawned container environments (refs for `{"mode":"existing"}`) | No |
 | `get_container_configs` | With `agent_id: "*"`, list the container configs `spawn` can select for this checkout: `{"container_configs":[{"name","default","source":"overlay"\|"global","repository","problem","joinable"}],"overlay_withheld","diagnostics"}`, the `container: true` default first (a repo-bound `standard` whatever the labels say, #2035); `repository` is shown with any URL userinfo redacted, `problem` is why a launch would refuse the entry (else null), `joinable` whether the config carries an `exec` argv (#2024 S4c) | No |
-| `kill_container` | With `agent_id: "*"`, terminate a spawned container by `ref` or `name` | No |
+| `kill_container` | With `agent_id: "*"`, terminate a spawned container by `ref` or `name`; a `stopped` one's leftovers are removed and its record forgotten once its container is gone | No |
 | `set_model` | Change the LLM model | No |
 | `set_effort` | Change the reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the child's active model; invalid values are rejected with the valid list) | No |
 | `clear_history` | Clear conversation history | No |
@@ -797,7 +797,23 @@ snapshot, restored from a session or read from a coordination store.
   kill script is bounded at 20 s, past which it is killed and the record is
   `cleanup-failed`, retryable by an explicit `kill_container`).
   `kill_container` asks every member to shut down first and runs the
-  retained `kill` argv exactly once, only once all members settled.
+  retained `kill` argv exactly once, only once all members settled; of a
+  `stopped` environment it removes what is left through the retained
+  `cleanup` and forgets the record, once the container is reported gone.
+- **A plain container child ends for good on its owner's word** (#2206):
+  when the owner kills a non-swarm container child (`agent_cmd kill`, or
+  a kill forwarded down its chain), or a one-shot `quecto agent -m` parent
+  ends its run the way it meant (finished, or stopped by `--max-time`: it
+  writes its answer out, then settles its fleet on the run-end authority,
+  waiting at most 60 s for them to settle, plus any container script
+  already running, within its own bound), the emptied environment's
+  retained `cleanup` runs
+  and its record is forgotten. A run whose provider failed settles
+  nothing — that is closer to a crash — and a crashed or killed parent
+  runs no code: the box is kept (`stopped` at the next restore) for
+  `quecto container kill` or `gc`. A swarm is judged exactly as before in
+  every one of these cases, its board looked for at both places a member
+  may keep it.
 
 #### Kill latency bounds
 

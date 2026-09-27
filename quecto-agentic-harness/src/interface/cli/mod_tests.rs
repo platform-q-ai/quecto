@@ -53,6 +53,7 @@ fn test_composition() -> CliComposition {
         container_inventory: quecto::composition::environments::build_container_inventory,
         container_init: crate::composition::standard_container::build_standard_container_init,
         container_status: crate::composition::standard_container::build_container_status,
+        run_end_fleet: crate::composition::subagent_teardown::build_run_end_fleet,
     }
 }
 

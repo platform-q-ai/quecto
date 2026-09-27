@@ -24,7 +24,46 @@ use crate::application::environments::ports::ContainerAssetStore;
 
 /// Bumped when an embedded asset changes, so `status` can say which
 /// bundle a project carries.
-pub const STANDARD_ASSET_VERSION: u32 = 5;
+pub const STANDARD_ASSET_VERSION: u32 = 6;
+
+/// SHA-256 digests of bundle scripts an earlier quecto wrote (#2206):
+/// version 5's `inspect.sh` and `kill.sh`, and its `create.sh` as shipped
+/// before #2184 (d950204ee) and before #2173 (cc08db65b). A file holding
+/// exactly those bytes is `Outdated`, not an edit: quecto wrote them, so
+/// replacing them loses nothing a person wrote. Any other bytes stay
+/// `Differs`. Never list the current bytes here.
+const PREVIOUSLY_SHIPPED: &[(&str, &str)] = &[
+    (
+        "scripts/create.sh",
+        "008c19f962a358eb1b1c376991c9d08b42a10a0d9e1dd7b70d34cef6e478524b",
+    ),
+    (
+        "scripts/create.sh",
+        "34fe6aa6f9e6010de7f513d85c8774c10b16805abe0a619ad11d959bf5961995",
+    ),
+    (
+        "scripts/inspect.sh",
+        "395805c76c2a9d9161bec1f293a56582a7b0f3a117ef5f18a1d98fc74d76012a",
+    ),
+    (
+        "scripts/kill.sh",
+        "ca6c918ef8b87488737445224bbf8638cfaac855ccc9848d98583036accb736c",
+    ),
+];
+
+/// Whether `bytes` are what an earlier quecto wrote at the bundle's
+/// `path` (a script the bundle owns).
+fn previously_shipped(asset: &ContainerAsset, bytes: &[u8]) -> bool {
+    use sha2::Digest;
+    let digest: String = sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    asset.ownership == AssetOwnership::Bundle
+        && PREVIOUSLY_SHIPPED
+            .iter()
+            .any(|(path, known)| *path == asset.path && *known == digest)
+}
 
 // The scripts are symbolic links to `scripts/container-runtime/` in the
 // workspace, resolved by `include_str!` at compile time: one source for
@@ -101,6 +140,8 @@ impl ContainerAssetStore for EmbeddedStandardAssets {
                     .map_err(|error| format!("cannot read {}: {error}", destination.display()))?;
                 Ok(if bytes == asset.contents {
                     AssetState::Identical
+                } else if previously_shipped(asset, &bytes) {
+                    AssetState::Outdated
                 } else {
                     AssetState::Differs
                 })
@@ -142,6 +183,9 @@ impl EmbeddedStandardAssets {
             AssetState::Identical => return Ok(AssetOutcome::KeptIdentical),
             AssetState::Differs if !replace => return Ok(AssetOutcome::KeptDiffering),
             AssetState::Differs => true,
+            // Bytes an earlier quecto wrote: replaced whatever the run,
+            // since no one's edit is lost (#2206).
+            AssetState::Outdated => true,
             AssetState::Refused => {
                 return Err(format!(
                     "{} is not a regular file; refusing to write it",

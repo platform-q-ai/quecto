@@ -224,6 +224,9 @@ impl InitialiseStandardContainer {
                     AssetState::Differs if asset.is_projects_own(state) => AssetOutcome::KeptOwn,
                     AssetState::Differs if request.refresh => AssetOutcome::Refreshed,
                     AssetState::Differs => AssetOutcome::KeptDiffering,
+                    // Bytes an earlier quecto wrote are replaced whatever
+                    // the run (#2206).
+                    AssetState::Outdated => AssetOutcome::Refreshed,
                     AssetState::Refused => {
                         return Err(InitialiseStandardContainerError::Asset {
                             path,

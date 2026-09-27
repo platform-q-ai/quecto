@@ -84,7 +84,7 @@ impl ContainerAssetStore for MemoryAssets {
             }
             AssetState::Identical => AssetOutcome::KeptIdentical,
             AssetState::Differs => AssetOutcome::KeptDiffering,
-            AssetState::Refused => unreachable!(),
+            AssetState::Outdated | AssetState::Refused => unreachable!(),
         })
     }
 

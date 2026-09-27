@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry, KillClaim};
 use crate::domain::environment_retention::{
-    MemberFinalizeMode, SwarmRunObservation, loss_reason, retains_environment, retention_reason,
-    unrecorded_loss_reason,
+    MemberFinalizeMode, SwarmRunObservation, ends_plain_environment, loss_reason,
+    retains_environment, retention_reason, unrecorded_loss_reason,
 };
 
 use super::super::ports::{EnvironmentProcessCommands, HostedSwarmRunObservation};
@@ -74,6 +74,17 @@ impl FinalizeEnvironmentMember {
             }
         }
 
+        // #2206: on the owner's word a plain container child's box has
+        // nothing to resume — it goes for good, record included.
+        if ends_plain_environment(mode, &observed) {
+            let plan = Self::cleanup_plan(&record, entry_cleanup_plan.clone());
+            if let Some((environment_id, argv)) = plan {
+                self.end_for_good(claim, &record, &environment_id, &argv)
+                    .await;
+                return;
+            }
+        }
+
         if mode.launch_rollback() || record.retained_kill_argv.is_empty() {
             self.cleanup(claim, &record, entry_cleanup_plan, mode).await;
             return;
@@ -89,9 +100,54 @@ impl FinalizeEnvironmentMember {
         }
     }
 
+    /// The cleanup that ends `record`: the environment's own retained
+    /// cleanup argv, else the member's plan; `None` when neither names one.
+    fn cleanup_plan(
+        record: &EnvironmentRecord,
+        entry_cleanup_plan: Option<(String, Vec<String>)>,
+    ) -> Option<(String, Vec<String>)> {
+        match record.retained_cleanup_argv.first() {
+            Some(_program) => Some((
+                record.environment_id.clone(),
+                record.retained_cleanup_argv.clone(),
+            )),
+            None => {
+                entry_cleanup_plan.filter(|(_, argv)| matches!(argv.as_slice(), [_program, ..]))
+            }
+        }
+    }
+
+    /// End a plain container child's environment for good (#2206): the
+    /// retained `cleanup` removes the container and its state directory,
+    /// and only once it reported success is the record forgotten, as a
+    /// launch rollback does. A failed cleanup leaves the record
+    /// `cleanup-failed` with the script's account, so `container kill`
+    /// retries it and `ls` still shows what is left.
+    async fn end_for_good(
+        &self,
+        claim: KillClaim,
+        record: &EnvironmentRecord,
+        environment_id: &str,
+        argv: &[String],
+    ) {
+        debug_assert!(!argv.is_empty(), "only a named cleanup ends a box for good");
+        match self
+            .commands
+            .run_retained_cleanup(environment_id, argv)
+            .await
+        {
+            Ok(()) => {
+                self.registry.complete_kill(claim);
+                self.registry.remove(&record.environment_ref);
+            }
+            Err(error) => self.registry.fail_kill(claim, &error),
+        }
+    }
+
     /// The retained `cleanup` contract: the environment's own cleanup argv,
     /// else the member's plan; then stopped, and for the launch that created
-    /// the environment the record is discarded entirely.
+    /// the environment the record is discarded entirely. Best effort: a
+    /// rollback has nothing usable to keep, so its outcome only is logged.
     async fn cleanup(
         &self,
         claim: KillClaim,
@@ -99,12 +155,12 @@ impl FinalizeEnvironmentMember {
         entry_cleanup_plan: Option<(String, Vec<String>)>,
         mode: MemberFinalizeMode,
     ) {
-        if !record.retained_cleanup_argv.is_empty() {
-            self.commands
-                .run_retained_cleanup(&record.environment_id, &record.retained_cleanup_argv)
+        if let Some((environment_id, argv)) = Self::cleanup_plan(record, entry_cleanup_plan) {
+            // The adapter reports a failure itself; best effort by contract.
+            let _ = self
+                .commands
+                .run_retained_cleanup(&environment_id, &argv)
                 .await;
-        } else if let Some((env_id, argv)) = entry_cleanup_plan {
-            self.commands.run_retained_cleanup(&env_id, &argv).await;
         }
         self.registry.complete_kill(claim);
         if mode == MemberFinalizeMode::LaunchRollbackOwned {

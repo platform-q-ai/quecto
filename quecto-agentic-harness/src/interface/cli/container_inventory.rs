@@ -250,16 +250,22 @@ pub(crate) fn cmd_kill(
     });
     match outcome {
         Ok(killed) => {
-            stdout.push_str(&format!(
-                "killed {}{}\n",
-                killed.record.environment_ref,
-                killed
-                    .record
-                    .name
-                    .as_deref()
-                    .map(|name| format!(" ({name})"))
-                    .unwrap_or_default()
-            ));
+            let name = killed
+                .record
+                .name
+                .as_deref()
+                .map(|name| format!(" ({name})"))
+                .unwrap_or_default();
+            let line = if killed.removed_stopped {
+                // #2206: a stopped environment's leftovers went.
+                format!(
+                    "removed stopped {}{name}: its container and state directory are gone and its record is forgotten\n",
+                    killed.record.environment_ref
+                )
+            } else {
+                format!("killed {}{name}\n", killed.record.environment_ref)
+            };
+            stdout.push_str(&line);
             0
         }
         Err(error) => fail(stderr, &error),
@@ -438,6 +444,9 @@ fn present_gc(report: &GcReport, stdout: &mut String) {
 #[cfg(test)]
 #[path = "container_inventory_hosted_tests.rs"]
 mod hosted_tests;
+#[cfg(test)]
+#[path = "container_inventory_kill_stopped_tests.rs"]
+mod kill_stopped_tests;
 #[cfg(test)]
 #[path = "container_inventory_tests.rs"]
 mod tests;

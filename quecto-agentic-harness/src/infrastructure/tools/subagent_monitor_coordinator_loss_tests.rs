@@ -295,11 +295,10 @@ async fn unreadable_store_maps_to_unreadable_and_retains_the_environment() {
 }
 
 /// A record whose advertised checkout is not an absolute path under its
-/// workspace (or is missing) opens no store: the ordinary kill runs even
-/// though a running swarm store exists at the advertised location.
-async fn rejected_checkout_keeps_the_final_member_kill(
-    advertised: impl FnOnce(&std::path::Path) -> String,
-) {
+/// workspace (or is missing) opens no store — no interpreter runs there,
+/// no loss is recorded on the live run — and, since the host cannot tell
+/// what the box hosts, it is kept (#2206 round 2: never "no board").
+async fn rejected_checkout_keeps_the_box(advertised: impl FnOnce(&std::path::Path) -> String) {
     let dir = tempfile::tempdir().unwrap();
     let elsewhere = dir.path().join("elsewhere");
     let _live = create_running_swarm(&elsewhere);
@@ -323,31 +322,34 @@ async fn rejected_checkout_keeps_the_final_member_kill(
     )
     .await;
 
-    assert_eq!(
-        std::fs::read_to_string(&log).unwrap_or_default().trim(),
-        "kill env-coordinator",
-        "a rejected checkout is no store"
+    assert!(
+        std::fs::read_to_string(&log).unwrap_or_default().is_empty(),
+        "a rejected checkout is never proof of no store: nothing is killed"
     );
+    let record = environments.get(&env_ref).unwrap();
+    assert_eq!(record.status, EnvironmentStatus::Retained);
+    let reason = record.metadata["retained"].as_str().unwrap();
+    assert!(reason.contains("could not be read"), "{reason}");
     assert_eq!(
-        environments.get(&env_ref).unwrap().status,
-        EnvironmentStatus::Stopped
+        _live.summary().unwrap()["status"],
+        "running",
+        "the store at the advertised place was never opened"
     );
 }
 
 #[tokio::test]
 async fn checkout_outside_the_workspace_is_not_opened() {
-    rejected_checkout_keeps_the_final_member_kill(|elsewhere| elsewhere.display().to_string())
-        .await;
+    rejected_checkout_keeps_the_box(|elsewhere| elsewhere.display().to_string()).await;
 }
 
 #[tokio::test]
 async fn relative_checkout_is_not_opened() {
-    rejected_checkout_keeps_the_final_member_kill(|_| "checkout".to_string()).await;
+    rejected_checkout_keeps_the_box(|_| "checkout".to_string()).await;
 }
 
 #[tokio::test]
 async fn checkout_escaping_the_workspace_with_dotdot_is_not_opened() {
-    rejected_checkout_keeps_the_final_member_kill(|elsewhere| {
+    rejected_checkout_keeps_the_box(|elsewhere| {
         // `<workspace>/../elsewhere` resolves to the live store but is refused.
         format!(
             "{}/../elsewhere",
@@ -680,16 +682,14 @@ async fn symlinked_checkout_pointing_outside_the_workspace_is_not_opened() {
         environments.commit(record);
         let _ = std::fs::remove_file(&log);
         let registry = register_member(dir.path(), &environments, &env_ref);
+        let reason = exit_and_reason(&environments, &env_ref, &registry)
+            .await
+            .unwrap_or_else(|| panic!("{metadata}: a symlink out of the workspace keeps the box"));
+        assert!(reason.contains("could not be read"), "{metadata}: {reason}");
         assert!(
-            exit_and_reason(&environments, &env_ref, &registry)
-                .await
-                .is_none(),
-            "{metadata}: a symlink out of the workspace is refused"
+            std::fs::read_to_string(&log).unwrap_or_default().is_empty(),
+            "{metadata}: nothing killed"
         );
-        assert_eq!(
-            std::fs::read_to_string(&log).unwrap_or_default().trim(),
-            "kill env-coordinator",
-            "{metadata}"
-        );
+        assert_eq!(_live.summary().unwrap()["status"], "running", "{metadata}");
     }
 }
