@@ -83,7 +83,9 @@ fn discovery_finds_each_prefix_from_its_ipv4only_arpa_answers() {
 #[test]
 fn no_discovery_answers_or_unrelated_answers_mean_no_prefix() {
     assert_eq!(discovered_prefixes(&[]), Vec::new());
+    // The first and last embed 192.0.0.170 at /32 but set a u-octet bit.
     for unrelated in [
+        "2001:db8:c000:aa:100::",
         "2001:db8::1",
         "2001:db8:122:344::c000:2ab",
         "::1",
