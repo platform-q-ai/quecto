@@ -54,8 +54,8 @@ fn workflow_tool_debug_engine_and_poisoned_lock_paths() {
     })
     .join();
 
-    let err = tool.lock_engine().unwrap_err();
-    assert!(err.contains("workflow engine poisoned"));
+    // A panic contained under the lock (#2192) leaves the engine readable.
+    assert_eq!(tool.lock_engine().list_templates().len(), 2);
 }
 
 #[tokio::test]
@@ -226,7 +226,7 @@ fn select_template_rejects_an_unknown_template_id() {
 }
 
 #[test]
-fn guard_check_surfaces_a_poisoned_engine_rather_than_allowing_the_command() {
+fn guard_check_reads_a_poisoned_engine_as_it_was_left_and_still_enforces_its_rules() {
     let handle = engine_handle();
     handle
         .lock()
@@ -234,6 +234,7 @@ fn guard_check_surfaces_a_poisoned_engine_rather_than_allowing_the_command() {
         .select_template("feature", None)
         .unwrap();
     let guard = WorkflowGuard::new(handle.clone());
+    let unpoisoned = guard.check("bash", r#"{"command":"cargo test"}"#);
 
     let poisoned = handle.clone();
     let _ = std::thread::spawn(move || {
@@ -241,15 +242,16 @@ fn guard_check_surfaces_a_poisoned_engine_rather_than_allowing_the_command() {
         panic!("poison the production workflow engine mutex");
     })
     .join();
+    assert!(handle.is_poisoned());
 
-    // Fail closed: a poisoned engine must not silently permit a guarded command.
-    let err = guard
-        .check("bash", r#"{"command":"cargo test"}"#)
-        .expect_err("a poisoned engine must not allow the command through");
-    assert!(
-        err.contains("workflow engine poisoned"),
-        "expected the poison message, got: {err}"
+    // One policy for the lock (#2192): a poisoned engine answers exactly as
+    // before the poison, so a contained panic neither blocks every `bash`
+    // call nor lets a guarded one through.
+    assert_eq!(
+        guard.check("bash", r#"{"command":"cargo test"}"#),
+        unpoisoned
     );
+    assert!(guard.check("read", "{}").is_ok());
 }
 
 #[test]

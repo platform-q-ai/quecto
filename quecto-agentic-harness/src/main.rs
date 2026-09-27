@@ -1,6 +1,9 @@
 use quecto::interface::cli;
 
 fn main() {
+    // Fail-fast outside tool calls; a panicking tool costs only its call
+    // (#2192, ADR-0029).
+    quecto::interface::panic_hook::install();
     let args: Vec<String> = std::env::args().collect();
     std::process::exit(cli::run(
         args,

@@ -661,6 +661,8 @@ mod parallel_tool_calls_tests;
 mod progress_tests;
 #[path = "agent_loop_931_tests.rs"]
 mod retry_malformed_tests;
+#[path = "agent_loop_2192_tests.rs"]
+mod tool_panic_tests;
 
 #[test]
 fn new_threads_context_knobs_and_model_window_into_observable_budget() {

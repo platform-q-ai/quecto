@@ -32,7 +32,10 @@ impl ExecutionScope {
                 // Serialize reap + identity removal with registry cancellation.
                 // Do not call Child::wait/try_wait before group cleanup: reaping
                 // the leader first loses the reserved process-group identity.
-                let mut state = self.state.as_ref().map(|s| s.lock().unwrap());
+                let mut state = self
+                    .state
+                    .as_ref()
+                    .map(|s| crate::infrastructure::tools::swarm::swarm_registry::recovered(s));
                 super::kill_pid(pid);
                 let result = self.child.try_wait();
                 if let Some(state) = &mut state {
@@ -51,7 +54,7 @@ impl ExecutionScope {
     pub(super) async fn wait(&mut self) -> io::Result<ExitStatus> {
         let result = self.child.wait().await;
         if let Some(state) = &self.state {
-            state.lock().unwrap().pid = None;
+            crate::infrastructure::tools::swarm::swarm_registry::recovered(&state).pid = None;
         }
         result
     }
@@ -63,7 +66,7 @@ impl Drop for ExecutionScope {
         // After a successful wait, Child::id is None and no PID is signalled.
         self.terminate();
         if let Some(state) = &self.state {
-            state.lock().unwrap().pid = None;
+            crate::infrastructure::tools::swarm::swarm_registry::recovered(state).pid = None;
         }
     }
 }

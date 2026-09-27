@@ -72,9 +72,12 @@ impl FindPaths for FdFindPaths {
             // runtime cannot abort termination/wait. Receiver closure cancels the
             // invocation; the owner runtime lives until the child has been reaped.
             // Both thread and reactor creation happen before any child is spawned.
-            std::thread::Builder::new()
-                .name("find-fd-owner".into())
-                .spawn(move || {
+            // Its job is the call's own work, carried in the call's scope
+            // (#2192): a panic in it while the call runs fails the call. Once
+            // a cancelled call is gone, it only reaps the child, outside it.
+            super::call_work::std_thread_in_call(
+                std::thread::Builder::new().name("find-fd-owner".into()),
+                move || {
                     match tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
@@ -91,10 +94,11 @@ impl FindPaths for FdFindPaths {
                             ))));
                         }
                     }
-                })
-                .map_err(|error| {
-                    FindError::Io(format!("find failed to start process owner: {error}"))
-                })?;
+                },
+            )
+            .map_err(|error| {
+                FindError::Io(format!("find failed to start process owner: {error}"))
+            })?;
             receiver
                 .await
                 .map_err(|e| FindError::Io(format!("find process owner failed: {e}")))?

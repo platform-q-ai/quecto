@@ -234,6 +234,19 @@ pub struct WorkflowEngine {
     revision: u64,
 }
 
+/// The one way to reach a shared engine (#2192): a panic contained to a
+/// tool call while the lock was held poisons it, and every reader and
+/// writer then goes on with the engine as it was left — the guard for
+/// `bash`, the workflow tool, the save and the nudges alike — rather than
+/// some refusing and some silently skipping.
+pub fn lock_engine(
+    engine: &std::sync::Mutex<WorkflowEngine>,
+) -> std::sync::MutexGuard<'_, WorkflowEngine> {
+    engine
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 mod binding;
 mod engine;
 pub use engine::*;

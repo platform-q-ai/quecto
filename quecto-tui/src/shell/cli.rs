@@ -190,6 +190,8 @@ async fn run_tui(flags: CliFlags) -> i32 {
         return 1;
     }
 
+    // The hook taken here is `main`'s abort-on-panic hook (#2192): the
+    // terminal is restored first, then it reports the panic and aborts.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = std::io::Write::write_all(

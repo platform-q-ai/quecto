@@ -1,0 +1,8 @@
+[package]
+name = "quecto-fail-fast"
+version = "0.1.0"
+edition = "2024"
+description = "The panic hook quecto's tool-less binaries install: report, then abort"
+license = "LicenseRef-Proprietary"
+
+[dependencies]

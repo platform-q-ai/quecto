@@ -195,7 +195,8 @@ pub enum WorkflowIdleReason {
     /// The bound workflow reached a terminal state (or no workflow is bound).
     Completed,
     /// A reason this build does not recognize (newer producer). Never
-    /// classified as a stall.
+    /// produced by this build — it exists for deserialization only — and
+    /// never classified as a stall.
     #[serde(other)]
     Unknown,
 }

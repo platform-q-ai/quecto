@@ -502,6 +502,7 @@ fn given_error_event(world: &mut QuectoWorld, source: String, tool: String, mess
         source,
         tool: Some(tool),
         message,
+        location: None,
     };
     world.audit_event = Some(event);
 }

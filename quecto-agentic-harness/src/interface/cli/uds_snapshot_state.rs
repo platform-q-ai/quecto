@@ -41,7 +41,7 @@ pub(crate) fn build_get_state_line_live(
     state.is_streaming = is_streaming;
     state.sync = 1;
     if let Some(ws) = workflow_state {
-        let engine = ws.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let engine = crate::domain::workflow::lock_engine(ws);
         let mut live = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
         if let Some(auto) = state
             .workflow

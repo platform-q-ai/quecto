@@ -157,6 +157,7 @@ fn error_round_trip() {
         source: "tool".into(),
         tool: Some("bash".into()),
         message: "Command timed out".into(),
+        location: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AuditEvent = serde_json::from_str(&json).unwrap();
@@ -169,6 +170,7 @@ fn error_without_tool_round_trip() {
         source: "provider".into(),
         tool: None,
         message: "rate limited".into(),
+        location: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AuditEvent = serde_json::from_str(&json).unwrap();

@@ -487,7 +487,7 @@ async fn prepare_output_file(
             workspace.join(p)
         }
     };
-    let file = tokio::task::spawn_blocking({
+    let file = crate::infrastructure::tools::call_work::spawn_blocking_in_call({
         let target = target.clone();
         move || -> std::io::Result<std::fs::File> {
             if let Some(parent) = target.parent() {

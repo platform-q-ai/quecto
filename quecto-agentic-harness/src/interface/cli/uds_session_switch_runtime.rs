@@ -86,9 +86,8 @@ fn apply_workflow_run(
     session: &mut AgentSession,
     run: Option<crate::domain::workflow::WorkflowRunPersisted>,
 ) {
-    if let Some(workflow) = workflow_state
-        && let Ok(mut engine) = workflow.lock()
-    {
+    if let Some(workflow) = workflow_state {
+        let mut engine = crate::domain::workflow::lock_engine(workflow);
         let before = serde_json::to_value(engine.snapshot(true)).ok();
         if let Some(run) = run {
             engine.restore_run(run);

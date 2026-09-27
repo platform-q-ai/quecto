@@ -18,18 +18,27 @@ impl OwnerExitFlag {
 
 impl OwnerExitAnnouncement for OwnerExitFlag {
     fn announce(&self, client: u64) {
-        *self.0.lock().unwrap() = Some(client);
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(client);
     }
 
     fn withdraw(&self, client: u64) {
-        let mut held = self.0.lock().unwrap();
+        let mut held = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if *held == Some(client) {
             *held = None;
         }
     }
 
     fn announced(&self) -> bool {
-        self.0.lock().unwrap().is_some()
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
     }
 }
 

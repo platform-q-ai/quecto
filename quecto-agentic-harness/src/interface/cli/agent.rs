@@ -464,9 +464,7 @@ pub(crate) fn build_agent_from_config(
     // prompt, which stays byte-identical for the whole session.
     if flags.workflow {
         if let Some(ws) = &workflow_state {
-            if let Ok(mut engine) = ws.lock() {
-                engine.set_selector_nudge(true);
-            }
+            crate::domain::workflow::lock_engine(ws).set_selector_nudge(true);
         }
     }
     let wf_config = workflow_state.as_ref().map(|_| config.workflow.clone());

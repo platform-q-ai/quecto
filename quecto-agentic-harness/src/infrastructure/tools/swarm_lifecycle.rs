@@ -94,7 +94,7 @@ pub fn member_exited(
 pub async fn notify(context: &SwarmContext) -> Vec<String> {
     let ctx = context.clone();
     let Ok(Ok((members, generation))) =
-        tokio::task::spawn_blocking(move || ctx.notification_batch()).await
+        super::call_work::spawn_blocking_in_call(move || ctx.notification_batch()).await
     else {
         return vec!["swarm notification summary unavailable; inspect durable inbox".into()];
     };
@@ -107,7 +107,8 @@ pub async fn notify(context: &SwarmContext) -> Vec<String> {
 /// provider failure learns the new control generation and re-arms.
 pub async fn wake_after_resume(context: &SwarmContext, generation: u64) -> Vec<String> {
     let ctx = context.clone();
-    let Ok(Ok(snapshot)) = tokio::task::spawn_blocking(move || ctx.snapshot()).await else {
+    let Ok(Ok(snapshot)) = super::call_work::spawn_blocking_in_call(move || ctx.snapshot()).await
+    else {
         return vec![
             "swarm membership unavailable after resume; members re-arm on their next wake".into(),
         ];
@@ -206,7 +207,7 @@ pub fn bind_member_termination(
 
 pub async fn settle(context: SwarmContext) -> Result<Value, DomainError> {
     let ctx = context.clone();
-    let snapshot = tokio::task::spawn_blocking(move || ctx.snapshot())
+    let snapshot = super::call_work::spawn_blocking_in_call(move || ctx.snapshot())
         .await
         .map_err(|e| DomainError::Tool(e.to_string()))??;
     context
@@ -218,7 +219,7 @@ pub async fn settle(context: SwarmContext) -> Result<Value, DomainError> {
             &LinuxProcesses,
         )
         .await?;
-    tokio::task::spawn_blocking(move || reconcile(&context))
+    super::call_work::spawn_blocking_in_call(move || reconcile(&context))
         .await
         .map_err(|e| DomainError::Tool(e.to_string()))?
 }
@@ -417,9 +418,10 @@ impl crate::application::providers::ports::RequestAdmission for SwarmContext {
         let context = self.clone();
         let actor = self.member.clone();
         Box::pin(async move {
-            let snapshot = tokio::task::spawn_blocking(move || context.inference_snapshot())
-                .await
-                .map_err(|error| DomainError::Tool(error.to_string()))??;
+            let snapshot =
+                super::call_work::spawn_blocking_in_call(move || context.inference_snapshot())
+                    .await
+                    .map_err(|error| DomainError::Tool(error.to_string()))??;
             if snapshot.admits_inference(&actor) {
                 Ok(())
             } else {
@@ -450,7 +452,7 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
         Box::pin(async move {
             let resuming = matches!(action, crate::domain::swarm::RunControlAction::Resume);
             let fan_out = context.clone();
-            let mut receipt = tokio::task::spawn_blocking(move || {
+            let mut receipt = super::call_work::spawn_blocking_in_call(move || {
                 use crate::domain::swarm::RunControlAction;
                 let mut wake_allowed = false;
                 let value = match action {
@@ -493,9 +495,10 @@ impl crate::application::tools::ports::ToolExecutionAdmission for SwarmContext {
     ) -> PortFuture<'a, Result<(), DomainError>> {
         let context = self.clone();
         Box::pin(async move {
-            let snapshot = tokio::task::spawn_blocking(move || context.inference_snapshot())
-                .await
-                .map_err(|error| DomainError::Tool(error.to_string()))??;
+            let snapshot =
+                super::call_work::spawn_blocking_in_call(move || context.inference_snapshot())
+                    .await
+                    .map_err(|error| DomainError::Tool(error.to_string()))??;
             use crate::domain::swarm::RunStatus;
             // A reporting coordinator (terminal run, or a run it ended and
             // that now waits for the supervisor, #1729) keeps native reads.

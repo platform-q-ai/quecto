@@ -257,7 +257,7 @@ fn parse_exec_result(
 
 async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainError> {
     let context = child.swarm_context.cloned();
-    let mut reservation = tokio::task::spawn_blocking(move || {
+    let mut reservation = super::call_work::spawn_blocking_in_call(move || {
         context
             .map(super::swarm_admission::LaunchReservation::reserve)
             .transpose()

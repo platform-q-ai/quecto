@@ -19,6 +19,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "tim
 
 # Shared bounded protocol reader (#1003)
 quecto-line-io = { version = "0.2.1", path = "../quecto-line-io" }
+quecto-fail-fast = { version = "0.1.0", path = "../quecto-fail-fast" }
 
 # HTTP-date parsing (already present transitively through hyper).
 httpdate = "1.0.3"

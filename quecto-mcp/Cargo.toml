@@ -6,6 +6,7 @@ description = "MCP client UDS extension for Quecto"
 license = "LicenseRef-Proprietary"
 
 [dependencies]
+quecto-fail-fast = { version = "0.1.0", path = "../quecto-fail-fast" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3"

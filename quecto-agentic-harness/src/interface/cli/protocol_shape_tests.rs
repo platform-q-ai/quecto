@@ -712,3 +712,19 @@ fn session_discovery_scope_is_local_by_default_and_accepts_only_known_scopes() {
         );
     }
 }
+
+/// #2192 review: this build never produces `Unknown` (a poisoned engine is
+/// read, not reported as unknown), but the variant is not dead — it is the
+/// `#[serde(other)]` target that keeps a newer producer's reason from
+/// failing to parse, and it must never read as a stall.
+#[test]
+fn a_workflow_idle_reason_from_a_newer_producer_parses_as_unknown() {
+    let json = r#"{"type":"workflow_idle","reason":"some_future_reason"}"#;
+    let parsed: AgentEvent = serde_json::from_str(json).unwrap();
+    assert!(matches!(
+        parsed,
+        AgentEvent::WorkflowIdle {
+            reason: Some(WorkflowIdleReason::Unknown)
+        }
+    ));
+}

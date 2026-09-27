@@ -28,6 +28,9 @@ use std::path::Path;
 /// Hook scripts resolve git paths so they work in linked worktrees (#2119).
 #[path = "architecture/hook_scripts_worktree.rs"]
 mod hook_scripts_worktree;
+/// Release builds unwind and every binary installs its panic hook (#2192).
+#[path = "architecture/panic_strategy.rs"]
+mod panic_strategy;
 /// Sessions capability (#1968, D1 #1970): plural capability, one
 /// construction site, one layout owner, retirement of the singular path.
 #[path = "architecture/sessions_capability.rs"]
@@ -1190,6 +1193,9 @@ fn application_path_allowed(path: &str) -> bool {
     let parts: Vec<_> = path.split("::").collect();
     match parts.as_slice() {
         ["crate", "application", "ports", ..] => true,
+        // A tool call's own work carries its panic scope (#2192, ADR-0029):
+        // only `call_work`, which joins what it spawns (`carried_work_is_joined`).
+        ["crate", "application", "tool_panic_scope", "carry" | "carry_future"] => true,
         // Ports are capability-local (#1934, #1960): every
         // `application/<capability>/ports.rs` is a contract this
         // layer implements. Subagent teardown (#1935) was the first.

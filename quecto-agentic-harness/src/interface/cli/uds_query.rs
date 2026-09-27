@@ -32,7 +32,7 @@ pub(super) fn query_response_data_result(
         AgentCommand::GetState { since, .. } => {
             let (workflow, workflow_revision) =
                 ctx.workflow_state.as_ref().map_or((None, 0), |ws| {
-                    let engine = ws.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let engine = crate::domain::workflow::lock_engine(ws);
                     let revision = engine.revision();
                     let mut value = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
                     if let Some(config) = &ctx.workflow_config {

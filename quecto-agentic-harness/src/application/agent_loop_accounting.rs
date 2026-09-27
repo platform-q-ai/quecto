@@ -22,6 +22,7 @@ impl AgentLoopImpl {
                 source: "deadline".into(),
                 tool: None,
                 message: reason.into(),
+                location: None,
             },
         )
         .await;

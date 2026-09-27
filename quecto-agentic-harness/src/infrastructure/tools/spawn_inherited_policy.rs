@@ -17,7 +17,9 @@ pub(super) fn replace_state(
     state: &InheritedToolPolicyState,
     snapshot: InheritedToolPolicySnapshot,
 ) {
-    *state.write().expect("inherited policy lock") = Some(snapshot);
+    *state
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(snapshot);
 }
 
 pub(super) fn set_from_tools(
@@ -28,7 +30,10 @@ pub(super) fn set_from_tools(
 }
 
 pub(super) fn snapshot(state: &InheritedToolPolicyState) -> Option<InheritedToolPolicySnapshot> {
-    state.read().expect("inherited policy lock").clone()
+    state
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
 }
 
 pub(super) fn tools(

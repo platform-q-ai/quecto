@@ -383,10 +383,9 @@ pub(super) async fn handle_set_workflow_automation(
     if before != (config.auto_continue, config.completion_nudge) {
         ctx.session.bump_visible_generation();
     }
-    if let Some(workflow) = &ctx.workflow_state
-        && let Ok(mut engine) = workflow.lock()
-    {
-        engine.set_automation(config.auto_continue, config.completion_nudge);
+    if let Some(workflow) = &ctx.workflow_state {
+        crate::domain::workflow::lock_engine(workflow)
+            .set_automation(config.auto_continue, config.completion_nudge);
     }
     let ev = AgentEvent::ok(
         id,

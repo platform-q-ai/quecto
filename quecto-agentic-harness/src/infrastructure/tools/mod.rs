@@ -4,6 +4,7 @@ pub mod agent_cmd_containers;
 mod agent_cmd_parse;
 mod agent_cmd_report;
 pub mod bash;
+pub mod call_work;
 pub mod command_match;
 pub mod delegated_roster;
 pub mod docs;
@@ -19,6 +20,8 @@ pub(crate) mod inherited_tool_policy;
 mod inherited_tool_policy_unit_tests;
 pub mod launch_rollbacks;
 pub mod owner_exit;
+#[cfg(any(test, feature = "test-support"))]
+pub mod panic_probe;
 pub mod path_utils;
 mod process_tree;
 pub mod recall;

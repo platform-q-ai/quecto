@@ -68,6 +68,7 @@ for file in "${CHANGED_FILES[@]}"; do
         quecto-mcp/*) PACKAGES[quecto-mcp]=1 ;;
         quecto-runtime-manager/*) PACKAGES[quecto-runtime-manager]=1 ;;
         quecto-line-io/*) PACKAGES[quecto-line-io]=1 ;;
+        quecto-fail-fast/*) PACKAGES[quecto-fail-fast]=1 ;;
     esac
 done
 

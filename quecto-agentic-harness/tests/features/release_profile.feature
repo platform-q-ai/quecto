@@ -9,7 +9,7 @@ Feature: Release profile and dependency hygiene
     And Cargo.toml should contain a release profile with "lto"
     And Cargo.toml should contain a release profile with "codegen-units = 1"
     And Cargo.toml should contain a release profile with "strip = true"
-    And Cargo.toml should contain a release profile with 'panic = "abort"'
+    And Cargo.toml should contain a release profile with 'panic = "unwind"'
 
   Scenario: image crate is not a direct dependency
     Then Cargo.toml should not contain a direct dependency on "image"

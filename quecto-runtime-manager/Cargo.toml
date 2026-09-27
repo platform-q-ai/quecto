@@ -6,6 +6,7 @@ description = "Ultra-lightweight Quecto runtime manager"
 license = "LicenseRef-Proprietary"
 
 [dependencies]
+quecto-fail-fast = { version = "0.1.0", path = "../quecto-fail-fast" }
 axum = { version = "0.7", features = ["ws"] }
 base64 = "0.22"
 futures-util = "0.3"

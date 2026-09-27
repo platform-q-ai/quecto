@@ -1591,6 +1591,7 @@ dependencies = [
  "humantime",
  "libc",
  "proc-macro2",
+ "quecto-fail-fast",
  "quecto-line-io",
  "quecto-tui",
  "quote",
@@ -1624,6 +1625,7 @@ dependencies = [
  "axum 0.8.8",
  "cucumber",
  "futures",
+ "quecto-fail-fast",
  "quecto-line-io",
  "reqwest",
  "serde",
@@ -1639,6 +1641,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "quecto-fail-fast"
+version = "0.1.0"
+
+[[package]]
 name = "quecto-line-io"
 version = "0.2.1"
 dependencies = [
@@ -1651,6 +1657,7 @@ version = "0.1.1"
 dependencies = [
  "cucumber",
  "futures-util",
+ "quecto-fail-fast",
  "reqwest",
  "serde",
  "serde_json",
@@ -1671,6 +1678,7 @@ dependencies = [
  "axum 0.7.9",
  "base64",
  "futures-util",
+ "quecto-fail-fast",
  "reqwest",
  "serde",
  "serde_json",
@@ -1692,6 +1700,7 @@ dependencies = [
  "futures",
  "libc",
  "pulldown-cmark",
+ "quecto-fail-fast",
  "quecto-line-io",
  "regex",
  "serde",

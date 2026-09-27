@@ -236,6 +236,7 @@ async fn all_event_types_write_successfully() {
             source: "provider".into(),
             tool: None,
             message: "rate limited".into(),
+            location: None,
         },
     ];
 

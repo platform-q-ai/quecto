@@ -6,6 +6,7 @@ description = "HTTP/WebSocket gateway to a quecto agent over UDS"
 license = "LicenseRef-Proprietary"
 
 [dependencies]
+quecto-fail-fast = { version = "0.1.0", path = "../quecto-fail-fast" }
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "net", "sync", "io-util"] }
 

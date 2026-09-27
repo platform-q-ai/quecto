@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod panic_hook;
 pub mod repl;
 pub mod shared;
 pub(crate) mod tool_runtime;

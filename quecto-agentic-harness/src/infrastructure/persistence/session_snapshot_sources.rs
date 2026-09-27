@@ -20,7 +20,7 @@ impl WorkflowEngineRunSource {
 
 impl WorkflowRunSource for WorkflowEngineRunSource {
     fn persisted_run(&self) -> Option<WorkflowRunPersisted> {
-        self.0.lock().ok().and_then(|engine| engine.persisted_run())
+        crate::domain::workflow::lock_engine(&self.0).persisted_run()
     }
 }
 

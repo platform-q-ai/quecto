@@ -281,9 +281,11 @@ async fn candidate_texts(matches: &[RgMatch], sandbox: &Sandbox) -> Vec<Option<E
     let mut texts = vec![None; matches.len()];
     for (path, indices) in by_file {
         let lines = match sandbox.validate_path(&path.to_string_lossy()) {
-            Ok(_) => tokio::task::spawn_blocking(move || whole_lines(&path))
-                .await
-                .unwrap_or_default(),
+            Ok(_) => crate::infrastructure::tools::call_work::spawn_blocking_in_call(move || {
+                whole_lines(&path)
+            })
+            .await
+            .unwrap_or_default(),
             Err(_) => continue,
         };
         for index in indices {

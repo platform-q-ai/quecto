@@ -107,7 +107,7 @@ pub(super) const SAVED_OUTPUT_POLICY: PrunePolicy = PrunePolicy {
 
 /// Save content to the shared temp directory asynchronously and return the path.
 pub(super) async fn save_to_temp_file(content: String) -> Option<String> {
-    tokio::task::spawn_blocking(move || {
+    crate::infrastructure::tools::call_work::spawn_blocking_in_call(move || {
         let temp = std::env::temp_dir();
         sweep_legacy(
             &temp.join(LEGACY_DIR_NAME),

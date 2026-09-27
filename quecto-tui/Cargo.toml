@@ -15,6 +15,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 test-harness = []
 
 [dependencies]
+quecto-fail-fast = { version = "0.1.0", path = "../quecto-fail-fast" }
 # Async runtime — UDS client + stdin reader
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "process", "io-util", "io-std", "sync", "net"] }
 

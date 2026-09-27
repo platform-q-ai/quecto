@@ -751,6 +751,8 @@ pub struct QuectoWorld {
     pub swarm_workspace: Option<PathBuf>,
     /// #2150: a real agent's event log run.
     pub event_log: Option<event_log_steps::EventLogRun>,
+    /// #2192: a real agent calling a tool that panics.
+    pub tool_panic: Option<tool_panic_steps::ToolPanicRun>,
     /// #2210: a real agent's model turn in flight.
     pub model_turn: Option<model_turn_progress_steps::ModelTurnRun>,
     /// Result from the most recent swarm tool execution
@@ -1503,6 +1505,7 @@ mod subagent_teardown_then_steps;
 mod subagent_widget_steps;
 mod swarm_steps;
 mod tool_empty_args_steps;
+mod tool_panic_steps;
 mod tool_stable_ids_steps;
 mod truncate_steps;
 mod tui_architecture_steps;
