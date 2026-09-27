@@ -412,3 +412,190 @@ async fn a_denied_answer_is_never_a_fallback_when_the_allowed_one_fails() {
     assert_eq!(denied_accepted.load(Ordering::SeqCst), 0);
     task.abort();
 }
+
+/// `denied.test` answers only the refused 127.0.0.2; every other name the
+/// admitted 127.0.0.1.
+fn denied_name_elsewhere_loopback(host: String) -> Answer {
+    Box::pin(async move {
+        let address = match host.as_str() {
+            "denied.test" => [127, 0, 0, 2],
+            _ => [127, 0, 0, 1],
+        };
+        Ok(vec![SocketAddr::from((address, 0))])
+    })
+}
+
+/// A redirect to a NAME whose every answer is refused: the hop's name is
+/// resolved and refused, and nothing connects to its address.
+#[tokio::test]
+async fn a_redirect_to_a_name_with_only_refused_answers_connects_nothing() {
+    let (port, denied, allowed, tasks) = twin(Answering::Ok).await;
+    // The first hop is the 127.0.0.1 listener: make it redirect.
+    tasks[0].abort();
+    let first = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let first_port = first.local_addr().unwrap().port();
+    let redirect = tokio::spawn(async move {
+        let (mut socket, _) = first.accept().await.unwrap();
+        let mut buffer = [0; 4096];
+        let _ = socket.read(&mut buffer).await;
+        let response = format!(
+            "HTTP/1.1 302 Found\r\nConnection: close\r\nLocation: http://denied.test:{port}/\r\nContent-Length: 0\r\n\r\n"
+        );
+        let _ = socket.write_all(response.as_bytes()).await;
+    });
+    let result = adapter(
+        WebFetchClientRecipe::default(),
+        LOOPBACK,
+        denied_name_elsewhere_loopback,
+    )
+    .fetch(&request(&format!("http://first.test:{first_port}/")))
+    .await;
+    assert_eq!(
+        result,
+        Err(FetchFailure::Refused(
+            "denied.test resolves to no public address: 127.0.0.2 is not a public address".into()
+        ))
+    );
+    assert_eq!(allowed.load(Ordering::SeqCst), 0, "127.0.0.2 never reached");
+    assert_eq!(denied.load(Ordering::SeqCst), 0);
+    redirect.abort();
+    tasks[1].abort();
+}
+
+/// Serves `/start` (recording its Authorization) as a redirect to
+/// `location`, then records the hop's head.
+async fn recording_redirect(
+    location: String,
+) -> (
+    u16,
+    Arc<std::sync::Mutex<Vec<String>>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let task = tokio::spawn({
+        let seen = seen.clone();
+        async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = [0; 4096];
+                let read = socket.read(&mut buffer).await.unwrap_or(0);
+                let head = String::from_utf8_lossy(&buffer[..read]).to_ascii_lowercase();
+                let response = match head.starts_with("get /start") {
+                    true => format!(
+                        "HTTP/1.1 302 Found\r\nConnection: close\r\nLocation: {location}\r\nContent-Length: 0\r\n\r\n"
+                    ),
+                    false => "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok"
+                        .to_owned(),
+                };
+                seen.lock().unwrap().push(head);
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        }
+    });
+    (port, seen, task)
+}
+
+const USER_PW: &str = "authorization: basic dxnlcjpwdw=="; // user:pw
+
+/// URL userinfo credentials follow a same-host hop, as reqwest carried
+/// them, and are stripped on a cross-host hop.
+#[tokio::test]
+async fn url_credentials_follow_only_same_host_hops() {
+    // Same host (`localhost` both times): kept.
+    let (port, seen, task) = recording_redirect("/final".to_owned()).await;
+    let result = ReqwestFetchWebContent::with_policy(LOOPBACK_FOR_TESTS)
+        .fetch(&request(&format!("http://user:pw@localhost:{port}/start")))
+        .await;
+    assert!(
+        matches!(result, Ok(FetchOutcome::SuccessBody { .. })),
+        "{result:?}"
+    );
+    let heads = seen.lock().unwrap().clone();
+    assert_eq!(heads.len(), 2);
+    assert!(heads[0].contains(USER_PW), "{}", heads[0]);
+    assert!(
+        heads[1].contains(USER_PW),
+        "same host keeps it: {}",
+        heads[1]
+    );
+    task.abort();
+    // Cross host (`localhost` to `127.0.0.1`): stripped, and not restored.
+    let (target_port, target_seen, target) = recording_redirect("/never".to_owned()).await;
+    let (port, seen, task) =
+        recording_redirect(format!("http://127.0.0.1:{target_port}/final")).await;
+    let result = ReqwestFetchWebContent::with_policy(LOOPBACK_FOR_TESTS)
+        .fetch(&request(&format!("http://user:pw@localhost:{port}/start")))
+        .await;
+    assert!(
+        matches!(result, Ok(FetchOutcome::SuccessBody { .. })),
+        "{result:?}"
+    );
+    assert!(seen.lock().unwrap()[0].contains(USER_PW));
+    let hop = target_seen.lock().unwrap()[0].clone();
+    assert!(
+        !hop.contains("authorization"),
+        "cross host strips it: {hop}"
+    );
+    task.abort();
+    target.abort();
+}
+
+#[test]
+fn credentials_are_carried_only_onto_urls_without_their_own() {
+    let url = |text: &str| url::Url::parse(text).unwrap();
+    let carried = url("http://u:p@a.test/");
+    assert_eq!(
+        with_credentials(&url("http://a.test/x"), Some(&carried)).as_str(),
+        "http://u:p@a.test/x"
+    );
+    assert_eq!(
+        with_credentials(&url("http://v:q@a.test/x"), Some(&carried)).as_str(),
+        "http://v:q@a.test/x"
+    );
+    assert_eq!(
+        with_credentials(&url("http://a.test/x"), None).as_str(),
+        "http://a.test/x"
+    );
+    assert!(same_host(
+        &url("http://a.test/"),
+        &url("http://a.test:80/y")
+    ));
+    assert!(!same_host(&url("http://a.test/"), &url("https://a.test/")));
+    assert!(!same_host(&url("http://a.test/"), &url("http://b.test/")));
+}
+
+/// A transport failure says web_fetch ignored the proxy variables, when
+/// they were set; otherwise it is unchanged.
+#[tokio::test]
+async fn a_transport_failure_names_the_ignored_proxy_variables_when_set() {
+    // A port nothing listens on: the connection is refused.
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    // Set explicitly: the process environment decides it otherwise.
+    let plain = ReqwestFetchWebContent {
+        proxies_ignored: false,
+        ..adapter(WebFetchClientRecipe::default(), LOOPBACK, loopback_now)
+    };
+    let url = format!("http://closed.test:{port}/");
+    match plain.clone().fetch(&request(&url)).await {
+        Err(FetchFailure::Transport(message)) => {
+            assert!(!message.contains(PROXY_HINT), "{message}")
+        }
+        other => panic!("{other:?}"),
+    }
+    let hinted = ReqwestFetchWebContent {
+        proxies_ignored: true,
+        ..plain
+    };
+    match hinted.fetch(&request(&url)).await {
+        Err(FetchFailure::Transport(message)) => assert!(
+            message.ends_with(" (web_fetch ignores HTTP(S)_PROXY; see #1942)"),
+            "{message}"
+        ),
+        other => panic!("{other:?}"),
+    }
+}

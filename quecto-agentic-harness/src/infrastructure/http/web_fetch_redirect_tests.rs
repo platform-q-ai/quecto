@@ -158,7 +158,7 @@ async fn a_redirect_without_exactly_one_valid_location_fails_closed_unsent() {
             .await;
         assert_eq!(
             result,
-            Err(FetchFailure::Refused(format!(
+            Err(FetchFailure::BadRedirect(format!(
                 "the redirect from http://localhost:{port}/start: {why}"
             ))),
             "{locations:?}"

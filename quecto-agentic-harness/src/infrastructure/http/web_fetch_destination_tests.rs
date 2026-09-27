@@ -328,6 +328,7 @@ async fn a_client_that_cannot_be_built_fails_every_fetch_closed() {
         client: Err("the web-fetch client could not be built: test".into()),
         policy: LOOPBACK_FOR_TESTS,
         timeout: REQUEST_TIMEOUT,
+        proxies_ignored: false,
     };
     let result = timeout(
         Duration::from_secs(5),

@@ -121,5 +121,6 @@ fn map_failure(f: FetchFailure, url: &str) -> DomainError {
         FetchFailure::Refused(reason) => {
             format!("Blocked: {url} reaches a restricted address; refused: {reason}")
         }
+        FetchFailure::BadRedirect(reason) => format!("Redirect refused: {reason}"),
     })
 }

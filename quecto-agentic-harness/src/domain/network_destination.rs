@@ -8,6 +8,11 @@
 //! 6to4, Teredo) are judged by the IPv4 address they reach, so a private
 //! IPv4 address cannot be smuggled in an IPv6 spelling. Pure; no I/O.
 //!
+//! The address allowlist is the security boundary. [`is_fetchable_name`]
+//! is not: it is a courtesy check over a short list of local names, refused
+//! early with a plain reason, and a list of names can never be complete.
+//! Every address any name resolves to is still judged by the allowlist.
+//!
 //! The allowlist is the unicast range (IPv4) and the space IANA has
 //! allocated to the registries (IPv6). The `*_NOT_GLOBAL` tables are not a
 //! denylist of the whole address space: they are the special-purpose

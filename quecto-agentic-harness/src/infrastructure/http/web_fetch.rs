@@ -14,10 +14,22 @@
 //! is applied last, after every recipe setting, and `HTTP(S)_PROXY` /
 //! `ALL_PROXY` are ignored (a note is logged once when they are set).
 //!
+//! The client and its connection pool are web_fetch's own, not the
+//! providers' shared client: a client whose resolver, redirect policy and
+//! proxy setting the adapter controls is the secure recipe, and a shared
+//! client could not carry it.
+//!
 //! Redirects are followed here, not by reqwest: exactly the statuses
 //! reqwest follows (301, 302, 303, 307, 308), at most [`MAX_REDIRECTS`]
 //! times, each hop only when its response carries exactly one valid
-//! `Location`, under one deadline for the whole fetch as before.
+//! `Location`, under one deadline for the whole fetch as before. Like
+//! reqwest, a hop keeps the credentials the URL's userinfo gave while it
+//! stays on the same host and port, and loses them for good once it leaves.
+//!
+//! The adapter authorizes every URL and every hop itself: it does not rely
+//! on the use case's `Allowed` gate, and a `FetchRequest` built any other
+//! way is held to the same checks. That, not the type system, is why the
+//! gate cannot be widened into a bypass (#1942 ledger row 13).
 use crate::application::agent_turn::use_cases::web_fetch::{
     FetchFailure, FetchOutcome, FetchRequest, FetchWebContent, HttpStatus,
 };
@@ -34,6 +46,9 @@ const MAX_REDIRECTS: usize = 10;
 /// The redirect statuses followed: reqwest's own set, kept.
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const USER_AGENT: &str = concat!("quecto/", env!("CARGO_PKG_VERSION"));
+/// Appended to a transport failure while proxy variables are set, so a
+/// fetch failing on a proxy-only network says why.
+const PROXY_HINT: &str = "(web_fetch ignores HTTP(S)_PROXY; see #1942)";
 /// The proxy variables reqwest would read, all ignored here.
 const PROXY_VARIABLES: [&str; 6] = [
     "HTTP_PROXY",
@@ -135,6 +150,8 @@ pub struct ReqwestFetchWebContent {
     policy: DestinationPolicy,
     /// The whole fetch's deadline, redirects included.
     timeout: Duration,
+    /// Whether proxy variables were set (and ignored) when it was built.
+    proxies_ignored: bool,
 }
 impl ReqwestFetchWebContent {
     /// Over the production recipe, with destination enforcement laid over
@@ -158,8 +175,9 @@ impl ReqwestFetchWebContent {
         lookup: Lookup,
     ) -> Self {
         static NOTED: std::sync::Once = std::sync::Once::new();
-        if let Some(note) = ignored_proxies_note(|name| std::env::var_os(name).is_some()) {
-            NOTED.call_once(|| tracing::info!("{note}"));
+        let note = ignored_proxies_note(|name| std::env::var_os(name).is_some());
+        if let Some(note) = &note {
+            NOTED.call_once(|| tracing::warn!("{note}"));
         }
         let resolver = AuthorizingResolver {
             policy: policy.address,
@@ -178,6 +196,18 @@ impl ReqwestFetchWebContent {
             client,
             policy,
             timeout: REQUEST_TIMEOUT,
+            proxies_ignored: note.is_some(),
+        }
+    }
+
+    /// `failure`, with [`PROXY_HINT`] on a transport failure while proxy
+    /// variables are set.
+    fn hinted(&self, failure: FetchFailure) -> FetchFailure {
+        match (failure, self.proxies_ignored) {
+            (FetchFailure::Transport(message), true) => {
+                FetchFailure::Transport(format!("{message} {PROXY_HINT}"))
+            }
+            (failure, _) => failure,
         }
     }
 }
@@ -301,7 +331,8 @@ fn single_location(
     base: &url::Url,
 ) -> Result<url::Url, FetchFailure> {
     let locations: Vec<_> = headers.get_all(reqwest::header::LOCATION).iter().collect();
-    let refused = |why: String| FetchFailure::Refused(format!("the redirect from {base}: {why}"));
+    let refused =
+        |why: String| FetchFailure::BadRedirect(format!("the redirect from {base}: {why}"));
     let [location] = locations.as_slice() else {
         return Err(refused(format!(
             "{} Location headers, not exactly one",
@@ -329,6 +360,31 @@ fn referer(next: &url::Url, previous: &url::Url) -> Option<reqwest::header::Head
             referer.set_fragment(None);
             referer.as_str().parse().ok()
         }
+    }
+}
+
+fn has_userinfo(url: &url::Url) -> bool {
+    !url.username().is_empty() || url.password().is_some()
+}
+
+/// Whether two URLs name the same host and port, as reqwest judges a
+/// cross-host redirect.
+fn same_host(a: &url::Url, b: &url::Url) -> bool {
+    a.host_str() == b.host_str() && a.port_or_known_default() == b.port_or_known_default()
+}
+
+/// The URL a hop is requested at: `url` itself, or, when it has no
+/// userinfo of its own, `url` with the carried `credentials` (from which
+/// reqwest makes the `Authorization` header, as it did on its own hops).
+fn with_credentials(url: &url::Url, credentials: Option<&url::Url>) -> url::Url {
+    let mut target = url.clone();
+    match (credentials, has_userinfo(url)) {
+        (Some(carried), false) => {
+            let _ = target.set_username(carried.username());
+            let _ = target.set_password(carried.password());
+            target
+        }
+        _ => target,
     }
 }
 
@@ -407,6 +463,8 @@ impl ReqwestFetchWebContent {
         url: &url::Url,
     ) -> Result<reqwest::Response, FetchFailure> {
         let deadline = tokio::time::Instant::now() + self.timeout;
+        // The first URL's credentials, carried while hops stay on its host.
+        let mut credentials = has_userinfo(url).then(|| url.clone());
         let mut current = url.clone();
         let mut previous: Option<url::Url> = None;
         let mut follows = 0;
@@ -416,24 +474,27 @@ impl ReqwestFetchWebContent {
                 return Err(FetchFailure::TimedOut);
             }
             let mut request = client
-                .get(current.clone())
+                .get(with_credentials(&current, credentials.as_ref()))
                 .timeout(remaining)
                 .header(reqwest::header::USER_AGENT, USER_AGENT);
             if let Some(value) = previous.as_ref().and_then(|p| referer(&current, p)) {
                 request = request.header(reqwest::header::REFERER, value);
             }
-            let response = request.send().await.map_err(failure)?;
+            let response = request
+                .send()
+                .await
+                .map_err(|error| self.hinted(failure(error)))?;
             let status = response.status().as_u16();
             let Some(next) = redirect_target(status, response.headers(), &current)? else {
                 return Ok(response);
             };
             if follows == MAX_REDIRECTS {
                 return Err(FetchFailure::Transport(format!(
-                    "too many redirects: the redirect to {next} would be follow {}",
-                    follows + 1
+                    "too many redirects: {MAX_REDIRECTS} followed, and {next} would be one more"
                 )));
             }
             authorize_hop(&next, self.policy)?;
+            credentials = credentials.filter(|_| same_host(&current, &next));
             follows += 1;
             previous = Some(std::mem::replace(&mut current, next));
         }

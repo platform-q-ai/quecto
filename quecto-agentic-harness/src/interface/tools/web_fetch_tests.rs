@@ -74,6 +74,13 @@ fn every_fetch_failure_becomes_a_tool_error_naming_what_went_wrong() {
         )),
         "Blocked: https://x.test/ reaches a restricted address; refused: the redirect to http://10.0.0.1/: 10.0.0.1 is not a public address"
     );
+    // #1942 final review: a malformed redirect reaches no address at all.
+    assert_eq!(
+        message(FetchFailure::BadRedirect(
+            "the redirect from https://x.test/: 0 Location headers, not exactly one".into()
+        )),
+        "Redirect refused: the redirect from https://x.test/: 0 Location headers, not exactly one"
+    );
 }
 
 /// #1942: a refused address literal says what it reaches and why.

@@ -16,6 +16,9 @@ impl ParsedHttpUrl {
         &self.0
     }
 }
+/// What the port is asked to fetch. The use case builds one only from an
+/// `Allowed` gate, but the type does not enforce that: the adapter
+/// authorizes every URL and redirect hop itself (#1942 ledger row 13).
 #[derive(Clone, Debug)]
 pub struct FetchRequest {
     pub url: ParsedHttpUrl,
@@ -52,6 +55,10 @@ pub enum FetchFailure {
     /// an address a name resolved to, or a redirect hop (#1942). Nothing was
     /// sent to it.
     Refused(String),
+    /// A redirect that cannot be followed safely: not exactly one `Location`,
+    /// or one that is empty or not a URL (#1942). Nothing was sent to any
+    /// target.
+    BadRedirect(String),
 }
 pub trait FetchWebContent: Send + Sync {
     fn fetch<'a>(
