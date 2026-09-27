@@ -361,3 +361,164 @@ fn the_drop_rung_keeps_the_in_flight_tool_call_and_its_result() {
     assert!(tail[1].content.starts_with("fresh "), "its result stays");
     assert!(!tail[1].is_collapsed);
 }
+
+/// Review 3 M3 (#2226): a long nudge phase pushes the context past its
+/// ceiling. The ladder may stub the agent's answer, but never removes it,
+/// so the answer stays the report every history page names, and its text
+/// stays recallable by id.
+#[test]
+fn the_ceiling_never_removes_the_agents_report() {
+    use crate::application::sessions::history_paging::newest_window;
+    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    let mut answer = Message::assistant(format!("ANSWER {}", "a".repeat(400)), vec![]);
+    answer.turn = Some(1);
+    answer.turn_origin = TurnOrigin::Instruction;
+    answer.spill_id = Some("turn1:msg:assistant".into());
+    let answer_id = answer.id();
+    let mut messages = vec![instruction("task".into()), answer];
+    for turn in 2..=40 {
+        let mut nudge = progress_nudge("Workflow incomplete.".into());
+        nudge.turn = Some(turn);
+        let mut reply = turn_message(turn);
+        reply.turn_origin = TurnOrigin::ProgressNudge;
+        messages.extend([nudge, reply]);
+    }
+    messages.push(progress_nudge("Workflow incomplete.".into()));
+    let budget = estimate_total_tokens(&messages) / 4;
+
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 2);
+
+    assert!(outcome.dropped > 0, "the ladder removed messages");
+    let kept = messages.iter().find(|m| m.id() == answer_id);
+    assert!(kept.is_some(), "the answer is never removed");
+    let page = newest_window(&messages, "", 4);
+    assert_eq!(
+        page.report.map(|report| report.id),
+        Some(answer_id.to_string()),
+        "the page still names the answer, not a nudge reply"
+    );
+}
+
+/// A long nudge phase after `answer`, then a nudge in flight.
+fn nudged_after(answer: Message, turns: u32) -> Vec<Message> {
+    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    let mut messages = vec![instruction("task".into()), answer];
+    for turn in 2..=turns {
+        let mut nudge = progress_nudge("Workflow incomplete.".into());
+        nudge.turn = Some(turn);
+        let mut reply = turn_message(turn);
+        reply.turn_origin = TurnOrigin::ProgressNudge;
+        messages.extend([nudge, reply]);
+    }
+    messages.push(progress_nudge("Workflow incomplete.".into()));
+    messages
+}
+
+/// Review 4 probe C1 (M2): a report that was never spilled cannot be
+/// stubbed, only removed; keeping it would hold the context over its
+/// ceiling for good, so the ceiling may remove it and is met.
+#[test]
+fn r4_c1_an_unspilled_huge_report_never_holds_the_ceiling_unmet() {
+    let mut answer = Message::assistant(format!("ANSWER {}", "a".repeat(1_000_000)), vec![]);
+    answer.turn = Some(1);
+    answer.turn_origin = crate::domain::turn_origin::TurnOrigin::Instruction;
+    answer.spill_id = None;
+    let mut messages = nudged_after(answer, 40);
+    let budget = 50_000;
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 2);
+    assert!(!outcome.over_budget, "the ceiling is met");
+    assert!(estimate_total_tokens(&messages) <= budget);
+    let again = enforce_context_ceiling_ladder(&mut messages, budget, 2);
+    assert!(!again.over_budget && again.dropped == 0);
+}
+
+/// Review 4 probe C2 (L1), #2246 review finding 4: the report kept is one
+/// of a finished turn, never a reply of the turn in flight, and it is kept
+/// over newer messages. Here the finished report is older than every nudge
+/// reply (an unmarked answer outranks them), and the in-flight reply would
+/// outrank it were it a candidate: the ceiling must keep the old answer
+/// while it removes the newer nudge replies.
+#[test]
+fn r4_c2_the_kept_report_is_of_a_finished_turn() {
+    use crate::domain::turn_origin::{TurnOrigin, progress_nudge};
+    let mut answer = Message::assistant(format!("LEGACY {}", "a".repeat(400)), vec![]);
+    answer.turn = Some(1);
+    answer.spill_id = Some("turn1:msg:legacy".into());
+    let answer_id = answer.id();
+    let mut messages = vec![Message::user("task"), answer];
+    let mut nudge_replies = Vec::new();
+    for turn in 2..=40 {
+        let mut reply = turn_message(turn);
+        reply.turn_origin = TurnOrigin::ProgressNudge;
+        nudge_replies.push(reply.id());
+        messages.extend([progress_nudge("Workflow incomplete.".into()), reply]);
+    }
+    messages.push(progress_nudge("Workflow incomplete.".into()));
+    let mut status = turn_message(1);
+    status.content = format!("in flight {}", "s".repeat(400));
+    messages.push(status);
+    let budget = estimate_total_tokens(&messages) / 4;
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 1);
+    assert!(outcome.dropped > 0);
+    let kept = messages.iter().find(|m| m.id() == answer_id);
+    assert!(kept.is_some(), "the finished report is kept");
+    assert!(
+        nudge_replies
+            .iter()
+            .any(|id| messages.iter().all(|m| m.id() != *id)),
+        "newer nudge replies were removed while the older report stayed"
+    );
+}
+
+/// #2246 review finding 2: a harness note between the task and the answer
+/// (the child waited for a sub-agent) opens the answer's turn. Through the
+/// nudge phase after it, the answer is stubbed, never removed.
+#[test]
+fn a_note_before_the_answer_never_exposes_it_to_removal() {
+    use crate::domain::turn_origin::{TurnOrigin, harness_note, instruction};
+    let mut answer = Message::assistant(format!("ANSWER {}", "a".repeat(400)), vec![]);
+    answer.turn = Some(1);
+    answer.turn_origin = TurnOrigin::Instruction;
+    answer.spill_id = Some("turn1:msg:assistant".into());
+    let answer_id = answer.id();
+    let mut messages = nudged_after(answer, 40);
+    let note = harness_note("<subagent_notification/>".into(), &messages[..1]);
+    assert_eq!(note.turn_origin, TurnOrigin::Instruction);
+    messages.insert(1, note);
+    assert_eq!(messages[0].content, instruction("task".into()).content);
+    let budget = estimate_total_tokens(&messages) / 4;
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 0);
+    assert!(outcome.dropped > 0, "the ladder removed messages");
+    let kept = messages.iter().find(|m| m.id() == answer_id);
+    assert!(
+        kept.is_some_and(|m| m.is_collapsed),
+        "stubbed, never removed"
+    );
+}
+
+/// #2246 review finding 2: a transcript whose latest turn is finished (a
+/// resumed session pruned before its next prompt) keeps that turn's answer,
+/// opened by a note, as a stub rather than removing it.
+#[test]
+fn a_finished_latest_turn_keeps_its_answer_under_the_ceiling() {
+    use crate::domain::turn_origin::{TurnOrigin, harness_note, instruction};
+    let mut messages = vec![instruction("task".into())];
+    for turn in 1..=40 {
+        let mut step = turn_message(turn);
+        step.turn_origin = TurnOrigin::Instruction;
+        messages.push(step);
+    }
+    messages.push(harness_note("<subagent_notification/>".into(), &messages));
+    let mut answer = turn_message(1);
+    answer.content = format!("ANSWER {}", "a".repeat(400));
+    answer.turn_origin = TurnOrigin::Instruction;
+    let answer_id = answer.id();
+    messages.push(answer);
+    let outcome = enforce_context_ceiling_ladder(&mut messages, 1, 0);
+    assert!(outcome.dropped > 0, "the ladder removed messages");
+    let kept = messages.iter().find(|m| m.id() == answer_id);
+    assert!(
+        kept.is_some_and(|m| m.is_collapsed),
+        "stubbed, never removed"
+    );
+}

@@ -189,6 +189,40 @@ async fn test_is_collapsed_survives_round_trip() {
     );
 }
 
+/// #2226: each message's turn origin survives a full save and an appended
+/// delta, so pruning or a restart never changes which reply is the report;
+/// a name this build does not know loads as unrecognised (ranked last).
+#[tokio::test]
+async fn turn_origin_survives_a_save_and_an_append() {
+    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let mut answer = Message::assistant("REPORT", vec![]);
+    answer.turn_origin = TurnOrigin::Instruction;
+    let mut messages = vec![instruction("task".into()), answer, Message::user("legacy")];
+    store
+        .save_clean_delta(&id("test:origin"), &messages, 0, None)
+        .await
+        .unwrap();
+    messages.push(progress_nudge("continue".into()));
+    store
+        .save_clean_delta(&id("test:origin"), &messages, 3, None)
+        .await
+        .unwrap();
+    let loaded = store.load(&id("test:origin")).await.unwrap().unwrap();
+    let origins: Vec<TurnOrigin> = loaded.messages.iter().map(|m| m.turn_origin).collect();
+    use TurnOrigin::{Instruction as I, ProgressNudge as N, Unknown as U};
+    assert_eq!(origins, [I, I, U, N]);
+    let path = tmp.path().join("sessions/test_origin.json");
+    let raw = tokio::fs::read_to_string(&path).await.unwrap();
+    assert!(raw.contains(r#""turn_origin":"progressNudge""#), "{raw}");
+    tokio::fs::write(&path, raw.replace("progressNudge", "somethingNew"))
+        .await
+        .unwrap();
+    let reloaded = store.load(&id("test:origin")).await.unwrap().unwrap();
+    assert_eq!(reloaded.messages[3].turn_origin, TurnOrigin::Unrecognised);
+}
+
 #[tokio::test]
 async fn test_is_manifest_survives_round_trip() {
     let tmp = TempDir::new().unwrap();

@@ -34,6 +34,7 @@ fn message_json(message: &Message) -> Value {
         "toolName": message.tool_name,
         "isError": message.is_error,
         "collapsed": message.is_collapsed,
+        "turnOrigin": crate::infrastructure::turn_origin_names::origin_name(message.turn_origin),
     });
     if !message.thinking_blocks.is_empty() {
         value["thinking"] =

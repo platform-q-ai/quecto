@@ -72,6 +72,7 @@ async fn an_export_writes_records_and_manifest_under_the_root_and_returns_the_re
         "content": "thinking done",
         "toolCalls": [{"id":"call-1","name":"bash","arguments":"{\"command\":\"ls\"}"}],
         "toolCallId": null, "toolName": null, "isError": false, "collapsed": false,
+        "turnOrigin": null,
         "thinking": [{"kind":"text","text":"hmm"},{"kind":"redacted"}]
     }});
     assert_eq!(
@@ -115,6 +116,7 @@ async fn a_plain_message_record_omits_thinking_and_keeps_tool_result_linkage() {
     result.tool_name = Some("bash".into());
     result.is_error = true;
     result.is_collapsed = true;
+    result.turn_origin = crate::domain::turn_origin::TurnOrigin::ProgressNudge;
     let receipt = exporter
         .write_export(vec![ExportRecord::Message(Box::new(result))], manifest())
         .await
@@ -126,6 +128,7 @@ async fn a_plain_message_record_omits_thinking_and_keeps_tool_result_linkage() {
     assert_eq!(record["message"]["toolName"], "bash");
     assert_eq!(record["message"]["isError"], true);
     assert_eq!(record["message"]["collapsed"], true);
+    assert_eq!(record["message"]["turnOrigin"], "progressNudge"); // #2226
     assert!(record["message"].get("thinking").is_none());
     assert_eq!(record["message"]["toolCalls"], serde_json::json!([]));
 }

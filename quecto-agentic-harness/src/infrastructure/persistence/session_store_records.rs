@@ -119,6 +119,8 @@ pub(super) struct MessageRecord {
     #[serde(default, skip_serializing_if = "skip_if_false")]
     pub(super) is_collapsed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) turn_origin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) tool_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) input_preview: Option<String>,
@@ -152,6 +154,8 @@ pub(super) struct MessageRecordRef<'a> {
     pub(super) is_manifest: bool,
     #[serde(skip_serializing_if = "skip_if_false")]
     pub(super) is_collapsed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) turn_origin: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) tool_name: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]

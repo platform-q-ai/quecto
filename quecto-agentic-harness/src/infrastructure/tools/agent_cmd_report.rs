@@ -4,8 +4,10 @@
 //! (`domain::unread_report`), and the report budget, receipt and envelope
 //! shaping stay with this tool.
 use crate::domain::session::PendingMessageReport;
+use crate::domain::turn_origin::{TurnOrigin, report_index};
 use crate::domain::unread_report::{
-    ReportedMessage, UnreadSelection, acknowledged_report_index, needs_backfill, select_unread,
+    ReportedMessage, UnreadSelection, acknowledged_report_index, later_than, needs_backfill,
+    select_unread, select_unread_without_report, skipped_unread,
 };
 
 pub(crate) fn mint_default_report_receipt() -> String {
@@ -29,10 +31,28 @@ fn ordinal_of(message: &serde_json::Value) -> Option<u64> {
     message.get("ordinal").and_then(|value| value.as_u64())
 }
 
+/// What opened the message's turn, as the child marked it (#2226).
+pub(crate) fn turn_origin_of(message: &serde_json::Value) -> TurnOrigin {
+    crate::infrastructure::turn_origin_names::origin_from_name(
+        message.get("turnOrigin").and_then(|v| v.as_str()),
+    )
+}
+
+/// The child's report among `messages`: the latest substantive answer to
+/// an instruction, never a nudge turn's reply while one exists (#2226).
+pub(crate) fn report_position(messages: &[serde_json::Value]) -> Option<usize> {
+    report_index(
+        messages.len(),
+        |i| is_substantive_assistant(&messages[i]),
+        |i| turn_origin_of(&messages[i]),
+    )
+}
+
 fn observed(message: &serde_json::Value) -> ReportedMessage {
     ReportedMessage {
         ordinal: ordinal_of(message),
         substantive_assistant: is_substantive_assistant(message),
+        origin: turn_origin_of(message),
     }
 }
 
@@ -51,6 +71,11 @@ pub(crate) fn plan_default_report(response: &str, delivered: u64) -> DefaultRepo
         return unchanged(response.to_string());
     };
     let report_incomplete = data.get("reportIncomplete").and_then(|v| v.as_bool()) == Some(true);
+    // A first read that paged back as far as it may without finding a
+    // report says so (#2246): it delivers the window it holds instead.
+    let no_report_found = data.get("reportFound").and_then(|v| v.as_bool()) == Some(false);
+    let older_unread_skipped = data.get("olderUnreadSkipped").cloned();
+    let before = data.get("before").cloned();
     let Some(messages) = data.get_mut("messages").and_then(|v| v.as_array_mut()) else {
         return unchanged(response.to_string());
     };
@@ -61,12 +86,14 @@ pub(crate) fn plan_default_report(response: &str, delivered: u64) -> DefaultRepo
             .collect()
     };
     let reported: Vec<ReportedMessage> = messages.iter().map(observed).collect();
-    match select_unread(&reported, delivered, report_incomplete) {
-        UnreadSelection::PendingPersistence { latest_substantive } => {
-            let report = bounded_report_messages(
-                selected(&latest_substantive.into_iter().collect::<Vec<_>>()),
-                0,
-            );
+    let selection = match no_report_found {
+        true => select_unread_without_report(&reported, delivered, report_incomplete),
+        false => select_unread(&reported, delivered, report_incomplete),
+    };
+    match selection {
+        UnreadSelection::PendingPersistence { report } => {
+            let report =
+                bounded_report_messages(selected(&report.into_iter().collect::<Vec<_>>()), 0);
             *data = serde_json::json!({"messages":report.messages, "cursorNeutral":true,
                 "ordinalStatus":"pending_persistence", "reportIncomplete":true,
                 "messageContentTruncated":report.message_content_truncated});
@@ -112,6 +139,35 @@ pub(crate) fn plan_default_report(response: &str, delivered: u64) -> DefaultRepo
             let truncated = report.has_more_messages || report.message_content_truncated;
             let receipt = mint_default_report_receipt();
             *data = serde_json::json!({"messages": report.messages, "truncated": truncated, "hasMoreMessages": report.has_more_messages, "messageContentTruncated": report.message_content_truncated});
+            // A first read delivers the report alone: say how much newer
+            // progress (a workflow's nudge turns) the next read brings (#2226).
+            let later = match indices.as_slice() {
+                [report] if delivered == 0 => later_than(&reported, *report),
+                _ => 0,
+            };
+            if later > 0 {
+                data["laterProgress"] = serde_json::json!(later);
+            }
+            // A later read past the backfill cap skipped older unread
+            // history; it is still readable with explicit pages.
+            if let Some(skipped) = older_unread_skipped {
+                data["olderUnreadSkipped"] = skipped;
+            }
+            // A window without a report is acknowledged up to its newest
+            // message: every unread one it did not deliver (older than it
+            // held, or cut to the budget) is named, still readable (#2246).
+            if no_report_found {
+                let sent: Vec<u64> = report.messages.iter().filter_map(ordinal_of).collect();
+                let ranges: Vec<serde_json::Value> = skipped_unread(delivered, &sent)
+                    .into_iter()
+                    .map(|(from, to)| serde_json::json!({"fromOrdinal": from, "toOrdinal": to}))
+                    .collect();
+                if !ranges.is_empty() {
+                    data["olderUnreadSkipped"] =
+                        serde_json::json!({"ranges": ranges, "before": before});
+                }
+                data["reportFound"] = serde_json::json!(false);
+            }
             let content = envelope.to_string();
             DefaultReportPlan {
                 content: content.clone(),
@@ -174,6 +230,103 @@ pub(crate) fn plan_delivery(
         .unwrap_or(DeliveryDecision::Ignore)
 }
 
+/// What a child's page says of its report (#2226).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PageReport {
+    /// The page carries no `report` field, or one this reader cannot use:
+    /// the page alone must be read (paging back as before #2226).
+    Unnamed,
+    /// The child has no report (`report: null`): there is nothing to page
+    /// back for.
+    NamesNone,
+    /// The page names its report and holds it.
+    OnPage,
+    /// The page names a report it does not hold: read it by id.
+    OffPage(NamedReport),
+}
+
+/// A report named off the page: what the child said of it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct NamedReport {
+    pub id: String,
+    ordinal: serde_json::Value,
+    /// Its origin's name, when it named one (#2246: never a `null` one).
+    turn_origin: Option<String>,
+}
+
+impl NamedReport {
+    /// The report as a delivered message, from its text read from the child
+    /// (`text`, of the full `length`): never a stand-in (#2226 review 2). A
+    /// text read only in part (past the final-report budget) is not marked
+    /// for reading again: the report budget cuts it once, with its notice.
+    pub(crate) fn with_text(&self, text: String, length: usize) -> serde_json::Value {
+        debug_assert!(text.len() == length || text.len() > FINAL_REPORT_BUDGET_BYTES);
+        let mut report = serde_json::json!({"id": self.id, "role": "assistant",
+            "content": text, "ordinal": self.ordinal, "contentLength": length});
+        if let Some(origin) = &self.turn_origin {
+            report["turnOrigin"] = serde_json::json!(origin);
+        }
+        report
+    }
+
+    /// Put the report, read whole, into `messages`: in place of its collapsed
+    /// stub when the page holds one, else before the oldest message.
+    pub(crate) fn place(&self, messages: &mut Vec<serde_json::Value>, report: serde_json::Value) {
+        let stub = messages
+            .iter()
+            .position(|m| m.get("id").and_then(|v| v.as_str()) == Some(self.id.as_str()));
+        match stub {
+            Some(index) => messages[index] = report,
+            None => messages.insert(0, report),
+        }
+    }
+
+    /// Whether the supervisor has yet to read the report (above the
+    /// `delivered` watermark, or not yet numbered).
+    pub(crate) fn is_unread(&self, delivered: u64) -> bool {
+        self.ordinal
+            .as_u64()
+            .is_none_or(|ordinal| ordinal > delivered)
+    }
+}
+
+/// Whether `messages` hold message `id` whole: one the child collapsed to a
+/// recall stub is read by id like one off the page (#2226 review 3).
+pub(crate) fn holds_whole(messages: &[serde_json::Value], id: &str) -> bool {
+    messages.iter().any(|m| {
+        m.get("id").and_then(|v| v.as_str()) == Some(id)
+            && matches!(
+                m.get("collapsed"),
+                None | Some(serde_json::Value::Bool(false))
+            )
+    })
+}
+
+/// What `data`'s page says of its report, given the `messages` it holds. A
+/// named report must carry a string `id`; anything else is unnamed.
+pub(crate) fn page_report(messages: &[serde_json::Value], data: &serde_json::Value) -> PageReport {
+    let Some(named) = data.get("report") else {
+        return PageReport::Unnamed;
+    };
+    if named.is_null() {
+        return PageReport::NamesNone;
+    }
+    let Some(id) = named.get("id").and_then(|v| v.as_str()) else {
+        return PageReport::Unnamed;
+    };
+    if holds_whole(messages, id) {
+        return PageReport::OnPage;
+    }
+    PageReport::OffPage(NamedReport {
+        id: id.to_string(),
+        ordinal: named.get("ordinal").cloned().unwrap_or_default(),
+        turn_origin: named
+            .get("turnOrigin")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    })
+}
+
 /// Whether the default report must page older history in: `has_older` is
 /// the oldest page's own `hasMoreBefore`.
 pub(crate) fn needs_default_report_backfill(
@@ -181,12 +334,21 @@ pub(crate) fn needs_default_report_backfill(
     delivered: u64,
     has_older: bool,
 ) -> bool {
-    let holds_assistant = messages
-        .iter()
-        .any(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"));
+    // A first read stops at a substantive answer: to an instruction, or
+    // unmarked (#2226). A page from a child older than #2226 marks nothing:
+    // any assistant message stops it, as before, so an old child is not
+    // paged back to the cap.
+    let marked = messages.iter().any(|m| {
+        m.get("turnOrigin")
+            .is_some_and(serde_json::Value::is_string)
+    });
+    let holds_answer = messages.iter().any(|m| match marked {
+        true => is_substantive_assistant(m) && turn_origin_of(m).answers(),
+        false => m.get("role").and_then(|v| v.as_str()) == Some("assistant"),
+    });
     needs_backfill(
         messages.iter().filter_map(ordinal_of).min(),
-        holds_assistant,
+        holds_answer,
         delivered,
         has_older,
     )
@@ -211,10 +373,10 @@ pub(crate) fn bounded_report_messages(
         strip_unbounded_payloads(msg);
     }
 
-    // The latest substantive assistant message is the child's handoff: it
-    // gets its own budget (#2114) and the rest of the report, context, the
-    // ordinary one on top of it.
-    let final_idx = candidates.iter().rposition(is_substantive_assistant);
+    // The child's report (#2226: never a nudge turn's reply while an
+    // answer exists) is its handoff: it gets its own budget (#2114) and the
+    // rest of the report, context, the ordinary one on top of it.
+    let final_idx = report_position(&candidates);
     if let Some(index) = final_idx {
         let final_message = &mut candidates[index];
         if report_envelope_size(&[], Some(final_message)) > FINAL_REPORT_BUDGET_BYTES {

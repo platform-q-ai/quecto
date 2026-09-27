@@ -7,6 +7,7 @@
 //! adapter parses the child's wire response into them, applies these
 //! rules, and keeps the transport budget and envelope shaping to itself.
 use super::session::PendingMessageReport;
+use super::turn_origin::{TurnOrigin, report_index};
 use std::collections::VecDeque;
 
 /// What the policy needs to know about one reported message.
@@ -17,15 +18,18 @@ pub struct ReportedMessage {
     /// An assistant message with non-blank content and no tool calls: a
     /// report the supervisor can act on.
     pub substantive_assistant: bool,
+    /// What opened the message's turn: a nudge turn's reply never replaces
+    /// the report (#2226).
+    pub origin: TurnOrigin,
 }
 
 /// The messages a default report covers, by index into the observed list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnreadSelection {
     /// A live turn published messages persistence has not yet numbered:
-    /// expose the latest substantive report by id without inventing a
+    /// expose the unread report ([`report_among`]) by id without inventing a
     /// watermark (cursor-neutral, incomplete).
-    PendingPersistence { latest_substantive: Option<usize> },
+    PendingPersistence { report: Option<usize> },
     /// Nothing newer than the watermark.
     Unchanged,
     /// The child's transcript could not be read completely: the unread
@@ -35,8 +39,8 @@ pub enum UnreadSelection {
         unread: Vec<usize>,
         max_ordinal: u64,
     },
-    /// The unread messages to report and acknowledge: the latest
-    /// substantive report alone on a first read (`delivered == 0`), every
+    /// The unread messages to report and acknowledge: the report
+    /// ([`report_among`]) alone on a first read (`delivered == 0`), every
     /// unread message afterwards. `max_ordinal` is the newest durable
     /// ordinal the child holds, at least the watermark.
     Unread {
@@ -53,9 +57,84 @@ pub fn select_unread(
     delivered: u64,
     report_incomplete: bool,
 ) -> UnreadSelection {
+    select(messages, delivered, report_incomplete, FirstRead::Report)
+}
+
+/// What a first read (`delivered == 0`) delivers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FirstRead {
+    /// The report alone ([`report_among`]).
+    Report,
+    /// Every unread message: the reader found no report to deliver.
+    Window,
+}
+
+/// [`select_unread`] for a first read that looked for a report as far back
+/// as it may page and found none (#2246): every unread message it holds is
+/// delivered and acknowledged like a later read's, so the next read moves on
+/// instead of paging back for an answer that is not there. Any other read
+/// selects as [`select_unread`] does.
+pub fn select_unread_without_report(
+    messages: &[ReportedMessage],
+    delivered: u64,
+    report_incomplete: bool,
+) -> UnreadSelection {
+    let selection = select(messages, delivered, report_incomplete, FirstRead::Window);
+    debug_assert!(
+        delivered == 0
+            || selection == select(messages, delivered, report_incomplete, FirstRead::Report),
+        "the window rule only changes a first read"
+    );
+    selection
+}
+
+/// The unread ordinals a delivery of `delivered` acknowledges without
+/// delivering them (#2246): every ordinal above the `watermark`, up to the
+/// newest delivered, that is not itself delivered, as inclusive ranges in
+/// order. The supervisor can still read them with explicit pages.
+pub fn skipped_unread(watermark: u64, delivered: &[u64]) -> Vec<(u64, u64)> {
+    let mut sent: Vec<u64> = delivered
+        .iter()
+        .copied()
+        .filter(|&o| o > watermark)
+        .collect();
+    // A repeated ordinal (pages overlapping) opens no gap: it is at most
+    // the one before it.
+    sent.sort_unstable();
+    let mut ranges = Vec::new();
+    let mut next = watermark + 1;
+    for ordinal in sent {
+        if ordinal > next {
+            ranges.push((next, ordinal - 1));
+        }
+        next = ordinal + 1;
+    }
+    debug_assert!(
+        ranges
+            .iter()
+            .all(|&(from, to)| watermark < from && from <= to)
+    );
+    ranges
+}
+
+fn select(
+    messages: &[ReportedMessage],
+    delivered: u64,
+    report_incomplete: bool,
+    first_read: FirstRead,
+) -> UnreadSelection {
     if messages.iter().any(|m| m.ordinal.is_none()) {
+        // Only what the supervisor has not read yet: a live nudge turn must
+        // not bring back an answer it already acknowledged (#2226).
+        let unread: Vec<usize> = (0..messages.len())
+            .filter(|&i| {
+                messages[i]
+                    .ordinal
+                    .is_none_or(|ordinal| ordinal > delivered)
+            })
+            .collect();
         return UnreadSelection::PendingPersistence {
-            latest_substantive: messages.iter().rposition(|m| m.substantive_assistant),
+            report: report_among(messages, &unread),
         };
     }
     let ordinal = |index: usize| messages[index].ordinal.unwrap_or(0);
@@ -72,16 +151,9 @@ pub fn select_unread(
     if observed_max < delivered || unread.is_empty() {
         return UnreadSelection::Unchanged;
     }
-    let indices = if delivered == 0 {
-        unread
-            .iter()
-            .rev()
-            .find(|&&i| messages[i].substantive_assistant)
-            .copied()
-            .into_iter()
-            .collect()
-    } else {
-        unread
+    let indices = match (delivered, first_read) {
+        (0, FirstRead::Report) => report_among(messages, &unread).into_iter().collect(),
+        (0, FirstRead::Window) | (1.., _) => unread,
     };
     if indices.is_empty() {
         return UnreadSelection::Unchanged;
@@ -92,22 +164,52 @@ pub fn select_unread(
     }
 }
 
+/// The report among the `candidates` (indices into `messages`): the latest
+/// substantive answer to an instruction, never a nudge turn's reply while
+/// one exists (#2226); its index into `messages`.
+pub fn report_among(messages: &[ReportedMessage], candidates: &[usize]) -> Option<usize> {
+    report_index(
+        candidates.len(),
+        |p| messages[candidates[p]].substantive_assistant,
+        |p| messages[candidates[p]].origin,
+    )
+    .map(|position| candidates[position])
+}
+
+/// How many messages the child holds after the one at `report`, by durable
+/// ordinal (the newest observed less the report's): the progress a first
+/// read leaves unread (#2226), counted even where the page does not reach.
+pub fn later_than(messages: &[ReportedMessage], report: usize) -> u64 {
+    let after = messages[report].ordinal.unwrap_or(0);
+    debug_assert!(
+        messages[report].ordinal.is_some(),
+        "a delivered report is numbered"
+    );
+    let newest = messages
+        .iter()
+        .filter_map(|m| m.ordinal)
+        .max()
+        .unwrap_or(after);
+    newest.saturating_sub(after)
+}
+
 /// Whether a default report must page further back before it can be
 /// shaped: older history exists (`has_older`) and the page's smallest
 /// durable ordinal (`oldest_ordinal`) lies above the watermark by a gap —
 /// unless this is a first read (`delivered == 0`) that already holds an
-/// assistant message, which reports the latest one without backfilling.
+/// assistant message of an instruction turn (`holds_answer`, #2226), which
+/// reports the latest answer without backfilling.
 /// A page with nothing older is the whole transcript (#2218): its order
 /// need not follow its ordinals (a recall notice inserted at the head after
 /// the task was saved is numbered after it).
 pub fn needs_backfill(
     oldest_ordinal: Option<u64>,
-    holds_assistant: bool,
+    holds_answer: bool,
     delivered: u64,
     has_older: bool,
 ) -> bool {
     let gap = oldest_ordinal.is_some_and(|ordinal| ordinal > delivered.saturating_add(1));
-    let reports_latest_without_backfill = delivered == 0 && holds_assistant;
+    let reports_latest_without_backfill = delivered == 0 && holds_answer;
     has_older && gap && !reports_latest_without_backfill
 }
 

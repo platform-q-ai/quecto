@@ -43,15 +43,16 @@ impl AgentLoopImpl {
         // the model's window (no transcript fits).
         plan.over_budget |= floor_overrides || window_exceeded;
         if plan.over_budget {
-            // The pinned/exempt set alone exceeds the budget (#1044 AC1), the
-            // floor passed it, or the tool definitions alone fill the window.
+            // The pinned/exempt set alone exceeds the budget (#1044 AC1) — the
+            // agent's kept report stub among it (#2226) — the floor passed
+            // it, or the tool definitions alone fill the window.
             tracing::warn!(
                 target: "context_prune",
                 budget,
                 window_exceeded,
                 total_tokens = context_pruning::estimate_total_tokens(messages),
                 turn = current_turn,
-                "context ceiling unmet: the pinned set or the tool definitions exceed the budget"
+                "context ceiling unmet: the pinned set (with the kept report) or the tool definitions exceed the budget"
             );
         }
         if plan.durable_prefix_dirty {

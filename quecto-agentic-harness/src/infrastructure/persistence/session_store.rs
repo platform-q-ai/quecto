@@ -1,9 +1,10 @@
 use crate::application::sessions::dto::SessionListQuery;
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall};
+use crate::domain::message::{Message, Role, StopReason, ToolCall};
 use crate::domain::session::{Session, SessionSummary};
 use crate::domain::session_identity::SessionIdentity;
 use crate::domain::{error::DomainError, workflow::WorkflowRunPersisted};
+use crate::infrastructure::turn_origin_names::{origin_from_name, origin_name};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -405,6 +406,7 @@ fn message_to_record_ref(msg: &Message) -> MessageRecordRef<'_> {
         is_pinned: Some(msg.is_pinned),
         is_manifest: msg.is_manifest,
         is_collapsed: msg.is_collapsed,
+        turn_origin: origin_name(msg.turn_origin),
         tool_name: msg.tool_name.as_deref(),
         input_preview: msg.input_preview.as_deref(),
         spill_id: msg.spill_id.as_deref(),
@@ -437,6 +439,7 @@ fn message_to_record(msg: &Message) -> MessageRecord {
         is_pinned: Some(msg.is_pinned),
         is_manifest: msg.is_manifest,
         is_collapsed: msg.is_collapsed,
+        turn_origin: origin_name(msg.turn_origin).map(str::to_string),
         tool_name: msg.tool_name.clone(),
         input_preview: msg.input_preview.clone(),
         spill_id: msg.spill_id.clone(),
@@ -471,6 +474,7 @@ fn record_to_message(rec: MessageRecord) -> Message {
     msg.turn = rec.turn;
     msg.is_manifest = rec.is_manifest;
     msg.is_collapsed = rec.is_collapsed;
+    msg.turn_origin = origin_from_name(rec.turn_origin.as_deref());
     msg.tool_name = rec.tool_name;
     msg.input_preview = rec.input_preview;
     msg.spill_id = rec.spill_id;
@@ -479,11 +483,7 @@ fn record_to_message(rec: MessageRecord) -> Message {
     if let Some(pinned) = rec.is_pinned {
         msg.is_pinned = pinned;
     }
-    msg.thinking_blocks = rec
-        .thinking_blocks
-        .into_iter()
-        .map(ThinkingBlock::from)
-        .collect();
+    msg.thinking_blocks = rec.thinking_blocks.into_iter().map(Into::into).collect();
     msg
 }
 

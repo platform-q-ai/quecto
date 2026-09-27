@@ -401,7 +401,7 @@ fn idle_note(world: &mut QuectoWorld) -> &quecto::domain::message::Message {
             .into_iter()
             .next()
             .expect("no pending note")
-            .into_message();
+            .into_message(&[]);
         world.notify_drained_note = Some(msg);
     }
     world.notify_drained_note.as_ref().unwrap()

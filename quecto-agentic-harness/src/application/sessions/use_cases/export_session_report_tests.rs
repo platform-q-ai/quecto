@@ -202,6 +202,31 @@ async fn the_latest_substantive_assistant_message_is_reported_over_later_tool_st
     assert!(!preview.content_truncated);
 }
 
+/// #2226: the replies of workflow nudge turns after the answer never
+/// replace it as the report.
+#[tokio::test]
+async fn a_workflow_nudge_reply_never_replaces_the_answer_as_the_report() {
+    let answer = Message::assistant("the report", vec![]);
+    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    let mut answer = answer;
+    answer.turn_origin = TurnOrigin::Instruction;
+    let mut status = Message::assistant("status", vec![]);
+    status.turn_origin = TurnOrigin::ProgressNudge;
+    let messages = vec![
+        instruction("task".into()),
+        answer.clone(),
+        progress_nudge("Workflow incomplete. Continue.".into()),
+        status,
+    ];
+    let report = use_case(state_with(&messages, None), None)
+        .execute(false)
+        .await
+        .unwrap();
+    let preview = report.report.unwrap();
+    assert_eq!(preview.message_id.as_str(), answer.id().to_string());
+    assert_eq!(preview.content, "the report");
+}
+
 #[tokio::test]
 async fn the_ledger_full_copy_is_preferred_over_a_collapsed_live_stub() {
     let full = Message::assistant("the complete final report", vec![]);

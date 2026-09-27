@@ -7,6 +7,7 @@ use crate::application::sessions::dto::{HistoryError, HistoryPage, HistoryQuery}
 use crate::domain::conversation_view::{position_by_id, user_visible_messages};
 use crate::domain::ids::MessageId;
 use crate::domain::message::Message;
+use crate::domain::turn_origin::{ReportRef, is_substantive_reply, transcript_report_index};
 
 /// The window `query` selects from `conversation`, whose injected system
 /// prompt (`injected_prompt`, empty when none) is not part of the visible
@@ -49,8 +50,11 @@ fn window(visible: &[Message], query: &HistoryQuery) -> HistoryPage {
         .unwrap_or(visible.len());
     let start = end.saturating_sub(query.count);
     let has_more_before = query.count > 0 && start > 0;
+    let report = transcript_report_index(visible, is_substantive_reply);
+    debug_assert!(report.is_none_or(|index| is_substantive_reply(&visible[index])));
     HistoryPage {
         messages: visible[start..end].to_vec(),
+        report: report.map(|index| ReportRef::of(&visible[index])),
         before: has_more_before.then(|| MessageId::from(visible[start].id().to_string())),
         has_more_before,
     }

@@ -116,6 +116,8 @@ pub(super) fn append_feedback(
         _ => {
             let mut msg = Message::user(feedback);
             msg.turn = Some(current_turn);
+            // The loop's own feedback continues the open turn (#2226).
+            msg.turn_origin = crate::domain::turn_origin::current_phase(messages);
             messages.push(msg);
             Feedback::Added
         }
@@ -196,3 +198,7 @@ pub(super) fn is_context_or_output_limit_error(message: &str) -> bool {
         || lowered.contains("requested") && lowered.contains("tokens"))
         && (lowered.contains("token") || lowered.contains("context"))
 }
+
+#[cfg(test)]
+#[path = "agent_loop_errors_tests.rs"]
+mod tests;

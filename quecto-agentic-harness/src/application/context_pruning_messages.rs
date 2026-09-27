@@ -15,6 +15,7 @@ use super::{COLLAPSE_DISABLED, estimate_tokens, truncate_utf8_safe};
 use crate::application::sessions::use_cases::RetainContext;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::SpillEntry;
+use crate::domain::turn_origin::latest_opener;
 
 // #2213: the demotion-ladder ceiling and its low-water mark.
 #[path = "context_pruning_ceiling.rs"]
@@ -88,18 +89,12 @@ fn collapse_conversation_message(msg: &mut Message, spill_id: &str) {
 /// already keeps the most recent messages in full by construction, and its
 /// whole point is ageing out earlier prompts' prose.
 fn exempt_flags(messages: &[Message], pin_recent_turns: u32, tail_fallback: bool) -> Vec<bool> {
-    let region_start = messages
-        .iter()
-        .rposition(|m| m.role == Role::User && m.turn.is_none())
-        .unwrap_or(0);
+    let region_start = latest_opener(messages).unwrap_or(0);
     // The turn-bearing region: the current prompt's region, or — when it has
     // no turns yet — the previous prompt's region.
     let mut tail_start = region_start;
     if tail_fallback && messages[region_start..].iter().all(|m| m.turn.is_none()) {
-        tail_start = messages[..region_start]
-            .iter()
-            .rposition(|m| m.role == Role::User && m.turn.is_none())
-            .unwrap_or(0);
+        tail_start = latest_opener(&messages[..region_start]).unwrap_or(0);
     }
     let mut recent_turns: Vec<u32> = messages[tail_start..]
         .iter()

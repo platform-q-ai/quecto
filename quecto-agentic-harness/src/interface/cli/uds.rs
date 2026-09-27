@@ -342,7 +342,7 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         super::uds_swarm_control::date_provider_suspension(ctx).await;
         return false;
     };
-    let mut message = Message::user(message);
+    let mut message = crate::domain::turn_origin::instruction(message);
     if let Err(err) = persist_user_prompt_before_run(ctx, &mut message).await {
         tracing::warn!("failed to persist user prompt before turn: {err}");
     }
@@ -504,7 +504,7 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
             let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828
             run_drained_message_guarded(
                 ctx,
-                Message::user(nudge.into_message(no_progress_turns > 0)),
+                nudge.into_message(no_progress_turns > 0),
                 TurnAdmissionGuard::NoActiveWorkflowDescendant,
             )
             .await;

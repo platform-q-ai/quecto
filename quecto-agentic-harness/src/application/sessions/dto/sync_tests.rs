@@ -30,6 +30,7 @@ fn the_request_and_replies_are_plain_values() {
         rev: 2,
         page: HistoryPage {
             messages: Vec::new(),
+            report: None,
             before: None,
             has_more_before: false,
         },

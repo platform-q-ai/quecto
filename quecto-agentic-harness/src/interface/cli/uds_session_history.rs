@@ -1,12 +1,11 @@
 //! Presenter of a history page (#1856, #1971): the `get_messages` wire
 //! shape over the application's [`HistoryPage`], and the transport byte
 //! budget that decides how many of the page's messages one frame carries.
-//!
 //! Which messages a page holds, its cursor and `hasMoreBefore` are the
-//! application's (`ReadHistory`); this module only encodes them, trims the
-//! oldest of them when the frame budget would overflow (through
-//! [`HistoryPage::keeping_newest`], so the cursor rule stays one), and
-//! summarises a single message too large to carry whole.
+//! application's (`ReadHistory`); this module encodes them with each turn's
+//! origin and the report (#2226), trims the oldest when the frame budget
+//! would overflow (through [`HistoryPage::keeping_newest`]), and summarises
+//! a single message too large to carry whole.
 use crate::application::sessions::dto::HistoryPage;
 use crate::domain::message::{Message, ThinkingBlock};
 
@@ -18,21 +17,25 @@ pub(crate) const HISTORY_PAGE_JSON_BUDGET: usize =
     crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET / 2;
 pub(super) const HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES: usize = 2048;
 pub(super) const HISTORY_THINKING_SUMMARY_PREVIEW_BYTES: usize = 2048;
+/// Room a page keeps for the report it names (#2226).
+pub(super) const REPORT_HINT_RESERVE_BYTES: usize = 256;
 
 /// The `get_messages` response data for `page`: its messages in
-/// chronological order under the frame budget, the `before` cursor and
-/// `hasMoreBefore`.
-///
-/// The budget is applied newest-first so the newest messages always
-/// arrive; a single message that alone exceeds the budget is carried as a
-/// recoverable summary (#1107). When older messages of the window are
-/// dropped, the page's cursor moves to the oldest kept one.
+/// chronological order under the frame budget, `before`, `hasMoreBefore`
+/// and `report`. The budget is applied newest-first so the newest messages
+/// always arrive; a single message over the budget is carried as a
+/// recoverable summary (#1107); dropping older ones moves the cursor.
 pub(crate) fn history_page_json(page: HistoryPage) -> serde_json::Value {
     let mut encoded: Vec<serde_json::Value> = Vec::new();
-    let mut used = 0usize;
+    let mut used = REPORT_HINT_RESERVE_BYTES;
     for message in page.messages.iter().rev() {
         let mut value = message_to_json_for_history_page(message);
         value["ordinal"] = serde_json::json!(message.ordinal);
+        if let Some(origin) =
+            crate::infrastructure::turn_origin_names::origin_name(message.turn_origin)
+        {
+            value["turnOrigin"] = serde_json::json!(origin);
+        }
         let sz = serde_json::to_vec(&value)
             .map(|v| v.len())
             .unwrap_or(usize::MAX)
@@ -49,6 +52,7 @@ pub(crate) fn history_page_json(page: HistoryPage) -> serde_json::Value {
         "messages": encoded,
         "before": page.before.as_ref().map(|id| id.as_str().to_string()),
         "hasMoreBefore": page.has_more_before,
+        "report": page.report.as_ref().map(super::report_hint_json),
     })
 }
 
@@ -111,14 +115,18 @@ fn thinking_summary_json(msg: &Message, max_encoded_bytes: usize) -> serde_json:
     serde_json::Value::Array(values)
 }
 
+/// One message's share of a page: the page budget less the named report's
+/// reserve (#2226), so even a page of one oversized message fits.
+const MESSAGE_BUDGET: usize = HISTORY_PAGE_JSON_BUDGET - REPORT_HINT_RESERVE_BYTES;
+
 pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Value {
     // JSON never shrinks a string: a body or argument payload already past
     // the budget is over it without serialising the whole message first.
     let payloads = std::iter::once(msg.content.len())
         .chain(msg.tool_calls.iter().map(|call| call.arguments.len()));
-    if payloads.max().unwrap_or(0) <= HISTORY_PAGE_JSON_BUDGET {
+    if payloads.max().unwrap_or(0) <= MESSAGE_BUDGET {
         let full = message_to_json(msg);
-        if serde_json::to_vec(&full).map_or(usize::MAX, |v| v.len()) <= HISTORY_PAGE_JSON_BUDGET {
+        if serde_json::to_vec(&full).map_or(usize::MAX, |v| v.len()) <= MESSAGE_BUDGET {
             return full;
         }
     }
@@ -147,11 +155,11 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         let base_size = serde_json::to_vec(&summary)
             .map(|v| v.len())
             .unwrap_or(usize::MAX);
-        let thinking_budget = HISTORY_PAGE_JSON_BUDGET.saturating_sub(base_size + 64);
+        let thinking_budget = MESSAGE_BUDGET.saturating_sub(base_size + 64);
         summary["thinking"] = thinking_summary_json(msg, thinking_budget);
     }
     while serde_json::to_vec(&summary)
-        .map(|v| v.len() > HISTORY_PAGE_JSON_BUDGET)
+        .map(|v| v.len() > MESSAGE_BUDGET)
         .unwrap_or(true)
     {
         let Some(thinking) = summary["thinking"].as_array_mut() else {
@@ -180,24 +188,6 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         }
     }
     summary
-}
-
-/// Test rig: the `get_messages` data for `messages` paged through the
-/// composed history use case over an ephemeral read model.
-#[cfg(test)]
-pub(crate) fn messages_page_json(
-    messages: &[Message],
-    count: usize,
-    before: Option<&str>,
-) -> serde_json::Value {
-    let handles =
-        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
-    history_page_json(
-        handles
-            .read_history
-            .page(messages, "", count, before)
-            .expect("test pages carry known cursors"),
-    )
 }
 
 #[cfg(test)]

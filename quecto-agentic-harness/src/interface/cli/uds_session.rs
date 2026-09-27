@@ -105,26 +105,36 @@ impl PendingMessage {
     /// the cached system block every time, missing the prompt cache for the
     /// whole request. The `<subagent_notification>` wrapper marks the note as
     /// harness-injected so clients can render it distinctly from user input.
-    pub fn into_message(self) -> Message {
+    ///
+    /// A prompt or a queued control is an instruction; a harness note (a
+    /// sub-agent note, a swarm wake) opens a turn of the phase it lands in,
+    /// that of `conversation` (#2226).
+    pub fn into_message(self, conversation: &[Message]) -> Message {
+        use crate::domain::turn_origin::{harness_note, instruction};
         match self {
-            Self::User(content) | Self::Control { content, .. } | Self::Automatic(content) => {
-                Message::user(content)
-            }
+            Self::User(content) | Self::Control { content, .. } => instruction(content),
+            Self::Automatic(content) => harness_note(content, conversation),
             Self::SubagentNotification {
                 agent_id,
                 sequence,
                 content,
                 ..
-            } => Message::user(format!(
-                "<subagent_notification source=\"spawn_tool\" agent_id=\"{}\" sequence=\"{}\">\n{}\n</subagent_notification>",
-                escape_attr(&agent_id),
-                sequence,
-                escape_text(&content)
-            )),
-            Self::CoalescedSubagentNotification { content } => Message::user(format!(
-                "<subagent_notification source=\"spawn_tool\" coalesced=\"true\">\n{}\n</subagent_notification>",
-                escape_text(&content)
-            )),
+            } => harness_note(
+                format!(
+                    "<subagent_notification source=\"spawn_tool\" agent_id=\"{}\" sequence=\"{}\">\n{}\n</subagent_notification>",
+                    escape_attr(&agent_id),
+                    sequence,
+                    escape_text(&content)
+                ),
+                conversation,
+            ),
+            Self::CoalescedSubagentNotification { content } => harness_note(
+                format!(
+                    "<subagent_notification source=\"spawn_tool\" coalesced=\"true\">\n{}\n</subagent_notification>",
+                    escape_text(&content)
+                ),
+                conversation,
+            ),
         }
     }
 }
@@ -453,8 +463,23 @@ mod usage_projection;
 pub use usage_projection::{SessionUsage, compute_session_stats, compute_session_stats_with_usage};
 #[path = "uds_session_history.rs"]
 pub(crate) mod uds_session_history;
+/// Test rig: the `get_messages` data for `messages` paged through the
+/// composed history use case over an ephemeral read model.
 #[cfg(test)]
-pub(crate) use uds_session_history::messages_page_json;
+pub(crate) fn messages_page_json(
+    messages: &[Message],
+    count: usize,
+    before: Option<&str>,
+) -> serde_json::Value {
+    let handles =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
+    history_page_json(
+        handles
+            .read_history
+            .page(messages, "", count, before)
+            .expect("test pages carry known cursors"),
+    )
+}
 pub(crate) use uds_session_history::{
     HISTORY_PAGE_JSON_BUDGET, HISTORY_PAGE_SIZE, history_page_json,
     message_to_json_for_history_page,
@@ -520,6 +545,22 @@ impl serde::Serialize for MessageView<'_> {
         }
         s.end()
     }
+}
+/// The report a history page names (#2226): the message's id, ordinal,
+/// turn origin and text length, so a supervisor reads the report by id
+/// (`get_message`) without paging back to it. Small and bounded: a page
+/// reserves [`uds_session_history::REPORT_HINT_RESERVE_BYTES`] for it. A
+/// report never stamped carries no `turnOrigin`, like a message (#2246).
+pub(crate) fn report_hint_json(
+    report: &crate::domain::turn_origin::ReportRef,
+) -> serde_json::Value {
+    let mut hint = serde_json::json!({"id": report.id, "ordinal": report.ordinal,
+        "contentLength": report.content_length});
+    if let Some(origin) = crate::infrastructure::turn_origin_names::origin_name(report.origin) {
+        hint["turnOrigin"] = serde_json::json!(origin);
+    }
+    debug_assert!(hint.to_string().len() < uds_session_history::REPORT_HINT_RESERVE_BYTES);
+    hint
 }
 /// Serialize a `Message` to a JSON value for protocol emission.
 ///

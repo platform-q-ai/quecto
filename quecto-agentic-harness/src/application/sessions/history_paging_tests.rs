@@ -49,3 +49,33 @@ fn an_unknown_cursor_is_refused_before_paging() {
         Err(HistoryError::UnknownCursor(_))
     ));
 }
+
+/// #2226: every page names the transcript's report, the latest answer to an
+/// instruction, even when it lies on an older page or nudge replies follow.
+#[test]
+fn a_page_names_the_transcripts_report_wherever_it_lies() {
+    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    let stamped = |mut m: Message, origin| {
+        m.turn_origin = origin;
+        m
+    };
+    let conversation = vec![
+        instruction("task".into()),
+        stamped(
+            Message::assistant("REPORT", vec![]),
+            TurnOrigin::Instruction,
+        ),
+        progress_nudge("continue".into()),
+        stamped(
+            Message::assistant("status", vec![]),
+            TurnOrigin::ProgressNudge,
+        ),
+    ];
+    let newest = newest_window(&conversation, "", 1);
+    assert_eq!(newest.messages[0].content, "status");
+    let report = newest.report.expect("the transcript has a report");
+    assert_eq!(report.id, conversation[1].id().to_string());
+    assert_eq!(report.content_length, 6);
+    let empty = newest_window(&messages(3), "", 3);
+    assert!(empty.report.is_none(), "no reply, no report");
+}

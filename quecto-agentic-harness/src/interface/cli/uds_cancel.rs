@@ -396,6 +396,9 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     // #2218: a completed or failed turn is saved before it publishes or
     // reports its end, so `agent_end` never precedes its durable ordinals;
     // an interrupted one once its history is finalized, below.
+    // #2226: what the turn appended takes its opener's origin before it is
+    // saved or reported.
+    crate::domain::turn_origin::stamp_turn(messages, prompt_id);
     save_turn(turn_save.as_ref().filter(|_| result.is_some()), messages).await;
     match result {
         None => {

@@ -53,7 +53,7 @@ fn test_drain_pending_messages() {
     let drained = session.drain_pending();
     let drained: Vec<_> = drained
         .into_iter()
-        .map(|m| m.into_message().content)
+        .map(|m| m.into_message(&[]).content)
         .collect();
     assert_eq!(drained, vec!["a".to_string(), "b".to_string()]);
     assert_eq!(

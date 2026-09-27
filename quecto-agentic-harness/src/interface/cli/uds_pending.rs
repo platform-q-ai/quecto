@@ -103,7 +103,7 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                     super::super::protocol::ControlStatus::Started,
                 );
             }
-            let outcome = run_drained_message(ctx, pending_msg.into_message()).await;
+            let outcome = run_drained_message(ctx, pending_msg.into_message(ctx.messages)).await;
             if let Some((id, command)) = &correlation {
                 ctx.session
                     .record_control(Some(id), command, super::control_status(&outcome));

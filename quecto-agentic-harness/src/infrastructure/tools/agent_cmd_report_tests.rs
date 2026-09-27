@@ -654,7 +654,9 @@ fn incomplete_default_get_messages_delivery_keeps_pending_without_commit() {
 
 #[test]
 fn first_contact_backfill_not_needed_when_newest_page_has_assistant() {
-    let messages = vec![serde_json::json!({"role":"assistant","content":"latest","ordinal":9})];
+    let messages = vec![
+        serde_json::json!({"role":"assistant","content":"latest","ordinal":9,"turnOrigin":"instruction"}),
+    ];
     assert!(!super::needs_default_report_backfill(&messages, 0, true));
 }
 
