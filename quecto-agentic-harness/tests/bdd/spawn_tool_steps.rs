@@ -1,4 +1,5 @@
 use super::*;
+use quecto::domain::tool_descriptor::ProfileAvailabilityScope;
 use quecto::infrastructure::tools::agent_cmd::AgentCmdTool;
 
 // SpawnTool BDD Steps (#401)
@@ -47,6 +48,31 @@ fn given_spawn_tool_empty_allowlist_parent_and_broadcast(
     // is queued for this receiver before execute() returns.
     world.cascade_broadcast = Some(None);
     world.spawn_broadcast_rx = Some(rx);
+}
+
+/// #2216: the inherited policy a parent hands its children, as the spawn
+/// tool holds it; `workflow` is recorded by name as a child matches it.
+fn spawn_tool_inheriting(workflow: Option<ProfileAvailabilityScope>) -> SpawnTool {
+    let tool = SpawnTool::new(vec![]);
+    let mut tools =
+        std::collections::BTreeMap::from([("read".to_string(), ProfileAvailabilityScope::Both)]);
+    if let Some(scope) = workflow {
+        tools.insert("workflow".to_string(), scope);
+    }
+    tool.set_inherited_child_policy_snapshot_for_spawn(tools);
+    tool
+}
+
+#[given("a SpawnTool whose inherited tool policy denies workflow to children")]
+fn given_spawn_tool_denying_workflow(world: &mut QuectoWorld) {
+    world.spawn_tool = Some(spawn_tool_inheriting(Some(
+        ProfileAvailabilityScope::Parent,
+    )));
+}
+
+#[given("a SpawnTool whose inherited tool policy has no workflow entry")]
+fn given_spawn_tool_without_workflow_entry(world: &mut QuectoWorld) {
+    world.spawn_tool = Some(spawn_tool_inheriting(None));
 }
 
 #[given(expr = "a SpawnTool created with base_dir {string}")]

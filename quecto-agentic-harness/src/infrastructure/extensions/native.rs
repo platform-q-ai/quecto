@@ -321,7 +321,7 @@ pub fn build_workflow_tool_extension(deps: WorkflowToolDeps) -> Arc<dyn Extensio
     };
     let tool: Arc<dyn Tool> = Arc::new(tool.with_participation(deps.participation));
     Arc::new(NativeExtension::new(
-        "quecto:workflow",
+        crate::infrastructure::tools::workflow_tool::WORKFLOW_PROVIDER_ID,
         "Bundled Quecto workflow tool",
         tool,
     ))

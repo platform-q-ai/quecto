@@ -32,6 +32,7 @@ pub mod text;
 pub mod tool;
 pub mod tool_descriptor;
 pub mod tool_id;
+pub mod tool_policy;
 pub mod unread_report;
 pub mod usage_accounting;
 

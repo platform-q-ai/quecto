@@ -437,6 +437,11 @@ impl SpawnTool {
         }
 
         let disable_tools = parse_disable_tools(&args)?;
+        super::spawn_inherited_policy::admit_workflow_request(
+            &self.inherited_tool_policy,
+            workflow || workflow_spec.is_some(),
+            &disable_tools,
+        )?;
 
         let read_only = {
             let has = |name: &str| disable_tools.iter().any(|t| t == name);

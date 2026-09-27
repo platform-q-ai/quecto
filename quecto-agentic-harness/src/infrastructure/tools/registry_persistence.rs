@@ -4,7 +4,7 @@ use crate::infrastructure::config::ToolPolicyConfig;
 use crate::infrastructure::tools::registration::ToolRegistration;
 
 impl ToolRegistryImpl {
-    pub(super) fn persisted_scope_for(
+    pub(crate) fn persisted_scope_for(
         &self,
         name: &str,
         metadata: &ToolRegistration,

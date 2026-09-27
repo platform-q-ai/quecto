@@ -245,6 +245,7 @@ fn workflow_enabled_policy<'a>(
 ) -> ToolRuntimeWorkflowPolicy<'a> {
     ToolRuntimeWorkflowPolicy {
         workflow_disabled: false,
+        workflow_requested: false,
         workflow_guards: false,
         workflow_spec_path: None,
         broadcast_tx: None,

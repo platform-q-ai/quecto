@@ -38,6 +38,9 @@ pub struct ToolRegistryImpl {
     pub(super) inherited_policy_scopes: HashMap<String, ProfileAvailabilityScope>,
     pub(super) inherited_policy_default_scope: Option<ProfileAvailabilityScope>,
     pub(super) persisted_policy_scopes: HashMap<String, ProfileAvailabilityScope>,
+    /// Entrypoint-only tools this runtime could build but withheld
+    /// (`--no-workflow`, a swarm member): closed to its children (#2216).
+    pub(super) withheld_entrypoint_only: std::collections::BTreeSet<String>,
 }
 
 impl std::fmt::Debug for ToolRegistryImpl {
@@ -75,6 +78,7 @@ impl ToolRegistryImpl {
             inherited_policy_scopes: HashMap::new(),
             inherited_policy_default_scope: None,
             persisted_policy_scopes: HashMap::new(),
+            withheld_entrypoint_only: std::collections::BTreeSet::new(),
         }
     }
 
@@ -233,9 +237,18 @@ impl ToolRegistryImpl {
             Err(ToolIdResolveError::Unknown(_)) => unreachable!("register does not resolve ids"),
         }
         self.apply_retained_persisted_policy(&name, &mut metadata);
+        // #2216: the closed default never reaches an entrypoint-only tool.
+        let closed_default =
+            if crate::infrastructure::tools::inherited_tool_policy::is_entrypoint_only(
+                &name, &metadata,
+            ) {
+                None
+            } else {
+                self.inherited_policy_default_scope
+            };
         if let Some(scope) = self
             .inherited_scope_for(&name, &metadata)
-            .or(self.inherited_policy_default_scope)
+            .or(closed_default)
         {
             metadata.inherited_scope = Some(scope);
             metadata.profile_scope = Some(scope);

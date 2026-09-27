@@ -69,6 +69,14 @@ impl ToolRegistryImpl {
         metadata: &ToolRegistration,
     ) -> Result<(), ToolIdResolveError> {
         let identity = metadata.identity_for_name(name);
+        // #2216: only a bundled-native registration may use an id in the
+        // bundled-native namespace, so no UDS or runtime tool can pose as a
+        // bundled tool that inherited policy treats specially.
+        if !claims_its_own_namespace(&identity, metadata) {
+            return Err(ToolIdResolveError::Duplicate(
+                identity.stable_id.into_owned(),
+            ));
+        }
         let resolver_inputs = identity.resolver_inputs();
         if self
             .denied_policy_ids
@@ -81,5 +89,22 @@ impl ToolRegistryImpl {
         }
         self.tool_id_resolver_excluding(Some(name))?
             .register(&identity)
+    }
+}
+
+/// Whether `metadata` may use its stable id: ids in the bundled-native
+/// namespace belong to bundled-native registrations alone.
+fn claims_its_own_namespace(
+    identity: &crate::domain::tool_id::ToolIdentity,
+    metadata: &ToolRegistration,
+) -> bool {
+    let bundled_namespace = format!(
+        "{}:{}:",
+        crate::domain::tool_id::TOOL_ID_SCHEME_V1,
+        crate::domain::tool_descriptor::ToolSource::BundledNative.as_str()
+    );
+    match identity.stable_id.starts_with(&bundled_namespace) {
+        true => metadata.source == crate::domain::tool_descriptor::ToolSource::BundledNative,
+        false => true,
     }
 }

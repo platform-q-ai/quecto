@@ -247,26 +247,31 @@ fn build_agent_with_unloadable_workflow_spec_fails_closed() {
         r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
     )
     .unwrap();
-    // Point at a spec file that does not exist.
-    let mut flags = uds_workflow_flags(false, false);
-    flags.workflow_spec_path = Some(tmp.path().join("missing.json"));
-    let mut stderr = String::new();
-    let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(
-        tmp.path(),
-        &selection_for_test(&cfg, false),
-        &flags,
-        &mut stderr,
-        None,
-    )
-    .expect("agent should still build");
-    // Fail closed: an assigned-but-unloadable spec must NOT degrade into a
-    // free-selection workflow agent — no workflow is registered.
-    assert!(result.workflow_state.is_none(), "stderr: {stderr}");
-    assert!(
-        stderr.contains("refusing to start a workflow"),
-        "stderr: {stderr}"
-    );
+    // A spawned child too (#2216): its workflow-tool check applies only to
+    // an engine that was built, so this path keeps its own outcome.
+    for spawned in [false, true] {
+        // Point at a spec file that does not exist.
+        let mut flags = uds_workflow_flags(false, false);
+        flags.spawned = spawned;
+        flags.workflow_spec_path = Some(tmp.path().join("missing.json"));
+        let mut stderr = String::new();
+        let cfg = tmp.path().join("config.json");
+        let result = build_agent_from_config(
+            tmp.path(),
+            &selection_for_test(&cfg, false),
+            &flags,
+            &mut stderr,
+            None,
+        )
+        .expect("agent should still build");
+        // Fail closed: an assigned-but-unloadable spec must NOT degrade into a
+        // free-selection workflow agent — no workflow is registered.
+        assert!(result.workflow_state.is_none(), "stderr: {stderr}");
+        assert!(
+            stderr.contains("refusing to start a workflow"),
+            "stderr: {stderr}"
+        );
+    }
 }
 
 #[test]
@@ -330,4 +335,33 @@ fn build_agent_with_oversized_workflow_spec_fails_closed() {
     .expect("agent should still build");
     assert!(result.workflow_state.is_none(), "stderr: {stderr}");
     assert!(stderr.contains("too large"), "stderr: {stderr}");
+}
+
+/// #2216: a spawned child launched with `--workflow` whose policy hides the
+/// workflow tool refuses to build, so its parent's spawn fails with the
+/// reason instead of reporting a child that cannot drive its workflow.
+#[test]
+fn spawned_workflow_child_denied_the_workflow_tool_refuses_to_build() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cfg = tmp.path().join("config.json");
+    std::fs::write(&cfg, r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#).unwrap();
+    for (workflow, refused) in [(true, true), (false, false)] {
+        let mut flags = uds_workflow_flags(workflow, false);
+        flags.spawned = true;
+        flags.disabled_tools = vec!["workflow".into()];
+        let mut stderr = String::new();
+        let built = build_agent_from_config(
+            tmp.path(),
+            &selection_for_test(&cfg, false),
+            &flags,
+            &mut stderr,
+            None,
+        );
+        assert_eq!(built.is_none(), refused, "workflow={workflow}: {stderr}");
+        assert_eq!(
+            stderr.contains("workflow mode was requested"),
+            refused,
+            "workflow={workflow}: {stderr}"
+        );
+    }
 }

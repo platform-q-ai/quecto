@@ -140,7 +140,10 @@ reviewer cannot use `write`/`edit` and must follow those steps. Remember
 - **Workflow-driven with `--workflow`**: selector/active workflow prompt text is
   injected from the first turn, so the model may choose and follow a template
   immediately
-- **Fully disabled with `--no-workflow`**: no workflow engine/tool/state/prompt
+- **Fully disabled with `--no-workflow`**: no workflow engine/tool/state/prompt,
+  and the agent's spawned children are closed to workflow too (so are a swarm
+  member's). A one-shot CLI parent, which has no workflow runtime at all, does
+  not close it: its children use workflow as any UDS agent's children do
 - **Built-in template library**: Quecto ships built-in workflow templates for common work shapes (`feature`, `adversarial-review`, `bugfix`, `chore`, `flake-hunt`, `investigate`, `plan`, `prd`, `refactor`, and `remove`); custom configs may still define their own templates
 - **In-process engine**: `WorkflowEngine` owns all state; the UDS bus is
   the external read/broadcast interface, not the coordinator
@@ -153,7 +156,7 @@ reviewer cannot use `write`/`edit` and must follow those steps. Remember
 | Flag | Effect |
 |------|--------|
 | `--workflow` | Start in workflow-driven mode: the workflow tool is available and selector/active prompt text is injected immediately |
-| `--no-workflow` | Fully disable workflow tool/state/prompt (clears `--workflow` and `--workflow-guards`) |
+| `--no-workflow` | Fully disable workflow tool/state/prompt (clears `--workflow` and `--workflow-guards`); the agent's children are closed to workflow too |
 | `--workflow-guards` | Enable bash command guards when the workflow tool is available; does not by itself force workflow prompt injection |
 | `--workflow-spec <path>` | Run the by-value template in the given spec file, **bound** in Active mode from the first turn (no template selection). Cannot be combined with `--no-workflow`. Usually set by the parent `spawn` tool, not by hand — see [Bound mode](#bound-mode) |
 

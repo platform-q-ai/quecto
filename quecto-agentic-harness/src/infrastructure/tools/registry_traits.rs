@@ -129,9 +129,7 @@ impl RuntimeToolLifecycleRegistry for ToolRegistryImpl {
         &self,
         snapshot: BTreeMap<String, ProfileAvailabilityScope>,
     ) {
-        if let Some(spawn) = self.tools.get("spawn") {
-            spawn.set_inherited_child_policy_snapshot_for_spawn(snapshot);
-        }
+        self.hand_inherited_child_policy_to_spawn(snapshot);
     }
 }
 

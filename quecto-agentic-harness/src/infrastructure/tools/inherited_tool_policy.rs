@@ -3,9 +3,66 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolSource};
+use crate::domain::tool_id::ToolIdentity;
+use crate::infrastructure::tools::registration::ToolRegistration;
 
 const INHERITED_TOOL_POLICY_SNAPSHOT_VERSION: u32 = 1;
+
+pub(crate) use crate::infrastructure::tools::workflow_tool::{
+    WORKFLOW_PROVIDER_ID, WORKFLOW_TOOL_NAME,
+};
+
+/// Entrypoint-only tools (#2216), as `(provider id, name)`: the bundled tools
+/// that some entrypoints never build. A one-shot CLI agent has no workflow
+/// runtime, so its snapshot holds no workflow entry; that absence is an
+/// entrypoint difference, not a denial. An allowlist: add a tool here only
+/// when not building it is never how a policy denies it.
+const ENTRYPOINT_ONLY_TOOLS: &[(&str, &str)] = &[(WORKFLOW_PROVIDER_ID, WORKFLOW_TOOL_NAME)];
+
+/// Each entrypoint-only tool's name and the registration it is built with.
+pub(crate) fn entrypoint_only_tools() -> impl Iterator<Item = (&'static str, ToolRegistration)> {
+    ENTRYPOINT_ONLY_TOOLS.iter().map(|(provider_id, name)| {
+        (
+            *name,
+            ToolRegistration::official_native().with_provider_id(*provider_id),
+        )
+    })
+}
+
+/// Whether `name`, registered as `registration`, is an entrypoint-only tool:
+/// the bundled registration itself, never a UDS or runtime tool that shares
+/// its name or claims its stable id.
+pub(crate) fn is_entrypoint_only(name: &str, registration: &ToolRegistration) -> bool {
+    registration.source == ToolSource::BundledNative
+        && registration.stable_id_override.is_none()
+        && ENTRYPOINT_ONLY_TOOLS.iter().any(|(provider_id, tool)| {
+            *tool == name && registration.provider_id.as_ref() == *provider_id
+        })
+}
+
+/// The scope `tools` records for `name` with `identity`: by stable id, then
+/// by name, the lookup a child applies.
+pub(crate) fn recorded_scope(
+    tools: &BTreeMap<String, ProfileAvailabilityScope>,
+    name: &str,
+    identity: &ToolIdentity,
+) -> Option<ProfileAvailabilityScope> {
+    tools
+        .get(identity.stable_id.as_ref())
+        .or_else(|| tools.get(name))
+        .copied()
+}
+
+/// The bundled workflow tool's identity.
+pub(crate) fn workflow_tool_identity() -> ToolIdentity {
+    ToolIdentity::new(
+        ToolSource::BundledNative,
+        WORKFLOW_PROVIDER_ID,
+        WORKFLOW_TOOL_NAME,
+        Vec::new(),
+    )
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InheritedToolPolicySnapshot {
