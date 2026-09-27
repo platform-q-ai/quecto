@@ -223,15 +223,11 @@ impl AgentLoopImpl {
     pub fn adopt_durable_prefix_latch(&mut self, latch: Arc<DurablePrefixLatch>) {
         self.durable_prefix_dirty = latch;
     }
-    /// Replace the LLM provider after config reload.
-    /// The model is unchanged (a model change goes through `apply_model`), so
-    /// the observed scale still holds when the provider's name does (#2212).
+    /// Replace the LLM provider after config reload. A reload may change the
+    /// endpoint behind the same name (a rebuilt router is always `router`),
+    /// so the calibration starts over, as on a model switch (#2212).
     pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
-        let calibration_holds = self.provider.name() == provider.name();
         self.provider = provider;
-        if calibration_holds {
-            return;
-        }
         self.context_manager.forget_calibration();
     }
     /// Return the currently configured model name.

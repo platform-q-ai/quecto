@@ -19,7 +19,13 @@ impl AgentLoopImpl {
             tokens: budget,
             window_exceeded,
         } = message_budget(effective, window, fixed_tokens);
-        if budget.saturating_add(fixed_tokens) > effective {
+        // The quarter floor (#2182) keeps a minimum conversation beside a
+        // large tool set, so it may pass the configured budget: that budget
+        // is soft (the model's window, a hard limit, caps the floor inside
+        // `message_budget`). Passing it is reported: the plan is over budget
+        // and the ContextPruned audit records `budget_unmet`.
+        let floor_overrides = budget.saturating_add(fixed_tokens) > effective;
+        if floor_overrides {
             tracing::warn!(
                 target: "context_prune",
                 fixed_tokens,
@@ -33,11 +39,12 @@ impl AgentLoopImpl {
             .context_manager
             .prepare_provider_context(messages, budget, spills_dirty)
             .await;
-        // The tools alone fill the model's window: no transcript fits.
-        plan.over_budget |= window_exceeded;
+        // The floor passed the configured budget, or the tools alone fill
+        // the model's window (no transcript fits).
+        plan.over_budget |= floor_overrides || window_exceeded;
         if plan.over_budget {
-            // The pinned/exempt set alone exceeds the budget (#1044 AC1), or
-            // the tool definitions alone fill the window.
+            // The pinned/exempt set alone exceeds the budget (#1044 AC1), the
+            // floor passed it, or the tool definitions alone fill the window.
             tracing::warn!(
                 target: "context_prune",
                 budget,

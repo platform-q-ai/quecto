@@ -172,10 +172,11 @@ impl crate::application::providers::ports::LlmProvider for NamedProvider {
     }
 }
 
-/// A config reload that swaps in another provider (another tokeniser)
-/// forgets the observed scale.
+/// A config reload may change the endpoint behind the same provider name
+/// (a rebuilt router is always `router`), so it forgets the observed scale
+/// and the provider figure, as a model switch does.
 #[tokio::test]
-async fn a_reload_to_another_provider_forgets_the_observed_scale() {
+async fn a_reload_to_another_provider_forgets_the_calibration() {
     let (mut agent, _) = crate::application::agent_loop::tests::make_agent(vec![], vec![]);
     agent.observe_provider_context_gauge_for_test(2_000, 1_000);
 
@@ -192,17 +193,18 @@ async fn a_reload_to_another_provider_forgets_the_observed_scale() {
     );
 }
 
-/// A config reload that rebuilds the same provider for the same model
-/// keeps what the last response measured.
 #[tokio::test]
-async fn a_reload_to_the_same_provider_keeps_the_observed_scale() {
+async fn a_reload_under_the_same_provider_name_forgets_the_calibration() {
     let (mut agent, _) = crate::application::agent_loop::tests::make_agent(vec![], vec![]);
     agent.observe_provider_context_gauge_for_test(2_000, 1_000);
 
     agent.swap_provider(Arc::new(NamedProvider("mock")));
 
-    assert_eq!(agent.context_manager.estimate_scale().permille(), 2_000);
-    assert_eq!(agent.reconcile_context_gauge_for_test(1_100), 2_100);
+    assert_eq!(
+        agent.context_manager.estimate_scale(),
+        EstimateScale::IDENTITY
+    );
+    assert_eq!(agent.reconcile_context_gauge_for_test(1_100), 1_100);
 }
 
 /// #2212 review 2: the gauge recorded at the tool-iteration limit counts
@@ -348,4 +350,37 @@ async fn tools_that_fill_the_window_are_reported_over_budget() {
 
     assert_eq!(*audit.unmet.lock().unwrap(), vec![true]);
     assert_eq!(messages.len(), 1, "the in-flight prompt is kept");
+}
+
+/// #2212 PR review 2: the reviewer's shape without a model window (a 100k
+/// budget, 2x, 45k of tools): the quarter floor keeps a minimum
+/// conversation beside the tools although that passes the configured
+/// (soft) budget, and the pass reports the budget unmet.
+#[tokio::test]
+async fn the_quarter_floor_over_the_calibrated_budget_is_reported_unmet() {
+    let mut registry = MockRegistry::new();
+    for i in 0..40 {
+        registry.register(Arc::new(MockTool::new(&format!("tool_{i}"), "ok")));
+    }
+    let tools: usize = registry
+        .cached_definitions
+        .iter()
+        .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+        .sum();
+    let audit = Arc::new(PrunedAudit::default());
+    let agent = AgentLoopImpl::new(crate::application::agent_loop::AgentLoopConfig {
+        // 100k against 45k of tools, as the reviewer's example.
+        max_context_tokens: tools * 100 / 45,
+        audit_log: Some(audit.clone() as Arc<dyn crate::application::audit::ports::AuditSink>),
+        ..test_config(Arc::new(MockProvider::new(vec![])), Box::new(registry))
+    });
+    agent.observe_provider_context_gauge_for_test(2_000, 1_000);
+    let effective = agent.context_manager.pruning_ceiling_in_estimate_units();
+    assert!(effective - tools < effective / 4, "the floor applies");
+    let mut messages = vec![Message::user("go")];
+
+    agent.apply_context_pruning(&mut messages, 1, false).await;
+
+    assert_eq!(messages.len(), 1, "the floor keeps the conversation");
+    assert_eq!(*audit.unmet.lock().unwrap(), vec![true]);
 }

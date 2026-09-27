@@ -729,8 +729,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #2213: new module (the ladder, the low-water mark and the dials' batch).
     ("src/application/context_pruning_ceiling.rs", 203),
     ("src/application/agent_loop_spill.rs", 56),
-    // #2212: the gauge wrappers moved to their own module (749 → 707).
-    ("src/application/agent_loop.rs", 707),
+    // #2212: the gauge wrappers moved to their own module (749 → 703).
+    ("src/application/agent_loop.rs", 703),
     ("src/application/agent_loop_gauge.rs", 61),
     // D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976 and D8 #1977 each
     // add use cases to this graph; the ceiling follows their merge (was 113
