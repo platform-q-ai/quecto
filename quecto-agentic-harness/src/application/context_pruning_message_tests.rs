@@ -259,7 +259,7 @@ fn message_collapse_disabled_by_sentinel() {
 
     // Control: the identical session DOES collapse at a finite limit.
     let collapsed = collapse_conversation_messages_over_limit(&mut messages, 50, 0);
-    assert_eq!(collapsed, 50);
+    assert_eq!(collapsed, 62, "down to the low-water mark of 38 (#2213)");
 }
 
 // --- exemptions (AC3) ---
@@ -343,7 +343,8 @@ fn collapsed_message_stubs_count_toward_the_token_budget() {
 #[test]
 fn message_stubs_do_not_disturb_the_tool_collapse_trigger() {
     // Collapse conversation messages first, marking them is_collapsed. The
-    // tool trigger must still see 51 live tool results and collapse exactly 1.
+    // tool trigger must still see 51 live tool results and collapse exactly 13
+    // (down to its low-water mark of 38, #2213).
     let mut messages = session_with_old_conv_messages(4);
     let collapsed = collapse_conversation_messages_over_limit(&mut messages, 3, 0);
     assert_eq!(collapsed, 1, "positive control: one message stub exists");
@@ -352,7 +353,7 @@ fn message_stubs_do_not_disturb_the_tool_collapse_trigger() {
     }
     let tool_collapsed = collapse_tool_results_over_limit(&mut messages, 50);
     assert_eq!(
-        tool_collapsed, 1,
+        tool_collapsed, 13,
         "message stubs must not count toward the tool-call trigger"
     );
 }
@@ -611,12 +612,13 @@ fn ladder_skips_tiny_messages_whose_stub_would_not_be_cheaper() {
     tiny.turn = Some(1);
     tiny.spill_id = Some("turn1:msg:user".into());
     let mut messages = vec![tiny];
-    for i in 2..=4u32 {
+    for i in 2..=12u32 {
         messages.push(conv_msg(Role::Assistant, i, i));
     }
     messages.push(Message::user("current question"));
     let total = estimate_total_tokens(&messages);
-    // Slightly over budget: stubbing the large messages suffices, so the
+    // Slightly over budget: stubbing the large messages reaches the
+    // low-water mark (#2213; hence eleven of them), so the
     // second rung never runs and the tiny message's fate is rung 1's alone.
     let budget = total - 20;
     let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 0);

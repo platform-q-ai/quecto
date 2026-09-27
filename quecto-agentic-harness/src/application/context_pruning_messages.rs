@@ -124,7 +124,7 @@ fn exempt_flags(messages: &[Message], pin_recent_turns: u32, tail_fallback: bool
 
 /// Collapse the oldest live conversation (assistant + user, one combined
 /// count) messages to recall stubs once their number exceeds `max_messages`
-/// (#1046 AC2). Exempt from the count and never collapsed: system prompt,
+/// (#1046 AC2), down to its low-water mark in one batch (#2213). Exempt from the count and never collapsed: system prompt,
 /// manifest, the in-flight user prompt, and messages within the
 /// `pin_recent_turns` tail. Tool results are excluded — the tool dial
 /// (`context_collapse_after_tool_calls`) is independent.
@@ -149,7 +149,7 @@ pub fn collapse_conversation_messages_over_limit(
         })
         .map(|(i, _)| i)
         .collect();
-    let to_collapse = live.len().saturating_sub(max_messages as usize);
+    let to_collapse = ceiling::count_to_collapse(live.len(), max_messages as usize);
     for &i in &live[..to_collapse] {
         // `live` filtered to spill_id.is_some(); skip defensively otherwise.
         let Some(spill_id) = messages[i].spill_id.clone() else {

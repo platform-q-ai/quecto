@@ -5,7 +5,7 @@ Quecto manages long-running sessions with a configurable sliding context window.
 ## How it works
 
 - Tool results and user/assistant messages are spilled to disk when created.
-- Older content can collapse into compact recall stubs as the active window fills.
+- Older content can collapse into compact recall stubs as the active window fills. Once a limit is crossed, content collapses in one batch down to 75% of it, so the following turns keep the provider's prompt cache.
 - The model can call `recall("list")` to inspect the live spill index.
 - The model can call `recall("<spill-id>")` to retrieve full spilled content.
 - Recent turns are pinned so the active working tail is preserved.

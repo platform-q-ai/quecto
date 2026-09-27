@@ -573,19 +573,23 @@ default `200000`), the agent applies context pruning:
    the `recall` tool
 2. **Tool output collapsing**: Once the session accumulates more than
    `context_collapse_after_tool_calls` tool calls, the oldest tool outputs are
-   replaced with compact recall stubs. The trigger counts tool calls
+   replaced with compact recall stubs, down to the dial's low-water mark
+   (75%, rounded up: 38 of 50) in one batch. The trigger counts tool calls
    cumulatively across prompts within a session. Current config default: `50`.
    Set it to `4294967295` (`u32::MAX`) to disable collapse.
 3. **Conversation message collapsing**: An independent dial,
    `context_collapse_after_messages`, keeps the most recent N conversation
-   messages in full and replaces older ones with one-line recall stubs.
+   messages in full and replaces older ones with one-line recall stubs; once
+   N is exceeded it collapses down to the same 75% low-water mark.
    Exempt: the system prompt, spill manifest, in-flight user prompt, and the
    `pin_recent_turns` most recent turns. Defaults to 50 (mirroring the
    tool-call collapse default); set to `4294967295` (`u32::MAX`) to disable.
 4. **Demotion ladder**: When the conversation still exceeds the effective
    budget, messages are demoted down a ladder — full content is collapsed to
    recall stubs first (oldest first), and only if the budget is still
-   exceeded are stubs removed entirely (their content stays on disk). Pinned
+   exceeded are stubs removed entirely (their content stays on disk). Once
+   the budget is crossed, both rungs demote down to 75% of it, not just back
+   under it. Pinned
    and tail-pinned (`pin_recent_turns`, default `2`) content is never
    demoted; if the pinned set alone exceeds the budget, a
    `context_prune` warning is logged and the `ContextPruned` audit event
@@ -593,6 +597,12 @@ default `200000`), the agent applies context pruning:
 
 The effective budget is the smaller of `max_context_tokens` and the active
 model's context window when the model registry declares one.
+
+Every collapse or demotion rewrites a message early in the conversation, so
+the provider's prompt cache misses from that message on. Pruning down to the
+low-water mark (#2213) leaves a quarter of each dial as headroom: the turns
+that follow append without touching the prefix, and the cache miss is paid
+once per batch instead of on every turn. Below a dial nothing is pruned.
 
 ### Spill and recall
 

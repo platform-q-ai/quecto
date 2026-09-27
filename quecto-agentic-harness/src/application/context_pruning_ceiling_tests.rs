@@ -1,0 +1,237 @@
+//! #2213: the low-water mark. Crossing a dial prunes down to the low-water
+//! mark, so the turns that follow append without rewriting the prompt
+//! prefix; below the dial nothing changes.
+
+use super::*;
+use crate::application::context_pruning::messages::collapse_conversation_messages_over_limit;
+use crate::application::context_pruning::{
+    collapse_tool_results_over_limit, estimate_total_tokens,
+};
+use crate::domain::message::{Message, Role};
+
+/// A spilled assistant message of about 100 tokens in `turn`.
+fn turn_message(turn: u32) -> Message {
+    let mut msg = Message::assistant(format!("turn {turn} {}", "x".repeat(400)), vec![]);
+    msg.turn = Some(turn);
+    msg.spill_id = Some(format!("turn{turn}:msg:assistant"));
+    msg
+}
+
+/// The in-flight prompt (exempt) followed by `n` demotable turns.
+fn session(n: u32) -> Vec<Message> {
+    let mut messages = vec![Message::user("current prompt")];
+    messages.extend((1..=n).map(turn_message));
+    messages
+}
+
+fn spilled_tool_result(i: u32) -> Message {
+    let mut msg = Message::tool(format!("call-{i}"), format!("output {i}"));
+    msg.tool_name = Some("bash".to_string());
+    msg.spill_id = Some(format!("turn{i}:bash:0"));
+    msg
+}
+
+fn live_tool_results(messages: &[Message]) -> usize {
+    messages
+        .iter()
+        .filter(|m| m.role == Role::Tool && !m.is_collapsed)
+        .count()
+}
+
+/// True when a pass changed any message already in the list: the prompt
+/// prefix the provider cached from the previous request no longer matches.
+fn rewrote_prefix(before: &[Message], after: &[Message]) -> bool {
+    before.len() != after.len()
+        || before
+            .iter()
+            .zip(after)
+            .any(|(b, a)| b.content != a.content || b.is_collapsed != a.is_collapsed)
+}
+
+#[test]
+fn low_water_is_the_named_fraction_of_the_limit_rounded_up() {
+    assert_eq!(LOW_WATER_PERCENT, 75);
+    assert_eq!(low_water(0), 0);
+    assert_eq!(low_water(1), 1, "a one-item dial keeps its one item");
+    assert_eq!(low_water(3), 3, "ceil(2.25)");
+    assert_eq!(low_water(4), 3);
+    assert_eq!(low_water(50), 38, "ceil(37.5)");
+    assert_eq!(low_water(100), 75);
+    assert_eq!(low_water(200_000), 150_000);
+}
+
+#[test]
+fn low_water_never_exceeds_the_limit_and_never_overflows() {
+    for limit in (0..=1_000).chain([usize::MAX - 1, usize::MAX]) {
+        let mark = low_water(limit);
+        assert!(mark <= limit, "low_water({limit}) = {mark}");
+        let exact = limit as u128 * LOW_WATER_PERCENT as u128;
+        assert!(mark as u128 * 100 >= exact, "rounded up: {limit}");
+        assert!(
+            (mark as u128).saturating_sub(1) * 100 < exact.max(1),
+            "{limit}"
+        );
+    }
+}
+
+#[test]
+fn crossing_the_ceiling_prunes_down_to_the_low_water_mark() {
+    let mut messages = session(20);
+    let budget = estimate_total_tokens(&messages) - 1;
+
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 0);
+
+    assert!(!outcome.over_budget);
+    assert!(
+        estimate_total_tokens(&messages) <= low_water(budget),
+        "{} over the low-water mark {}",
+        estimate_total_tokens(&messages),
+        low_water(budget)
+    );
+    assert!(
+        outcome.collapsed_to_stubs > 1,
+        "a batch, not just the overflow"
+    );
+    assert_eq!(outcome.dropped, 0, "stubbing alone reaches the mark");
+}
+
+#[test]
+fn a_total_exactly_at_the_ceiling_changes_nothing_and_one_over_prunes_to_low_water() {
+    let mut at = session(20);
+    let total = estimate_total_tokens(&at);
+    let before = at.clone();
+    let outcome = enforce_context_ceiling_ladder(&mut at, total, 0);
+    assert!(
+        !rewrote_prefix(&before, &at),
+        "at the ceiling nothing moves"
+    );
+    assert_eq!(outcome.collapsed_to_stubs + outcome.dropped, 0);
+
+    let mut over = session(20);
+    let outcome = enforce_context_ceiling_ladder(&mut over, total - 1, 0);
+    assert!(outcome.collapsed_to_stubs > 0);
+    assert!(estimate_total_tokens(&over) <= low_water(total - 1));
+}
+
+#[test]
+fn a_total_between_the_low_water_mark_and_the_ceiling_changes_nothing() {
+    let mut messages = session(20);
+    let total = estimate_total_tokens(&messages);
+    // The low-water mark of this budget is below the total; the ceiling is not.
+    let budget = total + total / 10;
+    assert!(low_water(budget) < total && total <= budget);
+    let before = messages.clone();
+
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 0);
+
+    assert!(!rewrote_prefix(&before, &messages));
+    assert_eq!(outcome.collapsed_to_stubs + outcome.dropped, 0);
+    assert!(!outcome.over_budget);
+}
+
+#[test]
+fn two_consecutive_over_ceiling_appends_rewrite_the_prefix_once() {
+    let mut messages = session(10);
+    let budget = estimate_total_tokens(&messages) + 50;
+    let mut rewrites = 0;
+    for turn in [11, 12] {
+        messages.push(turn_message(turn));
+        let before = messages.clone();
+        enforce_context_ceiling_ladder(&mut messages, budget, 0);
+        rewrites += usize::from(rewrote_prefix(&before, &messages));
+    }
+    assert_eq!(rewrites, 1, "the second append lands in the headroom");
+}
+
+#[test]
+fn an_unreachable_low_water_mark_demotes_everything_demotable_and_meets_the_ceiling() {
+    // The exempt in-flight prompt alone is 90% of the budget: the low-water
+    // mark cannot be reached, the ceiling can.
+    let old = session(4);
+    let old_tokens = estimate_total_tokens(&old[1..]);
+    let budget = old_tokens * 5;
+    let prompt = Message::user("p".repeat(4 * (budget * 9 / 10)));
+    let prompt_content = prompt.content.clone();
+    let mut messages = vec![prompt];
+    messages.extend(old.into_iter().skip(1));
+    assert!(estimate_total_tokens(&messages) > budget);
+
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 0);
+
+    assert!(!outcome.over_budget, "the ceiling itself is met");
+    assert!(estimate_total_tokens(&messages) > low_water(budget));
+    assert_eq!(messages.len(), 1, "every demotable message is gone");
+    assert_eq!(messages[0].content, prompt_content, "the prompt is exempt");
+}
+
+#[test]
+fn pinned_recent_turns_are_kept_when_they_dominate_the_budget() {
+    let mut messages = session(6);
+    let pinned: Vec<String> = messages[5..].iter().map(|m| m.content.clone()).collect();
+    // Room for the prompt and the two pinned turns only.
+    let budget = estimate_total_tokens(&messages[..1]) + estimate_total_tokens(&messages[5..]);
+
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 2);
+
+    assert!(!outcome.over_budget);
+    let kept: Vec<String> = messages
+        .iter()
+        .filter(|m| !m.is_collapsed && m.turn.is_some())
+        .map(|m| m.content.clone())
+        .collect();
+    assert_eq!(kept, pinned, "the pinned tail is never demoted");
+}
+
+#[test]
+fn the_tool_count_dial_collapses_down_to_its_low_water_mark_when_crossed() {
+    let mut messages: Vec<Message> = (0..50).map(spilled_tool_result).collect();
+    assert_eq!(collapse_tool_results_over_limit(&mut messages, 50), 0);
+
+    messages.push(spilled_tool_result(50));
+    assert_eq!(collapse_tool_results_over_limit(&mut messages, 50), 13);
+    assert_eq!(live_tool_results(&messages), low_water(50));
+    assert!(
+        messages[..13].iter().all(|m| m.is_collapsed),
+        "oldest first"
+    );
+}
+
+#[test]
+fn two_consecutive_tool_results_over_the_count_dial_rewrite_the_prefix_once() {
+    let mut messages: Vec<Message> = (0..50).map(spilled_tool_result).collect();
+    let mut rewrites = 0;
+    for i in [50, 51] {
+        messages.push(spilled_tool_result(i));
+        let before = messages.clone();
+        collapse_tool_results_over_limit(&mut messages, 50);
+        rewrites += usize::from(rewrote_prefix(&before, &messages));
+    }
+    assert_eq!(rewrites, 1);
+}
+
+#[test]
+fn the_message_count_dial_collapses_down_to_its_low_water_mark_when_crossed() {
+    let mut messages = session(8);
+    assert_eq!(
+        collapse_conversation_messages_over_limit(&mut messages, 8, 0),
+        0
+    );
+
+    messages.push(turn_message(9));
+    assert_eq!(
+        collapse_conversation_messages_over_limit(&mut messages, 8, 0),
+        3
+    );
+    let live = messages
+        .iter()
+        .filter(|m| m.role == Role::Assistant && !m.is_collapsed)
+        .count();
+    assert_eq!(live, low_water(8));
+
+    messages.push(turn_message(10));
+    assert_eq!(
+        collapse_conversation_messages_over_limit(&mut messages, 8, 0),
+        0,
+        "the next message lands in the headroom"
+    );
+}

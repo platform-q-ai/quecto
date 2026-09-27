@@ -11,6 +11,45 @@ use crate::application::context_pruning::{
 };
 use crate::domain::message::{Message, Role};
 
+/// The low-water mark of every pruning dial, in percent of the dial (#2213).
+///
+/// Crossing a dial (the token ceiling, the tool-result count, the
+/// conversation-message count) prunes down to this share of it, not just
+/// back under it. Each pruning pass rewrites a message early in the
+/// conversation, which invalidates the provider's prompt-cache prefix from
+/// there on. Pruning only the overflow let the next tool result cross again,
+/// so every turn missed the cache (QA: 0 cached tokens on a 471k request,
+/// about 7x the input cost). At 75 the quarter left as headroom takes about
+/// five 12k-token tool results (or recalls) on the QA session's 250k budget
+/// before the next pass, so the miss is paid once per batch, while three
+/// quarters of the working context stay in full and few stubs need a recall
+/// round-trip. A lower mark buys longer batches with more stubbed context; a
+/// higher one drifts back towards a miss per turn.
+pub const LOW_WATER_PERCENT: usize = 75;
+
+// A mark of 0 would empty the context; 100 is the old per-turn pruning.
+const _: () = assert!(LOW_WATER_PERCENT > 0 && LOW_WATER_PERCENT < 100);
+
+/// The low-water mark of a dial: [`LOW_WATER_PERCENT`] of `limit`, rounded
+/// up so a small count dial keeps at least its share (a one-item dial keeps
+/// its item). Never above `limit`; computed wide so no limit overflows.
+pub fn low_water(limit: usize) -> usize {
+    let wide = (limit as u128 * LOW_WATER_PERCENT as u128).div_ceil(100);
+    let mark = usize::try_from(wide).map_or(limit, |mark| mark.min(limit));
+    debug_assert!(mark <= limit, "the low-water mark is under its dial");
+    mark
+}
+
+/// How many of `live` items a count dial collapses: none at or under
+/// `limit`; once `limit` is crossed, enough to leave [`low_water`]`(limit)`.
+pub fn count_to_collapse(live: usize, limit: usize) -> usize {
+    if live > limit {
+        live - low_water(limit)
+    } else {
+        0
+    }
+}
+
 /// Outcome of one demotion-ladder ceiling pass (#1046 AC6, #1044 AC1).
 #[derive(Debug, Clone, Default)]
 pub struct CeilingLadderOutcome {
@@ -23,8 +62,10 @@ pub struct CeilingLadderOutcome {
     pub over_budget: bool,
 }
 
-/// Enforce the context ceiling by demoting down the ladder (#1046 AC6):
-/// first collapse not-yet-collapsed messages to recall stubs (oldest first —
+/// Enforce the context ceiling by demoting down the ladder (#1046 AC6).
+/// Nothing moves at or under `max_tokens`; once it is crossed, both rungs
+/// demote down to [`low_water`]`(max_tokens)` so the following turns append
+/// without rewriting the prefix (#2213). First collapse not-yet-collapsed messages to recall stubs (oldest first —
 /// cheap, keeps locality), and only if still over budget remove stubs
 /// entirely (manifest-only; content is already on disk from creation-time
 /// spilling). Pinned/exempt messages are never demoted at any rung; when
@@ -40,13 +81,16 @@ pub fn enforce_context_ceiling_ladder(
     if total <= max_tokens {
         return outcome;
     }
+    // Crossed: demote down to the low-water mark, not just under the ceiling.
+    let target = low_water(max_tokens);
+    debug_assert!(target <= max_tokens);
     let exempt = exempt_flags(messages, pin_recent_turns, true);
 
     // First rung: demote full messages to stubs, oldest first. A message
     // whose stub would be no cheaper than its content (tiny messages) is
     // skipped — it goes straight to the second rung instead.
     for (i, msg) in messages.iter_mut().enumerate() {
-        if total <= max_tokens {
+        if total <= target {
             break;
         }
         if exempt[i] || msg.is_collapsed {
@@ -85,17 +129,23 @@ pub fn enforce_context_ceiling_ladder(
     }
 
     // Second rung: remove demoted messages entirely, oldest first (content
-    // stays recallable via the spill store and manifest).
-    if total > max_tokens {
+    // stays recallable via the spill store and manifest). When the exempt set
+    // keeps the mark out of reach, every demotable message goes; the outcome
+    // still judges the ceiling itself.
+    if total > target {
         let droppable: Vec<usize> = messages
             .iter()
             .enumerate()
             .filter(|&(i, _)| !exempt[i])
             .map(|(i, _)| i)
             .collect();
-        outcome.dropped = drop_until_under_budget(messages, max_tokens, &droppable).len();
+        outcome.dropped = drop_until_under_budget(messages, target, &droppable).len();
     }
 
     outcome.over_budget = estimate_total_tokens(messages) > max_tokens;
     outcome
 }
+
+#[cfg(test)]
+#[path = "context_pruning_ceiling_tests.rs"]
+mod tests;

@@ -156,27 +156,24 @@ fn when_executes_more_tool_calls(world: &mut QuectoWorld, n: u32) {
     run_collapse(world);
 }
 
-#[then("the oldest tool result is collapsed to a recall() stub")]
-fn then_oldest_collapsed(world: &mut QuectoWorld) {
+#[then(expr = "the oldest {int} tool results are collapsed to recall\\(\\) stubs")]
+fn then_oldest_collapsed(world: &mut QuectoWorld, n: usize) {
     assert_eq!(
         world.context_collapsed_count,
-        Some(1),
-        "exactly one (the oldest) tool result should collapse"
+        Some(n),
+        "exactly the oldest {n} tool results should collapse"
     );
     let messages = world.context_messages.as_ref().unwrap();
-    let oldest = messages
-        .iter()
-        .find(|m| m.role == Role::Tool)
-        .expect("should have a tool result");
-    assert!(
-        oldest.is_collapsed,
-        "oldest tool result should be collapsed"
-    );
-    assert!(
-        oldest.content.contains("recall(\""),
-        "collapsed content should be a recall() stub, got: {}",
-        oldest.content
-    );
+    let tools: Vec<&Message> = messages.iter().filter(|m| m.role == Role::Tool).collect();
+    assert!(tools.len() > n, "should have more than {n} tool results");
+    for oldest in &tools[..n] {
+        assert!(
+            oldest.is_collapsed && oldest.content.contains("recall(\""),
+            "the oldest tool results should be recall() stubs, got: {}",
+            oldest.content
+        );
+    }
+    assert!(!tools[n].is_collapsed, "the collapse front stops at {n}");
 }
 
 #[then(expr = "the {int} most recent tool results remain in full context")]

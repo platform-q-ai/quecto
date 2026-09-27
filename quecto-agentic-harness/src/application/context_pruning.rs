@@ -89,8 +89,8 @@ fn collapse_message(msg: &mut Message) {
 }
 
 /// Collapse the oldest tool results once the number of tool calls in the
-/// session exceeds `max_tool_calls`, keeping only the most recent
-/// `max_tool_calls` tool results in full context (#1017).
+/// session exceeds `max_tool_calls` (#1017), down to its low-water mark in one
+/// batch so the next results append without a prefix rewrite (#2213).
 ///
 /// The trigger is the cumulative **number of un-collapsed tool-result messages**
 /// in the conversation, so it accumulates across prompts within a session
@@ -108,11 +108,11 @@ pub fn collapse_tool_results_over_limit(messages: &mut [Message], max_tool_calls
     // failure / missing store): collapsing it would mint an unresolvable
     // recall() stub, so such results are excluded from both the count and the
     // collapse front (same rule as the conversation-message trigger).
-    let live_tool_calls = messages
+    let live = messages
         .iter()
         .filter(|m| m.role == Role::Tool && !m.is_collapsed && m.spill_id.is_some())
         .count();
-    let mut to_collapse = live_tool_calls.saturating_sub(max_tool_calls as usize);
+    let mut to_collapse = messages::ceiling::count_to_collapse(live, max_tool_calls as usize);
     if to_collapse == 0 {
         return 0;
     }
