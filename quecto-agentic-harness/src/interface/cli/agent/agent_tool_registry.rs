@@ -162,6 +162,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             inherited_tool_policy: flags.inherited_tool_policy.clone(),
             workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy {
                 workflow_disabled: flags.workflow_disabled,
+                workflow_requested: flags.workflow,
                 workflow_guards: flags.workflow_guards,
                 workflow_spec_path: flags.workflow_spec_path.as_deref(),
                 broadcast_tx,

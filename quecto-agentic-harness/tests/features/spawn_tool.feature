@@ -260,6 +260,24 @@ Feature: SpawnTool — child agent process spawning
     Then the spawn result should be an error
     And the spawn result should contain "workflow_guards requires workflow"
 
+  # --- workflow under the inherited tool policy (#2216) ---
+
+  Scenario: A workflow spawn is refused when the parent's tool policy denies workflow to children
+    Given a SpawnTool whose inherited tool policy denies workflow to children
+    When I parse spawn arguments '{"task":"work","workflow":true}'
+    Then the parse should fail with "workflow is not available to children of this agent"
+
+  Scenario: A workflow spawn is admitted when the parent never built the workflow tool
+    Given a SpawnTool whose inherited tool policy has no workflow entry
+    When I parse spawn arguments '{"task":"work","workflow":true}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have workflow true
+
+  Scenario: A workflow spawn that disables the workflow tool is refused
+    Given a SpawnTool with empty allowlist
+    When I parse spawn arguments '{"task":"work","workflow":true,"disable_tools":["workflow"]}'
+    Then the parse should fail with "disable_tools denies the workflow tool"
+
   # --- tool definition schema includes new fields ---
 
 

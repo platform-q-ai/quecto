@@ -66,6 +66,9 @@ impl ToolRuntimePolicyState {
 /// Workflow-specific policy inputs for [`build_tool_runtime`].
 pub(crate) struct ToolRuntimeWorkflowPolicy<'a> {
     pub workflow_disabled: bool,
+    /// The launch asked for workflow mode (`--workflow`); guards and a
+    /// bound spec ask for it too (#2216).
+    pub workflow_requested: bool,
     pub workflow_guards: bool,
     pub workflow_spec_path: Option<&'a std::path::Path>,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
@@ -80,6 +83,7 @@ impl<'a> ToolRuntimeWorkflowPolicy<'a> {
     pub fn disabled(cwd: &'a std::path::Path, home_dir: Option<&'a std::path::Path>) -> Self {
         Self {
             workflow_disabled: true,
+            workflow_requested: false,
             workflow_guards: false,
             workflow_spec_path: None,
             broadcast_tx: None,
@@ -366,7 +370,13 @@ pub(crate) fn build_tool_runtime(
         registry.disable_tool_by_entrypoint_default("agent_cmd");
     }
 
-    let wf_state = build_workflow_runtime(
+    let workflow_requested = workflow.workflow_requested
+        || workflow.workflow_guards
+        || workflow.workflow_spec_path.is_some();
+    let WorkflowRuntime {
+        engine: wf_state,
+        spec_error,
+    } = build_workflow_runtime(
         &mut registry,
         entrypoint,
         config,
@@ -374,6 +384,29 @@ pub(crate) fn build_tool_runtime(
         stderr,
         swarm_participation.clone(),
     )?;
+    // #2216: a spawned child explicitly asked for workflow whose runtime
+    // builds workflow (not a swarm member) expects an engine; when it could
+    // not be built (its spec failed to load) the child refuses to start with
+    // the reason, so its parent's spawn fails instead of reporting success.
+    // A top-level agent keeps its fail-closed start without an engine.
+    let engine_expected = spawned && workflow_requested && policy_state.workflow_supported;
+    let engine_missing = wf_state.is_none();
+    if engine_expected && engine_missing {
+        return Err(format!(
+            "workflow mode was requested, but the workflow engine could not be built: {}; refusing to start",
+            spec_error.as_deref().unwrap_or("no workflow runtime")
+        ));
+    }
+    // #2216: a runtime whose entrypoint builds workflow, or a swarm member,
+    // withholds it when it did not build it (`--no-workflow`, a swarm run, a
+    // spec that failed to load): its children stay closed to workflow. Only
+    // an entrypoint that never builds it (the one-shot CLI) leaves it to its
+    // children's own policy.
+    if wf_state.is_none() && (entrypoint.workflow_supported() || swarm_agent) {
+        registry.withhold_entrypoint_only_tool(
+            crate::infrastructure::tools::workflow_tool::WORKFLOW_TOOL_NAME,
+        );
+    }
     // A swarm cannot be created while this composition's workflow is engaged,
     // and once this process is a swarm agent the selector nudge stops.
     if let Some(engine) = &wf_state {
@@ -433,6 +466,11 @@ pub(crate) fn build_tool_runtime(
 
     registry.set_execution_profile_context(profile_context.profile_context());
     registry.refresh_spawn_inherited_child_policy_snapshot();
+    require_requested_workflow_tool(
+        &registry,
+        profile_context.profile_context(),
+        spawned && workflow_requested && wf_state.is_some(),
+    )?;
 
     let catalogue_entries = registry.catalogue_entries();
 
@@ -451,6 +489,48 @@ pub(crate) fn build_tool_runtime(
     })
 }
 
+/// #2216: a spawned child launched in workflow mode refuses to start when its
+/// tool policy hides the workflow tool from its model. Its engine would
+/// otherwise nudge the model toward a tool it cannot call, and its parent
+/// would see success; a refusal before readiness reaches the parent's
+/// `spawn` as the child's stderr instead. A top-level agent's user sees and
+/// owns its own policy, so its launch is left alone.
+fn require_requested_workflow_tool(
+    registry: &crate::infrastructure::tools::registry::ToolRegistryImpl,
+    context: ToolProfileContext,
+    workflow_engaged: bool,
+) -> Result<(), String> {
+    if workflow_engaged {
+        let visible = registry.definitions_for(context).iter().any(|definition| {
+            definition.name.as_ref()
+                == crate::infrastructure::tools::workflow_tool::WORKFLOW_TOOL_NAME
+        });
+        return if visible {
+            Ok(())
+        } else {
+            Err("workflow mode was requested, but this agent's tool policy denies the workflow tool; refusing to start".into())
+        };
+    }
+    Ok(())
+}
+
+/// What [`build_workflow_runtime`] built: the engine, if any, and why a
+/// requested bound spec could not be loaded.
+#[derive(Debug)]
+struct WorkflowRuntime {
+    engine: Option<crate::interface::shared::WorkflowStateHandle>,
+    spec_error: Option<String>,
+}
+
+impl WorkflowRuntime {
+    fn none() -> Self {
+        Self {
+            engine: None,
+            spec_error: None,
+        }
+    }
+}
+
 fn build_workflow_runtime(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     entrypoint: ToolEntrypoint,
@@ -458,7 +538,7 @@ fn build_workflow_runtime(
     workflow: ToolRuntimeWorkflowPolicy<'_>,
     stderr: &mut String,
     swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
-) -> Result<Option<crate::interface::shared::WorkflowStateHandle>, String> {
+) -> Result<WorkflowRuntime, String> {
     let swarm_agent = swarm_participation.participating();
     crate::domain::swarm::validate_workflow(
         swarm_agent,
@@ -466,23 +546,22 @@ fn build_workflow_runtime(
     )
     .map_err(|e| e.to_string())?;
     if swarm_agent {
-        return Ok(None);
+        return Ok(WorkflowRuntime::none());
     }
     if !entrypoint.workflow_supported() {
-        return Ok(None);
+        return Ok(WorkflowRuntime::none());
     }
 
     let spec_requested = workflow.workflow_spec_path.is_some();
+    let mut spec_error = None;
     let bound_spec = workflow
         .workflow_spec_path
         .and_then(|p| match load_workflow_spec(p) {
             Ok(spec) => Some(spec),
             Err(err) => {
-                stderr.push_str(&format!(
-                    "failed to load workflow spec '{}': {}\n",
-                    p.display(),
-                    err
-                ));
+                let error = format!("failed to load workflow spec '{}': {}", p.display(), err);
+                stderr.push_str(&format!("{error}\n"));
+                spec_error = Some(error);
                 None
             }
         });
@@ -494,7 +573,10 @@ fn build_workflow_runtime(
     let workflow_available = !(spec_requested && bound_spec.is_none())
         && (!workflow.workflow_disabled || bound_spec.is_some());
     if !workflow_available {
-        return Ok(None);
+        return Ok(WorkflowRuntime {
+            engine: None,
+            spec_error,
+        });
     }
 
     let wf_emitter = workflow.broadcast_tx.map(|tx| {
@@ -539,6 +621,12 @@ fn build_workflow_runtime(
         swarm_participation,
     )
     .map_err(|error| format!("failed to initialize workflow: {error}"))?;
+    debug_assert!(
+        registry.registers_entrypoint_only(
+            crate::infrastructure::tools::workflow_tool::WORKFLOW_TOOL_NAME
+        ),
+        "the workflow tool must register as the allowlisted entrypoint-only tool"
+    );
     if let Some(spec) = bound_spec {
         let mut engine = state
             .lock()
@@ -553,7 +641,10 @@ fn build_workflow_runtime(
             })?;
         engine.set_bound(true);
     }
-    Ok(Some(state))
+    Ok(WorkflowRuntime {
+        engine: Some(state),
+        spec_error: None,
+    })
 }
 
 #[cfg(test)]
@@ -563,6 +654,18 @@ mod catalogue_tests;
 #[cfg(test)]
 #[path = "tool_runtime_profile_tests.rs"]
 mod profile_tests;
+
+#[cfg(test)]
+#[path = "tool_runtime_inherited_workflow_tests.rs"]
+mod inherited_workflow_tests;
+
+#[cfg(test)]
+#[path = "tool_runtime_workflow_denial_tests.rs"]
+mod workflow_denial_tests;
+
+#[cfg(test)]
+#[path = "tool_runtime_workflow_engine_tests.rs"]
+mod workflow_engine_tests;
 
 /// Canonicalize the parent's own config path before it is plumbed into the
 /// tool runtime (PR #1401 review): container spawns fall back to this path

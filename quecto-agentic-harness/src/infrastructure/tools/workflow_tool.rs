@@ -11,6 +11,12 @@ use crate::domain::workflow::{
     WorkflowEngine, WorkflowGuardRule, WorkflowSnapshot, WorkflowTemplateSummary,
 };
 
+/// Provider the bundled workflow tool registers under; the inherited-policy
+/// allowlist of entrypoint-only tools names it (#2216).
+pub const WORKFLOW_PROVIDER_ID: &str = "quecto:workflow";
+/// The bundled workflow tool's name.
+pub const WORKFLOW_TOOL_NAME: &str = "workflow";
+
 pub type WorkflowEventEmitter = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
 pub type WorkflowEngineHandle = Arc<Mutex<WorkflowEngine>>;
 
@@ -330,7 +336,7 @@ pub fn snapshot_to_event(snapshot: &WorkflowSnapshot) -> serde_json::Value {
 impl Tool for WorkflowTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "workflow".into(),
+            name: WORKFLOW_TOOL_NAME.into(),
             description: "Manage the active development workflow. Discover templates with action=list_templates, activate one with action=select_template, mark steps done with action=check (the result hands you the next step's guidance), and use action=status for current progress and guidance.".into(),
             parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["status","list_templates","select_template","check","uncheck","skip","reset","set_issue","clear_issue","check_guards"]},"template":{"type":"string"},"step":{"type":"integer","description":"Required for check/uncheck/skip; 1-indexed. check requires earlier steps done; skip marks done without ordering checks and satisfies guards; uncheck clears only this step. Current step is the first unfinished; visible progress hides later done flags until earlier gaps close."},"issueNumber":{"type":"integer"},"issueTitle":{"type":"string"},"command":{"type":"string","description":"Required for check_guards: bash command to preflight, not execute. Requires an active template; evaluates only matching template guards. Disabled guards or no matching rules succeed. Rules require steps strictly before before_step_key done (checked or skipped), not the named step; messages are diagnostic, not extra prohibitions."}},"required":["action"]}"#.into(),
         }

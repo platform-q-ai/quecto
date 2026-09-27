@@ -157,7 +157,7 @@ fn swarm_runtime_omits_workflow_engine_tool_and_guards() {
         crate::infrastructure::tools::swarm_bridge::Participation::Fixed(true),
     )
     .unwrap();
-    assert!(state.is_none());
+    assert!(state.engine.is_none());
     assert_eq!(registry.guard_count(), 0);
     assert!(registry.get("workflow").is_none());
     assert!(!registry.definitions().iter().any(|t| t.name == "workflow"));

@@ -5,8 +5,8 @@ use crate::domain::tool::{
     ToolPolicyReconciliation, ToolPolicyRequest,
 };
 use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolCatalogueEntry};
-use crate::domain::tool_id::stable_tool_id;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use crate::domain::tool_policy::inherited_child_policy_from_catalogue;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 
 #[derive(Debug, Default, Clone)]
@@ -202,18 +202,9 @@ impl AgentLoopImpl {
     }
 
     pub(crate) fn refresh_spawn_inherited_child_policy_snapshot(&self) {
-        let mut snapshot = BTreeMap::new();
-        for tool in self.tool_catalogue_entries() {
-            let name = tool.name.into_owned();
-            let stable_id = tool.stable_id.into_owned();
-            let scope = tool.effective_scope;
-            let is_generated_legacy_stable_id =
-                stable_id == stable_tool_id(tool.source, tool.provider_id.as_ref(), &name);
-            snapshot.insert(stable_id, scope);
-            if is_generated_legacy_stable_id {
-                snapshot.insert(name, scope);
-            }
-        }
+        // The registry completes the snapshot with the policy it holds over
+        // tools it never built (#2216) before handing it to spawn.
+        let snapshot = inherited_child_policy_from_catalogue(self.tool_catalogue_entries());
         self.extension_tool_registry()
             .set_inherited_child_policy_snapshot_for_spawn(snapshot);
     }
