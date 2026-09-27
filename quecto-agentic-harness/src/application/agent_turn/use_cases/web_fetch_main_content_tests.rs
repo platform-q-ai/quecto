@@ -633,6 +633,7 @@ fn the_page_header_does_not_count_against_the_landmark() {
 fn role_main_is_an_attribute_not_a_substring() {
     for (open, landmark) in [
         ("<div title=\"a role=main\">", false),
+        ("<div title=\"a role=main b\">", false),
         ("<div title='x role=\"main\"'>", false),
         ("<div data-x=role=main>", false),
         ("<div role=\"main region\">", true),
@@ -671,6 +672,12 @@ fn an_unterminated_quote_does_not_hide_later_landmarks() {
     assert!(text.contains(NOTE) && !text.contains("side"), "{text}");
     let text = strip_html("<p>x < y = \"z</p><p>after</p>");
     assert_eq!(text, "x < y = \"z\n\nafter");
+    // A quote that closes holds its brackets: with no `>` after it, the
+    // `<` was text.
+    assert_eq!(
+        strip_html("<p>a</p><a title=\"x>y\""),
+        "a\n<a title=\"x>y\""
+    );
 }
 
 /// A quoted `>` inside an attribute leaks nothing, whole page or landmark.
