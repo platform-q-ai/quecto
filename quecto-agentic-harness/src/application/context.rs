@@ -15,18 +15,27 @@
 //!   content;
 //! - provider-truth context gauges supersede local estimates, while subsequent
 //!   estimate-only pruning deltas carry that truth forward until the next
-//!   provider observation; and
+//!   provider observation;
+//! - the ceiling decides on calibrated occupancy: the effective budget is
+//!   converted to estimate units at the last provider-observed ratio
+//!   (#2212), so the ladder's per-message sums stay consistent with it; and
 //! - durable prefix dirty semantics are latched for every persisted-layout or
 //!   in-place history mutation, including manifest insert/remove, stub demotion,
 //!   and physical drops.
 
 use crate::application::context_pruning;
 use crate::application::sessions::use_cases::{ListRetainedContext, RetainContext};
+use crate::domain::context_calibration::EstimateScale;
 use crate::domain::message::{Message, ToolCall};
 use crate::domain::session::SpillEntry;
 use crate::domain::session_identity::SessionIdentity;
 use crate::domain::tool::ImageBlock;
 use std::sync::{Arc, Mutex};
+
+// #2212: the provider-calibrated gauge and the estimate scale it observes.
+#[path = "context_gauge.rs"]
+mod gauge;
+use gauge::ContextGaugeCalibration;
 
 /// The narrow handles the pruning policy holds on the sessions
 /// capability's retention namespace (D9 #1978): the writer that appends
@@ -43,57 +52,6 @@ pub struct ContextRetention {
 impl std::fmt::Debug for ContextRetention {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ContextRetention").finish_non_exhaustive()
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub(super) struct ContextGaugeCalibration {
-    /// Provider-reported occupancy shown to users after the last exact LLM call,
-    /// adjusted by estimated removals/demotions in subsequent pruning passes.
-    reported_tokens: usize,
-    /// Message-only estimate at the point represented by `reported_tokens`.
-    estimated_tokens: usize,
-    /// False until a provider supplies usage; without provider truth the gauge
-    /// intentionally remains the internal estimate for providers that omit usage.
-    has_provider_truth: bool,
-}
-
-impl ContextGaugeCalibration {
-    pub(super) fn reconcile_before_call(&mut self, current_estimate: usize) -> usize {
-        if self.has_provider_truth {
-            if current_estimate < self.estimated_tokens {
-                self.reported_tokens = self
-                    .reported_tokens
-                    .saturating_sub(self.estimated_tokens - current_estimate);
-            } else if current_estimate > self.estimated_tokens {
-                self.reported_tokens = self
-                    .reported_tokens
-                    .saturating_add(current_estimate - self.estimated_tokens);
-            }
-            self.estimated_tokens = current_estimate;
-            self.reported_tokens
-        } else {
-            self.estimated_tokens = current_estimate;
-            self.reported_tokens = current_estimate;
-            current_estimate
-        }
-    }
-
-    pub(super) fn observe_provider_truth(
-        &mut self,
-        reported_tokens: usize,
-        estimate_at_call: usize,
-    ) {
-        self.reported_tokens = reported_tokens;
-        self.estimated_tokens = estimate_at_call;
-        self.has_provider_truth = true;
-    }
-
-    pub(super) fn observe_estimate_only(&mut self, estimate: usize) {
-        if !self.has_provider_truth {
-            self.reported_tokens = estimate;
-            self.estimated_tokens = estimate;
-        }
     }
 }
 
@@ -150,8 +108,14 @@ impl ContextManager {
         }
     }
 
+    /// Another session's transcript: the last observation does not
+    /// describe it, so the gauge and its scale start over (#2212).
     pub fn set_session_key(&mut self, session_key: SessionIdentity) {
         self.session_key = session_key;
+        self.gauge
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .forget_calibration();
     }
 
     pub fn set_model_context_window(&mut self, model_context_window: Option<usize>) {
@@ -178,6 +142,35 @@ impl ContextManager {
             Some(window) => self.max_context_tokens.min(window),
             None => self.max_context_tokens,
         }
+    }
+
+    /// The budget the pruning ceiling compares the estimate with (#2212):
+    /// the effective budget in estimate units at the provider-observed
+    /// scale, so the ladder prunes on calibrated occupancy. Without an
+    /// observation the scale is 1 and this is the effective budget.
+    pub fn pruning_ceiling_in_estimate_units(&self) -> usize {
+        let effective = self.effective_max_context_tokens();
+        let ceiling = self.estimate_scale().in_estimate_units(effective);
+        debug_assert!(
+            ceiling <= effective,
+            "calibration only tightens the ceiling"
+        );
+        ceiling
+    }
+
+    pub fn estimate_scale(&self) -> EstimateScale {
+        self.gauge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .estimate_scale()
+    }
+
+    /// Forget the observed scale (a model switch or a session change).
+    pub fn forget_estimate_scale(&self) {
+        self.gauge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .forget_estimate_scale();
     }
 
     pub fn reconcile_context_gauge(&self, estimate: usize) -> usize {

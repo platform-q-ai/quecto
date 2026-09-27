@@ -59,8 +59,8 @@ fn estimated_tokens_counts_content_tool_calls_ids_and_images_once() {
         + Message::estimate_tokens("tool")
         + Message::estimate_tokens("abcdefghi")
         + Message::estimate_tokens("callid")
-        + Message::estimate_tokens("12345")
-        + Message::estimate_tokens("abcdef");
+        + crate::domain::token_estimate::estimate_opaque_tokens("12345")
+        + crate::domain::token_estimate::estimate_opaque_tokens("abcdef");
 
     assert_eq!(msg.estimated_tokens(), expected);
     assert_eq!(msg.estimated_tokens(), expected);
@@ -89,4 +89,31 @@ fn token_cache_clone_directly_resets_once_lock() {
         cloned.build_count.load(std::sync::atomic::Ordering::SeqCst),
         0
     );
+}
+
+/// #2212: image data keeps the plain ASCII/4 rate although base64 carries
+/// digits; the dense rate would double an over-estimate that is already
+/// large (providers price images per image).
+#[test]
+fn image_data_is_estimated_at_the_opaque_rate() {
+    let data = "iVBORw0KGgo1AAAANSUhEUg2AAAAEAAAAB3CAYAAAAf4FcSJAAAADUlEQVR42mNk".repeat(8);
+    let opaque = crate::domain::token_estimate::estimate_opaque_tokens(&data);
+    assert!(
+        Message::estimate_tokens(&data) > opaque,
+        "base64 reads as dense text"
+    );
+
+    let mut msg = Message::user("");
+    msg.image_blocks.push(crate::domain::tool::ImageBlock {
+        mime_type: "image/png",
+        data: data.clone(),
+    });
+    assert_eq!(msg.estimated_tokens(), opaque);
+
+    let mut msg = Message::user("");
+    msg.user_image_blocks.push(UserImageBlock {
+        mime_type: "image/png".to_string(),
+        data,
+    });
+    assert_eq!(msg.estimated_tokens(), opaque);
 }

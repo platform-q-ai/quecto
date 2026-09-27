@@ -223,18 +223,11 @@ impl Message {
         }
     }
 
-    /// Estimate token count from text content.
-    ///
-    /// Uses a two-class character heuristic that is accurate for both ASCII
-    /// prose and non-ASCII (CJK, emoji, etc.).
-    /// Estimate token count from text content. This is exposed as a public
-    /// helper so the rest of the codebase (and tests) can reuse the same
-    /// heuristic without recomputing it.
+    /// Estimate token count from text content, by character class: prose,
+    /// dense digit-bearing runs and non-ASCII (#2212). See
+    /// [`crate::domain::token_estimate`].
     pub fn estimate_tokens(text: &str) -> usize {
-        let (ascii, non_ascii) = text.chars().fold((0usize, 0usize), |(a, n), c| {
-            if c.is_ascii() { (a + 1, n) } else { (a, n + 1) }
-        });
-        ascii.div_ceil(4) + non_ascii
+        crate::domain::token_estimate::estimate_tokens(text)
     }
 
     /// Clear the cached token estimate. Call this whenever the fields that
@@ -270,12 +263,12 @@ impl Message {
             let user_image_tokens: usize = self
                 .user_image_blocks
                 .iter()
-                .map(|img| Self::estimate_tokens(&img.data))
+                .map(|img| crate::domain::token_estimate::estimate_opaque_tokens(&img.data))
                 .sum();
             let image_tokens: usize = self
                 .image_blocks
                 .iter()
-                .map(|img| Self::estimate_tokens(&img.data))
+                .map(|img| crate::domain::token_estimate::estimate_opaque_tokens(&img.data))
                 .sum();
             text_tokens + tool_call_tokens + tool_call_id_tokens + image_tokens + user_image_tokens
         })

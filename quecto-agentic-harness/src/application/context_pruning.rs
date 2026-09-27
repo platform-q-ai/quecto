@@ -26,23 +26,21 @@ use crate::domain::message::{Message, Role};
 /// the count-based trigger could fire, which is unreachable in practice.
 pub const COLLAPSE_DISABLED: u32 = u32::MAX;
 
-/// Estimate token count from text content (#305).
+/// Estimate token count from text content (#305, #2212).
 ///
-/// Uses a two-class character heuristic that is accurate for both ASCII prose
-/// and non-ASCII (CJK, emoji, etc.):
+/// A per-class character heuristic (`domain::token_estimate`):
 ///
-/// - ASCII codepoints: ~4 chars per token (matches GPT cl100k_base for English)
-/// - Non-ASCII codepoints: ~1 char per token (CJK, emoji, etc. are typically
-///   1 token per codepoint in current tokenisers)
+/// - ASCII prose: ~4 chars per token (GPT cl100k_base on English);
+/// - ASCII words carrying a digit, and the separator after each: ~2 chars
+///   per token (numbers, hex, UUIDs, log columns: `seq` output measured
+///   2.0x the prose rate in #2212);
+/// - long mixed-case runs with digits (base64, JWTs, keys): ~1.4;
+/// - non-ASCII: ~1 token per codepoint (CJK, emoji).
 ///
-/// The old byte-based estimate (`len/3`) overcounted ASCII by ~33% and gave
-/// the same token count for 100 CJK chars as for 300 ASCII chars, which is
-/// inaccurate in opposite directions. This heuristic is more balanced: it
-/// reduces pruning pressure on ASCII-heavy sessions without undercounting CJK
-/// (which would weaken pruning as a prompt-injection defence).
-///
-/// The estimate is intentionally slightly conservative — it is better to
-/// prune a turn early than to exceed the provider's context limit.
+/// It replaced a byte-based `len/3`, which overcounted ASCII by ~33% and
+/// undercounted CJK (weakening pruning as a prompt-injection defence).
+/// Not exact: once a provider reports its prompt size, the ceiling is
+/// scaled by the observed residual (`domain::context_calibration`, 1x..4x).
 pub fn estimate_tokens(text: &str) -> usize {
     crate::domain::message::Message::estimate_tokens(text)
 }

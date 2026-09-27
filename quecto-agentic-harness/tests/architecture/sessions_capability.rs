@@ -715,13 +715,23 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/composition/retention.rs", 35),
     ("src/interface/cli/retention_handles.rs", 33),
     ("src/infrastructure/tools/recall.rs", 183),
-    ("src/application/context.rs", 336),
-    ("src/application/context_pruning.rs", 244),
+    // #2212: the gauge moved to its own module (336 → 329).
+    ("src/application/context.rs", 329),
+    // #2212: new modules (the gauge and its estimate scale; the pure ratio;
+    // the per-class estimate).
+    ("src/application/context_gauge.rs", 102),
+    ("src/domain/context_calibration.rs", 118),
+    ("src/domain/token_estimate.rs", 162),
+    // #2212: the estimate doc points at the per-class module (244 → 242).
+    ("src/application/context_pruning.rs", 242),
     // #2213: the demotion-ladder ceiling moved to its own module (304 → 217).
     ("src/application/context_pruning_messages.rs", 217),
     // #2213: new module (the ladder, the low-water mark and the dials' batch).
     ("src/application/context_pruning_ceiling.rs", 203),
     ("src/application/agent_loop_spill.rs", 56),
+    // #2212: the gauge wrappers moved to their own module (749 → 707).
+    ("src/application/agent_loop.rs", 707),
+    ("src/application/agent_loop_gauge.rs", 61),
     // D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976 and D8 #1977 each
     // add use cases to this graph; the ceiling follows their merge (was 113
     // before D8); D10 #1979 drops the raw-key conversion (was 119).

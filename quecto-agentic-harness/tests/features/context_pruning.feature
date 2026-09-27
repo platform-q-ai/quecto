@@ -426,15 +426,17 @@ Feature: Context pruning via sliding window and tool-call collapse
   # #2213: crossing the ceiling demotes down to the low-water mark (75% of
   # the budget, rounded up), not just under the ceiling, so the next turns
   # append without rewriting the cached prompt prefix.
+  # (#2212: the stubs' ids and counts are digit runs, priced at the dense
+  # rate, so the budget leaves the mark above what four stubs cost.)
   Scenario: Crossing the ceiling demotes down to the low-water mark
-    Given max_context_tokens is set to 170
+    Given max_context_tokens is set to 185
     And recent-turn pinning is set to 0 turns
     And 4 old conversation messages
     And an in-flight user prompt
     When the agent enforces the context ceiling
     Then at least 1 old message is reduced to a recall stub by the ceiling
     And no messages are removed from the conversation
-    And total context is under 128 tokens
+    And total context is under 139 tokens
 
   Scenario: Budget pressure removes stubs entirely only when stubbing is not enough
     Given max_context_tokens is set to 5
@@ -505,6 +507,43 @@ Feature: Context pruning via sliding window and tool-call collapse
   Scenario: Token estimation for CJK text uses 1 token per character
     Given a string of 100 CJK characters
     Then the estimated token count should be 100
+
+  # --- #2212: the ceiling counts dense output at its tokenised size ---
+
+  # Digits, hex and log columns tokenise at about 2 characters a token,
+  # prose at about 4. The estimate prices each at its own rate, and once a
+  # provider reports its prompt size, the ceiling decides on that figure.
+  @issue-2212
+  Scenario: Numeric tool output is counted at its tokenised size
+    Given a configured agent with a mock LLM
+    And a spilled conversation history of 6 prior turns of seq output
+    And the pruning agent context budget is 4000 tokens
+    And the LLM returns a plain text response "final answer"
+    When the user sends "go" through the pruning agent
+    Then some pre-run messages are collapsed to recall stubs
+    And a flat four-characters-per-token count of the pre-run history fits the budget
+
+  @issue-2212
+  Scenario: A provider-reported size over the budget prunes the next request of the run
+    Given a configured agent with a mock LLM
+    And a spilled conversation history of 6 prior turns of prose
+    And the pruning agent context budget is 4000 tokens
+    And the LLM returns a tool call for "bulk" reporting 8000 context tokens
+    And the tool "bulk" returns "tool-output-payload"
+    And the LLM returns a plain text response "final answer"
+    When the user sends "go" through the pruning agent
+    Then some pre-run messages are collapsed to recall stubs
+
+  @issue-2212
+  Scenario: Without provider usage prose that fits the budget is kept
+    Given a configured agent with a mock LLM
+    And a spilled conversation history of 6 prior turns of prose
+    And the pruning agent context budget is 4000 tokens
+    And the LLM returns a tool call for "bulk" reporting no usage
+    And the tool "bulk" returns "tool-output-payload"
+    And the LLM returns a plain text response "final answer"
+    When the user sends "go" through the pruning agent
+    Then no pre-run message is collapsed to a recall stub
 
   # --- Default max context tokens is 200,000 ---
 
