@@ -175,6 +175,25 @@ fn an_unreachable_low_water_mark_drops_only_down_to_the_ceiling() {
 }
 
 #[test]
+fn a_reachable_low_water_mark_is_the_drop_target_when_stubbing_misses_the_ceiling() {
+    // Four stubs alone are still over a budget of 100; only the tiny prompt
+    // is exempt, so dropping reaches the mark and drops down to it, not
+    // just under the ceiling.
+    let mut messages = session(4);
+    let budget = 100;
+    assert!(estimate_total_tokens(&messages[..1]) <= low_water(budget));
+
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 0);
+
+    assert!(outcome.dropped >= 1, "stubbing alone missed the ceiling");
+    assert!(
+        estimate_total_tokens(&messages) <= low_water(budget),
+        "{} over the mark",
+        estimate_total_tokens(&messages)
+    );
+}
+
+#[test]
 fn stubbing_that_meets_the_ceiling_drops_nothing_even_above_the_mark() {
     // Four pinned turns dominate: stubbing turns 1 and 2 meets the ceiling
     // but not the low-water mark. The drop rung is a last resort for the
