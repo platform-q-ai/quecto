@@ -373,7 +373,10 @@ pub(crate) fn build_tool_runtime(
     let workflow_requested = workflow.workflow_requested
         || workflow.workflow_guards
         || workflow.workflow_spec_path.is_some();
-    let wf_state = build_workflow_runtime(
+    let WorkflowRuntime {
+        engine: wf_state,
+        spec_error,
+    } = build_workflow_runtime(
         &mut registry,
         entrypoint,
         config,
@@ -381,6 +384,19 @@ pub(crate) fn build_tool_runtime(
         stderr,
         swarm_participation.clone(),
     )?;
+    // #2216: a spawned child explicitly asked for workflow whose runtime
+    // builds workflow (not a swarm member) expects an engine; when it could
+    // not be built (its spec failed to load) the child refuses to start with
+    // the reason, so its parent's spawn fails instead of reporting success.
+    // A top-level agent keeps its fail-closed start without an engine.
+    let engine_expected = spawned && workflow_requested && policy_state.workflow_supported;
+    let engine_missing = wf_state.is_none();
+    if engine_expected && engine_missing {
+        return Err(format!(
+            "workflow mode was requested, but the workflow engine could not be built: {}; refusing to start",
+            spec_error.as_deref().unwrap_or("no workflow runtime")
+        ));
+    }
     // #2216: a runtime whose entrypoint builds workflow, or a swarm member,
     // withholds it when it did not build it (`--no-workflow`, a swarm run, a
     // spec that failed to load): its children stay closed to workflow. Only
@@ -498,6 +514,23 @@ fn require_requested_workflow_tool(
     Ok(())
 }
 
+/// What [`build_workflow_runtime`] built: the engine, if any, and why a
+/// requested bound spec could not be loaded.
+#[derive(Debug)]
+struct WorkflowRuntime {
+    engine: Option<crate::interface::shared::WorkflowStateHandle>,
+    spec_error: Option<String>,
+}
+
+impl WorkflowRuntime {
+    fn none() -> Self {
+        Self {
+            engine: None,
+            spec_error: None,
+        }
+    }
+}
+
 fn build_workflow_runtime(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     entrypoint: ToolEntrypoint,
@@ -505,7 +538,7 @@ fn build_workflow_runtime(
     workflow: ToolRuntimeWorkflowPolicy<'_>,
     stderr: &mut String,
     swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
-) -> Result<Option<crate::interface::shared::WorkflowStateHandle>, String> {
+) -> Result<WorkflowRuntime, String> {
     let swarm_agent = swarm_participation.participating();
     crate::domain::swarm::validate_workflow(
         swarm_agent,
@@ -513,23 +546,22 @@ fn build_workflow_runtime(
     )
     .map_err(|e| e.to_string())?;
     if swarm_agent {
-        return Ok(None);
+        return Ok(WorkflowRuntime::none());
     }
     if !entrypoint.workflow_supported() {
-        return Ok(None);
+        return Ok(WorkflowRuntime::none());
     }
 
     let spec_requested = workflow.workflow_spec_path.is_some();
+    let mut spec_error = None;
     let bound_spec = workflow
         .workflow_spec_path
         .and_then(|p| match load_workflow_spec(p) {
             Ok(spec) => Some(spec),
             Err(err) => {
-                stderr.push_str(&format!(
-                    "failed to load workflow spec '{}': {}\n",
-                    p.display(),
-                    err
-                ));
+                let error = format!("failed to load workflow spec '{}': {}", p.display(), err);
+                stderr.push_str(&format!("{error}\n"));
+                spec_error = Some(error);
                 None
             }
         });
@@ -541,7 +573,10 @@ fn build_workflow_runtime(
     let workflow_available = !(spec_requested && bound_spec.is_none())
         && (!workflow.workflow_disabled || bound_spec.is_some());
     if !workflow_available {
-        return Ok(None);
+        return Ok(WorkflowRuntime {
+            engine: None,
+            spec_error,
+        });
     }
 
     let wf_emitter = workflow.broadcast_tx.map(|tx| {
@@ -606,7 +641,10 @@ fn build_workflow_runtime(
             })?;
         engine.set_bound(true);
     }
-    Ok(Some(state))
+    Ok(WorkflowRuntime {
+        engine: Some(state),
+        spec_error: None,
+    })
 }
 
 #[cfg(test)]
@@ -624,6 +662,10 @@ mod inherited_workflow_tests;
 #[cfg(test)]
 #[path = "tool_runtime_workflow_denial_tests.rs"]
 mod workflow_denial_tests;
+
+#[cfg(test)]
+#[path = "tool_runtime_workflow_engine_tests.rs"]
+mod workflow_engine_tests;
 
 /// Canonicalize the parent's own config path before it is plumbed into the
 /// tool runtime (PR #1401 review): container spawns fall back to this path

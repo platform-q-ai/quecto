@@ -247,31 +247,47 @@ fn build_agent_with_unloadable_workflow_spec_fails_closed() {
         r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
     )
     .unwrap();
-    // A spawned child too (#2216): its workflow-tool check applies only to
-    // an engine that was built, so this path keeps its own outcome.
-    for spawned in [false, true] {
-        // Point at a spec file that does not exist.
+    let cfg = tmp.path().join("config.json");
+    // Point at a spec file that does not exist.
+    let flags_for = |spawned: bool| {
         let mut flags = uds_workflow_flags(false, false);
         flags.spawned = spawned;
         flags.workflow_spec_path = Some(tmp.path().join("missing.json"));
-        let mut stderr = String::new();
-        let cfg = tmp.path().join("config.json");
-        let result = build_agent_from_config(
-            tmp.path(),
-            &selection_for_test(&cfg, false),
-            &flags,
-            &mut stderr,
-            None,
-        )
-        .expect("agent should still build");
-        // Fail closed: an assigned-but-unloadable spec must NOT degrade into a
-        // free-selection workflow agent — no workflow is registered.
-        assert!(result.workflow_state.is_none(), "stderr: {stderr}");
-        assert!(
-            stderr.contains("refusing to start a workflow"),
-            "stderr: {stderr}"
-        );
-    }
+        flags
+    };
+    // Top level: fail closed. An assigned-but-unloadable spec must NOT
+    // degrade into a free-selection workflow agent; no workflow is registered.
+    let mut stderr = String::new();
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags_for(false),
+        &mut stderr,
+        None,
+    )
+    .expect("a top-level agent still builds");
+    assert!(result.workflow_state.is_none(), "stderr: {stderr}");
+    assert!(
+        stderr.contains("refusing to start a workflow"),
+        "stderr: {stderr}"
+    );
+    // A spawned child (#2216): it was sent to run that spec, so it refuses to
+    // start and names the load error, which its parent's spawn reports.
+    let mut stderr = String::new();
+    let refused = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags_for(true),
+        &mut stderr,
+        None,
+    );
+    assert!(refused.is_none(), "stderr: {stderr}");
+    assert!(
+        stderr.contains("workflow engine could not be built")
+            && stderr.contains("failed to load workflow spec")
+            && stderr.contains("missing.json"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
