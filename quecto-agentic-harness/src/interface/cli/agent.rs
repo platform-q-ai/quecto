@@ -730,6 +730,9 @@ mod startup_identity_tests;
 #[path = "agent_tests.rs"]
 mod tests;
 #[cfg(test)]
+#[path = "agent_web_fetch_recipe_tests.rs"]
+mod web_fetch_recipe_tests;
+#[cfg(test)]
 #[path = "agent_workflow_discovery_tests.rs"]
 mod workflow_discovery_tests;
 #[cfg(test)]

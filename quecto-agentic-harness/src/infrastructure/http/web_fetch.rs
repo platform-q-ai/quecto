@@ -67,6 +67,13 @@ impl WebFetchClientRecipe {
         self
     }
 
+    /// The connect timeout this recipe sets, for tests of the paths that
+    /// carry it.
+    #[cfg(test)]
+    pub(crate) fn configured_connect_timeout(&self) -> Option<Duration> {
+        self.connect_timeout
+    }
+
     /// The recipe's settings on a fresh builder; the adapter adds its own
     /// enforcement over them.
     fn builder(&self) -> reqwest::ClientBuilder {
@@ -493,6 +500,9 @@ async fn read_body(mut response: reqwest::Response, max: usize) -> Result<Vec<u8
 #[cfg(test)]
 #[path = "web_fetch_destination_tests.rs"]
 mod destination_tests;
+#[cfg(test)]
+#[path = "web_fetch_lifecycle_tests.rs"]
+mod lifecycle_tests;
 #[cfg(test)]
 #[path = "web_fetch_redirect_tests.rs"]
 mod redirect_tests;
