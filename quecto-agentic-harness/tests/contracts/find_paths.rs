@@ -36,6 +36,7 @@ async fn typed_port_preserves_incomplete_output_and_normalized_request() {
             result_limit_reached: true,
             incomplete: true,
             diagnostic: Some("bounded discovery".into()),
+            skipped_vcs_dir: None,
         }))),
     });
     let port: Arc<dyn FindPaths> = effect.clone();
@@ -44,6 +45,7 @@ async fn typed_port_preserves_incomplete_output_and_normalized_request() {
             pattern: "**/*.rs".into(),
             path: "root".into(),
             limit: Some(5.5),
+            kind: None,
         })
         .await
         .unwrap();
@@ -81,6 +83,7 @@ async fn typed_port_preserves_each_failure_category() {
                 pattern: "*".into(),
                 path: ".".into(),
                 limit: None,
+                kind: None,
             })
             .await
             .unwrap_err();

@@ -21,6 +21,7 @@ Feature: Find Tool
     Given a find workspace file "hello.txt"
     When I find files matching "*.rs"
     Then the find result should contain "No files found"
+    And the find result should contain "lists only directories"
     And the find result should not be an error
 
   Scenario: Default path searches current workspace
@@ -146,4 +147,59 @@ Feature: Find Tool
     And a find workspace file "other/.gitignore" with content "*.json\n"
     When I find files matching "app/src/*.json" in path "."
     Then the find result should contain "config.json"
+    And the find result should not be an error
+
+  @done
+  Scenario: Hidden files are listed but git internals are skipped (#2199)
+    Given a find tool git workspace
+    And a find workspace file ".env"
+    And a find workspace file ".gitignore"
+    And a find workspace file ".github/ci.yml"
+    And a find workspace file "src/main.rs"
+    When I find files matching "*"
+    Then the find result should have the line ".env"
+    And the find result should have the line ".gitignore"
+    And the find result should have the line ".github/ci.yml"
+    And the find result should have the line "src/main.rs"
+    And the find result should list nothing inside ".git"
+    And the find result should not be an error
+
+  @done
+  Scenario: A path inside .git lists git's own files (#2199)
+    Given a find tool git workspace
+    When I find files matching "HEAD" in path ".git"
+    Then the find result should have the line ".git/HEAD"
+    And the find result should not be an error
+
+  @done
+  Scenario: Type d lists only directories (#2200)
+    Given a find workspace file "src/domain/agent.rs"
+    And a find workspace file "top.rs"
+    When I find entries matching "*" of type "d"
+    Then the find result should have the line "src/"
+    And the find result should have the line "src/domain/"
+    And the find result should not contain ".rs"
+    And the find result should not be an error
+
+  @done
+  Scenario: A pattern ending in a slash lists directories (#2200)
+    Given a find workspace file "src/domain/agent.rs"
+    And a find workspace file "src/lib.rs"
+    When I find files matching "*/" in path "src"
+    Then the find result should have the line "src/domain/"
+    And the find result should not contain ".rs"
+    And the find result should not be an error
+
+  @done
+  Scenario: An unknown type is refused, not ignored (#2200)
+    Given a find workspace file "top.rs"
+    When I find entries matching "*" of type "dir"
+    Then the find result should be an error
+    And the find result should contain "(directories only)"
+
+  @done
+  Scenario: Paths are relative to the workspace, as grep shows them (#2203)
+    Given a find workspace file "crate/src/domain/agent.rs"
+    When I find files matching "*.rs" in path "crate/src/domain"
+    Then the find result should have the line "crate/src/domain/agent.rs"
     And the find result should not be an error

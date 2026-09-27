@@ -35,20 +35,37 @@ Feature: LsTool — Quecto compatibility
   Scenario: Limit parameter caps entries returned (Quecto compatibility)
     Given ls workspace with 20 files named "file_NNN.txt"
     When I list the workspace with limit 5
-    Then the ls result should contain "5 entries limit reached"
-    And the ls result should contain "limit=10"
+    Then the ls result should contain "[Entries 1-5 of 20 shown"
+    And the ls result should contain "Next: offset=5"
     And the ls result should not be an error
 
   @done
   Scenario: Default limit is 500 entries (Quecto compatibility)
     Given ls workspace with 600 files named "file_NNN.txt"
     When I list the workspace
-    Then the ls result should contain "500 entries limit reached"
+    Then the ls result should contain "[Entries 1-500 of 600 shown"
     And the ls result should not be an error
 
   @done
   Scenario: Float limit parameter is accepted
     Given ls workspace with 20 files named "file_NNN.txt"
     When I list the workspace with float limit 5.0
-    Then the ls result should contain "5 entries limit reached"
+    Then the ls result should contain "[Entries 1-5 of 20 shown"
+    And the ls result should not be an error
+
+  @done
+  Scenario: A truncated listing is the sorted start of the whole directory (#2188)
+    Given ls workspace with 1200 files named "fN"
+    When I list the workspace with limit 20
+    Then the ls result should list sorted entries 1 to 20 of the directory
+    And the ls result should contain "[Entries 1-20 of 1200 shown (sorted case-insensitively; limit 20 reached)"
+    And the ls result should contain "Next: offset=20"
+    And the ls result should not be an error
+
+  @done
+  Scenario: Offset continues where the previous page stopped (#2188)
+    Given ls workspace with 45 files named "fN"
+    When I list the workspace with limit 20 and offset 20
+    Then the ls result should list sorted entries 21 to 40 of the directory
+    And the ls result should contain "Next: offset=40"
     And the ls result should not be an error
