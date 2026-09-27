@@ -350,6 +350,10 @@ fn build_shell_command(
         "QUECTO_SWARM_CONTAINER",
         "QUECTO_SWARM_HOST_PID_NS",
         "RUST_LOG",
+        // A non-interactive shell sources these before the command: code
+        // the command policy never saw (#2207 review).
+        "BASH_ENV",
+        "ENV",
     ] {
         cmd.env_remove(key);
     }

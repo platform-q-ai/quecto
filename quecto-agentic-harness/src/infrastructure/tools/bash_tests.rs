@@ -727,3 +727,20 @@ fn the_description_names_a_posix_shell_only_without_bash() {
     );
     assert_eq!(super::posix_note("/usr/bin/bash"), "");
 }
+
+/// #2207 review: an inherited `BASH_ENV` (or `ENV`) never runs before the
+/// command: the command policy only saw the command.
+#[tokio::test]
+async fn an_inherited_bash_env_is_never_sourced() {
+    let (tool, tmp) = test_exec();
+    let startup = tmp.path().join("startup.sh");
+    std::fs::write(&startup, "echo SOURCED\n").unwrap();
+    let mut env = HashMap::new();
+    env.insert("BASH_ENV".to_string(), startup.display().to_string());
+    env.insert("ENV".to_string(), startup.display().to_string());
+    let result = tool
+        .execute_with_env(r#"{"command": "echo ok"}"#, &env)
+        .await
+        .unwrap();
+    assert_eq!(result.content.trim(), "ok", "{}", result.content);
+}
