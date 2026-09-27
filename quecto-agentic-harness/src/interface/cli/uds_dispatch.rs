@@ -450,7 +450,6 @@ mod clamp_935_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_cov2_tests.rs"]
 mod cov2_tests;
-
 #[cfg(test)]
 #[path = "uds_dispatch_cov_tests.rs"]
 mod cov_tests;
@@ -478,7 +477,6 @@ mod resume_e2e_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_resume_persist_tests.rs"]
 mod resume_persist_tests;
-
 #[cfg(test)]
 #[path = "uds_dispatch_resume_picker_tests.rs"]
 mod resume_picker_tests;
@@ -494,6 +492,9 @@ mod tests_843;
 #[cfg(test)]
 #[path = "uds_dispatch_843_targeted_tests.rs"]
 mod tests_843_targeted;
+#[cfg(test)]
+#[path = "uds_dispatch_ended_child_tests.rs"]
+mod tests_ended_child;
 #[cfg(test)]
 #[path = "uds_dispatch_tool_catalogue_tests.rs"]
 mod tool_catalogue_tests;
