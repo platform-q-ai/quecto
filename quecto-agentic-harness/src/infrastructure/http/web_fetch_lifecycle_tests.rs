@@ -465,7 +465,7 @@ async fn a_redirect_to_a_name_with_only_refused_answers_connects_nothing() {
 /// Serves `/start` (recording its Authorization) as a redirect to
 /// `location`, then records the hop's head.
 async fn recording_redirect(
-    location: String,
+    location: impl Fn(u16) -> String + Send + 'static,
 ) -> (
     u16,
     Arc<std::sync::Mutex<Vec<String>>>,
@@ -473,6 +473,7 @@ async fn recording_redirect(
 ) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
+    let location = location(port);
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let task = tokio::spawn({
         let seen = seen.clone();
@@ -503,8 +504,10 @@ const USER_PW: &str = "authorization: basic dxnlcjpwdw=="; // user:pw
 /// them, and are stripped on a cross-host hop.
 #[tokio::test]
 async fn url_credentials_follow_only_same_host_hops() {
-    // Same host (`localhost` both times): kept.
-    let (port, seen, task) = recording_redirect("/final".to_owned()).await;
+    // Same host (`localhost` both times), by an absolute Location without
+    // userinfo: kept.
+    let (port, seen, task) =
+        recording_redirect(|port| format!("http://localhost:{port}/final")).await;
     let result = ReqwestFetchWebContent::with_policy(LOOPBACK_FOR_TESTS)
         .fetch(&request(&format!("http://user:pw@localhost:{port}/start")))
         .await;
@@ -522,9 +525,9 @@ async fn url_credentials_follow_only_same_host_hops() {
     );
     task.abort();
     // Cross host (`localhost` to `127.0.0.1`): stripped, and not restored.
-    let (target_port, target_seen, target) = recording_redirect("/never".to_owned()).await;
+    let (target_port, target_seen, target) = recording_redirect(|_| "/never".to_owned()).await;
     let (port, seen, task) =
-        recording_redirect(format!("http://127.0.0.1:{target_port}/final")).await;
+        recording_redirect(move |_| format!("http://127.0.0.1:{target_port}/final")).await;
     let result = ReqwestFetchWebContent::with_policy(LOOPBACK_FOR_TESTS)
         .fetch(&request(&format!("http://user:pw@localhost:{port}/start")))
         .await;
