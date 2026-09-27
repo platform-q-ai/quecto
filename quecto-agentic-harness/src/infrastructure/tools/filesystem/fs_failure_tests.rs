@@ -255,6 +255,93 @@ async fn an_edit_of_a_path_through_a_file_is_explained() {
     );
 }
 
+/// #2243: a failed write says what it left: nothing changed (the file is
+/// replaced whole or not at all), or, written in place, maybe cut short.
+#[test]
+fn a_write_failure_says_what_it_left_of_the_file() {
+    let failure = |kind: std::io::ErrorKind, file: FileState| WriteFailure {
+        error: std::io::Error::new(kind, "disk full"),
+        file,
+        leftover: None,
+    };
+    assert_eq!(
+        write_failure(
+            "a b.txt",
+            &failure(std::io::ErrorKind::Other, FileState::Unchanged)
+        ),
+        "writing a b.txt failed: disk full. Nothing was written: the file is as it was (it is \
+         replaced whole or not at all)."
+    );
+    assert_eq!(
+        write_failure(
+            "a b.txt",
+            &failure(std::io::ErrorKind::Other, FileState::MayBeCutShort)
+        ),
+        "writing a b.txt failed: disk full. It was being written in place (not atomically), \
+         so it may now be cut short or a mix of old and new text; restore it (e.g. git \
+         checkout -- 'a b.txt') or rewrite it with write."
+    );
+    let denied = write_failure(
+        "f",
+        &failure(std::io::ErrorKind::PermissionDenied, FileState::Unchanged),
+    );
+    assert!(
+        denied.starts_with("permission denied: cannot write f, so nothing was written."),
+        "{denied}"
+    );
+    let read_only = write_failure(
+        "f",
+        &failure(std::io::ErrorKind::ReadOnlyFilesystem, FileState::Unchanged),
+    );
+    assert!(
+        read_only.contains("read-only, so nothing was written"),
+        "{read_only}"
+    );
+    // Written in place, a refused write may still have cut the file.
+    let cut = write_failure(
+        "f",
+        &failure(
+            std::io::ErrorKind::PermissionDenied,
+            FileState::MayBeCutShort,
+        ),
+    );
+    assert!(cut.contains("may now be cut short"), "{cut}");
+}
+
+#[test]
+fn only_a_write_in_place_gets_a_note() {
+    assert_eq!(written_note("f", Written::Replaced), None);
+    assert_eq!(written_note("f", Written::Created), None);
+    assert_eq!(
+        written_note(
+            "f",
+            Written::InPlace(InPlace::RenameRefused { leftover: None })
+        )
+        .as_deref(),
+        Some(
+            "[note: the system refused to replace f by a rename (for example a mount point or a \
+             security policy), so it was written in place, not atomically]"
+        )
+    );
+    assert_eq!(
+        written_note(
+            "f",
+            Written::InPlace(InPlace::OwnerNotKept { leftover: None })
+        )
+        .as_deref(),
+        Some(
+            "[note: f belongs to another owner or group that a new file could not be given, \
+             so it was written in place to keep them, not atomically]"
+        )
+    );
+    assert_eq!(
+        written_note("f", Written::InPlace(InPlace::DirectoryNotWritable)).as_deref(),
+        Some(
+            "[note: the directory of f takes no new file, so it was written in place, not atomically]"
+        )
+    );
+}
+
 /// #2189 review: UTF-16 text (it starts with a byte-order mark) is named as
 /// such, with the conversion to make, not as binary for its NUL bytes.
 #[test]
@@ -272,6 +359,109 @@ fn utf16_with_a_byte_order_mark_is_named_utf16() {
         edited.contains("mark), and edit changes UTF-8 text only. Convert"),
         "{edited}"
     );
+}
+
+/// Round 2 L1: a temporary file left behind is named in the note.
+#[test]
+fn a_leftover_temp_file_is_named_in_the_note() {
+    let leftover = Some(PathBuf::from("/w/.f.1234.tmp"));
+    let note = written_note("f", Written::InPlace(InPlace::RenameRefused { leftover }));
+    assert_eq!(
+        note.as_deref(),
+        Some(
+            "[note: the system refused to replace f by a rename (for example a mount point or a \
+             security policy), so it was written in place, not atomically; its temporary file \
+             /w/.f.1234.tmp could not be removed: delete it]"
+        )
+    );
+}
+
+/// Round 2 L2 and nit: a full disk says to free space; a file that could
+/// not be created points at its directory.
+#[test]
+fn a_full_disk_and_an_uncreatable_file_say_what_to_do() {
+    let failure = |kind: std::io::ErrorKind, file: FileState| WriteFailure {
+        error: std::io::Error::from(kind),
+        file,
+        leftover: None,
+    };
+    for kind in [
+        std::io::ErrorKind::StorageFull,
+        std::io::ErrorKind::QuotaExceeded,
+    ] {
+        assert_eq!(
+            write_failure("f.txt", &failure(kind, FileState::Unchanged)),
+            "writing f.txt failed: the disk or quota is full, so nothing was written: the file \
+             is as it was. Free space and retry."
+        );
+    }
+    assert_eq!(
+        write_failure(
+            "sub dir/f.txt",
+            &failure(std::io::ErrorKind::PermissionDenied, FileState::Absent)
+        ),
+        "permission denied: cannot create sub dir/f.txt in its directory, so nothing was \
+         written. Check the directory's permissions with bash, e.g. ls -ld 'sub dir'"
+    );
+    assert_eq!(
+        write_failure(
+            "f.txt",
+            &failure(std::io::ErrorKind::PermissionDenied, FileState::Absent)
+        ),
+        "permission denied: cannot create f.txt in its directory, so nothing was written. \
+         Check the directory's permissions with bash, e.g. ls -ld '.'"
+    );
+    let other = write_failure("f", &failure(std::io::ErrorKind::Other, FileState::Absent));
+    assert!(
+        other.starts_with("creating f failed: other error. Nothing was created."),
+        "{other}"
+    );
+}
+
+/// Re-review: a file removed while it was written, a leftover temporary
+/// file, and an internal failure are each said as they are.
+#[test]
+fn a_write_failure_names_a_removed_file_a_leftover_and_an_internal_fault() {
+    let removed = WriteFailure {
+        error: std::io::Error::from(std::io::ErrorKind::NotFound),
+        file: FileState::Unchanged,
+        leftover: None,
+    };
+    assert_eq!(
+        write_failure("f", &removed),
+        "f was removed while it was being written, so nothing was written. Check the path \
+         with ls, and write it again if it is still wanted."
+    );
+    let left = WriteFailure {
+        error: std::io::Error::other("disk on fire"),
+        file: FileState::Absent,
+        leftover: Some(PathBuf::from("/w/.f.1.tmp")),
+    };
+    assert_eq!(
+        write_failure("f", &left),
+        "creating f failed: disk on fire. No file was created at f; its temporary file \
+         /w/.f.1.tmp could not be removed: delete it."
+    );
+    let fault = WriteFailure {
+        error: std::io::Error::other("the write task panicked"),
+        file: FileState::Unknown,
+        leftover: None,
+    };
+    assert_eq!(
+        write_failure("f", &fault),
+        "writing f stopped on an internal error (the write task panicked), so whether it was \
+         written is not known. Read it to check before writing it again."
+    );
+}
+
+/// Re-review: a write whose blocking task panics is an internal fault, not
+/// a file said to be cut short.
+#[tokio::test]
+async fn a_panicking_write_task_is_an_internal_fault() {
+    let failure = run_write(|| panic!("write step panicked (injected)"))
+        .await
+        .unwrap_err();
+    assert_eq!(failure.file, FileState::Unknown);
 }
 
 /// Re-review: a two-link cycle is named as a loop.

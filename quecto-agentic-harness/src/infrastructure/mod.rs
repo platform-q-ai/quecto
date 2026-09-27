@@ -11,6 +11,7 @@ pub mod catalogue_registry;
 pub mod config;
 pub mod config_admission;
 pub mod extensions;
+pub mod file_replace;
 pub mod line_cap;
 pub mod logging;
 pub mod model_registry;

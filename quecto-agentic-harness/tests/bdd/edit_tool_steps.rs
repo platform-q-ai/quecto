@@ -208,3 +208,33 @@ fn then_file_starts_with_bom(world: &mut QuectoWorld, filename: String) {
         &bytes[..bytes.len().min(6)]
     );
 }
+
+/// A second name for a file (#2243).
+#[given(expr = "{string} is a hard link to {string}")]
+fn given_hard_link(world: &mut QuectoWorld, link: String, target: String) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    std::fs::hard_link(ws.join(&target), ws.join(&link)).expect("hard link");
+}
+
+/// A symbolic link in the tool workspace (#2243).
+#[given(expr = "{string} is a symbolic link to {string}")]
+fn given_symbolic_link(world: &mut QuectoWorld, link: String, target: String) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    std::os::unix::fs::symlink(&target, ws.join(&link)).expect("symbolic link");
+}
+
+#[then(expr = "{string} should still be a symbolic link")]
+fn then_still_symbolic_link(world: &mut QuectoWorld, link: String) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    let meta = std::fs::symlink_metadata(ws.join(&link)).expect("link metadata");
+    assert!(meta.file_type().is_symlink(), "{link} is no longer a link");
+}

@@ -7,6 +7,9 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use crate::domain::tool::ToolResult;
+use crate::infrastructure::file_replace::{
+    FileState, InPlace, WriteFailure, Written, replace_contents,
+};
 use crate::infrastructure::tools::truncate::format_size;
 
 use super::shell_escape_single;
@@ -180,6 +183,154 @@ async fn is_file(path: &Path) -> bool {
     tokio::fs::metadata(path)
         .await
         .is_ok_and(|meta| meta.is_file())
+}
+
+/// Why writing `path` failed, and what that left (#2243): a file is
+/// replaced whole or not at all, except one written in place (it has hard
+/// links, its directory takes no new file, the system refused the rename,
+/// or its owner could not be given to a new file), which may be cut short.
+pub(super) fn write_failure(path: &str, failure: &WriteFailure) -> String {
+    let (text, names_leftover) = failure_text(path, failure);
+    match (&failure.leftover, names_leftover) {
+        (Some(temp), false) => format!(
+            "{text} Its temporary file {} could not be removed: delete it.",
+            temp.display()
+        ),
+        (Some(_), true) | (None, _) => text,
+    }
+}
+
+/// The words for [`write_failure`], and whether they name the leftover
+/// temporary file themselves.
+fn failure_text(path: &str, failure: &WriteFailure) -> (String, bool) {
+    let hint = shell_escape_single(path);
+    let error = &failure.error;
+    let text = match (failure.file, error.kind()) {
+        (FileState::Unknown, _) => format!(
+            "writing {path} stopped on an internal error ({error}), so whether it was written \
+             is not known. Read it to check before writing it again."
+        ),
+        (FileState::Unchanged, ErrorKind::NotFound) => format!(
+            "{path} was removed while it was being written, so nothing was written. Check the \
+             path with ls, and write it again if it is still wanted."
+        ),
+        (FileState::Unchanged, ErrorKind::PermissionDenied) => format!(
+            "permission denied: cannot write {path}, so nothing was written. Check its \
+             permissions with bash, e.g. ls -l {hint}"
+        ),
+        (FileState::Absent, ErrorKind::PermissionDenied) => {
+            let dir = match Path::new(path).parent() {
+                Some(dir) if !dir.as_os_str().is_empty() => dir.display().to_string(),
+                Some(_) | None => ".".to_string(),
+            };
+            format!(
+                "permission denied: cannot create {path} in its directory, so nothing was \
+                 written. Check the directory's permissions with bash, e.g. ls -ld {}",
+                shell_escape_single(&dir)
+            )
+        }
+        (
+            FileState::Unchanged | FileState::Absent,
+            ErrorKind::StorageFull | ErrorKind::QuotaExceeded,
+        ) => {
+            let state = match failure.file {
+                FileState::Absent => "no file was created",
+                FileState::Unchanged | FileState::MayBeCutShort | FileState::Unknown => {
+                    "the file is as it was"
+                }
+            };
+            format!(
+                "writing {path} failed: the disk or quota is full, so nothing was written: \
+                 {state}. Free space and retry."
+            )
+        }
+        (FileState::Unchanged | FileState::Absent, ErrorKind::ReadOnlyFilesystem) => {
+            format!("cannot write {path}: its file system is read-only, so nothing was written.")
+        }
+        (FileState::Unchanged, ErrorKind::IsADirectory) => {
+            format!("{path} is a directory, so nothing was written. Give the path of a file.")
+        }
+        (FileState::Unchanged, _) => format!(
+            "writing {path} failed: {error}. Nothing was written: the file is as it was \
+             (it is replaced whole or not at all)."
+        ),
+        (FileState::Absent, _) => match &failure.leftover {
+            Some(temp) => {
+                let text = format!(
+                    "creating {path} failed: {error}. No file was created at {path}; its \
+                     temporary file {} could not be removed: delete it.",
+                    temp.display()
+                );
+                return (text, true);
+            }
+            None => format!(
+                "creating {path} failed: {error}. Nothing was created. Check the path with ls."
+            ),
+        },
+        (FileState::MayBeCutShort, _) => format!(
+            "writing {path} failed: {error}. It was being written in place (not atomically), \
+             so it may now be cut short or a mix of old and new text; restore it (e.g. git \
+             checkout -- {hint}) or rewrite it with write."
+        ),
+    };
+    (text, false)
+}
+
+/// A note for a write that was not atomic, to follow the tool's result.
+pub(super) fn written_note(path: &str, written: Written) -> Option<String> {
+    let (why, leftover) = match written {
+        Written::Replaced | Written::Created => return None,
+        Written::InPlace(InPlace::HardLinks(links)) => (
+            format!("{path} has {links} hard links, so it was written in place to keep them"),
+            None,
+        ),
+        Written::InPlace(InPlace::RenameRefused { leftover }) => (
+            format!(
+                "the system refused to replace {path} by a rename (for example a mount point \
+                 or a security policy), so it was written in place"
+            ),
+            leftover,
+        ),
+        Written::InPlace(InPlace::OwnerNotKept { leftover }) => (
+            format!(
+                "{path} belongs to another owner or group that a new file could not be given, \
+                 so it was written in place to keep them"
+            ),
+            leftover,
+        ),
+        Written::InPlace(InPlace::DirectoryNotWritable) => (
+            format!("the directory of {path} takes no new file, so it was written in place"),
+            None,
+        ),
+    };
+    let left = match leftover {
+        Some(temp) => format!(
+            "; its temporary file {} could not be removed: delete it",
+            temp.display()
+        ),
+        None => String::new(),
+    };
+    Some(format!("[note: {why}, not atomically{left}]"))
+}
+
+/// Replace the contents of `path` whole (#2243), off the async runtime.
+pub(super) async fn write_file(path: PathBuf, bytes: Vec<u8>) -> Result<Written, WriteFailure> {
+    run_write(move || replace_contents(&path, &bytes)).await
+}
+
+/// Run a write off the async runtime. A write task that panicked is an
+/// internal fault: what it left is not known, and is said so (#2254 review).
+async fn run_write(
+    write: impl FnOnce() -> Result<Written, WriteFailure> + Send + 'static,
+) -> Result<Written, WriteFailure> {
+    match tokio::task::spawn_blocking(write).await {
+        Ok(written) => written,
+        Err(error) => Err(WriteFailure {
+            error: std::io::Error::other(format!("the write task failed: {error}")),
+            file: FileState::Unknown,
+            leftover: None,
+        }),
+    }
 }
 
 /// Leading bytes that mark a binary format: executables, archives and

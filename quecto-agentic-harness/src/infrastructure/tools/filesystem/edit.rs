@@ -17,8 +17,8 @@ use crate::infrastructure::security::sandbox::Sandbox;
 use super::edit_bytes::{line_view, span_line_ending, splice, view_offset, with_span_endings};
 use super::edit_diff::{Change, make_edit_diff};
 use super::edit_match::{Location, Unmappable, base_mapped, locate};
-use super::edit_refusal::{FileLines, ambiguous, load_text, not_found, write_refusal};
-use super::fs_failure::refused;
+use super::edit_refusal::{FileLines, ambiguous, load_text, not_found};
+use super::fs_failure::{refused, write_failure, write_file, written_note};
 use super::resolve_and_validate;
 
 pub(super) const MAX_EDIT_FILE_BYTES: u64 = 1024 * 1024;
@@ -184,12 +184,18 @@ impl Tool for EditTool {
             let change = Change::of_splice(&old_view, &new_view, view_range, normalised_new.len());
             let diff = make_edit_diff(path, &old_view, &new_view, &change);
 
-            if let Err(error) = tokio::fs::write(&full_path, updated.as_bytes()).await {
-                return Ok(write_refusal(path, &error));
-            }
+            // Replaced whole or not at all (#2243).
+            let written = match write_file(full_path, updated.into_bytes()).await {
+                Ok(written) => written,
+                Err(failure) => return Ok(refused(write_failure(path, &failure))),
+            };
+            let content = match written_note(path, written) {
+                Some(note) => format!("{diff}\n{note}"),
+                None => diff,
+            };
 
             Ok(ToolResult {
-                content: diff,
+                content,
                 is_error: false,
                 image_blocks: vec![],
                 delivery_metadata: None,
@@ -230,3 +236,7 @@ mod fuzzy_file_tests;
 #[cfg(test)]
 #[path = "edit_bytes_tests.rs"]
 mod bytes_tests;
+
+#[cfg(test)]
+#[path = "edit_write_tests.rs"]
+mod write_tests;

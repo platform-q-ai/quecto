@@ -13,7 +13,6 @@ use super::edit::{MAX_EDIT_FILE_BYTES, base_normalise};
 use super::edit_indent::{describe_indent, indent_mismatch};
 use super::edit_match::{LISTED_MATCHES, Matches};
 use super::fs_failure::{Access, explain, not_utf8_text, refused};
-use super::shell_escape_single;
 
 /// The file's text, or a refusal that names the file, says why it cannot
 /// be edited and what to do instead.
@@ -81,27 +80,6 @@ fn too_large(path: &str, size: &str) -> ToolResult {
 /// Why the file could not be opened or read, in words the model can act on.
 async fn open_refusal(full_path: &Path, path: &str, error: &std::io::Error) -> ToolResult {
     refused(explain(Access::Edit, full_path, path, error).await)
-}
-
-/// Why writing the edited text failed. The write is not atomic: the file
-/// is truncated first, so only an error raised on opening it leaves it
-/// untouched.
-pub(super) fn write_refusal(path: &str, error: &std::io::Error) -> ToolResult {
-    let hint = shell_escape_single(path);
-    refused(match error.kind() {
-        std::io::ErrorKind::PermissionDenied => format!(
-            "permission denied: cannot write {path}, so nothing was written. Check its \
-             permissions with bash, e.g. ls -l {hint}"
-        ),
-        std::io::ErrorKind::ReadOnlyFilesystem => {
-            format!("cannot write {path}: its file system is read-only, so nothing was written.")
-        }
-        _ => format!(
-            "writing {path} failed: {error}. The file may now be empty or cut short and its \
-             earlier text lost; restore it (e.g. git checkout -- {hint}) or rewrite it with \
-             write."
-        ),
-    })
 }
 
 /// The file's own line breaks, as offsets into its normalised text
