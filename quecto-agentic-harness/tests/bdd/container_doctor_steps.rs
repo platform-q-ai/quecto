@@ -35,16 +35,7 @@ fn write_script(path: &Path, body: &str) -> Vec<String> {
 }
 
 /// A fixture program that must be found on PATH (the fake `podman`).
-pub(crate) fn write_executable(path: &Path, body: &str) {
-    std::fs::write(path, body).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut p = std::fs::metadata(path).unwrap().permissions();
-        p.set_mode(0o700);
-        std::fs::set_permissions(path, p).unwrap();
-    }
-}
+pub(crate) use quecto::infrastructure::test_support::executable::write_executable;
 
 /// Replace the global default entry's create script with `body`.
 fn replace_default_create_script(world: &QuectoWorld, body: &str) {
@@ -256,7 +247,7 @@ fn given_controlled_path_failing_runtime(
     let toolbox = Toolbox::build(world);
     write_executable(
         &toolbox.dir.join(&runtime),
-        &format!("#!/usr/bin/env bash\nprintf '%s\\n' '{message}' >&2\nexit 1\n"),
+        format!("#!/usr/bin/env bash\nprintf '%s\\n' '{message}' >&2\nexit 1\n"),
     );
 }
 

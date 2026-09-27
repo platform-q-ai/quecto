@@ -4,7 +4,7 @@
 //! directory; and an unlisted slot binds to the default alias. The
 //! real-process child-inherits and reset/restart recovery scenarios live in
 //! `admission_recovery_steps`.
-use std::os::unix::fs::PermissionsExt;
+use quecto::infrastructure::test_support::executable::write_executable;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -171,15 +171,13 @@ fn given_fake_systemctl(world: &mut QuectoWorld) {
     std::fs::create_dir_all(base_path.join("workspace")).unwrap();
     let log = base_path.join("systemctl.log");
     let script = bindir.join("systemctl");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
             log.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     state(world).systemctl_log = log;
     // An admission-enabled global config so install resolves a real directory.
     let config_path = base_path.join("config.json");

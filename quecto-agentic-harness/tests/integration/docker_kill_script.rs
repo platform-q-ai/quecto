@@ -1,6 +1,7 @@
 //! The official Docker adapter's `kill.sh` against a fake runtime CLI
 //! (#2024 S4d, round 2 F-C of #2033): what it asks the runtime to remove.
 
+use quecto::infrastructure::test_support::executable::write_executable;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -17,19 +18,13 @@ fn repo_root() -> PathBuf {
 fn fake_podman(bin: &Path, log: &Path) {
     fs::create_dir_all(bin).unwrap();
     let script = bin.join("podman");
-    fs::write(
+    write_executable(
         &script,
         format!(
             "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>'{}'\n",
             log.display()
         ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    );
 }
 
 fn run_kill(bin: &Path, state_dir: &Path, id: &str, op: &str) -> std::process::Output {

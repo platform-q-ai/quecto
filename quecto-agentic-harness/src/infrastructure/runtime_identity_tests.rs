@@ -1,11 +1,11 @@
-use super::*;
-
 #[cfg(target_os = "linux")]
 #[test]
 fn runtime_digest_tracks_running_inode_after_executable_replacement() {
+    use super::*;
+    use crate::infrastructure::test_support::executable::write_executable;
     let directory = tempfile::tempdir().unwrap();
     let executable = directory.path().join("running");
-    std::fs::copy("/bin/sleep", &executable).unwrap();
+    write_executable(&executable, std::fs::read("/bin/sleep").unwrap());
     let expected = format!("{:x}", Sha256::digest(std::fs::read(&executable).unwrap()));
     let mut process = std::process::Command::new(&executable)
         .arg("30")

@@ -11,13 +11,15 @@ fn spawn(script: &str) -> tokio::process::Child {
     cmd.spawn().expect("spawn test child")
 }
 
+/// SIGKILL, not SIGABRT: a real signal death that dumps no core (a dump
+/// raises a desktop "process crashed" notification per run, #2232 review).
 #[tokio::test]
 async fn records_signal_exit_with_name() {
-    let watch = watch_child(spawn("kill -ABRT $$"), StderrTail::default());
+    let watch = watch_child(spawn("kill -KILL $$"), StderrTail::default());
     let detail = watch.wait_exit_detail(Duration::from_secs(5)).await;
     assert_eq!(
         detail.as_deref(),
-        Some("agent process aborted: signal 6 (SIGABRT)")
+        Some("agent process aborted: signal 9 (SIGKILL)")
     );
     assert_eq!(watch.exit_detail(), detail);
 }
@@ -158,6 +160,18 @@ fn unknown_signal_has_no_name_suffix() {
     use std::os::unix::process::ExitStatusExt;
     let status = std::process::ExitStatus::from_raw(34); // signal 34 (real-time)
     assert_eq!(describe_exit(status), "agent process aborted: signal 34");
+}
+
+/// The panic=abort death an agent really dies of is named, proven on a raw
+/// wait status: no process is aborted, so no core is dumped (#2232 review).
+#[test]
+fn an_abort_is_named_sigabrt() {
+    use std::os::unix::process::ExitStatusExt;
+    let status = std::process::ExitStatus::from_raw(libc::SIGABRT);
+    assert_eq!(
+        describe_exit(status),
+        "agent process aborted: signal 6 (SIGABRT)"
+    );
 }
 
 async fn wait_for_pid_file(path: &std::path::Path) -> i32 {

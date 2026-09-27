@@ -103,14 +103,38 @@ quecto-tui = { version = "0.77.3", path = "../quecto-tui", features = ["test-har
 name = "selected_termination"
 required-features = ["test-support"]
 
+# These targets reach test-only surface gated behind `test-support` (e.g.
+# `test_support::executable::write_executable`, #2232). Without the feature
+# a plain `cargo test` SKIPS them silently; an explicit `--test <name>` is
+# refused with "requires the features: test-support" (rather than a wall of
+# "not found" errors). CI and the local gates always pass the feature, so
+# pass `--features test-support` too, or these targets do not run.
+[[test]]
+name = "contracts"
+required-features = ["test-support"]
+
+[[test]]
+name = "integration"
+required-features = ["test-support"]
+
+[[test]]
+name = "docs"
+required-features = ["test-support"]
+
+[[test]]
+name = "parent_loss"
+required-features = ["test-support"]
+
 [[test]]
 name = "bdd"
 harness = false
 # BDD steps reach into test-only surface (e.g. `*_public`, `parse_args_for_test`,
 # `run_repl_with_tty_captured`, `ReplRecorderOptions`) that is gated behind
-# `#[cfg(any(test, feature = "test-support"))]`. Without this line, invoking
-# `cargo test --test bdd` fails with 40+ "function not found" errors because
+# `#[cfg(any(test, feature = "test-support"))]`. Without the feature, building
+# `cargo test --test bdd` would fail with 40+ "function not found" errors because
 # the integration-test target is a separate crate compilation that doesn't
-# inherit the unit-test `#[cfg(test)]`. `required-features` makes cargo pull
-# the feature in automatically whenever the bdd target is built.
+# inherit the unit-test `#[cfg(test)]`. `required-features` does NOT turn the
+# feature on: without `--features test-support` a plain `cargo test` skips
+# this target silently, and `--test bdd` is refused with a message naming
+# the feature.
 required-features = ["test-support"]

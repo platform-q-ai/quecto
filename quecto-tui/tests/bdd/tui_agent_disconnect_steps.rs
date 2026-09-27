@@ -97,8 +97,10 @@ fn tui_spawned_agent_child_with_panicky_stderr(world: &mut TuiWorld) {
     init_disconnect_harness(world);
     let rt = world.tui_parity_rt.as_ref().expect("runtime");
     let watch = rt.block_on(async {
+        // `exec`: the shell becomes the sleep, so killing the pid ends it
+        // rather than orphaning a 10-minute `sleep`.
         let mut child = tokio::process::Command::new("sh")
-            .args(["-c", "echo 'panicked: boom-panic' >&2; sleep 600"])
+            .args(["-c", "echo 'panicked: boom-panic' >&2; exec sleep 600"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -135,18 +137,19 @@ fn disconnect_diagnostics_include_panic_message(world: &mut TuiWorld) {
     );
 }
 
-#[when("the agent child process aborts with a signal")]
-fn agent_child_aborts_with_signal(world: &mut TuiWorld) {
+#[when("the agent child process dies of a signal")]
+fn agent_child_dies_of_a_signal(world: &mut TuiWorld) {
     let watch = world
         .tui_disconnect_child
         .take()
         .expect("spawned agent child");
-    // Abort the REAL child with a real SIGABRT; its death closes the agent
-    // connection, which the TUI observes as the stream closing.
-    // SAFETY: pid comes from a child we just spawned; kill with a valid
-    // signal returns an error code rather than faulting.
-    let rc = unsafe { libc::kill(watch.pid as i32, libc::SIGABRT) };
-    assert_eq!(rc, 0, "SIGABRT must be delivered to the spawned child");
+    // Kill the REAL child with a real signal; its death closes the agent
+    // connection, which the TUI observes as the stream closing. SIGKILL, not
+    // SIGABRT: it dumps no core (a dump raises a desktop crash notification).
+    // Kill with a valid signal returns an error code rather than faulting.
+    // SAFETY: pid comes from a child we just spawned.
+    let rc = unsafe { libc::kill(watch.pid as i32, libc::SIGKILL) };
+    assert_eq!(rc, 0, "SIGKILL must be delivered to the spawned child");
 
     let rt = world.tui_parity_rt.as_ref().expect("runtime");
     let handle = rt.handle().clone();
@@ -161,7 +164,7 @@ fn disconnect_notification_includes_exit_detail(world: &mut TuiWorld) {
     // concurrent-scenario scheduling delays (#1067).
     let text = harness(world).notification_messages().join("\n");
     assert!(
-        text.contains("signal 6 (SIGABRT)"),
-        "the disconnect notification must diagnose the child's abort (#1047), got: {text}"
+        text.contains("signal 9 (SIGKILL)"),
+        "the disconnect notification must diagnose the child's signal death (#1047), got: {text}"
     );
 }

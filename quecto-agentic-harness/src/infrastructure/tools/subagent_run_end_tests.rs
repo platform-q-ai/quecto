@@ -5,6 +5,7 @@
 //! ordinary retained kill and the record; a selected kill of the child is
 //! the owner's word too.
 
+use crate::infrastructure::test_support::executable::write_executable;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -23,19 +24,13 @@ use crate::domain::subagent_teardown::{DelegatedAgentIdentity, LaunchGeneration,
 /// A script that appends `<op> <environment id>` to `log`.
 fn logging_script(dir: &Path, op: &str, log: &Path) -> String {
     let script = dir.join(format!("{op}.sh"));
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/usr/bin/env bash\necho \"{op} $QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'\n",
             log.display()
         ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    );
     script.to_string_lossy().to_string()
 }
 

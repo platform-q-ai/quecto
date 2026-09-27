@@ -426,6 +426,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/session_resume_selector.rs` | `shell` session-only `/resume` selector open and selection dispatch (#2044) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
+| `shell/test_executable.rs` | `shell` test-only race-free fake executables (#2232) |
 | `shell/thinking_preferences.rs` | `shell` durable model-thinking visibility preference storage (#1231) |
 | `shell/tool_policy.rs` | `shell` live tool/profile policy modal controller (#1334 PR 4) |
 | `shell/tui_harness.rs` | `shell` test harness support (relocated, #1257 Phase 6) |

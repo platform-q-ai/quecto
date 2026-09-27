@@ -6,6 +6,7 @@
 //! BDD/integration tests instead.
 
 use super::*;
+use crate::infrastructure::test_support::executable::write_executable;
 
 // --- registry() accessor ---
 
@@ -644,7 +645,7 @@ async fn launch_uds_agent_uses_uuid_not_display_label_for_socket_and_session_pat
     let dir = tempfile::tempdir().expect("tempdir");
     let child = dir.path().join("fake-child.py");
     let args_file = dir.path().join("args.json");
-    std::fs::write(
+    write_executable(
         &child,
         format!(
             r#"#!/usr/bin/env python3
@@ -663,15 +664,7 @@ time.sleep(0.2)
 "#,
             args_file = args_file.to_string_lossy().to_string()
         ),
-    )
-    .expect("write fake child");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&child).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&child, perms).unwrap();
-    }
+    );
 
     // SAFETY: this test runs in-process and restores QUECTO_CHILD_BINARY before returning.
     unsafe { std::env::set_var("QUECTO_CHILD_BINARY", &child) };

@@ -18,6 +18,7 @@
 //! not-yet-bound child 3 times in 14 runs, which then exits at the 30 s
 //! `DEFAULT_BIND_DEADLINE` instead of on connection loss, past `EXIT_BOUND`.
 //! Alone it is stable; tests/architecture.rs asserts the file stays separate.
+use quecto::infrastructure::test_support::executable::write_executable;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -29,12 +30,6 @@ const EXIT_BOUND: Duration = Duration::from_secs(20);
 fn alive(pid: u32) -> bool {
     // SAFETY: signal 0 only probes existence of the given pid.
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
-}
-
-fn write_executable(path: &Path, body: &str) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::write(path, body).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 /// Shared config for the child: an unreachable provider (the child never
@@ -127,7 +122,7 @@ fn persist_refused_launcher(base: &Path) {
     let wrapper = base.join("quecto-with-persist.sh");
     write_executable(
         &wrapper,
-        &format!(
+        format!(
             "#!/usr/bin/env bash\nexec '{}' \"$@\" --persist\n",
             env!("CARGO_BIN_EXE_quecto")
         ),

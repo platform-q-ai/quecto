@@ -15,11 +15,11 @@ Feature: Agent disconnect keeps context and reports diagnostics
   @issue-1047
   Scenario: Disconnect notification reports the agent child's exit detail
     Given the TUI spawned its own agent child process
-    When the agent child process aborts with a signal
+    When the agent child process dies of a signal
     Then the disconnect notification should include the child's exit detail
 
   @issue-1047
   Scenario: Disconnect diagnostics include the agent's panic message from stderr
     Given the TUI spawned its own agent child process that writes a panic message to stderr
-    When the agent child process aborts with a signal
+    When the agent child process dies of a signal
     Then the disconnect diagnostics should include the panic message from stderr

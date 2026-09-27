@@ -5,6 +5,7 @@
 //! before it removes the state directory. A runtime that says "no such
 //! container" is an answer: dead, and removed.
 
+use quecto::infrastructure::test_support::executable::write_executable;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -50,19 +51,13 @@ fn fake_cli(dir: &Path, runtime: Runtime) -> (PathBuf, PathBuf) {
         _ => body.to_string(),
     };
     let cli = dir.join("fake-cli");
-    fs::write(
+    write_executable(
         &cli,
         format!(
             "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>'{}'\n{body}\n",
             log.display()
         ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    );
     (cli, log)
 }
 
@@ -202,16 +197,10 @@ fn the_scripts_need_no_writable_tmpdir() {
 fn a_no_such_answer_about_another_container_is_no_answer() {
     let temp = tempfile::tempdir().unwrap();
     let cli = temp.path().join("fake-cli");
-    fs::write(
+    write_executable(
         &cli,
         "#!/usr/bin/env bash\necho 'Error: no such container quecto-other' >&2\nexit 125\n",
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    );
     let dir = self::state(temp.path());
     assert!(!run("inspect.sh", &cli, &dir, &[]).status.success());
     assert!(
@@ -279,19 +268,13 @@ fn scripted_cli(dir: &Path, answers: &[(&str, &str, i32)]) -> (PathBuf, PathBuf)
         ));
     }
     let cli = dir.join("scripted-cli");
-    fs::write(
+    write_executable(
         &cli,
         format!(
             "#!/usr/bin/env bash\n[ \"$1\" = inspect ] || exit 0\nn=$(( $(cat '{c}' 2>/dev/null || echo 0) + 1 ))\necho \"$n\" > '{c}'\ncase \"$n\" in\n{cases}esac\n",
             c = count.display()
         ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    );
     (cli, count)
 }
 

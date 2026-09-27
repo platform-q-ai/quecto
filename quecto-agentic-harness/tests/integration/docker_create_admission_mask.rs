@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
+use quecto::infrastructure::test_support::executable::write_executable;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -10,12 +10,6 @@ fn root() -> PathBuf {
         .parent()
         .unwrap()
         .to_path_buf()
-}
-fn executable(path: &Path, body: &str) {
-    fs::write(path, body).unwrap();
-    let mut p = fs::metadata(path).unwrap().permissions();
-    p.set_mode(0o755);
-    fs::set_permissions(path, p).unwrap();
 }
 
 /// How HOME and the admission directory are spelled on the host.
@@ -200,9 +194,9 @@ fn run_with_layout(admission_suffix: &str, layout: Layout) -> Run {
         .to_path_buf();
     let log = base.join("runtime.log");
     let podman = bin.join("podman");
-    executable(
+    write_executable(
         &podman,
-        &format!(
+        format!(
             r#"#!/usr/bin/env bash
 printf '%q ' "$@" >> {log:?}; printf '\n' >> {log:?}
 if [ "$1" = image ] && [ "$2" = exists ]; then exit 0; fi
@@ -249,7 +243,7 @@ exit 125
     );
     // Nothing of the developer's reaches the run: a real create writes any
     // provider key and the `gh auth token` it finds to its provider-env.
-    executable(&bin.join("gh"), "#!/bin/sh\nexit 1\n");
+    write_executable(&bin.join("gh"), "#!/bin/sh\nexit 1\n");
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let home_env = match layout {
         Layout::TrailingSlashHome => format!("{}/", home.display()),

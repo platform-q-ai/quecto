@@ -5,8 +5,8 @@
 //! more is the image's own promise, declared in its
 //! `ai.quecto.required-tools` label and checked by the doctor.
 
+use quecto::infrastructure::test_support::executable::write_executable;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -15,13 +15,6 @@ fn root() -> PathBuf {
         .parent()
         .unwrap()
         .to_path_buf()
-}
-
-fn executable(path: &Path, body: &str) {
-    fs::write(path, body).unwrap();
-    let mut p = fs::metadata(path).unwrap().permissions();
-    p.set_mode(0o755);
-    fs::set_permissions(path, p).unwrap();
 }
 
 /// What the fake runtime's image holds, and how the runtime misbehaves.
@@ -110,14 +103,14 @@ fn invoke(image: &Image<'_>, preflight_only: bool) -> Preflight {
         fs::create_dir_all(dir).unwrap();
     }
     for tool in image.tools {
-        executable(&image_bin.join(tool), "#!/bin/sh\nexit 0\n");
+        write_executable(&image_bin.join(tool), "#!/bin/sh\nexit 0\n");
     }
     let log = base.join("runtime.log");
     let label = base.join("label");
     fs::write(&label, image.label.unwrap_or("")).unwrap();
-    executable(
+    write_executable(
         &bin.join(image.cli),
-        &format!(
+        format!(
             r#"#!/usr/bin/env bash
 printf '%q ' "$@" >> {log:?}; printf '\n' >> {log:?}
 echo 'WARN[0000] "/" is not a shared mount, this could cause issues' >&2
@@ -141,7 +134,7 @@ exit 125
             warns_last = u8::from(image.warns_last),
         ),
     );
-    executable(&bin.join("gh"), "#!/bin/sh\nexit 1\n");
+    write_executable(&bin.join("gh"), "#!/bin/sh\nexit 1\n");
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let mut command = Command::new(root().join("scripts/container-runtime/docker/create.sh"));
     command.args(["--state-dir", state.to_str().unwrap()]);

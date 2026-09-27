@@ -4,6 +4,7 @@
 use super::termination_tests::spawn_agent_program;
 use super::*;
 use crate::shell::process::{LeaderBudget, LeaderIdentity as Id, terminate_leader};
+use crate::shell::test_executable::write_executable;
 
 async fn terminate_test_child(child: &mut tokio::process::Child) {
     terminate_leader(child, LeaderBudget::WORST_CASE, Id::capture(child.id())).await;
@@ -14,35 +15,6 @@ pub(super) fn args(s: &str) -> Vec<String> {
         v.extend(s.split_whitespace().map(String::from));
     }
     v
-}
-
-const ETXTBSY_SPAWN_RETRIES: usize = 10;
-const ETXTBSY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(10);
-
-pub(super) async fn spawn_agent_program_retry_etxtbsy(
-    program: &str,
-    flags: &CliFlags,
-) -> Result<
-    (
-        PathBuf,
-        tokio::process::Child,
-        crate::shell::child_watch::StderrTail,
-        Option<u8>,
-    ),
-    String,
-> {
-    for attempt in 0..=ETXTBSY_SPAWN_RETRIES {
-        match spawn_agent_program(program, flags).await {
-            Err(error)
-                if attempt < ETXTBSY_SPAWN_RETRIES
-                    && error.contains("Text file busy (os error 26)") =>
-            {
-                tokio::time::sleep(ETXTBSY_RETRY_DELAY).await;
-            }
-            result => return result,
-        }
-    }
-    unreachable!("bounded retry loop always returns on its final attempt")
 }
 
 pub(super) fn tmp_dir(tag: &str) -> PathBuf {
@@ -287,31 +259,25 @@ async fn capped_line_reader_drops_char_sliced_by_the_cap() {
 /// to stderr; the drain spawned inside `spawn_agent_program` must capture it.
 #[tokio::test]
 async fn spawn_agent_wires_the_post_startup_stderr_drain() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = tmp_dir("spawnwire");
     let sock = dir.join("agent.sock");
     let _listener = std::os::unix::net::UnixListener::bind(&sock).expect("bind fake socket");
     let script = dir.join("fake-agent.sh");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/bin/sh\n\
              echo 'quecto-agent-socket: {}' >&2\n\
              echo 'post-startup panic line' >&2\n\
-             sleep 30\n",
+             exec sleep 30\n",
             sock.display()
         ),
-    )
-    .expect("write fake agent script");
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-        .expect("mark script executable");
+    );
 
     let flags = parse_flags(&args(""));
-    let (path, mut child, tail, protocol) =
-        spawn_agent_program_retry_etxtbsy(script.to_str().unwrap(), &flags)
-            .await
-            .expect("spawn fake agent");
+    let (path, mut child, tail, protocol) = spawn_agent_program(script.to_str().unwrap(), &flags)
+        .await
+        .expect("spawn fake agent");
     assert_eq!(path, sock);
     // This fake agent announces no protocol line, so the spawn must report the
     // legacy (None) framing rather than inventing a version (#1059).
@@ -340,32 +306,26 @@ async fn spawn_agent_wires_the_post_startup_stderr_drain() {
 /// legacy NDJSON forever — this pins the parse.
 #[tokio::test]
 async fn spawn_agent_parses_the_protocol_version_announcement() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = tmp_dir("spawnproto");
     let sock = dir.join("agent.sock");
     let _listener = std::os::unix::net::UnixListener::bind(&sock).expect("bind fake socket");
     let script = dir.join("fake-agent.sh");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/bin/sh\n\
              echo 'quecto-agent-protocol: {}' >&2\n\
              echo 'quecto-agent-socket: {}' >&2\n\
-             sleep 30\n",
+             exec sleep 30\n",
             quecto_line_io::PROTOCOL_VERSION,
             sock.display()
         ),
-    )
-    .expect("write fake agent script");
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-        .expect("mark script executable");
+    );
 
     let flags = parse_flags(&args(""));
-    let (_path, mut child, _tail, protocol) =
-        spawn_agent_program_retry_etxtbsy(script.to_str().unwrap(), &flags)
-            .await
-            .expect("spawn fake agent");
+    let (_path, mut child, _tail, protocol) = spawn_agent_program(script.to_str().unwrap(), &flags)
+        .await
+        .expect("spawn fake agent");
     assert_eq!(
         protocol,
         Some(quecto_line_io::PROTOCOL_VERSION),
@@ -653,20 +613,15 @@ async fn spawn_agent_program_reports_spawn_error_for_missing_program() {
 
 #[tokio::test]
 async fn spawn_agent_program_exited_before_socket_includes_stderr_and_terminates() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = tmp_dir("spawn-eof");
     let script = dir.join("fake-agent.sh");
-    std::fs::write(
+    write_executable(
         &script,
         "#!/bin/sh\necho 'startup failed: no providers configured' >&2\nexit 7\n",
-    )
-    .expect("write fake agent script");
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-        .expect("mark script executable");
+    );
 
     let flags = parse_flags(&args(""));
-    let err = spawn_agent_program_retry_etxtbsy(script.to_str().unwrap(), &flags)
+    let err = spawn_agent_program(script.to_str().unwrap(), &flags)
         .await
         .expect_err("fake child exits before socket");
 
@@ -681,25 +636,20 @@ async fn spawn_agent_program_exited_before_socket_includes_stderr_and_terminates
 
 #[tokio::test]
 async fn spawn_agent_program_rejects_announced_regular_file_socket() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = tmp_dir("spawn-bad-socket");
     let fake_socket = dir.join("agent.sock");
     std::fs::write(&fake_socket, b"not a socket").expect("fake socket file");
     let script = dir.join("fake-agent.sh");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
-            "#!/bin/sh\necho 'quecto-agent-socket: {}' >&2\nsleep 30\n",
+            "#!/bin/sh\necho 'quecto-agent-socket: {}' >&2\nexec sleep 30\n",
             fake_socket.display()
         ),
-    )
-    .expect("write fake agent script");
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-        .expect("mark script executable");
+    );
 
     let flags = parse_flags(&args(""));
-    let err = spawn_agent_program_retry_etxtbsy(script.to_str().unwrap(), &flags)
+    let err = spawn_agent_program(script.to_str().unwrap(), &flags)
         .await
         .expect_err("regular file socket must be rejected");
 

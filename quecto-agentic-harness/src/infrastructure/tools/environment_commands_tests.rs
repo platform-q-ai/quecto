@@ -1,5 +1,6 @@
 //! Script adapters of the environments capability's ports (#1939).
 use crate::application::environments::ports::EnvironmentProcessCommands;
+use crate::infrastructure::test_support::executable::write_executable;
 
 #[test]
 fn run_kill_sync_reports_missing_argv_and_failures_truthfully() {
@@ -51,19 +52,13 @@ async fn script_kill_adapter_reports_the_script_outcome_on_a_runtime() {
     let temp = tempfile::tempdir().unwrap();
     let log = temp.path().join("kill.log");
     let script = temp.path().join("kill.sh");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/usr/bin/env bash\necho \"$QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'\nexit ${{KILL_EXIT:-0}}\n",
             log.display()
         ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    );
     let argv = vec!["bash".to_string(), script.to_string_lossy().to_string()];
     super::ScriptEnvironmentCommands::default()
         .run_retained_kill("env-runtime", &argv)
@@ -227,7 +222,6 @@ fn a_stopped_ref_is_removed_only_on_the_runtimes_own_word() {
         EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
         EnvironmentTarget,
     };
-    use std::os::unix::fs::PermissionsExt;
     struct NoMembers;
     impl EnvironmentMemberShutdown for NoMembers {
         fn shutdown_members<'a>(&'a self, _: &'a [String]) -> PortFuture<'a, MemberShutdownReport> {
@@ -257,8 +251,7 @@ fn a_stopped_ref_is_removed_only_on_the_runtimes_own_word() {
         std::fs::write(env_dir.join("container"), "quecto-env-x\n").unwrap();
         std::fs::write(env_dir.join("workspace/repo/work.txt"), "work\n").unwrap();
         let cli = dir.path().join("podman");
-        std::fs::write(&cli, format!("#!/bin/sh\n{answer}\n")).unwrap();
-        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_executable(&cli, format!("#!/bin/sh\n{answer}\n"));
         // The fake runtime reaches only these scripts: no process-wide
         // environment is touched.
         let argv = |script: &str, rest: &[&str]| -> Vec<String> {

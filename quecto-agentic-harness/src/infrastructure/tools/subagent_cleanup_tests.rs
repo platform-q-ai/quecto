@@ -1,3 +1,4 @@
+use crate::infrastructure::test_support::executable::write_executable;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -8,21 +9,13 @@ use crate::domain::environment_retention::MemberFinalizeMode as FinalizeMode;
 
 fn cleanup_script(log: &std::path::Path) -> std::path::PathBuf {
     let script = log.parent().unwrap().join("cleanup.sh");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/usr/bin/env bash\necho \"$QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'\n",
             log.display()
         ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut p = std::fs::metadata(&script).unwrap().permissions();
-        p.set_mode(0o700);
-        std::fs::set_permissions(&script, p).unwrap();
-    }
+    );
     script
 }
 
@@ -315,21 +308,13 @@ async fn launch_rollback_runs_retained_cleanup_instead_of_kill() {
     let kill_log = temp.path().join("kill.log");
     let kill = {
         let script = temp.path().join("kill.sh");
-        std::fs::write(
+        write_executable(
             &script,
             format!(
                 "#!/usr/bin/env bash\necho killed >> '{}'\n",
                 kill_log.display()
             ),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut p = std::fs::metadata(&script).unwrap().permissions();
-            p.set_mode(0o700);
-            std::fs::set_permissions(&script, p).unwrap();
-        }
+        );
         script
     };
 
@@ -397,21 +382,13 @@ async fn owned_launch_rollback_discards_the_environment_record_entirely() {
 
 fn logging_fail_script(log: &std::path::Path, dir: &std::path::Path) -> String {
     let script = dir.join("inspect-fail.sh");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/usr/bin/env bash\necho \"$QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'\nexit 1\n",
             log.display()
         ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut p = std::fs::metadata(&script).unwrap().permissions();
-        p.set_mode(0o700);
-        std::fs::set_permissions(&script, p).unwrap();
-    }
+    );
     script.to_string_lossy().to_string()
 }
 

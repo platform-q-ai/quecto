@@ -44,7 +44,7 @@ async fn silent_child_yields_an_empty_snapshot_and_wait_eof_is_bounded() {
     let tail = tail_of("exit 0").await;
     assert!(tail.snapshot().is_empty());
     // A pipe still held open cannot stall a report beyond the bound.
-    let mut child = sh("sleep 5").spawn().unwrap();
+    let mut child = sh("exec sleep 5").spawn().unwrap();
     let open = StderrTail::pump(
         &tokio::runtime::Handle::current(),
         child.stderr.take().unwrap(),

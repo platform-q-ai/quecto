@@ -6,16 +6,12 @@
 use std::sync::Arc;
 
 use quecto::application::environments::ports::EnvironmentProcessCommands;
+use quecto::infrastructure::test_support::executable::write_executable;
 use quecto::infrastructure::tools::environment_commands::ScriptEnvironmentCommands;
 
 fn script(dir: &std::path::Path, name: &str, body: &str) -> Vec<String> {
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/usr/bin/env bash\n{body}\n")).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    write_executable(&path, format!("#!/usr/bin/env bash\n{body}\n"));
     vec![path.to_string_lossy().into_owned()]
 }
 

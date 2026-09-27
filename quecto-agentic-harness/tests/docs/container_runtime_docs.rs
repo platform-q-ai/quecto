@@ -6,6 +6,7 @@
 //! are proven by tests/features/script_managed_runtime_slice5.feature; these
 //! tests pin the repository shape and the doc/script cross-links.
 
+use quecto::infrastructure::test_support::executable::write_executable;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -370,19 +371,16 @@ fn scan_rust_sources(dir: &Path, offenders: &mut Vec<String>) {
 /// the recorded `run` argv and the create result.
 #[cfg(unix)]
 fn run_docker_create_with_fake_cli(rust_log: Option<&str>) -> (Vec<String>, serde_json::Value) {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let argv_log = dir.path().join("cli-argv.txt");
     let fake_cli = dir.path().join("fake-runtime");
-    fs::write(
+    write_executable(
         &fake_cli,
         format!(
             "#!/usr/bin/env bash\nif [ \"$1\" = run ]; then printf '%s\\n' \"$@\" > '{}'; fi\nexit 0\n",
             argv_log.display()
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&fake_cli, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let home = dir.path().join("home");
     fs::create_dir_all(home.join(".quecto")).unwrap();
     let socket_dir = dir.path().join("sockets");

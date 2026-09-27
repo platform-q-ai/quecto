@@ -1,4 +1,4 @@
-use super::find::{build_find_tool, build_find_tool_with_binary};
+use super::find::build_find_tool;
 use crate::infrastructure::extensions::native::build_official_tool_registry;
 use crate::infrastructure::security::sandbox::Sandbox;
 use std::sync::Arc;
@@ -27,20 +27,19 @@ async fn convenience_registry_executes_find_and_preserves_default_session_contra
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn registered_find_cancellation_terminates_and_reaps_child() {
-    use std::os::unix::fs::PermissionsExt;
+    use super::find::build_find_tool_with_binary;
+    use crate::infrastructure::test_support::executable::write_executable;
     let dir = tempfile::tempdir().unwrap();
     let binary = dir.path().join("fd-fixture");
     let pidfile = dir.path().join("ready.pid");
     // Shell is the direct child and busy loop creates no descendant process.
-    std::fs::write(
+    write_executable(
         &binary,
         format!(
             "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nwhile :; do :; done\n",
             pidfile.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let sandbox = Sandbox::new(Some(dir.path().to_path_buf()));
     let tool = build_find_tool_with_binary(
         Arc::new(dir.path().to_path_buf()),
@@ -84,24 +83,21 @@ async fn registered_find_cancellation_terminates_and_reaps_child() {
 #[cfg(target_os = "linux")]
 #[test]
 fn registered_find_runtime_destruction_terminates_and_reaps() {
-    use std::{
-        os::unix::fs::PermissionsExt,
-        time::{Duration, Instant},
-    };
+    use super::find::build_find_tool_with_binary;
+    use crate::infrastructure::test_support::executable::write_executable;
+    use std::time::{Duration, Instant};
     for multi_thread in [false, true] {
         for close_pipes in ["", "exec 1>&-", "exec 1>&- 2>&-"] {
             let dir = tempfile::tempdir().unwrap();
             let binary = dir.path().join("fd-fixture");
             let pidfile = dir.path().join("ready.pid");
-            std::fs::write(
+            write_executable(
                 &binary,
                 format!(
                     "#!/bin/sh\n{close_pipes}\nprintf '%s' \"$$\" > '{}'\nwhile :; do :; done\n",
                     pidfile.display()
                 ),
-            )
-            .unwrap();
-            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+            );
             let sandbox = Sandbox::new(Some(dir.path().to_path_buf()));
             let tool = build_find_tool_with_binary(
                 Arc::new(dir.path().to_path_buf()),

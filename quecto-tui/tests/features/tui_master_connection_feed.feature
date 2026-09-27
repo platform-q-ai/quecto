@@ -23,6 +23,6 @@ Feature: Master connection behind a feed task (N=1)
   @issue-1462
   Scenario: A closed connection keeps the child exit diagnosis
     Given the TUI spawned its own agent child process
-    When the agent child process aborts
+    When the agent child process dies of a signal while its stream is open
     And the master connection's event stream closes
     Then the disconnect notification should include the child's exit detail

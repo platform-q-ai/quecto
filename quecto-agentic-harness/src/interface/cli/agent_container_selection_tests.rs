@@ -12,6 +12,7 @@ use super::integration_tests::composed_ctx;
 use super::selection_for_test;
 use crate::composition::tool_policy::build_tool_policy_persistence;
 use crate::domain::tool::ToolResult;
+use crate::infrastructure::test_support::executable::write_executable;
 use crate::interface::cli::run_with_output;
 
 struct Rig {
@@ -34,19 +35,13 @@ impl Rig {
         std::fs::create_dir_all(&repo).unwrap();
         let log = base.join("create-calls.jsonl");
         let script = base.join("create.sh");
-        std::fs::write(
+        write_executable(
             &script,
             format!(
                 "#!/usr/bin/env bash\nown=\"\"\nfor a in \"$@\"; do [ \"$a\" = \"--\" ] && break; own=\"$own $a\"; done\nprintf '{{\"config\":\"%s\",\"own_argv\":\"%s\"}}\\n' \"${{QUECTO_CONTAINER_CONFIG:-}}\" \"${{own# }}\" >> '{}'\nexit 1\n",
                 log.display()
             ),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-        }
+        );
         let config = serde_json::json!({
             "providers": {"openai": {"api_key": "sk-test"}},
             "container_configs": {

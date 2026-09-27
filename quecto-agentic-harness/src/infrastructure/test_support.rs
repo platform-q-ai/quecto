@@ -2,6 +2,8 @@
 
 use std::os::unix::net::UnixStream;
 
+pub mod executable;
+
 /// Read one production-format framed JSON command from a synchronous fixture.
 ///
 /// The fixture keeps its blocking stream for legacy NDJSON replies while a

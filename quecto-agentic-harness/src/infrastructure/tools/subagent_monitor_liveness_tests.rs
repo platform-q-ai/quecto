@@ -7,6 +7,7 @@ use super::*;
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
+use crate::infrastructure::test_support::executable::write_executable;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -35,12 +36,7 @@ fn write_failing_inspect_script(
 
 fn write_inspect_script_with_body(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
     let script = dir.join("inspect.sh");
-    std::fs::write(&script, format!("#!/usr/bin/env bash\n{body}")).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    write_executable(&script, format!("#!/usr/bin/env bash\n{body}"));
     script
 }
 

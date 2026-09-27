@@ -18,16 +18,7 @@ pub(crate) fn shared_invocations(world: &QuectoWorld) -> Vec<serde_json::Value> 
         .collect()
 }
 
-pub(crate) fn write_executable(path: &PathBuf, content: String) {
-    std::fs::write(path, content).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut p = std::fs::metadata(path).unwrap().permissions();
-        p.set_mode(0o700);
-        std::fs::set_permissions(path, p).unwrap();
-    }
-}
+pub(crate) use quecto::infrastructure::test_support::executable::write_executable;
 
 /// Configure a full create/exec/kill (plus rollback cleanup) script set that
 /// records every invocation kind to a shared JSONL log, then rewrites the

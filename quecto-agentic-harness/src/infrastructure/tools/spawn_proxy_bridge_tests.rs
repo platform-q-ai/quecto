@@ -2,6 +2,7 @@
 //! real UNIX listeners and real proxy processes.
 
 use super::*;
+use crate::infrastructure::test_support::executable::write_executable;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn test_supervisor() -> Arc<OwnedChildSupervisor> {
@@ -147,20 +148,13 @@ async fn dropped_connection_tears_down_the_proxy_process() {
     let dir = tempfile::tempdir().unwrap();
     let pid_file = dir.path().join("proxy.pid");
     let proxy = dir.path().join("proxy.sh");
-    std::fs::write(
+    write_executable(
         &proxy,
         format!(
             "#!/usr/bin/env bash\necho $$ > '{}'\nexec sleep 30\n",
             pid_file.display()
         ),
-    )
-    .unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut p = std::fs::metadata(&proxy).unwrap().permissions();
-        p.set_mode(0o700);
-        std::fs::set_permissions(&proxy, p).unwrap();
-    }
+    );
 
     let bridge = materialize(
         vec![proxy.to_string_lossy().to_string()],

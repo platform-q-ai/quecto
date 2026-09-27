@@ -2,6 +2,7 @@
 //! the run-end authority; dropping it (a panic unwinding, an early return)
 //! settles nothing.
 
+use crate::infrastructure::test_support::executable::write_executable;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -17,19 +18,13 @@ use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentReg
 
 fn logging_script(dir: &Path, op: &str, log: &Path) -> String {
     let script = dir.join(format!("{op}.sh"));
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/usr/bin/env bash\necho \"{op} $QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'\n",
             log.display()
         ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    );
     script.to_string_lossy().to_string()
 }
 
