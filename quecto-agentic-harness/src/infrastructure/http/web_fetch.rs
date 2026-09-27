@@ -14,6 +14,14 @@
 //! is applied last, after every recipe setting, and `HTTP(S)_PROXY` /
 //! `ALL_PROXY` are ignored (a note is logged once when they are set).
 //!
+//! NAT64: once per client the adapter looks up `ipv4only.arpa` through the
+//! same lookup (RFC 7050), within [`DISCOVERY_TIMEOUT`] and the fetch's
+//! deadline. The network-specific prefixes its answers reveal are handed to
+//! the domain rule, so an address under one (a literal, a DNS answer or a
+//! hop) is judged by the IPv4 address the translator reaches. A lookup
+//! that errs or times out means no prefix for that fetch and is asked
+//! again; an answer, prefixes or none, is kept.
+//!
 //! The client and its connection pool are web_fetch's own, not the
 //! providers' shared client: a client whose resolver, redirect policy and
 //! proxy setting the adapter controls is the secure recipe, and a shared
@@ -33,14 +41,18 @@
 use crate::application::agent_turn::use_cases::web_fetch::{
     FetchFailure, FetchOutcome, FetchRequest, FetchWebContent, HttpStatus,
 };
+use crate::domain::nat64_prefix::{DISCOVERY_NAME, Nat64Prefix, discovered_prefixes};
 use crate::domain::network_destination::{
-    NonPublicAddress, authorize_destination, is_fetchable_name,
+    NonPublicAddress, authorize_destination, authorize_under, is_fetchable_name,
 };
 use std::{future::Future, net::IpAddr, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 const MAX_RAW_BYTES: usize = 5 * 1024 * 1024;
 /// One deadline for the whole fetch, every redirect included, as reqwest's
 /// request timeout was (#1942 changes only who is reached).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// The longest RFC 7050 NAT64 prefix discovery may take (within the fetch
+/// deadline); a slower answer means no prefix for this fetch.
+const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
 /// reqwest's default redirect limit, kept.
 const MAX_REDIRECTS: usize = 10;
 /// The redirect statuses followed: reqwest's own set, kept.
@@ -152,6 +164,56 @@ pub struct ReqwestFetchWebContent {
     timeout: Duration,
     /// Whether proxy variables were set (and ignored) when it was built.
     proxies_ignored: bool,
+    /// The network-specific NAT64 prefixes, discovered once.
+    nat64: Arc<Nat64Discovery>,
+}
+
+/// RFC 7050 NAT64 prefix discovery, shared by the adapter and its
+/// resolver: `ipv4only.arpa` is looked up through the same lookup as every
+/// name, once it answers the prefixes it reveals are kept, and until then
+/// (no answer yet, a lookup error or a timeout) there are none.
+struct Nat64Discovery {
+    lookup: Lookup,
+    timeout: Duration,
+    found: std::sync::OnceLock<Arc<[Nat64Prefix]>>,
+}
+
+impl std::fmt::Debug for Nat64Discovery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Nat64Discovery")
+            .field("found", &self.found.get())
+            .finish()
+    }
+}
+
+impl Nat64Discovery {
+    /// The prefixes discovered so far: none until discovery has answered.
+    fn known(&self) -> Arc<[Nat64Prefix]> {
+        self.found.get().cloned().unwrap_or_else(|| Arc::from([]))
+    }
+
+    /// The discovered prefixes, looking them up first if no lookup has
+    /// answered yet, within [`Self::timeout`] and never past `deadline`.
+    async fn prefixes(&self, deadline: tokio::time::Instant) -> Arc<[Nat64Prefix]> {
+        if let Some(found) = self.found.get() {
+            return found.clone();
+        }
+        let bound = self
+            .timeout
+            .min(deadline.saturating_duration_since(tokio::time::Instant::now()));
+        let answered = tokio::time::timeout(bound, (self.lookup)(DISCOVERY_NAME.to_owned())).await;
+        if let Ok(Ok(answers)) = answered {
+            let answers: Vec<std::net::Ipv6Addr> = answers
+                .iter()
+                .filter_map(|answer| match answer.ip() {
+                    IpAddr::V6(v6) => Some(v6),
+                    IpAddr::V4(_) => None,
+                })
+                .collect();
+            let _ = self.found.set(discovered_prefixes(&answers).into());
+        }
+        self.known()
+    }
 }
 impl ReqwestFetchWebContent {
     /// Over the production recipe, with destination enforcement laid over
@@ -174,14 +236,29 @@ impl ReqwestFetchWebContent {
         policy: DestinationPolicy,
         lookup: Lookup,
     ) -> Self {
+        Self::with_discovery(recipe, policy, lookup, DISCOVERY_TIMEOUT)
+    }
+
+    fn with_discovery(
+        recipe: WebFetchClientRecipe,
+        policy: DestinationPolicy,
+        lookup: Lookup,
+        discovery_timeout: Duration,
+    ) -> Self {
         static NOTED: std::sync::Once = std::sync::Once::new();
         let note = ignored_proxies_note(|name| std::env::var_os(name).is_some());
         if let Some(note) = &note {
             NOTED.call_once(|| tracing::warn!("{note}"));
         }
+        let nat64 = Arc::new(Nat64Discovery {
+            lookup,
+            timeout: discovery_timeout,
+            found: std::sync::OnceLock::new(),
+        });
         let resolver = AuthorizingResolver {
             policy: policy.address,
             lookup,
+            nat64: nat64.clone(),
         };
         // `no_proxy` is the last setting before `build`: nothing after it
         // can bring a proxy back, and the recipe cannot set one.
@@ -197,6 +274,7 @@ impl ReqwestFetchWebContent {
             policy,
             timeout: REQUEST_TIMEOUT,
             proxies_ignored: note.is_some(),
+            nat64,
         }
     }
 
@@ -216,7 +294,11 @@ impl ReqwestFetchWebContent {
 impl ReqwestFetchWebContent {
     /// Over a default recipe with `policy` and the system resolver.
     fn with_policy(policy: DestinationPolicy) -> Self {
-        Self::with_lookup(WebFetchClientRecipe::default(), policy, system_lookup)
+        Self::with_lookup(
+            WebFetchClientRecipe::default(),
+            policy,
+            loopback_test_lookup,
+        )
     }
 
     /// The same adapter with a shorter whole-fetch deadline.
@@ -245,13 +327,16 @@ fn ignored_proxies_note(is_set: impl Fn(&str) -> bool) -> Option<String> {
 #[cfg(any(test, feature = "test-support"))]
 pub const TEST_HOST: &str = "web-fetch.test";
 
-/// [`TEST_HOST`] resolves to 127.0.0.1; every other name as in production.
+/// [`TEST_HOST`] resolves to 127.0.0.1 and [`DISCOVERY_NAME`] to nothing;
+/// every other name as in production.
 #[cfg(any(test, feature = "test-support"))]
 fn loopback_test_lookup(
     host: String,
 ) -> Pin<Box<dyn Future<Output = std::io::Result<Vec<SocketAddr>>> + Send>> {
     match host.as_str() {
         TEST_HOST => Box::pin(async { Ok(vec![SocketAddr::from(([127, 0, 0, 1], 0))]) }),
+        // No NAT64 here, and no query leaves the machine for it.
+        DISCOVERY_NAME => Box::pin(async { Ok(Vec::new()) }),
         _ => system_lookup(host),
     }
 }
@@ -292,7 +377,11 @@ impl std::error::Error for Refused {}
 /// literal, or its name (refused by the name policy). A name's addresses
 /// are left to [`AuthorizingResolver`], which checks every address it
 /// resolves to.
-fn authorize_url(url: &url::Url, policy: DestinationPolicy) -> Result<(), String> {
+fn authorize_url(
+    url: &url::Url,
+    policy: DestinationPolicy,
+    prefixes: &[Nat64Prefix],
+) -> Result<(), String> {
     let address = match (url.scheme(), url.host()) {
         ("http" | "https", Some(url::Host::Domain(name))) => return (policy.name)(name),
         ("http" | "https", Some(url::Host::Ipv4(v4))) => IpAddr::V4(v4),
@@ -300,11 +389,15 @@ fn authorize_url(url: &url::Url, policy: DestinationPolicy) -> Result<(), String
         ("http" | "https", None) => return Err("the URL names no host".into()),
         _ => return Err("only http and https are fetched".into()),
     };
-    (policy.address)(address).map_err(|refused| refused.to_string())
+    authorize_under(address, prefixes, policy.address).map_err(|refused| refused.to_string())
 }
 
-fn authorize_hop(url: &url::Url, policy: DestinationPolicy) -> Result<(), FetchFailure> {
-    authorize_url(url, policy)
+fn authorize_hop(
+    url: &url::Url,
+    policy: DestinationPolicy,
+    prefixes: &[Nat64Prefix],
+) -> Result<(), FetchFailure> {
+    authorize_url(url, policy, prefixes)
         .map_err(|reason| FetchFailure::Refused(format!("the redirect to {url}: {reason}")))
 }
 
@@ -394,15 +487,17 @@ fn with_credentials(url: &url::Url, credentials: Option<&url::Url>) -> url::Url 
 struct AuthorizingResolver {
     policy: AddressPolicy,
     lookup: Lookup,
+    nat64: Arc<Nat64Discovery>,
 }
 impl reqwest::dns::Resolve for AuthorizingResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let policy = self.policy;
         let lookup = self.lookup;
+        let prefixes = self.nat64.known();
         Box::pin(async move {
             let host = name.as_str().to_owned();
             let answers = lookup(host.clone()).await?;
-            let admitted = authorized_answers(&host, answers, policy)?;
+            let admitted = authorized_answers(&host, answers, policy, &prefixes)?;
             assert!(!admitted.is_empty(), "an admitted answer is never empty");
             let addresses: reqwest::dns::Addrs = Box::new(admitted.into_iter());
             Ok(addresses)
@@ -416,13 +511,14 @@ fn authorized_answers(
     host: &str,
     answers: Vec<SocketAddr>,
     policy: AddressPolicy,
+    prefixes: &[Nat64Prefix],
 ) -> Result<Vec<SocketAddr>, Refused> {
     if answers.is_empty() {
         return Err(Refused(format!("{host} resolves to no address")));
     }
     let (admitted, refused): (Vec<_>, Vec<_>) = answers
         .into_iter()
-        .map(|answer| (answer, policy(answer.ip())))
+        .map(|answer| (answer, authorize_under(answer.ip(), prefixes, policy)))
         .partition(|(_, verdict)| verdict.is_ok());
     if admitted.is_empty() {
         let reasons: Vec<String> = refused
@@ -461,8 +557,9 @@ impl ReqwestFetchWebContent {
         &self,
         client: &reqwest::Client,
         url: &url::Url,
+        deadline: tokio::time::Instant,
+        prefixes: &[Nat64Prefix],
     ) -> Result<reqwest::Response, FetchFailure> {
-        let deadline = tokio::time::Instant::now() + self.timeout;
         // The first URL's credentials, carried while hops stay on its host.
         let mut credentials = has_userinfo(url).then(|| url.clone());
         let mut current = url.clone();
@@ -493,7 +590,7 @@ impl ReqwestFetchWebContent {
                     "too many redirects: {MAX_REDIRECTS} followed, and {next} would be one more"
                 )));
             }
-            authorize_hop(&next, self.policy)?;
+            authorize_hop(&next, self.policy, prefixes)?;
             credentials = credentials.filter(|_| same_host(&current, &next));
             follows += 1;
             previous = Some(std::mem::replace(&mut current, next));
@@ -512,8 +609,12 @@ impl FetchWebContent for ReqwestFetchWebContent {
                 .as_ref()
                 .map_err(|e| FetchFailure::Transport(e.clone()))?;
             let url = request.url.as_url();
-            authorize_url(url, self.policy).map_err(FetchFailure::Refused)?;
-            let response = self.final_response(client, url).await?;
+            let deadline = tokio::time::Instant::now() + self.timeout;
+            let prefixes = self.nat64.prefixes(deadline).await;
+            authorize_url(url, self.policy, &prefixes).map_err(FetchFailure::Refused)?;
+            let response = self
+                .final_response(client, url, deadline, &prefixes)
+                .await?;
             if !response.status().is_success() {
                 let status = response.status();
                 return Ok(FetchOutcome::NonSuccessStatus(HttpStatus::new(
@@ -564,6 +665,9 @@ mod destination_tests;
 #[cfg(test)]
 #[path = "web_fetch_lifecycle_tests.rs"]
 mod lifecycle_tests;
+#[cfg(test)]
+#[path = "web_fetch_nat64_tests.rs"]
+mod nat64_tests;
 #[cfg(test)]
 #[path = "web_fetch_redirect_tests.rs"]
 mod redirect_tests;

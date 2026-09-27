@@ -237,3 +237,50 @@ fn a_name_is_fetchable_unless_a_whole_local_name_ignoring_case_and_trailing_dots
         assert!(is_fetchable_name(name), "{name}");
     }
 }
+
+/// #1942 second review: a network-specific NAT64 prefix, once discovered,
+/// judges its addresses by the IPv4 address they reach.
+#[test]
+fn a_discovered_nat64_prefix_judges_by_the_embedded_ipv4_address() {
+    use crate::domain::nat64_prefix::Nat64Prefix;
+    let slash96 = Nat64Prefix::new("2001:4860:1234:5678:9abc:de00::".parse().unwrap(), 96).unwrap();
+    let slash64 = Nat64Prefix::new("2001:4860:64:64::".parse().unwrap(), 64).unwrap();
+    let prefixes = [slash96, slash64];
+    for (address, embedded) in [
+        ("2001:4860:1234:5678:9abc:de00:a00:1", "10.0.0.1"),
+        ("2001:4860:64:64:a9:fea9:fe00:0", "169.254.169.254"),
+        ("2001:4860:64:64:ff7f:0:100:0", "127.0.0.1"),
+    ] {
+        // Without the prefix it is ordinary allocated IPv6.
+        assert!(is_public_destination(ip(address)), "{address}");
+        let refused = authorize_destination_under(ip(address), &prefixes).unwrap_err();
+        assert_eq!(refused.address(), ip(address));
+        assert_eq!(refused.embedded(), Some(embedded.parse().unwrap()));
+        assert_eq!(
+            refused.to_string(),
+            format!("{embedded} (via {address}) is not a public address")
+        );
+    }
+    for public in [
+        "2001:4860:1234:5678:9abc:de00:808:808",
+        "2001:4860:64:64:8:808:800:0",
+    ] {
+        assert_eq!(
+            authorize_destination_under(ip(public), &prefixes),
+            Ok(()),
+            "{public}"
+        );
+    }
+    // Outside every prefix, and IPv4 itself: unchanged.
+    assert_eq!(
+        authorize_destination_under(ip("2001:4860::1"), &prefixes),
+        Ok(())
+    );
+    assert!(authorize_destination_under(ip("10.0.0.1"), &prefixes).is_err());
+    assert_eq!(
+        authorize_destination_under(ip("8.8.8.8"), &prefixes),
+        Ok(())
+    );
+    // The well-known prefix needs no discovery.
+    assert!(authorize_destination_under(ip("64:ff9b::a00:1"), &[]).is_err());
+}

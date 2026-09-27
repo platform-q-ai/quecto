@@ -21,11 +21,14 @@
 //! ranges contain and so must take back out. An address outside the allowed
 //! ranges is refused whether or not any table names it.
 //!
-//! Residual risk: only the well-known NAT64 prefix `64:ff9b::/96` is
-//! recognised. A network-specific NAT64 prefix (RFC 6052) inside allocated
-//! registry space looks like any public IPv6 address, so on an IPv6-only
-//! host behind such a translator an embedded private IPv4 address could be
-//! reached through it.
+//! NAT64: the well-known prefix `64:ff9b::/96` is always judged by its
+//! embedded IPv4 address. A network-specific prefix (RFC 6052) looks like
+//! any IPv6 address, so it is judged by what it embeds only once it is
+//! known: [`authorize_destination_under`] takes the prefixes the adapter
+//! discovered (RFC 7050, through `ipv4only.arpa`) as a plain value.
+//! Residual risk: a translator that no DNS64 advertises cannot be
+//! discovered, and an address under its prefix is judged as IPv6.
+use crate::domain::nat64_prefix::{Nat64Prefix, translated};
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// A refused destination: the address as written and, when it is an IPv6
@@ -56,6 +59,37 @@ impl std::fmt::Display for NonPublicAddress {
 }
 
 impl std::error::Error for NonPublicAddress {}
+
+/// [`authorize_destination`] under the network-specific NAT64 `prefixes`
+/// discovered for this host: an address under one is judged by the IPv4
+/// address the translator reaches.
+pub fn authorize_destination_under(
+    address: IpAddr,
+    prefixes: &[Nat64Prefix],
+) -> Result<(), NonPublicAddress> {
+    authorize_under(address, prefixes, authorize_destination)
+}
+
+/// `policy` applied to the address a fetch actually reaches: the IPv4
+/// address a discovered prefix translates `address` to, or `address`
+/// itself. A refusal names both.
+pub fn authorize_under(
+    address: IpAddr,
+    prefixes: &[Nat64Prefix],
+    policy: impl Fn(IpAddr) -> Result<(), NonPublicAddress>,
+) -> Result<(), NonPublicAddress> {
+    let reached = match address {
+        IpAddr::V6(v6) => translated(v6, prefixes),
+        IpAddr::V4(_) => None,
+    };
+    match reached {
+        Some(v4) => policy(IpAddr::V4(v4)).map_err(|_| NonPublicAddress {
+            address,
+            embedded: Some(v4),
+        }),
+        None => policy(address),
+    }
+}
 
 /// Admits `address` only when it is globally routable unicast, the only
 /// kind of destination an outbound fetch may reach; otherwise says why not.

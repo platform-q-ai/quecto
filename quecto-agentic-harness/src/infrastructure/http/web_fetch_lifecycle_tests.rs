@@ -52,7 +52,10 @@ fn loopback_now(_: String) -> Answer {
 }
 
 /// Every name: 127.0.0.1, after 400 ms.
-fn loopback_after_400ms(_: String) -> Answer {
+fn loopback_after_400ms(host: String) -> Answer {
+    if host == DISCOVERY_NAME {
+        return Box::pin(async { Ok(Vec::new()) });
+    }
     Box::pin(async {
         sleep(Duration::from_millis(400)).await;
         Ok(vec![SocketAddr::from(([127, 0, 0, 1], 0))])
@@ -60,7 +63,10 @@ fn loopback_after_400ms(_: String) -> Answer {
 }
 
 /// Every name: 127.0.0.1, after 120 ms.
-fn loopback_after_120ms(_: String) -> Answer {
+fn loopback_after_120ms(host: String) -> Answer {
+    if host == DISCOVERY_NAME {
+        return Box::pin(async { Ok(Vec::new()) });
+    }
     Box::pin(async {
         sleep(Duration::from_millis(120)).await;
         Ok(vec![SocketAddr::from(([127, 0, 0, 1], 0))])

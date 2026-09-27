@@ -177,17 +177,17 @@ fn only_authorized_answers_are_kept_and_an_empty_answer_is_refused() {
     let v4: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let v6: SocketAddr = "[::1]:0".parse().unwrap();
     assert_eq!(
-        authorized_answers("mixed.test", vec![v4, v6], ipv6_loopback_only),
+        authorized_answers("mixed.test", vec![v4, v6], ipv6_loopback_only, &[]),
         Ok(vec![v6])
     );
     assert_eq!(
-        authorized_answers("none.test", vec![v4], ipv6_loopback_only),
+        authorized_answers("none.test", vec![v4], ipv6_loopback_only, &[]),
         Err(Refused(
             "none.test resolves to no public address: 127.0.0.1 is not a public address".into()
         ))
     );
     assert_eq!(
-        authorized_answers("empty.test", vec![], ipv6_loopback_only),
+        authorized_answers("empty.test", vec![], ipv6_loopback_only, &[]),
         Err(Refused("empty.test resolves to no address".into()))
     );
 }
@@ -296,6 +296,7 @@ fn a_redirect_is_authorized_by_scheme_and_address_and_a_name_is_left_to_dns() {
         authorize_hop(
             &reqwest::Url::parse(url).unwrap(),
             DestinationPolicy::PRODUCTION,
+            &[],
         )
     };
     assert_eq!(hop("https://example.com/next"), Ok(()));
@@ -329,6 +330,11 @@ async fn a_client_that_cannot_be_built_fails_every_fetch_closed() {
         policy: LOOPBACK_FOR_TESTS,
         timeout: REQUEST_TIMEOUT,
         proxies_ignored: false,
+        nat64: Arc::new(Nat64Discovery {
+            lookup: loopback_test_lookup,
+            timeout: DISCOVERY_TIMEOUT,
+            found: std::sync::OnceLock::new(),
+        }),
     };
     let result = timeout(
         Duration::from_secs(5),
