@@ -549,3 +549,31 @@ fn without_a_note_the_entries_use_the_whole_cap() {
     window.offer("b".into());
     assert_eq!(render_listing(window, 0, 2).len(), LS_MAX_BYTES);
 }
+
+/// The reserve is exact for the longest note (past the maximum offset,
+/// cut at the cap): a page filling the room makes the response exactly
+/// the cap, never a byte over.
+#[test]
+fn the_longest_note_fills_the_cap_exactly() {
+    let offset = LS_MAX_OFFSET;
+    let total = LS_MAX_OFFSET + 3;
+    let budget = LS_MAX_BYTES - note_reserve(offset, total, 2);
+    let mut window = SortedWindow::new(offset + 2);
+    for i in 0..LS_MAX_OFFSET {
+        window.offer(format!("{i:07}"));
+    }
+    window.offer(format!("x{}", "x".repeat(budget - 1)));
+    window.offer("y".into());
+    window.offer("z".into());
+    let output = render_listing(window, offset, 2);
+    assert_eq!(output.len(), LS_MAX_BYTES);
+    assert!(
+        output.ends_with(&format!(
+            "[Entries {}-{} of {total} shown (sorted case-insensitively; 50KB output cap reached). offset stops at {LS_MAX_OFFSET}: use find with a pattern and this path for later entries]",
+            offset + 1,
+            offset + 1
+        )),
+        "{}",
+        &output[output.len() - 200..]
+    );
+}
