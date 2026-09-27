@@ -118,7 +118,9 @@ pub(super) async fn pump_sse<H: SseHandler>(
         }
     }
 
-    // Clean EOF — let the handler finalize.
+    // Clean EOF — let the handler finalize. A last line with no newline
+    // is never handed to the handler, observed or not, so no output past
+    // the cap is delivered from it (#2210 review).
     handler.on_eof(tx).await;
 }
 

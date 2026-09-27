@@ -348,7 +348,12 @@ pub(super) async fn assembled<T>(
             }
             body.extend_from_slice(&bytes);
         }
+        // The last line may end without a newline: observed only now, and
+        // parsed with the body, so it counts against the cap (#2210 review).
         observer.finish(&receipt);
+        if let Some(capped) = receipt.capped() {
+            return Err(DomainError::Provider(receipt.output_capped(capped)));
+        }
         receipt.accepted(parse(&String::from_utf8_lossy(&body)), Termination::Eof)
     })
     .await

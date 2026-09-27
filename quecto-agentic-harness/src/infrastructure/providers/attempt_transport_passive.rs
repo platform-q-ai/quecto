@@ -130,7 +130,12 @@ impl PassiveAttempt {
                 }
             }
         }
+        // The last line may end without a newline: observed only now, and
+        // parsed with the body, so it counts against the cap (#2210 review).
         lines.finish(&self.receipt);
+        if let Some(capped) = self.receipt.capped() {
+            return Err(DomainError::Provider(self.receipt.output_capped(capped)));
+        }
         Ok(String::from_utf8_lossy(&body).into_owned())
     }
 

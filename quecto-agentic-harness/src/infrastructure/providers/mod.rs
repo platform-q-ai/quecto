@@ -461,3 +461,7 @@ pub(crate) mod stream_idle_provider_tests;
 #[cfg(test)]
 #[path = "output_cap_provider_tests.rs"]
 mod output_cap_provider_tests;
+
+#[cfg(test)]
+#[path = "output_cap_eof_tests.rs"]
+mod output_cap_eof_tests;

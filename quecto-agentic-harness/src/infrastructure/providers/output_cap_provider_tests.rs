@@ -17,13 +17,13 @@ use crate::domain::provider_error::OUTPUT_CAP_EXCEEDED;
 use crate::domain::request_observation::RequestTrace;
 
 /// The cap the runaway tests set: a few dozen deltas.
-const CAP: u64 = 4096;
+pub(super) const CAP: u64 = 4096;
 /// The output each runaway delta carries.
-const DELTA: &str = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl";
+pub(super) const DELTA: &str = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl";
 
 impl Vendor {
     /// What a runaway reply sends first, and the delta it then repeats.
-    fn runaway(self) -> (String, String) {
+    pub(super) fn runaway(self) -> (String, String) {
         match self {
             Vendor::Codex => (
                 "data: {\"type\":\"response.created\",\"response\":{}}\n\n".into(),
@@ -47,13 +47,13 @@ impl Vendor {
     }
 }
 
-fn capped_trace() -> Arc<RequestTrace> {
+pub(super) fn capped_trace() -> Arc<RequestTrace> {
     let trace = traced();
     trace.set_output_cap(CAP);
     trace
 }
 
-fn is_cap_error(message: &str) -> bool {
+pub(super) fn is_cap_error(message: &str) -> bool {
     message.starts_with(OUTPUT_CAP_EXCEEDED) && message.contains(&format!("{CAP} bytes"))
 }
 
