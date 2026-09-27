@@ -166,6 +166,113 @@ impl ContainerAssetStore for EmbeddedStandardAssets {
     ) -> Result<AssetOutcome, String> {
         self.place(root, dir, asset, true)
     }
+
+    fn refresh_outdated(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetOutcome, String> {
+        let destination = dir.join(&asset.path);
+        match self.observe(root, dir, asset)? {
+            AssetState::Identical => Ok(AssetOutcome::KeptIdentical),
+            AssetState::Outdated => self.place(root, dir, asset, false),
+            AssetState::Differs => Err(format!(
+                "{} no longer holds the bytes an earlier quecto wrote (edited since it was judged outdated?); left as it is",
+                destination.display()
+            )),
+            AssetState::Missing => Err(format!(
+                "{} is gone; run `quecto container init` to materialise it",
+                destination.display()
+            )),
+            AssetState::Refused => Err(format!(
+                "{} is not a regular file; refusing to write it",
+                destination.display()
+            )),
+        }
+    }
+}
+
+/// What an outdated file was when it was re-judged under its own handle
+/// (#2206): the replacement renames over it only while it still is.
+struct OutdatedSnapshot {
+    device: u64,
+    inode: u64,
+    length: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl OutdatedSnapshot {
+    /// Open `destination` (never through a link), read and hash its bytes
+    /// through that one handle, and keep the handle's identity: only a
+    /// file that still holds exactly bytes an earlier quecto shipped.
+    fn take(destination: &Path, asset: &ContainerAsset) -> Result<Self, String> {
+        use std::io::Read;
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(destination)
+            .map_err(|error| format!("cannot open {}: {error}", destination.display()))?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|error| format!("cannot read {}: {error}", destination.display()))?;
+        match previously_shipped(asset, &bytes) {
+            true => {}
+            false => {
+                return Err(format!(
+                    "{} no longer holds the bytes an earlier quecto wrote (edited since it was judged outdated?); left as it is",
+                    destination.display()
+                ));
+            }
+        }
+        let meta = file
+            .metadata()
+            .map_err(|error| format!("cannot stat {}: {error}", destination.display()))?;
+        Ok(Self {
+            device: meta.dev(),
+            inode: meta.ino(),
+            length: meta.len(),
+            modified: meta.modified().ok(),
+        })
+    }
+
+    /// Whether `destination` is still the very file this snapshot judged:
+    /// same device, inode, length and modification time.
+    fn still_holds(&self, destination: &Path) -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::symlink_metadata(destination)
+            .map_err(|error| format!("cannot stat {}: {error}", destination.display()))?;
+        let same = meta.dev() == self.device
+            && meta.ino() == self.inode
+            && meta.len() == self.length
+            && meta.modified().ok() == self.modified;
+        match same {
+            true => Ok(()),
+            false => Err(format!(
+                "{} changed while it was being refreshed; left as it is",
+                destination.display()
+            )),
+        }
+    }
+}
+
+/// A test's hook, run at each step of placing an asset (`"observe"`
+/// before the destination is judged, `"snapshot"` before an outdated file
+/// is re-read, `"rename"` before it is renamed over), to change the file
+/// in that window.
+#[cfg(test)]
+pub(crate) type PlaceHook = fn(&Path, &str);
+
+#[cfg(test)]
+pub(crate) static PLACE_HOOK: std::sync::Mutex<Option<PlaceHook>> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn place_hook(destination: &Path, step: &str) {
+    let hook = *PLACE_HOOK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(hook) = hook {
+        hook(destination, step);
+    }
 }
 
 impl EmbeddedStandardAssets {
@@ -179,22 +286,29 @@ impl EmbeddedStandardAssets {
         asset: &ContainerAsset,
         replace: bool,
     ) -> Result<AssetOutcome, String> {
-        let replacing = match self.observe(root, dir, asset)? {
+        let destination = dir.join(&asset.path);
+        #[cfg(test)]
+        place_hook(&destination, "observe");
+        let (replacing, outdated) = match self.observe(root, dir, asset)? {
             AssetState::Identical => return Ok(AssetOutcome::KeptIdentical),
             AssetState::Differs if !replace => return Ok(AssetOutcome::KeptDiffering),
-            AssetState::Differs => true,
+            AssetState::Differs => (true, None),
             // Bytes an earlier quecto wrote: replaced whatever the run,
-            // since no one's edit is lost (#2206).
-            AssetState::Outdated => true,
+            // since no one's edit is lost (#2206) — re-judged through its
+            // own handle now, and renamed over only while unchanged.
+            AssetState::Outdated => {
+                #[cfg(test)]
+                place_hook(&destination, "snapshot");
+                (true, Some(OutdatedSnapshot::take(&destination, asset)?))
+            }
             AssetState::Refused => {
                 return Err(format!(
                     "{} is not a regular file; refusing to write it",
                     dir.join(&asset.path).display()
                 ));
             }
-            AssetState::Missing => false,
+            AssetState::Missing => (false, None),
         };
-        let destination = dir.join(&asset.path);
         let parent = destination
             .parent()
             .ok_or_else(|| format!("{} has no parent directory", destination.display()))?;
@@ -227,6 +341,13 @@ impl EmbeddedStandardAssets {
                 })?;
         }
         if replacing {
+            // An outdated file is renamed over only while it is still the
+            // file judged outdated (#2206): an edit since then stands.
+            if let Some(snapshot) = &outdated {
+                #[cfg(test)]
+                place_hook(&destination, "rename");
+                snapshot.still_holds(&destination)?;
+            }
             // A refresh renames over the differing file it observed; the
             // link-check just above bounds the race to the file itself.
             return match temporary.persist(&destination) {

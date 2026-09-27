@@ -54,6 +54,15 @@ impl ContainerAssetStore for FixedAssets {
     fn refresh(&self, _: &Path, _: &Path, _: &ContainerAsset) -> Result<AssetOutcome, String> {
         unreachable!("status never writes")
     }
+
+    fn refresh_outdated(
+        &self,
+        _: &Path,
+        _: &Path,
+        _: &ContainerAsset,
+    ) -> Result<AssetOutcome, String> {
+        unreachable!("no fixed state here is outdated")
+    }
 }
 
 struct FixedRoster(Result<ContainerConfigRosterReport, String>);

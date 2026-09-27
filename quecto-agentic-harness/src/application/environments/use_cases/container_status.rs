@@ -59,7 +59,7 @@ impl ContainerStatus {
                     // Bytes an earlier quecto wrote (#2206): refreshed in
                     // place, and the report says so.
                     Ok(AssetState::Outdated) => {
-                        match self.assets.refresh(project, &assets_dir, asset) {
+                        match self.assets.refresh_outdated(project, &assets_dir, asset) {
                             Ok(_) => {
                                 asset_diagnostics.push(format!(
                                     "refreshed {}: it held a script an earlier quecto wrote; version {} is now in place — restart any older quecto that is still running, its scripts changed",

@@ -355,6 +355,19 @@ pub trait ContainerAssetStore: Send + Sync {
         dir: &Path,
         asset: &ContainerAsset,
     ) -> Result<AssetOutcome, String>;
+
+    /// Replace `asset` below `dir` only while it still holds exactly bytes
+    /// an earlier quecto shipped (#2206): the bytes are re-read and
+    /// re-judged at replacement time, and the file must be unchanged up to
+    /// the rename. Anything else — an edit made since it was judged
+    /// outdated, a file gone — is refused (`Err`) and left as it is, so
+    /// no one's edit is ever overwritten by a refresh nobody asked for.
+    fn refresh_outdated(
+        &self,
+        root: &Path,
+        dir: &Path,
+        asset: &ContainerAsset,
+    ) -> Result<AssetOutcome, String>;
 }
 
 /// The repository a checkout came from: its `origin` remote URL, `None`

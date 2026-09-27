@@ -353,3 +353,108 @@ fn the_composed_doctor_refreshes_an_outdated_script() {
     );
     assert_eq!(std::fs::read(&script).unwrap(), embedded("scripts/kill.sh"));
 }
+
+/// Review P2 of PR #2234: a refresh authorised by an earlier "outdated"
+/// judgement re-judges the bytes when it replaces them. A file edited
+/// since then is refused and left exactly as the edit made it.
+#[test]
+fn an_edit_made_after_the_outdated_judgement_is_never_overwritten() {
+    for (relative, bytes) in shipped() {
+        let (project, script) = project_with(relative, bytes);
+        assert_eq!(
+            EmbeddedScriptIntegrity.verify(&script),
+            StandardScriptVerdict::Outdated
+        );
+        // The user edits the script before the refresh runs.
+        let edited = [bytes, b"\n# my change\n"].concat();
+        std::fs::write(&script, &edited).unwrap();
+        let dir = project.path().join(".quecto/containers/standard");
+        let asset = EmbeddedStandardAssets
+            .catalogue()
+            .assets
+            .into_iter()
+            .find(|asset| asset.path == relative)
+            .unwrap();
+        let refused = EmbeddedStandardAssets
+            .refresh_outdated(project.path(), &dir, &asset)
+            .unwrap_err();
+        assert!(refused.contains("left as it is"), "{refused}");
+        assert_eq!(std::fs::read(&script).unwrap(), edited, "{relative}");
+        // Through the launch-side judge: refused, the edit stands.
+        assert!(matches!(
+            RefreshingScriptIntegrity.verify(&script),
+            StandardScriptVerdict::Differs
+        ));
+        assert_eq!(std::fs::read(&script).unwrap(), edited);
+    }
+}
+
+/// Serialises the tests that set the process-wide place hook.
+static HOOKED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Append an edit to a `race-probe` project's file at `step`.
+fn edit_at(step: &'static str) -> fn(&Path, &str) {
+    fn edit(destination: &Path, marker: &str) {
+        if destination.to_string_lossy().contains("race-probe") {
+            let mut bytes = std::fs::read(destination).unwrap();
+            bytes.extend_from_slice(format!("\n# edited at {marker}\n").as_bytes());
+            std::fs::write(destination, bytes).unwrap();
+        }
+    }
+    match step {
+        "observe" => |d, s| {
+            if s == "observe" {
+                edit(d, s)
+            }
+        },
+        "snapshot" => |d, s| {
+            if s == "snapshot" {
+                edit(d, s)
+            }
+        },
+        _ => |d, s| {
+            if s == "rename" {
+                edit(d, s)
+            }
+        },
+    }
+}
+
+/// Every window of a refresh — before the destination is judged, between
+/// that judgement and the re-read, between the re-read and the rename: a
+/// file edited there is never overwritten, whichever judge (the doctor's,
+/// or the store's own `refresh_outdated`) asked for the refresh.
+#[test]
+fn an_edit_in_any_window_of_a_refresh_is_never_overwritten() {
+    let _serial = HOOKED.lock().unwrap_or_else(|e| e.into_inner());
+    for step in ["observe", "snapshot", "rename"] {
+        for through_the_judge in [false, true] {
+            let project = tempfile::Builder::new()
+                .prefix("race-probe")
+                .tempdir()
+                .unwrap();
+            let dir = super::test_support::materialise_bundle(project.path());
+            let script = dir.join("scripts/kill.sh");
+            std::fs::write(&script, shipped()[3].1).unwrap();
+            let asset = EmbeddedStandardAssets
+                .catalogue()
+                .assets
+                .into_iter()
+                .find(|asset| asset.path == "scripts/kill.sh")
+                .unwrap();
+            *super::super::assets::PLACE_HOOK.lock().unwrap() = Some(edit_at(step));
+            let verdict = if through_the_judge {
+                Some(RefreshingScriptIntegrity.verify(&script))
+            } else {
+                let _ = EmbeddedStandardAssets.refresh_outdated(project.path(), &dir, &asset);
+                None
+            };
+            *super::super::assets::PLACE_HOOK.lock().unwrap() = None;
+            let now = std::fs::read(&script).unwrap();
+            assert!(
+                now.ends_with(format!("# edited at {step}\n").as_bytes()),
+                "{step} (judge: {through_the_judge}): the edit stands, verdict {verdict:?}"
+            );
+        }
+    }
+}

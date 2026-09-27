@@ -80,20 +80,22 @@ says_no_such() {
   printf '%s\n' "$1" | grep -iE 'no such (container|object)' | grep -qF -- "$2"
 }
 
-# Ask the runtime about one container. The answer is left in `answer`;
-# returns 1 only when the runtime's own words say the container does not
-# exist. Any other failure — a runtime that cannot be reached, a storage
-# lock — is no answer: the inspect fails, so the harness treats the
-# container's state as unknown and never as gone (#2206). No temporary
-# file: the error words are read by asking again, stderr only.
+# Ask the runtime about one container, once. The answer is left in
+# `answer`; returns 1 only when the runtime's own words say the container
+# does not exist. Any other failure — a runtime that cannot be reached, a
+# storage lock — is no answer: the inspect fails, so the harness treats
+# the container's state as unknown and never as gone (#2206). One call
+# yields both streams, without a temporary file: stderr lines are tagged
+# on their way into the same capture, so a transient failure is never
+# followed by a second, different answer.
 answer=""
 inspect_container() {
-  local errors
-  if answer="$("$cli" inspect --format "$1" "$2" 2>/dev/null)"; then
+  local output errors status=0
+  output="$({ "$cli" inspect --format "$1" "$2" 2>&1 1>&3 3>&- | sed 's/^/stderr: /'; } 3>&1)" || status=$?
+  answer="$(printf '%s\n' "$output" | grep -v '^stderr: ' || true)"
+  errors="$(printf '%s\n' "$output" | sed -n 's/^stderr: //p')"
+  if [ "$status" = 0 ]; then
     return 0
-  fi
-  if errors="$("$cli" inspect --format "$1" "$2" 2>&1 >/dev/null)"; then
-    die "$cli inspect $2 failed, then answered: whether it exists is unknown"
   fi
   if says_no_such "$errors" "$2"; then
     return 1

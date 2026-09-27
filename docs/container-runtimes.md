@@ -1211,7 +1211,10 @@ explicit commands rewrite it: `container status`, `container doctor` and
 `container init` (with or without `--refresh`) replace it with this
 binary's bytes in place (the same atomic rename as `--refresh`) and print
 a notice that any older quecto still running should be restarted — its
-scripts changed under it. A launch never rewrites the bundle (an older
+scripts changed under it. The replacement re-reads the file through one
+handle and renames over it only while it still holds exactly those old
+bytes and is the same unchanged file (inode, length, mtime): an edit made
+since it was judged outdated is left alone and reported. A launch never rewrites the bundle (an older
 quecto still running would find its own scripts replaced): it refuses
 with "… was written by an earlier quecto; run `quecto container status
 --project <dir>` (or `quecto container init --refresh --project <dir>`)

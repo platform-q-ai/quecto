@@ -105,6 +105,15 @@ impl ContainerAssetStore for MemoryAssets {
             _ => self.materialise(root, dir, asset),
         }
     }
+
+    fn refresh_outdated(
+        &self,
+        _: &Path,
+        _: &Path,
+        _: &ContainerAsset,
+    ) -> Result<AssetOutcome, String> {
+        unreachable!("init never refreshes only outdated files")
+    }
 }
 
 pub(super) struct FixedOrigin {

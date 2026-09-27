@@ -261,3 +261,81 @@ fn a_kill_of_a_container_the_runtime_says_is_gone_removes_everything() {
         }
     }
 }
+
+/// A fake runtime whose `inspect` behaves per call: call 1, 2, ... take
+/// the n-th of `answers` (the last repeats), each `(stdout, stderr, exit)`.
+fn scripted_cli(dir: &Path, answers: &[(&str, &str, i32)]) -> (PathBuf, PathBuf) {
+    let count = dir.join("calls");
+    let mut cases = String::new();
+    for (index, (stdout, stderr, exit)) in answers.iter().enumerate() {
+        let n = index + 1;
+        let selector = if n == answers.len() {
+            "*".to_string()
+        } else {
+            n.to_string()
+        };
+        cases.push_str(&format!(
+            "{selector}) printf '%s' '{stdout}'; printf '%s' '{stderr}' >&2; exit {exit};;\n"
+        ));
+    }
+    let cli = dir.join("scripted-cli");
+    fs::write(
+        &cli,
+        format!(
+            "#!/usr/bin/env bash\n[ \"$1\" = inspect ] || exit 0\nn=$(( $(cat '{c}' 2>/dev/null || echo 0) + 1 ))\necho \"$n\" > '{c}'\ncase \"$n\" in\n{cases}esac\n",
+            c = count.display()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    (cli, count)
+}
+
+/// Review P3 of PR #2234: one inspect call yields both its answer and its
+/// error words. A transient failure is that call's answer — unknown —
+/// never followed by a second, different ask; a success that also warns
+/// on stderr is read from its stdout alone.
+#[test]
+fn inspect_asks_the_runtime_once_and_uses_that_answer() {
+    let temp = tempfile::tempdir().unwrap();
+    let (cli, calls) = scripted_cli(
+        temp.path(),
+        &[
+            ("", "Error: cannot connect to Podman socket", 125),
+            ("running 0 false", "", 0),
+        ],
+    );
+    let dir = self::state(temp.path());
+    let output = run("inspect.sh", &cli, &dir, &[]);
+    assert!(!output.status.success(), "the transient failure is unknown");
+    assert_eq!(
+        fs::read_to_string(&calls).unwrap().trim(),
+        "1",
+        "asked once"
+    );
+    // The next inspect is a new ask, and its success is used.
+    let output = run("inspect.sh", &cli, &dir, &[]);
+    assert_eq!(status_of(&output), "running");
+
+    let temp = tempfile::tempdir().unwrap();
+    let (cli, calls) = scripted_cli(
+        temp.path(),
+        &[(
+            "exited 3 false",
+            "WARN[0000] cgroupv2 manager is set to systemd",
+            0,
+        )],
+    );
+    let output = run("inspect.sh", &cli, &self::state(temp.path()), &[]);
+    assert_eq!(
+        status_of(&output),
+        "dead",
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read_to_string(&calls).unwrap().trim(), "1");
+}

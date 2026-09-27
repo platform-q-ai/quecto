@@ -88,7 +88,7 @@ fn refresh_outdated(script: &Path) -> StandardScriptVerdict {
     else {
         return StandardScriptVerdict::NotStandard;
     };
-    match store.refresh(root, &root.join(STANDARD_CONTAINER_DIR), &asset) {
+    match store.refresh_outdated(root, &root.join(STANDARD_CONTAINER_DIR), &asset) {
         Ok(_) => {
             let notice = format!(
                 "quecto: refreshed {} — it held a standard bundle script an earlier quecto wrote; this quecto's version is now in place. Restart any older quecto that is still running: its scripts changed under it",
