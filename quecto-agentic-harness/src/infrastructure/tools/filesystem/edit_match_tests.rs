@@ -200,6 +200,38 @@ fn a_mapped_range_that_does_not_normalise_to_the_needle_is_refused() {
     assert_eq!(prove_fuzzy_range("\u{2019}b", &(0..4), "'b"), Ok(()));
 }
 
+// --- occurrences ---
+
+#[test]
+fn the_fallback_table_follows_nested_borders() {
+    assert_eq!(kmp_fallback(b"aabaaa"), vec![0, 1, 0, 1, 2, 2]);
+    assert_eq!(kmp_fallback(b"abab"), vec![0, 0, 1, 2]);
+    assert_eq!(kmp_fallback(b""), Vec::<usize>::new());
+}
+
+#[test]
+fn occurrences_equal_a_naive_overlapping_search() {
+    let mut rng = StdRng::seed_from_u64(0x0cc);
+    for _ in 0..5_000 {
+        let pick = |rng: &mut StdRng, max: usize| -> String {
+            (0..rng.gen_range(0..=max))
+                .map(|_| ["a", "b", "\u{2019}"][rng.gen_range(0..3)])
+                .collect()
+        };
+        let haystack = pick(&mut rng, 30);
+        let needle = pick(&mut rng, 6);
+        let naive: Vec<usize> = (0..=haystack.len())
+            .filter(|at| {
+                !needle.is_empty()
+                    && haystack.is_char_boundary(*at)
+                    && haystack[*at..].starts_with(&needle)
+            })
+            .collect();
+        let found: Vec<usize> = occurrences(&haystack, &needle).collect();
+        assert_eq!(found, naive, "{haystack:?} / {needle:?}");
+    }
+}
+
 // --- cost ---
 
 /// #2191 review: candidates that do not fit must not make the search
