@@ -255,3 +255,30 @@ fn explicit_model_effort_without_composed_capability_is_refused() {
     assert_eq!(super::validate_effort("low", None, None).unwrap(), "low");
     assert!(super::validate_effort("turbo", None, None).is_err());
 }
+
+/// Contract (#2192 F6): the `-s` the launcher passes is the name the domain
+/// derives for the child, so the session the child opens (`named_cli` of its
+/// `-s`, as `startup_identity` does) is the one the parent reads back.
+#[test]
+fn the_launched_session_is_the_one_the_domain_names_for_the_child() {
+    use crate::domain::child_session::{child_session_identity, child_session_name};
+    use crate::domain::ids::AgentUuid;
+    use crate::domain::session_identity::SessionIdentity;
+
+    let child = AgentUuid::new("65268567-be4a-471f-a805-1238dcf08b68");
+    assert_eq!(
+        super::super::spawn_entry::child_session_key(&child),
+        child_session_name(&child)
+    );
+    let cfg = base_config();
+    let mut launch = spec(&cfg);
+    launch.session_name = super::super::spawn_entry::child_session_key(&child);
+    let strs = as_strings(&build_child_cli_args(&launch));
+    let pos = strs.iter().position(|a| a == "-s").expect("-s is passed");
+    let opened = SessionIdentity::named_cli(&strs[pos + 1]).expect("a valid session name");
+    assert_eq!(opened, child_session_identity(&child).unwrap());
+    assert_eq!(
+        opened.runtime_key(),
+        "cli:65268567-be4a-471f-a805-1238dcf08b68"
+    );
+}

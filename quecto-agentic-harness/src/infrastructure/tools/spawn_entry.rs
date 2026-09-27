@@ -18,9 +18,10 @@ pub(super) fn effective_config_path(
 }
 
 /// Durable child session key used for `-s` / `Session::build_key` (#1378).
-/// Always the minted AgentUuid — never the user-facing display label.
+/// Always the minted AgentUuid — never the user-facing display label; the
+/// domain names it so the parent reads back the session the child opens.
 pub(super) fn child_session_key(agent_uuid: &AgentUuid) -> &str {
-    agent_uuid.as_str()
+    crate::domain::child_session::child_session_name(agent_uuid)
 }
 
 /// Socket path for a spawned child, keyed by AgentUuid (#1378).

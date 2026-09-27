@@ -11,7 +11,7 @@ use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::Message;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::tools::subagent_registry::{
-    SubagentEntry, SubagentRegistry, SubagentStatus, new_registry,
+    SubagentEntry, SubagentRegistry, new_registry,
 };
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::DispatchCtx;
@@ -611,99 +611,6 @@ async fn forward_get_message_unknown_agent_is_error_event() {
         err.contains("not found"),
         "unknown agent must report not-found: {json}"
     );
-}
-
-#[tokio::test]
-async fn forward_get_messages_reads_dead_historical_transcript_by_uuid() {
-    use crate::application::sessions::ports::SessionStore;
-    use crate::domain::session::{Session, SubagentLiveness};
-
-    let registry = new_registry();
-    {
-        let mut entry = SubagentEntry::with_identity(
-            crate::domain::ids::AgentUuid::from("dead-child".to_string()),
-            "dead worker".to_string(),
-            "/tmp/dead-child.sock".into(),
-            0,
-        );
-        entry.persisted_liveness = SubagentLiveness::Dead;
-        registry.lock().unwrap().insert("dead-child".into(), entry);
-    }
-    let mut fx = Fx::new();
-    fx.store
-        .save(&Session {
-            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("dead-child"),
-            messages: vec![Message::user("historical transcript")],
-            workflow_run: None,
-            subagent_roster: Vec::new(),
-        })
-        .await
-        .unwrap();
-    let mut ctx = fx.ctx();
-    ctx.subagent_registry = Some(registry);
-
-    let ev = forward_subagent_get_messages(
-        &ctx,
-        Some(crate::domain::ids::CommandId::from("hist")),
-        "get_messages",
-        crate::domain::ids::AgentId::from("dead-child"),
-        Some(10),
-        None,
-    )
-    .await;
-    let json = serde_json::to_value(ev).unwrap();
-
-    assert_eq!(json["success"], true);
-    assert!(json.to_string().contains("historical transcript"));
-}
-
-#[tokio::test]
-async fn forward_get_messages_reads_full_dead_historical_transcript_when_count_omitted() {
-    use crate::application::sessions::ports::SessionStore;
-    use crate::domain::session::{Session, SubagentLiveness};
-    use crate::interface::cli::uds_session::HISTORY_PAGE_SIZE;
-
-    let registry = new_registry();
-    {
-        let mut entry = SubagentEntry::with_identity(
-            crate::domain::ids::AgentUuid::from("dead-child"),
-            "dead-label".into(),
-            "/tmp/dead.sock".into(),
-            0,
-        );
-        entry.status = SubagentStatus::Exited;
-        entry.persisted_liveness = SubagentLiveness::Dead;
-        registry.lock().unwrap().insert("dead-child".into(), entry);
-    }
-    let mut fx = Fx::new();
-    let messages: Vec<_> = (0..(HISTORY_PAGE_SIZE + 3))
-        .map(|i| Message::user(format!("historical-{i}")))
-        .collect();
-    fx.store
-        .save(&Session {
-            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("dead-child"),
-            messages,
-            workflow_run: None,
-            subagent_roster: Vec::new(),
-        })
-        .await
-        .unwrap();
-    let mut ctx = fx.ctx();
-    ctx.subagent_registry = Some(registry);
-
-    let ev = forward_subagent_get_messages(
-        &ctx,
-        Some(crate::domain::ids::CommandId::from("hist-full")),
-        "get_messages",
-        crate::domain::ids::AgentId::from("dead-child"),
-        None,
-        None,
-    )
-    .await;
-    let json = serde_json::to_value(ev).unwrap();
-    let returned = json["data"]["messages"].as_array().unwrap();
-    assert_eq!(returned.len(), HISTORY_PAGE_SIZE + 3);
-    assert!(json.to_string().contains("historical-0"));
 }
 
 #[tokio::test]

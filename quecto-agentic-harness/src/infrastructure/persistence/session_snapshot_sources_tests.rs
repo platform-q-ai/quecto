@@ -83,7 +83,8 @@ fn the_roster_source_maps_rows_as_history_without_pid_or_socket() {
     assert_eq!(rows.len(), 2);
     let beta = rows.iter().find(|r| r.agent_uuid == "b").unwrap();
     assert_eq!(beta.display_name, "beta");
-    assert_eq!(beta.session_key, "b");
+    // The session the child runs as, `cli:<uuid>` (#2192).
+    assert_eq!(beta.session_key, "cli:b");
     assert_eq!(beta.liveness, SubagentLiveness::Dead);
     assert_eq!(
         beta.restore_reason,
@@ -119,4 +120,21 @@ fn the_roster_source_recovers_from_a_poisoned_registry_lock() {
     .join();
     assert!(registry.lock().is_err());
     assert_eq!(RegistryRosterSource::new(registry).roster_rows().len(), 1);
+}
+
+/// #2192: a uuid no child could run under names no session in the roster.
+#[test]
+fn a_uuid_that_names_no_session_is_persisted_without_one() {
+    let registry = new_registry();
+    registry.lock().unwrap().insert(
+        "odd".to_string(),
+        SubagentEntry::with_identity(
+            crate::domain::ids::AgentUuid::new("has space"),
+            "odd".into(),
+            "/tmp/odd.sock".into(),
+            0,
+        ),
+    );
+    let rows = RegistryRosterSource::new(registry).roster_rows();
+    assert_eq!(rows[0].session_key, "");
 }

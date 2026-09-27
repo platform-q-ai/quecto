@@ -182,3 +182,7 @@ pub(super) async fn queue_prompt(
     super::emit_event_to_broadcast_or_writer(ctx, &event).await;
     retained
 }
+
+#[cfg(test)]
+#[path = "uds_pending_persist_tests.rs"]
+mod persist_tests;

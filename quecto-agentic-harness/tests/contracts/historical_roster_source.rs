@@ -44,7 +44,8 @@ fn every_entry_becomes_one_history_row_with_the_default_reason() {
     let row = &rows[0];
     assert_eq!(row.agent_uuid, "w");
     assert_eq!(row.display_name, "worker");
-    assert_eq!(row.session_key, "w");
+    // The session the child runs as, `cli:<uuid>` (#2192).
+    assert_eq!(row.session_key, "cli:w");
     assert_eq!(row.liveness, SubagentLiveness::Detached);
     assert_eq!(row.restore_reason, SubagentRestoreReason::LegacyUnspecified);
     assert_eq!(row.parent_id.as_deref(), Some("parent"));

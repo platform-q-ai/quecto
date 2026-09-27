@@ -219,19 +219,19 @@ pub(super) async fn forward_subagent_get_messages(
     let route = match resolve_inspection_route(registry, agent_id.as_str()) {
         Ok(route) => route,
         Err(e) => {
-            let historical_session_key = {
+            let historical_agent_uuid = {
                 let entries = registry
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 if let Some(entry) = entries.get(agent_id.as_str()) {
-                    Ok(Some(entry.agent_uuid.as_str().to_string()))
+                    Ok(Some(entry.agent_uuid.clone()))
                 } else {
                     let mut matches = entries
                         .iter()
                         .filter(|(key, entry)| {
                             entry.effective_display_name(key) == agent_id.as_str()
                         })
-                        .map(|(_, entry)| entry.agent_uuid.as_str().to_string());
+                        .map(|(_, entry)| entry.agent_uuid.clone());
                     match (matches.next(), matches.next()) {
                         (Some(first), None) => Ok(Some(first)),
                         (Some(_), Some(_)) => Err(format!(
@@ -242,8 +242,24 @@ pub(super) async fn forward_subagent_get_messages(
                     }
                 }
             };
-            match historical_session_key {
-                Ok(Some(session_key)) => {
+            match historical_agent_uuid {
+                Ok(Some(child)) => {
+                    // A launched child runs as `cli:<uuid>` (#2192).
+                    let session = match crate::domain::child_session::child_session_identity(&child)
+                    {
+                        Ok(session) => session,
+                        Err(error) => {
+                            return AgentEvent::err(
+                                id_ref,
+                                tn,
+                                format!(
+                                    "subagent '{}' names no session a child runs as: {error}",
+                                    agent_id.as_str()
+                                ),
+                            );
+                        }
+                    };
+                    let session_key = session.runtime_key().to_string();
                     // A historical child's transcript is history the store
                     // holds: the composed history owner pages it (#1856).
                     use crate::application::sessions::dto::HistoryError;
