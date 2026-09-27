@@ -315,9 +315,11 @@ fn test_build_shell_command_inherits_environment_when_no_overrides() {
     assert!(
         cmd.as_std().get_envs().all(|(key, value)| {
             let key = key.to_string_lossy();
-            (key.starts_with("QUECTO_SWARM_") || key == "RUST_LOG") && value.is_none()
+            let removed = key.starts_with("QUECTO_SWARM_")
+                || ["RUST_LOG", "BASH_ENV", "ENV"].contains(&key.as_ref());
+            removed && value.is_none()
         }),
-        "ordinary environment is inherited; only swarm launch context and the harness log level are removed"
+        "ordinary environment is inherited; only swarm launch context, the harness log level and shell startup files are removed"
     );
 }
 
