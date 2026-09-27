@@ -33,10 +33,10 @@ Feature: ExecTool (bash) — Quecto compatibility
   # --- Shell detection ---
 
   @done
-  Scenario: Shell detection uses SHELL env variable
+  Scenario: A POSIX SHELL gives way to bash, which the tool is named for
     When the agent executes bash "echo $0" with shell env "sh"
     Then the [ToolResult] should not be an error
-    And the [ToolResult] should contain "sh"
+    And the [ToolResult] should contain "bash"
 
   # --- commandPrefix option ---
 

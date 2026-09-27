@@ -141,10 +141,16 @@ async fn test_exec_command_prefix_prepended() {
 
 // --- Shell detection ---
 
+fn bash_is_installed() -> bool {
+    ["/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash"]
+        .iter()
+        .any(|path| super::shell::is_installed(path))
+}
+
+/// #2195: `SHELL=/bin/sh` gives way to bash where bash is installed.
 #[tokio::test]
-async fn test_exec_shell_detection_uses_shell_env() {
+async fn test_exec_posix_shell_env_gives_way_to_bash() {
     let (tool, _tmp) = test_exec();
-    // Set SHELL to /bin/sh and verify the shell is spawned (not an arbitrary binary).
     // $0 in the spawned shell prints the shell executable name.
     let mut env_overrides = HashMap::new();
     env_overrides.insert("SHELL".to_string(), "/bin/sh".to_string());
@@ -162,15 +168,33 @@ async fn test_exec_shell_detection_uses_shell_env() {
         "output should name the shell, got: {}",
         result.content
     );
+    assert!(bash_is_installed(), "these tests require bash on the host");
+    assert!(
+        result.content.trim().ends_with("bash"),
+        "{}",
+        result.content
+    );
+}
+
+/// #2195: bash syntax works with no `SHELL` in the environment (a
+/// container) and with the parent's own, wherever bash is installed.
+#[tokio::test]
+async fn bash_syntax_runs_in_a_container_like_environment() {
+    // Test hosts have bash, as the CI images and the standard container do.
+    assert!(bash_is_installed(), "these tests require bash on the host");
+    let (tool, _tmp) = test_exec();
+    let command = r#"{"command": "[[ a == a ]] && echo {1..3}"}"#;
+    let empty = HashMap::new();
+    let contained = tool.execute_with_env(command, &empty).await.unwrap();
+    assert_eq!(contained.content.trim(), "1 2 3", "{}", contained.content);
+    let native = tool.execute(command).await.unwrap();
+    assert_eq!(native.content.trim(), "1 2 3", "{}", native.content);
 }
 
 #[test]
-fn test_exec_disallowed_shell_falls_back_to_sh() {
-    // $SHELL pointing to a non-allowlisted binary should silently fall back to /bin/sh.
-    // We test build_shell_command indirectly via the allowlist logic.
-    // ALLOWED_SHELLS does not contain /tmp/evil, so it should use /bin/sh.
-    // We can't call build_shell_command directly (it's private), but we can
-    // confirm the constant list is correct.
+fn test_exec_allowlist_excludes_arbitrary_binaries() {
+    // A non-allowlisted $SHELL is never run: the fallback (bash where
+    // installed, else /bin/sh, #2195) runs the command instead.
     assert!(ALLOWED_SHELLS.contains(&"/bin/sh"));
     assert!(ALLOWED_SHELLS.contains(&"/bin/bash"));
     assert!(!ALLOWED_SHELLS.contains(&"/tmp/evil"));
@@ -291,9 +315,11 @@ fn test_build_shell_command_inherits_environment_when_no_overrides() {
     assert!(
         cmd.as_std().get_envs().all(|(key, value)| {
             let key = key.to_string_lossy();
-            (key.starts_with("QUECTO_SWARM_") || key == "RUST_LOG") && value.is_none()
+            let removed = key.starts_with("QUECTO_SWARM_")
+                || ["RUST_LOG", "BASH_ENV", "ENV"].contains(&key.as_ref());
+            removed && value.is_none()
         }),
-        "ordinary environment is inherited; only swarm launch context and the harness log level are removed"
+        "ordinary environment is inherited; only swarm launch context, the harness log level and shell startup files are removed"
     );
 }
 
@@ -308,14 +334,23 @@ fn test_build_shell_command_uses_allowed_shell_from_env() {
 fn test_build_shell_command_rejects_disallowed_shell() {
     let mut env = HashMap::new();
     env.insert("SHELL".to_string(), "/tmp/evil".to_string());
-    // Disallowed shell falls back to /bin/sh.
-    assert_eq!(shell_program(&env), "/bin/sh");
+    // A disallowed shell is never run: the fallback (bash where installed,
+    // else /bin/sh, #2195) runs the command instead.
+    let program = shell_program(&env);
+    assert_ne!(program, "/tmp/evil");
+    assert_eq!(
+        program,
+        super::shell::select_shell(None, super::shell::is_installed)
+    );
 }
 
 #[test]
-fn test_build_shell_command_defaults_to_sh_without_shell_env() {
+fn test_build_shell_command_without_shell_env_uses_the_fallback() {
     let env = HashMap::new();
-    assert_eq!(shell_program(&env), "/bin/sh");
+    assert_eq!(
+        shell_program(&env),
+        super::shell::select_shell(None, super::shell::is_installed)
+    );
 }
 
 #[test]
@@ -661,4 +696,53 @@ async fn test_exec_drop_kills_whole_process_group() {
         !marker.exists(),
         "a killed subshell cannot have touched the marker"
     );
+}
+
+/// #2195: with no `SHELL` in the command's environment (as in a container),
+/// the command runs under the shell selection's choice: bash where it is
+/// installed, never a hard-coded `/bin/sh`.
+#[test]
+fn a_command_without_shell_in_its_environment_runs_under_bash_when_installed() {
+    let workspace = std::env::temp_dir();
+    let env = std::collections::HashMap::new();
+    let cmd = super::build_shell_command(&workspace, "true", Some(&env));
+    let expected = super::shell::select_shell(None, super::shell::is_installed);
+    assert_eq!(cmd.as_std().get_program(), std::ffi::OsStr::new(expected));
+    assert!(bash_is_installed(), "these tests require bash on the host");
+    assert!(expected.ends_with("/bash"), "{expected}");
+}
+
+/// #2195 review: without bash the description says commands run under a
+/// POSIX shell; with bash it adds nothing.
+#[test]
+fn the_description_names_a_posix_shell_only_without_bash() {
+    let note = super::posix_note("/bin/sh");
+    assert!(
+        note.contains("/bin/sh") && note.contains("not bash"),
+        "{note}"
+    );
+    // zsh is not POSIX sh either: the note names it, and makes no such claim.
+    let zsh = super::posix_note("/usr/bin/zsh");
+    assert!(
+        zsh.contains("/usr/bin/zsh") && !zsh.contains("POSIX"),
+        "{zsh}"
+    );
+    assert_eq!(super::posix_note("/usr/bin/bash"), "");
+}
+
+/// #2207 review: an inherited `BASH_ENV` (or `ENV`) never runs before the
+/// command: the command policy only saw the command.
+#[tokio::test]
+async fn an_inherited_bash_env_is_never_sourced() {
+    let (tool, tmp) = test_exec();
+    let startup = tmp.path().join("startup.sh");
+    std::fs::write(&startup, "echo SOURCED\n").unwrap();
+    let mut env = HashMap::new();
+    env.insert("BASH_ENV".to_string(), startup.display().to_string());
+    env.insert("ENV".to_string(), startup.display().to_string());
+    let result = tool
+        .execute_with_env(r#"{"command": "echo ok"}"#, &env)
+        .await
+        .unwrap();
+    assert_eq!(result.content.trim(), "ok", "{}", result.content);
 }

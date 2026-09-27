@@ -784,7 +784,7 @@ To use an OAuth-backed registry provider, first run `quecto auth login --provide
 
 ### Exec behaviour
 
-- `bash` commands run natively in the workspace via the user's shell. The shell is read from `$SHELL` and validated against an allowlist of known system shells (defaults to `/bin/sh`).
+- `bash` commands run natively in the workspace root, each in a fresh shell (`cd` and `export` do not carry over between calls). The shell is chosen once per process (#2195). An allowlisted, installed bash named by `$SHELL` is used; otherwise the first installed of `/bin/bash`, `/usr/bin/bash` and `/usr/local/bin/bash`; otherwise the allowlisted `$SHELL`; otherwise `/bin/sh`. Without bash, the tool's description says bash-only syntax may not work.
 - exec child processes clear the ambient environment and then explicitly receive the current process environment (or test-provided overrides).
 - `Sandbox::validate_command` rejects a denylist of destructive commands (e.g. `rm -rf /`, recursive `chown root`) before execution.
 - There is no built-in process/network/resource isolation. For untrusted workloads, run Quecto inside a container (or other OS-level sandbox), which bounds filesystem, network, and resource access for the whole process.
