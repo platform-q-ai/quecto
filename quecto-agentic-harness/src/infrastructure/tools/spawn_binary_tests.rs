@@ -1,14 +1,7 @@
 use super::*;
 
 fn write_executable(path: &Path) {
-    std::fs::write(path, b"#!/bin/sh\n").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = std::fs::metadata(path).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(path, permissions).unwrap();
-    }
+    crate::infrastructure::test_support::executable::write_executable(path, "#!/bin/sh\n");
 }
 
 #[test]

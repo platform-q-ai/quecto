@@ -1,6 +1,7 @@
 //! Termination signals and parent death on the CLI path (#2053).
-use super::cli_cov_tests::{args, spawn_agent_program_retry_etxtbsy, tmp_dir};
+use super::cli_cov_tests::{args, tmp_dir};
 use super::*;
+use crate::shell::test_executable::write_executable;
 
 /// [`spawn_agent_program_until`] with no signal to interrupt it.
 pub(super) async fn spawn_agent_program(
@@ -64,11 +65,10 @@ async fn a_signal_during_startup_is_taken_once_and_named() {
 /// A stand-in that announces its socket only after `delay` seconds and
 /// exits 0 on SIGTERM.
 fn slow_agent(tag: &str, delay_secs: u32) -> (PathBuf, PathBuf) {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tmp_dir(tag);
     let sock = dir.join("agent.sock");
     let script = dir.join("slow-agent.py");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/usr/bin/env python3\n\
@@ -79,9 +79,7 @@ fn slow_agent(tag: &str, delay_secs: u32) -> (PathBuf, PathBuf) {
              signal.pause()\n",
             sock.display()
         ),
-    )
-    .expect("write slow agent");
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     (dir, script)
 }
 
@@ -160,13 +158,14 @@ async fn a_signal_while_waiting_leaves_a_detached_agent_running_once_announced()
     }
 }
 
-/// A stand-in that reports its own parent-death signal before announcing.
+/// A stand-in that reports its own parent-death signal before announcing
+/// (`prctl` is Linux's, as are the tests that use it).
+#[cfg(target_os = "linux")]
 fn pdeathsig_reporting_agent(tag: &str) -> (PathBuf, PathBuf) {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tmp_dir(tag);
     let sock = dir.join("agent.sock");
     let script = dir.join("fake-agent.py");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/usr/bin/env python3\n\
@@ -178,20 +177,18 @@ fn pdeathsig_reporting_agent(tag: &str) -> (PathBuf, PathBuf) {
              signal.pause()\n",
             sock.display()
         ),
-    )
-    .expect("write fake agent");
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     (dir, script)
 }
 
+#[cfg(target_os = "linux")]
 async fn spawned_pdeathsig(flag: &str, tag: &str) -> String {
     let (dir, script) = pdeathsig_reporting_agent(tag);
     let _listener = std::os::unix::net::UnixListener::bind(dir.join("agent.sock")).unwrap();
     let flags = parse_flags(&args(flag));
-    let (_path, mut child, tail, _protocol) =
-        spawn_agent_program_retry_etxtbsy(script.to_str().unwrap(), &flags)
-            .await
-            .expect("spawn fake agent");
+    let (_path, mut child, tail, _protocol) = spawn_agent_program(script.to_str().unwrap(), &flags)
+        .await
+        .expect("spawn fake agent");
     let reported = tail
         .lines()
         .iter()

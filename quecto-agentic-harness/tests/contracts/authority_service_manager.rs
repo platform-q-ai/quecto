@@ -2,23 +2,21 @@
 //! is written, read back and removed idempotently, and each lifecycle call
 //! reaches `systemctl --user`. A fake `systemctl` (pointed at by the manager,
 //! so the whole test process's PATH is untouched) records every invocation.
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use quecto::application::admission::ports::{AuthorityServiceManager, ServiceUnitSpec, UnitStatus};
 use quecto::infrastructure::processes::local::SystemdUserServiceManager;
+use quecto::infrastructure::test_support::executable::write_executable;
 
 fn fake_systemctl(dir: &Path, log: &Path) -> PathBuf {
     let script = dir.join("systemctl");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
             log.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     script
 }
 
@@ -79,15 +77,13 @@ fn failed_systemctl_user_commands_report_stderr_and_preserve_unit() {
     let tmp = tempfile::tempdir().unwrap();
     let (manager, log) = under_test(&tmp);
     let script = tmp.path().join("systemctl");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf 'service unavailable\\n' >&2\nexit 7\n",
             log.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     manager
         .write_unit(&ServiceUnitSpec {
             contents: "[Service]\nExecStart=/x\n".into(),
@@ -145,16 +141,14 @@ fn disable_now_treats_only_missing_unit_errors_as_idempotent() {
         let tmp = tempfile::tempdir().unwrap();
         let (manager, log) = under_test(&tmp);
         let script = tmp.path().join("systemctl");
-        std::fs::write(
+        write_executable(
             &script,
             format!(
                 "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf '%s\\n' '{}' >&2\nexit 7\n",
                 log.display(),
                 stderr
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         assert!(!manager.disable_now().unwrap(), "{stderr}");
         assert_eq!(
             std::fs::read_to_string(&log).unwrap(),

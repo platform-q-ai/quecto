@@ -305,11 +305,111 @@ fn a_bundle_directory_that_cannot_be_written_is_an_error_that_names_it() {
         .unwrap_err();
     assert!(
         error.contains(&format!(
-            "cannot create a temporary file in {}",
+            "cannot create {}/.quecto-asset-",
             bundle.display()
         )),
         "{error}"
     );
+    assert!(error.contains("Permission denied"), "{error}");
     std::fs::set_permissions(&bundle, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(std::fs::read_dir(&bundle).unwrap().next().is_none());
+}
+
+/// #2232 review: a placed script is exec'able at once, from a process whose
+/// other threads fork — `place` holds no writable descriptor on it, so a
+/// concurrent fork cannot make the exec "Text file busy". With the former
+/// in-process tempfile write, a few percent of these execs were refused.
+#[test]
+fn a_placed_script_runs_at_once_while_other_threads_fork() {
+    use crate::infrastructure::test_support::executable::{exec_is_busy, while_forking};
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = EmbeddedStandardAssets;
+    let mut asset = store
+        .catalogue()
+        .assets
+        .into_iter()
+        .find(|asset| asset.executable)
+        .expect("the bundle ships an executable script");
+    asset.contents = b"#!/bin/sh\nexit 0\n".to_vec();
+    let busy = while_forking(2, || {
+        (0..300)
+            .filter(|index| {
+                let bundle = dir.path().join(format!("bundle-{index}"));
+                assert_eq!(
+                    store.materialise(dir.path(), &bundle, &asset).unwrap(),
+                    AssetOutcome::Written
+                );
+                let script = bundle.join(&asset.path);
+                assert_eq!(
+                    std::fs::metadata(&script).unwrap().permissions().mode() & 0o777,
+                    0o755
+                );
+                exec_is_busy(&script)
+            })
+            .count()
+    });
+    assert_eq!(busy, 0, "placed scripts refused with ETXTBSY");
+}
+
+/// Plants what the `persist-probe` test's current case needs in the
+/// windows around the no-clobber link of a new asset.
+fn plant(destination: &Path, step: &str) {
+    if !destination.to_string_lossy().contains("persist-probe") {
+        return;
+    }
+    let case = std::fs::read_to_string(destination.with_file_name("case")).unwrap();
+    match (case.as_str(), step) {
+        ("identical", "persist") => std::fs::write(destination, b"ours").unwrap(),
+        ("differs", "persist") => std::fs::write(destination, b"theirs").unwrap(),
+        ("directory", "persist") => std::fs::create_dir(destination).unwrap(),
+        ("vanished", "persist") => std::fs::write(destination, b"ours").unwrap(),
+        ("vanished", "kept") => std::fs::remove_file(destination).unwrap(),
+        _ => {}
+    }
+}
+
+/// #2232 review round 3: a name taken while a new asset was written is
+/// judged on what took it, every state by name; a non-file or a vanished
+/// name is an error, never reported as kept.
+#[test]
+fn a_name_taken_during_the_write_is_reported_by_what_took_it() {
+    let _serial = super::PLACE_HOOK_SERIAL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let store = EmbeddedStandardAssets;
+    let mut asset = store.catalogue().assets[0].clone();
+    asset.path = "planted".into();
+    asset.contents = b"ours".to_vec();
+    *super::PLACE_HOOK.lock().unwrap() = Some(plant);
+    let outcomes: Vec<_> = ["identical", "differs", "directory", "vanished"]
+        .into_iter()
+        .map(|case| {
+            let root = tempfile::Builder::new()
+                .prefix("persist-probe")
+                .tempdir()
+                .unwrap();
+            let bundle = root.path().join("bundle");
+            std::fs::create_dir_all(&bundle).unwrap();
+            std::fs::write(bundle.join("case"), case).unwrap();
+            (case, store.materialise(root.path(), &bundle, &asset))
+        })
+        .collect();
+    *super::PLACE_HOOK.lock().unwrap() = None;
+    for (case, outcome) in outcomes {
+        match case {
+            "identical" => assert_eq!(outcome, Ok(AssetOutcome::KeptIdentical), "{case}"),
+            "differs" => assert_eq!(outcome, Ok(AssetOutcome::KeptDiffering), "{case}"),
+            "directory" => assert!(
+                outcome
+                    .as_ref()
+                    .is_err_and(|e| e.contains("not a regular file")),
+                "{case}: {outcome:?}"
+            ),
+            _ => assert!(
+                outcome.as_ref().is_err_and(|e| e.contains("try again")),
+                "{case}: {outcome:?}"
+            ),
+        }
+    }
 }

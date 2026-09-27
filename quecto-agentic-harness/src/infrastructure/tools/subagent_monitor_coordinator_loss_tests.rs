@@ -10,6 +10,7 @@ use super::*;
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
+use crate::infrastructure::test_support::executable::write_executable;
 use crate::infrastructure::tools::swarm_bridge::SwarmContext;
 use serde_json::json;
 use std::collections::HashMap;
@@ -17,19 +18,13 @@ use std::sync::{Arc, Mutex};
 
 fn write_kill_script(dir: &std::path::Path, log: &std::path::Path) -> std::path::PathBuf {
     let script = dir.join("kill.sh");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/usr/bin/env bash\necho \"kill ${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}\" >> '{}'\n",
             log.display()
         ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    );
     script
 }
 

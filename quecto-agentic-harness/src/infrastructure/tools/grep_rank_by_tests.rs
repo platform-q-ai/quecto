@@ -1,6 +1,6 @@
 //! `rank_by` and the search log through the tool itself (#2136 slice B),
 //! over the real rg.
-use super::tests::{execute_fake, fake_rg};
+use super::tests::fake_rg;
 use super::*;
 use crate::application::search::ports::{
     PortFuture, RankingRecord, Relevance, RelevanceCandidate, SearchRecord,
@@ -35,20 +35,10 @@ impl RelevanceJudge for KeywordJudge {
 pub(super) struct RecordingLog(Mutex<Vec<SearchRecord>>);
 
 impl RecordingLog {
-    /// The records, without the retried spawns of a just-written fake rg
-    /// (ETXTBSY, see `execute_fake`): each retry is a search of its own.
+    /// Every record, in order: a fake rg is written race-free (#2232), so
+    /// no spawn is ever retried and each record is one search.
     pub(super) fn searches(&self) -> Vec<SearchRecord> {
-        self.0
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|r| {
-                !r.error
-                    .as_deref()
-                    .is_some_and(|e| e.contains("Text file busy"))
-            })
-            .cloned()
-            .collect()
+        self.0.lock().unwrap().clone()
     }
 }
 
@@ -232,7 +222,7 @@ async fn a_cancelled_search_is_recorded_as_cancelled() {
     let tmp = TempDir::new().unwrap();
     let log = Arc::new(RecordingLog::default());
     let tool = with_fake_rg(&tmp, "exec sleep 5", 0, log.clone());
-    let call = execute_fake(&tool, r#"{"pattern": "x"}"#);
+    let call = tool.execute(r#"{"pattern": "x"}"#);
     let dropped = tokio::time::timeout(std::time::Duration::from_millis(300), call).await;
     assert!(dropped.is_err(), "the search was still running");
     let records = log.searches();
@@ -249,12 +239,10 @@ async fn failed_searches_are_recorded_with_their_error() {
     let tmp = TempDir::new().unwrap();
     let log = Arc::new(RecordingLog::default());
     let failing = with_fake_rg(&tmp, "true", 2, log.clone());
-    execute_fake(&failing, r#"{"pattern": "x"}"#).await.unwrap();
+    failing.execute(r#"{"pattern": "x"}"#).await.unwrap();
     let slow = with_fake_rg(&tmp, "exec sleep 5", 0, log.clone())
         .with_rg_timeout(std::time::Duration::from_millis(200));
-    execute_fake(&slow, r#"{"pattern": "x"}"#)
-        .await
-        .unwrap_err();
+    slow.execute(r#"{"pattern": "x"}"#).await.unwrap_err();
     let records = log.searches();
     assert_eq!(records.len(), 2);
     assert!(
@@ -287,7 +275,7 @@ async fn a_capped_search_is_recorded_as_incomplete() {
         tmp.path().display()
     );
     let tool = with_fake_rg(&tmp, &flood, 0, log.clone());
-    execute_fake(&tool, r#"{"pattern": "x", "output": "files"}"#)
+    tool.execute(r#"{"pattern": "x", "output": "files"}"#)
         .await
         .unwrap();
     let records = log.searches();
@@ -401,7 +389,8 @@ async fn only_a_complete_search_says_no_match_looks_relevant() {
     ] {
         let tool = with_fake_rg(&tmp, &script, code, Arc::new(RecordingLog::default()))
             .with_relevance(Arc::new(KeywordJudge("nowhere")), 1000);
-        let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+        let result = tool
+            .execute(r#"{"pattern": "retry", "rank_by": "the retry"}"#)
             .await
             .unwrap();
         assert!(result.content.contains("a.rs:1"), "{}", result.content);

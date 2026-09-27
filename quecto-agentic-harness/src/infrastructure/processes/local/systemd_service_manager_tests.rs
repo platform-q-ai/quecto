@@ -1,20 +1,18 @@
 use super::*;
-use std::os::unix::fs::PermissionsExt;
+use crate::infrastructure::test_support::executable::write_executable;
 
 /// A fake `systemctl` that appends its argv to a log file (`$FAKE_LOG`) and
 /// exits successfully, so the manager's calls are observable without touching
 /// the real user session.
 fn fake_systemctl(dir: &std::path::Path, log: &std::path::Path) -> PathBuf {
     let script = dir.join("systemctl");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
             log.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     script
 }
 

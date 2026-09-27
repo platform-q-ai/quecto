@@ -1,4 +1,5 @@
 use super::*;
+use crate::infrastructure::test_support::executable::write_executable;
 use tempfile::TempDir;
 use tokio::time::{Duration, timeout};
 
@@ -25,19 +26,7 @@ pub(super) fn at(root: &str) -> SearchRoot {
 pub(super) fn fixture(script: &str) -> (TempDir, FdFindPaths) {
     let dir = TempDir::new().unwrap();
     let binary = dir.path().join("fake-fd");
-    // A parallel test can fork while this process holds a writable script fd,
-    // inheriting it until exec and making our exec fail with ETXTBSY. Create
-    // scripts in a separate writer process and join it before execution.
-    let written = std::process::Command::new("/usr/bin/python3")
-        .arg("-c")
-        .arg("import os,sys\np=sys.argv[1]\nwith open(p,'w') as f: f.write(sys.argv[2]); f.flush(); os.fsync(f.fileno())\nos.chmod(p,0o755)")
-        .arg(&binary)
-        .arg(format!("#!/usr/bin/python3\n{script}\n"))
-        .status().unwrap();
-    assert!(
-        written.success(),
-        "fixture writer must finish before execution"
-    );
+    write_executable(&binary, format!("#!/usr/bin/python3\n{script}\n"));
     let effect = FdFindPaths::with_fd_binary(
         Arc::new(dir.path().into()),
         Arc::new(Sandbox::new(None)),

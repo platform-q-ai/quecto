@@ -172,14 +172,7 @@ mod real_adapters {
     static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn write_exec(path: &Path, content: &str) {
-        std::fs::write(path, content).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut p = std::fs::metadata(path).unwrap().permissions();
-            p.set_mode(0o700);
-            std::fs::set_permissions(path, p).unwrap();
-        }
+        quecto::infrastructure::test_support::executable::write_executable(path, content);
     }
 
     /// A stand-in child: binds the UDS socket passed via `--socket` and holds

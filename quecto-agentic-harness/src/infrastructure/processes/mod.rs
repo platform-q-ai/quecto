@@ -10,3 +10,4 @@ pub mod owned_child_supervisor;
 pub mod owned_child_termination;
 pub mod parent_control;
 pub mod parent_death_signal;
+pub mod writer_free_file;

@@ -1,5 +1,6 @@
 use super::*;
 use quecto::domain::tool_descriptor::ProfileAvailabilityScope;
+use quecto::infrastructure::test_support::executable::write_executable;
 use quecto::infrastructure::tools::agent_cmd::AgentCmdTool;
 
 // SpawnTool BDD Steps (#401)
@@ -917,18 +918,11 @@ printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"sock
         mode,
         pid_dir = pid_dir.display()
     );
-    std::fs::write(&script, create_script).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut p = std::fs::metadata(&script).unwrap().permissions();
-        p.set_mode(0o700);
-        std::fs::set_permissions(&script, p).unwrap();
-    }
+    write_executable(&script, create_script);
     let mut v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
     let cleanup = cfg_dir.join("container-cleanup.sh");
-    std::fs::write(
+    write_executable(
         &cleanup,
         format!(
             r#"#!/usr/bin/env bash
@@ -937,15 +931,7 @@ printf '{{"kind":"cleanup","env_ref":"%s"}}\n' "${{QUECTO_CONTAINER_ENVIRONMENT_
 "#,
             log.display()
         ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut p = std::fs::metadata(&cleanup).unwrap().permissions();
-        p.set_mode(0o700);
-        std::fs::set_permissions(&cleanup, p).unwrap();
-    }
+    );
     // The default entry may bake a repository into its OWN argv (#1410); the
     // parent base dir is deliberately NOT a git checkout — parent location is
     // irrelevant to container semantics, and no scenario configures a remote.
@@ -1305,21 +1291,13 @@ fn given_invalid_runtime_config(world: &mut QuectoWorld, err: String) {
     let cfg_dir = cfg_path.parent().unwrap().to_path_buf();
     let log = cfg_dir.join("container-log.jsonl");
     let create = cfg_dir.join("should-not-create.sh");
-    std::fs::write(
+    write_executable(
         &create,
         format!(
             "#!/usr/bin/env bash\necho '{{\"kind\":\"create\"}}' >> '{}'\n",
             log.display()
         ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut p = std::fs::metadata(&create).unwrap().permissions();
-        p.set_mode(0o700);
-        std::fs::set_permissions(&create, p).unwrap();
-    }
+    );
     let mut v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
     v["container_configs"] = match err.as_str() {

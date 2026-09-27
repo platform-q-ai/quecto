@@ -14,7 +14,6 @@
 //! file; a symbolic link in the destination's place is refused rather
 //! than followed.
 
-use std::io::Write;
 use std::path::Path;
 
 use crate::application::environments::dto::{
@@ -259,13 +258,18 @@ impl OutdatedSnapshot {
 
 /// A test's hook, run at each step of placing an asset (`"observe"`
 /// before the destination is judged, `"snapshot"` before an outdated file
-/// is re-read, `"rename"` before it is renamed over), to change the file
-/// in that window.
+/// is re-read, `"rename"` before it is renamed over, `"persist"` before a
+/// new file is linked in, `"kept"` after the name was found taken), to
+/// change the file in that window.
 #[cfg(test)]
 pub(crate) type PlaceHook = fn(&Path, &str);
 
 #[cfg(test)]
 pub(crate) static PLACE_HOOK: std::sync::Mutex<Option<PlaceHook>> = std::sync::Mutex::new(None);
+
+/// Held by every test that sets [`PLACE_HOOK`], which is process-wide.
+#[cfg(test)]
+pub(crate) static PLACE_HOOK_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 fn place_hook(destination: &Path, step: &str) {
@@ -316,30 +320,23 @@ impl EmbeddedStandardAssets {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
         refuse_symlinked_directories(root, parent)?;
-        let mut temporary = tempfile::Builder::new()
+        // The bytes are written by a child (#2232): this process never holds
+        // a writable descriptor on a script it may exec at once, which a
+        // concurrent fork could keep open past our close ("Text file busy").
+        let temporary = tempfile::Builder::new()
             .prefix(".quecto-asset-")
-            .tempfile_in(parent)
-            .map_err(|error| {
-                format!(
-                    "cannot create a temporary file in {}: {error}",
-                    parent.display()
+            .make_in(parent, |path| {
+                crate::infrastructure::processes::writer_free_file::create_new(
+                    path,
+                    &asset.contents,
                 )
-            })?;
-        temporary
-            .write_all(&asset.contents)
-            .and_then(|()| temporary.as_file().sync_all())
-            .map_err(|error| format!("cannot write {}: {error}", destination.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = if asset.executable { 0o755 } else { 0o644 };
-            temporary
-                .as_file()
-                .set_permissions(std::fs::Permissions::from_mode(mode))
-                .map_err(|error| {
-                    format!("cannot set the mode of {}: {error}", destination.display())
-                })?;
-        }
+            })
+            // The writer's error names the temporary file and its own cause
+            // (creating it, starting the writer, or writing).
+            .map_err(|error| format!("cannot place {}: {error}", destination.display()))?;
+        settle_mode(temporary.as_file(), asset.executable).map_err(|error| {
+            format!("cannot set the mode of {}: {error}", destination.display())
+        })?;
         if replacing {
             // An outdated file is renamed over only while it is still the
             // file judged outdated (#2206): an edit since then stands.
@@ -362,13 +359,15 @@ impl EmbeddedStandardAssets {
         // `persist_noclobber` links the new file in only if nothing took
         // the name meanwhile (a concurrent init): then the other's file
         // stands and ours is dropped.
+        #[cfg(test)]
+        place_hook(&destination, "persist");
         match temporary.persist_noclobber(&destination) {
             Ok(_) => Ok(AssetOutcome::Written),
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-                self.observe(root, dir, asset).map(|state| match state {
-                    AssetState::Differs => AssetOutcome::KeptDiffering,
-                    _ => AssetOutcome::KeptIdentical,
-                })
+                #[cfg(test)]
+                place_hook(&destination, "kept");
+                self.observe(root, dir, asset)
+                    .and_then(|state| kept_outcome(state, &destination))
             }
             Err(error) => Err(format!(
                 "cannot place {}: {}",
@@ -377,6 +376,33 @@ impl EmbeddedStandardAssets {
             )),
         }
     }
+}
+
+/// What a place that lost the name to someone else did, judged on what now
+/// holds the name: their file stands, and says whether it matches ours.
+fn kept_outcome(state: AssetState, destination: &Path) -> Result<AssetOutcome, String> {
+    match state {
+        AssetState::Identical => Ok(AssetOutcome::KeptIdentical),
+        AssetState::Differs | AssetState::Outdated => Ok(AssetOutcome::KeptDiffering),
+        AssetState::Refused => Err(format!(
+            "{} was taken by something that is not a regular file; refusing to write it",
+            destination.display()
+        )),
+        AssetState::Missing => Err(format!(
+            "{} was taken and then removed while it was placed; try again",
+            destination.display()
+        )),
+    }
+}
+
+/// Give the placed file its mode and make it durable, through the
+/// read-only handle it was created with: never a reopen by name, and a
+/// read-only descriptor never makes an exec of the file "Text file busy".
+fn settle_mode(file: &std::fs::File, executable: bool) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = if executable { 0o755 } else { 0o644 };
+    file.set_permissions(std::fs::Permissions::from_mode(mode))?;
+    file.sync_all()
 }
 
 /// No existing directory below `root` (exclusive) down to `parent` may

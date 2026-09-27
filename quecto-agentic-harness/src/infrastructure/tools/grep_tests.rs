@@ -1,4 +1,5 @@
 use super::*;
+use crate::infrastructure::test_support::executable::write_executable;
 use tempfile::TempDir;
 
 fn test_grep() -> (GrepTool, Arc<PathBuf>, TempDir) {
@@ -332,30 +333,15 @@ fn a_multiline_match_prints_every_line_it_spans() {
     assert_eq!(result, "m.rs-1- a\nm.rs:2: b(\nm.rs:3:   c)\nm.rs-4- d");
 }
 
-/// Run a tool backed by a freshly written fake rg. Executing a script just
-/// written can fail with ETXTBSY while another test thread's fork briefly
-/// holds its write handle: retry that, and only that.
-pub(super) async fn execute_fake(
-    tool: &GrepTool,
-    args: &str,
-) -> Result<ToolResult, crate::domain::error::DomainError> {
-    for _ in 0..50 {
-        match tool.execute(args).await {
-            Err(e) if e.to_string().contains("Text file busy") => {
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            }
-            other => return other,
-        }
-    }
-    tool.execute(args).await
-}
-
 /// A stand-in rg that prints `stdout` then exits with `code`.
 pub(super) fn fake_rg(dir: &std::path::Path, stdout_command: &str, code: i32) -> String {
-    use std::os::unix::fs::PermissionsExt;
     let path = dir.join("fake-rg.sh");
-    std::fs::write(&path, format!("#!/bin/sh\n{stdout_command}\necho 'rg: ./locked: Permission denied (os error 13)' >&2\nexit {code}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(
+        &path,
+        format!(
+            "#!/bin/sh\n{stdout_command}\necho 'rg: ./locked: Permission denied (os error 13)' >&2\nexit {code}\n"
+        ),
+    );
     path.to_string_lossy().into_owned()
 }
 
@@ -372,7 +358,8 @@ async fn partial_results_before_an_rg_error_are_returned_with_a_notice() {
         Arc::new(Sandbox::new(None)),
         fake_rg(tmp.path(), &listing, 2),
     );
-    let result = execute_fake(&tool, r#"{"pattern": "needle", "output": "files"}"#)
+    let result = tool
+        .execute(r#"{"pattern": "needle", "output": "files"}"#)
         .await
         .unwrap();
     assert!(!result.is_error, "{}", result.content);
@@ -389,7 +376,8 @@ async fn partial_results_before_an_rg_error_are_returned_with_a_notice() {
         Arc::new(Sandbox::new(None)),
         fake_rg(tmp.path(), "true", 2),
     );
-    let result = execute_fake(&tool, r#"{"pattern": "needle", "output": "files"}"#)
+    let result = tool
+        .execute(r#"{"pattern": "needle", "output": "files"}"#)
         .await
         .unwrap();
     assert!(result.is_error, "{}", result.content);
@@ -412,10 +400,9 @@ async fn output_past_the_cap_is_reported_as_incomplete() {
             fake_rg(tmp.path(), &flood, 0),
         );
         async move {
-            execute_fake(
-                &tool,
-                &format!(r#"{{"pattern": "x", "output": "files", "limit": {limit}}}"#),
-            )
+            tool.execute(&format!(
+                r#"{{"pattern": "x", "output": "files", "limit": {limit}}}"#
+            ))
             .await
             .unwrap()
         }
@@ -457,9 +444,7 @@ async fn an_rg_error_with_only_a_summary_is_an_error() {
         Arc::new(Sandbox::new(None)),
         fake_rg(tmp.path(), summary, 2),
     );
-    let result = execute_fake(&tool, r#"{"pattern": "needle"}"#)
-        .await
-        .unwrap();
+    let result = tool.execute(r#"{"pattern": "needle"}"#).await.unwrap();
     assert!(result.is_error, "{}", result.content);
     assert!(
         result.content.contains("Permission denied"),
@@ -487,7 +472,7 @@ async fn a_flood_of_rg_errors_never_blocks_and_a_slow_rg_is_stopped() {
     .with_rg_timeout(std::time::Duration::from_secs(20));
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(15),
-        execute_fake(&tool, r#"{"pattern": "needle", "output": "files"}"#),
+        tool.execute(r#"{"pattern": "needle", "output": "files"}"#),
     )
     .await
     .expect("the tool must not block on rg's stderr")
@@ -505,7 +490,8 @@ async fn a_flood_of_rg_errors_never_blocks_and_a_slow_rg_is_stopped() {
     )
     .with_rg_timeout(std::time::Duration::from_millis(300));
     let started = std::time::Instant::now();
-    let error = execute_fake(&tool, r#"{"pattern": "needle"}"#)
+    let error = tool
+        .execute(r#"{"pattern": "needle"}"#)
         .await
         .unwrap_err()
         .to_string();
@@ -531,7 +517,7 @@ async fn a_matching_line_larger_than_the_cap_is_explained() {
         Arc::new(Sandbox::new(None)),
         fake_rg(tmp.path(), &huge, 0),
     );
-    let result = execute_fake(&tool, r#"{"pattern": "a"}"#).await.unwrap();
+    let result = tool.execute(r#"{"pattern": "a"}"#).await.unwrap();
     assert!(!result.is_error, "{}", result.content);
     assert!(
         result.content.contains("A matching line is larger than"),
@@ -554,7 +540,8 @@ async fn rg_stopped_by_a_signal_is_reported_incomplete() {
         Arc::new(Sandbox::new(None)),
         fake_rg(tmp.path(), &listing, 0),
     );
-    let result = execute_fake(&tool, r#"{"pattern": "x", "output": "files"}"#)
+    let result = tool
+        .execute(r#"{"pattern": "x", "output": "files"}"#)
         .await
         .unwrap();
     assert!(!result.is_error, "{}", result.content);
@@ -583,7 +570,8 @@ async fn a_descendant_holding_the_pipes_cannot_hold_the_results() {
     )
     .with_rg_timeout(std::time::Duration::from_secs(30));
     let started = std::time::Instant::now();
-    let result = execute_fake(&tool, r#"{"pattern": "x", "output": "files", "limit": 3}"#)
+    let result = tool
+        .execute(r#"{"pattern": "x", "output": "files", "limit": 3}"#)
         .await
         .unwrap();
     assert!(
@@ -638,7 +626,8 @@ async fn a_pipe_held_open_after_rg_exits_is_abandoned_after_a_grace() {
     )
     .with_rg_timeout(std::time::Duration::from_secs(30));
     let started = std::time::Instant::now();
-    let result = execute_fake(&tool, r#"{"pattern": "x", "output": "files"}"#)
+    let result = tool
+        .execute(r#"{"pattern": "x", "output": "files"}"#)
         .await
         .unwrap();
     assert!(
@@ -663,7 +652,8 @@ async fn a_pipe_held_open_after_rg_exits_is_abandoned_after_a_grace() {
         ),
     )
     .with_rg_timeout(std::time::Duration::from_secs(30));
-    let result = execute_fake(&failed, r#"{"pattern": "x", "output": "files"}"#)
+    let result = failed
+        .execute(r#"{"pattern": "x", "output": "files"}"#)
         .await
         .unwrap();
     assert!(result.is_error, "{}", result.content);

@@ -130,15 +130,13 @@ fn start(
     with_stand_in: bool,
     served: Option<&std::path::Path>,
 ) {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().expect("fixture dir");
     let bin = dir.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::create_dir_all(dir.path().join("home")).unwrap();
     if with_stand_in {
         let script = bin.join("quecto");
-        std::fs::write(&script, STAND_IN).unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        quecto_tui::shell::test_executable::write_executable(&script, STAND_IN);
     }
     let loop_started = Arc::new(AtomicBool::new(false));
     // Every socket the TUI may connect to is served BEFORE it starts: an

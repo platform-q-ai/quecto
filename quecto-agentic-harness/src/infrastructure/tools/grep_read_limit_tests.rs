@@ -3,7 +3,6 @@
 //! to the plain-results cap; a timeout keeps what was printed.
 
 use super::rank_by_tests::{KeywordJudge, RecordingLog, with_fake_rg};
-use super::tests::execute_fake;
 use super::*;
 use crate::application::search::ports::{PortFuture, RankingRecord, Relevance, RelevanceCandidate};
 use tempfile::TempDir;
@@ -48,7 +47,8 @@ async fn a_ranked_search_reads_past_the_plain_results_cap() {
     let log = Arc::new(RecordingLog::default());
     let tool = with_fake_rg(&tmp, &flood, 0, log.clone())
         .with_relevance(Arc::new(KeywordJudge("retry")), 5000);
-    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+    let result = tool
+        .execute(r#"{"pattern": "retry", "rank_by": "the retry"}"#)
         .await
         .unwrap();
     assert!(
@@ -76,7 +76,8 @@ async fn a_plain_search_keeps_the_plain_results_cap() {
     let flood = match_flood(&tmp, 30_000);
     let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
         .with_relevance(Arc::new(KeywordJudge("retry")), 5000);
-    let result = execute_fake(&tool, r#"{"pattern": "retry", "limit": 100000}"#)
+    let result = tool
+        .execute(r#"{"pattern": "retry", "limit": 100000}"#)
         .await
         .unwrap();
     let tail = &result.content[result.content.len().saturating_sub(600)..];
@@ -92,12 +93,10 @@ async fn an_unranked_search_cut_at_the_read_cap_claims_no_ranking() {
     std::fs::write(tmp.path().join("a.rs"), "retry\n").unwrap();
     let flood = match_flood(&tmp, 30_000);
     let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()));
-    let result = execute_fake(
-        &tool,
-        r#"{"pattern": "retry", "rank_by": "the retry", "limit": 100000}"#,
-    )
-    .await
-    .unwrap();
+    let result = tool
+        .execute(r#"{"pattern": "retry", "rank_by": "the retry", "limit": 100000}"#)
+        .await
+        .unwrap();
     let tail = &result.content[result.content.len().saturating_sub(600)..];
     assert!(!tail.contains("were ranked"), "{tail}");
     assert!(tail.contains("results are incomplete"), "{tail}");
@@ -114,7 +113,8 @@ async fn a_ranked_search_stops_at_the_matches_it_may_judge() {
     let log = Arc::new(RecordingLog::default());
     let tool = with_fake_rg(&tmp, &flood, 0, log.clone())
         .with_relevance(Arc::new(KeywordJudge("nowhere")), 1000);
-    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+    let result = tool
+        .execute(r#"{"pattern": "retry", "rank_by": "the retry"}"#)
         .await
         .unwrap();
     let tail = &result.content[result.content.len().saturating_sub(600)..];
@@ -143,7 +143,8 @@ async fn exactly_the_matches_it_may_judge_is_a_whole_search() {
     let flood = match_flood(&tmp, 1000);
     let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
         .with_relevance(Arc::new(KeywordJudge("nowhere")), 1000);
-    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+    let result = tool
+        .execute(r#"{"pattern": "retry", "rank_by": "the retry"}"#)
         .await
         .unwrap();
     let tail = &result.content[result.content.len().saturating_sub(600)..];
@@ -169,7 +170,8 @@ async fn a_ranked_search_of_long_lines_stops_at_the_byte_backstop() {
     );
     let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
         .with_relevance(Arc::new(KeywordJudge("retry")), 1000);
-    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+    let result = tool
+        .execute(r#"{"pattern": "retry", "rank_by": "the retry"}"#)
         .await
         .unwrap();
     let tail = &result.content[result.content.len().saturating_sub(600)..];
@@ -188,12 +190,10 @@ async fn a_match_cut_search_the_judge_could_not_rank_says_it_is_incomplete() {
     let flood = match_flood(&tmp, 30);
     let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
         .with_relevance(Arc::new(DownJudge), 20);
-    let result = execute_fake(
-        &tool,
-        r#"{"pattern": "retry", "rank_by": "the retry", "limit": 100}"#,
-    )
-    .await
-    .unwrap();
+    let result = tool
+        .execute(r#"{"pattern": "retry", "rank_by": "the retry", "limit": 100}"#)
+        .await
+        .unwrap();
     let tail = &result.content[result.content.len().saturating_sub(600)..];
     assert!(
         tail.contains("rg found more than 20 matches; results are incomplete"),
@@ -214,7 +214,8 @@ async fn a_match_cap_filled_by_the_search_log_says_so() {
     let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
         .with_relevance(Arc::new(KeywordJudge("retry")), 20)
         .excluding(log_dir);
-    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+    let result = tool
+        .execute(r#"{"pattern": "retry", "rank_by": "the retry"}"#)
         .await
         .unwrap();
     assert!(!result.is_error, "{}", result.content);
@@ -239,9 +240,7 @@ async fn a_timed_out_search_keeps_what_rg_printed() {
     );
     let tool = with_fake_rg(&tmp, &slow, 0, Arc::new(RecordingLog::default()))
         .with_rg_timeout(std::time::Duration::from_millis(500));
-    let result = execute_fake(&tool, r#"{"pattern": "retry"}"#)
-        .await
-        .unwrap();
+    let result = tool.execute(r#"{"pattern": "retry"}"#).await.unwrap();
     assert!(result.content.contains("a.rs:1"), "{}", result.content);
     assert!(
         result
@@ -254,7 +253,8 @@ async fn a_timed_out_search_keeps_what_rg_printed() {
     let partial = r#"printf '%s' '{"type":"begin"'; exec sleep 30"#;
     let tool = with_fake_rg(&tmp, partial, 0, Arc::new(RecordingLog::default()))
         .with_rg_timeout(std::time::Duration::from_millis(500));
-    let error = execute_fake(&tool, r#"{"pattern": "retry"}"#)
+    let error = tool
+        .execute(r#"{"pattern": "retry"}"#)
         .await
         .unwrap_err()
         .to_string();
@@ -271,7 +271,8 @@ async fn a_match_cut_after_rg_exited_is_still_incomplete() {
     let flood = match_flood(&tmp, 30);
     let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
         .with_relevance(Arc::new(KeywordJudge("nowhere")), 20);
-    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+    let result = tool
+        .execute(r#"{"pattern": "retry", "rank_by": "the retry"}"#)
         .await
         .unwrap();
     let tail = &result.content[result.content.len().saturating_sub(600)..];
@@ -336,7 +337,8 @@ async fn a_ranked_search_past_the_timeout_says_only_what_was_printed_was_ranked(
     let tool = with_fake_rg(&tmp, &slow, 0, Arc::new(RecordingLog::default()))
         .with_relevance(Arc::new(KeywordJudge("retry")), 1000)
         .with_rg_timeout(std::time::Duration::from_millis(500));
-    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+    let result = tool
+        .execute(r#"{"pattern": "retry", "rank_by": "the retry"}"#)
         .await
         .unwrap();
     assert!(
@@ -359,7 +361,8 @@ async fn a_cut_made_before_the_timeout_is_reported_as_the_cut() {
     let tool = with_fake_rg(&tmp, &flood, 0, Arc::new(RecordingLog::default()))
         .with_relevance(Arc::new(KeywordJudge("retry")), 20)
         .with_rg_timeout(std::time::Duration::from_millis(500));
-    let result = execute_fake(&tool, r#"{"pattern": "retry", "rank_by": "the retry"}"#)
+    let result = tool
+        .execute(r#"{"pattern": "retry", "rank_by": "the retry"}"#)
         .await
         .unwrap();
     let tail = &result.content[result.content.len().saturating_sub(600)..];
@@ -400,9 +403,7 @@ async fn a_timeout_after_rg_exited_reports_the_output_held_open() {
     );
     let tool = with_fake_rg(&tmp, &held, 0, Arc::new(RecordingLog::default()))
         .with_rg_timeout(std::time::Duration::from_millis(500));
-    let result = execute_fake(&tool, r#"{"pattern": "retry"}"#)
-        .await
-        .unwrap();
+    let result = tool.execute(r#"{"pattern": "retry"}"#).await.unwrap();
     assert!(result.content.contains("a.rs:1"), "{}", result.content);
     assert!(
         result.content.contains("still held open after it exited"),
@@ -429,9 +430,7 @@ async fn a_timeout_after_all_output_was_read_leaves_the_result_whole() {
     );
     let tool = with_fake_rg(&tmp, &done, 0, Arc::new(RecordingLog::default()))
         .with_rg_timeout(std::time::Duration::from_millis(500));
-    let result = execute_fake(&tool, r#"{"pattern": "retry"}"#)
-        .await
-        .unwrap();
+    let result = tool.execute(r#"{"pattern": "retry"}"#).await.unwrap();
     assert!(result.content.contains("a.rs:1"), "{}", result.content);
     assert!(!result.content.contains('['), "{}", result.content);
 }
@@ -450,9 +449,7 @@ async fn an_error_exit_without_a_message_says_none_was_kept() {
             match_record(tmp.path(), "retry")
         );
         let tool = with_fake_rg(&tmp, &script, 0, Arc::new(RecordingLog::default()));
-        let result = execute_fake(&tool, r#"{"pattern": "retry"}"#)
-            .await
-            .unwrap();
+        let result = tool.execute(r#"{"pattern": "retry"}"#).await.unwrap();
         assert!(result.content.contains("a.rs:1"), "{}", result.content);
         assert!(
             result

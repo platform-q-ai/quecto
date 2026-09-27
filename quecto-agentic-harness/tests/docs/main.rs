@@ -1,7 +1,9 @@
-//! Consolidated repository/documentation invariant target (no process spawning,
-//! no `test-support` requirement): repo docs, workflow docs and templates,
-//! container-runtime docs, repository file reader. Each former target is a
-//! module here; `--test docs repo_docs::` selects one of them.
+//! Consolidated repository/documentation invariant target: repo docs,
+//! workflow docs and templates, container-runtime docs, repository file
+//! reader. Each former target is a module here; `--test docs repo_docs::`
+//! selects one of them. It requires `test-support`: the container-runtime
+//! docs run a fake runtime CLI written by the race-free
+//! `test_support::executable` helper (#2232).
 
 #[path = "../common/mod.rs"]
 mod common;

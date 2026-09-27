@@ -389,9 +389,6 @@ fn an_edit_made_after_the_outdated_judgement_is_never_overwritten() {
     }
 }
 
-/// Serialises the tests that set the process-wide place hook.
-static HOOKED: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 /// Append an edit to a `race-probe` project's file at `step`.
 fn edit_at(step: &'static str) -> fn(&Path, &str) {
     fn edit(destination: &Path, marker: &str) {
@@ -426,7 +423,9 @@ fn edit_at(step: &'static str) -> fn(&Path, &str) {
 /// or the store's own `refresh_outdated`) asked for the refresh.
 #[test]
 fn an_edit_in_any_window_of_a_refresh_is_never_overwritten() {
-    let _serial = HOOKED.lock().unwrap_or_else(|e| e.into_inner());
+    let _serial = super::super::assets::PLACE_HOOK_SERIAL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     for step in ["observe", "snapshot", "rename"] {
         for through_the_judge in [false, true] {
             let project = tempfile::Builder::new()

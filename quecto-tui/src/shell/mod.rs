@@ -18,6 +18,9 @@ pub mod signals;
 pub(crate) mod socket_path;
 pub mod stdin_buffer;
 pub mod terminal;
+/// Race-free fake executables for tests (#2232): unit tests and `tui_bdd`.
+#[cfg(any(test, feature = "test-harness"))]
+pub mod test_executable;
 /// Shared test-only `tracing` warn-capture apparatus (#1112 review): used by
 /// the client defence unit tests and the workspace `bdd` target.
 #[cfg(any(test, feature = "test-harness"))]

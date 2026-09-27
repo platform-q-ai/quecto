@@ -79,17 +79,18 @@ async fn disconnect_notification_includes_agent_exit_detail() {
 
 /// #1047 AC1 wiring: the PRODUCTION disconnect path (`handle_agent_stream_closed`)
 /// must read the exit diagnosis from the child watcher's slot — for a real
-/// spawned child killed by a real signal — not be hand-fed a string.
+/// spawned child killed by a real signal — not be hand-fed a string. The
+/// signal is SIGKILL, which dumps no core (#2232 review).
 #[tokio::test]
 async fn stream_closed_path_reports_real_child_exit_detail() {
     let mut h = TuiHarness::new().await;
 
     let child = tokio::process::Command::new("sh")
-        .args(["-c", "kill -ABRT $$"])
+        .args(["-c", "kill -KILL $$"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .expect("spawn aborting child");
+        .expect("spawn killed child");
     let watch = crate::shell::child_watch::watch_child(
         child,
         crate::shell::child_watch::StderrTail::default(),
@@ -98,15 +99,16 @@ async fn stream_closed_path_reports_real_child_exit_detail() {
 
     let rendered = h.app_mut().notifications.render(200).join("\n");
     assert!(
-        rendered.contains("signal 6 (SIGABRT)"),
-        "the stream-closed path must diagnose the real child's abort (#1047): {rendered}"
+        rendered.contains("signal 9 (SIGKILL)"),
+        "the stream-closed path must diagnose the real child's signal death (#1047): {rendered}"
     );
 }
 
 /// #1047 (top-priority fix): the agent's post-startup stderr is drained into
 /// the watcher's ring buffer, and the disconnect diagnostics include the tail
 /// — under `panic = "abort"` the panic message lands on stderr right before
-/// the process dies, and without this every recurrence is undiagnosable.
+/// the process dies, and without this every recurrence is undiagnosable. The
+/// stand-in dies of SIGKILL, not SIGABRT, so it dumps no core (#2232 review).
 #[tokio::test]
 async fn disconnect_diagnostics_include_drained_stderr_tail() {
     use crate::shell::child_watch::{StderrTail, watch_child};
@@ -116,7 +118,7 @@ async fn disconnect_diagnostics_include_drained_stderr_tail() {
     let mut child = tokio::process::Command::new("sh")
         .args([
             "-c",
-            "echo \"thread 'main' panicked at boom-panic\" >&2; kill -ABRT $$",
+            "echo \"thread 'main' panicked at boom-panic\" >&2; kill -KILL $$",
         ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -138,7 +140,7 @@ async fn disconnect_diagnostics_include_drained_stderr_tail() {
         "disconnect notification must carry the last stderr line (#1047): {rendered}"
     );
     assert!(
-        rendered.contains("SIGABRT"),
+        rendered.contains("SIGKILL"),
         "exit diagnosis must still be present alongside the stderr tail: {rendered}"
     );
 }

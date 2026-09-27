@@ -13,10 +13,11 @@
 //!   session switch settles it and runs the argv once.
 //!
 //! Every wait is bounded so a regression fails instead of hanging.
+use quecto::infrastructure::test_support::executable::write_executable;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::ExitStatusExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 /// Bound on every wait. Generous for a 2-vCPU CI runner where six harness
@@ -26,12 +27,6 @@ const BOUND: Duration = Duration::from_secs(120);
 fn alive(pid: u32) -> bool {
     // SAFETY: signal 0 only probes existence of the given pid.
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
-}
-
-fn write_executable(path: &Path, body: &str) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::write(path, body).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 /// A provider that makes the harness spawn one child ("worker") when the
@@ -165,7 +160,7 @@ printf '{"environment_id":"env-1","workspace_path":"%s","metadata":{},"socket_pr
         let kill = base.join("kill.sh");
         write_executable(
             &kill,
-            &format!(
+            format!(
                 "#!/bin/sh\nprintf 'killed %s\\n' \"$QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'\n",
                 base.join("killed.log").display()
             ),

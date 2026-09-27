@@ -169,17 +169,18 @@ async fn closed_sentinel_marks_agent_disconnected() {
 
 /// #1462 scope 3 + #1047: the sentinel path still reads the owned child's
 /// exit diagnosis from the watcher — for a real child killed by a real
-/// signal — even though the diagnosis await moved off the select loop.
+/// signal — even though the diagnosis await moved off the select loop. The
+/// signal is SIGKILL, which dumps no core (#2232 review).
 #[tokio::test]
 async fn closed_sentinel_reports_real_child_exit_detail() {
     let mut h = TuiHarness::new().await;
 
     let child = tokio::process::Command::new("sh")
-        .args(["-c", "kill -ABRT $$"])
+        .args(["-c", "kill -KILL $$"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .expect("spawn aborting child");
+        .expect("spawn killed child");
     let watch = crate::shell::child_watch::watch_child(
         child,
         crate::shell::child_watch::StderrTail::default(),
@@ -189,8 +190,8 @@ async fn closed_sentinel_reports_real_child_exit_detail() {
 
     let rendered = h.app_mut().notifications.render(200).join("\n");
     assert!(
-        rendered.contains("signal 6 (SIGABRT)"),
-        "the Closed sentinel path must diagnose the real child's abort (#1047 via #1462): {rendered}"
+        rendered.contains("signal 9 (SIGKILL)"),
+        "the Closed sentinel path must diagnose the real child's signal death (#1047 via #1462): {rendered}"
     );
 }
 

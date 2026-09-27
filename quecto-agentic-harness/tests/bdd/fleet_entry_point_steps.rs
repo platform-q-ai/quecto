@@ -3,6 +3,7 @@
 //! default lifetime, a persistent harness, and a script-managed member's
 //! finalization on a session switch — all against the in-process restoring
 //! harness and real launched child of `restore_lifetime_steps`.
+use quecto::infrastructure::test_support::executable::write_executable;
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
@@ -111,16 +112,13 @@ fn given_script_member(world: &mut QuectoWorld) {
     let base = base(world);
     let log = base.join("member-kill.log");
     let script = base.join("member-kill.sh");
-    std::fs::write(
+    write_executable(
         &script,
         format!(
             "#!/bin/sh\nprintf 'killed %s\\n' \"$QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'\n",
             log.display()
         ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let harness = state(world).harness.as_ref().unwrap();
     let uuid = quecto::domain::ids::AgentUuid::mint();
     let mut entry = SubagentEntry::with_identity(

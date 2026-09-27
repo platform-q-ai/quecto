@@ -1,6 +1,7 @@
 //! A termination signal is delivered to the one teardown controller (#1938):
 //! the common shutdown settles the fleet — a script-managed member's
 //! environment kill included — before the dispatch loop is told to exit.
+use crate::infrastructure::test_support::executable::write_executable;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -37,13 +38,10 @@ fn environment_with_kill_script(
     member: &str,
 ) -> (EnvironmentRegistry, String) {
     let script = dir.join("kill.sh");
-    std::fs::write(
+    write_executable(
         &script,
         "#!/bin/sh\nprintf '%s\\n' \"$QUECTO_CONTAINER_ENVIRONMENT_ID\" > \"$(dirname \"$0\")/killed\"\n",
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let registry = EnvironmentRegistry::new();
     let env_ref = registry.mint_ref().unwrap();
     registry.commit(EnvironmentRecord {

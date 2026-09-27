@@ -102,17 +102,18 @@ fn master_event_stream_closes(world: &mut TuiWorld) {
     });
 }
 
-#[when("the agent child process aborts")]
-fn agent_child_process_aborts(world: &mut TuiWorld) {
+#[when("the agent child process dies of a signal while its stream is open")]
+fn agent_child_process_dies_while_its_stream_is_open(world: &mut TuiWorld) {
     let watch = world
         .tui_disconnect_child
         .take()
         .expect("spawned agent child");
-    // Abort the REAL child with a real SIGABRT (same technique as #1047);
+    // Kill the REAL child with a real SIGKILL (same technique as #1047; not
+    // SIGABRT, which dumps core);
     // kill with a valid signal returns an error code rather than faulting.
     // SAFETY: pid comes from a child we just spawned.
-    let rc = unsafe { libc::kill(watch.pid as i32, libc::SIGABRT) };
-    assert_eq!(rc, 0, "SIGABRT must be delivered to the spawned child");
+    let rc = unsafe { libc::kill(watch.pid as i32, libc::SIGKILL) };
+    assert_eq!(rc, 0, "SIGKILL must be delivered to the spawned child");
     // Attach the production exit watcher so the subsequent stream close can
     // diagnose WHY the agent went away (#1047).
     harness(world).app_mut().set_child_exit_watch(watch.watch);
