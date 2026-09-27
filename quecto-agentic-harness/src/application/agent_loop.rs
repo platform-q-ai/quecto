@@ -57,7 +57,7 @@ use agent_loop_errors::{
 };
 use agent_loop_spill::ToolMessageArgs;
 use agent_loop_turn::{
-    ProviderFailureTransition, TurnState, classify_provider_failure,
+    Output, ProviderFailureTransition, TurnState, classify_provider_failure,
     next_state_after_provider_response, state_for_provider_failure_transition,
 };
 use agent_loop_turn_flow::AfterResponse;
@@ -526,9 +526,16 @@ impl AgentLoopImpl {
             let llm_start = std::time::Instant::now();
             // Streaming (UDS mode) forwards token events in real time; REPL/
             // one-shot use the non-streaming path.
-            let response = self
+            let (response, output) = match self
                 .request_provider_response(request, current_turn, estimated_context_tokens)
-                .await;
+                .await
+            {
+                Ok(response) => (Ok(response), Output::NotShown),
+                Err(failure) => (
+                    Err(failure.error),
+                    Output::from_emitted(failure.emitted_event),
+                ),
+            };
 
             let llm_duration_ms = llm_start.elapsed().as_millis() as u64;
             // Every response is audited and counted, including one dropped below.
@@ -548,7 +555,7 @@ impl AgentLoopImpl {
                 Ok(response) => AfterResponse::Proceed(response),
                 Err(error) => {
                     let recovery = (&mut malformed_retries, &mut appended_messages);
-                    self.after_provider_failure(messages, error, current_turn, recovery)
+                    self.after_provider_failure(messages, (error, output), current_turn, recovery)
                         .await
                 }
             };

@@ -522,3 +522,51 @@ async fn a_stall_after_a_network_failure_is_still_retried_once() {
     assert_eq!(result.response, "recovered");
     assert_eq!(provider.request_count(), 3);
 }
+
+/// #2155 review: a malformed-request error after output (here from a stream
+/// no admission gate owns) is never repaired and sent again: one request,
+/// and the turn fails with the error.
+#[tokio::test]
+async fn a_malformed_request_error_after_output_is_not_resent() {
+    use crate::domain::provider::StreamEvent;
+    let error = r#"HTTP 400 OpenAI stream error: {"error":{"type":"invalid_request_error"}}"#;
+    let provider = Arc::new(MockStreamingProvider::new(vec![
+        vec![
+            StreamEvent::TextDelta("partial".to_string()),
+            StreamEvent::Error(error.to_string()),
+        ],
+        vec![StreamEvent::TextDelta("resent".to_string())],
+    ]));
+    let mut agent = streaming_agent(provider.clone());
+    let err = agent
+        .process(&mut vec![Message::user("hello")])
+        .await
+        .unwrap_err()
+        .to_string();
+    assert_eq!(provider.request_count(), 1);
+    assert!(err.contains("invalid_request_error"), "{err}");
+}
+
+/// The same error before any output is still repaired and sent again.
+#[tokio::test]
+async fn a_malformed_request_error_before_output_is_recovered() {
+    use crate::domain::provider::StreamEvent;
+    let error = r#"HTTP 400 OpenAI stream error: {"error":{"type":"invalid_request_error"}}"#;
+    let provider = Arc::new(MockStreamingProvider::new(vec![
+        vec![StreamEvent::Error(error.to_string())],
+        vec![StreamEvent::Done(crate::domain::message::LlmResponse {
+            content: Some("repaired".to_string()),
+            tool_calls: vec![],
+            usage: None,
+            stop_reason: None,
+            thinking_blocks: vec![],
+        })],
+    ]));
+    let mut agent = streaming_agent(provider.clone());
+    let result = agent
+        .process(&mut vec![Message::user("hello")])
+        .await
+        .unwrap();
+    assert_eq!(provider.request_count(), 2);
+    assert_eq!(result.response, "repaired");
+}

@@ -12,7 +12,25 @@ use serde_json::json;
 use std::sync::Arc;
 
 async fn check(post_text: bool, kind: &str, code: Option<&str>, throttle: bool, enabled: bool) {
+    let status = match (throttle, code) {
+        (true, _) => 429,
+        (false, Some("insufficient_quota")) => 402,
+        (false, _) => 400,
+    };
     let error = json!({"type": kind, "code": code, "message": "opaque fixture"});
+    check_error(post_text, error, status, throttle, enabled).await;
+}
+/// One OpenAI-compatible stream that fails with the error chunk `error`
+/// (after one text delta when `post_text`): through admission it ends as one
+/// error rendered with `status`; the text already streamed stays streamed
+/// once, and no completed reply follows it (#2155).
+async fn check_error(
+    post_text: bool,
+    error: serde_json::Value,
+    status: u16,
+    throttle: bool,
+    enabled: bool,
+) {
     let prefix = if post_text {
         "data: {\"choices\":[{\"delta\":{\"content\":\"visible once\"}}]}\n\n"
     } else {
@@ -55,8 +73,7 @@ async fn check(post_text: bool, kind: &str, code: Option<&str>, throttle: bool, 
             enabled,
             throttle,
             error: &format!(
-                "HTTP {} OpenAI stream error: {}",
-                if throttle { 429 } else { 400 },
+                "HTTP {status} OpenAI stream error: {}",
                 json!({"error": error})
             ),
         },
@@ -88,4 +105,40 @@ async fn billing_overrides_throttle_but_remains_terminal() {
 #[tokio::test]
 async fn untyped_structured_error_is_terminal_without_cooldown() {
     check(false, "invalid_request_error", None, false, true).await;
+}
+/// #2155: every error-chunk shape keeps the partial text streamed once and
+/// ends with one error carrying a retry-classifiable status.
+#[tokio::test]
+async fn numeric_gateway_code_is_the_status() {
+    check_error(
+        false,
+        json!({"code": 502, "message": "m"}),
+        502,
+        false,
+        true,
+    )
+    .await;
+}
+#[tokio::test]
+async fn server_error_type_is_a_server_status() {
+    check_error(
+        false,
+        json!({"type": "server_error", "code": null}),
+        500,
+        false,
+        true,
+    )
+    .await;
+}
+#[tokio::test]
+async fn unknown_error_type_is_a_bad_gateway() {
+    check_error(false, json!({"type": "brand_new_error"}), 502, false, true).await;
+}
+#[tokio::test]
+async fn server_error_after_partial_text_keeps_the_text_and_ends_in_error() {
+    check_error(true, json!({"type": "server_error"}), 500, false, true).await;
+}
+#[tokio::test]
+async fn numeric_gateway_code_after_partial_text_keeps_the_text_and_ends_in_error() {
+    check_error(true, json!({"code": 502}), 502, false, true).await;
 }

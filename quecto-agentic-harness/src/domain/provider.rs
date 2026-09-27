@@ -31,31 +31,9 @@ pub enum StreamEvent {
     Error(String),
 }
 
-/// A shared cancellation flag that can be checked by providers.
-///
-/// Wraps `Arc<AtomicBool>` as a domain-level concept so that the domain layer
-/// does not expose raw concurrency primitives in its public API.
-#[derive(Debug, Clone, Default)]
-pub struct CancelFlag(std::sync::Arc<std::sync::atomic::AtomicBool>);
-
-impl CancelFlag {
-    /// Create a new, unset cancel flag.
-    pub fn new() -> Self {
-        Self(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
-            false,
-        )))
-    }
-
-    /// Signal cancellation. The next provider check will return a cancellation error.
-    pub fn cancel(&self) {
-        self.0.store(true, std::sync::atomic::Ordering::Release);
-    }
-
-    /// Returns `true` if cancellation has been requested.
-    pub fn is_cancelled(&self) -> bool {
-        self.0.load(std::sync::atomic::Ordering::Acquire)
-    }
-}
+#[path = "cancel_flag.rs"]
+mod cancel_flag;
+pub use cancel_flag::{CancelFlag, CancelWatch};
 
 /// Thinking mode for extended thinking support.
 ///

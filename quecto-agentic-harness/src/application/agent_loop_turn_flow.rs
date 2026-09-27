@@ -71,8 +71,10 @@ impl AgentLoopImpl {
         mut request: ChatRequest<'_>,
         turn: u32,
         estimate: usize,
-    ) -> Result<LlmResponse, DomainError> {
-        self.flush_request_accounting().await?;
+    ) -> Result<LlmResponse, StreamProviderError> {
+        self.flush_request_accounting()
+            .await
+            .map_err(StreamProviderError::before_output)?;
         let prefix = super::super::request_observation::prefix(&request);
         let unchanged = self
             .request_prefix
@@ -108,11 +110,17 @@ impl AgentLoopImpl {
             },
             trace,
         );
-        let result = super::super::request_observation::MarkDropping::new(
+        let outcome = super::super::request_observation::MarkDropping::new(
             observation.trace(),
             self.request_provider_response_inner(request),
         )
         .await;
+        // Whether the failed reply had shown output travels beside the
+        // error, which is observed and accounted as before (#2155).
+        let (result, emitted_event) = match outcome {
+            Ok(response) => (Ok(response), false),
+            Err(failure) => (Err(failure.error), failure.emitted_event),
+        };
         if let Ok(response) = &result {
             if let Some(usage) = &response.usage {
                 self.unreported_usage
@@ -129,16 +137,28 @@ impl AgentLoopImpl {
             },
         )
         .await;
-        self.flush_request_accounting().await?;
-        result
+        // A flush failure after the reply keeps whether it had shown output.
+        self.flush_request_accounting()
+            .await
+            .map_err(|error| StreamProviderError {
+                error,
+                emitted_event,
+            })?;
+        result.map_err(|error| StreamProviderError {
+            error,
+            emitted_event,
+        })
     }
 
     async fn request_provider_response_inner(
         &self,
         request: ChatRequest<'_>,
-    ) -> Result<LlmResponse, DomainError> {
+    ) -> Result<LlmResponse, StreamProviderError> {
         if let Some(admission) = &self.request_admission {
-            admission.check().await?;
+            admission
+                .check()
+                .await
+                .map_err(StreamProviderError::before_output)?;
         }
         // Transient-error retry is owned by the `RetryingProvider` decorator, so
         // the non-streaming path makes a single call and passes the error
@@ -147,11 +167,9 @@ impl AgentLoopImpl {
             if let Some(trace) = &request.trace {
                 trace.start();
             }
-            return self
-                .provider
-                .chat(request)
-                .await
-                .map_err(enhance_provider_error);
+            return self.provider.chat(request).await.map_err(|error| {
+                StreamProviderError::before_output(enhance_provider_error(error))
+            });
         }
 
         // Streaming initiation *is* retried here: the decorator forwards
@@ -162,7 +180,10 @@ impl AgentLoopImpl {
             // re-check, so streaming never pays a second first-attempt check.
             if attempt > 1 {
                 if let Some(admission) = &self.request_admission {
-                    admission.check().await?;
+                    admission
+                        .check()
+                        .await
+                        .map_err(StreamProviderError::before_output)?;
                 }
             }
             if let Some(trace) = &request.trace {
@@ -175,8 +196,12 @@ impl AgentLoopImpl {
             let result = match self.stream_chat_once(request.clone()).await {
                 Ok(response) => Ok(response),
                 Err(stream_error) if stream_error.emitted_event => {
-                    // Replaying after emitted content would corrupt output.
-                    return Err(enhance_provider_error(stream_error.error));
+                    // Replaying after emitted content would corrupt output;
+                    // the turn is told output was shown (#2155).
+                    return Err(StreamProviderError {
+                        error: enhance_provider_error(stream_error.error),
+                        emitted_event: true,
+                    });
                 }
                 Err(stream_error) => Err(stream_error.error),
             };
@@ -189,7 +214,9 @@ impl AgentLoopImpl {
                         || !class.is_retryable()
                         || !capped.allows_another(&class)
                     {
-                        return Err(enhance_provider_error(err));
+                        return Err(StreamProviderError::before_output(enhance_provider_error(
+                            err,
+                        )));
                     }
                     tracing::warn!(
                         target: "provider_retry",
@@ -205,16 +232,18 @@ impl AgentLoopImpl {
                         ),
                         std::time::Duration::from_secs(30),
                     ) else {
-                        return Err(enhance_provider_error(err));
+                        return Err(StreamProviderError::before_output(enhance_provider_error(
+                            err,
+                        )));
                     };
                     tokio::time::sleep(delay).await;
                 }
             }
         }
 
-        Err(DomainError::Provider(
+        Err(StreamProviderError::before_output(DomainError::Provider(
             "provider request failed without an error".to_string(),
-        ))
+        )))
     }
 
     pub(super) fn prepare_provider_request_transition<'a>(
@@ -323,16 +352,20 @@ impl AgentLoopImpl {
     }
 
     /// What follows a provider failure: re-prompt a model-malformed request
-    /// while retries remain, otherwise fail the turn.
+    /// that showed no output while retries remain, otherwise fail the turn.
     pub(super) async fn after_provider_failure(
         &mut self,
         messages: &mut Vec<Message>,
-        error: DomainError,
+        (error, output): (DomainError, Output),
         current_turn: u32,
         (malformed_retries, appended_messages): (&mut u32, &mut Vec<Message>),
     ) -> AfterResponse {
-        let transition =
-            classify_provider_failure(&error, *malformed_retries, MAX_MALFORMED_REQUEST_RETRIES);
+        let transition = classify_provider_failure(
+            &error,
+            output,
+            *malformed_retries,
+            MAX_MALFORMED_REQUEST_RETRIES,
+        );
         let _state = state_for_provider_failure_transition(&transition);
         match transition {
             ProviderFailureTransition::RecoverMalformedRequest => {

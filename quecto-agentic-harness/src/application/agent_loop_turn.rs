@@ -1,7 +1,9 @@
 use super::is_context_or_output_limit_error;
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+use crate::domain::provider_error::{
+    ProviderErrorClass, classify_provider_error, provider_http_status,
+};
 
 /// Internal vocabulary for the agent turn lifecycle.
 ///
@@ -38,16 +40,46 @@ pub(super) fn classify_provider_response(response: &LlmResponse) -> ProviderResp
     }
 }
 
+/// Whether a failed request had already shown output to the user (#2155).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Output {
+    /// Nothing reached the user: the request may be sent again.
+    NotShown,
+    /// Text, thinking or a tool call already streamed: sending the request
+    /// again would show a second reply after the first one's fragment.
+    Shown,
+}
+
+impl Output {
+    /// The output state of a stream that did (`true`) or did not emit events.
+    pub(super) fn from_emitted(emitted_event: bool) -> Self {
+        match emitted_event {
+            true => Self::Shown,
+            false => Self::NotShown,
+        }
+    }
+}
+
+/// What follows a failed provider request. Only a malformed request (an
+/// HTTP 400 or 422, or a 5xx wrapping an explicit `invalid_request_error`,
+/// #935) whose reply showed nothing is repaired and sent again, while the
+/// budget lasts; everything else ends the turn (#2155).
 pub(super) fn classify_provider_failure(
     error: &DomainError,
+    output: Output,
     malformed_retries: u32,
     max_malformed_retries: u32,
 ) -> ProviderFailureTransition {
     let class = classify_provider_error(error);
     let is_malformed_request = matches!(error, DomainError::Provider(message)
-        if class == ProviderErrorClass::Client && !is_context_or_output_limit_error(message));
+        if class == ProviderErrorClass::Client
+            && matches!(provider_http_status(error), Some(400 | 422 | 500..=599))
+            && !is_context_or_output_limit_error(message));
 
-    if is_malformed_request && malformed_retries < max_malformed_retries {
+    if is_malformed_request
+        && output == Output::NotShown
+        && malformed_retries < max_malformed_retries
+    {
         ProviderFailureTransition::RecoverMalformedRequest
     } else {
         ProviderFailureTransition::Terminal(class)

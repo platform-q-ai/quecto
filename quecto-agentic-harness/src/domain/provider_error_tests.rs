@@ -520,3 +520,27 @@ fn capped_failures_are_counted_per_class() {
     assert!(!capped.allows_another(&ProviderErrorClass::Stalled));
     assert!(capped.allows_another(&ProviderErrorClass::RateLimit));
 }
+
+/// #2155 PR review: an HTTP 402 (payment required) is a billing failure on
+/// every path a status is read from; never retried.
+#[test]
+fn http_402_is_billing() {
+    assert_eq!(
+        ProviderErrorClass::from_status(402),
+        ProviderErrorClass::Billing
+    );
+    for message in [
+        "HTTP 402 Payment Required: {\"error\":{\"message\":\"Insufficient credits\"}}",
+        "OpenRouter API error: status 402: insufficient credits",
+        "provider error (402): payment required",
+    ] {
+        let class = classify_provider_error(&DomainError::Provider(message.to_string()));
+        assert_eq!(class, ProviderErrorClass::Billing, "{message}");
+        assert!(!class.is_retryable(), "{message}");
+        assert_eq!(
+            provider_http_status(&DomainError::Provider(message.to_string())),
+            Some(402),
+            "{message}"
+        );
+    }
+}

@@ -2,9 +2,21 @@ use crate::application::agent_usage::UsageTotals;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, StopReason};
 
+/// A failed provider request, and whether its reply had already emitted
+/// events (shown output) before it failed.
 pub(super) struct StreamProviderError {
     pub(super) error: DomainError,
     pub(super) emitted_event: bool,
+}
+
+impl StreamProviderError {
+    /// A failure before any output was shown.
+    pub(super) fn before_output(error: DomainError) -> Self {
+        Self {
+            error,
+            emitted_event: false,
+        }
+    }
 }
 
 pub(super) struct TurnEnd {

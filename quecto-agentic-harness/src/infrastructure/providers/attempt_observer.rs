@@ -219,7 +219,15 @@ impl ProtocolObserver {
                 Vendor::Anthropic => unreachable!("Anthropic dispatch handled above"),
             };
             if failed {
-                receipt.typed(&value);
+                match self.vendor {
+                    // A numeric 429/529 chunk throttles too (#2155 review).
+                    Vendor::OpenAi => receipt.typed_as(
+                        &value,
+                        is_typed_throttle(&value)
+                            || super::super::attempt_profile::is_throttle_chunk(&value),
+                    ),
+                    _ => receipt.typed(&value),
+                }
                 receipt.fail();
             }
             self.terminal = failed || completed;

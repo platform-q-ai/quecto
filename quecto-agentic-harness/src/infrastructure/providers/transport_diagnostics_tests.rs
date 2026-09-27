@@ -187,13 +187,20 @@ mod transport_tests {
             assert_eq!(state.diagnostics.oversized_lines, u32::from(refused));
         }
     }
-    #[tokio::test]
+    /// `run` bounded, so a stop that never ends the attempt fails the test
+    /// (the paused clock reaches the bound at once) instead of hanging it.
+    async fn bounded<T>(run: impl Future<Output = T>) -> T {
+        tokio::time::timeout(std::time::Duration::from_secs(3600), run)
+            .await
+            .expect("the stop ends the attempt")
+    }
+    #[tokio::test(start_paused = true)]
     async fn stops_are_recorded_before_owner_release() {
         let trace = Arc::new(RequestTrace::default());
         let gate: Arc<dyn AttemptAdmission> = Arc::new(DeadlineGate);
-        let result = run(&gate, Some(trace.clone()), None, None, |_| {
+        let result = bounded(run(&gate, Some(trace.clone()), None, None, |_| {
             std::future::pending::<Result<(), DomainError>>()
-        })
+        }))
         .await;
         assert!(result.is_err());
         assert_eq!(
@@ -202,10 +209,10 @@ mod transport_tests {
         );
         let gate: Arc<dyn AttemptAdmission> = Arc::new(Gate);
         let flag = CancelFlag::new();
-        let result = run(&gate, Some(trace.clone()), Some(&flag), None, |_| {
+        let result = bounded(run(&gate, Some(trace.clone()), Some(&flag), None, |_| {
             flag.cancel();
             std::future::pending::<Result<(), DomainError>>()
-        })
+        }))
         .await;
         assert!(result.is_err());
         assert_eq!(
@@ -213,10 +220,10 @@ mod transport_tests {
             Termination::Cancelled
         );
         let (tx, rx) = tokio::sync::mpsc::channel(1);
-        let result = run(&gate, Some(trace.clone()), None, Some(&tx), |_| {
+        let result = bounded(run(&gate, Some(trace.clone()), None, Some(&tx), |_| {
             drop(rx);
             std::future::pending::<Result<(), DomainError>>()
-        })
+        }))
         .await;
         assert!(result.is_err());
         assert_eq!(

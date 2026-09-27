@@ -110,30 +110,123 @@ impl Profile {
     }
 }
 
-/// New enabled OpenAI SSE errors retain machine fields for the existing retry
-/// classifier. Status is derived from typed protocol fields, never message text.
+/// Known client-side error types and codes (OpenAI, Anthropic, OpenRouter
+/// and compatible vendors), in precedence order, with the HTTP status each
+/// stands for: the provider refused the request for what it is, so resending
+/// it unchanged fails again. A billing error, the domain's list, precedes
+/// them all as [`BILLING_STATUS`].
+const CLIENT_ERRORS: &[(&str, u16)] = &[
+    ("authentication_error", 401),
+    ("invalid_api_key", 401),
+    ("permission_error", 403),
+    ("not_found_error", 404),
+    ("model_not_found", 404),
+    ("request_too_large", 413),
+    ("context_length_exceeded", 400),
+    ("invalid_request_error", 400),
+];
+/// The status a billing error stands for: payment required.
+const BILLING_STATUS: u16 = 402;
+/// Known server-side error types and codes, with the HTTP status each
+/// stands for: the provider failed, and a later attempt may succeed.
+const SERVER_ERRORS: &[(&str, u16)] = &[
+    ("server_error", 500),
+    ("api_error", 500),
+    ("internal_error", 500),
+    ("internal_server_error", 500),
+    ("service_unavailable", 503),
+    ("service_unavailable_error", 503),
+    ("timeout_error", 504),
+];
+/// An error chunk nobody knows: the provider's side failed in a way it did
+/// not name. Retryable, like a gateway failure, never a client error.
+const UNKNOWN_ERROR_STATUS: u16 = 502;
+/// A request timeout (408, OpenRouter's upstream timeout) stands for a
+/// gateway timeout: the provider did not answer in time, and a later
+/// attempt may.
+const REQUEST_TIMEOUT: u16 = 408;
+const GATEWAY_TIMEOUT: u16 = 504;
+
+/// Whether an OpenAI-compatible error chunk is a throttle the admission gate
+/// should hear of (#2155 review): its status is 429 or 529, typed or numeric
+/// (OpenRouter's `{"code":429}`). A billing error is never one: it is 402
+/// before any throttle or numeric status is considered.
+pub(super) fn is_throttle_chunk(value: &serde_json::Value) -> bool {
+    matches!(stream_error_status(value), 429 | 529)
+}
+
+/// An OpenAI-compatible mid-stream `data: {"error":{...}}` chunk as the
+/// stream's terminal error (#2155), rendered with the HTTP status its typed
+/// fields stand for, so the retry classifier reads it as the provider meant
+/// it. Status is derived from typed protocol fields, never message text:
+///
+/// 1. a billing error type or code is 402 (never retried);
+/// 2. an allowlisted client error type or code is its 4xx (never retried);
+/// 3. a typed throttle is 429, or 529 when overloaded;
+/// 4. a known server error type or code is its 5xx (retried);
+/// 5. a numeric `error.code` (OpenRouter's shape) is that status when the
+///    retry classifier knows it; a 408 is a gateway timeout (504) and any
+///    other 5xx (Cloudflare's 520-524) a bad gateway (502), both retried;
+///    another 4xx stands as itself (never retried);
+/// 6. anything else is 502: retryable.
+///
+/// Typed fields always win over a numeric code: a named failure says more
+/// than a status a gateway may have wrapped it in (a client type in a 5xx,
+/// #935, stays a client error).
+///
+/// The chunk ends the attempt: the text already streamed stays streamed (it
+/// was shown once, and the retry owner never replays a reply after output),
+/// and no completed reply follows the error, so a reply cut short by a
+/// provider failure is never taken as a whole answer.
 pub(super) fn openai_stream_error(value: &serde_json::Value) -> String {
+    let status = stream_error_status(value);
+    assert!(
+        (400..=599).contains(&status),
+        "an error chunk always renders an HTTP error status"
+    );
+    format!("HTTP {status} OpenAI stream error: {value}")
+}
+
+/// The HTTP status an OpenAI-compatible error chunk stands for; see
+/// [`openai_stream_error`].
+pub(super) fn stream_error_status(value: &serde_json::Value) -> u16 {
+    use crate::domain::provider_error::{ProviderErrorClass, is_billing_error_name};
     let error = &value["error"];
     let fields = [error["type"].as_str(), error["code"].as_str()];
-    let status = if fields.iter().any(|field| {
-        matches!(
-            field,
-            Some("authentication_error" | "permission_error" | "invalid_api_key")
-        )
-    }) {
-        401
-    } else if fields.contains(&Some("invalid_request_error")) {
-        400
-    } else if super::admission_feedback::is_typed_throttle(value) {
-        if fields.contains(&Some("overloaded_error")) {
+    if fields.into_iter().flatten().any(is_billing_error_name) {
+        return BILLING_STATUS;
+    }
+    let named = |table: &[(&str, u16)]| {
+        table
+            .iter()
+            .find(|(name, _)| fields.contains(&Some(*name)))
+            .map(|(_, status)| *status)
+    };
+    if let Some(status) = named(CLIENT_ERRORS) {
+        return status;
+    }
+    if super::admission_feedback::is_typed_throttle(value) {
+        return if fields.contains(&Some("overloaded_error")) {
             529
         } else {
             429
+        };
+    }
+    if let Some(status) = named(SERVER_ERRORS) {
+        return status;
+    }
+    let numeric = error["code"]
+        .as_u64()
+        .filter(|code| (400..=599).contains(code))
+        .and_then(|code| u16::try_from(code).ok());
+    match numeric {
+        Some(status) if ProviderErrorClass::from_status(status) != ProviderErrorClass::Unknown => {
+            status
         }
-    } else {
-        400
-    };
-    format!("HTTP {status} OpenAI stream error: {value}")
+        Some(REQUEST_TIMEOUT) => GATEWAY_TIMEOUT,
+        Some(status @ 400..=499) => status,
+        _ => UNKNOWN_ERROR_STATUS,
+    }
 }
 
 #[cfg(test)]
