@@ -65,6 +65,7 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
         &config,
         &ChildCommand {
             swarm_context: None,
+            swarm_member: false,
             supervisor: &test_supervisor(),
             binary: Path::new("true"),
             cli_args: &[],
@@ -166,6 +167,7 @@ async fn join_fails_for_unknown_target_and_missing_retained_exec() {
     let registry = EnvironmentRegistry::new();
     let child = ChildCommand {
         swarm_context: None,
+        swarm_member: false,
         supervisor: &test_supervisor(),
         binary: Path::new("true"),
         cli_args: &[],
@@ -217,6 +219,7 @@ async fn join_refuses_an_altered_standard_exec_script_before_running_it() {
     registry.commit(record);
     let child = ChildCommand {
         swarm_context: None,
+        swarm_member: false,
         supervisor: &test_supervisor(),
         binary: Path::new("true"),
         cli_args: &[],
@@ -265,6 +268,7 @@ async fn explicit_selection_also_fails_at_load_when_no_default_is_labeled() {
         &config,
         &ChildCommand {
             swarm_context: None,
+            swarm_member: false,
             supervisor: &test_supervisor(),
             binary: Path::new("true"),
             cli_args: &[],

@@ -435,7 +435,7 @@ fn a_correction_another_session_overtook_is_not_written_and_their_state_is_seede
         process,
         no_hosted(),
     )
-    .execute("s");
+    .execute("cli:one");
     assert!(inner.corrections.lock().unwrap().is_empty());
     let c1 = registry.get("C1").unwrap();
     assert_eq!(c1.last_error.as_deref(), Some("killed elsewhere"));
@@ -444,11 +444,11 @@ fn a_correction_another_session_overtook_is_not_written_and_their_state_is_seede
         "a forgotten record is not resurrected"
     );
     assert_eq!(report.stopped, ["C1", "C2"]);
+    // #2190: what this session loaded, then what the other session wrote.
     assert!(
-        report
-            .diagnostics
-            .iter()
-            .any(|d| d.contains("C1 changed while it was being checked")),
+        report.diagnostics.iter().any(|d| d
+            == "C1 changed while it was being checked (running → stopped); \
+                the other session's state stands"),
         "{report:?}"
     );
 }

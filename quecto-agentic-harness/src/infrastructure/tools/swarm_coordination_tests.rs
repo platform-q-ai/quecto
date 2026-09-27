@@ -103,3 +103,66 @@ fn a_relative_deadline_outside_one_second_to_seven_days_is_refused_by_name() {
         );
     }
 }
+
+/// #2205: `constraints` is optional in meaning and in the schema: omitted
+/// is an empty list; any value given goes to the store as given.
+#[test]
+fn an_omitted_constraints_list_is_empty_and_a_given_one_is_passed_as_given() {
+    assert_eq!(run_constraints(&json!({"goal": "g"})), json!([]));
+    for given in [json!(["no network"]), json!([]), json!("x"), json!(null)] {
+        assert_eq!(run_constraints(&json!({"constraints": given})), given);
+    }
+}
+
+fn store_member(checkout: &std::path::Path) -> SwarmContext {
+    std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
+    let context = SwarmContext {
+        checkout: checkout.to_path_buf(),
+        member: "coordinator".into(),
+        lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
+    };
+    context.join(&this_process(), None, None).unwrap();
+    context
+}
+
+fn this_process() -> ProcessIdentity {
+    let pid = std::process::id();
+    ProcessIdentity {
+        pid,
+        started: crate::infrastructure::tools::swarm_bridge::process_start(pid).unwrap(),
+    }
+}
+
+fn create_input(constraints: Option<Value>) -> Value {
+    let mut input = json!({"goal":"g",
+        "criteria":[{"id":"t","kind":"command","description":"pass"}],
+        "member_limit":1,"deadline_in_seconds":300});
+    if let Some(constraints) = constraints {
+        input["constraints"] = constraints;
+    }
+    input
+}
+
+#[test]
+fn a_run_is_created_without_constraints_but_not_with_a_wrong_typed_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let context = store_member(dir.path());
+    context
+        .create_run(&create_input(None), &this_process(), None)
+        .expect("constraints may be omitted");
+    let summary = context.summary().unwrap();
+    assert_eq!(summary["constraints"], json!([]), "{summary}");
+
+    for wrong in [json!("no network"), json!(null), json!([1])] {
+        let dir = tempfile::tempdir().unwrap();
+        let context = store_member(dir.path());
+        let error = context
+            .create_run(&create_input(Some(wrong.clone())), &this_process(), None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("constraints must be a list of strings"),
+            "{wrong}: {error}"
+        );
+    }
+}

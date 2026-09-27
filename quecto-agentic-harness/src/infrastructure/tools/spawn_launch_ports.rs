@@ -253,6 +253,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 config,
                 &super::spawn_container::ChildCommand {
                     swarm_context: self.tool.swarm_context.as_ref(),
+                    swarm_member: self.tool.launches_swarm_worker(),
                     supervisor: &self.tool.supervisor,
                     binary,
                     cli_args: &launch_args,

@@ -196,9 +196,12 @@ fn parse_args_rejects_specific_invalid_fields() {
 #[tokio::test]
 async fn execute_parse_error_returns_llm_addressable_tool_error() {
     let tool = SpawnTool::new(vec![]);
-    let result = tool.execute(r#"{"read_only":"yes"}"#).await.unwrap();
-    assert!(result.is_error);
-    assert!(result.content.contains("read_only must be a boolean"));
+    let error = tool
+        .execute(r#"{"read_only":"yes"}"#)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert_eq!(error, "tool error: read_only must be a boolean");
 }
 
 #[tokio::test]

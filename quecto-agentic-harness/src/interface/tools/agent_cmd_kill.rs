@@ -42,15 +42,7 @@ pub fn parse_kill_arguments(arguments: &str) -> Result<KillDelegatedAgentRequest
     // Delivery-specific syntax only (the same shape every `agent_cmd`
     // command accepts); whether the reference names anything is the use
     // case's answer.
-    if agent_id.is_empty() || agent_id.len() > 64 {
-        return Err("agent_id must be 1-64 characters".to_string());
-    }
-    if !agent_id
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-    {
-        return Err("agent_id must use only [a-zA-Z0-9_-]".to_string());
-    }
+    crate::domain::subagent::validate_agent_id_format(agent_id)?;
     Ok(KillDelegatedAgentRequest {
         reference: agent_id.to_owned(),
     })

@@ -92,7 +92,16 @@ fn when_parse_spawn_args(world: &mut QuectoWorld, arguments: String) {
     let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
     world.subagent_config = tool.parse_args_for_test(&arguments).ok();
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let result = rt.block_on(tool.execute(&arguments)).unwrap();
+    // A refusal is a tool error (#2221), shown to the model as the agent
+    // loop renders it.
+    let result = rt
+        .block_on(tool.execute(&arguments))
+        .unwrap_or_else(|error| ToolResult {
+            content: format!("Error: {error}"),
+            is_error: true,
+            image_blocks: vec![],
+            delivery_metadata: None,
+        });
     world.spawn_result = Some(result);
 }
 

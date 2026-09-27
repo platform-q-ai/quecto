@@ -72,6 +72,7 @@ async fn a_new_container_needs_a_composed_selection_but_a_local_child_does_not()
         &config,
         &ChildCommand {
             swarm_context: None,
+            swarm_member: false,
             supervisor: &test_supervisor(),
             binary: Path::new("true"),
             cli_args: &[],
@@ -93,6 +94,7 @@ async fn a_new_container_needs_a_composed_selection_but_a_local_child_does_not()
             &local,
             &ChildCommand {
                 swarm_context: None,
+                swarm_member: false,
                 supervisor: &test_supervisor(),
                 binary: Path::new("true"),
                 cli_args: &[],
@@ -114,6 +116,7 @@ async fn local_subagent_inherits_parent_process_group() {
     let cli_args = vec![std::ffi::OsString::from("2")];
     let mut prepared = spawn_local_child(&ChildCommand {
         swarm_context: None,
+        swarm_member: false,
         supervisor: &test_supervisor(),
         binary: Path::new("/bin/sleep"),
         cli_args: &cli_args,
@@ -155,6 +158,7 @@ async fn selection_errors_surface_as_tool_errors_without_a_launch() {
     let supervisor = test_supervisor();
     let child = || ChildCommand {
         swarm_context: None,
+        swarm_member: false,
         supervisor: &supervisor,
         binary: Path::new("true"),
         cli_args: &[],
@@ -246,6 +250,7 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
             &local,
             &ChildCommand {
                 swarm_context: None,
+                swarm_member: false,
                 supervisor: &test_supervisor(),
                 binary: Path::new("/definitely/not/quecto"),
                 cli_args: &[],
@@ -268,6 +273,7 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
             &without_config,
             &ChildCommand {
                 swarm_context: None,
+                swarm_member: false,
                 supervisor: &test_supervisor(),
                 binary: Path::new("true"),
                 cli_args: &[],
@@ -287,6 +293,7 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
             &without_config,
             &ChildCommand {
                 swarm_context: None,
+                swarm_member: false,
                 supervisor: &test_supervisor(),
                 binary: Path::new("true"),
                 cli_args: &[],
@@ -325,6 +332,7 @@ async fn script_managed_spawn_error_uses_config_and_selected_script() {
         &config,
         &ChildCommand {
             swarm_context: None,
+            swarm_member: false,
             supervisor: &test_supervisor(),
             binary: Path::new("true"),
             cli_args: &[],
@@ -397,6 +405,7 @@ async fn script_env_includes_optional_selection_values() {
         &config,
         &ChildCommand {
             swarm_context: None,
+            swarm_member: false,
             supervisor: &test_supervisor(),
             binary: Path::new("true"),
             cli_args: &[],
@@ -429,6 +438,7 @@ async fn local_child_success_has_no_cleanup_plan() {
         &config,
         &ChildCommand {
             swarm_context: None,
+            swarm_member: false,
             supervisor: &test_supervisor(),
             binary: Path::new("true"),
             cli_args: &[],
@@ -502,6 +512,7 @@ async fn a_named_launch_over_a_withheld_overlay_carries_the_diagnostic() {
     );
     let child = ChildCommand {
         swarm_context: None,
+        swarm_member: false,
         supervisor: &test_supervisor(),
         binary: Path::new("true"),
         cli_args: &[],
@@ -552,4 +563,69 @@ async fn a_named_launch_over_a_withheld_overlay_carries_the_diagnostic() {
         prepared.container_diagnostics
     );
     assert_eq!(registry.get("C1").unwrap().script_name, "alt");
+}
+
+fn container_swarm_context(
+    checkout: &Path,
+) -> crate::infrastructure::tools::swarm_bridge::SwarmContext {
+    crate::infrastructure::tools::swarm_bridge::SwarmContext {
+        lifecycle: Arc::new(crate::application::swarm::LifecycleService),
+        checkout: checkout.to_path_buf(),
+        member: "member-1".into(),
+    }
+}
+
+/// #2204: every agent inside a container carries the container's swarm
+/// context (the runtime's launch contract), whether or not a swarm run was
+/// ever created. A nested container is refused for all of them, worded by
+/// the real condition; the swarm wording is kept for real swarm members.
+#[tokio::test]
+async fn a_nested_container_is_refused_inside_a_container_by_the_real_condition() {
+    let dir = TempDir::new().unwrap();
+    let context = container_swarm_context(dir.path());
+    let refusal = |swarm_member: bool, container: ContainerSelection| {
+        let context = &context;
+        let dir = dir.path().to_path_buf();
+        async move {
+            spawn_prepared_child(
+                &base_config(container),
+                &ChildCommand {
+                    swarm_context: Some(context),
+                    swarm_member,
+                    supervisor: &test_supervisor(),
+                    binary: Path::new("true"),
+                    cli_args: &[],
+                    base_dir: &dir,
+                    admission_dir: None,
+                },
+                &EnvironmentRegistry::new(),
+                Some(&test_selection(&dir)),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err()
+            .to_string()
+        }
+    };
+    let new = || ContainerSelection::New {
+        container_config: None,
+        name: None,
+    };
+    let existing = || ContainerSelection::Existing {
+        target: crate::domain::environment_registry::EnvironmentTarget::Ref("C1".into()),
+    };
+    for container in [new(), existing()] {
+        assert_eq!(
+            refusal(false, container).await,
+            "tool error: agents inside a container cannot start another container; \
+             spawn a local sub-agent (omit container) instead"
+        );
+    }
+    for container in [new(), existing()] {
+        assert_eq!(
+            refusal(true, container).await,
+            "tool error: swarm members must reuse their shared container and fixed pool; \
+             nested containers cannot reset admission"
+        );
+    }
 }

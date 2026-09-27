@@ -629,7 +629,11 @@ switch.
    and tail-pinned (`pin_recent_turns`, default `2`) content is never
    demoted; if the pinned set alone exceeds the budget, a
    `context_prune` warning is logged and the `ContextPruned` audit event
-   records `budget_unmet`.
+   records `budget_unmet`. Every `context_pruned` event counts what the
+   prune did: `messages_stubbed` (collapsed to recall stubs by the ladder),
+   `messages_dropped`, `tool_results_collapsed`, and `tokens_before` /
+   `tokens_after`; logs written before `messages_stubbed` existed read it
+   as 0.
 
 The effective budget is the smaller of `max_context_tokens` and the active
 model's context window when the model registry declares one.

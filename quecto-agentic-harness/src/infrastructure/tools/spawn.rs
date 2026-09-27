@@ -165,7 +165,7 @@ impl SpawnTool {
     /// Children of a swarm participant are swarm-local workers; any other
     /// launch, containerized or not, keeps workflow eligibility (#1715).
     /// Participation is only ever recorded for a process with a swarm context.
-    fn launches_swarm_worker(&self) -> bool {
+    pub(super) fn launches_swarm_worker(&self) -> bool {
         self.swarm_participation.participating()
     }
 
@@ -397,7 +397,12 @@ impl SpawnTool {
             self.launches_swarm_worker(),
             workflow || workflow_guards || args.get("workflow_spec").is_some_and(|v| !v.is_null()),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| match e {
+            // The refusal goes out as a tool error (#2221): its reason alone,
+            // so the prefix is not doubled.
+            DomainError::Tool(reason) => reason,
+            other => other.to_string(),
+        })?;
 
         // child process fail with an opaque CLI error.
         if workflow_guards && !workflow {
@@ -710,12 +715,9 @@ impl Tool for SpawnTool {
                         self.launch_uds_agent(&config).await
                     }
                 }
-                Err(e) => Ok(ToolResult {
-                    content: format!("Failed to spawn subagent: {}", e),
-                    is_error: true,
-                    image_blocks: vec![],
-                    delivery_metadata: None,
-                }),
+                // A refused request is a tool error (#2221): one prefix
+                // with every other spawn refusal the launch path returns.
+                Err(e) => Err(DomainError::Tool(e)),
             }
         })
     }

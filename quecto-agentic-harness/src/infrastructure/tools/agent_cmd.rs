@@ -177,6 +177,15 @@ impl AgentCmdTool {
         if command != "kill" {
             return None;
         }
+        let target = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("");
+        if let Err(refused) = super::agent_cmd_parse::admit_target(command, target) {
+            return Some(ToolResult {
+                content: format!("agent_cmd error: {refused}"),
+                is_error: true,
+                image_blocks: vec![],
+                delivery_metadata: None,
+            });
+        }
         let Some(kill) = self.kill.get() else {
             return Some(ToolResult {
                 content: "agent_cmd error: kill is not available in this composition".into(),

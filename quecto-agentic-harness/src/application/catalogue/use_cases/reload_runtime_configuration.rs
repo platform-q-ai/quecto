@@ -113,7 +113,7 @@ impl ReloadRuntimeConfiguration {
         runtime.swap_provider(configuration.provider);
         let unknown_policy_tools = runtime.apply_persisted_tool_policy(&configuration.tool_policy);
         for stable_id in &unknown_policy_tools {
-            tracing::warn!(target: "reload", stable_id = %stable_id, "tools.policy reload entry did not match a registered tool");
+            tracing::debug!(target: "reload", stable_id = %stable_id, "tools.policy reload entry names no registered tool; kept and ignored (#2217)");
         }
         ReloadOutcome::Reloaded {
             unknown_policy_tools,

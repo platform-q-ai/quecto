@@ -333,9 +333,8 @@ fn when_execute_spawn_tool(world: &mut QuectoWorld, task: String) {
     let args = serde_json::json!({"task": task}).to_string();
     let result = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(tool.execute(&args))
-        .unwrap();
-    world.spawn_result = Some(result);
+        .block_on(tool.execute(&args));
+    world.spawn_result = Some(spawn_outcome(result));
 }
 
 #[when(expr = "the agent executes the spawn tool with task {string} and agent_id {string}")]
@@ -344,9 +343,8 @@ fn when_execute_spawn_with_agent(world: &mut QuectoWorld, task: String, agent_id
     let args = serde_json::json!({"task": task, "agent_id": agent_id}).to_string();
     let result = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(tool.execute(&args))
-        .unwrap();
-    world.spawn_result = Some(result);
+        .block_on(tool.execute(&args));
+    world.spawn_result = Some(spawn_outcome(result));
 }
 
 #[then("the spawn result should confirm the subagent was spawned")]
@@ -658,4 +656,17 @@ fn then_image_blocks_empty(world: &mut QuectoWorld) {
             .map(|b| &b.mime_type)
             .collect::<Vec<_>>()
     );
+}
+
+/// A spawn refusal is a tool error (#2221): the agent loop shows it to the
+/// model as `Error: tool error: …`, so the step records it the same way.
+fn spawn_outcome(
+    result: Result<quecto::domain::tool::ToolResult, quecto::domain::error::DomainError>,
+) -> quecto::domain::tool::ToolResult {
+    result.unwrap_or_else(|error| quecto::domain::tool::ToolResult {
+        content: format!("Error: {error}"),
+        is_error: true,
+        image_blocks: vec![],
+        delivery_metadata: None,
+    })
 }

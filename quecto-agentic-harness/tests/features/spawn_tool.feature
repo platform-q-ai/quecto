@@ -78,7 +78,7 @@ Feature: SpawnTool — child agent process spawning
   Scenario: Empty agent ID is rejected
     Given a SpawnTool with empty allowlist
     When I parse spawn arguments '{"task":"work","agent_id":""}'
-    Then the parse should fail with "1-64 characters"
+    Then the parse should fail with "agent_id is 0 characters; it must be 1-64"
 
   Scenario: Agent ID at max length 64 is accepted
     Given a SpawnTool with empty allowlist
@@ -88,7 +88,7 @@ Feature: SpawnTool — child agent process spawning
   Scenario: Agent ID exceeding 64 characters is rejected
     Given a SpawnTool with empty allowlist
     When I parse spawn arguments with a 65-character agent_id
-    Then the parse should fail with "1-64 characters"
+    Then the parse should fail with "agent_id is 65 characters; it must be 1-64"
 
 
   # --- Constructors ---

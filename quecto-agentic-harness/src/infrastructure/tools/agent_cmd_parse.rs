@@ -22,6 +22,33 @@ pub(super) const SUPPORTED_COMMANDS: &[&str] = &[
     "clear_history",
 ];
 
+/// The inventory commands that take the synthetic `*` target (#2221): it
+/// names no sub-agent, so every other command needs one agent's id.
+pub(super) const WILDCARD_COMMANDS: &[&str] = &[
+    "get_subagents_all",
+    "get_containers",
+    "get_container_configs",
+    "kill_container",
+];
+
+/// Commands `build_command` accepts beyond the model-facing list.
+const UNLISTED_COMMANDS: &[&str] = &["get_messages_tail", "get_tool_catalogue", "list_tools"];
+
+/// Admit `agent_id` as the target of `command`: `*` only for an inventory
+/// command (#2221). A per-agent command given `*` is told what it needs
+/// instead of failing the character-set check.
+pub(super) fn admit_target(command: &str, agent_id: &str) -> Result<(), String> {
+    match agent_id {
+        "*" if WILDCARD_COMMANDS.contains(&command) => Ok(()),
+        "*" => Err(format!(
+            "{command} needs one sub-agent's UUID, as returned by spawn; \"*\" works only with \
+             the inventory commands {} (use get_subagents_all to list sub-agents)",
+            WILDCARD_COMMANDS.join(", ")
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Validate the already-parsed arguments and build the JSON command to send.
 /// Used by the dispatch path, which parses the arguments once per call.
 pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String, String), String> {
@@ -37,26 +64,25 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
         .map(str::to_string)
         .ok_or("missing required field: agent_id")?;
 
-    // Validate agent_id format (same rules as spawn). The synthetic `*` target
-    // is accepted only for the parent-local get_subagents_all command.
-    if command == "get_subagents_all" {
-        if agent_id != "*" {
-            return Err("get_subagents_all requires agent_id '*'".to_string());
-        }
-    } else {
-        validate_agent_id_format(&agent_id)?;
-    }
-
-    if !SUPPORTED_COMMANDS.contains(&command.as_str())
-        && command != "get_messages_tail"
-        && command != "get_tool_catalogue"
-        && command != "list_tools"
-    {
+    let supported = SUPPORTED_COMMANDS.contains(&command.as_str())
+        || UNLISTED_COMMANDS.contains(&command.as_str());
+    if !supported {
         return Err(format!(
             "unsupported command '{}'; supported: {}",
             command,
             SUPPORTED_COMMANDS.join(", ")
         ));
+    }
+
+    // The synthetic `*` target first (#2221), then the id's syntax (same
+    // rules as spawn). get_subagents_all takes `*` and nothing else.
+    admit_target(&command, &agent_id)?;
+    match (command.as_str(), agent_id.as_str()) {
+        ("get_subagents_all", "*") => {}
+        ("get_subagents_all", _) => {
+            return Err("get_subagents_all requires agent_id '*'".to_string());
+        }
+        _ => validate_agent_id_format(&agent_id)?,
     }
 
     // Build the framed JSON command. Control commands (prompt/steer/

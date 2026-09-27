@@ -477,6 +477,56 @@ async fn window_derived_budget_drives_pruning_not_the_larger_config() {
     );
 }
 
+// --- #2214: a prune that only stubbed says so in the audit trail ---
+
+#[tokio::test]
+async fn a_prune_that_stubbed_a_message_records_it_in_the_context_pruned_event() {
+    let store = Arc::new(MemSpillStore::default());
+    let sink = Arc::new(CapturingAuditSink::default());
+    let big = "x".repeat(2000); // ~500 tokens
+    let mut old = Message::assistant(&big, vec![]);
+    old.turn = Some(1);
+    let mut messages = vec![old, Message::user("new prompt")];
+    let mut loop_ = agent(
+        vec![text_response("done")],
+        store,
+        200_000,
+        Some(sink.clone() as Arc<dyn AuditSink>),
+    )
+    .with_pin_recent_turns(0)
+    .with_model_context_window(Some(100));
+    loop_.run_loop(&mut messages).await.unwrap();
+
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.turn == Some(1) && m.content.contains("recall(")),
+        "positive control: the old message must be stubbed, not dropped"
+    );
+    let events = sink.events.lock().unwrap();
+    let stubbed: Vec<(usize, usize, usize)> = events
+        .iter()
+        .filter_map(|e| match e {
+            AuditEvent::ContextPruned {
+                messages_stubbed,
+                messages_dropped,
+                tool_results_collapsed,
+                ..
+            } => Some((
+                *messages_stubbed,
+                *messages_dropped,
+                *tool_results_collapsed,
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        stubbed.first(),
+        Some(&(1, 0, 0)),
+        "the first prune stubbed one message and dropped none: {stubbed:?}"
+    );
+}
+
 // --- #1046 fold of #1043: exactly one spill writer, no duplicate entries ---
 
 #[tokio::test]

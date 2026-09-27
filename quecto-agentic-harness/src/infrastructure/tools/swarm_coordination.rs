@@ -203,7 +203,7 @@ impl SwarmContext {
             "create",
             json!([
                 input["goal"],
-                input["constraints"],
+                run_constraints(input),
                 input["criteria"],
                 input["member_limit"],
                 absolute_deadline(input)?
@@ -264,6 +264,16 @@ impl crate::application::providers::ports::RequestAccounting for SwarmContext {
 /// `deadline_in_seconds` when given (it wins over `deadline`, so a
 /// placeholder `deadline` never hides it), else `deadline`. A model need not
 /// know the current time; the store still checks the result.
+/// The run's `constraints` (#2205): optional, an omitted list is empty. A
+/// value that is given goes to the store as given, which refuses anything
+/// but a list of strings — so a wrong type is still named as one.
+fn run_constraints(input: &Value) -> Value {
+    match input.get("constraints") {
+        Some(given) => given.clone(),
+        None => json!([]),
+    }
+}
+
 fn absolute_deadline(input: &Value) -> Result<Value, DomainError> {
     const SEVEN_DAYS: f64 = 604_800.0;
     match (input.get("deadline_in_seconds"), input.get("deadline")) {

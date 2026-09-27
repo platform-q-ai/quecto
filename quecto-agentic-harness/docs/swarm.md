@@ -76,7 +76,8 @@ The external supervising parent is not a member. Initial harness startup records
 membership in a setup board; creation cannot choose a smaller limit than the
 already live/reserved population. Create the run before launching the pool.
 
-Call `swarm` with `op=create`, a nonempty `goal`, a list of `constraints`,
+Call `swarm` with `op=create`, a nonempty `goal`, an optional list of
+`constraints` (omitted means none; any other value must be a list of strings),
 `criteria`, `member_limit` (1 through 25), and either `deadline_in_seconds`
 (seconds from now, 1 to 604800; wins when both are given) or `deadline` (Unix
 seconds, in the future and no more than seven days away). This differs from
@@ -95,7 +96,8 @@ Use existing local `spawn` inside the container to establish the fixed pool.
 External parents may use existing container joins; startup performs the same
 atomic admission. Idle members count. Changing the session name, switching
 entrypoints, or spawning descendants does not establish a new run budget.
-Nested container launches are rejected. An existing run cannot be reset through
+Nested container launches are rejected: no agent inside a container, swarm
+member or not, may start another container; it spawns local sub-agents. An existing run cannot be reset through
 the helper API. This bounds harness-managed agents, not arbitrary subprocesses
 or direct provider API calls. Provider inference admission is separate (#1679).
 

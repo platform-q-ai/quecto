@@ -83,6 +83,7 @@ impl AgentLoopImpl {
                     tokens_before: plan.tokens_before.saturating_add(fixed_tokens),
                     tokens_after: plan.total_tokens.saturating_add(fixed_tokens),
                     budget_unmet: plan.over_budget,
+                    messages_stubbed: plan.messages_stubbed,
                 },
             )
             .await;

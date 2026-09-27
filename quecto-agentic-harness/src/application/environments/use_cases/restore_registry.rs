@@ -114,12 +114,13 @@ impl RestoreRegistry {
     /// panic — the session keeps its in-memory registry. A write made with
     /// an expected status is the store's conditional `correct` (review F5):
     /// applied only while the record on file still has that status.
-    fn journal(&self, mode: RestoreMode) -> EnvironmentJournal {
+    fn journal(&self, mode: RestoreMode, session: &str) -> EnvironmentJournal {
         let allocate = Arc::clone(&self.store);
         let record = Arc::clone(&self.store);
         let forget = Arc::clone(&self.store);
         let release = Arc::clone(&self.store);
         let reload = self.clone();
+        let reload_session = session.to_owned();
         EnvironmentJournal {
             reload: Arc::new(move || {
                 let records = reload
@@ -131,7 +132,7 @@ impl RestoreRegistry {
                 // been then; the account goes to the log, there being
                 // no report to carry it.
                 let mut report = RestoredRegistry::default();
-                let seeded = reload.seed(records, mode, &mut report);
+                let seeded = reload.seed(records, mode, &reload_session, &mut report);
                 for line in &report.diagnostics {
                     tracing::info!(%line, "durable environment registry read late");
                 }
@@ -198,7 +199,7 @@ impl RestoreRegistry {
     /// inherits nothing (a spawned child's registry — the fleet is its
     /// parent's to show).
     pub fn unseeded(&self, session: &str) -> EnvironmentRegistry {
-        EnvironmentRegistry::with_journal(self.journal(RestoreMode::Correct), session)
+        EnvironmentRegistry::with_journal(self.journal(RestoreMode::Correct, session), session)
     }
 
     /// Build the durable registry for `session`: seeded with the store's
@@ -234,14 +235,17 @@ impl RestoreRegistry {
                 // The registry carries the error itself (round 2 F-B,
                 // #2033): the model's listing shows it and a lookup of
                 // anything this session did not create answers with it.
-                let registry =
-                    EnvironmentRegistry::unreadable(self.journal(mode), session, &read_error);
+                let registry = EnvironmentRegistry::unreadable(
+                    self.journal(mode, session),
+                    session,
+                    &read_error,
+                );
                 report.read_error = Some(read_error);
                 return (registry, report);
             }
         };
-        let registry = EnvironmentRegistry::with_journal(self.journal(mode), session);
-        registry.restore(self.seed(records, mode, &mut report));
+        let registry = EnvironmentRegistry::with_journal(self.journal(mode, session), session);
+        registry.restore(self.seed(records, mode, session, &mut report));
         (registry, report)
     }
 
@@ -251,6 +255,7 @@ impl RestoreRegistry {
         &self,
         records: Vec<EnvironmentRecord>,
         mode: RestoreMode,
+        session: &str,
         report: &mut RestoredRegistry,
     ) -> Vec<EnvironmentRecord> {
         let mut restored = Vec::with_capacity(records.len());
@@ -261,6 +266,7 @@ impl RestoreRegistry {
                 continue;
             }
             let loaded_status = record.status.clone();
+            let loaded_label = record.status_label();
             let mut judged = record;
             let corrected = self.judge(&mut judged, report);
             if !corrected {
@@ -286,12 +292,7 @@ impl RestoreRegistry {
             match self.store.correct(&judged, &loaded_status) {
                 Ok(CorrectionOutcome::Applied) => restored.push(judged),
                 Ok(CorrectionOutcome::Superseded(current)) => {
-                    report.diagnostics.push(format!(
-                        "{} changed while it was being checked ({} → {}); the other session's state stands",
-                        judged.environment_ref,
-                        judged.status_label(),
-                        current.status_label()
-                    ));
+                    report_overtaken(&current, loaded_label, session, report);
                     restored.push(*current);
                 }
                 Ok(CorrectionOutcome::Forgotten) => {}
@@ -476,3 +477,32 @@ impl RestoreRegistry {
 
 /// How a store that could not be read is reported.
 const READ_FAILED: &str = "durable environment registry could not be read";
+
+/// Another session wrote `current` between this session's load and its
+/// correction (#2190). What stands is theirs; the race is reported as what
+/// was read then what is on file — only when those differ, and on stderr
+/// only for this session's own environments (anyone else's goes to the
+/// debug log: it is that session's to report).
+fn report_overtaken(
+    current: &EnvironmentRecord,
+    loaded_label: &'static str,
+    session: &str,
+    report: &mut RestoredRegistry,
+) {
+    let current_label = current.status_label();
+    let changed = loaded_label != current_label;
+    let own = crate::domain::environment_listing::created_by_session(current, session);
+    let line = || {
+        format!(
+            "{} changed while it was being checked ({loaded_label} → {current_label}); the other session's state stands",
+            current.environment_ref
+        )
+    };
+    match (changed, own) {
+        (true, true) => report.diagnostics.push(line()),
+        (true, false) => {
+            tracing::debug!(target: "environments", created_by = %current.created_by, "{}", line());
+        }
+        (false, _) => {}
+    }
+}

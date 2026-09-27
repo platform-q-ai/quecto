@@ -73,14 +73,13 @@ fn swarm_worker_rejects_every_workflow_activation_form() {
 #[tokio::test]
 async fn swarm_worker_launch_revalidates_workflow_before_effects() {
     use crate::application::tools::ports::Tool;
-    let result = swarm_tool(true)
+    let error = swarm_tool(true)
         .execute(r#"{"agent_id":"w","workflow":true}"#)
         .await
-        .unwrap();
-    assert!(result.is_error, "{}", result.content);
+        .unwrap_err()
+        .to_string();
     assert!(
-        result
-            .content
-            .contains("workflow is unavailable for swarm agents")
+        error.starts_with("tool error: workflow is unavailable for swarm agents"),
+        "{error}"
     );
 }

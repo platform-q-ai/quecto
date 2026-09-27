@@ -442,12 +442,17 @@ pub(crate) fn build_tool_runtime(
         }
     }
 
+    // An entry naming no tool registered here is kept and ignored, as the
+    // config documents (#2217): a bundled tool this entrypoint does not
+    // build (`workflow` on the one-shot CLI) or one no build knows any more
+    // (`python_lab`, #1684). Nothing to act on at start-up, so debug only.
     let persisted_unknown = registry.apply_persisted_tool_policy(&config.tools.policy);
     for stable_id in &persisted_unknown {
-        stderr.push_str(&format!(
-            "WARNING: tools.policy: no registered tool with stable id '{}'\n",
-            stable_id
-        ));
+        tracing::debug!(
+            target: "tool_policy",
+            stable_id = %stable_id,
+            "tools.policy entry names no tool registered on this entrypoint; kept and ignored"
+        );
     }
 
     // Apply explicit startup restrictions after every startup provider has had a

@@ -56,4 +56,6 @@ mod restore_registry_forget_tests;
 #[cfg(test)]
 mod restore_registry_hosted_tests;
 #[cfg(test)]
+mod restore_registry_superseded_tests;
+#[cfg(test)]
 mod restore_registry_tests;

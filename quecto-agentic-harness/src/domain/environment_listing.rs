@@ -157,10 +157,16 @@ pub fn select_listing(
 fn is_own(record: &EnvironmentRecord, session: &str) -> bool {
     match record.origin {
         EnvironmentOrigin::Created => true,
-        EnvironmentOrigin::Restored => match session {
-            "" => false,
-            named => record.created_by == named,
-        },
+        EnvironmentOrigin::Restored => created_by_session(record, session),
+    }
+}
+
+/// Whether the named session `session` created `record`, by the creator's
+/// key the record carries: a session-less run (empty key) names none.
+pub fn created_by_session(record: &EnvironmentRecord, session: &str) -> bool {
+    match session {
+        "" => false,
+        named => record.created_by == named,
     }
 }
 

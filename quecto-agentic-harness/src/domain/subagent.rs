@@ -170,6 +170,26 @@ pub fn parse_model_arg(
     }
 }
 
+/// Longest agent_id, in characters (#2221).
+pub const MAX_AGENT_ID_CHARS: usize = 64;
+
+/// Validate an agent_id's syntax (shared by spawn, agent_cmd and kill): 1-64
+/// characters from `[a-zA-Z0-9_-]`. A length error names the length given,
+/// counted in characters as the message states (#2221).
+pub fn validate_agent_id_format(agent_id: &str) -> Result<(), String> {
+    let length = agent_id.chars().count();
+    if !(1..=MAX_AGENT_ID_CHARS).contains(&length) {
+        return Err(format!(
+            "agent_id is {length} characters; it must be 1-{MAX_AGENT_ID_CHARS}"
+        ));
+    }
+    agent_id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+        .then_some(())
+        .ok_or_else(|| "agent_id must use only [a-zA-Z0-9_-]".to_string())
+}
+
 /// Validate an agent_id against an allowlist.
 /// Returns Ok if the agent_id is in the allowlist, or Err if not.
 pub fn validate_agent_id(agent_id: &str, allowlist: &[String]) -> Result<(), DomainError> {

@@ -68,6 +68,19 @@ fn the_valid_ops_are_exactly_the_schema_enum() {
 }
 
 #[test]
+fn the_schema_lists_constraints_as_an_optional_list_of_strings() {
+    // #2205: the store defaults an omitted list to empty, so the schema
+    // must not require it.
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("swarm_helpers/tool_schema.json")).unwrap();
+    assert_eq!(schema["required"], serde_json::json!(["op"]));
+    assert_eq!(
+        schema["properties"]["constraints"],
+        serde_json::json!({"type": "array", "items": {"type": "string"}})
+    );
+}
+
+#[test]
 fn the_tool_description_names_op_create_and_a_relative_deadline() {
     let description = include_str!("swarm_helpers/tool_description.txt");
     assert!(description.contains("op=create"), "no op=create");
