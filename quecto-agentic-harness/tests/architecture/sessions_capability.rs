@@ -717,7 +717,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/tools/recall.rs", 183),
     ("src/application/context.rs", 336),
     ("src/application/context_pruning.rs", 248),
-    ("src/application/context_pruning_messages.rs", 304),
+    // #2213: the demotion-ladder ceiling moved to its own module (304 → 217).
+    ("src/application/context_pruning_messages.rs", 217),
+    ("src/application/context_pruning_ceiling.rs", 101),
     ("src/application/agent_loop_spill.rs", 56),
     // D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976 and D8 #1977 each
     // add use cases to this graph; the ceiling follows their merge (was 113
