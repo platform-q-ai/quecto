@@ -162,6 +162,9 @@ fn terminal_class_guidance(err: &DomainError) -> Option<&'static str> {
         ProviderErrorClass::Server => Some(
             "Server/overload: the provider is overloaded or returned a 5xx error. It was retried and still failed — retry later.",
         ),
+        ProviderErrorClass::Stalled => Some(
+            "Stalled: the provider stopped sending (the limit is in the error above) and the reply was abandoned. Retry later.",
+        ),
         ProviderErrorClass::Network => Some(
             "Network: could not reach the provider (connection/timeout). It was retried and still failed — check connectivity and retry later.",
         ),

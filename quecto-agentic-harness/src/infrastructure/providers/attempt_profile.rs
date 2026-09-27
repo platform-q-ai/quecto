@@ -1,5 +1,6 @@
 //! Existing wire/error behavior is a property of a provider and call surface,
 //! not admission policy. Keep these compatibility decisions out of ownership.
+use super::stream_idle::{BodyError, Idle, StreamIdle};
 use crate::domain::error::DomainError;
 
 #[derive(Clone, Copy)]
@@ -18,10 +19,39 @@ pub(super) enum Surface {
 pub(super) struct Profile {
     pub vendor: Vendor,
     pub surface: Surface,
+    /// The provider's bound on a silent stream (#2210).
+    pub idle: StreamIdle,
 }
 impl Profile {
-    pub const fn new(vendor: Vendor, surface: Surface) -> Self {
-        Self { vendor, surface }
+    /// A profile bound by `idle`: always the provider's own bounds, which
+    /// every call site must name (#2210 review), so none can fall back to
+    /// the defaults and ignore a provider's chosen bounds.
+    pub fn new(vendor: Vendor, surface: Surface, idle: StreamIdle) -> Self {
+        Self {
+            vendor,
+            surface,
+            idle,
+        }
+    }
+    /// Whether the reply streams, so its send and every read of its body are
+    /// bounded by [`Self::idle`]. A whole non-streaming reply sends nothing
+    /// until it is complete: there the bound would be a total one.
+    pub fn streams(self) -> bool {
+        matches!(self.surface, Surface::Assembled | Surface::Incremental)
+    }
+    /// Await one step of the exchange: bounded when the reply streams.
+    pub async fn within<F: std::future::Future>(self, step: F) -> Result<F::Output, Idle> {
+        match self.streams() {
+            true => self.idle.within(step).await,
+            false => Ok(step.await),
+        }
+    }
+    /// Read a whole body: each read bounded when the reply streams.
+    pub async fn text(self, response: reqwest::Response) -> Result<String, BodyError> {
+        match self.streams() {
+            true => self.idle.text(response).await,
+            false => response.text().await.map_err(BodyError::Read),
+        }
     }
     pub fn name(self) -> &'static str {
         match self.vendor {

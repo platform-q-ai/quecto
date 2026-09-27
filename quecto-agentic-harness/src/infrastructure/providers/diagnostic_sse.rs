@@ -1,6 +1,8 @@
-//! Instrumented pump preserves the common pump behavior while reporting transport exits.
+//! Instrumented pump preserves the common pump behavior while reporting transport exits;
+//! so do the send and the error body read of an owned attempt.
 use super::*;
 use crate::infrastructure::providers::sse_common::line_within_limit;
+use crate::infrastructure::providers::stream_idle::StreamIdle;
 
 impl Receipt {
     /// A whole reply was read: it ended as `read` when accepted, rejected
@@ -15,6 +17,20 @@ impl Receipt {
             Err(_) => Termination::Rejected,
         });
         parsed
+    }
+
+    /// The provider went silent for the whole idle bound (#2210): the
+    /// attempt ends as idle, failing with the idle error.
+    pub(super) fn idle(&self, silent: super::super::stream_idle::Idle) -> DomainError {
+        self.termination(Termination::Idle);
+        DomainError::Provider(silent.to_string())
+    }
+
+    /// A whole non-streaming reply took the total bound (#2210 review): the
+    /// attempt ends as timed out, failing with the timeout error.
+    pub(super) fn timed_out(&self, late: super::super::stream_idle::TimedOut) -> DomainError {
+        self.termination(Termination::TimedOut);
+        DomainError::Provider(late.to_string())
     }
 
     /// The handler ended the stream: a terminal event already recorded how,
@@ -32,18 +48,24 @@ pub(super) async fn pump_sse<H: SseHandler>(
     response: &mut reqwest::Response,
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     handler: &mut H,
+    idle: StreamIdle,
 ) {
     let mut carry: Vec<u8> = Vec::new();
 
     loop {
-        let bytes = match response.chunk().await {
-            Ok(Some(b)) => b,
-            Ok(None) => break,
-            Err(e) => {
+        let bytes = match idle.within(response.chunk()).await {
+            Ok(Ok(Some(b))) => b,
+            Ok(Ok(None)) => break,
+            Ok(Err(e)) => {
                 receipt.termination(Termination::ReadError);
                 let _ = tx
                     .send(StreamEvent::Error(format!("stream read error: {e}")))
                     .await;
+                return;
+            }
+            Err(silent) => {
+                receipt.termination(Termination::Idle);
+                let _ = tx.send(StreamEvent::Error(silent.to_string())).await;
                 return;
             }
         };
@@ -93,4 +115,54 @@ async fn refuse_long_line(receipt: &Receipt, tx: &tokio::sync::mpsc::Sender<Stre
     }
     receipt.termination(Termination::Rejected);
     super::super::sse_common::refuse_long_line(tx).await;
+}
+
+pub(super) async fn send(
+    builder: reqwest::RequestBuilder,
+    receipt: &Receipt,
+    profile: Profile,
+) -> Result<reqwest::Response, DomainError> {
+    let response = match profile.within(builder.send()).await {
+        Ok(Ok(response)) => response,
+        Ok(Err(error)) => {
+            receipt.termination(Termination::SendError);
+            return Err(profile.send_error(&error));
+        }
+        Err(silent) => return Err(receipt.idle(silent)),
+    };
+    receipt.headers(&response);
+    Ok(response)
+}
+pub(super) async fn error_body(
+    response: reqwest::Response,
+    receipt: &Receipt,
+    profile: Profile,
+) -> DomainError {
+    use super::super::stream_idle::BodyError;
+    let status = response.status().as_u16();
+    let suffix = profile.suffix(response.headers());
+    let text = match profile.text(response).await {
+        Ok(text) => text,
+        Err(BodyError::Read(error)) if profile.strict_error_body() => {
+            receipt.termination(Termination::ReadError);
+            return profile.read_error(&error);
+        }
+        Err(BodyError::Read(_)) => {
+            receipt.termination(Termination::ReadError);
+            String::new()
+        }
+        Err(BodyError::Idle(idle)) => {
+            receipt.termination(Termination::Idle);
+            idle.body_marker()
+        }
+    };
+    if receipt.0.lock().unwrap().diagnostics.termination == Termination::Dropped {
+        receipt.termination(Termination::HttpError);
+    }
+    receipt.http_error(status, &text);
+    let text = profile.error_body(text);
+    DomainError::Provider(format!(
+        "HTTP {status} from {}: {text}{suffix}",
+        profile.name()
+    ))
 }

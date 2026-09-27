@@ -1,6 +1,7 @@
 use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
 // OpenAI adapter: impl LlmProvider for OpenAiProvider.
 
+use super::stream_idle::StreamIdle;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -55,6 +56,8 @@ pub struct OpenAiProvider {
     attempt_admission: Option<std::sync::Arc<dyn crate::application::ports::AttemptAdmission>>,
     /// Account ID for OAuth tokens (chatgpt_account_id from JWT).
     account_id: Option<String>,
+    /// The bound on a silent streaming reply (#2210).
+    stream_idle: StreamIdle,
 }
 
 impl OpenAiProvider {
@@ -109,6 +112,7 @@ impl OpenAiProvider {
             client,
             attempt_admission: None,
             account_id,
+            stream_idle: StreamIdle::default(),
         }
     }
 
@@ -312,7 +316,7 @@ impl OpenAiProvider {
         // Observed beside the request, never altering it (#2151).
         let attempt = super::attempt_transport::PassiveAttempt::begin(
             trace,
-            Profile::new(Vendor::OpenAi, Surface::Assembled),
+            Profile::new(Vendor::OpenAi, Surface::Assembled, self.stream_idle),
         );
         let request_builder = self
             .client
@@ -321,16 +325,20 @@ impl OpenAiProvider {
             .json(&body);
         let request_builder = self.apply_auth_headers(request_builder);
 
-        let response = request_builder
-            .send()
-            .await
-            .inspect_err(|_| attempt.iter().for_each(|a| a.send_failed()))
-            .map_err(|e| {
-                DomainError::Provider(format!(
-                    "HTTP error: {}",
-                    super::sse_common::format_send_error(&e)
-                ))
-            })?;
+        let response = match self.stream_idle.within(request_builder.send()).await {
+            Ok(sent) => sent
+                .inspect_err(|_| attempt.iter().for_each(|a| a.send_failed()))
+                .map_err(|e| {
+                    DomainError::Provider(format!(
+                        "HTTP error: {}",
+                        super::sse_common::format_send_error(&e)
+                    ))
+                })?,
+            Err(silent) => {
+                attempt.iter().for_each(|a| a.idle());
+                return Err(DomainError::Provider(silent.to_string()));
+            }
+        };
 
         if let Some(attempt) = &attempt {
             attempt.response(&response);
@@ -338,11 +346,9 @@ impl OpenAiProvider {
         let status = response.status().as_u16();
         if status != 200 {
             let retry_after = super::sse_common::retry_after_suffix(response.headers());
-            let read = response.text().await;
-            attempt
-                .iter()
-                .for_each(|a| a.http_error(status, read.as_deref().ok()));
-            let text = read.unwrap_or_default();
+            let read = self.stream_idle.text(response).await;
+            attempt.iter().for_each(|a| a.error_read(status, &read));
+            let text = super::stream_idle::error_text(read);
             return Err(DomainError::Provider(format!(
                 "HTTP {} from OpenAI: {}{}",
                 status, text, retry_after
@@ -355,6 +361,7 @@ impl OpenAiProvider {
             tx,
             model.to_string(),
             attempt,
+            self.stream_idle,
         )));
         while let Some(event) = rx.recv().await {
             match event {
@@ -396,7 +403,7 @@ impl OpenAiProvider {
         // Observed beside the request, never altering it (#2151).
         let attempt = super::attempt_transport::PassiveAttempt::begin(
             trace,
-            Profile::new(Vendor::OpenAi, Surface::Incremental),
+            Profile::new(Vendor::OpenAi, Surface::Incremental, self.stream_idle),
         );
         let request_builder = self
             .client
@@ -404,9 +411,9 @@ impl OpenAiProvider {
             .header("Content-Type", "application/json")
             .json(&body);
         let request_builder = self.apply_auth_headers(request_builder);
-        let mut response = match request_builder.send().await {
-            Ok(r) => r,
-            Err(e) => {
+        let mut response = match self.stream_idle.within(request_builder.send()).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
                 attempt.iter().for_each(|a| a.send_failed());
                 let _ = tx
                     .send(StreamEvent::Error(format!(
@@ -416,6 +423,11 @@ impl OpenAiProvider {
                     .await;
                 return;
             }
+            Err(silent) => {
+                attempt.iter().for_each(|a| a.idle());
+                let _ = tx.send(StreamEvent::Error(silent.to_string())).await;
+                return;
+            }
         };
         if let Some(attempt) = &attempt {
             attempt.response(&response);
@@ -423,11 +435,9 @@ impl OpenAiProvider {
         let status = response.status().as_u16();
         if status != 200 {
             let retry_after = super::sse_common::retry_after_suffix(response.headers());
-            let read = response.text().await;
-            attempt
-                .iter()
-                .for_each(|a| a.http_error(status, read.as_deref().ok()));
-            let text = super::sse_common::truncate_error_body(read.unwrap_or_default());
+            let read = self.stream_idle.text(response).await;
+            attempt.iter().for_each(|a| a.error_read(status, &read));
+            let text = super::sse_common::truncate_error_body(super::stream_idle::error_text(read));
             let _ = tx
                 .send(StreamEvent::Error(format!(
                     "HTTP {status} from OpenAI: {text}{retry_after}"
@@ -435,7 +445,8 @@ impl OpenAiProvider {
                 .await;
             return;
         }
-        openai_sse::pump_sse_bytes_for_model(&mut response, &tx, model, attempt).await;
+        let idle = self.stream_idle;
+        openai_sse::pump_sse_bytes_for_model(&mut response, &tx, model, attempt, idle).await;
     }
 
     fn apply_delta(
@@ -476,7 +487,7 @@ impl LlmProvider for OpenAiProvider {
                     trace.clone(),
                     cancel.as_ref(),
                     request_builder,
-                    Profile::new(Vendor::OpenAi, Surface::Chat),
+                    Profile::new(Vendor::OpenAi, Surface::Chat, self.stream_idle),
                     |text| {
                         let json = serde_json::from_str(text).map_err(|e| {
                             DomainError::Provider(format!("failed to parse response JSON: {e}"))
@@ -493,29 +504,42 @@ impl LlmProvider for OpenAiProvider {
             // whole reply at once has no first token to time.
             let attempt = super::attempt_transport::PassiveAttempt::begin(
                 trace,
-                Profile::new(Vendor::OpenAi, Surface::Chat),
+                Profile::new(Vendor::OpenAi, Surface::Chat, self.stream_idle),
             );
-            let response = request_builder
-                .send()
-                .await
-                .inspect_err(|_| attempt.iter().for_each(|a| a.send_failed()))
-                .map_err(|e| {
-                    DomainError::Provider(format!(
-                        "HTTP error: {}",
-                        super::sse_common::format_send_error(&e)
-                    ))
-                })?;
-            if let Some(attempt) = &attempt {
-                attempt.response(&response);
-            }
-
-            let status = response.status().as_u16();
-            let retry_after = super::sse_common::retry_after_suffix(response.headers());
-            let response_text = response
-                .text()
-                .await
-                .inspect_err(|_| attempt.iter().for_each(|a| a.read_failed()))
-                .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
+            // A whole reply sends nothing until complete: bounded in total.
+            let exchange = async {
+                let response = request_builder
+                    .send()
+                    .await
+                    .inspect_err(|_| attempt.iter().for_each(|a| a.send_failed()))
+                    .map_err(|e| {
+                        DomainError::Provider(format!(
+                            "HTTP error: {}",
+                            super::sse_common::format_send_error(&e)
+                        ))
+                    })?;
+                if let Some(attempt) = &attempt {
+                    attempt.response(&response);
+                }
+                let status = response.status().as_u16();
+                let retry_after = super::sse_common::retry_after_suffix(response.headers());
+                let text = response
+                    .text()
+                    .await
+                    .inspect_err(|_| attempt.iter().for_each(|a| a.read_failed()))
+                    .map_err(|e| {
+                        DomainError::Provider(format!("failed to read response: {}", e))
+                    })?;
+                Ok::<_, DomainError>((status, retry_after, text))
+            };
+            let (status, retry_after, response_text) = match self.stream_idle.whole(exchange).await
+            {
+                Ok(read) => read?,
+                Err(late) => {
+                    attempt.iter().for_each(|a| a.timed_out());
+                    return Err(DomainError::Provider(late.to_string()));
+                }
+            };
 
             if status != 200 {
                 attempt
@@ -563,7 +587,7 @@ impl LlmProvider for OpenAiProvider {
                     gate,
                     (trace.clone(), cancel.as_ref()),
                     builder,
-                    Profile::new(Vendor::OpenAi, Surface::Assembled),
+                    Profile::new(Vendor::OpenAi, Surface::Assembled, self.stream_idle),
                     tx,
                     openai_sse::OpenAiSseHandler::with_model(&model),
                 );
@@ -597,7 +621,7 @@ impl LlmProvider for OpenAiProvider {
                         gate,
                         (trace.clone(), cancel.as_ref()),
                         builder,
-                        Profile::new(Vendor::OpenAi, Surface::Incremental),
+                        Profile::new(Vendor::OpenAi, Surface::Incremental, provider.stream_idle),
                         tx,
                         openai_sse::OpenAiSseHandler::with_model(&model),
                     )
@@ -631,6 +655,22 @@ mod tests;
 
 #[cfg(any(test, feature = "test-support"))]
 impl OpenAiProvider {
+    /// Bound a silent streaming reply by `limit` rather than the default
+    /// stream idle limit (tests, #2210).
+    pub fn with_stream_idle_limit(mut self, limit: std::time::Duration) -> Self {
+        let total = self.stream_idle.total();
+        self.stream_idle =
+            crate::infrastructure::providers::stream_idle::StreamIdle::new(limit).with_total(total);
+        self
+    }
+
+    /// Bound a whole non-streaming reply by `total` rather than the default
+    /// reply total limit (tests, #2210 review).
+    pub fn with_reply_total_limit(mut self, total: std::time::Duration) -> Self {
+        self.stream_idle = self.stream_idle.with_total(total);
+        self
+    }
+
     /// Public accessor for the chat-completions request builder (BDD and
     /// integration tests, #1996).
     pub fn build_chat_completions_body_for_test(

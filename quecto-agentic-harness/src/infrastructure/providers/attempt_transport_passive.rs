@@ -49,6 +49,38 @@ impl PassiveAttempt {
         });
     }
 
+    /// The provider went silent for the whole idle bound (#2210): before
+    /// the response head, or in the middle of a whole body.
+    pub(in crate::infrastructure::providers) fn idle(&self) {
+        self.receipt.fail();
+        self.receipt.termination(Termination::Idle);
+    }
+
+    /// The provider answered an error status and its body was read as
+    /// `read`: typed as [`Self::http_error`] does, or ended as idle when the
+    /// provider went silent mid-body (#2210).
+    pub(in crate::infrastructure::providers) fn error_read(
+        &self,
+        status: u16,
+        read: &Result<String, super::super::stream_idle::BodyError>,
+    ) {
+        use super::super::stream_idle::BodyError;
+        match read {
+            Ok(body) => self.http_error(status, Some(body)),
+            Err(BodyError::Read(_)) => self.http_error(status, None),
+            Err(BodyError::Idle(_)) => {
+                self.receipt.http_error(status, "");
+                self.receipt.termination(Termination::Idle);
+            }
+        }
+    }
+
+    /// A whole reply took the total bound (#2210 review).
+    pub(in crate::infrastructure::providers) fn timed_out(&self) {
+        self.receipt.fail();
+        self.receipt.termination(Termination::TimedOut);
+    }
+
     /// The reply's body could not be read.
     pub(in crate::infrastructure::providers) fn read_failed(&self) {
         self.receipt.fail();
@@ -121,13 +153,14 @@ impl<H: SseHandler> SseHandler for Observed<H> {
 
 /// Pump a response through `inner`, observing the attempt when there is
 /// one. An observed stream goes through the instrumented pump, which sends
-/// the same events and also records a read failure or an oversized line as
-/// how the attempt ended (#2156 review).
+/// the same events and also records a read failure, an oversized line or a
+/// silence over the `idle` bound as how the attempt ended (#2156 review).
 pub(in crate::infrastructure::providers) async fn pump_observed<H: SseHandler>(
     response: &mut reqwest::Response,
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     inner: H,
     attempt: Option<PassiveAttempt>,
+    idle: super::super::stream_idle::StreamIdle,
 ) {
     match attempt {
         Some(attempt) => {
@@ -136,11 +169,11 @@ pub(in crate::infrastructure::providers) async fn pump_observed<H: SseHandler>(
                 inner,
                 attempt: Some(attempt),
             };
-            super::diagnostic_sse::pump_sse(&receipt, response, tx, &mut handler).await;
+            super::diagnostic_sse::pump_sse(&receipt, response, tx, &mut handler, idle).await;
         }
         None => {
             let mut inner = inner;
-            super::super::sse_common::pump_sse(response, tx, &mut inner).await;
+            super::super::sse_common::pump_sse(response, tx, &mut inner, idle).await;
         }
     }
 }

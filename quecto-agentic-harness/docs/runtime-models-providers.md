@@ -246,3 +246,18 @@ the session's retry wait budget (30 seconds by default). A hint above that
 budget is not clamped: the request fails immediately with the provider error so
 the caller can decide, instead of silently waiting longer than the budget. This
 applies to every session, not only swarm runs.
+
+## Stalled replies
+
+No provider request has a total time limit while it streams: a long reply that
+keeps sending is never cut short. A streaming reply that sends *nothing* — no
+response head, no bytes, no SSE event or keep-alive — for 300 seconds is
+abandoned (the stream idle limit; the official Codex client allows the same,
+since a reasoning model can think silently for minutes). A non-streaming reply
+sends nothing until it is complete, so it has a 20 minute total limit instead.
+Either expiry fails the attempt with a `stream idle timeout: …` or
+`reply timeout: …` error of class `stalled`, recorded on the attempt as `Idle`
+or `TimedOut`. A stall is retried at most once per request (before any output
+reached the caller); an error status whose body stalls keeps its status class
+and shows `(error body abandoned: …)` in place of the body. Neither limit is
+configurable.

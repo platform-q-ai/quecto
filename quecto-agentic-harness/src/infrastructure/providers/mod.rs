@@ -13,6 +13,7 @@ pub mod single_attempt_client;
 pub use single_attempt_client::{SingleAttemptClient, default_client_builder};
 pub mod sse_common;
 pub(crate) mod sse_limits;
+pub mod stream_idle;
 pub mod usage;
 
 #[cfg(test)]
@@ -452,3 +453,7 @@ mod tests;
 #[cfg(test)]
 #[path = "attempt_observation_tests.rs"]
 mod attempt_observation_tests;
+
+#[cfg(test)]
+#[path = "stream_idle_provider_tests.rs"]
+mod stream_idle_provider_tests;

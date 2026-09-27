@@ -101,4 +101,20 @@ impl AnthropicProvider {
     pub fn to_claude_code_name_public(name: &str) -> &str {
         super::to_claude_code_name(name)
     }
+
+    /// Bound a silent streaming reply by `limit` rather than the default
+    /// stream idle limit (tests, #2210).
+    pub fn with_stream_idle_limit(mut self, limit: std::time::Duration) -> Self {
+        let total = self.stream_idle.total();
+        self.stream_idle =
+            crate::infrastructure::providers::stream_idle::StreamIdle::new(limit).with_total(total);
+        self
+    }
+
+    /// Bound a whole non-streaming reply by `total` rather than the default
+    /// reply total limit (tests, #2210 review).
+    pub fn with_reply_total_limit(mut self, total: std::time::Duration) -> Self {
+        self.stream_idle = self.stream_idle.with_total(total);
+        self
+    }
 }

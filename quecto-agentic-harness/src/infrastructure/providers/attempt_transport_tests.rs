@@ -175,7 +175,8 @@ fn protocol_dispatch_matches_each_vendors_terminal_vocabulary() {
             diagnostics: Default::default(),
             started: std::time::Instant::now(),
         })));
-        let mut observer = ProtocolObserver::new(Profile::new(vendor, Surface::Assembled));
+        let mut observer =
+            ProtocolObserver::new(Profile::new(vendor, Surface::Assembled, Default::default()));
         observer.observe(&format!("event: {event}"), &receipt);
         observer.observe(&format!("data: {data}"), &receipt);
         assert_eq!(
@@ -192,6 +193,7 @@ fn supported_error_and_reasoning_events_retain_truthful_metadata() {
     let mut openai = ProtocolObserver::new(Profile::new(
         Vendor::OpenAi,
         super::super::attempt_profile::Surface::Incremental,
+        Default::default(),
     ));
     openai.observe(
         r#"data: {"error":{"code":"rate_limit_exceeded","message":"SECRET"}}"#,
@@ -219,6 +221,7 @@ fn supported_dotted_reasoning_remains_visible_on_read_failure() {
     let mut protocol = ProtocolObserver::new(Profile::new(
         Vendor::Codex,
         super::super::attempt_profile::Surface::Incremental,
+        Default::default(),
     ));
     protocol.observe(
         r#"data: {"type":"response.reasoning.summary_text.delta","delta":"SECRET"}"#,
@@ -242,6 +245,7 @@ fn malformed_anthropic_terminal_retains_event_without_payload_content() {
         let mut protocol = ProtocolObserver::new(Profile::new(
             Vendor::Anthropic,
             super::super::attempt_profile::Surface::Incremental,
+            Default::default(),
         ));
         protocol.observe(&format!("event: {event}"), &receipt);
         protocol.observe("data: {SECRET", &receipt);
@@ -261,6 +265,7 @@ fn a_codex_tool_call_stream_has_no_unknown_events() {
     let mut protocol = ProtocolObserver::new(Profile::new(
         Vendor::Codex,
         super::super::attempt_profile::Surface::Incremental,
+        Default::default(),
     ));
     for line in [
         r#"data: {"type":"response.created","response":{}}"#,

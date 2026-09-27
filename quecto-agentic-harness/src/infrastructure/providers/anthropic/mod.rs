@@ -4,6 +4,7 @@ use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor
 // See gap analysis #437 for Anthropic API parity work.
 
 mod claude_code;
+mod effort;
 mod normalize;
 mod usage;
 
@@ -33,6 +34,8 @@ pub struct AnthropicProvider {
     /// providers set a custom prefix (e.g. `"anthropic-oauth"`) so the same
     /// vendor can appear under multiple distinct routing keys.
     router_name: String,
+    /// The bound on a silent streaming reply (#2210).
+    stream_idle: crate::infrastructure::providers::stream_idle::StreamIdle,
 }
 
 impl AnthropicProvider {
@@ -74,6 +77,7 @@ impl AnthropicProvider {
             attempt_admission: None,
             is_oauth,
             router_name: router_name.into(),
+            stream_idle: Default::default(),
         }
     }
 
@@ -198,7 +202,8 @@ impl AnthropicProvider {
             .effort
             .or_else(|| adaptive_model.then_some(crate::domain::provider::EffortLevel::Low));
         if let Some(effort) = effective_effort {
-            body["output_config"] = serde_json::json!({"effort": anthropic_effort_str(effort)});
+            body["output_config"] =
+                serde_json::json!({"effort": effort::anthropic_effort_str(effort)});
         }
     }
 
@@ -558,7 +563,7 @@ impl LlmProvider for AnthropicProvider {
                     trace.clone(),
                     cancel.as_ref(),
                     request_builder,
-                    Profile::new(Vendor::Anthropic, Surface::Chat),
+                    Profile::new(Vendor::Anthropic, Surface::Chat, self.stream_idle),
                     |text| {
                         let json = serde_json::from_str(text).map_err(|e| {
                             DomainError::Provider(format!("failed to parse response JSON: {e}"))
@@ -570,19 +575,7 @@ impl LlmProvider for AnthropicProvider {
                 )
                 .await;
             }
-            let response = request_builder
-                .send()
-                .await
-                .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
-
-            let status = response.status().as_u16();
-            let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
-                response.headers(),
-            );
-            let response_text = response
-                .text()
-                .await
-                .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
+            let (status, retry_after, response_text) = self.read_whole(request_builder).await?;
 
             if status != 200 {
                 return Err(DomainError::Provider(format!(
@@ -630,7 +623,7 @@ impl LlmProvider for AnthropicProvider {
                     trace.clone(),
                     cancel.as_ref(),
                     builder,
-                    Profile::new(Vendor::Anthropic, Surface::Assembled),
+                    Profile::new(Vendor::Anthropic, Surface::Assembled, self.stream_idle),
                     |raw| {
                         let mut parsed = Self::parse_sse_response(raw, tools_snapshot)?;
                         crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
@@ -691,7 +684,11 @@ impl LlmProvider for AnthropicProvider {
                         gate,
                         (trace.clone(), cancel.as_ref()),
                         builder,
-                        Profile::new(Vendor::Anthropic, Surface::Incremental),
+                        Profile::new(
+                            Vendor::Anthropic,
+                            Surface::Incremental,
+                            provider.stream_idle,
+                        ),
                         tx,
                         anthropic_sse::AnthropicSseHandler::with_model(tools_snapshot, &model),
                     )
@@ -713,19 +710,6 @@ impl LlmProvider for AnthropicProvider {
 
             rx
         })
-    }
-}
-
-/// Map an effort level onto Anthropic's documented vocabulary
-/// (`low`/`medium`/`high`/`max`). The OpenAI-only levels (#1066) clamp to
-/// the nearest documented Anthropic value; Anthropic's own levels are
-/// transmitted verbatim, unchanged from the pre-#1066 behaviour.
-fn anthropic_effort_str(effort: crate::domain::provider::EffortLevel) -> &'static str {
-    use crate::domain::provider::EffortLevel;
-    match effort {
-        EffortLevel::None => "low",
-        EffortLevel::XHigh => "high",
-        other => other.as_str(),
     }
 }
 

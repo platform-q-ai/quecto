@@ -478,3 +478,94 @@ async fn admission_is_rechecked_only_on_retry_attempts() {
         "the loop admitted the first attempt; only the retry re-checks"
     );
 }
+
+/// #2210 review: an abandoned reply is retried once, never to the full
+/// budget: a provider that stalls once tends to stall again, and each stall
+/// costs the whole bound.
+#[tokio::test]
+async fn a_stalled_reply_is_retried_at_most_once() {
+    use crate::domain::provider_error::{REPLY_TIMEOUT, STREAM_IDLE_TIMEOUT};
+    for prefix in [STREAM_IDLE_TIMEOUT, REPLY_TIMEOUT] {
+        let count = Arc::new(AtomicU32::new(0));
+        let message = format!("{prefix}the provider sent nothing; the request was abandoned");
+        let inner = Arc::new(CountingMockProvider::new(count.clone(), 10, &message));
+        let retrying = RetryingProvider::new(inner, RetryConfig::no_delay(4));
+        let result = retrying.chat(test_request()).await;
+        assert!(result.is_err(), "{prefix}");
+        assert_eq!(count.load(Ordering::SeqCst), 2, "{prefix}");
+    }
+    let count = Arc::new(AtomicU32::new(0));
+    let message = format!("{STREAM_IDLE_TIMEOUT}the provider sent nothing");
+    let inner = Arc::new(CountingMockProvider::new(count.clone(), 1, &message));
+    let retrying = RetryingProvider::new(inner, RetryConfig::no_delay(4));
+    assert!(retrying.chat(test_request()).await.is_ok());
+    assert_eq!(count.load(Ordering::SeqCst), 2, "one stall, then a reply");
+}
+
+/// A provider failing with each message in turn, then answering.
+#[derive(Debug)]
+struct SequenceProvider {
+    calls: Arc<AtomicU32>,
+    failures: Vec<String>,
+}
+
+impl LlmProvider for SequenceProvider {
+    fn name(&self) -> &str {
+        "sequence-mock"
+    }
+
+    fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst) as usize;
+        let failure = self.failures.get(n).cloned();
+        Box::pin(async move {
+            match failure {
+                Some(message) => Err(DomainError::Provider(message)),
+                None => Ok(LlmResponse {
+                    content: Some("success".to_string()),
+                    tool_calls: vec![],
+                    usage: None,
+                    stop_reason: None,
+                    thinking_blocks: vec![],
+                }),
+            }
+        })
+    }
+}
+
+/// #2210 review: the stall cap counts stalls, not attempts: a stall after
+/// a network failure is still retried once, within the overall budget.
+#[tokio::test]
+async fn a_stall_after_another_failure_is_still_retried_once() {
+    use crate::domain::provider_error::STREAM_IDLE_TIMEOUT;
+    let stall = format!("{STREAM_IDLE_TIMEOUT}the provider sent nothing");
+    let cases = [
+        (
+            vec!["connection reset by peer".to_string(), stall.clone()],
+            true,
+            3,
+        ),
+        (
+            vec![
+                "connection reset by peer".to_string(),
+                stall.clone(),
+                stall.clone(),
+            ],
+            false,
+            3,
+        ),
+    ];
+    for (failures, succeeds, calls) in cases {
+        let count = Arc::new(AtomicU32::new(0));
+        let inner = Arc::new(SequenceProvider {
+            calls: count.clone(),
+            failures: failures.clone(),
+        });
+        let retrying = RetryingProvider::new(inner, RetryConfig::no_delay(4));
+        let result = retrying.chat(test_request()).await;
+        assert_eq!(result.is_ok(), succeeds, "{failures:?}");
+        assert_eq!(count.load(Ordering::SeqCst), calls, "{failures:?}");
+    }
+}

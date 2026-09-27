@@ -340,29 +340,58 @@ impl AnthropicProvider {
         let request_builder = self.client.post(params.url).json(&params.body);
         let request_builder = self.apply_headers(request_builder, params.model);
 
-        let response = request_builder
-            .send()
-            .await
-            .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
+        let idle = self.stream_idle;
+        let response = match idle.within(request_builder.send()).await {
+            Ok(sent) => sent.map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?,
+            Err(silent) => return Err(DomainError::Provider(silent.to_string())),
+        };
 
         let status = response.status().as_u16();
         if status != 200 {
             let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
                 response.headers(),
             );
-            let text = response.text().await.unwrap_or_default();
+            let text = error_text(idle.text(response).await);
             return Err(DomainError::Provider(format!(
                 "HTTP {} from Anthropic: {}{}",
                 status, text, retry_after
             )));
         }
 
-        let full = response
-            .text()
-            .await
-            .map_err(|e| DomainError::Provider(format!("failed to read stream: {}", e)))?;
+        let full = idle.text(response).await.map_err(|e| match e {
+            BodyError::Idle(silent) => DomainError::Provider(silent.to_string()),
+            BodyError::Read(e) => DomainError::Provider(format!("failed to read stream: {}", e)),
+        })?;
 
         Self::parse_sse_response(&full, params.tool_defs)
+    }
+
+    /// Send a non-streaming request and read its whole reply: its status,
+    /// `Retry-After` suffix and body. A whole reply sends nothing until it is
+    /// complete, so the exchange is bounded in total (#2210 review).
+    pub(super) async fn read_whole(
+        &self,
+        request_builder: reqwest::RequestBuilder,
+    ) -> Result<(u16, String, String), DomainError> {
+        let exchange = async {
+            let response = request_builder
+                .send()
+                .await
+                .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
+            let status = response.status().as_u16();
+            let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
+                response.headers(),
+            );
+            let text = response
+                .text()
+                .await
+                .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
+            Ok((status, retry_after, text))
+        };
+        match self.stream_idle.whole(exchange).await {
+            Ok(read) => read,
+            Err(late) => Err(DomainError::Provider(late.to_string())),
+        }
     }
 
     /// Parse Anthropic SSE events into an assembled [`LlmResponse`].
@@ -429,12 +458,17 @@ impl AnthropicProvider {
         let request_builder = self.apply_headers(request_builder, params.base.model);
         let tx = params.tx;
 
-        let mut response = match request_builder.send().await {
-            Ok(r) => r,
-            Err(e) => {
+        let idle = self.stream_idle;
+        let mut response = match idle.within(request_builder.send()).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
                 let _ = tx
                     .send(StreamEvent::Error(format!("HTTP error: {}", e)))
                     .await;
+                return;
+            }
+            Err(silent) => {
+                let _ = tx.send(StreamEvent::Error(silent.to_string())).await;
                 return;
             }
         };
@@ -445,7 +479,7 @@ impl AnthropicProvider {
                 response.headers(),
             );
             let text = crate::infrastructure::providers::sse_common::truncate_error_body(
-                response.text().await.unwrap_or_default(),
+                error_text(idle.text(response).await),
             );
             let _ = tx
                 .send(StreamEvent::Error(format!(
@@ -457,12 +491,18 @@ impl AnthropicProvider {
         }
 
         let mut handler = AnthropicSseHandler::with_model(params.base.tool_defs, params.base.model);
-        crate::infrastructure::providers::sse_common::pump_sse(&mut response, &tx, &mut handler)
-            .await;
+        crate::infrastructure::providers::sse_common::pump_sse(
+            &mut response,
+            &tx,
+            &mut handler,
+            idle,
+        )
+        .await;
     }
 }
 
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
+use crate::infrastructure::providers::stream_idle::{BodyError, error_text};
 
 /// SSE line handler for the Anthropic Messages API.
 pub(crate) struct AnthropicSseHandler {

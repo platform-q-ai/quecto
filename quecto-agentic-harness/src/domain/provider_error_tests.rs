@@ -458,3 +458,65 @@ fn unknown_admission_messages_never_reach_the_keyword_paths() {
         assert!(!class.is_retryable(), "{msg}");
     }
 }
+
+/// #2210 review: a reply the harness abandoned because the provider stopped
+/// sending is its own class — retryable, but at most once — whether the
+/// stream went silent or a whole reply never arrived.
+#[test]
+fn an_abandoned_reply_is_a_stall_retried_at_most_once() {
+    for message in [
+        format!(
+            "{STREAM_IDLE_TIMEOUT}the provider sent nothing for 300 s; the request was abandoned"
+        ),
+        format!(
+            "{REPLY_TIMEOUT}the provider sent no whole reply within 1200 s; the request was abandoned"
+        ),
+    ] {
+        let class = classify_provider_error(&DomainError::Provider(message.clone()));
+        assert_eq!(class, ProviderErrorClass::Stalled, "{message}");
+        assert!(class.is_retryable());
+        assert_eq!(class.max_failures(), Some(2));
+        assert_eq!(class.as_str(), "stalled");
+    }
+    for other in [
+        ProviderErrorClass::Network,
+        ProviderErrorClass::Server,
+        ProviderErrorClass::RateLimit,
+        ProviderErrorClass::EmptyStream,
+    ] {
+        assert_eq!(other.max_failures(), None, "{other}");
+    }
+}
+
+/// An error status whose body was abandoned keeps its status class: the
+/// marker trails the status, it never leads.
+#[test]
+fn an_abandoned_error_body_keeps_its_status_class() {
+    let message =
+        format!("HTTP 500 from OpenAI: (error body abandoned: {STREAM_IDLE_TIMEOUT}after 300 s)");
+    assert_eq!(
+        classify_provider_error(&DomainError::Provider(message)),
+        ProviderErrorClass::Server
+    );
+    let message =
+        format!("HTTP 400 from Codex: (error body abandoned: {STREAM_IDLE_TIMEOUT}after 300 s)");
+    assert_eq!(
+        classify_provider_error(&DomainError::Provider(message)),
+        ProviderErrorClass::Client
+    );
+}
+
+/// #2210 review: a capped class is counted on its own, so one stall is
+/// always retried once whatever failed before it, and a second stall ends
+/// the request; uncapped classes never exhaust this count.
+#[test]
+fn capped_failures_are_counted_per_class() {
+    let mut capped = CappedFailures::default();
+    assert!(capped.allows_another(&ProviderErrorClass::Network));
+    assert!(capped.allows_another(&ProviderErrorClass::Network));
+    assert!(capped.allows_another(&ProviderErrorClass::Stalled));
+    assert!(capped.allows_another(&ProviderErrorClass::Server));
+    assert!(!capped.allows_another(&ProviderErrorClass::Stalled));
+    assert!(!capped.allows_another(&ProviderErrorClass::Stalled));
+    assert!(capped.allows_another(&ProviderErrorClass::RateLimit));
+}
