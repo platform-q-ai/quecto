@@ -103,7 +103,7 @@ async fn adapter_follows_redirects_and_reports_final_status() {
     let port = listener.local_addr().unwrap().port();
     let peer = tokio::spawn(async move {
         for response in [
-            b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\n\r\n".as_slice(),
+            b"HTTP/1.1 302 Found\r\nConnection: close\r\nLocation: /final\r\nContent-Length: 0\r\n\r\n".as_slice(),
             b"HTTP/1.1 418 Nope\r\nTransfer-Encoding: chunked\r\n\r\n".as_slice(),
         ] {
             let (mut socket, _) = listener.accept().await.unwrap();

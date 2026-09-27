@@ -204,9 +204,9 @@ async fn a_redirect_to_the_proxy_host_is_refused_before_it_is_followed() {
 }
 
 #[test]
-fn a_target_is_fetchable_only_when_it_is_not_a_proxy_host() {
+fn an_admitted_fetch_host_is_any_host_but_a_proxy_host() {
     let proxies = ["proxy.corp".to_owned()];
-    let fetchable = |url: &str| target_is_fetchable(&url::Url::parse(url).unwrap(), &proxies);
+    let fetchable = |url: &str| is_admitted_fetch_host(&url::Url::parse(url).unwrap(), &proxies);
     assert!(fetchable("http://example.com/"));
     assert!(fetchable("http://sub.proxy.corp/"));
     assert!(fetchable("http://10.0.0.1/"), "literals are the policy's");

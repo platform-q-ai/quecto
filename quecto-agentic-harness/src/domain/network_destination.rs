@@ -8,6 +8,14 @@
 //! 6to4, Teredo) are judged by the IPv4 address they reach, so a private
 //! IPv4 address cannot be smuggled in an IPv6 spelling. Pure; no I/O.
 //!
+//! The allowlist is the unicast range (IPv4) and the space IANA has
+//! allocated to the registries (IPv6). The `*_NOT_GLOBAL` tables are not a
+//! denylist of the whole address space: they are the special-purpose
+//! carve-outs IANA registers inside that allowed space (private, loopback,
+//! link-local, documentation, benchmarking, ...), which the allowlist's own
+//! ranges contain and so must take back out. An address outside the allowed
+//! ranges is refused whether or not any table names it.
+//!
 //! Residual risk: only the well-known NAT64 prefix `64:ff9b::/96` is
 //! recognised. A network-specific NAT64 prefix (RFC 6052) inside allocated
 //! registry space looks like any public IPv6 address, so on an IPv6-only
@@ -44,13 +52,8 @@ impl std::fmt::Display for NonPublicAddress {
 
 impl std::error::Error for NonPublicAddress {}
 
-/// Whether `address` is globally routable unicast, the only kind of
-/// destination an outbound fetch may reach.
-pub fn is_public_destination(address: IpAddr) -> bool {
-    authorize_destination(address).is_ok()
-}
-
-/// [`is_public_destination`], with the reason for a refusal.
+/// Admits `address` only when it is globally routable unicast, the only
+/// kind of destination an outbound fetch may reach; otherwise says why not.
 pub fn authorize_destination(address: IpAddr) -> Result<(), NonPublicAddress> {
     let refused = |embedded| NonPublicAddress { address, embedded };
     match address {
@@ -67,6 +70,12 @@ pub fn authorize_destination(address: IpAddr) -> Result<(), NonPublicAddress> {
     }
 }
 
+/// Whether a URL may give `name` as its host: any name outside the
+/// courtesy list of local names ([`is_local_name`]).
+pub fn is_fetchable_name(name: &str) -> bool {
+    !is_local_name(name)
+}
+
 /// A courtesy, not the security boundary: names that mean this machine or a
 /// cloud metadata service, refused early with a plain reason (#1942).
 /// Without a proxy it adds nothing (every address such a name resolves to
@@ -74,7 +83,7 @@ pub fn authorize_destination(address: IpAddr) -> Result<(), NonPublicAddress> {
 /// proxy, which resolves names itself, it is the only name check there is,
 /// and a list of names can never be complete. Case and any trailing dots
 /// are ignored.
-pub fn is_local_name(name: &str) -> bool {
+fn is_local_name(name: &str) -> bool {
     const LOCAL_NAMES: &[&str] = &[
         "localhost",
         "localhost.localdomain",
@@ -176,7 +185,6 @@ enum Embedded {
 }
 
 const MAPPED: V6Block = V6Block(v6([0, 0, 0, 0, 0, 0xffff, 0, 0]), 96);
-const COMPATIBLE: V6Block = V6Block(v6([0, 0, 0, 0, 0, 0, 0, 0]), 96);
 const NAT64: V6Block = V6Block(v6([0x64, 0xff9b, 0, 0, 0, 0, 0, 0]), 96);
 const SIX_TO_FOUR: V6Block = V6Block(v6([0x2002, 0, 0, 0, 0, 0, 0, 0]), 16);
 const TEREDO: V6Block = V6Block(v6([0x2001, 0, 0, 0, 0, 0, 0, 0]), 32);
@@ -194,9 +202,9 @@ fn embedded_ipv4(address: Ipv6Addr) -> Embedded {
         let server = Ipv4Addr::from((bits >> 64) as u32);
         Embedded::Judged(vec![server, Ipv4Addr::from(!(bits as u32))])
     } else {
-        // IPv4-compatible (`::a.b.c.d`, deprecated) and every other form
-        // outside the allocated space are refused by the IPv6 rules.
-        debug_assert!(!COMPATIBLE.contains(address) || !is_public_v6(address));
+        // IPv4-compatible (`::a.b.c.d`, deprecated) lies outside the
+        // allocated space, so the IPv6 rules refuse it like every other form
+        // there.
         Embedded::Absent
     }
 }

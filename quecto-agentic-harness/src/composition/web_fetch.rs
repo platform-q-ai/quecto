@@ -29,3 +29,7 @@ fn graph(adapter: ReqwestFetchWebContent, max_response_kb: u32) -> Arc<dyn Tool>
         max_response_kb,
     ))))
 }
+
+#[cfg(test)]
+#[path = "web_fetch_tests.rs"]
+mod tests;

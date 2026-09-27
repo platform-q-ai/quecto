@@ -1,6 +1,10 @@
 use super::*;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+fn is_public_destination(address: IpAddr) -> bool {
+    authorize_destination(address).is_ok()
+}
+
 fn ip(text: &str) -> IpAddr {
     text.parse().expect("test address parses")
 }
@@ -205,7 +209,7 @@ fn refusals_name_the_address_and_any_embedded_ipv4_it_stands_for() {
 }
 
 #[test]
-fn local_names_are_matched_whole_ignoring_case_and_every_trailing_dot() {
+fn a_name_is_fetchable_unless_a_whole_local_name_ignoring_case_and_trailing_dots() {
     for name in [
         "localhost",
         "localhost.",
@@ -219,7 +223,7 @@ fn local_names_are_matched_whole_ignoring_case_and_every_trailing_dot() {
         "metadata.goog.",
         "metadata.google.internal",
     ] {
-        assert!(is_local_name(name), "{name}");
+        assert!(!is_fetchable_name(name), "{name}");
     }
     for name in [
         "notlocalhost",
@@ -230,6 +234,6 @@ fn local_names_are_matched_whole_ignoring_case_and_every_trailing_dot() {
         "",
         ".",
     ] {
-        assert!(!is_local_name(name), "{name}");
+        assert!(is_fetchable_name(name), "{name}");
     }
 }

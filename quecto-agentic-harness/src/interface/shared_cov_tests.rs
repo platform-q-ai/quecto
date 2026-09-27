@@ -174,8 +174,9 @@ async fn production_registry_preserves_injected_client_default_headers() {
     config.tools.web.fetch.enabled = true;
     // The production graph over the injected recipe; only the destination
     // policy admits the local peer (#1942).
+    // `web-fetch.test` is pinned to the local peer: no public DNS is used.
     let graph = crate::composition::web_fetch::build_allowing_loopback_for_tests(
-        recipe(),
+        recipe().resolve("web-fetch.test", ([127, 0, 0, 1], 0).into()),
         config.tools.web.fetch.max_response_kb,
     );
     let extensions = build_and_register_native_extensions(&config, &client, Some(graph));
@@ -184,7 +185,7 @@ async fn production_registry_preserves_injected_client_default_headers() {
     let result = registry
         .execute(
             "web_fetch",
-            &format!(r#"{{"url":"http://localtest.me:{port}/","raw":true}}"#),
+            &format!(r#"{{"url":"http://web-fetch.test:{port}/","raw":true}}"#),
         )
         .await
         .unwrap();
@@ -200,7 +201,7 @@ async fn production_registry_preserves_injected_private_ca_tls_trust() {
     use tokio_rustls::rustls::{ServerConfig, pki_types::PrivateKeyDer};
 
     let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
-    let certified = rcgen::generate_simple_self_signed(vec!["localtest.me".into()]).unwrap();
+    let certified = rcgen::generate_simple_self_signed(vec!["web-fetch.test".into()]).unwrap();
     let cert_der = certified.cert.der().clone();
     let key = PrivateKeyDer::try_from(certified.key_pair.serialize_der()).unwrap();
     let tls = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(
@@ -230,8 +231,9 @@ async fn production_registry_preserves_injected_private_ca_tls_trust() {
     let client = recipe().build().unwrap();
     let mut config = crate::infrastructure::config::Config::default();
     config.tools.web.fetch.enabled = true;
+    // `web-fetch.test` is pinned to the local peer: no public DNS is used.
     let graph = crate::composition::web_fetch::build_allowing_loopback_for_tests(
-        recipe(),
+        recipe().resolve("web-fetch.test", ([127, 0, 0, 1], 0).into()),
         config.tools.web.fetch.max_response_kb,
     );
     let extensions = build_and_register_native_extensions(&config, &client, Some(graph));
@@ -240,7 +242,7 @@ async fn production_registry_preserves_injected_private_ca_tls_trust() {
     let result = registry
         .execute(
             "web_fetch",
-            &format!(r#"{{"url":"https://localtest.me:{port}/","raw":true}}"#),
+            &format!(r#"{{"url":"https://web-fetch.test:{port}/","raw":true}}"#),
         )
         .await
         .unwrap();

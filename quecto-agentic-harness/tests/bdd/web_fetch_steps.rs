@@ -38,12 +38,16 @@ fn given_web_fetch_workspace(world: &mut QuectoWorld) {
     );
 
     let (server, uri) = start_web_fetch_mock();
+    // No proxy, and `web-fetch.test` pinned to the local mock server: the
+    // scenario depends on neither the proxy environment nor public DNS.
     let tool = quecto::composition::web_fetch::build_allowing_loopback_for_tests(
-        reqwest::Client::builder(),
+        reqwest::Client::builder()
+            .no_proxy()
+            .resolve("web-fetch.test", ([127, 0, 0, 1], 0).into()),
         32,
     );
     registry.register(tool);
-    let uri = uri.replace("127.0.0.1", "localtest.me");
+    let uri = uri.replace("127.0.0.1", "web-fetch.test");
 
     world.tool_workspace = Some(ws);
     world.tool_registry = Some(registry);
@@ -68,12 +72,16 @@ fn given_web_fetch_workspace_1kb(world: &mut QuectoWorld) {
     );
 
     let (server, uri) = start_web_fetch_mock();
+    // No proxy, and `web-fetch.test` pinned to the local mock server: the
+    // scenario depends on neither the proxy environment nor public DNS.
     let tool = quecto::composition::web_fetch::build_allowing_loopback_for_tests(
-        reqwest::Client::builder(),
+        reqwest::Client::builder()
+            .no_proxy()
+            .resolve("web-fetch.test", ([127, 0, 0, 1], 0).into()),
         1,
     );
     registry.register(tool);
-    let uri = uri.replace("127.0.0.1", "localtest.me");
+    let uri = uri.replace("127.0.0.1", "web-fetch.test");
 
     world.tool_workspace = Some(ws);
     world.tool_registry = Some(registry);

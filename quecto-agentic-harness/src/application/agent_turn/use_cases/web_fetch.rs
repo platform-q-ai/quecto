@@ -1,5 +1,5 @@
 //! Application-owned web fetch policy, orchestration, and content transformation.
-use crate::domain::network_destination::{authorize_destination, is_local_name};
+use crate::domain::network_destination::{authorize_destination, is_fetchable_name};
 use std::{future::Future, net::IpAddr, pin::Pin, sync::Arc};
 
 #[path = "web_fetch_main_content.rs"]
@@ -277,13 +277,16 @@ fn classify(url: url::Url) -> ExecutionGate {
 /// literal must be public (#1942): that allowlist is the security boundary,
 /// applied again by the adapter to every address a name resolves to and to
 /// every redirect hop. A local name is refused early, as a courtesy
-/// ([`is_local_name`]); the adapter applies it to every hop too.
+/// ([`is_fetchable_name`]); the adapter applies it to every hop too.
 fn restriction(url: &url::Url) -> Option<String> {
     let address = match url.host() {
         Some(url::Host::Ipv4(v4)) => IpAddr::V4(v4),
         Some(url::Host::Ipv6(v6)) => IpAddr::V6(v6),
         Some(url::Host::Domain(name)) => {
-            return is_local_name(name).then(|| format!("{name} is a local name"));
+            return match is_fetchable_name(name) {
+                true => None,
+                false => Some(format!("{name} is a local name")),
+            };
         }
         None => return Some("the URL names no host".to_owned()),
     };

@@ -96,7 +96,6 @@ fn a_host_the_connector_resolves_is_a_name() {
         ("http://127.1:3128", "127.1"),
         ("http://0x7f.1:3128", "0x7f.1"),
         ("http://2130706433:3128", "2130706433"),
-        ("http://[fe80::1%25eth0]:3128", "fe80::1%25eth0"),
         ("http://p:99999", "p"),
         ("HTTP://Proxy.Corp.:1", "proxy.corp"),
         (
@@ -167,7 +166,7 @@ fn the_warning_names_the_variables_and_what_they_bypass() {
             .warning()
             .as_deref(),
         Some(
-            "web_fetch: http_proxy is set; fetches through an HTTP(S) proxy are checked only on the URL's literal address; the proxy resolves names"
+            "web_fetch: http_proxy is set; a fetch may go through an HTTP(S) proxy, and through it only the URL's literal address is checked; the proxy resolves names"
         )
     );
     assert_eq!(
@@ -178,7 +177,59 @@ fn the_warning_names_the_variables_and_what_they_bypass() {
         .warning()
         .as_deref(),
         Some(
-            "web_fetch: HTTP_PROXY, HTTPS_PROXY is set; fetches through an HTTP(S) proxy are checked only on the URL's literal address; the proxy resolves names"
+            "web_fetch: HTTP_PROXY, HTTPS_PROXY is set; a fetch may go through an HTTP(S) proxy, and through it only the URL's literal address is checked; the proxy resolves names"
         )
     );
+}
+
+/// #1942 third review: hyper-util keeps a proxy whose host is empty or
+/// names nothing resolvable. It is in effect (so the warning names it) and
+/// exempts no name; nothing panics.
+#[test]
+fn a_proxy_without_a_dns_name_is_in_effect_and_exempts_nothing() {
+    for value in [
+        "http://:3128",
+        ":3128",
+        "http://user@:3128",
+        "socks5://:1",
+        "http://[]:3128",
+        "http://.:3128",
+        "http://[fe80::1%25eth0]:3128",
+    ] {
+        let pairs = [("HTTP_PROXY", value)];
+        assert_eq!(variables(&pairs), ["HTTP_PROXY"], "{value:?}");
+        assert_eq!(names(&pairs), Vec::<String>::new(), "{value:?}");
+        assert!(
+            proxy_environment(false, env(&pairs)).warning().is_some(),
+            "{value:?}"
+        );
+    }
+}
+
+#[test]
+fn a_dns_name_is_unbracketed_non_empty_labels() {
+    for name in [
+        "p",
+        "proxy.corp",
+        "proxy.corp.",
+        "127.1",
+        "0x7f.1",
+        "a-b_c.d",
+    ] {
+        assert!(is_dns_name(name), "{name}");
+    }
+    for host in [
+        "",
+        ".",
+        "..",
+        "[]",
+        "[::1]",
+        "a..b",
+        ".a",
+        "a b",
+        "fe80::1%25eth0",
+        "b\u{fc}cher",
+    ] {
+        assert!(!is_dns_name(host), "{host:?}");
+    }
 }

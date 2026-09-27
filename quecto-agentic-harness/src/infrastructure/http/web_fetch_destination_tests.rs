@@ -95,20 +95,82 @@ async fn a_name_resolving_only_to_non_public_addresses_is_refused_unsent() {
     peer.abort();
 }
 
+/// The resolver's answer for every name: the refused 127.0.0.1 first, so an
+/// unfiltered connector would try it first, then the allowed 127.0.0.2.
+fn refused_then_allowed(
+    _: String,
+) -> Pin<Box<dyn Future<Output = std::io::Result<Vec<SocketAddr>>> + Send>> {
+    Box::pin(async {
+        Ok(vec![
+            "127.0.0.1:0".parse().unwrap(),
+            "127.0.0.2:0".parse().unwrap(),
+        ])
+    })
+}
+
+/// Only 127.0.0.2 beyond public space.
+fn second_loopback_only(address: IpAddr) -> Result<(), NonPublicAddress> {
+    match address {
+        IpAddr::V4(v4) if v4 == Ipv4Addr::new(127, 0, 0, 2) => Ok(()),
+        _ => authorize_destination(address),
+    }
+}
+
+/// Listeners on 127.0.0.1 and 127.0.0.2 sharing one port (the resolver's
+/// answers carry no port; the URL's is used for both).
+async fn twin_peers() -> (u16, [Arc<AtomicUsize>; 2], [tokio::task::JoinHandle<()>; 2]) {
+    loop {
+        let (port, first_accepted, first) = counting_peer(ok).await;
+        let Ok(second) = TcpListener::bind(("127.0.0.2", port)).await else {
+            first.abort();
+            continue;
+        };
+        let second_accepted = Arc::new(AtomicUsize::new(0));
+        let task = tokio::spawn({
+            let accepted = second_accepted.clone();
+            async move {
+                loop {
+                    let (mut socket, _) = second.accept().await.unwrap();
+                    accepted.fetch_add(1, Ordering::SeqCst);
+                    let mut buffer = [0; 4096];
+                    let _ = socket.read(&mut buffer).await;
+                    let _ = socket.write_all(ok(port).as_bytes()).await;
+                }
+            }
+        });
+        return (port, [first_accepted, second_accepted], [first, task]);
+    }
+}
+
 #[tokio::test]
 async fn a_refused_dns_answer_is_never_connected_even_beside_an_allowed_one() {
-    let (port, accepted, peer) = counting_peer(ok).await;
-    // `localhost` answers 127.0.0.1 (refused here) and, where configured,
-    // ::1 (allowed, nothing listening): whatever happens to ::1, the
-    // refused 127.0.0.1 is never connected.
-    let _ = ReqwestFetchWebContent::without_proxies(DestinationPolicy {
-        address: ipv6_loopback_only,
-        name: any_name,
-    })
-    .fetch(&request(&format!("http://localhost:{port}/")))
+    let (port, [refused_accepted, allowed_accepted], peers) = twin_peers().await;
+    let result = ReqwestFetchWebContent::with_lookup(
+        reqwest::Client::builder().no_proxy(),
+        DestinationPolicy {
+            address: second_loopback_only,
+            name: any_name,
+        },
+        ProxyEnvironment::default(),
+        refused_then_allowed,
+    )
+    .fetch(&request(&format!("http://both.test:{port}/")))
     .await;
-    assert_eq!(accepted.load(Ordering::SeqCst), 0);
-    peer.abort();
+    assert!(
+        matches!(result, Ok(FetchOutcome::SuccessBody { .. })),
+        "{result:?}"
+    );
+    assert_eq!(
+        refused_accepted.load(Ordering::SeqCst),
+        0,
+        "never connected"
+    );
+    assert_eq!(
+        allowed_accepted.load(Ordering::SeqCst),
+        1,
+        "the allowed one"
+    );
+    peers.iter().for_each(|peer| peer.abort());
 }
 
 #[test]
@@ -405,10 +467,10 @@ fn the_test_policy_admits_only_the_ipv4_loopback_beyond_public_space() {
 fn the_test_policy_admits_only_the_name_localhost_beyond_production() {
     assert_eq!(localhost_or_production("localhost"), Ok(()));
     assert_eq!(localhost_or_production("example.com"), Ok(()));
-    assert_eq!(not_local_name("example.com"), Ok(()));
+    assert_eq!(admitted_name("example.com"), Ok(()));
     for name in ["localhost", "localhost.", "foo.localhost", "metadata"] {
         assert_eq!(
-            not_local_name(name),
+            admitted_name(name),
             Err(format!("{name} is a local name")),
             "production"
         );

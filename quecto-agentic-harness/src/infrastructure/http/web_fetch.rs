@@ -14,11 +14,13 @@
 //! this resolver), and for that reason a URL or hop naming a proxy host is
 //! never fetched: the unfiltered answer is reached only by connecting to the
 //! proxy itself. Every URL and hop is also held to the courtesy local-name
-//! check ([`is_local_name`]).
+//! check ([`is_fetchable_name`]).
 use crate::application::agent_turn::use_cases::web_fetch::{
     FetchFailure, FetchOutcome, FetchRequest, FetchWebContent, HttpStatus,
 };
-use crate::domain::network_destination::{NonPublicAddress, authorize_destination, is_local_name};
+use crate::domain::network_destination::{
+    NonPublicAddress, authorize_destination, is_fetchable_name,
+};
 use crate::infrastructure::http::proxy_env::{ProxyEnvironment, host_key, process_proxies};
 use std::{future::Future, net::IpAddr, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 const MAX_RAW_BYTES: usize = 5 * 1024 * 1024;
@@ -29,7 +31,8 @@ const MAX_REDIRECTS: usize = 10;
 /// Which addresses may be reached: production admits public space only.
 type AddressPolicy = fn(IpAddr) -> Result<(), NonPublicAddress>;
 
-/// Which names a URL or hop may give: production refuses local names.
+/// Which names a URL or hop may give: production admits every name outside
+/// the courtesy local-name list.
 type NamePolicy = fn(&str) -> Result<(), String>;
 
 /// What a fetch may reach: every address, and every name a URL or hop gives.
@@ -42,16 +45,26 @@ struct DestinationPolicy {
 impl DestinationPolicy {
     const PRODUCTION: Self = Self {
         address: authorize_destination,
-        name: not_local_name,
+        name: admitted_name,
     };
 }
 
-/// The production name rule: any name but a local one ([`is_local_name`]).
-fn not_local_name(name: &str) -> Result<(), String> {
-    match is_local_name(name) {
-        false => Ok(()),
-        true => Err(format!("{name} is a local name")),
+/// The production name rule: a fetchable name ([`is_fetchable_name`]).
+fn admitted_name(name: &str) -> Result<(), String> {
+    match is_fetchable_name(name) {
+        true => Ok(()),
+        false => Err(format!("{name} is a local name")),
     }
+}
+
+/// Resolves a host name to its addresses (the port is the connector's).
+type Lookup = fn(String) -> Pin<Box<dyn Future<Output = std::io::Result<Vec<SocketAddr>>> + Send>>;
+
+/// The system resolver, as reqwest's default resolver uses it.
+fn system_lookup(
+    host: String,
+) -> Pin<Box<dyn Future<Output = std::io::Result<Vec<SocketAddr>>> + Send>> {
+    Box::pin(async move { Ok(tokio::net::lookup_host((host.as_str(), 0)).await?.collect()) })
 }
 
 #[derive(Clone, Debug)]
@@ -71,16 +84,31 @@ impl ReqwestFetchWebContent {
 
     /// Tests' local servers listen on 127.0.0.1 and are named `localhost`:
     /// this adapter admits that one address and that one name beyond
-    /// production, and is never compiled into production.
+    /// production, and is never compiled into production. It uses no proxy
+    /// at all, whatever the process environment says, so no test depends
+    /// on it.
     #[cfg(any(test, feature = "test-support"))]
     pub fn allowing_loopback_for_tests(builder: reqwest::ClientBuilder) -> Self {
-        Self::with_environment(builder, LOOPBACK_FOR_TESTS, process_proxies())
+        Self::with_environment(
+            builder.no_proxy(),
+            LOOPBACK_FOR_TESTS,
+            ProxyEnvironment::default(),
+        )
     }
 
     fn with_environment(
         builder: reqwest::ClientBuilder,
         policy: DestinationPolicy,
         proxies: ProxyEnvironment,
+    ) -> Self {
+        Self::with_lookup(builder, policy, proxies, system_lookup)
+    }
+
+    fn with_lookup(
+        builder: reqwest::ClientBuilder,
+        policy: DestinationPolicy,
+        proxies: ProxyEnvironment,
+        lookup: Lookup,
     ) -> Self {
         static WARNED: std::sync::Once = std::sync::Once::new();
         if let Some(warning) = proxies.warning() {
@@ -95,11 +123,13 @@ impl ReqwestFetchWebContent {
         // `fetch`, and each hop's, checked by the redirect policy) are
         // enforced.
         // That exemption is reachable only by connecting to a proxy: a URL
-        // or hop naming a proxy host is refused ([`target_is_fetchable`]).
+        // or hop may name only an admitted fetch host
+        // ([`is_admitted_fetch_host`]), never a proxy's.
         let proxy_names: Arc<[String]> = proxies.proxy_names().into();
         let resolver = AuthorizingResolver {
             policy: policy.address,
             proxy_names: proxy_names.clone(),
+            lookup,
         };
         let client = builder
             .dns_resolver(Arc::new(resolver))
@@ -145,7 +175,7 @@ fn loopback_or_public(address: IpAddr) -> Result<(), NonPublicAddress> {
 fn localhost_or_production(name: &str) -> Result<(), String> {
     match name {
         "localhost" => Ok(()),
-        _ => not_local_name(name),
+        _ => admitted_name(name),
     }
 }
 
@@ -159,16 +189,14 @@ impl std::fmt::Display for Refused {
 }
 impl std::error::Error for Refused {}
 
-/// Whether `url` may be fetched at all given the configured proxies: only
-/// a URL whose host is no proxy's host (compared by [`host_key`]). A proxy
-/// name resolves unfiltered so reqwest can reach the proxy; fetching it
-/// directly would reach that unfiltered answer.
-fn target_is_fetchable(url: &url::Url, proxy_names: &[String]) -> bool {
+/// Whether `url`'s host is an admitted fetch host: an address literal
+/// (judged by the address policy) or a name outside the exception set, the
+/// configured proxies' own hosts (compared by [`host_key`]). A proxy name
+/// resolves unfiltered so reqwest can reach the proxy; fetching it directly
+/// would reach that unfiltered answer.
+fn is_admitted_fetch_host(url: &url::Url, proxy_names: &[String]) -> bool {
     match url.host() {
-        Some(url::Host::Domain(name)) => {
-            let key = host_key(name);
-            proxy_names.iter().all(|proxy| *proxy != key)
-        }
+        Some(url::Host::Domain(name)) => !proxy_names.contains(&host_key(name)),
         Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)) | None => true,
     }
 }
@@ -184,7 +212,7 @@ fn authorize_url(
 ) -> Result<(), String> {
     let address = match (url.scheme(), url.host()) {
         ("http" | "https", Some(url::Host::Domain(name))) => {
-            return match target_is_fetchable(url, proxy_names) {
+            return match is_admitted_fetch_host(url, proxy_names) {
                 true => (policy.name)(name),
                 false => Err(format!(
                     "{} is a configured proxy host, not a fetch target",
@@ -235,15 +263,16 @@ struct AuthorizingResolver {
     policy: AddressPolicy,
     /// The configured proxies' own names, passed unfiltered.
     proxy_names: Arc<[String]>,
+    lookup: Lookup,
 }
 impl reqwest::dns::Resolve for AuthorizingResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let policy = self.policy;
         let proxy_names = self.proxy_names.clone();
+        let lookup = self.lookup;
         Box::pin(async move {
             let host = name.as_str().to_owned();
-            let answers: Vec<SocketAddr> =
-                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+            let answers = lookup(host.clone()).await?;
             let admitted = admitted_answers(&host, answers, policy, &proxy_names)?;
             assert!(!admitted.is_empty(), "an admitted answer is never empty");
             let addresses: reqwest::dns::Addrs = Box::new(admitted.into_iter());
@@ -254,7 +283,7 @@ impl reqwest::dns::Resolve for AuthorizingResolver {
 
 /// Every answer for a configured proxy's own name (the proxy is the
 /// operator's choice, reached as before; a URL or hop never names it, see
-/// [`target_is_fetchable`]); otherwise [`authorized_answers`].
+/// [`is_admitted_fetch_host`]); otherwise [`authorized_answers`].
 fn admitted_answers(
     host: &str,
     answers: Vec<SocketAddr>,

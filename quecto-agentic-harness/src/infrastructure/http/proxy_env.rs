@@ -10,8 +10,10 @@
 use hyper_util::client::proxy::matcher::Matcher;
 use std::net::IpAddr;
 
-/// The proxy variables in effect and the proxies' host names (address
-/// literals are left out: they are never resolved).
+/// The proxy variables in effect and the proxies' host names. Only a host
+/// that is a DNS name ([`is_dns_name`]) is kept: an address literal is never
+/// resolved, and a host that is neither (empty, `[]`, `.`, a zoned IPv6
+/// spelling) names nothing to exempt, though its proxy is still in effect.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ProxyEnvironment {
     variables: Vec<&'static str>,
@@ -30,11 +32,13 @@ impl ProxyEnvironment {
         &self.proxy_names
     }
 
-    /// What web_fetch logs when a proxy is in effect.
+    /// What web_fetch logs when a proxy is in effect. It says "may":
+    /// `NO_PROXY` sends some fetches direct (its `*` matches every name, but
+    /// never an address literal, so no variable makes every fetch direct).
     pub(crate) fn warning(&self) -> Option<String> {
         (!self.variables.is_empty()).then(|| {
             format!(
-                "web_fetch: {} is set; fetches through an HTTP(S) proxy are checked only on the URL's literal address; the proxy resolves names",
+                "web_fetch: {} is set; a fetch may go through an HTTP(S) proxy, and through it only the URL's literal address is checked; the proxy resolves names",
                 self.variables.join(", ")
             )
         })
@@ -63,8 +67,10 @@ struct Configured {
 }
 
 enum ProxyHost {
+    /// A DNS name, resolved by reqwest through web_fetch's resolver.
     Name(String),
-    Literal,
+    /// An address literal, or a host that names nothing resolvable.
+    Unnamed,
 }
 
 /// The proxy environment `lookup` describes; `is_cgi` turns every proxy off.
@@ -105,19 +111,31 @@ pub(crate) fn proxy_environment(
 fn usable_host(value: &str) -> Option<ProxyHost> {
     let probe = http::Uri::from_static("http://proxy-probe.invalid/");
     let intercept = Matcher::builder().http(value).build().intercept(&probe)?;
-    let host = intercept.uri().host()?;
-    assert!(
-        !host.is_empty(),
-        "hyper-util builds a proxy URI with a host"
-    );
+    // hyper-util keeps a proxy whose host is empty (`http://:3128`): it is
+    // in effect (and fails to connect), and exempts no name.
+    let host = intercept.uri().host().unwrap_or_default();
     // As hyper's connector sees it: brackets stripped, and only what
-    // `IpAddr` parses strictly is an address; anything else (`127.1`,
-    // `fe80::1%25eth0`) goes to the resolver as a name.
+    // `IpAddr` parses strictly is an address; a DNS name (`127.1` too) goes
+    // to the resolver.
     let bare = host.trim_start_matches('[').trim_end_matches(']');
-    Some(match bare.parse::<IpAddr>() {
-        Ok(_) => ProxyHost::Literal,
-        Err(_) => ProxyHost::Name(host_key(bare)),
+    let key = host_key(bare);
+    Some(match is_dns_name(host) && bare.parse::<IpAddr>().is_err() {
+        true => ProxyHost::Name(key),
+        false => ProxyHost::Unnamed,
     })
+}
+
+/// Whether `host` is a DNS name: unbracketed, and one or more non-empty
+/// labels of ASCII letters, digits, `-` and `_`, with any trailing dots.
+fn is_dns_name(host: &str) -> bool {
+    let labels = host.trim_end_matches('.');
+    !labels.is_empty()
+        && labels.split('.').all(|label| {
+            !label.is_empty()
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
 }
 
 #[cfg(test)]
