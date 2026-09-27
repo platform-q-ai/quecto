@@ -375,6 +375,7 @@ async fn run_turn(
             cancel_rx,
             notification_rx: &mut notification_rx,
             subagent_registry: &subagent_registry,
+            turn_save: None,
         })
         .await
     };
@@ -431,6 +432,7 @@ async fn run_streaming_turn(deltas: Vec<&str>, response: &str, prompt: &str) -> 
             cancel_rx,
             notification_rx: &mut notification_rx,
             subagent_registry: &subagent_registry,
+            turn_save: None,
         })
         .await
     };

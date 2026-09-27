@@ -221,12 +221,16 @@ const SESSION_STORE_HOLDERS: &[&str] = &[
     "src/application/sessions/use_cases/save_session.rs",
     // #2009 home acquisition runs on the save owner's existing path.
     "src/application/sessions/use_cases/save_session_home.rs",
+    // #2218 the save owner's write (mode and lent transcript).
+    "src/application/sessions/use_cases/save_session_write.rs",
     "src/application/sessions/use_cases/start_fresh_conversation.rs",
     "src/composition/active_session.rs",
     // #2009 the home context is composed over the one file store.
     "src/composition/session_home.rs",
     "src/composition/sessions.rs",
     "src/infrastructure/persistence/session_store.rs",
+    // #2218 the file store's write paths and intactness record.
+    "src/infrastructure/persistence/session_store_write.rs",
     "src/interface/cli/uds_session_handles.rs",
 ];
 

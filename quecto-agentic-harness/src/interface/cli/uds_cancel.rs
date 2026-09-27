@@ -278,6 +278,9 @@ pub(crate) struct PromptRun<'a, 's> {
     /// Subagent registry for building state-changed events (#534). `&None` on
     /// the single-client path.
     pub subagent_registry: &'a Option<SubagentRegistry>,
+    /// The loop's routine save, run before the turn reports its end
+    /// (#2218); `None` on rigs that persist nothing.
+    pub turn_save: Option<super::uds::TurnSave>,
 }
 
 /// Run a single agent prompt, emitting UDS events (including streamed tokens)
@@ -301,6 +304,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
         cancel_rx,
         notification_rx,
         subagent_registry,
+        turn_save,
     } = args;
 
     agent_session.set_streaming(true);
@@ -389,24 +393,22 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
         );
     }
 
+    // #2218: a completed or failed turn is saved before it publishes or
+    // reports its end, so `agent_end` never precedes its durable ordinals;
+    // an interrupted one once its history is finalized, below.
+    save_turn(turn_save.as_ref().filter(|_| result.is_some()), messages).await;
     match result {
         None => {
-            let finalized =
-                super::uds_cancel_history::finalize_interrupted_turn(messages, prompt_id);
-            if let Some(session) = &active_session {
-                let visible = user_visible_messages(messages, system_prompt);
-                let mut state = session.write().await;
-                let publish = state.publish(&visible);
-                let full = state.record_full(&finalized.recordable_messages());
-                drop(state);
-                sink.emit_ledger_advanced(publish).await;
-                sink.emit_ledger_advanced(full).await;
-            }
-            if let Some(state) = &execution_state {
-                if let Ok(mut state) = state.lock() {
-                    state.set_message_count(user_visible_messages(messages, system_prompt).len());
-                }
-            }
+            settle_interrupted_turn(InterruptedTurn {
+                messages,
+                prompt_id,
+                turn_save: turn_save.as_ref(),
+                active_session: active_session.as_ref(),
+                execution_state: &execution_state,
+                system_prompt,
+                sink,
+            })
+            .await;
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {
@@ -449,6 +451,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                 let mut state = session.write().await;
                 let publish = state.publish(&visible);
                 let full = state.record_full(&agent_result.appended_messages);
+                interrupted::restamp_ledger(&mut state, messages);
                 drop(state);
                 sink.emit_ledger_advanced(publish).await;
                 sink.emit_ledger_advanced(full).await;
@@ -480,6 +483,10 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             PromptOutcome::Success
         }
         Some(Err(e)) => {
+            // Copies the turn recorded as it ran predate the save's ordinals.
+            if let Some(session) = &active_session {
+                interrupted::restamp_ledger(&mut *session.write().await, messages);
+            }
             // Dated by the dispatch loop once it knows the control generation.
             agent_session.suspend_automatic_turns(
                 super::uds_session::SuspensionCause::ProviderFailure,
@@ -689,6 +696,10 @@ fn update_execution(
         }
     }
 }
+
+#[path = "uds_cancel_interrupted.rs"]
+mod interrupted;
+use interrupted::{InterruptedTurn, save_turn, settle_interrupted_turn};
 
 #[cfg(test)]
 #[path = "uds_cancel_1060_tests.rs"]

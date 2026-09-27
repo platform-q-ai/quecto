@@ -416,6 +416,7 @@ async fn run_stub_turn_event_types_with_sink(
         cancel_rx,
         notification_rx: &mut notification_rx,
         subagent_registry: &subagent_registry,
+        turn_save: None,
     })
     .await;
     assert!(matches!(

@@ -174,17 +174,21 @@ pub(crate) fn plan_delivery(
         .unwrap_or(DeliveryDecision::Ignore)
 }
 
+/// Whether the default report must page older history in: `has_older` is
+/// the oldest page's own `hasMoreBefore`.
 pub(crate) fn needs_default_report_backfill(
     messages: &[serde_json::Value],
     delivered: u64,
+    has_older: bool,
 ) -> bool {
     let holds_assistant = messages
         .iter()
         .any(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"));
     needs_backfill(
-        messages.first().and_then(ordinal_of),
+        messages.iter().filter_map(ordinal_of).min(),
         holds_assistant,
         delivered,
+        has_older,
     )
 }
 

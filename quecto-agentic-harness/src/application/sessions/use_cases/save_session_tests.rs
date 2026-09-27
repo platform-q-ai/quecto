@@ -39,7 +39,7 @@ async fn an_ephemeral_run_and_the_empty_key_are_affirmative_no_ops() {
         let mut pending = Message::user("next");
         let outcome = rig
             .use_case
-            .save_with_pending_prompt(&messages, &mut pending)
+            .save_with_pending_prompt(&mut messages, &mut pending)
             .await
             .unwrap();
         assert_eq!(outcome, SaveOutcome::Ephemeral);
@@ -483,11 +483,11 @@ async fn the_pending_prompt_save_writes_a_verified_delta_and_stamps_the_ordinal(
     set_watermark(&rig, 1);
     let mut old = Message::user("old");
     old.ordinal = Some(9);
-    let messages = vec![Message::system("be helpful"), old];
+    let mut messages = vec![Message::system("be helpful"), old];
     let mut pending = Message::user("next");
     let outcome = rig
         .use_case
-        .save_with_pending_prompt(&messages, &mut pending)
+        .save_with_pending_prompt(&mut messages, &mut pending)
         .await
         .unwrap();
     assert_eq!(
@@ -513,7 +513,7 @@ async fn the_pending_prompt_save_writes_a_verified_delta_and_stamps_the_ordinal(
     rig.state.write().await.set_killing_exit(true);
     let mut pending = Message::user("next");
     rig.use_case
-        .save_with_pending_prompt(&[Message::user("old")], &mut pending)
+        .save_with_pending_prompt(&mut vec![Message::user("old")], &mut pending)
         .await
         .unwrap();
     let [Write::Full(session)] = &rig.store.writes()[..] else {
@@ -530,7 +530,7 @@ async fn the_pending_prompt_save_writes_a_verified_delta_and_stamps_the_ordinal(
     let mut pending = Message::user("next");
     let err = rig
         .use_case
-        .save_with_pending_prompt(&[], &mut pending)
+        .save_with_pending_prompt(&mut Vec::new(), &mut pending)
         .await
         .expect_err("store failed");
     assert_eq!(
@@ -538,6 +538,44 @@ async fn the_pending_prompt_save_writes_a_verified_delta_and_stamps_the_ordinal(
         DomainError::Session("busy".into()).to_string()
     );
     assert_eq!(watermark(&rig), 0);
+    assert_eq!(
+        pending.ordinal, None,
+        "a prompt the store never held carries no durable ordinal (#2218)"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_write_withdraws_exactly_the_ordinals_it_stamped() {
+    let rig = build_rig(RigOptions {
+        prompt: "be helpful",
+        ..Default::default()
+    });
+    let mut durable = Message::user("durable");
+    durable.ordinal = Some(7);
+    let mut messages = vec![
+        Message::system("be helpful"),
+        durable,
+        Message::assistant("report", vec![]),
+        Message::user("next"),
+    ];
+    *rig.store.fail_with.lock().unwrap() = Some("disk full".into());
+    rig.use_case
+        .save(&mut messages, SaveTrigger::Routine)
+        .await
+        .expect_err("the store failed");
+    // #2218: a supervisor may deliver any ordinal it reads; one the store
+    // never held would be re-used after a restart and hide a later report.
+    assert_eq!(ordinals(&messages), [None, Some(7), None, None]);
+    assert_eq!(
+        messages[0].content, "be helpful",
+        "the prompt is re-injected"
+    );
+    *rig.store.fail_with.lock().unwrap() = None;
+    rig.use_case
+        .save(&mut messages, SaveTrigger::Routine)
+        .await
+        .unwrap();
+    assert_eq!(ordinals(&messages), [None, Some(7), Some(8), Some(9)]);
 }
 
 #[tokio::test]
@@ -563,6 +601,10 @@ async fn a_cancelled_save_keeps_the_latch_and_the_watermark_retryable() {
     assert!(dirty(&rig), "the sticky latch survives the cancellation");
     assert!(!rig.latch.take());
     assert_eq!(messages.len(), 1, "the prompt is stripped mid-save…");
+    assert_eq!(
+        messages[0].content, "a",
+        "a full save lends the transcript and a cancelled one gives it back (#2218)"
+    );
     // …and the next save, from a fresh caller, re-injects it and replays.
     rig.store.gate.as_ref().unwrap().add_permits(1);
     rig.use_case
@@ -649,3 +691,6 @@ async fn concurrent_saves_are_serialised_by_the_barrier() {
     assert_eq!(watermark(&rig), 3);
     assert!(format!("{:?}", rig.use_case).starts_with("SaveSession"));
 }
+
+#[path = "save_session_file_tests.rs"]
+mod file_tests;

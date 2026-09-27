@@ -187,6 +187,7 @@ impl FileSessionStore {
         &self,
         identity: &SessionIdentity,
     ) -> Result<(), DomainError> {
+        self.intact.forget(&self.session_path(identity));
         match tokio::fs::remove_file(self.session_path(identity)).await {
             Ok(()) => self.discard_orphan_home(identity),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

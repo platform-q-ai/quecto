@@ -93,14 +93,22 @@ pub fn select_unread(
 }
 
 /// Whether a default report must page further back before it can be
-/// shaped: the newest page starts after a gap above the watermark — unless
-/// this is a first read (`delivered == 0`) that already holds an assistant
-/// message, which reports the latest one without backfilling.
-pub fn needs_backfill(first_ordinal: Option<u64>, holds_assistant: bool, delivered: u64) -> bool {
-    if delivered == 0 && holds_assistant {
-        return false;
-    }
-    first_ordinal.is_some_and(|ordinal| ordinal > delivered.saturating_add(1))
+/// shaped: older history exists (`has_older`) and the page's smallest
+/// durable ordinal (`oldest_ordinal`) lies above the watermark by a gap —
+/// unless this is a first read (`delivered == 0`) that already holds an
+/// assistant message, which reports the latest one without backfilling.
+/// A page with nothing older is the whole transcript (#2218): its order
+/// need not follow its ordinals (a recall notice inserted at the head after
+/// the task was saved is numbered after it).
+pub fn needs_backfill(
+    oldest_ordinal: Option<u64>,
+    holds_assistant: bool,
+    delivered: u64,
+    has_older: bool,
+) -> bool {
+    let gap = oldest_ordinal.is_some_and(|ordinal| ordinal > delivered.saturating_add(1));
+    let reports_latest_without_backfill = delivered == 0 && holds_assistant;
+    has_older && gap && !reports_latest_without_backfill
 }
 
 /// The pending report a delivered result acknowledges: by receipt when the

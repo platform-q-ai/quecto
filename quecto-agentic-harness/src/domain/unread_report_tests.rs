@@ -114,11 +114,20 @@ fn an_incomplete_observation_reports_the_unread_tail_without_a_watermark() {
 
 #[test]
 fn backfill_is_needed_only_across_a_gap_above_the_watermark() {
-    assert!(!needs_backfill(Some(2), true, 0));
-    assert!(needs_backfill(Some(2), false, 0));
-    assert!(needs_backfill(Some(12), true, 10));
-    assert!(!needs_backfill(Some(11), true, 10));
-    assert!(!needs_backfill(None, false, 10));
+    assert!(!needs_backfill(Some(2), true, 0, true));
+    assert!(needs_backfill(Some(2), false, 0, true));
+    assert!(needs_backfill(Some(12), true, 10, true));
+    assert!(!needs_backfill(Some(11), true, 10, true));
+    assert!(!needs_backfill(None, false, 10, true));
+}
+
+/// #2218: a page with nothing older holds the whole transcript, whatever
+/// its oldest ordinal: a failed first turn (`[system 2, user 1]`) or a
+/// re-inserted recall notice numbered after the task is complete as is.
+#[test]
+fn a_page_with_no_older_history_never_needs_backfill() {
+    assert!(!needs_backfill(Some(2), false, 0, false));
+    assert!(!needs_backfill(Some(12), true, 10, false));
 }
 
 #[test]

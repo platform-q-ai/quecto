@@ -359,22 +359,15 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     ctx.session
         .record_control(id.as_deref(), &type_name, control_status(&outcome));
     disarm_cancel(&ctx.cancel_handle);
-    // #1072: the save transaction drains the durable-prefix dirty latch after every outcome.
+    // #1072: the turn's own save (`TurnSave`) drains the durable-prefix dirty latch.
     if matches!(outcome, PromptOutcome::Success) {
         let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
+    // Runs what the turn left queued; each of those turns saves itself (#2218).
     drain_pending_and_nudge(ctx).await;
     // Publish completed-turn state before any post-turn query queues behind the next command (#1104).
     super::uds_snapshots::refresh_busy_snapshots(ctx).await;
-    // Persist after every turn so the conversation survives an ungraceful exit.
-    if let Err(err) = ctx
-        .save_session
-        .save(ctx.messages, SaveTrigger::Routine)
-        .await
-    {
-        tracing::warn!("failed to persist session after turn: {err}");
-    }
     false
 }
 
@@ -388,51 +381,39 @@ use prompt_admission::{arm_prompt_cancel, control_status, emit_pre_cancelled};
 /// (e.g. toggling a step) without ever finishing.
 const MAX_WORKFLOW_NUDGES: usize = 128;
 
+#[cfg(test)]
+#[path = "uds_turn_test_hooks.rs"]
+mod turn_test_hooks;
+#[cfg(test)]
+use turn_test_hooks::{
+    run_before_guarded_turn_admission_test_hook, run_before_workflow_nudge_injection_test_hook,
+};
+#[cfg(test)]
+pub(super) use turn_test_hooks::{
+    set_before_guarded_turn_admission_test_hook, set_before_workflow_nudge_injection_test_hook,
+};
+
 /// Drain pending messages, then inject core workflow nudges while progress is advancing (#562).
-#[cfg(test)]
-static BEFORE_WORKFLOW_NUDGE_INJECTION_TEST_HOOK: std::sync::Mutex<Option<Box<dyn Fn() + Send>>> =
-    std::sync::Mutex::new(None);
-#[cfg(test)]
-static BEFORE_GUARDED_TURN_ADMISSION_TEST_HOOK: std::sync::Mutex<Option<Box<dyn Fn() + Send>>> =
-    std::sync::Mutex::new(None);
-
-#[cfg(test)]
-fn run_before_workflow_nudge_injection_test_hook() {
-    if let Some(hook) = BEFORE_WORKFLOW_NUDGE_INJECTION_TEST_HOOK
-        .lock()
-        .unwrap()
-        .take()
-    {
-        hook();
-    }
-}
-
-#[cfg(test)]
-pub(super) fn set_before_workflow_nudge_injection_test_hook(hook: Box<dyn Fn() + Send>) {
-    *BEFORE_WORKFLOW_NUDGE_INJECTION_TEST_HOOK.lock().unwrap() = Some(hook);
-}
-
-#[cfg(test)]
-fn run_before_guarded_turn_admission_test_hook() {
-    if let Some(hook) = BEFORE_GUARDED_TURN_ADMISSION_TEST_HOOK
-        .lock()
-        .unwrap()
-        .take()
-    {
-        hook();
-    }
-}
-
-#[cfg(test)]
-pub(super) fn set_before_guarded_turn_admission_test_hook(hook: Box<dyn Fn() + Send>) {
-    *BEFORE_GUARDED_TURN_ADMISSION_TEST_HOOK.lock().unwrap() = Some(hook);
-}
-
 pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     drain_pending_and_nudge_turns(ctx).await;
     // #1721: whichever turn failed (prompt, drained or nudged), date its
     // provider-failure suspension by the generation current after it.
     super::uds_swarm_control::date_provider_suspension(ctx).await;
+}
+
+/// The routine save every turn runs before it reports its end (#2218),
+/// whichever command ran it (`prompt`, a spawn's `follow_up`, a drained
+/// note, a nudge): `agent_end` and `get_messages` then carry durable
+/// ordinals, so a supervisor's unread cursor advances, and the turn
+/// survives a crash. Only a turn that ran is saved.
+pub(crate) struct TurnSave(SaveSessionHandle);
+
+impl TurnSave {
+    pub(crate) async fn persist(&self, messages: &mut Vec<Message>) {
+        if let Err(err) = self.0.save(messages, SaveTrigger::Routine).await {
+            tracing::warn!("failed to persist session after turn: {err}");
+        }
+    }
 }
 
 async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
@@ -574,6 +555,7 @@ async fn run_prompt_dispatch(
         cancel_rx,
         notification_rx: &mut ctx.notification_rx,
         subagent_registry: &ctx.subagent_registry,
+        turn_save: Some(TurnSave(ctx.save_session.clone())),
     })
     .await
 }
@@ -599,7 +581,7 @@ async fn run_drained_message(ctx: &mut DispatchCtx<'_>, msg: Message) -> PromptO
 
 async fn run_drained_message_guarded(
     ctx: &mut DispatchCtx<'_>,
-    msg: Message,
+    mut msg: Message,
     guard: TurnAdmissionGuard,
 ) -> PromptOutcome {
     #[cfg(test)]
@@ -609,6 +591,14 @@ async fn run_drained_message_guarded(
         emit_pre_cancelled(ctx).await; // Stale abort (#483).
         return PromptOutcome::Cancelled;
     };
+    // A drained instruction (a spawn's `follow_up` task) survives a crash in
+    // its own turn, as a `prompt` does (#2218). A guarded nudge is admitted
+    // only when polled, so it is never saved ahead of a turn that may not run.
+    if matches!(guard, TurnAdmissionGuard::None)
+        && let Err(err) = persist_user_prompt_before_run(ctx, &mut msg).await
+    {
+        tracing::warn!("failed to persist drained prompt before turn: {err}");
+    }
     let session_key = ctx.sessions.current_session_key().await;
     let outcome = {
         let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
@@ -624,6 +614,7 @@ async fn run_drained_message_guarded(
             cancel_rx: rx,
             notification_rx: &mut ctx.notification_rx,
             subagent_registry: &ctx.subagent_registry,
+            turn_save: Some(TurnSave(ctx.save_session.clone())),
         });
         tokio::pin!(run);
 
@@ -661,10 +652,6 @@ async fn run_drained_message_guarded(
         }
     };
     disarm_cancel(&ctx.cancel_handle);
-    // #1072: drained runs (steer follow-ups, workflow auto-continue,
-    // coalesced sub-agent notes) can prune too. Their dirty latch is
-    // sticky on the agent; the save transaction drains it centrally
-    // before choosing a persistence path.
     // #899: keep busy-child snapshots fresh across auto-continue nudges
     // instead of frozen at the pre-turn snapshot until dispatch returns.
     super::uds_snapshots::refresh_busy_snapshots(ctx).await;

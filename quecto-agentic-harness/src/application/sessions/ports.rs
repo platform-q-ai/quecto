@@ -53,10 +53,10 @@ pub trait SessionStore: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<Option<Session>, DomainError>> + Send + '_>>;
 
     /// Save (create or update) a session under its own identity.
-    fn save(
-        &self,
-        session: &Session,
-    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>>;
+    fn save<'a>(
+        &'a self,
+        session: &'a Session,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + 'a>>;
 
     /// Save a session when the caller knows how many messages are already durable.
     fn save_delta<'a>(

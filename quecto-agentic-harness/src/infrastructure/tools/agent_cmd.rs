@@ -292,7 +292,13 @@ impl AgentCmdTool {
         const MAX_DEFAULT_REPORT_BACKFILL_PAGES: usize = 16;
         let mut backfill_complete = true;
         let mut backfill_pages = 0;
-        while needs_default_report_backfill(&messages, delivered) {
+        // Only a page that says older history exists is paged back from
+        // (#2218); one without it holds the whole transcript.
+        while needs_default_report_backfill(
+            &messages,
+            delivered,
+            envelope.pointer("/data/hasMoreBefore") == Some(&serde_json::Value::Bool(true)),
+        ) {
             if backfill_pages >= MAX_DEFAULT_REPORT_BACKFILL_PAGES {
                 backfill_complete = false;
                 break;

@@ -16,11 +16,20 @@ pub fn read_framed_command(stream: &UnixStream) -> Option<String> {
         .enable_io()
         .build()
         .expect("build mock UDS runtime");
-    runtime.block_on(async move {
+    let command = runtime.block_on(async move {
         let stream = tokio::net::UnixStream::from_std(cloned).expect("convert mock UDS stream");
         let mut reader = tokio::io::BufReader::new(stream);
         read_framed_command_async(&mut reader).await
-    })
+    });
+    // The clone shares the fixture's open file description, so making it
+    // nonblocking made the fixture's own stream nonblocking too: a reply the
+    // fixture then writes could fail with `EAGAIN` once the peer's receive
+    // buffer filled under load, and arrive cut short (#2235 CI). Hand the
+    // fixture its blocking stream back.
+    stream
+        .set_nonblocking(false)
+        .expect("restore blocking mock UDS stream");
+    command
 }
 
 /// Read and validate one UTF-8 JSON command through the production frame API.
