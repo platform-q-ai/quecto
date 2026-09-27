@@ -145,8 +145,10 @@ async fn a_failed_first_turn_leaves_a_complete_report_with_nothing_to_report() {
         "{}",
         result.content
     );
+    // A page naming no report delivers its unread window and says no answer
+    // was found, so the read completes and moves on (#2226).
     assert!(
-        result.content.contains(r#""unchanged":true"#),
+        result.content.contains(r#""reportFound":false"#),
         "{}",
         result.content
     );
