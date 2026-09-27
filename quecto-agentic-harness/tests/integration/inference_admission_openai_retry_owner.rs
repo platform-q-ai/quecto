@@ -36,7 +36,7 @@ impl AttemptPermit for Gate {
     fn feedback(&mut self, _: ThrottleFeedback) {}
     fn finish(self: Box<Self>, _: Feedback) {}
 }
-async fn check(code: Option<&str>, post: bool, retries: bool) {
+async fn check(error: serde_json::Value, post: bool, retries: bool) {
     let server = MockServer::start().await;
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
@@ -45,14 +45,9 @@ async fn check(code: Option<&str>, post: bool, retries: bool) {
     } else {
         ""
     };
-    let message = if code.is_some() {
-        "rate limit exceeded"
-    } else {
-        "opaque fixture"
-    };
     let failure = format!(
         "{prefix}data: {}\n\n",
-        serde_json::json!({"error":{"type":"rate_limit_error","code":code,"message":message}})
+        serde_json::json!({ "error": error })
     );
     Mock::given(method("POST"))
         .respond_with(move |_: &wiremock::Request| {
@@ -109,18 +104,102 @@ async fn check(code: Option<&str>, post: bool, retries: bool) {
         result.as_ref().ok().map(|value| value.response.as_str()),
         retries,
     ));
+    // A retry resends the request unchanged; the malformed-request recovery
+    // a client error goes to would change it (#2155).
+    let bodies: Vec<_> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|request| request.body)
+        .collect();
+    assert!(
+        bodies.windows(2).all(|pair| pair[0] == pair[1]),
+        "a retry resends the request unchanged"
+    );
+}
+fn rate_limit(code: Option<&str>) -> serde_json::Value {
+    let message = if code.is_some() {
+        "rate limit exceeded"
+    } else {
+        "opaque fixture"
+    };
+    serde_json::json!({"type":"rate_limit_error","code":code,"message":message})
 }
 #[tokio::test]
 async fn opaque_typed_rate_limit_retries_before_output() {
-    check(None, false, true).await;
+    check(rate_limit(None), false, true).await;
 }
 #[tokio::test]
 async fn billing_code_overrides_retryable_message() {
-    check(Some("insufficient_quota"), false, false).await;
+    check(rate_limit(Some("insufficient_quota")), false, false).await;
 }
 #[tokio::test]
 async fn typed_rate_limit_after_text_never_replays() {
-    check(None, true, false).await;
+    check(rate_limit(None), true, false).await;
+}
+/// #2155: OpenRouter's numeric gateway status mid-stream is retried.
+#[tokio::test]
+async fn numeric_gateway_code_before_output_retries() {
+    check(
+        serde_json::json!({"code": 502, "message": "upstream went away"}),
+        false,
+        true,
+    )
+    .await;
+}
+/// #2155: OpenAI's `server_error` chunk is a server failure: retried.
+#[tokio::test]
+async fn server_error_type_before_output_retries() {
+    check(
+        serde_json::json!({"type": "server_error", "code": null, "message": "m"}),
+        false,
+        true,
+    )
+    .await;
+}
+/// #2155: an error type nobody knows is retried as a bad gateway.
+#[tokio::test]
+async fn unknown_error_type_before_output_retries() {
+    check(
+        serde_json::json!({"type": "brand_new_error", "message": "m"}),
+        false,
+        true,
+    )
+    .await;
+}
+/// #2155: an allowlisted client error is never resent as it was: resending
+/// it fails again. (A malformed request, `invalid_request_error`, goes to the
+/// loop's malformed-request recovery instead, which changes the request.)
+#[tokio::test]
+async fn known_client_error_before_output_never_retries() {
+    check(
+        serde_json::json!({"type": "authentication_error", "message": "m"}),
+        false,
+        false,
+    )
+    .await;
+}
+/// #2155 review: a malformed-request error after output is never repaired
+/// and sent again: one request, unchanged.
+#[tokio::test]
+async fn malformed_request_error_after_output_never_resends() {
+    check(
+        serde_json::json!({"type": "invalid_request_error", "message": "m"}),
+        true,
+        false,
+    )
+    .await;
+}
+/// #2155: a retryable server error after output never replays the reply.
+#[tokio::test]
+async fn server_error_after_output_never_replays() {
+    check(
+        serde_json::json!({"type": "server_error", "message": "m"}),
+        true,
+        false,
+    )
+    .await;
 }
 
 fn owner_checks(count: usize, response: Option<&str>, retries: bool) -> [bool; 3] {

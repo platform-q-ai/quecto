@@ -251,17 +251,30 @@ fn declares_client_error_code(lowered: &str) -> bool {
         || json_field_is(lowered, "type", "invalid_request_error")
 }
 
+/// Every provider's billing and quota error names, as an error's `type` or
+/// `code` (OpenAI, Codex, Anthropic): the one list every layer reads
+/// (#2155 review). A billing error is terminal, never a throttle, whatever
+/// status it arrives with: waiting does not pay the bill.
+pub const BILLING_ERROR_NAMES: &[&str] = &[
+    "insufficient_quota",
+    "billing_hard_limit_reached",
+    "usage_limit_reached",
+    "billing_error",
+];
+
+/// Whether `name`, an error's `type` or `code`, is a billing error.
+pub fn is_billing_error_name(name: &str) -> bool {
+    BILLING_ERROR_NAMES.contains(&name)
+}
+
 /// Recognise terminal quota/billing failures that may arrive with HTTP 429 but
 /// are not transient rate limits. OpenAI uses `insufficient_quota` in both
 /// `type` and `code` for exhausted-credit accounts; retrying those failures only
 /// delays surfacing the actionable billing error to the operator.
 fn declares_billing_or_quota_error(lowered: &str) -> bool {
-    json_field_is(lowered, "code", "usage_limit_reached")
-        || json_field_is(lowered, "type", "usage_limit_reached")
-        || json_field_is(lowered, "code", "insufficient_quota")
-        || json_field_is(lowered, "type", "insufficient_quota")
-        || json_field_is(lowered, "code", "billing_hard_limit_reached")
-        || json_field_is(lowered, "type", "billing_hard_limit_reached")
+    BILLING_ERROR_NAMES
+        .iter()
+        .any(|name| json_field_is(lowered, "code", name) || json_field_is(lowered, "type", name))
 }
 
 /// Whitespace-tolerant match for a JSON `"field": "value"` pair in an already

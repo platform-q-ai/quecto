@@ -286,3 +286,174 @@ fn a_codex_tool_call_stream_has_no_unknown_events() {
     );
     assert_eq!(receipt.0.lock().unwrap().diagnostics.unknown_events, 1);
 }
+
+/// A waker that counts how often it is woken.
+#[derive(Default)]
+struct Wakes(std::sync::atomic::AtomicUsize);
+impl std::task::Wake for Wakes {
+    fn wake(self: Arc<Self>) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// #2155: a wait for cancellation registers no timer. With nothing else
+/// happening, time passing wakes it never; the cancel alone wakes it, once.
+#[tokio::test(start_paused = true)]
+async fn a_cancel_wait_is_woken_by_the_cancel_never_by_polling() {
+    use std::sync::atomic::Ordering;
+    let flag = CancelFlag::new();
+    let wakes = Arc::new(Wakes::default());
+    let waker = std::task::Waker::from(wakes.clone());
+    let mut cx = Context::from_waker(&waker);
+    let mut wait = Box::pin(cancelled(Some(&flag)));
+    assert!(wait.as_mut().poll(&mut cx).is_pending());
+    for _ in 0..10 {
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    }
+    assert_eq!(
+        wakes.0.load(Ordering::SeqCst),
+        0,
+        "no wake without a cancel"
+    );
+    flag.cancel();
+    assert_eq!(wakes.0.load(Ordering::SeqCst), 1);
+    assert!(wait.as_mut().poll(&mut cx).is_ready());
+    // Without a flag the wait never ends, and never wakes either.
+    let mut never = Box::pin(cancelled(None));
+    assert!(never.as_mut().poll(&mut cx).is_pending());
+    tokio::time::advance(std::time::Duration::from_secs(10)).await;
+    assert_eq!(wakes.0.load(Ordering::SeqCst), 1);
+}
+
+/// A gate that grants `permit` on acquire, or never grants when it is none.
+#[derive(Debug)]
+struct Grant(Mutex<Option<Box<dyn AttemptPermit>>>);
+impl AttemptAdmission for Grant {
+    fn acquire(&self) -> crate::application::ports::AttemptAcquisition<'_> {
+        let permit = self.0.lock().unwrap().take();
+        Box::pin(async move {
+            match permit {
+                Some(permit) => Ok(permit),
+                None => std::future::pending().await,
+            }
+        })
+    }
+}
+
+/// #2155: a cancel ends an attempt at once, with no other activity: waiting
+/// in the gate's queue or in flight, in no virtual time at all (a polling
+/// wait would take its poll interval), and an in-flight attempt still
+/// finishes its permit as a failure.
+#[tokio::test(start_paused = true)]
+async fn a_cancel_stops_a_queued_or_running_attempt_in_no_time() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let gates: [Arc<dyn AttemptAdmission>; 2] = [
+        Arc::new(Grant(Mutex::new(None))),
+        Arc::new(Grant(Mutex::new(Some(Box::new(Permit(events.clone())))))),
+    ];
+    for gate in gates {
+        let flag = CancelFlag::new();
+        let canceller = flag.clone();
+        tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            canceller.cancel();
+        });
+        let started = tokio::time::Instant::now();
+        // Bounded, so a wait the cancel never wakes fails (the paused clock
+        // reaches the bound at once) instead of hanging.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(3600),
+            run(&gate, None, Some(&flag), None, |_| {
+                std::future::pending::<Result<(), DomainError>>()
+            }),
+        )
+        .await
+        .expect("the cancel ends the attempt");
+        assert!(matches!(result, Err(AttemptError::Stopped)));
+        assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+    }
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![Event::Finished(Feedback::Failure)]
+    );
+}
+
+/// #2155 review: an OpenAI-compatible error chunk with a numeric 429 or 529
+/// (OpenRouter's shape) throttles admission like a typed one; a billing
+/// error, a server status or another vendor's numeric code does not.
+#[test]
+fn numeric_throttle_chunks_throttle_admission() {
+    use super::super::attempt_profile::{Surface, Vendor};
+    for (vendor, data, throttled) in [
+        (
+            Vendor::OpenAi,
+            r#"{"error":{"code":429,"message":"m"}}"#,
+            true,
+        ),
+        (Vendor::OpenAi, r#"{"error":{"code":529}}"#, true),
+        (
+            Vendor::OpenAi,
+            r#"{"error":{"type":"rate_limit_error"}}"#,
+            true,
+        ),
+        (
+            Vendor::OpenAi,
+            r#"{"error":{"code":500,"type":"rate_limit_error"}}"#,
+            true,
+        ),
+        (
+            Vendor::OpenAi,
+            r#"{"error":{"code":429,"type":"insufficient_quota"}}"#,
+            false,
+        ),
+        (
+            Vendor::OpenAi,
+            r#"{"error":{"code":529,"type":"billing_error"}}"#,
+            false,
+        ),
+        (Vendor::OpenAi, r#"{"error":{"code":502}}"#, false),
+        (
+            Vendor::OpenAi,
+            r#"{"error":{"type":"server_error"}}"#,
+            false,
+        ),
+        (
+            Vendor::Codex,
+            r#"{"type":"error","error":{"code":429}}"#,
+            false,
+        ),
+    ] {
+        let receipt = diagnostic_receipt();
+        let mut observer = ProtocolObserver::new(Profile::new(
+            vendor,
+            Surface::Incremental,
+            Default::default(),
+        ));
+        observer.observe(&format!("data: {data}"), &receipt);
+        let state = receipt.0.lock().unwrap();
+        assert_eq!(state.hinted, throttled, "{data}");
+        assert!(
+            state.failure,
+            "an error chunk always fails the attempt: {data}"
+        );
+    }
+}
+
+/// #2155 review: an HTTP error declaring any billing name from the domain's
+/// one list never throttles admission, even as a 429; a plain 429 does.
+#[test]
+fn a_billing_http_error_never_throttles_admission() {
+    for name in crate::domain::provider_error::BILLING_ERROR_NAMES {
+        for field in ["type", "code"] {
+            let receipt = diagnostic_receipt();
+            let body = serde_json::json!({"error": { field: name }}).to_string();
+            receipt.http_error(429, &body);
+            let state = receipt.0.lock().unwrap();
+            assert!(!state.hinted, "{body}");
+            assert!(state.failure, "{body}");
+        }
+    }
+    let receipt = diagnostic_receipt();
+    receipt.http_error(429, r#"{"error":{"type":"rate_limit_error"}}"#);
+    assert!(receipt.0.lock().unwrap().hinted);
+}

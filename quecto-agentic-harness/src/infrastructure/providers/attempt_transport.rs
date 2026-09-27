@@ -130,17 +130,21 @@ impl Receipt {
         }
     }
     fn typed(&self, value: &serde_json::Value) {
+        self.typed_as(value, is_typed_throttle(value));
+    }
+    /// A typed error payload that is (`throttled`) or is not a throttle.
+    fn typed_as(&self, value: &serde_json::Value, throttled: bool) {
+        debug_assert!(
+            !is_typed_throttle(value) || throttled,
+            "a typed throttle is always a throttle"
+        );
         let mut state = self.0.lock().unwrap();
         diagnostics::typed(&mut state.diagnostics, value);
-        if is_typed_throttle(value) {
+        if throttled {
             state.failure = true;
         }
         let state = &mut *state;
-        if let (false, true, Some(permit)) = (
-            state.hinted,
-            is_typed_throttle(value),
-            state.permit.as_mut(),
-        ) {
+        if let (false, true, Some(permit)) = (state.hinted, throttled, state.permit.as_mut()) {
             permit.throttle_without_hint();
             state.hinted = true;
         }
@@ -151,18 +155,16 @@ impl Receipt {
             .iter()
             .any(|error| {
                 ["type", "code"].iter().any(|field| {
-                    matches!(
-                        error[*field].as_str(),
-                        Some(
-                            "insufficient_quota"
-                                | "usage_limit_reached"
-                                | "billing_hard_limit_reached"
-                                | "authentication_error"
-                                | "permission_error"
-                                | "invalid_request_error"
-                                | "invalid_api_key"
-                        )
-                    )
+                    error[*field].as_str().is_some_and(|name| {
+                        crate::domain::provider_error::is_billing_error_name(name)
+                            || matches!(
+                                name,
+                                "authentication_error"
+                                    | "permission_error"
+                                    | "invalid_request_error"
+                                    | "invalid_api_key"
+                            )
+                    })
                 })
             });
         let mut state = self.0.lock().unwrap();
@@ -220,10 +222,13 @@ async fn cancelled(flag: Option<&CancelFlag>) {
     let Some(flag) = flag else {
         return std::future::pending().await;
     };
-    // CancelFlag's inward API is an atomic observation, not a notification port.
-    while !flag.is_cancelled() {
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
+    // Woken by the cancel itself (#2155): no timer, no polling.
+    let mut watch = flag.watch();
+    std::future::poll_fn(|cx| match watch.cancelled_or_wake(cx.waker()) {
+        true => Poll::Ready(()),
+        false => Poll::Pending,
+    })
+    .await
 }
 async fn closed(tx: Option<&Sender>) {
     match tx {

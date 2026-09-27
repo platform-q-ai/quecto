@@ -44,7 +44,7 @@ pub struct ChatRequest<'a> {
     /// Optional cancellation flag. When `Some`, the provider checks this flag
     /// before processing and returns `DomainError::Provider("request cancelled")`
     /// immediately if it is set. Set `cancel_flag.cancel()` from any thread to
-    /// cancel an in-flight request.
+    /// cancel an in-flight request: the cancel wakes the request's waits.
     pub cancel_flag: Option<CancelFlag>,
     /// Optional effort level for the `output_config.effort` API parameter.
     /// Controls thinking depth and token spend on Opus 4.6 / Sonnet 4.6.
