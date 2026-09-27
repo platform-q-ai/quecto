@@ -230,3 +230,11 @@ fn keys_and_tokens_that_switch_class_often_are_high_entropy() {
         assert_eq!(estimate_tokens(key), high_entropy(key.len()), "{key}");
     }
 }
+
+/// Class switches count between adjacent letters and digits only: a joiner
+/// breaks the sequence, so single-character segments never switch.
+#[test]
+fn switches_across_a_joiner_do_not_count() {
+    // 12 prose chars (3 tokens), "1-", "2-", "3" dense (3 tokens).
+    assert_eq!(estimate_tokens("a-B-1-c-D-2-e-F-3"), 3 + 3);
+}
