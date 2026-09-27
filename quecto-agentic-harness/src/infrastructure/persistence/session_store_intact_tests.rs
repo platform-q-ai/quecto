@@ -185,31 +185,121 @@ async fn a_file_recreated_after_a_delete_is_not_vouched_for_even_at_the_same_len
     assert_eq!(fresh(&tmp, "cli:g").await, contents(4));
 }
 
+/// Rewrite `path` in place with same-length foreign bytes and restore its
+/// modification time: a file whose identity the store cannot tell apart.
+fn indistinguishable_rewrite(path: &std::path::Path) {
+    let before = std::fs::metadata(path).unwrap();
+    let foreign = same_length_foreign(&std::fs::read(path).unwrap());
+    let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+    std::io::Write::write_all(&mut &file, &foreign).unwrap();
+    file.set_modified(before.modified().unwrap()).unwrap();
+}
+
+/// A write that fails — even before it writes a byte — makes the store
+/// forget the file: nothing proves it is still the file it left, so the
+/// next save compacts (#2218 reviews 3 and 4).
 #[tokio::test]
 async fn a_write_that_failed_before_landing_still_forgets_the_file() {
+    for kind in ["clean", "verified"] {
+        let tmp = TempDir::new().unwrap();
+        let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+        store
+            .save_clean_delta(&key("cli:h"), &transcript(2), 0, None)
+            .await
+            .unwrap();
+        store.fail_next_write(&key("cli:h"));
+        let failed = match kind {
+            "verified" => {
+                store
+                    .save_delta(&key("cli:h"), &transcript(4), 2, None)
+                    .await
+            }
+            _ => {
+                store
+                    .save_clean_delta(&key("cli:h"), &transcript(4), 2, None)
+                    .await
+            }
+        };
+        failed.expect_err("the write failed before landing");
+        assert_eq!(lines(&store, "cli:h"), 1, "{kind}: nothing landed");
+        indistinguishable_rewrite(&store.session_path(&key("cli:h")));
+        store
+            .save_clean_delta(&key("cli:h"), &transcript(4), 2, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            fresh(&tmp, "cli:h").await,
+            contents(4),
+            "{kind}: compacted over it"
+        );
+    }
+}
+
+/// Another process swaps in different, valid JSONL of exactly the same
+/// length — by a rename (a new inode) or an in-place rewrite (a new
+/// modification time): the store no longer vouches for the file, and the
+/// next clean delta compacts instead of appending onto the foreign prefix
+/// (#2235 review).
+#[tokio::test]
+async fn a_same_length_foreign_file_is_compacted_over_however_it_was_swapped_in() {
+    for swap in ["rename", "in-place"] {
+        let tmp = TempDir::new().unwrap();
+        let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+        store
+            .save_clean_delta(&key("cli:i"), &transcript(2), 0, None)
+            .await
+            .unwrap();
+        let path = store.session_path(&key("cli:i"));
+        let foreign = same_length_foreign(&std::fs::read(&path).unwrap());
+        match swap {
+            "rename" => {
+                let staged = path.with_extension("foreign");
+                std::fs::write(&staged, &foreign).unwrap();
+                std::fs::rename(&staged, &path).unwrap();
+            }
+            _ => {
+                let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+                std::io::Write::write_all(&mut &file, &foreign).unwrap();
+                let later = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
+                file.set_modified(later).unwrap();
+            }
+        }
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len() as usize,
+            foreign.len()
+        );
+        store
+            .save_clean_delta(&key("cli:i"), &transcript(4), 2, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            fresh(&tmp, "cli:i").await,
+            contents(4),
+            "{swap}: compacted over it"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_store_vouches_for_the_file_a_compaction_renamed_into_place() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     store
-        .save_clean_delta(&key("cli:h"), &transcript(2), 0, None)
+        .save_clean_delta(&key("cli:j"), &transcript(2), 0, None)
         .await
         .unwrap();
-    let path = store.session_path(&key("cli:h"));
-    let saved = std::fs::read(&path).unwrap();
-    // The append is refused before it writes anything: a symlinked transcript.
-    let target = tmp.path().join("elsewhere.json");
-    std::fs::write(&target, &saved).unwrap();
-    std::fs::remove_file(&path).unwrap();
-    std::os::unix::fs::symlink(&target, &path).unwrap();
+    let path = store.session_path(&key("cli:j"));
+    assert!(
+        store.intact.appendable(&path).await,
+        "the new inode was recorded"
+    );
     store
-        .save_clean_delta(&key("cli:h"), &transcript(4), 2, None)
-        .await
-        .expect_err("a symlinked transcript is refused");
-    // Someone else then writes a transcript of exactly the old length.
-    std::fs::remove_file(&path).unwrap();
-    std::fs::write(&path, same_length_foreign(&saved)).unwrap();
-    store
-        .save_clean_delta(&key("cli:h"), &transcript(4), 2, None)
+        .save_clean_delta(&key("cli:j"), &transcript(4), 2, None)
         .await
         .unwrap();
-    assert_eq!(fresh(&tmp, "cli:h").await, contents(4));
+    assert_eq!(
+        lines(&store, "cli:j"),
+        2,
+        "a vouched-for file is appended to"
+    );
 }

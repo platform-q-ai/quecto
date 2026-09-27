@@ -5,41 +5,90 @@
 //! lost to a power cut would hand the same ordinals out again: an fsync
 //! (milliseconds) per save is cheap beside a model turn (seconds).
 //!
-//! The store appends only onto a file whose bytes it can vouch for: one it
-//! last wrote or loaded whole, still exactly the length it left it. The
-//! record is dropped before every write starts and restored only once the
-//! write succeeds, so after a failed, cancelled or foreign write the next
+//! The store appends only onto a file whose bytes it can vouch for: the
+//! very file it last wrote or loaded whole — same device, inode, length and
+//! modification time. The record is dropped before every write starts and
+//! restored only once the write succeeds, so after a failed, cancelled or
+//! foreign write (another process's rename or in-place rewrite) the next
 //! save compacts without trusting what it reads back — the page cache may
 //! hold pages that never reached the disk (after an fsync error, say). A
 //! record torn by a crash is therefore never appended after either.
 use std::collections::HashMap;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use super::*;
 
-/// The byte length of each transcript as this store last wrote or loaded it
+/// Which file a path names, and its state: a rename changes the inode, an
+/// in-place rewrite the modification time, an append the length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct FileIdentity {
+    dev: u64,
+    ino: u64,
+    len: u64,
+    mtime_ns: i128,
+}
+
+impl FileIdentity {
+    pub(super) async fn of(path: &Path) -> Option<Self> {
+        let metadata = tokio::fs::metadata(path).await.ok()?;
+        Some(Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            len: metadata.len(),
+            mtime_ns: i128::from(metadata.mtime()) * 1_000_000_000
+                + i128::from(metadata.mtime_nsec()),
+        })
+    }
+}
+
+/// The identity of each transcript as this store last wrote or loaded it
 /// whole (#2218).
 #[derive(Debug, Default)]
-pub(super) struct IntactFiles(std::sync::Mutex<HashMap<PathBuf, u64>>);
+pub(super) struct IntactFiles(std::sync::Mutex<HashMap<PathBuf, FileIdentity>>);
 
 impl IntactFiles {
-    fn known(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, u64>> {
+    fn known(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, FileIdentity>> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Whether `path` is still exactly the file this store left.
     pub(super) async fn appendable(&self, path: &Path) -> bool {
-        let Some(len) = self.known().get(path).copied() else {
+        let Some(known) = self.known().get(path).copied() else {
             return false;
         };
-        tokio::fs::metadata(path)
-            .await
-            .is_ok_and(|metadata| metadata.len() == len)
+        FileIdentity::of(path).await == Some(known)
     }
 
-    /// `path` holds `len` bytes this store wrote or read whole.
-    pub(super) fn record(&self, path: &Path, len: u64) {
-        self.known().insert(path.to_path_buf(), len);
+    /// Read the transcript, with the identity of the file it was read from.
+    pub(super) async fn read(
+        &self,
+        path: &Path,
+    ) -> Result<(String, Option<FileIdentity>), DomainError> {
+        let before = FileIdentity::of(path).await;
+        let data = tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| DomainError::Session(format!("failed to read session: {}", e)))?;
+        Ok((data, before))
+    }
+
+    /// `path` was read whole as `len` bytes (`intact` when every record
+    /// parsed) from the file `before` the read: remember it only if it is
+    /// intact and still that file, unchanged.
+    pub(super) async fn observe_read(
+        &self,
+        path: &Path,
+        before: Option<FileIdentity>,
+        len: usize,
+        intact: bool,
+    ) {
+        let after = FileIdentity::of(path).await;
+        match (intact, before, after) {
+            (true, Some(before), Some(after)) if before == after && after.len == len as u64 => {
+                self.known().insert(path.to_path_buf(), after);
+            }
+            _ => self.forget(path),
+        }
     }
 
     /// Nothing about `path` can be vouched for until a write succeeds.
@@ -47,11 +96,13 @@ impl IntactFiles {
         self.known().remove(path);
     }
 
-    /// The write of `path` succeeded: remember the length it left.
+    /// The write of `path` succeeded: remember the file it left.
     pub(super) async fn record_written(&self, path: &Path) {
-        match tokio::fs::metadata(path).await {
-            Ok(metadata) => self.record(path, metadata.len()),
-            Err(_) => self.forget(path),
+        match FileIdentity::of(path).await {
+            Some(identity) => {
+                self.known().insert(path.to_path_buf(), identity);
+            }
+            None => self.forget(path),
         }
     }
 }
@@ -77,6 +128,8 @@ impl FileSessionStore {
 
 pub(super) async fn write_compacted(path: &Path, session: &Session) -> Result<(), DomainError> {
     use tokio::io::AsyncWriteExt;
+    #[cfg(test)]
+    injected(&FAIL_NEXT_WRITE_OF, path)?;
 
     let record = SessionRecordRef::Snapshot(SessionFileRef {
         key: session.key.runtime_key(),
@@ -101,7 +154,7 @@ pub(super) async fn write_compacted(path: &Path, session: &Session) -> Result<()
         .map_err(|e| DomainError::Session(format!("failed to rename session: {e}")))?;
     sync_parent_dir(path).await?;
     #[cfg(test)]
-    injected_sync_failure(path)?;
+    injected(&FAIL_NEXT_SYNC_OF, path)?;
     Ok(())
 }
 
@@ -122,6 +175,8 @@ pub(super) async fn append_record(
     record: &SessionRecordRef<'_>,
 ) -> Result<(), DomainError> {
     use tokio::io::AsyncWriteExt;
+    #[cfg(test)]
+    injected(&FAIL_NEXT_WRITE_OF, path)?;
 
     reject_symlink(path).await?;
     let mut line = serde_json::to_string(record)
@@ -139,7 +194,7 @@ pub(super) async fn append_record(
         .await
         .map_err(|e| DomainError::Session(format!("failed to sync session: {e}")))?;
     #[cfg(test)]
-    injected_sync_failure(path)?;
+    injected(&FAIL_NEXT_SYNC_OF, path)?;
     Ok(())
 }
 
@@ -295,20 +350,23 @@ pub(super) async fn append_or_compact(
     append_record(path, &record).await
 }
 
-/// Test seam: the next write of this path lands and then reports an fsync
-/// failure, as `EIO` from `fsync` does.
+/// Test seams: the next write of a path lands and then reports an fsync
+/// failure (as `EIO` from `fsync` does), or fails before it writes a byte.
 #[cfg(test)]
 pub(super) static FAIL_NEXT_SYNC_OF: std::sync::Mutex<Vec<PathBuf>> =
     std::sync::Mutex::new(Vec::new());
+#[cfg(test)]
+pub(super) static FAIL_NEXT_WRITE_OF: std::sync::Mutex<Vec<PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
 
 #[cfg(test)]
-fn injected_sync_failure(path: &Path) -> Result<(), DomainError> {
-    let mut failing = FAIL_NEXT_SYNC_OF.lock().unwrap_or_else(|e| e.into_inner());
+fn injected(seam: &std::sync::Mutex<Vec<PathBuf>>, path: &Path) -> Result<(), DomainError> {
+    let mut failing = seam.lock().unwrap_or_else(|e| e.into_inner());
     match failing.iter().position(|p| p == path) {
         Some(index) => {
             failing.remove(index);
             Err(DomainError::Session(
-                "failed to sync session: EIO (injected)".into(),
+                "failed to write session: EIO (injected)".into(),
             ))
         }
         None => Ok(()),
@@ -317,12 +375,15 @@ fn injected_sync_failure(path: &Path) -> Result<(), DomainError> {
 
 #[cfg(test)]
 impl FileSessionStore {
-    /// Test seam: the next write of `identity`'s transcript lands and then
-    /// reports an fsync failure.
+    /// The next write of `identity`'s transcript lands, then its fsync fails.
     pub(crate) fn fail_next_sync(&self, identity: &SessionIdentity) {
-        FAIL_NEXT_SYNC_OF
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(self.session_path(identity));
+        let mut failing = FAIL_NEXT_SYNC_OF.lock().unwrap_or_else(|e| e.into_inner());
+        failing.push(self.session_path(identity));
+    }
+
+    /// The next write of `identity`'s transcript fails before writing.
+    pub(crate) fn fail_next_write(&self, identity: &SessionIdentity) {
+        let mut failing = FAIL_NEXT_WRITE_OF.lock().unwrap_or_else(|e| e.into_inner());
+        failing.push(self.session_path(identity));
     }
 }

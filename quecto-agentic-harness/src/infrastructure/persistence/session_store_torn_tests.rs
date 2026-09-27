@@ -276,42 +276,5 @@ async fn every_crash_boundary_of_an_append_recovers() {
     assert_eq!(store.load(&id()).await.unwrap().unwrap().messages.len(), 8);
 }
 
-/// A write that fails makes the store forget the file was intact: the next
-/// clean delta verifies it instead of appending after a record it cannot
-/// vouch for (#2218 review 3).
-#[tokio::test]
-async fn a_failed_write_forgets_the_file_was_intact() {
-    for verified in [false, true] {
-        let tmp = TempDir::new().unwrap();
-        let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
-        store
-            .save_clean_delta(&id(), &transcript(2), 0, None)
-            .await
-            .unwrap();
-        let path = store.session_path(&id());
-        let saved = std::fs::read(&path).unwrap();
-        // The append fails: the transcript is a symlink the store refuses.
-        let target = tmp.path().join("elsewhere.json");
-        std::fs::write(&target, &saved).unwrap();
-        std::fs::remove_file(&path).unwrap();
-        std::os::unix::fs::symlink(&target, &path).unwrap();
-        let failed = match verified {
-            true => store.save_delta(&id(), &transcript(4), 2, None).await,
-            false => store.save_clean_delta(&id(), &transcript(4), 2, None).await,
-        };
-        failed.expect_err("a symlinked transcript is refused");
-        // Meanwhile the file gained a terminated record no parser can read.
-        std::fs::remove_file(&path).unwrap();
-        let mut data = saved;
-        data.extend_from_slice(b"{\"type\":\"append\",\"garbage\n");
-        std::fs::write(&path, data).unwrap();
-        store
-            .save_clean_delta(&id(), &transcript(4), 2, None)
-            .await
-            .unwrap();
-        assert_reloads_whole(&store, 4).await;
-    }
-}
-
 #[path = "session_store_intact_tests.rs"]
 mod intact_tests;

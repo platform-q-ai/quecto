@@ -1,6 +1,8 @@
 //! The end of a turn that did not complete (#2218): its interrupted
 //! history is finalized, saved by the loop's routine save and published,
-//! and the routine save a completed turn runs before its `agent_end`.
+//! and the routine save a completed turn runs before its `agent_end`. The
+//! ledger's full copies of a turn's messages are taken before the save
+//! stamps the live ones, so every turn end restamps them (#2235 review).
 use super::{EventSink, Message, update_execution, user_visible_messages};
 
 /// An interrupted turn's history, finalized, saved (#2218) and published.
@@ -34,6 +36,7 @@ pub(super) async fn settle_interrupted_turn(turn: InterruptedTurn<'_, '_>) {
         let mut state = session.write().await;
         let publish = state.publish(&visible);
         let full = state.record_full(&finalized.recordable_messages());
+        restamp_ledger(&mut state, messages);
         drop(state);
         sink.emit_ledger_advanced(publish).await;
         sink.emit_ledger_advanced(full).await;
@@ -51,4 +54,27 @@ pub(super) async fn save_turn(
     if let Some(save) = turn_save {
         save.persist(messages).await;
     }
+}
+
+/// Give every full copy the ledger holds of a live message the durable
+/// ordinal the save stamped on it, so `get_message` by id serves the same
+/// ordinal `get_messages` does (#2235 review). The copies stay full; only
+/// their ordinal changes.
+pub(super) fn restamp_ledger(
+    state: &mut crate::application::sessions::active_session::ActiveSessionState,
+    live: &[Message],
+) {
+    let restamped: Vec<Message> = live
+        .iter()
+        .filter_map(|message| {
+            let ordinal = message.ordinal?;
+            let copy = state.conversation().lookup(&message.id().to_string())?;
+            (copy.ordinal != Some(ordinal)).then(|| {
+                let mut copy = copy.clone();
+                copy.ordinal = Some(ordinal);
+                copy
+            })
+        })
+        .collect();
+    let _ = state.record_full(&restamped);
 }

@@ -227,3 +227,6 @@ mod delivery_tests;
 
 #[path = "uds_dispatch_report_recall_tests.rs"]
 mod recall_tests;
+
+#[path = "uds_dispatch_report_ledger_tests.rs"]
+mod ledger_tests;

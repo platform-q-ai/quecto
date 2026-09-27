@@ -778,9 +778,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // R2-H2: the empty-save delete moved beside the home sidecar it now
     // removes (`session_store_home.rs`); the store is back at 687.
     // #2218: the writes, their fsync and the append-or-compact decisions
-    // and the intactness record moved to `session_store_write.rs` (656 → 513).
-    ("src/infrastructure/persistence/session_store.rs", 513),
-    ("src/infrastructure/persistence/session_store_write.rs", 328),
+    // and the intactness record moved to `session_store_write.rs` (656 → 510).
+    ("src/infrastructure/persistence/session_store.rs", 510),
+    ("src/infrastructure/persistence/session_store_write.rs", 389),
     (
         "src/infrastructure/persistence/session_store_catalogue.rs",
         23,

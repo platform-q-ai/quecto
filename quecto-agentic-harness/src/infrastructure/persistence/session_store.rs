@@ -121,15 +121,12 @@ impl SessionStore for FileSessionStore {
             if !path.exists() {
                 return Ok(None);
             }
-            let data = tokio::fs::read_to_string(&path)
-                .await
-                .map_err(|e| DomainError::Session(format!("failed to read session: {}", e)))?;
+            let (data, before) = self.intact.read(&path).await?;
             let (session, intact) = parse_session_records(&data)
                 .map_err(|e| DomainError::Session(format!("failed to parse session: {}", e)))?;
-            match intact {
-                true => self.intact.record(&path, data.len() as u64),
-                false => self.intact.forget(&path),
-            }
+            self.intact
+                .observe_read(&path, before, data.len(), intact)
+                .await;
             Ok(Some(session))
         })
     }

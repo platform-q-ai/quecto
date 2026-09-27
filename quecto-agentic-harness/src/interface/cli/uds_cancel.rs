@@ -451,6 +451,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                 let mut state = session.write().await;
                 let publish = state.publish(&visible);
                 let full = state.record_full(&agent_result.appended_messages);
+                interrupted::restamp_ledger(&mut state, messages);
                 drop(state);
                 sink.emit_ledger_advanced(publish).await;
                 sink.emit_ledger_advanced(full).await;
@@ -482,6 +483,10 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             PromptOutcome::Success
         }
         Some(Err(e)) => {
+            // Copies the turn recorded as it ran predate the save's ordinals.
+            if let Some(session) = &active_session {
+                interrupted::restamp_ledger(&mut *session.write().await, messages);
+            }
             // Dated by the dispatch loop once it knows the control generation.
             agent_session.suspend_automatic_turns(
                 super::uds_session::SuspensionCause::ProviderFailure,
