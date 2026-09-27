@@ -41,7 +41,10 @@ pub(super) fn child_socket(
                     let response = serde_json::json!({"type": "response", "id": request["id"],
                         "command": "get_messages", "success": true,
                         "data": page.lock().unwrap().clone()});
-                    let _ = writeln!(stream, "{response}");
+                    // One write of the whole line, and a failure is loud.
+                    stream
+                        .write_all(format!("{response}\n").as_bytes())
+                        .expect("the mock child writes its whole reply");
                 }
             });
         }
@@ -49,8 +52,12 @@ pub(super) fn child_socket(
     (tmp, path)
 }
 
+/// A read of the mock child's page, bounded well inside the CI test timeout.
 pub(super) async fn read(tool: &AgentCmdTool) -> ToolResult {
-    let result = tool.execute(READ).await.expect("agent_cmd answers");
+    let result = tokio::time::timeout(std::time::Duration::from_secs(10), tool.execute(READ))
+        .await
+        .expect("agent_cmd get_messages answered by the mock child within 10 s")
+        .expect("agent_cmd answers");
     assert!(!result.is_error, "{}", result.content);
     result
 }
