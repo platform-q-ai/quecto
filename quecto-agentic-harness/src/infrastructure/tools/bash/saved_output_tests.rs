@@ -386,7 +386,8 @@ fn view() -> TailView {
 fn the_truncation_hint_says_where_the_rest_went() {
     assert_eq!(
         truncation_hint(Some("/t/x.log"), &view()),
-        "\n[Showing lines 3-9 of 9 (50KB limit). Full output (90 bytes) saved to: /t/x.log]"
+        "\n[Showing lines 3-9 of 9 (50KB limit). Page through the saved file with read \
+         (offset/limit). Full output (90 bytes) saved to: /t/x.log]"
     );
     let unsaved = truncation_hint(None, &view());
     assert!(unsaved.contains("could not be saved"), "{unsaved}");
@@ -487,4 +488,43 @@ fn the_legacy_sweep_reaches_own_files_in_another_users_directory() {
     std::os::unix::fs::symlink(&target, &link).unwrap();
     sweep_legacy(&link, owner(), now);
     assert!(theirs.exists(), "a symlinked directory is not swept");
+}
+
+/// #2254 review: read refuses a file over its cap before any offset or
+/// limit, so a saved output over it is paged with bash instead.
+#[test]
+fn the_hint_sends_a_saved_file_over_reads_cap_to_bash() {
+    use crate::infrastructure::tools::filesystem::MAX_READ_BYTES;
+    let cap = usize::try_from(MAX_READ_BYTES).unwrap();
+    let at_cap = TailView {
+        combined_len: cap,
+        ..view()
+    };
+    let hint = truncation_hint(Some("/t/x.log"), &at_cap);
+    assert!(
+        hint.contains(" Page through the saved file with read (offset/limit). Full output"),
+        "{hint}"
+    );
+    let over = TailView {
+        combined_len: cap + 1,
+        ..view()
+    };
+    assert_eq!(
+        truncation_hint(Some("/t/x.log"), &over),
+        format!(
+            "\n[Showing lines 3-9 of 9 (50KB limit). It is over read's 10.0MB limit: page \
+             through it with bash, e.g. sed -n '1,200p' '/t/x.log' or tail -n 200 '/t/x.log'. \
+             Full output ({} bytes) saved to: /t/x.log]",
+            cap + 1
+        )
+    );
+    // Cut long lines over the cap: no advice to read the saved file.
+    let over_long = TailView {
+        long_lines: Some("line 9 is 60000 bytes".into()),
+        ..over
+    };
+    let hint = truncation_hint(Some("/t/x.log"), &over_long);
+    assert!(!hint.contains("`read` the saved file"), "{hint}");
+    assert!(hint.contains("Reformat the output with `jq .`"), "{hint}");
+    assert!(hint.contains("page through it with bash"), "{hint}");
 }

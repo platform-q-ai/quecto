@@ -10,6 +10,6 @@ Feature: Retained context over the real UDS agent loop
     When the model runs the stub tool twice, then recalls the index, the collapsed id and an unknown id
     Then the recall index answered exactly the user prompt and both stub results in append order
     And the recall of the collapsed id answered the full stub output
-    And the recall of the unknown id answered exactly "No spilled output found for id: turn9:stub:0" as an error
+    And the recall of the unknown id answered exactly 'No spilled output found for id: turn9:stub:0. Use recall("list") to see the ids this session has (they look like turn12:bash:0).' as an error
     And the first stub result is shown collapsed to the recall stub for "turn1:stub:0"
     And the file retention store of session "retained" holds "turn1:stub:0" and "turn2:stub:0" on disk

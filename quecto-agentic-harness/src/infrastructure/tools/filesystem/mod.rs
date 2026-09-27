@@ -37,7 +37,29 @@ pub(super) fn resolve_and_validate(
         .map_err(|e| DomainError::Security(e.to_string()))
 }
 
+/// The largest file `read` reads: a larger one is refused before any offset
+/// or limit applies (#2254 review), so a hint to page through a file with
+/// read holds only up to this size.
+pub const MAX_READ_BYTES: u64 = 10 * 1024 * 1024;
+
+/// `read`'s cap in words, e.g. "10.0MB".
+pub fn read_cap_text() -> String {
+    crate::infrastructure::tools::truncate::format_size(
+        usize::try_from(MAX_READ_BYTES).unwrap_or(usize::MAX),
+    )
+}
+
+/// Bounded paging of `path` with bash, for a file over `read`'s cap: its
+/// first 200 lines and, with `and_tail`, its last 200.
+pub fn bash_paging_example(path: &str, and_tail: bool) -> String {
+    let quoted = shell_escape_single(path);
+    match and_tail {
+        true => format!("sed -n '1,200p' {quoted} or tail -n 200 {quoted}"),
+        false => format!("sed -n '1,200p' {quoted}"),
+    }
+}
+
 /// Wrap a path in single quotes for use in a shell command hint.
-pub(super) fn shell_escape_single(path: &str) -> String {
+pub(crate) fn shell_escape_single(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
 }

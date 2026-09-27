@@ -6,7 +6,7 @@ Use `output_file` for output you will compute over or query selectively (for exa
 
 Anti-pattern: redirecting large output to `output_file` and then reading the whole file back into the conversation. That is re-ingestion, not a saving.
 
-When `output_file` is absent, bash output remains inline with the existing 2000-line/50KB tail cap. Overflow output is also saved under a stable temp directory and the path is reported. Timeout results include any captured output tail before the process was killed.
+When `output_file` is absent, bash output remains inline with the existing 2000-line/50KB tail cap. Overflow output is also saved under a stable temp directory and the path is reported, with a note to page through it with `read` (offset/limit), or, when the saved file is over `read`'s 10 MiB cap (stdout and stderr together can reach about 20 MiB), with bounded bash paging (`sed -n '1,200p' PATH` or `tail -n 200 PATH`), since `read` refuses such a file before any offset or limit applies: the saved file is a file, not a `recall` id. `recall` given such a path (or any unknown id) says so, points to `recall("list")` and, for a path, gives the `read` call to make instead (#2215). Timeout results include any captured output tail before the process was killed.
 
 Inline output is also bounded per line and per stream:
 

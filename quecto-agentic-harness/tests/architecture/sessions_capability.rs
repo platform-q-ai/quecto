@@ -727,7 +727,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/dto/retained_context.rs", 92),
     ("src/composition/retention.rs", 35),
     ("src/interface/cli/retention_handles.rs", 33),
-    ("src/infrastructure/tools/recall.rs", 183),
+    ("src/infrastructure/tools/recall.rs", 152),
     // #2212: the gauge moved to its own module (336 → 332).
     ("src/application/context.rs", 332),
     // #2212: new modules (the gauge and its estimate scale; the pure ratio;

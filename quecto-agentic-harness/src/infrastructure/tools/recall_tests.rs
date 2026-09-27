@@ -323,3 +323,102 @@ fn test_tool_definition() {
     assert!(def.description.contains("full session-memory index"));
     assert!(def.description.contains("recall(\"list\")"));
 }
+
+/// #2215: an unknown id points to recall("list") and says what ids look like.
+#[tokio::test]
+async fn an_unknown_id_points_to_the_list() {
+    let tool = RecallTool::new(recall_over(test_store_with_entry()), "s".to_string());
+    let result = tool
+        .execute(r#"{"id":"qa-no-such-spill-xyz"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert_eq!(
+        result.content,
+        "No spilled output found for id: qa-no-such-spill-xyz. Use recall(\"list\") to see \
+         the ids this session has (they look like turn12:bash:0)."
+    );
+}
+
+/// #2215: bash's saved-output path is a file to open with read, not an id.
+#[tokio::test]
+async fn a_saved_output_path_is_sent_to_read() {
+    let tool = RecallTool::new(recall_over(test_store_with_entry()), "s".to_string());
+    // Paths under a temporary directory that are sure not to exist: the
+    // guidance depends on the file's size when there is one (#2254 review).
+    let tmp = tempfile::TempDir::new().unwrap();
+    let saved = tmp.path().join("quecto-bash-output/bash-output-ydrV3Y.log");
+    let notes = tmp.path().join("notes.txt");
+    for path in [saved.display().to_string(), notes.display().to_string()] {
+        assert!(!std::path::Path::new(&path).exists(), "{path}");
+        let args = serde_json::json!({ "id": path }).to_string();
+        let result = tool.execute(&args).await.unwrap();
+        assert!(result.is_error);
+        assert_eq!(
+            result.content,
+            format!(
+                "No spilled output found for id: {path}. {path} looks like a file path: \
+                 saved bash output is a file, so open it with read, e.g. \
+                 {{\"path\":\"{path}\",\"offset\":1,\"limit\":200}}, or, if it is over \
+                 read's 10.0MB limit, page through it with bash, e.g. sed -n '1,200p' \
+                 '{path}'. Use recall(\"list\") to see the ids this session has (they look \
+                 like turn12:bash:0)."
+            )
+        );
+    }
+}
+
+/// #2215: only a path is taken for one; a spill id never is.
+#[test]
+fn only_paths_look_like_file_paths() {
+    for id in ["/a", "/tmp/x.log", "x/quecto-bash-output/y.log"] {
+        assert!(looks_like_file_path(id), "{id}");
+    }
+    for id in [
+        "turn12:bash:0",
+        "turn3:read:1:2",
+        "list",
+        "",
+        "a/b",
+        "quecto-bash-output",
+    ] {
+        assert!(!looks_like_file_path(id), "{id}");
+    }
+}
+
+/// #2254 review: a path that names a file is sent to read within read's
+/// cap and to bounded bash paging over it; an unknown size gets both.
+#[tokio::test]
+async fn a_file_path_is_paged_the_way_its_size_allows() {
+    use crate::infrastructure::tools::filesystem::MAX_READ_BYTES;
+    let tmp = tempfile::TempDir::new().unwrap();
+    let small = tmp.path().join("small.log");
+    std::fs::write(&small, "x\n").unwrap();
+    let big = tmp.path().join("big.log");
+    std::fs::File::create(&big)
+        .unwrap()
+        .set_len(MAX_READ_BYTES + 1)
+        .unwrap();
+    let tool = RecallTool::new(recall_over(test_store_with_entry()), "s".to_string());
+    let recall = |path: &std::path::Path| {
+        let args = serde_json::json!({ "id": path }).to_string();
+        let tool = &tool;
+        async move { tool.execute(&args).await.unwrap().content }
+    };
+    let small_text = recall(&small).await;
+    assert!(
+        small_text.contains("so open it with read, e.g. {\"path\":"),
+        "{small_text}"
+    );
+    assert!(!small_text.contains("sed -n"), "{small_text}");
+    let big_text = recall(&big).await;
+    let quoted = format!("'{}'", big.display());
+    assert!(
+        big_text.contains(&format!(
+            "it is over read's 10.0MB limit, so page through it with bash, e.g. \
+             sed -n '1,200p' {quoted} or tail -n 200 {quoted}"
+        )),
+        "{big_text}"
+    );
+    assert!(!big_text.contains("open it with read"), "{big_text}");
+}

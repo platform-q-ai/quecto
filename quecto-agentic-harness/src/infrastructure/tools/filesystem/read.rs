@@ -19,7 +19,7 @@ use crate::infrastructure::tools::truncate::{
 };
 
 use super::fs_failure::{Access, explain, not_utf8_text, refused};
-use super::shell_escape_single;
+use super::{MAX_READ_BYTES, shell_escape_single};
 
 pub struct ReadTool {
     workspace: Arc<PathBuf>,
@@ -138,7 +138,6 @@ impl Tool for ReadTool {
             let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
 
             // Safety cap: reject reads > 10 MiB before loading into memory.
-            const MAX_READ_BYTES: u64 = 10 * 1024 * 1024;
             if let Ok(meta) = tokio::fs::metadata(&resolved).await {
                 if meta.len() > MAX_READ_BYTES {
                     let size = format_size(meta.len() as usize);

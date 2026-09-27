@@ -285,7 +285,8 @@ fn then_collapsed_stub(world: &mut QuectoWorld, spill_id: String) {
     assert_eq!(full.len(), 1, "one live tool result: {full:#?}");
     assert_eq!(
         full[0]["content"],
-        "No spilled output found for id: turn9:stub:0"
+        "No spilled output found for id: turn9:stub:0. Use recall(\"list\") to see the ids \
+         this session has (they look like turn12:bash:0)."
     );
 }
 

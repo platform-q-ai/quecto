@@ -22,9 +22,13 @@ use crate::application::sessions::dto::retained_context::{
 use crate::application::sessions::use_cases::RecallContext;
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::session::SpillEntries;
 use crate::domain::session_identity::SessionIdentity;
 use crate::domain::tool::{ToolDefinition, ToolResult};
+
+mod results;
+#[cfg(test)]
+use results::looks_like_file_path;
+use results::{index_result, not_found};
 
 /// Tool that retrieves previously collapsed tool outputs by their spill ID.
 pub struct RecallTool {
@@ -86,7 +90,7 @@ impl Tool for RecallTool {
         Box::pin(async move {
             let query = match RecallQuery::parse(&id) {
                 Ok(query) => query,
-                Err(RecallError::MalformedId) => return Ok(not_found(&id)),
+                Err(RecallError::MalformedId) => return Ok(not_found(&id).await),
                 Err(RecallError::Store(error)) => return Err(error),
             };
             if matches!(query, RecallQuery::Entry(_)) {
@@ -100,8 +104,8 @@ impl Tool for RecallTool {
                     image_blocks: vec![],
                     delivery_metadata: None,
                 }),
-                Ok(RecallOutcome::Missing(_)) => Ok(not_found(&id)),
-                Err(RecallError::MalformedId) => Ok(not_found(&id)),
+                Ok(RecallOutcome::Missing(_)) => Ok(not_found(&id).await),
+                Err(RecallError::MalformedId) => Ok(not_found(&id).await),
                 Err(RecallError::Store(error)) => Err(error),
             }
         })
@@ -127,42 +131,6 @@ impl RecallTool {
                 );
             }
         }
-    }
-}
-
-/// The result for an id no retained entry carries (or a malformed id).
-fn not_found(id: &str) -> ToolResult {
-    ToolResult {
-        content: format!("No spilled output found for id: {}", id),
-        is_error: true,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    }
-}
-
-/// The result for `recall("list")`: the index, one line per entry in the
-/// use case's order.
-fn index_result(entries: &SpillEntries) -> ToolResult {
-    if entries.is_empty() {
-        return ToolResult {
-            content: "No spilled outputs in this session.".to_string(),
-            is_error: false,
-            image_blocks: vec![],
-            delivery_metadata: None,
-        };
-    }
-    let mut output = format!("Spilled outputs ({} entries):\n", entries.len());
-    for entry in entries.iter() {
-        output.push_str(&format!(
-            "  {} — {} ({} tokens)\n",
-            entry.id, entry.input_preview, entry.tokens
-        ));
-    }
-    ToolResult {
-        content: output,
-        is_error: false,
-        image_blocks: vec![],
-        delivery_metadata: None,
     }
 }
 

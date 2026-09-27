@@ -98,7 +98,11 @@ async fn missing_id_from_empty_arguments_reports_error_for_empty_id() {
     let result = tool.execute(r#"{}"#).await.unwrap();
 
     assert!(result.is_error);
-    assert_eq!(result.content, "No spilled output found for id: ");
+    assert_eq!(
+        result.content,
+        "No spilled output found for id: . Use recall(\"list\") to see the ids this session \
+         has (they look like turn12:bash:0)."
+    );
 }
 
 #[tokio::test]
