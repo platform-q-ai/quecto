@@ -41,6 +41,7 @@ fn ranks_answers_and_stamps() {
     assert!(N.report_rank() > X.report_rank());
     assert!(I.answers() && U.answers() && !N.answers() && !X.answers());
     assert!(I.is_known() && N.is_known() && !U.is_known() && !X.is_known());
+    assert!(I.is_stamped() && N.is_stamped() && X.is_stamped() && !U.is_stamped());
     assert_eq!(TurnOrigin::default(), U);
 }
 
@@ -189,4 +190,102 @@ fn a_transcript_reports_by_each_messages_own_stamp() {
         Some(1)
     );
     assert_eq!(transcript_report_index(&[], is_substantive_reply), None);
+}
+
+/// A spilled reply of `origin` in loop turn `turn`.
+fn spilled(text: &str, origin: TurnOrigin, turn: u32) -> Message {
+    let mut message = stamped(reply(text), origin);
+    message.turn = Some(turn);
+    message.spill_id = Some(format!("turn{turn}:msg:assistant"));
+    message
+}
+
+/// #2246 review finding 2: a harness note between the task and the answer
+/// opens the answer's turn; with the nudge phase after it, the answer is
+/// the report to keep.
+#[test]
+fn a_note_before_the_answer_never_hides_the_report_to_keep() {
+    let task = instruction("task".into());
+    let note = harness_note(
+        "<subagent_notification/>".into(),
+        std::slice::from_ref(&task),
+    );
+    assert_eq!(note.turn_origin, I, "the note lands in the task's phase");
+    let messages = [
+        task,
+        note,
+        spilled("ANSWER", I, 1),
+        progress_nudge("continue".into()),
+        spilled("status", N, 1),
+        progress_nudge("continue".into()),
+    ];
+    assert_eq!(super::report_to_keep(&messages), Some(2));
+}
+
+/// #2246 review finding 2: when no turn is in flight (a resumed transcript
+/// pruned before its next prompt), the latest opener's turn is finished,
+/// so the answer it holds is kept, even when a note opened that turn.
+#[test]
+fn a_finished_latest_turn_keeps_its_report() {
+    let task = instruction("task".into());
+    let note = harness_note(
+        "<subagent_notification/>".into(),
+        std::slice::from_ref(&task),
+    );
+    let messages = [task, note, spilled("ANSWER", I, 1)];
+    assert_eq!(super::report_to_keep(&messages), Some(2));
+    let messages = [instruction("task".into()), spilled("ANSWER", I, 1)];
+    assert_eq!(super::report_to_keep(&messages), Some(1));
+}
+
+/// The turn in flight (its replies not yet stamped) never gives the report
+/// to keep, even when its reply would outrank every finished one.
+#[test]
+fn a_turn_in_flight_never_gives_the_report_to_keep() {
+    let messages = [
+        instruction("task".into()),
+        spilled("status", N, 1),
+        progress_nudge("continue".into()),
+        spilled("in flight", U, 1),
+    ];
+    assert_eq!(super::report_to_keep(&messages), Some(1));
+    // An unmarked opener (a note in a session saved before #2226) cannot say
+    // whether its turn finished: it is taken as in flight.
+    let messages = [Message::user("task"), spilled("LEGACY", U, 1)];
+    assert_eq!(super::report_to_keep(&messages), None);
+}
+
+/// The loop's own feedback inside the turn in flight is stamped when it is
+/// added, but it opens no turn and does not finish the turn: every reply of
+/// that turn stays out of the report to keep.
+#[test]
+fn stamped_feedback_never_finishes_the_turn_in_flight() {
+    let mut feedback = stamped(Message::user("Your reply was cut off."), N);
+    feedback.turn = Some(1);
+    let messages = [
+        instruction("task".into()),
+        spilled("status", N, 1),
+        progress_nudge("continue".into()),
+        spilled("cut off", U, 1),
+        feedback,
+        spilled("in flight", U, 2),
+    ];
+    assert_eq!(super::report_to_keep(&messages), Some(1));
+}
+
+/// Every opener pruned away: no turn is known to be in flight, so the
+/// report among what is left is kept.
+#[test]
+fn a_transcript_without_an_opener_keeps_its_report() {
+    let messages = [spilled("ANSWER", I, 1), spilled("status", N, 2)];
+    assert_eq!(super::report_to_keep(&messages), Some(0));
+}
+
+/// An unmarked opener cannot say whether its turn finished, even when a
+/// newer build stamped what followed it: the turn is taken as in flight.
+#[test]
+fn an_unmarked_opener_is_taken_as_in_flight() {
+    use TurnOrigin::Unrecognised as X;
+    let messages = [Message::user("note"), spilled("reply", X, 1)];
+    assert_eq!(super::report_to_keep(&messages), None);
 }

@@ -7,7 +7,7 @@ use crate::domain::session::PendingMessageReport;
 use crate::domain::turn_origin::{TurnOrigin, report_index};
 use crate::domain::unread_report::{
     ReportedMessage, UnreadSelection, acknowledged_report_index, later_than, needs_backfill,
-    select_unread,
+    select_unread, select_unread_without_report,
 };
 
 pub(crate) fn mint_default_report_receipt() -> String {
@@ -71,6 +71,9 @@ pub(crate) fn plan_default_report(response: &str, delivered: u64) -> DefaultRepo
         return unchanged(response.to_string());
     };
     let report_incomplete = data.get("reportIncomplete").and_then(|v| v.as_bool()) == Some(true);
+    // A first read that paged back as far as it may without finding a
+    // report says so (#2246): it delivers the window it holds instead.
+    let no_report_found = data.get("reportFound").and_then(|v| v.as_bool()) == Some(false);
     let older_unread_skipped = data.get("olderUnreadSkipped").cloned();
     let Some(messages) = data.get_mut("messages").and_then(|v| v.as_array_mut()) else {
         return unchanged(response.to_string());
@@ -82,7 +85,11 @@ pub(crate) fn plan_default_report(response: &str, delivered: u64) -> DefaultRepo
             .collect()
     };
     let reported: Vec<ReportedMessage> = messages.iter().map(observed).collect();
-    match select_unread(&reported, delivered, report_incomplete) {
+    let selection = match no_report_found {
+        true => select_unread_without_report(&reported, delivered, report_incomplete),
+        false => select_unread(&reported, delivered, report_incomplete),
+    };
+    match selection {
         UnreadSelection::PendingPersistence { report } => {
             let report =
                 bounded_report_messages(selected(&report.into_iter().collect::<Vec<_>>()), 0);
@@ -144,6 +151,9 @@ pub(crate) fn plan_default_report(response: &str, delivered: u64) -> DefaultRepo
             // history; it is still readable with explicit pages.
             if let Some(skipped) = older_unread_skipped {
                 data["olderUnreadSkipped"] = skipped;
+            }
+            if no_report_found {
+                data["reportFound"] = serde_json::json!(false);
             }
             let content = envelope.to_string();
             DefaultReportPlan {

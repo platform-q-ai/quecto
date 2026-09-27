@@ -102,9 +102,11 @@ pub(crate) struct CapRead<'a> {
 }
 
 /// What the cap decided: whether the read is complete (acknowledgeable),
-/// and the unread history a later read skipped.
+/// whether a first read found a report to deliver, and the unread history
+/// the read skipped.
 pub(crate) struct CapOutcome {
     pub complete: bool,
+    pub report_found: bool,
     pub skipped: Option<serde_json::Value>,
 }
 
@@ -130,7 +132,10 @@ impl AgentCmdTool {
     /// - a named report a first read failed to read is still owed, so the
     ///   read is incomplete and acknowledges nothing (the next read retries);
     /// - a first read still looking for an answer reports the latest reply
-    ///   it holds;
+    ///   it holds; holding none (a child that never replied, #2246), it
+    ///   delivers the newest window it holds, says no report was found, and
+    ///   names the unread history it skipped, so it is acknowledged and the
+    ///   next read moves on instead of paging back for ever;
     /// - a later read delivers the newest window it holds and the named
     ///   report (read by id when not held whole), naming the unread history
     ///   it skipped; a named report it cannot read leaves it incomplete.
@@ -143,21 +148,29 @@ impl AgentCmdTool {
     ) -> CapOutcome {
         let incomplete = CapOutcome {
             complete: false,
+            report_found: true,
             skipped: None,
         };
         if read.owed.is_some() {
             return incomplete;
         }
-        if read.delivered == 0 {
-            return CapOutcome {
-                complete: messages.iter().any(is_substantive_assistant),
-                skipped: None,
-            };
-        }
         let oldest = messages
             .iter()
             .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
             .min();
+        let skipped = |delivered_report: Option<u64>| {
+            let to = oldest.map_or(read.delivered, |ordinal| ordinal.saturating_sub(1));
+            let ranges = skipped_ranges(read.delivered + 1, to, delivered_report);
+            Some(serde_json::json!({"ranges": ranges, "before": read.before}))
+        };
+        if read.delivered == 0 {
+            let report_found = messages.iter().any(is_substantive_assistant);
+            return CapOutcome {
+                complete: true,
+                report_found,
+                skipped: if report_found { None } else { skipped(None) },
+            };
+        }
         let mut delivered_report = None;
         if let Some(report) = read.named.filter(|r| !holds_whole(messages, &r.id)) {
             match self
@@ -171,11 +184,10 @@ impl AgentCmdTool {
                 Err(_) => return incomplete,
             }
         }
-        let to = oldest.map_or(read.delivered, |ordinal| ordinal.saturating_sub(1));
-        let ranges = skipped_ranges(read.delivered + 1, to, delivered_report);
         CapOutcome {
             complete: true,
-            skipped: Some(serde_json::json!({"ranges": ranges, "before": read.before})),
+            report_found: true,
+            skipped: skipped(delivered_report),
         }
     }
 

@@ -290,3 +290,31 @@ fn later_than_counts_the_messages_after_the_report() {
     assert_eq!(super::later_than(&messages, 1), 2);
     assert_eq!(super::later_than(&messages, 3), 0);
 }
+
+/// #2246 review finding 1: a first read that found no report delivers every
+/// unread message it holds, acknowledgeable, instead of nothing; any other
+/// read selects as a report read does.
+#[test]
+fn a_first_read_without_a_report_delivers_its_window() {
+    use super::select_unread_without_report;
+    let window = [
+        numbered(500, false),
+        numbered(501, false),
+        numbered(1002, false),
+    ];
+    assert_eq!(select_unread(&window, 0, false), UnreadSelection::Unchanged);
+    assert_eq!(
+        select_unread_without_report(&window, 0, false),
+        UnreadSelection::Unread {
+            indices: vec![0, 1, 2],
+            max_ordinal: 1002
+        }
+    );
+    for (delivered, incomplete) in [(501, false), (0, true), (2000, false)] {
+        assert_eq!(
+            select_unread_without_report(&window, delivered, incomplete),
+            select_unread(&window, delivered, incomplete),
+            "delivered {delivered}, incomplete {incomplete}"
+        );
+    }
+}

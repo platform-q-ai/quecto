@@ -454,34 +454,13 @@ async fn a_refused_named_report_that_cannot_page_is_incomplete_and_unacknowledge
 }
 
 /// Review 2 probe P2 (#2226): a historical grandchild's ancestor cannot
-/// route the read ("no live inspection route"); the first read falls back
-/// to paging the persisted transcript and finds the report.
+/// route the read ("no live inspection route"). The first read falls back
+/// to paging, which the same route refuses too, so the report stays owed:
+/// the read is incomplete and acknowledges nothing.
 #[tokio::test]
 async fn an_unroutable_named_report_falls_back_to_paging() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let sock = tmp.path().join("child.sock");
-    let all = fixture();
-    let _seen = serve_child(
-        &sock,
-        vec![(
-            Some("m3"),
-            json!({"messages": all[..2], "hasMoreBefore": false}),
-        )],
-        vec![],
-    );
-    let tool = tool_over(&sock);
-    // A read by id this child cannot route is refused like the probe's.
-    let expanded = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        first_read(&tool, &sock, named_page()),
-    )
-    .await
-    .expect("the mock child answers");
-    let (report, pending) = planned(&expanded, 0);
-    assert_eq!(contents(&report), ["REPORT"]);
-    assert_eq!(pending, Some(2));
-    let tmp2 = tempfile::TempDir::new().unwrap();
-    let dead = tmp2.path().join("dead.sock");
+    let dead = tmp.path().join("dead.sock");
     let _refusing = serve_refusing_child(
         &dead,
         "subagent 'g1' is dead and has no live inspection route: it has ended",
@@ -582,4 +561,83 @@ async fn a_page_holding_its_named_report_is_never_paged_back_from() {
     let (report, pending) = planned(&expanded, 0);
     assert_eq!(contents(&report), ["status two"]);
     assert_eq!(pending, Some(6));
+}
+
+/// A marked page of `n` messages from `first` on, none a substantive reply:
+/// tool calls, their results, and blank replies (#2246 review finding 1).
+fn answerless(first: u64, n: u64) -> Vec<Value> {
+    (first..first + n)
+        .map(|ordinal| match ordinal % 3 {
+            0 => json!({"id":format!("t{ordinal}"),"role":"assistant","content":"",
+                "toolCalls":[{"id":"c","name":"bash","arguments":"{}"}],
+                "ordinal":ordinal,"turnOrigin":TASK}),
+            1 => json!({"id":format!("t{ordinal}"),"role":"tool","content":"ok",
+                "ordinal":ordinal,"turnOrigin":TASK}),
+            _ => json!({"id":format!("t{ordinal}"),"role":"assistant","content":"  ",
+                "ordinal":ordinal,"turnOrigin":TASK}),
+        })
+        .collect()
+}
+
+/// #2246 review finding 1: a marked child whose transcript runs past the
+/// backfill cap without a substantive reply (it crashed mid-way through its
+/// first turn) is not read incomplete forever. The first read completes
+/// with the newest window it holds, says no report was found, and is
+/// acknowledged, so the next read moves on without paging back again.
+#[tokio::test]
+async fn a_first_read_capped_without_an_answer_completes_and_moves_on() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock = tmp.path().join("child.sock");
+    let newest = json!({"before":"p","hasMoreBefore":true,"messages":answerless(1000, 3)});
+    let older = json!({"before":"p","hasMoreBefore":true,"messages":answerless(500, 3)});
+    let seen = serve_child(&sock, vec![(None, newest), (Some("p"), older)], vec![]);
+    let registry = new_registry();
+    let mut entry = SubagentEntry::new(sock.clone(), 0);
+    entry.persisted_liveness = crate::domain::session::SubagentLiveness::Live;
+    registry.lock().unwrap().insert("w1".to_string(), entry);
+    let tool = AgentCmdTool::new(registry.clone());
+    let args = r#"{"agent_id":"w1","command":"get_messages"}"#;
+    let read = || async {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            crate::application::tools::ports::Tool::execute(&tool, args),
+        )
+        .await
+        .expect("the mock child answers")
+        .unwrap();
+        assert!(!result.is_error, "{}", result.content);
+        crate::application::tools::ports::Tool::result_delivered(&tool, args, &result);
+        serde_json::from_str::<Value>(&result.content).unwrap()
+    };
+
+    let first = read().await;
+    assert_eq!(seen.lock().unwrap().len(), 17, "the cap bounds the paging");
+    assert!(first["data"].get("reportIncomplete").is_none(), "{first}");
+    assert_eq!(first["data"]["reportFound"], false, "{first}");
+    let ordinals: Vec<u64> = first["data"]["messages"]
+        .as_array()
+        .expect("the window is delivered")
+        .iter()
+        .filter_map(|m| m["ordinal"].as_u64())
+        .collect();
+    assert_eq!(
+        ordinals.iter().max(),
+        Some(&1002),
+        "the newest window: {first}"
+    );
+    assert_eq!(
+        first["data"]["olderUnreadSkipped"],
+        json!({"ranges": [{"fromOrdinal": 1, "toOrdinal": 499}], "before": "p"}),
+        "{first}"
+    );
+    assert_eq!(
+        registry.lock().unwrap()["w1"].delivered_message_ordinal,
+        Some(1002),
+        "what it delivered is acknowledged"
+    );
+
+    seen.lock().unwrap().clear();
+    let second = read().await;
+    assert_eq!(seen.lock().unwrap().len(), 1, "no paging back: {second}");
+    assert_eq!(second["data"], json!({"unchanged": true}), "{second}");
 }

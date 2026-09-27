@@ -549,12 +549,16 @@ impl serde::Serialize for MessageView<'_> {
 /// The report a history page names (#2226): the message's id, ordinal,
 /// turn origin and text length, so a supervisor reads the report by id
 /// (`get_message`) without paging back to it. Small and bounded: a page
-/// reserves [`uds_session_history::REPORT_HINT_RESERVE_BYTES`] for it.
+/// reserves [`uds_session_history::REPORT_HINT_RESERVE_BYTES`] for it. A
+/// report never stamped carries no `turnOrigin`, like a message (#2246).
 pub(crate) fn report_hint_json(
     report: &crate::domain::turn_origin::ReportRef,
 ) -> serde_json::Value {
-    let hint = serde_json::json!({"id": report.id, "ordinal": report.ordinal,
-        "turnOrigin": crate::infrastructure::turn_origin_names::origin_name(report.origin), "contentLength": report.content_length});
+    let mut hint = serde_json::json!({"id": report.id, "ordinal": report.ordinal,
+        "contentLength": report.content_length});
+    if let Some(origin) = crate::infrastructure::turn_origin_names::origin_name(report.origin) {
+        hint["turnOrigin"] = serde_json::json!(origin);
+    }
     debug_assert!(hint.to_string().len() < uds_session_history::REPORT_HINT_RESERVE_BYTES);
     hint
 }

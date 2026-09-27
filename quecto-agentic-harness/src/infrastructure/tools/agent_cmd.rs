@@ -323,6 +323,7 @@ impl AgentCmdTool {
             _ => false,
         };
         let mut older_unread_skipped = None;
+        let mut report_found = true;
         // Only a page that says older history exists is paged back from
         // (#2218); one without it holds the whole transcript.
         while !named
@@ -347,6 +348,7 @@ impl AgentCmdTool {
                     )
                     .await;
                 backfill_complete = cap.complete;
+                report_found = cap.report_found;
                 older_unread_skipped = cap.skipped;
                 break;
             }
@@ -401,6 +403,9 @@ impl AgentCmdTool {
             }
             if let Some(skipped) = older_unread_skipped {
                 data["olderUnreadSkipped"] = skipped;
+            }
+            if !report_found {
+                data["reportFound"] = serde_json::json!(false);
             }
         }
         envelope.to_string()

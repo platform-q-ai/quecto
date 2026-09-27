@@ -57,6 +57,37 @@ pub fn select_unread(
     delivered: u64,
     report_incomplete: bool,
 ) -> UnreadSelection {
+    select(messages, delivered, report_incomplete, FirstRead::Report)
+}
+
+/// What a first read (`delivered == 0`) delivers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FirstRead {
+    /// The report alone ([`report_among`]).
+    Report,
+    /// Every unread message: the reader found no report to deliver.
+    Window,
+}
+
+/// [`select_unread`] for a first read that looked for a report as far back
+/// as it may page and found none (#2246): every unread message it holds is
+/// delivered and acknowledged like a later read's, so the next read moves on
+/// instead of paging back for an answer that is not there. Any other read
+/// selects as [`select_unread`] does.
+pub fn select_unread_without_report(
+    messages: &[ReportedMessage],
+    delivered: u64,
+    report_incomplete: bool,
+) -> UnreadSelection {
+    select(messages, delivered, report_incomplete, FirstRead::Window)
+}
+
+fn select(
+    messages: &[ReportedMessage],
+    delivered: u64,
+    report_incomplete: bool,
+    first_read: FirstRead,
+) -> UnreadSelection {
     if messages.iter().any(|m| m.ordinal.is_none()) {
         // Only what the supervisor has not read yet: a live nudge turn must
         // not bring back an answer it already acknowledged (#2226).
@@ -85,10 +116,9 @@ pub fn select_unread(
     if observed_max < delivered || unread.is_empty() {
         return UnreadSelection::Unchanged;
     }
-    let indices = if delivered == 0 {
-        report_among(messages, &unread).into_iter().collect()
-    } else {
-        unread
+    let indices = match (delivered, first_read) {
+        (0, FirstRead::Report) => report_among(messages, &unread).into_iter().collect(),
+        (0, FirstRead::Window) | (1.., _) => unread,
     };
     if indices.is_empty() {
         return UnreadSelection::Unchanged;

@@ -436,3 +436,17 @@ fn the_named_report_is_small_and_fits_the_page_budget() {
     assert_eq!(page["report"]["contentLength"], HISTORY_PAGE_JSON_BUDGET);
     assert!(serde_json::to_vec(&page).unwrap().len() <= HISTORY_PAGE_JSON_BUDGET);
 }
+
+/// #2246 review finding 3: a report never stamped (saved before #2226)
+/// carries no `turnOrigin` at all, like a message never stamped, never a
+/// `null` one.
+#[test]
+fn an_unmarked_report_names_no_turn_origin() {
+    let messages = vec![Message::user("task"), Message::assistant("LEGACY", vec![])];
+    let page = messages_page_json(&messages, 2, None);
+    let report = page["report"].as_object().expect("the page names a report");
+    assert!(!report.contains_key("turnOrigin"), "{page}");
+    assert_eq!(page["report"]["contentLength"], 6);
+    let reply = &page_messages(&page)[1];
+    assert!(reply.get("turnOrigin").is_none(), "{page}");
+}

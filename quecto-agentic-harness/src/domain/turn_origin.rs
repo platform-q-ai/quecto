@@ -71,6 +71,15 @@ impl TurnOrigin {
     pub fn is_known(self) -> bool {
         matches!(self, Self::Instruction | Self::ProgressNudge)
     }
+
+    /// Whether the message was stamped at all: by this build's rules or a
+    /// newer build's.
+    pub fn is_stamped(self) -> bool {
+        matches!(
+            self,
+            Self::Instruction | Self::ProgressNudge | Self::Unrecognised
+        )
+    }
 }
 
 /// A user message of `origin` that opens a turn.
@@ -153,23 +162,50 @@ pub fn report_index(
 }
 
 /// The report a context ceiling keeps from removal (#2226): the report of
-/// the finished turns (those before the latest prompt), and only when it can
-/// be stubbed and recalled: when it was spilled (a stub always was: pruning
-/// stubs only spilled messages). A report that was never spilled can only be
-/// removed, and keeping it could hold the context over its ceiling for good,
-/// so it is not kept.
+/// the finished turns, and only when it can be stubbed and recalled: when
+/// it was spilled (a stub always was: pruning stubs only spilled messages).
+/// A report that was never spilled can only be removed, and keeping it
+/// could hold the context over its ceiling for good, so it is not kept.
+///
+/// The turn in flight is left out (see [`turn_in_flight_start`]): its replies
+/// are not yet stamped, so an unmarked one would outrank a finished nudge
+/// reply. A harness note opens a turn like any other opener, so a note
+/// between the task and the answer never hides the answer (#2246).
 ///
 /// Limitation: a session saved before #2226 marks nothing, so its answer
 /// and the nudge replies after it rank alike, and the latest of them is
 /// kept (no effort is spent on such sessions).
 pub fn report_to_keep(messages: &[Message]) -> Option<usize> {
-    let finished = messages
-        .iter()
-        .rposition(|m| m.role == Role::User && m.turn.is_none())
-        .unwrap_or(0);
+    let finished = turn_in_flight_start(messages);
     let report = transcript_report_index(&messages[..finished], is_substantive_reply)?;
     debug_assert!(report < finished);
     messages[report].spill_id.is_some().then_some(report)
+}
+
+/// A message that opens a turn: a user message the loop did not append
+/// inside a turn (a prompt, a task, a nudge, a note, a steer).
+fn opens_turn(message: &Message) -> bool {
+    message.role == Role::User && message.turn.is_none()
+}
+
+/// Where the turn in flight starts: at the latest opener while its turn is
+/// still running, the end of `messages` when every turn is finished.
+///
+/// A turn is finished once [`stamp_turn`] stamped it at its end: its opener
+/// carries a stamp and so does every message after it. An opener with
+/// nothing after it has produced no reply yet, so nothing is left out. An
+/// unmarked opener (a note in a session saved before #2226) cannot say, so
+/// its turn is taken to be running. A resumed transcript pruned before its
+/// next prompt is thus finished throughout (#2246).
+fn turn_in_flight_start(messages: &[Message]) -> usize {
+    let Some(opener) = messages.iter().rposition(opens_turn) else {
+        return messages.len();
+    };
+    let finished = messages[opener].turn_origin.is_stamped()
+        && messages[opener + 1..]
+            .iter()
+            .all(|message| message.turn_origin.is_stamped());
+    if finished { messages.len() } else { opener }
 }
 
 /// What a page says of the report it names: never its text (#2226).
