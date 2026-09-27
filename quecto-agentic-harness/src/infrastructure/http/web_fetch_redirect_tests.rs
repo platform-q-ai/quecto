@@ -28,7 +28,8 @@ async fn scripted_peer(
     let task = tokio::spawn({
         let seen = seen.clone();
         async move {
-            for index in 0.. {
+            let mut index = 0_usize;
+            loop {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut buffer = [0; 4096];
                 let read = socket.read(&mut buffer).await.unwrap_or(0);
@@ -38,6 +39,7 @@ async fn scripted_peer(
                 tokio::time::sleep(delay).await;
                 let response = &responses[index.min(responses.len() - 1)];
                 let _ = socket.write_all(response.as_bytes()).await;
+                index += 1;
             }
         }
     });
