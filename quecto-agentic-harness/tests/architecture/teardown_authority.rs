@@ -425,6 +425,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/subagents/use_cases/harness_shutdown.rs",
     "src/application/subagents/use_cases/terminate_delegated_agent.rs",
     "src/application/subagents/use_cases/observe_owned_child_exit.rs",
+    "src/application/subagents/use_cases/inspect_ended_child.rs",
     "src/application/subagents/use_cases/compensate_failed_launch.rs",
     "src/application/subagents/use_cases/select_container_config.rs",
     "src/application/environments/ports.rs",

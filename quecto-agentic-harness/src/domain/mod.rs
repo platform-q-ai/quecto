@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod audit;
 pub mod catalogue;
+pub mod child_end;
 pub mod child_session;
 pub mod constants;
 pub mod context_calibration;

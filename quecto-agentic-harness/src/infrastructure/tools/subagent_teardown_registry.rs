@@ -58,7 +58,15 @@ pub struct RegistryDelegatedAgents {
     /// Composition's builder of the final-member environment cleanup
     /// (#1939) a compensation runs for each membership it removes.
     finalizer: super::subagent_cleanup::MemberFinalizer,
+    /// What a natural exit's note says about why the child ended (#2192):
+    /// the crash record it left. `None`, the note names only the
+    /// observation.
+    ended: Option<std::sync::Arc<crate::application::subagents::use_cases::InspectEndedChild>>,
 }
+
+/// What an exit note adds when the child's transcript can be read.
+pub const TRANSCRIPT_STAYS_READABLE: &str =
+    "Its transcript up to the end stays readable with agent_cmd get_messages";
 
 impl RegistryDelegatedAgents {
     pub fn new(
@@ -73,6 +81,60 @@ impl RegistryDelegatedAgents {
             notify_tx,
             compensation_wait: DEFAULT_COMPENSATION_WAIT,
             finalizer,
+            ended: None,
+        }
+    }
+
+    /// Read why a child ended on its own for the note its exit posts.
+    pub fn with_ended_child(
+        mut self,
+        ended: Option<std::sync::Arc<crate::application::subagents::use_cases::InspectEndedChild>>,
+    ) -> Self {
+        self.ended = ended;
+        self
+    }
+
+    /// How the target ended, for its natural-exit note, in the words every
+    /// other view of its end uses: its exit status (what the reaper
+    /// published, for a child this harness held) and the crash record it
+    /// left. `None` when nothing beyond the end is known.
+    async fn end_detail(
+        &self,
+        target: Option<&SubagentEntry>,
+        observation: &str,
+    ) -> Option<String> {
+        let (ended, target) = (self.ended.as_ref()?, target?);
+        let exit = target
+            .exit_signal_tx
+            .as_ref()
+            .and_then(|tx| tx.borrow().clone());
+        let crash = ended
+            .crash(
+                &target.agent_uuid,
+                target.origin,
+                super::agent_cmd_ended::vouched_pid(target),
+            )
+            .await;
+        let end = super::agent_cmd_ended::child_end_of(target, exit.as_ref(), crash);
+        // Nothing observed and nothing left: the note's own wording says so.
+        // How the end was observed stays in the note (#2192 review), as it
+        // does when nothing else is known.
+        let reason = match (end.kind(), &end.crash) {
+            (crate::domain::child_end::EndKind::Unknown, None) => return None,
+            _ => format!(
+                "{} ({})",
+                end.reason(),
+                crate::domain::child_end::shown(observation, 64)
+            ),
+        };
+        // The transcript is offered only when it can be read (#2192
+        // review): a child this harness launched, whose store is this one's.
+        match ended
+            .has_transcript(&target.agent_uuid, target.origin)
+            .await
+        {
+            true => Some(format!("{reason}. {TRANSCRIPT_STAYS_READABLE}")),
+            false => Some(reason),
         }
     }
 
@@ -459,6 +521,20 @@ impl TeardownCompensation for RegistryDelegatedAgents {
             )
             .await;
             let kind = exit_kind(cause);
+            // Why a child ended on its own, read before the target's exit
+            // signal is replaced below: what the reaper published for a
+            // child this harness held, and the crash record it left (#2192).
+            let detail = match cause {
+                TerminationCause::Exit(_) => {
+                    let target = removed
+                        .iter()
+                        .chain(&already_ended)
+                        .find(|(id, _)| id == key)
+                        .map(|(_, entry)| entry);
+                    self.end_detail(target, kind.to_wire_str()).await
+                }
+                _ => None,
+            };
             for (id, entry) in &removed {
                 if let Some(ref handle) = entry.monitor_handle {
                     handle.abort();
@@ -490,6 +566,7 @@ impl TeardownCompensation for RegistryDelegatedAgents {
                         SubagentNotification::Exited {
                             agent_id: label,
                             reason: Some(kind.to_wire_str().to_string()),
+                            detail,
                         },
                         agent_uuid,
                     ));
@@ -542,6 +619,9 @@ impl TeardownCompensation for RegistryDelegatedAgents {
     }
 }
 
+#[cfg(test)]
+#[path = "subagent_teardown_registry_2192_tests.rs"]
+mod end_detail_tests;
 #[cfg(test)]
 #[path = "subagent_teardown_registry_tests.rs"]
 mod tests;

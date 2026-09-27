@@ -325,3 +325,6 @@ impl From<ThinkingBlockRecord> for ThinkingBlock {
         }
     }
 }
+
+#[path = "session_store_bounded.rs"]
+pub(in crate::infrastructure::persistence) mod session_store_bounded;

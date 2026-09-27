@@ -75,6 +75,13 @@ impl AgentUuid {
     pub fn into_string(self) -> String {
         self.0
     }
+
+    /// Whether this is a uuid in exactly the form [`Self::mint`] makes
+    /// (lowercase, hyphenated): the only form a child's session may be
+    /// named by when another agent reports the child (#2192 review).
+    pub fn is_canonical(&self) -> bool {
+        uuid::Uuid::try_parse(&self.0).is_ok_and(|parsed| parsed.hyphenated().to_string() == self.0)
+    }
 }
 
 impl From<String> for AgentUuid {

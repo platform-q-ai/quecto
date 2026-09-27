@@ -374,6 +374,7 @@ async fn acking_child(
         registry.clone(),
         None,
         None,
+        None,
     )
     .observe_exit;
     let monitor = Arc::new(spawn_monitor_task(

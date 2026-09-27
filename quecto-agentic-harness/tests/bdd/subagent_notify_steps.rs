@@ -37,6 +37,7 @@ fn drive_monitor_with_lines(
             registry.clone(),
             None,
             Some(tx.clone()),
+            None,
         )
         .observe_exit;
         let handle = spawn_monitor_task(
@@ -89,6 +90,7 @@ fn given_exited_notification(world: &mut QuectoWorld, agent_id: String) {
     let notif = SubagentNotification::Exited {
         agent_id,
         reason: None,
+        detail: None,
     };
     world.notify_message = Some(notif.to_message());
 }
@@ -109,6 +111,7 @@ fn given_channel_with_pending(world: &mut QuectoWorld, count: i32) {
             SubagentNotification::Exited {
                 agent_id: format!("bot-{}", i),
                 reason: None,
+                detail: None,
             },
         ));
     }
@@ -210,6 +213,7 @@ fn then_channel_bounded(world: &mut QuectoWorld) {
         SubagentNotification::Exited {
             agent_id: "overflow".into(),
             reason: None,
+            detail: None,
         },
     ));
     assert!(result.is_err(), "expected channel full, but send succeeded");

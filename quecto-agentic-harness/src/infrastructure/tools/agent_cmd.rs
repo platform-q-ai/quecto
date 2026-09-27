@@ -40,6 +40,9 @@ pub struct AgentCmdTool {
     /// unavailable: this tool composes no use case.
     container_config_roster:
         Option<std::sync::Arc<crate::application::environments::use_cases::ListContainerConfigs>>,
+    /// What an ended child left (#2192), installed by composition: served
+    /// for `get_state` / `get_messages` once the child can no longer answer.
+    ended: super::agent_cmd_ended::EndedChildSlot,
 }
 
 /// Where the composed `agent_cmd kill` owner lives (#1936): filled once by
@@ -75,7 +78,14 @@ impl AgentCmdTool {
             kill: KillToolSlot::default(),
             environments: super::agent_cmd_containers::EnvironmentControlSlot::default(),
             container_config_roster: None,
+            ended: super::agent_cmd_ended::EndedChildSlot::default(),
         }
+    }
+
+    /// Read the ended-child inspection from a slot composition fills later.
+    pub fn with_ended_child_slot(mut self, slot: super::agent_cmd_ended::EndedChildSlot) -> Self {
+        self.ended = slot;
+        self
     }
 
     /// Attach composition's container-config listing (#2024 S4c).
@@ -272,7 +282,7 @@ impl AgentCmdTool {
 use super::agent_cmd_parse::SUPPORTED_COMMANDS;
 use super::agent_cmd_report::{
     DeliveryDecision, PageReport, holds_whole, needs_default_report_backfill, page_report,
-    plan_default_report, plan_delivery,
+    plan_delivery,
 };
 use full_report::CapRead;
 
@@ -432,20 +442,7 @@ impl AgentCmdTool {
         agent_id: &str,
         response: &str,
     ) -> (String, Option<String>) {
-        let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-        let Ok(key) = super::subagent_registry::resolve_registry_key(&entries, agent_id) else {
-            return (response.to_string(), None);
-        };
-        let Some(entry) = entries.get_mut(&key) else {
-            return (response.to_string(), None);
-        };
-        let plan = plan_default_report(response, entry.delivered_message_ordinal.unwrap_or(0));
-        let receipt = plan.pending.as_ref().map(|pending| pending.receipt.clone());
-        if let Some(pending) = plan.pending {
-            entry.pending_message_ordinal = Some(pending.ordinal);
-            entry.pending_message_reports.push_back(pending);
-        }
-        (plan.content, receipt)
+        super::agent_cmd_report::shape_default_report(&self.registry, agent_id, response)
     }
 }
 
@@ -468,7 +465,8 @@ impl Tool for AgentCmdTool {
             return;
         };
         let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-        let Ok(key) = super::subagent_registry::resolve_registry_key(&entries, agent_id) else {
+        let receipt = result.delivery_metadata.as_deref();
+        let Some(key) = super::agent_cmd_report::report_row_key(&entries, agent_id, receipt) else {
             return;
         };
         let Some(entry) = entries.get_mut(&key) else {
@@ -601,6 +599,15 @@ impl Tool for AgentCmdTool {
             let route = match route {
                 Ok(p) => p,
                 Err(e) => {
+                    // An ended child answers from what it left (#2192).
+                    let arguments = parsed.as_ref().ok().cloned().unwrap_or_default();
+                    let ended = super::agent_cmd_ended::answer_if_ended(
+                        (&self.registry, self.ended.get()),
+                        (&agent_id, &command, &arguments),
+                    );
+                    if let Some(result) = ended.await {
+                        return Ok(result);
+                    }
                     return Ok(ToolResult {
                         content: format!("agent_cmd error: {e}"),
                         is_error: true,

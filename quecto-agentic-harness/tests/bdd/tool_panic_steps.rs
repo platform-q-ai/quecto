@@ -99,6 +99,18 @@ fn start_provider() -> String {
     server.uri()
 }
 
+impl QuectoWorld {
+    /// The tool panic workspace's root directory.
+    pub fn tool_panic_root(&self) -> PathBuf {
+        self.tool_panic
+            .as_ref()
+            .expect("a tool panic workspace")
+            .root
+            .path()
+            .to_path_buf()
+    }
+}
+
 #[given("a tool panic workspace")]
 fn workspace(world: &mut QuectoWorld) {
     // The agents here abort on purpose: they must run without core dumps.

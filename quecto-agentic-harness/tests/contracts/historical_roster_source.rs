@@ -33,6 +33,7 @@ fn every_entry_becomes_one_history_row_with_the_default_reason() {
             "/tmp/w.sock".into(),
             4242,
         );
+        worker.origin = quecto::domain::child_end::ChildOrigin::Launched;
         worker.persisted_liveness = SubagentLiveness::Detached;
         worker.parent_id = Some("parent".into());
         worker.read_only = true;
@@ -52,6 +53,25 @@ fn every_entry_becomes_one_history_row_with_the_default_reason() {
     assert!(row.read_only);
     assert_eq!(row.delivered_message_ordinal, Some(3));
     assert!(row.status.is_some());
+}
+
+/// #2192 review: a row a child reported records no session: its uuid is
+/// the reporter's word, and could name any session.
+#[test]
+fn a_reported_row_records_no_session() {
+    let registry = new_registry();
+    let mut reported = SubagentEntry::with_identity(
+        AgentUuid::from("secret-plan".to_string()),
+        "secret-plan".to_string(),
+        "/tmp/s.sock".into(),
+        0,
+    );
+    reported.origin = quecto::domain::child_end::ChildOrigin::Reported;
+    registry
+        .lock()
+        .unwrap()
+        .insert("secret-plan".into(), reported);
+    assert_eq!(under_test(registry).roster_rows()[0].session_key, "");
 }
 
 #[test]

@@ -426,8 +426,13 @@ async fn run_control_receipt_decodes_the_lost_coordinator_blocker() {
 fn test_observer(
     registry: &SubagentRegistry,
 ) -> std::sync::Arc<crate::application::subagents::use_cases::ObserveOwnedChildExit> {
-    crate::composition::subagent_lifecycle::build_lifecycle_use_cases(registry.clone(), None, None)
-        .observe_exit
+    crate::composition::subagent_lifecycle::build_lifecycle_use_cases(
+        registry.clone(),
+        None,
+        None,
+        None,
+    )
+    .observe_exit
 }
 
 async fn exit_and_reason(

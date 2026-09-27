@@ -25,3 +25,17 @@ fn a_childs_session_name_is_its_uuid_and_names_its_identity() {
         SessionIdentity::named_cli(child_session_name(&child)).unwrap()
     );
 }
+
+/// #2192 review round 5 (M2): only a launched child's roster row names its
+/// session.
+#[test]
+fn only_a_launched_childs_roster_row_names_its_session() {
+    use crate::domain::child_end::ChildOrigin;
+    let child = AgentUuid::new("secret-plan");
+    assert_eq!(
+        roster_session_key(&child, ChildOrigin::Launched),
+        "cli:secret-plan"
+    );
+    assert_eq!(roster_session_key(&child, ChildOrigin::Reported), "");
+    assert_eq!(roster_session_key(&child, ChildOrigin::Unverified), "");
+}

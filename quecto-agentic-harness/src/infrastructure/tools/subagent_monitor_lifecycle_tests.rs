@@ -19,6 +19,7 @@ async fn monitor_connect_failure_marks_socket_readiness_failure() {
         registry.clone(),
         None,
         Some(tx.clone()),
+        None,
     )
     .observe_exit;
     let handle = spawn_monitor_task(MonitorSpec {

@@ -371,6 +371,7 @@ pub(crate) fn build_tool_runtime(
             harness_lifecycle: agent_control.harness_lifecycle.clone(),
             environment_registry: agent_control.environment_registry.clone(),
             slots: agent_control.termination_slots.clone(),
+            base_dir: base_dir.to_path_buf(),
         });
         debug_assert!(
             installed,

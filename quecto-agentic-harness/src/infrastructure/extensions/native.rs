@@ -285,6 +285,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
     let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry.clone())
         .with_kill_slot(termination_slots.kill.clone())
         .with_environment_control_slot(termination_slots.environments.clone())
+        .with_ended_child_slot(termination_slots.ended.clone())
         .with_container_config_roster(deps.container_config_roster);
 
     AgentControlToolBuild {

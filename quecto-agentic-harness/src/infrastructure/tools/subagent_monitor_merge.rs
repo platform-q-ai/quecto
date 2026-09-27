@@ -5,10 +5,15 @@
 
 use std::time::Instant;
 
+use crate::domain::child_end::ChildOrigin;
 use crate::domain::session::SubagentLiveness;
 
 use super::subagent_lifecycle::SubagentLifecycleState;
-use super::subagent_registry::{SubagentEntry, SubagentRegistry, SubagentStatus};
+use super::subagent_monitor::MAX_STORED_STRING;
+use super::subagent_monitor_truncate::truncate_string;
+use super::subagent_registry::{
+    SubagentEntry, SubagentRegistry, SubagentStatus, validate_agent_id_format,
+};
 
 /// Maximum number of descendant entries accepted from a single child's
 /// `subagent_state_changed` event (#815 security review). A child sits inside
@@ -122,11 +127,44 @@ fn merge_descendants(
                     .map(str::to_string)
             })
             .unwrap_or_else(|| crate::domain::ids::AgentUuid::mint().into_string());
-        let display_name = if display_label.is_empty() {
-            registry_key.clone()
-        } else {
-            display_label.to_string()
+        // The key and label are the child's words (#2192): only what the
+        // agent-id grammar admits names a row, so no label a parent is
+        // shown can carry a line of its own.
+        match validate_agent_id_format(&registry_key) {
+            Ok(()) => {}
+            Err(why) => {
+                tracing::warn!(%why, "monitor: skipping a descendant whose key is not an agent id");
+                continue;
+            }
+        }
+        // A label a launched row already answers to (its key or label) is
+        // never a reported row's (#2192 review): it is named by its key.
+        let display_name = match (
+            validate_agent_id_format(display_label),
+            names_a_launched_row(&guard, display_label),
+        ) {
+            (Ok(()), false) => display_label.to_string(),
+            (Ok(()), true) | (Err(_), _) => registry_key.clone(),
         };
+        // A child's report only ever describes rows reported to this
+        // harness (#2192 review): a row this harness launched itself is its
+        // own, and a child naming it as a descendant — to overwrite its pid,
+        // parent or label — changes nothing; nor can a report name the
+        // reporter, an ancestor of it, or close a cycle of parents.
+        let reported_parent = d
+            .get("parentId")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(forwarding_child_id);
+        if let Some(why) = refusal(&guard, &registry_key, reported_parent, forwarding_child_id) {
+            tracing::warn!(
+                key = %registry_key,
+                reporter = forwarding_child_id,
+                why,
+                "monitor: a reported descendant was refused"
+            );
+            continue;
+        }
         pushed_ids.insert(registry_key.clone());
         let socket_path = if forwarded_script_descendant_socket_is_ancestor_local(d)
             || (forwarding_child_crosses_environment
@@ -155,6 +193,12 @@ fn merge_descendants(
                 REPORTED_DESCENDANT_PID,
             )
         });
+        assert_ne!(
+            entry.origin,
+            ChildOrigin::Launched,
+            "a launched row is never merged over"
+        );
+        entry.origin = ChildOrigin::Reported;
         // Keep identity fields authoritative from the child's snapshot.
         entry.agent_uuid = crate::domain::ids::AgentUuid::new(registry_key.clone());
         entry.display_name = display_name;
@@ -167,14 +211,15 @@ fn merge_descendants(
             entry.status = status;
             entry.persisted_liveness = SubagentLiveness::Live;
         }
+        // Capped as a direct child's are (#2192).
         entry.last_tool = d
             .get("lastTool")
             .and_then(|v| v.as_str())
-            .map(str::to_string);
+            .map(|tool| truncate_string(tool, MAX_STORED_STRING));
         entry.last_error = d
             .get("lastError")
             .and_then(|v| v.as_str())
-            .map(str::to_string);
+            .map(|error| truncate_string(error, MAX_STORED_STRING));
         entry.pid = REPORTED_DESCENDANT_PID;
         // #1936: a reported generation makes the descendant addressable for
         // selected termination through its direct ancestor. A row this
@@ -246,6 +291,10 @@ fn forwarded_script_descendant_socket_is_ancestor_local(d: &serde_json::Value) -
 /// Collect the ids of every transitive descendant of `root` (by `parent_id`) in
 /// the registry, NOT including `root` itself. Used to scope the forwarded
 /// full-replace prune to one child's sub-tree (#831).
+///
+/// Each id is visited once (#2192 review H1): parents a child reported can
+/// form a cycle, and a walk without a visited set never ends — under the
+/// registry lock. The answer is bounded by the registry's size.
 fn transitive_descendants(
     guard: &std::collections::HashMap<String, SubagentEntry>,
     root: &str,
@@ -256,15 +305,68 @@ fn transitive_descendants(
             children.entry(parent.as_str()).or_default().push(id);
         }
     }
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::from([root]);
     let mut out = Vec::new();
     let mut frontier: Vec<&str> = children.get(root).cloned().unwrap_or_default();
     while let Some(id) = frontier.pop() {
-        out.push(id.to_string());
-        if let Some(kids) = children.get(id) {
-            frontier.extend(kids.iter().copied());
+        if seen.insert(id) {
+            out.push(id.to_string());
+            frontier.extend(children.get(id).into_iter().flatten().copied());
         }
     }
+    assert!(out.len() <= guard.len(), "each row is visited once");
     out
+}
+
+/// `start` and its ancestors by `parent_id`, ending at the first id with
+/// no row (this harness's own id, for a direct child) or at a repeat:
+/// each id once, so a cycle ends the walk.
+fn ancestry<'a>(
+    guard: &'a std::collections::HashMap<String, SubagentEntry>,
+    start: &'a str,
+) -> std::collections::HashSet<&'a str> {
+    let mut chain = std::collections::HashSet::new();
+    let mut next = Some(start);
+    while let Some(id) = next {
+        next = match chain.insert(id) {
+            true => guard.get(id).and_then(|entry| entry.parent_id.as_deref()),
+            false => None,
+        };
+    }
+    chain
+}
+
+/// Whether `name` is a launched row's key or label.
+fn names_a_launched_row(
+    guard: &std::collections::HashMap<String, SubagentEntry>,
+    name: &str,
+) -> bool {
+    guard.iter().any(|(row_key, entry)| {
+        entry.origin == ChildOrigin::Launched
+            && (row_key == name || entry.effective_display_name(row_key) == name)
+    })
+}
+
+/// Why a child's report of `key` (under `parent`) is refused, if it is
+/// (#2192 review): it names a row this harness launched, by key or label;
+/// it names the reporter, or an ancestor of it (this harness's own id
+/// included); or it would make `key` its own ancestor.
+fn refusal(
+    guard: &std::collections::HashMap<String, SubagentEntry>,
+    key: &str,
+    parent: &str,
+    reporter: &str,
+) -> Option<&'static str> {
+    match (
+        names_a_launched_row(guard, key),
+        ancestry(guard, reporter).contains(key),
+        ancestry(guard, parent).contains(key),
+    ) {
+        (true, _, _) => Some("it names a sub-agent this harness launched"),
+        (false, true, _) => Some("it names the reporter or one of its ancestors"),
+        (false, false, true) => Some("it would be its own ancestor"),
+        (false, false, false) => None,
+    }
 }
 
 /// Line-based wrapper around [`merge_and_forward_state_changed`]: cheap
@@ -285,6 +387,12 @@ pub fn forward_child_state_changed(
 #[path = "subagent_monitor_merge_cov_tests.rs"]
 mod cov_tests;
 
+#[cfg(test)]
+#[path = "subagent_monitor_merge_guard_tests.rs"]
+mod guard_tests;
+#[cfg(test)]
+#[path = "subagent_monitor_merge_label_tests.rs"]
+mod label_tests;
 #[cfg(test)]
 #[path = "subagent_monitor_merge_pid_tests.rs"]
 mod pid_tests;

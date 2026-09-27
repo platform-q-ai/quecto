@@ -211,6 +211,7 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
         environment_registry: quecto::domain::environment_registry::EnvironmentRegistry::new(),
         slots: Default::default(),
+        base_dir: std::env::temp_dir(),
     });
 
     let args = serde_json::json!({
@@ -363,6 +364,7 @@ async fn killing_a_busy_child_is_graceful_and_prompt() {
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
         environment_registry: quecto::domain::environment_registry::EnvironmentRegistry::new(),
         slots: Default::default(),
+        base_dir: std::env::temp_dir(),
     });
     let args = serde_json::json!({"agent_id": "aye", "task": "SPAWN_TWO", "config": config});
     let result = tokio::time::timeout(READY_TIMEOUT, spawn.execute(&args.to_string()))
@@ -511,6 +513,7 @@ async fn a_nested_child_that_acknowledges_but_never_exits_is_ended_by_its_owners
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
         environment_registry: quecto::domain::environment_registry::EnvironmentRegistry::new(),
         slots: Default::default(),
+        base_dir: std::env::temp_dir(),
     });
     let args = serde_json::json!({"agent_id": "aye", "task": "SPAWN_TWO", "config": config});
     let result = tokio::time::timeout(READY_TIMEOUT, spawn.execute(&args.to_string()))

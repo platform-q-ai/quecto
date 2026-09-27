@@ -721,6 +721,7 @@ fn when_subagent_completes_turn_on_parent(world: &mut QuectoWorld) {
             registry.clone(),
             Some(tx.clone()),
             None,
+            None,
         )
         .observe_exit;
         let monitor = quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task(

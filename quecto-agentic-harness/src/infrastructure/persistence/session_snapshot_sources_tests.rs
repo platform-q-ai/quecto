@@ -69,6 +69,7 @@ fn the_roster_source_maps_rows_as_history_without_pid_or_socket() {
             "/tmp/b.sock".into(),
             20,
         );
+        b.origin = crate::domain::child_end::ChildOrigin::Launched;
         b.persisted_liveness = SubagentLiveness::Dead;
         b.read_only = true;
         b.parent_id = Some("root".to_string());
@@ -135,6 +136,28 @@ fn a_uuid_that_names_no_session_is_persisted_without_one() {
             0,
         ),
     );
+    registry.lock().unwrap().get_mut("odd").unwrap().origin =
+        crate::domain::child_end::ChildOrigin::Launched;
     let rows = RegistryRosterSource::new(registry).roster_rows();
     assert_eq!(rows[0].session_key, "");
+}
+
+/// #2192 review round 5 (M2): a row a child reported names no session in
+/// the saved roster — its uuid is the reporter's word — whatever it is.
+#[test]
+fn a_reported_or_unverified_row_is_persisted_without_a_session() {
+    use crate::domain::child_end::ChildOrigin;
+    for origin in [ChildOrigin::Reported, ChildOrigin::Unverified] {
+        let registry = new_registry();
+        let mut row = SubagentEntry::with_identity(
+            AgentUuid::new("secret-plan"),
+            "secret-plan".into(),
+            "/tmp/s.sock".into(),
+            0,
+        );
+        row.origin = origin;
+        registry.lock().unwrap().insert("secret-plan".into(), row);
+        let rows = RegistryRosterSource::new(registry).roster_rows();
+        assert_eq!(rows[0].session_key, "", "{origin:?}");
+    }
 }

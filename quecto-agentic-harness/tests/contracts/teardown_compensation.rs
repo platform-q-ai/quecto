@@ -97,6 +97,7 @@ async fn a_natural_exit_compensates_the_subtree_once_with_one_broadcast_and_one_
         SubagentNotification::Exited {
             agent_id: "A".into(),
             reason: Some("process_exit".into()),
+            detail: None,
         }
     );
     assert!(notify_rx.try_recv().is_err());

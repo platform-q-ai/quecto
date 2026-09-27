@@ -53,19 +53,13 @@ fn notification_messages_cover_stalled_and_exited_reason_branches() {
     };
     assert!(stalled.to_message().contains("2/5"));
 
-    let exited_reason = SubagentNotification::Exited {
-        agent_id: "bot".into(),
-        reason: Some("signal".into()),
-    };
+    let exited_reason = SubagentNotification::exited("bot", Some("signal"));
     assert!(exited_reason.to_message().contains("signal"));
 
-    let exited_empty = SubagentNotification::Exited {
-        agent_id: "bot".into(),
-        reason: Some(String::new()),
-    };
+    let exited_empty = SubagentNotification::exited("bot", Some(""));
     assert_eq!(
         exited_empty.to_message(),
-        "Agent 'bot' exited unexpectedly".to_string()
+        "Sub-agent 'bot' ended; no exit status or crash record was observed.".to_string()
     );
 }
 
@@ -172,22 +166,16 @@ fn validate_agent_id_format_covers_valid_length_and_character_errors() {
 
 #[test]
 fn exited_notification_without_reason_uses_generic_message() {
-    let exited = SubagentNotification::Exited {
-        agent_id: "bot".into(),
-        reason: None,
-    };
-    assert_eq!(exited.to_message(), "Agent 'bot' exited unexpectedly");
+    let exited = SubagentNotification::exited("bot", None);
+    assert_eq!(
+        exited.to_message(),
+        "Sub-agent 'bot' ended; no exit status or crash record was observed."
+    );
 }
 
 #[test]
 fn sequenced_non_completion_notifications_are_not_completion() {
-    let exited = SequencedSubagentNotification::new(
-        9,
-        SubagentNotification::Exited {
-            agent_id: "bot".into(),
-            reason: None,
-        },
-    );
+    let exited = SequencedSubagentNotification::new(9, SubagentNotification::exited("bot", None));
     assert!(!exited.is_completion());
     assert_eq!(exited.dedupe_key(), ("bot".to_string(), 9));
 }

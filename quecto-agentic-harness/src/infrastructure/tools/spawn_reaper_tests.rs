@@ -18,8 +18,13 @@ async fn adopt(supervisor: &Arc<OwnedChildSupervisor>, program: &str) -> ChildHa
 }
 
 fn observer(registry: &SubagentRegistry) -> Arc<ObserveOwnedChildExit> {
-    crate::composition::subagent_lifecycle::build_lifecycle_use_cases(registry.clone(), None, None)
-        .observe_exit
+    crate::composition::subagent_lifecycle::build_lifecycle_use_cases(
+        registry.clone(),
+        None,
+        None,
+        None,
+    )
+    .observe_exit
 }
 
 fn identity(uuid: &str) -> DelegatedAgentIdentity {

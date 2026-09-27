@@ -65,6 +65,9 @@ pub(super) fn initial_registry_entry(spec: InitialRegistryEntrySpec<'_>) -> Suba
         spec.socket_path,
         spec.pid,
     );
+    // The one place a row is vouched for as this harness's own child
+    // (#2192 review): every launch, stub mode included, registers through it.
+    entry.origin = crate::domain::child_end::ChildOrigin::Launched;
     entry.exit_signal_tx = spec.exit_signal_tx;
     entry.cleanup_environment_id = spec.cleanup_environment_id;
     entry.cleanup_argv = spec.cleanup_argv;

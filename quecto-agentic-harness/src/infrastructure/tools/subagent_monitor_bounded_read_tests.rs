@@ -31,6 +31,7 @@ async fn monitor_loop_drops_oversized_line_but_keeps_processing_later_events() {
         registry.clone(),
         Some(btx.clone()),
         None,
+        None,
     )
     .observe_exit;
     let handle = spawn_monitor_task(MonitorSpec {

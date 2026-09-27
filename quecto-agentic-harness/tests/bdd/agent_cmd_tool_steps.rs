@@ -36,6 +36,7 @@ pub(crate) fn termination_owners(
                 quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
             environment_registry: quecto::domain::environment_registry::EnvironmentRegistry::new(),
             slots: Default::default(),
+            base_dir: std::env::temp_dir(),
         },
     )
 }

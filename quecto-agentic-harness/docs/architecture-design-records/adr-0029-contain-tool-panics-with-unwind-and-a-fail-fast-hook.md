@@ -306,6 +306,124 @@ tokio would also quietly turn a panic in any spawned task into a
      name someone already created is skipped for another, up to eight
      times: a co-tenant cannot stop a record by pre-creating its name.
 
+8. **A parent reads how an ended sub-agent ended and what it did.** The
+   exit note, `agent_cmd get_state` and `get_messages` on an ended child
+   answer from what it left, through the `EndedChildRecords` port and the
+   `InspectEndedChild` use case, all in one wording (`ChildEnd::reason`).
+   - A crash record is the child's own word — and any container can write
+     one under another child's key — so it is believed only when an
+     observed end fits a fatal panic of that process (an abort or the
+     test-support exit) **and** the child's pid is known — this harness
+     launched it — and is the record's own. A row with no pid (a container
+     child, a merged descendant) has no record believed, whatever it says;
+     and the reader asks the adapter for that pid's records only, so one
+     another process planted never stands in. A record next to a clean
+     exit — a stale provisional one, or a forged one — is named and not
+     believed; one that cannot be tied to the child's process is named as
+     such. Even a believed record's attribution ("during tool call
+     'edit'") is labelled "(child-supplied)": the tool name is the child's.
+     "Believed" means exactly that match — status and pid — and says so
+     (`believedBecause` in `get_state`): the record is not authenticated,
+     and within the same-uid trust model anyone who can write
+     `audit/crash/` can forge one naming the launched pid (or plant squat
+     names that crowd the provisional bound). It is a best-effort account
+     of why a child died, never proof; hardening it would need a record
+     the child cannot forge (e.g. written by this harness from the exit it
+     observed), which is out of scope here.
+     With no exit status observed (a container child, a merged
+     descendant: no pid, no status) nothing ties a record to the child's
+     end: the end is unknown, and the record, its attribution included,
+     is only quoted as the child's words.
+   - Every registry row carries its origin (`ChildOrigin`): `Launched` is
+     set only where a launch registers its row; a row a child reports is
+     `Reported`; anything else (fixtures, hand-built rows) is `Unverified`.
+     A saved roster's rows never re-enter the live registry, so a child
+     that ended before a restart is not found for inspection at all. A
+     child's report never merges over a `Launched` row — a child naming a
+     sibling as its own descendant cannot overwrite that sibling's pid,
+     parent or label.
+   - Only a `Launched` child's transcript is read. A reported descendant's
+     key is its reporter's word: any agent-id (`secret-plan`) turns into a
+     session name, so reading it would let a child make its parent read
+     another conversation, and no session records who launched it to
+     check against. A reported or unverified row's crash record is read only
+     under a uuid of the minted form (lowercase, hyphenated) and never as a
+     known process's, so it is quoted, never believed.
+   - A reported row's display name may not be a launched row's key or
+     label either: it is named by its own key instead. Every parent-facing
+     label of a reported row — exit notices, ended-child answers — is
+     `reported:<key>`, never the name the child chose, so a reported row
+     can never read as a child this harness launched.
+   - A child's report may not name a row this harness launched (by key or
+     by label), the reporter or any of its ancestors (this harness's own
+     id included), nor make a row its own ancestor; the prune after a
+     merge visits each row once. A report naming the reporter's parent
+     under the reporter once made that walk loop forever under the
+     registry lock. A lookup by name (`agent_cmd` on an ended child, the
+     TUI's history fallback) prefers a launched row, and a reported row
+     never stands in for one.
+   - The history fallback for an ended child's messages (`get_messages`
+     over the UDS) reads a transcript only for a launched row, and the
+     saved roster records a session key only for a launched row. An exit
+     note offers the transcript ("stays readable with agent_cmd
+     get_messages") only when it can be read: a launched child whose
+     session this harness's store holds as a regular, non-empty file —
+     asked of the entry, nothing read. The note keeps how the end was
+     observed (`(process_exit)`, `(connection_closed)`) whatever else it
+     says.
+   - A default `get_messages` of an ended child keeps the unread-report
+     contract a live child's has (#2226): the persisted window (its newest
+     256 messages, each with its ordinal and turn origin) is planned by the
+     same default-report rule against the row's delivered watermark, its
+     report left pending under a receipt the delivery acknowledges — found
+     by the receipt when the child is named by a label no live row
+     resolves. A report followed by many messages is still the first
+     read's; one delivered is not replayed; a report older than the window
+     is owed and the read says it is incomplete.
+   - `get_report` of an ended launched child answers its final report from
+     the transcript, whole up to the final-report budget (64 KiB, #2114),
+     cut beyond it with the same notice; `reportFound: false` when it gave
+     none. The newest message of an explicit page starts whole too, so
+     `get_messages count:1 before:<ordinal+1>` reads any one message whole
+     up to the answer's 64 KiB budget. (`get_message` stays TUI-only.)
+   - A page of an ended child's transcript holds at most 256 messages,
+     whatever `count` asks: more than one 64 KiB answer carries, so a
+     larger count only copied messages to discard them. Up to four
+     children's transcripts are kept, least recently read given up first
+     and together never more than one transcript's 32 MiB bound, so
+     readers of two children do not evict each other.
+   - Known gaps, left for follow-ups: the UDS `get_messages` history
+     fallback reads a launched child's session through the ordinary
+     session store (`SessionStore::load`), not the hardened bounded read
+     the `agent_cmd` path uses — giving it one needs a new store port
+     method, and the port and the store adapter are at their line
+     ceilings; and UDS `get_state` on an ended child answers the routing
+     error, not the end the `agent_cmd` tool gives, since the dispatch
+     context holds no ended-child inspection.
+   - A launch whose uuid a child already reported (a guessed uuid)
+     replaces the reported row: this harness's own launch is
+     authoritative.
+   - Whatever of it reaches the parent is escaped, capped (512 bytes for
+     the message) and labelled "(child-supplied, unverified)"; a cut never
+     falls inside an escape. So is every other child-chosen text: a
+     sub-agent's label in every answer and every notice — exit, error,
+     completion, stall (capped at 128 bytes), a child's error in its error
+     notice (512 bytes),
+     and its last tool and error (256 bytes each, under `lastActivity` with
+     their provenance). A merged descendant's key and label must fit the
+     agent-id grammar (`[a-zA-Z0-9_-]{1,64}`): a label that does not is
+     replaced by the key, and a descendant whose key does not is not
+     merged; its last tool and error are capped as a direct child's are.
+   - The transcript is read only from a regular file, through no link, at
+     most 32 MiB of it — the newest part of a larger one, marked
+     `olderOmitted`, held to the same append order as a full read — and
+     paged by durable ordinal (by position when it has none) within a hard
+     64 KiB answer. An unchanged transcript (same device, inode, length,
+     modification and status-change time) is shared, not read again; a
+     changed one is read afresh.
+   - What cannot be read is said, with the reason (a container child whose
+     store is not shared with its parent keeps its transcript there).
+
 ## Why unwinding is safe now
 
 - The only frames a contained panic unwinds through are the call's own. The

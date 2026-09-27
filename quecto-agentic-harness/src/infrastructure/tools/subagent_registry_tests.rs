@@ -138,13 +138,10 @@ fn test_errored_message_format() {
 
 #[test]
 fn test_exited_message_format() {
-    let n = SubagentNotification::Exited {
-        agent_id: "formatter".into(),
-        reason: None,
-    };
+    let n = SubagentNotification::exited("formatter", None);
     let msg = n.to_message();
     assert!(msg.contains("formatter"));
-    assert!(msg.contains("exited"));
+    assert!(msg.contains(" ended"));
 }
 
 // --- capped line reader (#795 security review) ---
@@ -401,6 +398,7 @@ async fn test_notification_drain() {
                 SubagentNotification::Exited {
                     agent_id: format!("bot-{}", i),
                     reason: None,
+                    detail: None,
                 },
             ))
             .await;
