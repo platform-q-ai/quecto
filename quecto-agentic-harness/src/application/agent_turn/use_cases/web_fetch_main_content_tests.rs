@@ -559,6 +559,15 @@ fn quotes_open_values_only_after_equals() {
     ));
     let text = readable_html(&html);
     assert!(text.contains(NOTE) && !text.contains("side"), "{text}");
+    // Even when a later apostrophe would close it, the landmark between
+    // is not swallowed.
+    let html = page(&format!(
+        "{}<p>1 < 2 isn't much</p><main>{}</main><p>don't</p>",
+        words(20, "side"),
+        words(60, "in")
+    ));
+    let text = readable_html(&html);
+    assert!(text.contains(NOTE) && !text.contains("side"), "{text}");
     let html = page(&format!(
         "<div data-tip = \"a > b\" role=\"main\">{}</div>{}",
         words(60, "in"),
