@@ -98,6 +98,52 @@ impl PassiveAttempt {
         self.receipt.termination(Termination::Completed);
     }
 
+    /// Read a whole SSE body (#2210), each read bounded by the idle bound,
+    /// observing its lines as they arrive, so the attempt is followed live
+    /// and its output cap ends a runaway. The body is decoded as lossy
+    /// UTF-8; a failed or silent read ends the attempt as the unobserved
+    /// read would fail.
+    pub(in crate::infrastructure::providers) async fn read_sse(
+        &self,
+        mut response: reqwest::Response,
+        profile: Profile,
+    ) -> Result<String, DomainError> {
+        let mut body = Vec::new();
+        let mut lines = LineObserver::new(profile);
+        loop {
+            match profile.idle.within(response.chunk()).await {
+                Ok(Ok(Some(bytes))) => {
+                    lines.push(&bytes, &self.receipt);
+                    if let Some(capped) = self.receipt.capped() {
+                        return Err(DomainError::Provider(self.receipt.output_capped(capped)));
+                    }
+                    body.extend_from_slice(&bytes);
+                }
+                Ok(Ok(None)) => break,
+                Ok(Err(error)) => {
+                    self.read_failed();
+                    return Err(profile.read_error(&error));
+                }
+                Err(silent) => {
+                    self.idle();
+                    return Err(DomainError::Provider(silent.to_string()));
+                }
+            }
+        }
+        lines.finish(&self.receipt);
+        Ok(String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// A whole SSE body read by [`Self::read_sse`] was parsed: accepted, it
+    /// ended as its terminal event said or at end of file; refused, it was
+    /// rejected.
+    pub(in crate::infrastructure::providers) fn parsed<T>(&self, parsed: &Result<T, DomainError>) {
+        match parsed {
+            Ok(_) => self.eof(),
+            Err(_) => self.rejected(),
+        }
+    }
+
     /// The body ended; unless a terminal event already ended the stream, it
     /// ended at end of file.
     fn eof(&self) {

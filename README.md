@@ -65,6 +65,14 @@ cargo install --path quecto-mcp
 cargo install --path quecto-runtime-manager
 ```
 
+**After upgrading, restart running parents.** A long-running agent or TUI
+spawns its sub-agents from the `quecto` on `PATH`, so after a `cargo install`
+it launches the new binary while it still runs the old one. A parent built
+before the live model-turn progress of #2210 does not accept a newer child's
+busy `get_state` snapshot (it carries `modelTurn`) and waits for a correlated
+reply for the whole model turn instead. Parents built since accept members a
+newer child adds.
+
 ### Configure credentials
 
 Use the harness credential command for provider tokens:

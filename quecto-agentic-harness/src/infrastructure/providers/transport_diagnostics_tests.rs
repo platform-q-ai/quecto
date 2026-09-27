@@ -74,15 +74,11 @@ mod transport_tests {
             diagnostics: Default::default(),
             started: std::time::Instant::now(),
         })));
-        let mut observer = LineObserver {
-            carry: Vec::new(),
-            oversized: false,
-            protocol: ProtocolObserver::new(Profile::new(
-                Vendor::Codex,
-                crate::infrastructure::providers::attempt_profile::Surface::Assembled,
-                Default::default(),
-            )),
-        };
+        let mut observer = LineObserver::new(Profile::new(
+            Vendor::Codex,
+            crate::infrastructure::providers::attempt_profile::Surface::Assembled,
+            Default::default(),
+        ));
         observer.push(
             b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"SECRET\"}\n",
             &receipt,

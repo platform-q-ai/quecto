@@ -33,6 +33,17 @@ impl Receipt {
         DomainError::Provider(late.to_string())
     }
 
+    /// The attempt's output passed its cap (#2210): it fails, ends as
+    /// output-capped, with the cap error's message.
+    pub(super) fn output_capped(
+        &self,
+        capped: crate::domain::request_progress::OutputCapped,
+    ) -> String {
+        self.fail();
+        self.termination(Termination::OutputCapped);
+        capped.to_string()
+    }
+
     /// The handler ended the stream: a terminal event already recorded how,
     /// so only an ending no event explains is the harness refusing the reply
     /// (#2156 review).
@@ -92,6 +103,11 @@ pub(super) async fn pump_sse<H: SseHandler>(
             };
             carry.drain(..=pos);
             if done {
+                return;
+            }
+            if let Some(capped) = receipt.capped() {
+                let error = receipt.output_capped(capped);
+                let _ = tx.send(StreamEvent::Error(error)).await;
                 return;
             }
         }

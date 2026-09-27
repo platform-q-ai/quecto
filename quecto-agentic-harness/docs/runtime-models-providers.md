@@ -261,3 +261,39 @@ or `TimedOut`. A stall is retried at most once per request (before any output
 reached the caller); an error status whose body stalls keeps its status class
 and shows `(error body abandoned: …)` in place of the body. Neither limit is
 configurable.
+
+## Runaway replies
+
+A reply that keeps sending is never cut short by time, so a runaway — a model
+stuck in a repetition loop, on a backend that takes no output limit (the Codex
+ChatGPT backend refuses `max_output_tokens`) — is bounded by size instead. Each
+attempt may stream 8 bytes of output per token of the model's declared output
+limit (32,768 tokens when the model's limit is not known, and never less than
+the request's own `max_tokens`): 1,024,000 bytes for a 128k-token model. A
+token is about four bytes, so a reply within its limit stays well under the cap.
+Output means the text, thinking, refusal and tool-call argument deltas, not
+the events around them.
+
+An attempt past its cap is abandoned with an `output cap exceeded: …` error of
+class `output_capped`, recorded on the attempt as `OutputCapped`. It is **not
+retried**: a runaway tends to repeat, each time at the cost of the whole cap,
+and by then the reply has usually streamed output a retry could not replay. The
+turn fails with guidance to narrow or rephrase the request. The cap covers
+every streaming path of a request the agent loop sends (incremental and
+assembled; Codex, OpenAI-compatible and Anthropic; gated or not); a whole
+non-streaming JSON reply is bounded by the 20 minute reply limit instead. The
+cap is not configurable.
+
+## Progress and interrupted requests
+
+While a request is in flight, `get_state` reports it as `modelTurn`: how long
+it has run and, for its attempt in flight, the events and output bytes it has
+streamed and how long since its last event (see `get_state` in
+[uds-protocol.md](uds-protocol.md)). A turn that stops while a request is in
+flight — a one-shot run's `--max-time` deadline, or, for a UDS agent (every
+subagent), an `abort` or `steer` or a shutdown it handles (SIGTERM/SIGINT, a
+`shutdown` command, its parent or last client going away) — writes that request to the event log as a `request_observed`
+record with outcome `cancelled`; its attempt in flight appears in
+`attempt_diagnostics` with termination `Interrupted`, its `event_count`,
+`output_bytes` and `first_token_ms` as they stood. A SIGKILL cannot be handled
+and leaves no record.

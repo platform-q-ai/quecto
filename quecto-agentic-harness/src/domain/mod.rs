@@ -24,6 +24,7 @@ pub mod provider_error;
 pub mod provider_retry;
 pub mod redaction;
 pub mod request_observation;
+pub mod request_progress;
 pub mod search_ranking;
 pub mod session;
 pub mod session_identity;

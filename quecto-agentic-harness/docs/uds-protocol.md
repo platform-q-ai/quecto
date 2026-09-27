@@ -462,7 +462,7 @@ history inspection remain the job of `get_messages`.
 |---|---|---|---|
 | `type` | `"get_state"` | yes | |
 | `id` | string | no | Correlation ID |
-| `since` | integer | no | Previously observed `generation`; when unchanged, return only the bounded unchanged marker |
+| `since` | integer | no | Previously observed `generation`; when unchanged, return only the bounded unchanged marker (with `modelTurn` while a model request is in flight) |
 
 **Response data (changed or no `since`):**
 
@@ -499,6 +499,9 @@ When no workflow template is selected, the `workflow` field is omitted entirely.
 {"unchanged": true, "generation": 27}
 ```
 
+While a model request is in flight the marker also carries `modelTurn`
+(see [Model turn](#get_state) below).
+
 | Field | Type | Description |
 |---|---|---|
 | `state` | string | Current model/execution state such as `idle`, `streaming`, `thinking`, `runningTool`, or `finalizing` |
@@ -509,6 +512,7 @@ When no workflow template is selected, the `workflow` field is omitted entirely.
 | `workflow` | object \| omitted | Slim selected-workflow identity and current step only |
 | `admission` | object \| omitted | Bounded inference-admission view (#1679); present only when the process joined an admission authority |
 | `admissionWarnings` | array | Advisory usable provider slots with no effective admission binding; always present (empty when all usable slots are bound). Each item has `slot`, `code` (`admission_binding_missing`) and an actionable `message`. These slots remain usable but their requests are not broker-gated. |
+| `modelTurn` | object \| omitted | The model request in flight (#2210): present only while the agent waits on the model — thinking or streaming — and omitted otherwise |
 
 **Admission (`admission`, #1679 P4).** When the process shares an inference
 authority ([inference-admission.md](inference-admission.md)) the projection
@@ -577,6 +581,62 @@ keep moving while a `since` poll answers `unchanged`; poll without `since` to
 watch a wait grow or a cooldown run out. `abort` while an attempt waits
 cancels the wait at the authority; the next `get_state` no longer reports
 `waiting` and counts the wait under `counters.cancelled`.
+
+**Model turn (`modelTurn`, #2210).** While the agent waits on the model, the
+projection says how long the request has run and what its attempt in flight
+has streamed, so a supervisor can tell a live reply (output keeps growing, the
+last event is recent) from a hung one (no events for a long time) and decide
+whether to `abort`. The field is additive and omitted whenever no request is in
+flight, so an idle state has the shape older readers know.
+
+```json
+{
+  "state": "thinking",
+  "modelTurn": {
+    "elapsedMs": 504000,
+    "outputCapBytes": 1024000,
+    "attempt": {
+      "number": 1,
+      "elapsedMs": 503800,
+      "events": 9120,
+      "outputBytes": 640512,
+      "sinceLastEventMs": 40,
+      "firstTokenMs": 2100
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `elapsedMs` | integer | Since the request started, retries and admission waits included |
+| `outputCapBytes` | integer \| omitted | Each attempt's output cap in bytes (see "Runaway replies" in [runtime-models-providers.md](runtime-models-providers.md)) |
+| `attempt` | object \| omitted | The attempt in flight; omitted before one starts (an admission wait, a retry's back-off) and on a path that observes no attempts (a whole non-streaming Anthropic reply) |
+| `attempt.number` | integer | The attempt's number within its request, from 1 |
+| `attempt.elapsedMs` | integer | Since the attempt started |
+| `attempt.events` | integer | Provider events (SSE `data:` lines) it has received |
+| `attempt.outputBytes` | integer | Bytes of output it has streamed: text, thinking, refusal and tool-call argument deltas, never the event framing around them |
+| `attempt.sinceLastEventMs` | integer \| omitted | Since its last event; omitted before its first |
+| `attempt.firstTokenMs` | integer \| omitted | When its first token arrived, from its start; omitted before one did |
+
+These are live measurements, not transitions: they are not folded into
+`generation`. So that a `since` poll never hides a long model turn and stays
+small, the unchanged marker carries them while a request is in flight:
+`{"unchanged": true, "generation": 27, "modelTurn": {...}}`. Once the turn
+ends, the marker is bare again. A parent relays a busy child's connect-time
+snapshot the same way: at a current cursor, as that marker.
+
+> **Restart running parents after upgrading.** A parent built before #2210
+> reads the slim projection with a closed set of top-level
+> members, so it refuses a newer child's busy snapshot carrying `modelTurn`
+> and waits for the correlated reply — for the whole model turn. A running
+> parent spawns children from the `quecto` on `PATH`, so this happens right
+> after a `cargo install`. From #2210 on, a parent reads, at every object
+> boundary of the projection and of the marker, the members it knows
+> strictly (declared types, required members) and drops a member it does not
+> know when its name is a camelCase identifier: an additive member of a
+> newer child. A name of any other shape is refused, and what the parent
+> relays is what it read, re-serialized — never the child's unknown members.
 
 `get_state` intentionally does not include static vocabularies, transcript
 counts, sync/history state, context-window metadata, available workflow

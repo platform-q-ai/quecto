@@ -43,9 +43,13 @@ pub(crate) fn slim_progress(state: &SessionState) -> serde_json::Value {
 }
 
 pub(crate) fn slim_state_projection(state: &SessionState) -> serde_json::Value {
+    serde_json::to_value(slim_state_snapshot(state)).expect("typed inspection snapshot serializes")
+}
+
+fn slim_state_snapshot(state: &SessionState) -> crate::domain::state_snapshot::StateSnapshot {
     use crate::domain::state_snapshot::{SnapshotProgress, StateSnapshot};
     let progress = slim_progress(state);
-    let snapshot = StateSnapshot {
+    StateSnapshot {
         state: state
             .execution
             .as_ref()
@@ -84,19 +88,23 @@ pub(crate) fn slim_state_projection(state: &SessionState) -> serde_json::Value {
         repeated_failure_notifications: state.repeated_failure_notifications,
         admission: state.execution.as_ref().and_then(|e| e.admission.clone()),
         admission_warnings: state.admission_warnings.clone(),
-    };
-    serde_json::to_value(snapshot).expect("typed inspection snapshot serializes")
+        model_turn: state.execution.as_ref().and_then(|e| e.model_turn.clone()),
+    }
 }
 
 pub(crate) fn slim_state_response_data(
     state: &SessionState,
     since: Option<u64>,
 ) -> serde_json::Value {
-    let data = slim_state_projection(state);
-    let generation = data["generation"].as_u64().unwrap_or(state.generation);
-    if since == Some(generation) {
-        serde_json::json!({"unchanged": true, "generation": generation})
-    } else {
-        data
-    }
+    let snapshot = slim_state_snapshot(state);
+    // A current cursor gets the unchanged marker, which still carries the
+    // live measurements `generation` does not track (#2210 review).
+    let answer = match since == Some(snapshot.generation) {
+        true => serde_json::to_value(crate::domain::state_snapshot::UnchangedSnapshot::at(
+            snapshot.generation,
+            &snapshot,
+        )),
+        false => serde_json::to_value(snapshot),
+    };
+    answer.expect("typed inspection snapshot serializes")
 }

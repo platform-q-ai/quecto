@@ -111,11 +111,37 @@ fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {
     let Some(object) = data.as_object() else {
         return false;
     };
-    if data.get("unchanged").and_then(|v| v.as_bool()) == Some(true) {
-        return data.get("generation").and_then(|v| v.as_u64()).is_some() && object.len() == 2;
+    use crate::domain::state_snapshot::{StateSnapshot, UnchangedSnapshot};
+    if object.get("unchanged").and_then(|v| v.as_bool()) == Some(true) {
+        return UnchangedSnapshot::read(data).is_some();
     }
-    serde_json::from_value::<crate::domain::state_snapshot::StateSnapshot>(data.clone())
-        .is_ok_and(|snapshot| snapshot.is_valid())
+    StateSnapshot::read_forward_compatible(data).is_some_and(|snapshot| snapshot.is_valid())
+}
+
+/// The accepted `get_state` snapshot as relayed to the caller (#2210
+/// review): what was read, re-serialized — a newer child's additive members
+/// are never passed on. Against a `since` cursor the snapshot is never
+/// newer than the cursor (see [`get_state_snapshot_honors_since`]), so it
+/// is answered as the unchanged marker at the caller's cursor, carrying the
+/// live measurements `generation` does not track (a model turn in flight).
+fn finalize_get_state(line: String, mut json: serde_json::Value, since: Option<u64>) -> String {
+    use crate::domain::state_snapshot::{StateSnapshot, UnchangedSnapshot};
+    let Some(data) = json.get("data") else {
+        return line;
+    };
+    let answer = match (UnchangedSnapshot::read(data), since) {
+        (Some(marker), Some(since)) => serde_json::to_value(marker.with_generation(since)),
+        (Some(marker), None) => serde_json::to_value(marker),
+        (None, since) => match (StateSnapshot::read_forward_compatible(data), since) {
+            (Some(snapshot), Some(since)) if snapshot.generation <= since => {
+                serde_json::to_value(UnchangedSnapshot::at(since, &snapshot))
+            }
+            (Some(snapshot), _) => serde_json::to_value(snapshot),
+            (None, _) => return line,
+        },
+    };
+    json["data"] = answer.expect("typed inspection snapshot serializes");
+    json.to_string()
 }
 
 /// Apply the request's `count` (if any) to an accepted `get_messages` snapshot by
@@ -142,25 +168,11 @@ pub(super) fn finalize_snapshot_answer(
         .and_then(|v| v.as_str())
         == Some("get_state")
     {
-        if let (Some(since), Some(generation)) = (
-            cmd.as_ref()
-                .and_then(|cmd| cmd.get("since"))
-                .and_then(|v| v.as_u64()),
-            json.pointer("/data/generation").and_then(|v| v.as_u64()),
-        ) {
-            if generation <= since {
-                if generation == since
-                    && json.pointer("/data/unchanged").and_then(|v| v.as_bool()) == Some(true)
-                {
-                    return line;
-                }
-                if let Some(data) = json.pointer_mut("/data") {
-                    *data = serde_json::json!({"unchanged": true, "generation": since});
-                }
-                return json.to_string();
-            }
-        }
-        return line;
+        let since = cmd
+            .as_ref()
+            .and_then(|cmd| cmd.get("since"))
+            .and_then(|v| v.as_u64());
+        return finalize_get_state(line, json, since);
     }
     let Some(count) = cmd
         .as_ref()

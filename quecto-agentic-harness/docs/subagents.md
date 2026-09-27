@@ -357,7 +357,12 @@ reports progress without polling:
   child's slim state/effort/model/progress projection, `generation`, and (only
   when selected) slim workflow identity plus current step on demand — including
   while the child is mid-turn. Pass `since` to receive only
-  `{"unchanged": true, "generation": N}` when nothing changed;
+  `{"unchanged": true, "generation": N}` when nothing changed. While the child
+  waits on its model, `modelTurn` shows how long the request has run and what
+  its attempt has streamed (`events`, `outputBytes`, `sinceLastEventMs`), so a
+  live but runaway reply can be told from a hung one (#2210); these live
+  measurements do not advance `generation`, but the unchanged marker a
+  `since` poll gets carries `modelTurn` while the turn runs;
 - in the TUI, the selected child renders its own workflow status bar.
 
 Read the child's final result the usual way — its one-line auto-note at your next
@@ -405,7 +410,7 @@ First bare `get_messages` (omit/null `count` and `before`) returns the latest su
     },
     "since": {
       "type": "integer",
-      "description": "Generation cursor for get_state/get_subagents; unchanged state returns only metadata"
+      "description": "Generation cursor for get_state/get_subagents; unchanged state returns only metadata, plus get_state modelTurn while the model runs"
     },
     "model": {
       "type": "string",
@@ -516,7 +521,8 @@ emits a true terminal failure signal.
   (identity-tagged with `agent_id` + `parent_id`). See "Observing the unit
   tree" below.
 - **Live supervision** via `get_state` reports the child's current phase,
-  tool activity, evidence-based recent progress, and canonical message count.
+  tool activity, evidence-based recent progress, canonical message count and,
+  while it waits on its model, the model turn in flight (`modelTurn`).
 - **Stable transcript inspection** via `get_messages` is intended for committed
   or end-of-turn output. A busy response is a snapshot and can lag mutable
   in-flight transcript content.

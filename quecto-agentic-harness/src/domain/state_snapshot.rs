@@ -1,7 +1,14 @@
-//! Bounded inspection wire contract. Both adapters use these affirmative,
-//! closed shapes; unknown fields at every object boundary are rejected.
-//! Serde's `deny_unknown_fields` closes the affirmative field/type declarations:
-//! only declared members are accepted, rather than enumerating forbidden keys.
+//! Bounded inspection wire contract. These affirmative, closed shapes are
+//! what this harness writes: `deny_unknown_fields` closes each declaration,
+//! so only declared members deserialize, with their declared types.
+//!
+//! A reader of another process's projection (a parent reading a child's
+//! busy snapshot) goes through [`StateSnapshot::read_forward_compatible`]
+//! and [`UnchangedSnapshot::read`] instead (#2210 review): at every object
+//! boundary the members this harness knows are read by these closed types,
+//! and a member it does not know, when its name has a member's shape, is an
+//! additive member of a newer writer — dropped, never refused, never passed
+//! on. See `state_snapshot_reader.rs`.
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,6 +174,111 @@ pub struct StateSnapshot {
     pub admission: Option<AdmissionSnapshot>,
     #[serde(default)]
     pub admission_warnings: Vec<AdmissionBindingWarning>,
+    /// The model request in flight (#2210): present only while the agent
+    /// waits on the model — thinking or streaming — and absent otherwise.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_optional"
+    )]
+    pub model_turn: Option<ModelTurnSnapshot>,
+}
+
+/// The members of the projection that are live measurements rather than
+/// transitions: `generation` does not track them, so a `since` poll whose
+/// cursor is current still carries each one present (#2210 review). The
+/// one rule, used by the child that answers and the parent that relays.
+pub const SINCE_BYPASSING_MEMBERS: &[&str] = &["modelTurn"];
+
+/// The answer to a `since` poll whose cursor is current: the unchanged
+/// marker, carrying the live measurements [`SINCE_BYPASSING_MEMBERS`] names
+/// when present (#2210 review) — a model turn stays visible, and a poll
+/// stays small.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UnchangedSnapshot {
+    /// Always `true`.
+    pub unchanged: bool,
+    pub generation: u64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_optional"
+    )]
+    pub model_turn: Option<ModelTurnSnapshot>,
+}
+
+impl UnchangedSnapshot {
+    /// The unchanged marker at `generation` for a projection `snapshot`,
+    /// with its live measurements.
+    pub fn at(generation: u64, snapshot: &StateSnapshot) -> Self {
+        Self {
+            unchanged: true,
+            generation,
+            model_turn: snapshot.model_turn.clone(),
+        }
+    }
+
+    /// The same marker at another `generation` (a caller's cursor).
+    pub fn with_generation(self, generation: u64) -> Self {
+        Self { generation, ..self }
+    }
+}
+
+/// The model request in flight (#2210): how long it has run and what its
+/// attempt in flight has streamed, so a supervisor can tell a live but
+/// runaway reply (output keeps growing) from a hung one (no events).
+/// Live measurements: they are not folded into `generation`, so a `since`
+/// cursor that reads `unchanged` says nothing about them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelTurnSnapshot {
+    /// Since the request started, retries and admission waits included.
+    pub elapsed_ms: u64,
+    /// Each attempt's output cap in bytes, when one applies.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_optional"
+    )]
+    pub output_cap_bytes: Option<u64>,
+    /// The attempt in flight; absent before one starts (an admission wait,
+    /// a retry's back-off) and on a path that observes no attempts.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_optional"
+    )]
+    pub attempt: Option<AttemptProgressSnapshot>,
+}
+
+/// The attempt in flight of a model request (#2210).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AttemptProgressSnapshot {
+    /// The attempt's number within its request, from 1.
+    pub number: u32,
+    /// Since the attempt started.
+    pub elapsed_ms: u64,
+    /// Provider events (SSE `data:` lines) it has received.
+    pub events: u32,
+    /// Bytes of output it has streamed (text, thinking, refusal and tool-call
+    /// argument deltas).
+    pub output_bytes: u64,
+    /// Since its last event; absent before its first.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_optional"
+    )]
+    pub since_last_event_ms: Option<u64>,
+    /// When its first token arrived, from its start; absent before one did.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_optional"
+    )]
+    pub first_token_ms: Option<u64>,
 }
 
 fn required_nullable_string<'de, D: serde::Deserializer<'de>>(
@@ -229,3 +341,10 @@ impl StateSnapshot {
         })
     }
 }
+
+#[path = "state_snapshot_reader.rs"]
+mod reader;
+
+#[cfg(test)]
+#[path = "state_snapshot_tests.rs"]
+mod tests;

@@ -400,8 +400,14 @@ fn install_busy_state_snapshot_entry(
                         snapshot["data"]["workflow"]["currentStep"]["done"] =
                             serde_json::json!("false");
                     }
+                    // #2210 review: a member whose name is no member's.
                     id if id.ends_with("extra-workflow") => {
-                        snapshot["data"]["workflow"]["extra"] = serde_json::json!(true);
+                        snapshot["data"]["workflow"]["extra_field"] = serde_json::json!(true);
+                    }
+                    // #2210 review: a newer child's additive members.
+                    id if id.ends_with("newer-child") => {
+                        snapshot["data"]["workflow"]["someFutureField"] = serde_json::json!(true);
+                        snapshot["data"]["someFutureMember"] = serde_json::json!({"x": 1});
                     }
                     id if id.ends_with("bad-generation") => {
                         snapshot["data"]["generation"] = serde_json::json!("seven");

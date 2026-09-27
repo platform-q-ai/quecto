@@ -638,6 +638,7 @@ impl LlmProvider for AnthropicProvider {
                     url: &url,
                     model: &model,
                     tool_defs: tools_snapshot,
+                    trace,
                 })
                 .await?;
             crate::domain::usage_accounting::attach_cost(&mut resp, &model);
@@ -702,6 +703,7 @@ impl LlmProvider for AnthropicProvider {
                             url: &url,
                             model: &model,
                             tool_defs: tools_snapshot,
+                            trace,
                         },
                         tx,
                     })

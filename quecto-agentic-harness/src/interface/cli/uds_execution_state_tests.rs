@@ -163,3 +163,40 @@ fn visible_generation_advances_once_per_new_component_revision() {
     assert_eq!(workflow_changed, initial + 1);
     assert_eq!(session_changed, workflow_changed + 1);
 }
+
+/// #2210: while the agent's request is in flight, every snapshot reports it
+/// as the model turn; before and after, none.
+#[test]
+fn the_request_in_flight_rides_on_every_snapshot() {
+    use crate::domain::request_observation::RequestTrace;
+    use crate::domain::request_progress::InFlightRequest;
+    use std::sync::Arc;
+    let mut state = ExecutionState::default();
+    assert!(state.snapshot().model_turn.is_none());
+    let in_flight = Arc::new(InFlightRequest::default());
+    state.set_model_turn_source(in_flight.clone());
+    assert!(state.snapshot().model_turn.is_none());
+    let trace = Arc::new(RequestTrace::default());
+    trace.set_output_cap(1_024);
+    let started = std::time::Instant::now();
+    in_flight.begin(started, trace.clone());
+    trace.begin_attempt(1, started, 1);
+    trace.observe_event(started, 17, true);
+    let turn = state.snapshot().model_turn.expect("a model turn in flight");
+    assert_eq!(turn.output_cap_bytes, Some(1_024));
+    let attempt = turn.attempt.expect("an attempt in flight");
+    assert_eq!(
+        (attempt.number, attempt.events, attempt.output_bytes),
+        (1, 1, 17)
+    );
+    let json = serde_json::to_value(state.snapshot()).unwrap();
+    assert_eq!(json["modelTurn"]["attempt"]["outputBytes"], 17);
+    in_flight.end(&trace);
+    assert!(state.snapshot().model_turn.is_none());
+    assert!(
+        serde_json::to_value(state.snapshot())
+            .unwrap()
+            .get("modelTurn")
+            .is_none()
+    );
+}

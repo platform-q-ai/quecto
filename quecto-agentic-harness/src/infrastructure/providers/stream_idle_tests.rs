@@ -82,6 +82,30 @@ pub(crate) mod servers {
         serve(Duration::ZERO, Some(HEAD.into()), steps, false).await
     }
 
+    /// Sends `first`, then `repeated` again and again as fast as it is read,
+    /// until the client goes away: a runaway reply (#2210).
+    pub(crate) async fn endless(first: &str, repeated: &str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (first, repeated) = (chunk(first), chunk(repeated));
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let (first, repeated) = (first.clone(), repeated.clone());
+                tokio::spawn(async move {
+                    let mut request = vec![0u8; 64 * 1024];
+                    let _ = socket.read(&mut request).await;
+                    let head = format!("{HEAD}{first}");
+                    let mut sent = socket.write_all(head.as_bytes()).await;
+                    while sent.is_ok() {
+                        sent = socket.write_all(repeated.as_bytes()).await;
+                    }
+                });
+            }
+        });
+        format!("http://{address}")
+    }
+
     /// Answers 500 with part of the body it promises, then goes silent.
     pub(crate) async fn silent_error_body() -> String {
         let head = "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 100\r\n\r\n";

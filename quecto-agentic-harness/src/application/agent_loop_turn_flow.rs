@@ -14,6 +14,58 @@ pub(super) enum AfterResponse {
 }
 
 impl AgentLoopImpl {
+    /// Send a chat request using incremental streaming.
+    ///
+    /// Emits `AgentProgressEvent::Token` for each text delta so the UDS layer
+    /// can forward them as `{"type":"token"}` events.  Falls back gracefully
+    /// for providers whose `chat_stream_incremental()` wraps `chat()` (emitting
+    /// only a single `Done`).
+    pub(super) async fn stream_chat_once(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Result<LlmResponse, StreamProviderError> {
+        let mut emitted_event = false;
+        let mut rx = self.provider.chat_stream_incremental(request).await;
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::TextDelta(t) => {
+                    emitted_event = true;
+                    self.notify(|| AgentProgressEvent::Token(t));
+                }
+                StreamEvent::ThinkingDelta(t) => {
+                    emitted_event = true;
+                    self.notify(|| AgentProgressEvent::ThinkingDelta(t));
+                }
+                StreamEvent::Done(response) => {
+                    if is_empty_streamed_response(&response) {
+                        return Err(StreamProviderError {
+                            error: DomainError::Provider(empty_stream_error_message(&response)),
+                            emitted_event,
+                        });
+                    }
+                    return Ok(response);
+                }
+                StreamEvent::Error(e) => {
+                    return Err(StreamProviderError {
+                        error: DomainError::Provider(e),
+                        emitted_event,
+                    });
+                }
+                // Tool call streaming events are handled by the provider's
+                // accumulator — they assemble into LlmResponse.tool_calls
+                // and are delivered via StreamEvent::Done.
+                _ => {
+                    emitted_event = true;
+                }
+            }
+        }
+        // Channel closed without Done — shouldn't happen but handle gracefully.
+        Err(StreamProviderError {
+            error: DomainError::Provider("streaming channel closed without completion".to_string()),
+            emitted_event,
+        })
+    }
+
     pub(super) async fn request_provider_response(
         &self,
         mut request: ChatRequest<'_>,
@@ -29,6 +81,11 @@ impl AgentLoopImpl {
             .replace(prefix.0.clone())
             .map(|previous| previous == prefix.0);
         let trace = Arc::new(crate::domain::request_observation::RequestTrace::default());
+        // #2210: every attempt is capped at its output limit's worth of bytes.
+        trace.set_output_cap(crate::domain::request_progress::output_cap_bytes(
+            self.model_max_tokens,
+            request.max_tokens,
+        ));
         request.trace = Some(trace.clone());
         let mut observation = super::super::request_observation::ObservationGuard::new(
             super::super::request_observation::ObservationSinks {
@@ -37,6 +94,9 @@ impl AgentLoopImpl {
                     .request_accounting
                     .as_ref()
                     .map(|_| &self.accounting_outbox),
+                in_flight: &self.in_flight_request,
+                interrupted: &self.interrupted_requests,
+                turn,
             },
             &request,
             self.provider.name(),
@@ -48,7 +108,11 @@ impl AgentLoopImpl {
             },
             trace,
         );
-        let result = self.request_provider_response_inner(request).await;
+        let result = super::super::request_observation::MarkDropping::new(
+            observation.trace(),
+            self.request_provider_response_inner(request),
+        )
+        .await;
         if let Ok(response) = &result {
             if let Some(usage) = &response.usage {
                 self.unreported_usage

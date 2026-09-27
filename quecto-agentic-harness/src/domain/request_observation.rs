@@ -2,19 +2,28 @@
 //!
 //! The accounting port a completed observation is recorded through is the
 //! application's (`application::providers::ports::RequestAccounting`, #1960).
-use super::attempt_diagnostics::AttemptDiagnostics;
+use super::attempt_diagnostics::{AttemptDiagnostics, Termination};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
+
+/// The most attempt records one request retains: a bounded prefix.
+pub const MAX_ATTEMPT_RECORDS: usize = 16;
 
 #[derive(Debug, Default)]
 pub struct RequestTrace {
     attempts: AtomicU32,
     oauth_retries: AtomicU32,
-    diagnostics: Mutex<Vec<AttemptDiagnostics>>,
+    pub(super) diagnostics: Mutex<Vec<AttemptDiagnostics>>,
     /// When the request's first token arrived, on the monotonic clock
     /// (#2151): the earliest any attempt saw.
     first_token: Mutex<Option<std::time::Instant>>,
+    /// The attempt in flight (#2210): see `request_progress`.
+    pub(super) live: Mutex<super::request_progress::LiveAttempt>,
+    /// Each attempt's output cap in bytes, zero for none (#2210).
+    pub(super) output_cap: std::sync::atomic::AtomicU64,
+    /// The request is being dropped (#2210 review): see `mark_dropping`.
+    pub(super) dropping: std::sync::atomic::AtomicBool,
 }
 impl RequestTrace {
     /// A token arrived at `at`; the earliest stays.
@@ -26,10 +35,21 @@ impl RequestTrace {
     pub fn first_token(&self) -> Option<std::time::Instant> {
         *self.first_token.lock().unwrap_or_else(|e| e.into_inner())
     }
-    /// Retain a bounded prefix of actual transport attempts, in completion order.
-    pub fn record_attempt(&self, record: AttemptDiagnostics) {
+    /// Retain a bounded prefix of actual transport attempts, in completion
+    /// order; the recorded attempt is no longer in flight.
+    /// The live lock is held across the close and the push (#2210 review),
+    /// so a request read while it ends sees the attempt either in flight or
+    /// recorded, never neither.
+    pub fn record_attempt(&self, mut record: AttemptDiagnostics) {
+        let mut live = self.live();
+        // A transport dropped with its request (every `chat` runs inside
+        // it) records `Dropped` on its way out: that is the interruption.
+        if self.dropping.load(Ordering::SeqCst) && record.termination == Termination::Dropped {
+            record.termination = Termination::Interrupted;
+        }
+        live.close(record.attempt_number);
         let mut records = self.diagnostics.lock().unwrap_or_else(|e| e.into_inner());
-        if records.len() < 16 {
+        if records.len() < MAX_ATTEMPT_RECORDS {
             records.push(record);
         }
     }

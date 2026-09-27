@@ -1,13 +1,20 @@
 //! Captures one logical request, including cancellation when its future is dropped.
+//! While it runs it is the agent's request in flight, which `get_state`
+//! reports; dropped mid-attempt, it records that attempt as `Interrupted`
+//! and queues itself for its audit record (#2210).
 use crate::application::providers::ports::ChatRequest;
 use crate::domain::{
     error::DomainError,
     message::{LlmResponse, Role},
     provider_error::classify_provider_error,
     request_observation::{RequestDiagnostics, RequestObservation, RequestTrace},
+    request_progress::InFlightRequest,
 };
 use sha2::{Digest, Sha256};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Instant;
 
 /// Diagnostic of the harness system/tool prefix, not provider cache eligibility.
@@ -37,11 +44,24 @@ pub(super) struct PrefixObservation {
 pub(super) struct ObservationSinks<'a> {
     pub log: &'a Mutex<RequestDiagnostics>,
     pub outbox: Option<&'a Mutex<Vec<RequestObservation>>>,
+    /// The agent's request in flight, which `get_state` reports.
+    pub in_flight: &'a InFlightRequest,
+    /// Requests that ended in flight, awaiting their audit record.
+    pub interrupted: &'a Mutex<Vec<InterruptedRequest>>,
+    /// The loop turn the request was sent in, for its audit record.
+    pub turn: u32,
+}
+
+/// A request that ended in flight, awaiting its audit record (#2210).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct InterruptedRequest {
+    /// The loop turn it was sent in.
+    pub turn: u32,
+    pub observation: RequestObservation,
 }
 
 pub(super) struct ObservationGuard<'a> {
-    log: &'a Mutex<RequestDiagnostics>,
-    outbox: Option<&'a Mutex<Vec<RequestObservation>>>,
+    sinks: ObservationSinks<'a>,
     record: Option<RequestObservation>,
     trace: Arc<RequestTrace>,
     started: Instant,
@@ -55,11 +75,12 @@ impl<'a> ObservationGuard<'a> {
         prefix: PrefixObservation,
         trace: Arc<RequestTrace>,
     ) -> Self {
+        let started = Instant::now();
+        sinks.in_flight.begin(started, trace.clone());
         Self {
-            log: sinks.log,
-            outbox: sinks.outbox,
+            sinks,
             trace,
-            started: Instant::now(),
+            started,
             record: Some(RequestObservation {
                 request_id: uuid::Uuid::new_v4().to_string(),
                 started_unix_ms: unix_ms(),
@@ -112,11 +133,20 @@ impl<'a> ObservationGuard<'a> {
                 record.error_class = Some(classify_provider_error(error));
             }
         }
-        self.publish().expect("completed observation exists")
+        self.publish(Ending::Finished)
+            .expect("completed observation exists")
     }
 
-    fn publish(&mut self) -> Option<RequestObservation> {
+    /// The request's trace.
+    pub fn trace(&self) -> Arc<RequestTrace> {
+        self.trace.clone()
+    }
+
+    /// Publish the record once; `ending` says whether the request finished
+    /// or was dropped in flight.
+    fn publish(&mut self, ending: Ending) -> Option<RequestObservation> {
         let mut record = self.record.take()?;
+        self.sinks.in_flight.end(&self.trace);
         record.duration_ms = self
             .started
             .elapsed()
@@ -124,29 +154,108 @@ impl<'a> ObservationGuard<'a> {
             .try_into()
             .unwrap_or(u64::MAX);
         record.finished_unix_ms = unix_ms();
-        record.attempt_diagnostics = self.trace.attempt_diagnostics();
+        record.attempt_diagnostics = match ending {
+            Ending::Finished => self.trace.attempt_diagnostics(),
+            // A stream in its own task may still run, and a transport run
+            // inside the request has recorded `Dropped` on its way out:
+            // either way the attempt in flight reads as `Interrupted`.
+            Ending::Dropped => self
+                .trace
+                .attempts_when_dropped(Instant::now(), record.finished_unix_ms),
+        };
         record.first_token_ms = self.trace.first_token().map(|at| {
             let since = at.saturating_duration_since(self.started).as_millis();
             u64::try_from(since).unwrap_or(u64::MAX)
         });
         record.instrumented_attempts = self.trace.attempts();
         record.oauth_retries = self.trace.oauth_retries();
-        if let Some(outbox) = self.outbox {
+        if let Some(outbox) = self.sinks.outbox {
             outbox
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .push(record.clone());
         }
-        self.log
+        if let Ending::Dropped = ending {
+            let mut interrupted = self
+                .sinks
+                .interrupted
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            // Bounded as the recent log is: a mode that never audits them
+            // keeps only the newest.
+            if interrupted.len() >= INTERRUPTED_RETAINED {
+                interrupted.remove(0);
+            }
+            interrupted.push(InterruptedRequest {
+                turn: self.sinks.turn,
+                observation: record.clone(),
+            });
+        }
+        self.sinks
+            .log
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .record(record.clone());
         Some(record)
     }
 }
+
+/// A request's future, which marks its trace as dropping when it is dropped
+/// before it completes (#2210 review) — before the future itself, and with
+/// it the transports it owns, is dropped — so an attempt a transport records
+/// on its way out is known to have been dropped with its request.
+pub(super) struct MarkDropping<F> {
+    trace: Arc<RequestTrace>,
+    request: Pin<Box<F>>,
+    completed: bool,
+}
+
+impl<F> MarkDropping<F> {
+    pub(super) fn new(trace: Arc<RequestTrace>, request: F) -> Self {
+        Self {
+            trace,
+            request: Box::pin(request),
+            completed: false,
+        }
+    }
+}
+
+impl<F: Future> Future for MarkDropping<F> {
+    type Output = F::Output;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+        let output = self.request.as_mut().poll(cx);
+        if output.is_ready() {
+            self.completed = true;
+        }
+        output
+    }
+}
+
+impl<F> Drop for MarkDropping<F> {
+    fn drop(&mut self) {
+        // Runs before the fields drop: the request is still whole here.
+        if !self.completed {
+            self.trace.mark_dropping();
+        }
+    }
+}
+
+/// The most requests ended in flight kept for their audit record.
+const INTERRUPTED_RETAINED: usize = 64;
+
+/// How a request's observation ended.
+#[derive(Clone, Copy)]
+enum Ending {
+    /// The request returned its result.
+    Finished,
+    /// The request's future was dropped before it returned (a run deadline,
+    /// an abort or steer, a shutdown).
+    Dropped,
+}
+
 impl Drop for ObservationGuard<'_> {
     fn drop(&mut self) {
-        self.publish();
+        self.publish(Ending::Dropped);
     }
 }
 

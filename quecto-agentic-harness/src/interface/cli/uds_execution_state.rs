@@ -26,6 +26,9 @@ pub struct ExecutionSnapshot {
     /// Bounded admission view (#1679 P4); absent when admission is disabled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub admission: Option<AdmissionSnapshot>,
+    /// The model request in flight (#2210); absent when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_turn: Option<crate::domain::state_snapshot::ModelTurnSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +67,8 @@ pub struct ExecutionState {
     /// Authority-level facts (#2024 S3): directory, epoch, and a live probe
     /// of the connection so `get_state.admission` carries broker health.
     authority: Option<AuthorityProbe>,
+    /// The agent's model request in flight, read on every snapshot (#2210).
+    model_turn: Option<Arc<crate::domain::request_progress::InFlightRequest>>,
     /// Last admission revision folded into `visible_generation`.
     observed_admission_revision: u64,
     observed_binding_warnings: Option<Vec<crate::domain::state_snapshot::AdmissionBindingWarning>>,
@@ -136,6 +141,7 @@ impl Default for ExecutionState {
             phase: "idle",
             admission: None,
             authority: None,
+            model_turn: None,
             observed_admission_revision: 0,
             observed_binding_warnings: None,
             visible_generation: 1,
@@ -172,6 +178,15 @@ impl ExecutionState {
     /// live connection check that `get_state.admission` reports as health.
     pub(crate) fn set_admission_authority(&mut self, probe: AuthorityProbe) {
         self.authority = Some(probe);
+    }
+
+    /// Attach the agent's in-flight request (#2210): every snapshot reports
+    /// it as `modelTurn` while the agent waits on the model.
+    pub(crate) fn set_model_turn_source(
+        &mut self,
+        source: Arc<crate::domain::request_progress::InFlightRequest>,
+    ) {
+        self.model_turn = Some(source);
     }
 
     fn admission_activity(&self) -> Option<AdmissionActivity> {
@@ -400,6 +415,10 @@ impl ExecutionState {
                 }
                 snapshot
             },
+            model_turn: self
+                .model_turn
+                .as_ref()
+                .and_then(|request| request.snapshot(now)),
         }
     }
 }

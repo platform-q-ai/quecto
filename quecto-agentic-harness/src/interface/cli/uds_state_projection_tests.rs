@@ -33,6 +33,7 @@ fn state_with_execution(activity_generation: u64, progress_state: &str) -> Sessi
                 ..Default::default()
             },
             admission: None,
+            model_turn: None,
         }),
         sync: 0,
     }
@@ -288,4 +289,63 @@ fn failure_circuit_is_visible_in_slim_supervision_state() {
     let data = slim_state_projection(&state);
     assert_eq!(data["automaticTurnsSuspended"], true);
     assert_eq!(data["repeatedFailureNotifications"], 12);
+}
+
+/// #2210: the slim `get_state` carries the model turn in flight as
+/// `modelTurn`, and omits it when there is none, so older readers of an
+/// idle state see the shape they know.
+#[test]
+fn the_model_turn_in_flight_is_projected_only_while_present() {
+    use crate::domain::state_snapshot::{
+        AttemptProgressSnapshot, ModelTurnSnapshot, StateSnapshot,
+    };
+    let mut state = state_with_execution(3, "active");
+    let idle = slim_state_projection(&state);
+    assert!(idle.get("modelTurn").is_none(), "{idle}");
+    let turn = ModelTurnSnapshot {
+        elapsed_ms: 12_000,
+        output_cap_bytes: Some(262_144),
+        attempt: Some(AttemptProgressSnapshot {
+            number: 1,
+            elapsed_ms: 11_500,
+            events: 40,
+            output_bytes: 2_048,
+            since_last_event_ms: Some(20),
+            first_token_ms: Some(900),
+        }),
+    };
+    state.execution.as_mut().unwrap().model_turn = Some(turn.clone());
+    let data = slim_state_projection(&state);
+    assert_eq!(data["modelTurn"]["elapsedMs"], 12_000);
+    assert_eq!(data["modelTurn"]["attempt"]["sinceLastEventMs"], 20);
+    let typed: StateSnapshot = serde_json::from_value(data).unwrap();
+    assert_eq!(typed.model_turn, Some(turn));
+}
+
+/// #2210 review: while a model turn is in flight, a `since` poll at the
+/// current generation gets the unchanged marker carrying the turn;
+/// without one, the bare marker.
+#[test]
+fn a_since_poll_sees_a_model_turn_in_flight() {
+    let mut state = state_with_execution(5, "active");
+    let generation = slim_state_projection(&state)["generation"]
+        .as_u64()
+        .unwrap();
+    assert_eq!(
+        slim_state_response_data(&state, Some(generation)),
+        serde_json::json!({"unchanged": true, "generation": generation})
+    );
+    state.execution.as_mut().unwrap().model_turn =
+        Some(serde_json::from_value(serde_json::json!({"elapsedMs": 9})).unwrap());
+    // The small marker, carrying the turn: never the whole projection.
+    let data = slim_state_response_data(&state, Some(generation));
+    assert_eq!(
+        data,
+        serde_json::json!({"unchanged": true, "generation": generation,
+                           "modelTurn": {"elapsedMs": 9}})
+    );
+    // A stale cursor still gets the whole projection, turn included.
+    let full = slim_state_response_data(&state, Some(generation - 1));
+    assert_eq!(full["state"], "runningTool", "{full}");
+    assert_eq!(full["modelTurn"]["elapsedMs"], 9);
 }

@@ -13,8 +13,8 @@ A request ID identifies the logical request; each nested attempt has its origina
 attempt number. UTC values are Unix milliseconds, not monotonic clocks; elapsed
 milliseconds use a monotonic clock. Clock adjustments can reorder UTC values.
 
-Transport details are available only for the existing admission-owned OpenAI,
-Codex and Anthropic adapter paths with a request trace. Disabled admission,
+Transport details are available for the OpenAI, Codex and Anthropic adapter
+paths with a request trace (admission-owned, or observed beside the request). Disabled admission,
 unsupported adapters, admission refusal before dispatch and legacy observations
 have no wire telemetry. Absence is unavailable evidence, not success or overload.
 
@@ -50,3 +50,16 @@ nothing for the stream idle limit (300 s), and `TimedOut`, a non-streaming reply
 that did not arrive within the reply total limit (20 min). Both limits are
 described under "Stalled replies" in `runtime-models-providers.md`. Stop reasons are mapped
 to a closed enum; unknown provider reasons retain only `Unknown`, never their text.
+
+#2210 adds, in the same additive way: the `output_capped` error class (a reply
+stopped at its output cap, never retried); two `attempt_diagnostics.termination`
+values, `OutputCapped` (the harness abandoned the attempt at its output cap)
+and `Interrupted` (the request ended — a deadline, an abort, a shutdown — while
+the attempt was in flight, recorded from what it had streamed); and the
+`attempt_diagnostics.output_bytes` counter, the bytes of output (text,
+thinking, refusal and tool-call argument deltas) the attempt streamed, which
+older records omit and read as `0`. Since #2210 the Codex and Anthropic
+adapters also observe their attempts when no admission gate owns them, as the
+OpenAI-compatible path has since #2151, so every streaming path of a traced
+request records its attempts; a whole non-streaming Anthropic reply still
+records none.

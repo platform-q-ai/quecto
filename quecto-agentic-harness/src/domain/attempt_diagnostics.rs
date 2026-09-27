@@ -20,6 +20,10 @@ pub struct AttemptDiagnostics {
     /// attempt's start (#2151); `None` before any did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_token_ms: Option<u64>,
+    /// Bytes of output the attempt streamed: text, thinking, refusal and
+    /// tool-call argument deltas, never the events around them (#2210).
+    #[serde(default)]
+    pub output_bytes: u64,
     pub oversized_lines: u32,
     pub parse_errors: u32,
     pub unknown_events: u32,
@@ -96,6 +100,13 @@ pub enum Termination {
     /// A whole non-streaming reply did not arrive within the total reply
     /// bound, and the harness abandoned the attempt (#2210 review).
     TimedOut,
+    /// The reply streamed more output than the attempt's output cap, and the
+    /// harness abandoned the attempt as a runaway (#2210).
+    OutputCapped,
+    /// The request ended — a run deadline, an abort or steer, a shutdown —
+    /// while this attempt was still in flight; recorded from what it had
+    /// streamed by then (#2210).
+    Interrupted,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

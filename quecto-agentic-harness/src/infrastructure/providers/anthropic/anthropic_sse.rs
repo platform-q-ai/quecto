@@ -323,6 +323,8 @@ pub(super) struct StreamParams<'a> {
     pub model: &'a str,
     /// Tool definitions for reverse-mapping OAuth tool names (#438).
     pub tool_defs: Option<Vec<ToolDefinition>>,
+    /// The request's trace: the attempt is observed beside it (#2210).
+    pub trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
 }
 
 /// Parameters for incremental streaming (extends [`StreamParams`] with a channel).
@@ -341,29 +343,52 @@ impl AnthropicProvider {
         let request_builder = self.apply_headers(request_builder, params.model);
 
         let idle = self.stream_idle;
+        // Observed beside the request, never altering it (#2151, #2210).
+        let profile = Profile::new(Vendor::Anthropic, Surface::Assembled, idle);
+        let attempt = crate::infrastructure::providers::attempt_transport::PassiveAttempt::begin(
+            params.trace,
+            profile,
+        );
         let response = match idle.within(request_builder.send()).await {
-            Ok(sent) => sent.map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?,
-            Err(silent) => return Err(DomainError::Provider(silent.to_string())),
+            Ok(sent) => sent
+                .inspect_err(|_| attempt.iter().for_each(|a| a.send_failed()))
+                .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?,
+            Err(silent) => {
+                attempt.iter().for_each(|a| a.idle());
+                return Err(DomainError::Provider(silent.to_string()));
+            }
         };
+        if let Some(attempt) = &attempt {
+            attempt.response(&response);
+        }
 
         let status = response.status().as_u16();
         if status != 200 {
             let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
                 response.headers(),
             );
-            let text = error_text(idle.text(response).await);
+            let read = idle.text(response).await;
+            attempt.iter().for_each(|a| a.error_read(status, &read));
             return Err(DomainError::Provider(format!(
                 "HTTP {} from Anthropic: {}{}",
-                status, text, retry_after
+                status,
+                error_text(read),
+                retry_after
             )));
         }
 
-        let full = idle.text(response).await.map_err(|e| match e {
-            BodyError::Idle(silent) => DomainError::Provider(silent.to_string()),
-            BodyError::Read(e) => DomainError::Provider(format!("failed to read stream: {}", e)),
-        })?;
-
-        Self::parse_sse_response(&full, params.tool_defs)
+        let full = match &attempt {
+            Some(attempt) => attempt.read_sse(response, profile).await?,
+            None => idle.text(response).await.map_err(|e| match e {
+                BodyError::Idle(silent) => DomainError::Provider(silent.to_string()),
+                BodyError::Read(e) => {
+                    DomainError::Provider(format!("failed to read stream: {}", e))
+                }
+            })?,
+        };
+        let parsed = Self::parse_sse_response(&full, params.tool_defs);
+        attempt.iter().for_each(|a| a.parsed(&parsed));
+        parsed
     }
 
     /// Send a non-streaming request and read its whole reply: its status,
@@ -459,28 +484,39 @@ impl AnthropicProvider {
         let tx = params.tx;
 
         let idle = self.stream_idle;
+        // Observed beside the request, never altering it (#2151, #2210).
+        let attempt = crate::infrastructure::providers::attempt_transport::PassiveAttempt::begin(
+            params.base.trace,
+            Profile::new(Vendor::Anthropic, Surface::Incremental, idle),
+        );
         let mut response = match idle.within(request_builder.send()).await {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
+                attempt.iter().for_each(|a| a.send_failed());
                 let _ = tx
                     .send(StreamEvent::Error(format!("HTTP error: {}", e)))
                     .await;
                 return;
             }
             Err(silent) => {
+                attempt.iter().for_each(|a| a.idle());
                 let _ = tx.send(StreamEvent::Error(silent.to_string())).await;
                 return;
             }
         };
+        if let Some(attempt) = &attempt {
+            attempt.response(&response);
+        }
 
         let status = response.status().as_u16();
         if status != 200 {
             let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
                 response.headers(),
             );
-            let text = crate::infrastructure::providers::sse_common::truncate_error_body(
-                error_text(idle.text(response).await),
-            );
+            let read = idle.text(response).await;
+            attempt.iter().for_each(|a| a.error_read(status, &read));
+            let text =
+                crate::infrastructure::providers::sse_common::truncate_error_body(error_text(read));
             let _ = tx
                 .send(StreamEvent::Error(format!(
                     "HTTP {} from Anthropic: {}{}",
@@ -490,17 +526,19 @@ impl AnthropicProvider {
             return;
         }
 
-        let mut handler = AnthropicSseHandler::with_model(params.base.tool_defs, params.base.model);
-        crate::infrastructure::providers::sse_common::pump_sse(
+        let handler = AnthropicSseHandler::with_model(params.base.tool_defs, params.base.model);
+        crate::infrastructure::providers::attempt_transport::pump_observed(
             &mut response,
             &tx,
-            &mut handler,
+            handler,
+            attempt,
             idle,
         )
         .await;
     }
 }
 
+use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 use crate::infrastructure::providers::stream_idle::{BodyError, error_text};
 

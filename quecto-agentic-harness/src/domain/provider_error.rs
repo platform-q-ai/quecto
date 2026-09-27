@@ -18,6 +18,10 @@ pub enum ProviderErrorClass {
     /// a stream silent for its idle bound, or a whole reply over its total
     /// bound. Retryable, but at most once ([`Self::max_failures`]).
     Stalled,
+    /// The harness stopped a reply that streamed past its output cap
+    /// (#2210): a runaway such as a repetition loop. Not retryable: it
+    /// tends to repeat, each time at the cost of the whole cap.
+    OutputCapped,
     Client,
     Network,
     Cancelled,
@@ -66,6 +70,7 @@ impl ProviderErrorClass {
             Self::Server => "server",
             Self::EmptyStream => "empty_stream",
             Self::Stalled => "stalled",
+            Self::OutputCapped => "output_capped",
             Self::Client => "client",
             Self::Network => "network",
             Self::Cancelled => "cancelled",
@@ -110,6 +115,8 @@ pub const STREAM_IDLE_TIMEOUT: &str = "stream idle timeout: ";
 /// How an abandoned whole reply's error begins (#2210 review): a
 /// non-streaming reply did not arrive within its total bound.
 pub const REPLY_TIMEOUT: &str = "reply timeout: ";
+/// How the error of a reply stopped at its output cap begins (#2210).
+pub const OUTPUT_CAP_EXCEEDED: &str = "output cap exceeded: ";
 
 pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
     let msg = match err {
@@ -126,6 +133,10 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
         .any(|prefix| msg.starts_with(prefix))
     {
         return ProviderErrorClass::Stalled;
+    }
+
+    if msg.starts_with(OUTPUT_CAP_EXCEEDED) {
+        return ProviderErrorClass::OutputCapped;
     }
 
     if let Some(class) = classify_admission_error(msg) {

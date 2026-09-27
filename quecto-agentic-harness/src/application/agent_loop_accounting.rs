@@ -12,28 +12,10 @@ impl AgentLoopImpl {
     }
 
     /// A run stopped where it stood (a `--max-time` deadline, #2168): write
-    /// the requests it left unfinished to the audit log as `cancelled`, say
-    /// why the run stopped, and flush the accounting outbox as a finished
-    /// turn would. The records are written with turn 0: after the run.
+    /// the requests it left unfinished to the audit log, say why the run
+    /// stopped, and flush the accounting outbox as a finished turn would.
     pub async fn settle_stopped_run(&self, reason: &str) -> Result<(), DomainError> {
-        let unfinished: Vec<_> = self
-            .request_observations
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .recent
-            .iter()
-            .filter(|record| record.outcome == "cancelled")
-            .cloned()
-            .collect();
-        for record in unfinished {
-            self.audit(
-                0,
-                AuditEvent::RequestObserved {
-                    observation: Box::new(record),
-                },
-            )
-            .await;
-        }
+        self.audit_interrupted_requests().await;
         self.audit(
             0,
             AuditEvent::Error {
@@ -44,6 +26,38 @@ impl AgentLoopImpl {
         )
         .await;
         self.flush_request_accounting().await
+    }
+
+    /// Write each request that ended in flight — a run deadline, an abort
+    /// or steer, a shutdown — to the audit log once, as `cancelled`, with
+    /// the attempt it interrupted, under the turn it was sent in (#2168,
+    /// #2210).
+    pub async fn audit_interrupted_requests(&self) {
+        let interrupted = std::mem::take(
+            &mut *self
+                .interrupted_requests
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        for request in interrupted {
+            debug_assert_eq!(
+                request.observation.outcome, "cancelled",
+                "only a dropped request is queued"
+            );
+            self.audit(
+                request.turn,
+                AuditEvent::RequestObserved {
+                    observation: Box::new(request.observation),
+                },
+            )
+            .await;
+        }
+    }
+
+    /// The request in flight, which `get_state` reports as `modelTurn`
+    /// while the model thinks or streams (#2210).
+    pub fn request_in_flight(&self) -> Arc<crate::domain::request_progress::InFlightRequest> {
+        self.in_flight_request.clone()
     }
 
     pub fn take_request_observations(
