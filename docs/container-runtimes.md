@@ -81,17 +81,61 @@ outlive sessions" below): refs are allocated there, unique across every
 session sharing the directory, and every transition is written through.
 Two session-level `agent_cmd` commands expose it (use `agent_id: "*"`):
 
-- `get_containers` — lists every environment this session committed, and
-  every environment earlier or concurrent sessions of the same base
-  directory recorded (`restored: true`, `session` naming the creator,
-  `config` the container config, `created_at` epoch seconds), with
-  status `running`, `empty` (live, no members — every restored environment
-  starts so: another session's members are not reachable here),
-  `killing`, `stopped`, `cleanup-failed` (with its `last_error`), or
-  `retained` (a swarm container kept because its owner has not closed the
-  swarm — its coordinator was lost, or it holds an outcome nobody closed — with
+- `get_containers` — a bounded, compact listing (#2220). By default it
+  lists what the caller can act on: every environment this harness
+  created that is not `stopped`, the caller's session's earlier ones that
+  are not `stopped` (joinable, `killing` or `cleanup-failed`), and other
+  sessions' ones a `{"mode":"existing"}` join admits (`running`, `empty`,
+  `retained`). Every `stopped` environment — this harness's own and the
+  session's restored ones included — and other sessions' `killing` and
+  `cleanup-failed` ones are listed only with `"all": true`, which is
+  capped the same way. Rows come in ref-number order (`C2` before
+  `C10`), at most 20 of them; when more qualify, they are kept in this
+  order: this harness's live ones (its `killing` and `cleanup-failed`
+  ones included — it owns their settling, so they outrank the session's
+  earlier running ones), the session's earlier live ones, other sessions'
+  joinable ones, this harness's stopped ones, the rest — newest (highest
+  ref) first within each, a ref that is not `C<n>` last. The whole result
+  stays within 16 KiB: past it the rows' `retained`/`cause`/
+  `inspect_status` go first, then — row by row, the row the cap would
+  drop first first — `metadata.container`, then whole rows in that same
+  order; a last row that still did not fit would be reduced to `ref` and
+  `status`. The result's `total` counts every record, `hidden` those outside
+  the default scope and `omitted` those past the cap or the budget, and a
+  `note` names the way to see them (`"all":true`, `quecto container ls
+  --all`) and says when metadata was left out. Each row carries `ref`, `status`, `config` (the container
+  config), `members` (a count), `own` (the caller's session created it),
+  `checkout` (the create result's absolute `metadata.checkout`, else the
+  workspace — clipped at 400 characters but never redacted: it is the
+  path the model hands on verbatim, which redaction could corrupt), and
+  when set `name`, `created_at` (epoch seconds) and `last_error`; a row
+  not the caller's own carries `session` (its creator, left out when the
+  creator ran without a session key), and every row restored from the
+  durable registry — the session's own earlier ones included — carries
+  `restored: true`. "The caller's own" means created by this harness or
+  by an earlier run under the same session key: an environment a spawned
+  child created is journalled under the child's own session key, so
+  after a restart it lists as another session's (`own: false`, the
+  child's `session`) — still joinable and killable, but hidden by default
+  once it is not joinable.
+  `repository` (userinfo and secrets redacted; none for a sandbox) is
+  given once at the top when every row shares it, else per row. Of the
+  record's metadata only `retained`, `cause` and `inspect_status` are
+  listed, as text — secrets and URL userinfo redacted, clipped like
+  `last_error` at 400 characters (`name`, `config` and `session` at 200)
+  — and `container`, the runtime's container name, verbatim when it is a
+  plain name (`[A-Za-z0-9][A-Za-z0-9_.-]{0,127}`), otherwise not at all;
+  the create script's other keys repeat the row's fields. The shipped
+  scripts name the container `quecto-<environment_id>`, and an
+  environment id is `env-XXXXXXXXXX`, so `quecto-env-<id>` in the log
+  commands below is that same name. Statuses: `running`,
+  `empty` (live, no members — every restored environment starts so:
+  another session's members are not reachable here), `killing`,
+  `stopped`, `cleanup-failed` (with its `last_error`), or `retained` (a
+  swarm container kept because its owner has not closed the swarm — its
+  coordinator was lost, or it holds an outcome nobody closed — with
   `metadata.retained` explaining which; see "Swarm environments live as
-  long as the swarm"), plus workspace and members.
+  long as the swarm").
 - `kill_container` with `ref` or `name` — takes the environment's
   exclusive kill claim, asks every member agent to shut down over its own
   control edge (the `shutdown` protocol; a container coordinator's harness
@@ -433,7 +477,9 @@ it was retained** (recognisable by its own `metadata.retained` under
 `stopped` with the restore's `container not found at restore …` last
 error — an explicit kill clears that error) is restored to `retained`,
 so `container kill` can end it. Restored records carry `restored: true`
-and `session` in `get_containers`. A spawned child
+in `get_containers`, and `session` when another session created them;
+stopped ones — another session's, the session's own restored ones, and
+those this harness created — are listed only with `"all": true`. A spawned child
 journals its own creates but is not seeded (its parent shows the fleet).
 A session that started while the file was unreadable retries the read on
 its next lookup (`get_containers`, a join, a kill), so a document
@@ -471,7 +517,8 @@ creator's state stands and nothing is reverted.
 
 What a new session can do with a restored environment:
 
-- **list** — `agent_cmd get_containers` (`agent_id: "*"`), or from the
+- **list** — `agent_cmd get_containers` (`agent_id: "*"`; `"all":true`
+  for stopped ones and other sessions' that cannot be joined), or from the
   shell `quecto container ls` (live ones; `--all` includes `stopped`):
   `REF NAME CONFIG STATUS REPOSITORY CREATED-BY AGE`.
 - **join** — `spawn {"container": {"mode": "existing", "ref": "C1"}}` (or
@@ -860,8 +907,8 @@ travels into the container) instead.
 The create result must contain exactly these fields — unknown keys are
 rejected. When the config cloned a repository, the script should report it
 as `metadata.repository`: that is how `get_containers` listings and the
-TUI learn the source truthfully (sandbox configs report none and list an
-empty repository). A script set that can host a swarm should also report
+TUI learn the source truthfully (sandbox configs report none and list no
+repository). A script set that can host a swarm should also report
 `metadata.checkout`: the members' working directory and swarm checkout root
 (`QUECTO_SWARM_CHECKOUT`), identity-mounted so the session that launched the
 container can read the coordination store at
@@ -966,7 +1013,7 @@ exactly one JSON object:
 ```
 
 `metadata` (required object) is merged over the environment's stored
-metadata and becomes visible via `get_containers`; `status` (optional) is
+metadata (its `cause` is listed by `get_containers`); `status` (optional) is
 recorded as `inspect_status` — and judged by the registry restore
 (#2024 S4d): `running` keeps the record, `dead`/`exited`/`removed`/
 `stopped` marks it stopped, anything else (or a failed inspect) leaves it
@@ -1516,8 +1563,8 @@ Design properties:
   journalctl --user CONTAINER_NAME=quecto-env-<id>
   ```
 
-  where `env-<id>` is the environment id from `get_containers` (the
-  container is named `quecto-<environment_id>`). Add `-f` to follow, or
+  where `quecto-env-<id>` is the `metadata.container` of the environment's
+  `get_containers` row (the container is named `quecto-<environment_id>`). Add `-f` to follow, or
   `--since`/`--until` around the time an environment was lost. Under Docker
   (default `json-file` driver) read them with `docker logs quecto-env-<id>`
   instead; a Podman configured with another driver likewise uses

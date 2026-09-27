@@ -301,11 +301,12 @@ pub(crate) fn run_container_command(
     }
 }
 
-/// Fetch the authoritative listing and return the entry for `env_ref`.
+/// Fetch the authoritative listing — every record, `all: true` (#2220) —
+/// and return the entry for `env_ref`.
 pub(crate) fn container_listing_entry(world: &mut QuectoWorld, env_ref: &str) -> serde_json::Value {
     let result = run_container_command(
         world,
-        serde_json::json!({"agent_id": "*", "command": "get_containers"}),
+        serde_json::json!({"agent_id": "*", "command": "get_containers", "all": true}),
     );
     assert!(
         !result.is_error,
@@ -579,65 +580,6 @@ fn then_shared_env_ref(world: &mut QuectoWorld, a: String, b: String, env_ref: S
     assert_eq!(rb.as_deref(), Some(env_ref.as_str()), "{b} env ref: {rb:?}");
 }
 
-#[then(expr = "subagents {string} and {string} should share the same workspace")]
-fn then_shared_workspace(world: &mut QuectoWorld, a: String, b: String) {
-    // Each agent's workspace comes from its OWN spawn result; the joiner must
-    // report the creator's workspace, and the listing must agree.
-    let wa = world
-        .agent_workspaces
-        .get(&a)
-        .unwrap_or_else(|| {
-            panic!(
-                "no captured workspace for {a}: {:?}",
-                world.agent_workspaces
-            )
-        })
-        .clone();
-    let wb = world
-        .agent_workspaces
-        .get(&b)
-        .unwrap_or_else(|| {
-            panic!(
-                "no captured workspace for {b}: {:?}",
-                world.agent_workspaces
-            )
-        })
-        .clone();
-    assert!(!wa.is_empty(), "workspace for {a} must be reported");
-    assert_eq!(wa, wb, "{a} and {b} must share one workspace");
-    let env_ref = world
-        .agent_env_refs
-        .get(&a)
-        .cloned()
-        .expect("captured env ref");
-    let entry = container_listing_entry(world, &env_ref);
-    assert_eq!(
-        entry["workspace"].as_str(),
-        Some(wa.as_str()),
-        "listing workspace must match the members' reported workspace: {entry}"
-    );
-}
-
-#[then(expr = "subagents {string} and {string} should both be listed as members of {string}")]
-fn then_both_listed_as_members(world: &mut QuectoWorld, a: String, b: String, env_ref: String) {
-    let entry = container_listing_entry(world, &env_ref);
-    let members: Vec<&str> = entry["members"]
-        .as_array()
-        .unwrap_or_else(|| panic!("listing must report members: {entry}"))
-        .iter()
-        .filter_map(|m| m.as_str())
-        .collect();
-    let ua = world.agent_spawn_uuids.get(&a).cloned().unwrap_or_default();
-    let ub = world.agent_spawn_uuids.get(&b).cloned().unwrap_or_default();
-    assert!(
-        !ua.is_empty()
-            && !ub.is_empty()
-            && members.contains(&ua.as_str())
-            && members.contains(&ub.as_str()),
-        "both agent UUIDs must be members of {env_ref}: members={members:?} a={ua} b={ub}"
-    );
-}
-
 #[then(expr = "the spawn result should fail because environment {string} is unknown")]
 fn then_env_unknown(world: &mut QuectoWorld, env_ref: String) {
     let r = world.spawn_result.as_ref().unwrap();
@@ -746,8 +688,12 @@ fn then_listing_status_members(world: &mut QuectoWorld, env_ref: String, status:
         Some(status.as_str()),
         "listing entry: {entry}"
     );
-    let members = entry["members"].as_array().cloned().unwrap_or_default();
-    assert_eq!(members.len() as i32, n, "listing entry: {entry}");
+    // #2220: a member count, not the member ids.
+    assert_eq!(
+        entry["members"].as_i64(),
+        Some(n as i64),
+        "listing entry: {entry}"
+    );
 }
 
 #[then(
@@ -856,11 +802,7 @@ fn then_listing_eventually(world: &mut QuectoWorld, env_ref: String, status: Str
                     .and_then(|cs| cs.iter().find(|c| c["ref"].as_str() == Some(&env_ref)))
                 {
                     if entry["status"].as_str() == Some(&status) {
-                        assert_eq!(
-                            entry["members"].as_array().map(|m| m.len()),
-                            Some(n as usize),
-                            "entry: {entry}"
-                        );
+                        assert_eq!(entry["members"].as_u64(), Some(n as u64), "entry: {entry}");
                         return;
                     }
                 }

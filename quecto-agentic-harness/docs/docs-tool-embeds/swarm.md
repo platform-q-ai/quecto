@@ -272,7 +272,8 @@ when the socket closed on a running (or outcome-less paused) run: that run
 is paused holding `failed` and `resume_blockers` names the coordinator to
 relaunch. Read the members' harness logs with
 `journalctl --user CONTAINER_NAME=quecto-env-<id>` (rootless Podman,
-journald driver) or `docker logs quecto-env-<id>` (Docker).
+journald driver) or `docker logs quecto-env-<id>` (Docker); the name is the row's
+`metadata.container` in `get_containers`.
 
 After sending an answer, inspect `agent_cmd get_state` → `controlReceipts` by
 command ID. `queued`, `started`, `completed`, `failed`, `cancelled`, and `rejected`

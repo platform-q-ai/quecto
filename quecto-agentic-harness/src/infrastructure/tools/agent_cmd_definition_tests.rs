@@ -112,3 +112,41 @@ fn get_message_and_its_range_inputs_are_not_agent_facing() {
             .contains("UUID")
     );
 }
+
+/// #2220: the description says what `get_containers` lists and how to
+/// widen it, the schema types `all`, and both stay within their budgets.
+#[test]
+fn get_containers_is_described_as_bounded_and_all_is_typed_within_budget() {
+    const DESCRIPTION_BUDGET_BYTES: usize = 1_024;
+    const SCHEMA_BUDGET_BYTES: usize = 2_560;
+    let definition = AgentCmdTool::new(new_registry()).definition();
+    assert!(
+        definition
+            .description
+            .contains("get_containers lists what {\"mode\":\"existing\"} can join"),
+        "{}",
+        definition.description
+    );
+    assert!(
+        definition
+            .description
+            .contains("all:true also lists stopped ones")
+    );
+    assert!(
+        !definition
+            .description
+            .contains("lists running environments")
+    );
+    let schema: serde_json::Value = serde_json::from_str(&definition.parameters_schema).unwrap();
+    assert_eq!(schema["properties"]["all"]["type"], "boolean");
+    assert!(
+        definition.description.len() <= DESCRIPTION_BUDGET_BYTES,
+        "{} bytes",
+        definition.description.len()
+    );
+    assert!(
+        definition.parameters_schema.len() <= SCHEMA_BUDGET_BYTES,
+        "{} bytes",
+        definition.parameters_schema.len()
+    );
+}

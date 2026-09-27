@@ -431,6 +431,10 @@ A finished child's report is complete. The child saves its session after every t
       "enum": ["none", "low", "medium", "high", "xhigh", "max"],
       "description": "set_effort value"
     },
+    "all": {
+      "type": "boolean",
+      "description": "get_containers: also list stopped ones and other sessions' that cannot be joined"
+    },
     "ref": {
       "type": "string",
       "description": "Container ref for kill_container, e.g. C1"
@@ -460,7 +464,7 @@ A finished child's report is complete. The child saves its session after every t
 | `get_session_stats` | Get token usage and cost | No |
 | `get_subagents` | List nested subagents spawned by the targeted live subagent; not parent/session-wide inventory | No |
 | `get_subagents_all` | With `agent_id: "*"`, list parent/session-wide subagent inventory for cleanup/inspection | No |
-| `get_containers` | With `agent_id: "*"`, list spawned container environments (refs for `{"mode":"existing"}`) | No |
+| `get_containers` | With `agent_id: "*"`, list the container environments a `{"mode":"existing"}` join admits plus this session's own not stopped — compact rows in ref-number order, at most 20, with `total`/`hidden`/`omitted` counts; `"all": true` lists every environment | No |
 | `get_container_configs` | With `agent_id: "*"`, list the container configs `spawn` can select for this checkout: `{"container_configs":[{"name","default","source":"overlay"\|"global","repository","problem","joinable"}],"overlay_withheld","diagnostics"}`, the `container: true` default first (a repo-bound `standard` whatever the labels say, #2035); `repository` is shown with any URL userinfo redacted, `problem` is why a launch would refuse the entry (else null), `joinable` whether the config carries an `exec` argv (#2024 S4c) | No |
 | `kill_container` | With `agent_id: "*"`, terminate a spawned container by `ref` or `name`; a `stopped` one's leftovers are removed and its record forgotten once its container is gone | No |
 | `set_model` | Change the LLM model | No |

@@ -115,6 +115,27 @@ Feature: Environments outlive sessions
     When I spawn script-managed subagent "impl-name-c" into a new shared environment named "dup-env" with task "IMPL_NAME_C_MARKER"
     Then the spawn result should fail because environment name "dup-env" already names more than one live environment
 
+  @done @issue-2220 @container-env
+  Scenario: get_containers lists what this session can act on in ref-number order, and all lists the rest
+    Given script-managed child "impl-scope-one" is running in a shared environment with task "IMPL_SCOPE_ONE_MARKER"
+    And the durable environment registry also records a stopped environment "C7" named "old-env"
+    And the durable environment registry also records a running environment "C9" named "peer-env" from session "elsewhere"
+    When the harness is restarted as session "session-two"
+    And I spawn script-managed subagent "impl-scope-two" into a new shared environment with task "IMPL_SCOPE_TWO_MARKER"
+    Then the spawn result should include environment reference "C10"
+    When I run container command "get_containers"
+    Then the listing should show refs "C1, C9, C10" in that order out of 4
+    And the listing should count 1 hidden, naming "all":true
+    And the listing row "C10" should be this session's own
+    And the listing row "C1" should come from session "session-one"
+    And the listing row "C9" should come from session "elsewhere"
+    And every listing row should be compact
+    When I run container command "get_containers" with all
+    Then the listing should show refs "C1, C7, C9, C10" in that order out of 4
+    And the listing should hide nothing
+    And every listing row should be compact
+    And scenario teardown should leave no fixture processes running
+
   @done @issue-2024 @container-env
   Scenario: quecto container ls lists live environments and --all includes stopped ones
     Given script-managed child "impl-ls" is running in a shared environment named "ls-env" with task "IMPL_LS_MARKER"

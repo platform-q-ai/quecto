@@ -547,8 +547,8 @@ Member harness logs are captured by the container runtime: the Docker/Podman
 adapter passes `RUST_LOG` (default `info`; the host's value wins) into every
 environment, so the members' tracing output reaches the container's journald
 stream. Under rootless Podman (journald driver) read them with
-`journalctl --user CONTAINER_NAME=quecto-env-<id>`, where `env-<id>` is the
-environment id from `get_containers` (add `-f` to follow, `--since` to
+`journalctl --user CONTAINER_NAME=quecto-env-<id>`, where `quecto-env-<id>`
+is the `metadata.container` of the environment's `get_containers` row (add `-f` to follow, `--since` to
 scope); under Docker use `docker logs quecto-env-<id>`. An environment that vanished also leaves a
 `kill.log` entry in the adapter's state root naming the operation that removed
 it. See [Container runtimes](../../docs/container-runtimes.md#the-official-dockerpodman-adapter).

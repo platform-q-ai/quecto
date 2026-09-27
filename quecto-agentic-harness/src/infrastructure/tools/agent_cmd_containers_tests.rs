@@ -140,11 +140,14 @@ fn listing_and_kill_round_trip_through_the_use_case() {
     let parsed: serde_json::Value = serde_json::from_str(&listing.content).unwrap();
     assert_eq!(parsed["containers"][0]["ref"], "C1");
     assert_eq!(parsed["containers"][0]["status"], "running");
-    // Provenance (#2024 S4d): created here, by this (session-less) registry.
-    assert_eq!(parsed["containers"][0]["restored"], false);
-    assert_eq!(parsed["containers"][0]["session"], "");
+    // Provenance (#2024 S4d, #2220): created here, by this (session-less)
+    // registry — the caller's own, so no session or restored mark.
+    assert_eq!(parsed["containers"][0]["own"], true);
+    assert!(parsed["containers"][0].get("restored").is_none());
+    assert!(parsed["containers"][0].get("session").is_none());
     assert_eq!(parsed["containers"][0]["config"], "default");
-    assert!(parsed["containers"][0]["created_at"].is_null());
+    assert_eq!(parsed["containers"][0]["members"], 2);
+    assert!(parsed["containers"][0].get("created_at").is_none());
 
     let killed = block_on(execute_container_command(
         None,
@@ -224,12 +227,12 @@ fn public_listing_query_only_empty_inventory_is_exact() {
     )
     .unwrap();
     assert!(!result.is_error, "{}", result.content);
-    assert_eq!(result.content, r#"{"containers":[]}"#);
+    assert_eq!(result.content, r#"{"containers":[],"total":0}"#);
     assert_eq!(query.execution_count(), 1);
 }
 
 #[test]
-fn public_listing_query_only_preserves_complete_wire_objects_and_all_statuses() {
+fn public_listing_query_only_encodes_compact_rows_in_every_status() {
     use crate::application::tools::ports::Tool;
     let registry = EnvironmentRegistry::new();
     let mut expected = Vec::new();
@@ -254,32 +257,36 @@ fn public_listing_query_only_preserves_complete_wire_objects_and_all_statuses() 
         if index == 1 {
             record.members.clear();
         }
-        expected.push(serde_json::json!({
+        // #2220: compact — no metadata blob, no hidden uuid, a member
+        // count, optional fields only when set.
+        let mut row = serde_json::json!({
             "ref": format!("C{}", index + 1),
-            "name": record.name,
             "status": label,
-            "workspace": format!("/workspace/with space/{index}"),
-            "repository": format!("https://example.test/repo-{index}.git"),
-            "environment_uuid": record.environment_uuid,
-            "members": if index == 1 { Vec::<String>::new() } else { vec!["impl-1517".into(), "rev-a".into()] },
-            "metadata": {"index": index, "nested": {"ready": true}},
-            "last_error": record.last_error,
-            "restored": false,
-            "session": "",
             "config": "default",
-            "created_at": null,
-        }));
+            "members": if index == 1 { 0 } else { 2 },
+            "own": true,
+            "checkout": format!("/workspace/with space/{index}"),
+            "repository": format!("https://example.test/repo-{index}.git"),
+        });
+        if let Some(name) = &record.name {
+            row["name"] = serde_json::json!(name);
+        }
+        if let Some(last_error) = &record.last_error {
+            row["last_error"] = serde_json::json!(last_error);
+        }
+        expected.push(row);
         registry.commit(record);
     }
     let query = Arc::new(ListEnvironmentsQuery::new(registry));
     let result = block_on(
-        query_only_tool(query.clone()).execute(r#"{"agent_id":"*","command":"get_containers"}"#),
+        query_only_tool(query.clone())
+            .execute(r#"{"agent_id":"*","command":"get_containers","all":true}"#),
     )
     .unwrap();
     assert!(!result.is_error, "{}", result.content);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&result.content).unwrap(),
-        serde_json::json!({"containers": expected})
+        serde_json::json!({"containers": expected, "total": 5})
     );
     assert_eq!(query.execution_count(), 1);
 }

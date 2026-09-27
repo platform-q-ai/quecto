@@ -10,7 +10,7 @@ use crate::spawn_env_steps::run_container_command;
 fn then_listing_excludes(world: &mut QuectoWorld, env_ref: String) {
     let result = run_container_command(
         world,
-        serde_json::json!({"agent_id": "*", "command": "get_containers"}),
+        serde_json::json!({"agent_id": "*", "command": "get_containers", "all": true}),
     );
     assert!(
         !result.is_error,

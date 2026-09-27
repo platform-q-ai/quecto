@@ -139,7 +139,7 @@ The comparison is against *this binary's* bundle, so after upgrading quecto ever
 ## How to find configs and refs
 
 - **Which configs exist for this checkout** (global file plus the trusted overlay): the `spawn` tool description carries one line — `Available container configs: standard (default, repo-bound), quecto (global), …` (`repo-bound` = declared by this repository's overlay; `+N more` folds a long list; `(repo overlay untrusted — run quecto config trust)` means `container: true` is refused until then; a repo-bound `standard` is listed `default` whatever the labels say, because it is what `container: true` selects there). Live detail: `agent_cmd {"agent_id":"*","command":"get_container_configs"}` → `{"container_configs":[{"name","default","source":"overlay"|"global","repository","problem","joinable"}],"overlay_withheld":bool,"diagnostics":[…]}` — the `container: true` default first; `repository` is what a new container clones (`null` = sandbox). Operators: `quecto config get --effective container_configs`.
-- **Which environments are running** (for `{"mode":"existing"}` joins and `kill_container`): `agent_cmd {"agent_id":"*","command":"get_containers"}` → `containers[]` with `ref` (`C1`, durable per base dir; reused only once nothing on file holds it — after a full `gc` the next is `C1` again), `name`, `status`, `workspace`, `repository`, `members`. A spawn result names its ref and config: `environment_ref=C1 container_config=<name>`.
+- **Which environments are running** (for `{"mode":"existing"}` joins and `kill_container`): `agent_cmd {"agent_id":"*","command":"get_containers"}` → what you can join (`running`/`empty`/`retained`) plus your session's own not stopped, in ref-number order, at most 20: `containers[]` with `ref` (`C1`, durable per base dir; reused only once nothing on file holds it — after a full `gc` the next is `C1` again), `status`, `config`, `members` (count), `own`, `checkout`, and when set `name`, `session`, `restored`, `created_at`, `last_error`, `metadata.container` (the `quecto-env-<id>` its logs are read by); `repository` once at the top when shared; `total`, plus `hidden`/`omitted` and a `note` when rows were left out. `"all":true` also lists stopped ones and other sessions' that cannot be joined (capped at 20 too). A spawn result names its ref and config: `environment_ref=C1 container_config=<name>`.
 - **What a new container is**: a fresh clone of the config's `--repo` at its default branch. Your working tree, branch and uncommitted changes are not inside; push a branch and tell the child to fetch/checkout it.
 
 ## Environments from earlier sessions
@@ -148,8 +148,9 @@ Refs and names are durable per base dir (`<base_dir>/environments.json`):
 a container created by an earlier or concurrent session survives a
 restart and appears in `get_containers` with `restored: true` and
 `session` (its creator), status `empty` (its members are not reachable
-here), `retained`, or `stopped` (its container was gone when this session
-started; other sessions' later changes show after a restart). Join one
+here) or `retained`; one that is `stopped` (its container was gone when
+this session started) is listed only with `"all":true` (other sessions'
+later changes show after a restart). Join one
 that is `empty`/`retained` with `container: {"mode":"existing","ref":"C1"}`
 (your joiner leaving never tears it down) — `empty` means its creating
 session is still alive (a member harness exits with its parent, and the
