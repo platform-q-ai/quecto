@@ -5,8 +5,11 @@
 //! byte is sent to it: the URL's own address literal, every address a name
 //! resolves to (resolved once, here, and only the checked addresses are
 //! handed to the connector, so a second, different answer cannot be
-//! connected), and every redirect hop before it is followed. Proxies are
-//! switched off: a proxy would resolve and connect on its own.
+//! connected), and every redirect hop before it is followed.
+//!
+//! A proxy configured by `HTTP(S)_PROXY`/`ALL_PROXY` is honoured as before:
+//! through it, only the URL's (and each hop's) literal address is checked,
+//! because the proxy resolves names and connects on its own.
 use crate::application::agent_turn::use_cases::web_fetch::{
     FetchFailure, FetchOutcome, FetchRequest, FetchWebContent, HttpStatus,
 };
@@ -41,8 +44,13 @@ impl ReqwestFetchWebContent {
     }
 
     fn with_policy(builder: reqwest::ClientBuilder, policy: DestinationPolicy) -> Self {
+        warn_once_when_proxied(|name| std::env::var(name).ok());
+        // Proxies are kept (#1942 changes no proxy behaviour without
+        // approval). Through a proxy the resolver below is not consulted:
+        // the proxy resolves names and connects, so only address literals
+        // (the URL's, checked in `fetch`, and each hop's, checked by the
+        // redirect policy) are enforced.
         let client = builder
-            .no_proxy()
             .dns_resolver(Arc::new(AuthorizingResolver { policy }))
             .redirect(authorizing_redirects(policy))
             .build()
@@ -56,6 +64,46 @@ fn loopback_or_public(address: IpAddr) -> Result<(), NonPublicAddress> {
     match address {
         IpAddr::V4(v4) if v4 == std::net::Ipv4Addr::LOCALHOST => Ok(()),
         _ => authorize_destination(address),
+    }
+}
+
+/// The proxy variable reqwest will use, found the way reqwest (through
+/// hyper-util's `Matcher::from_env`) finds it: the first of each upper/lower
+/// case pair that is set, in effect when non-empty; `HTTP_PROXY` is ignored
+/// under CGI (`REQUEST_METHOD` set). Platform proxy settings (macOS,
+/// Windows) are not seen here.
+fn proxy_variable_in_effect(lookup: impl Fn(&str) -> Option<String>) -> Option<&'static str> {
+    let cgi = lookup("REQUEST_METHOD").is_some();
+    let pairs: [(&'static str, &'static str, bool); 3] = [
+        ("ALL_PROXY", "all_proxy", true),
+        ("HTTPS_PROXY", "https_proxy", true),
+        ("HTTP_PROXY", "http_proxy", !cgi),
+    ];
+    pairs
+        .into_iter()
+        .filter(|(_, _, honoured)| *honoured)
+        .find_map(|(upper, lower, _)| {
+            let (name, value) = [upper, lower]
+                .into_iter()
+                .find_map(|name| lookup(name).map(|value| (name, value)))?;
+            (!value.is_empty()).then_some(name)
+        })
+}
+
+/// What web_fetch says when a proxy variable is in effect.
+fn proxy_warning(lookup: impl Fn(&str) -> Option<String>) -> Option<String> {
+    proxy_variable_in_effect(lookup).map(|name| {
+        format!(
+            "web_fetch: {name} is set; fetches through an HTTP(S) proxy are checked only on the URL's literal address; the proxy resolves names"
+        )
+    })
+}
+
+/// Logs [`proxy_warning`] the first time a web-fetch adapter is built.
+fn warn_once_when_proxied(lookup: impl Fn(&str) -> Option<String>) {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    if let Some(warning) = proxy_warning(lookup) {
+        WARNED.call_once(|| tracing::warn!("{warning}"));
     }
 }
 

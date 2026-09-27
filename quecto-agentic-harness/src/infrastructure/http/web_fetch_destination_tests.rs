@@ -207,23 +207,93 @@ fn a_redirect_is_authorized_by_scheme_and_address_and_a_name_is_left_to_dns() {
     );
 }
 
+/// A proxy is honoured as before: the request goes to it, and the name is
+/// not resolved here (the proxy resolves it). Only address literals are
+/// still refused before anything is sent.
 #[tokio::test]
-async fn a_proxy_on_the_injected_builder_is_never_used() {
-    let (port, accepted, peer) = counting_peer(ok).await;
+async fn a_proxy_on_the_injected_builder_is_used_and_resolves_names_itself() {
+    let (port, direct, peer) = counting_peer(ok).await;
     let (proxy_port, proxied, proxy) = counting_peer(ok).await;
-    let builder = reqwest::Client::builder()
-        .proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{proxy_port}")).unwrap());
-    let result = ReqwestFetchWebContent::allowing_loopback_for_tests(builder)
+    let adapter = ReqwestFetchWebContent::new(
+        reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{proxy_port}")).unwrap()),
+    );
+    // Direct, `localhost` would be refused (it resolves only to loopback):
+    // through the proxy it is not resolved here, so it is sent.
+    let result = adapter
         .fetch(&request(&format!("http://localhost:{port}/")))
         .await;
     assert!(
         matches!(result, Ok(FetchOutcome::SuccessBody { .. })),
         "{result:?}"
     );
-    assert_eq!(accepted.load(Ordering::SeqCst), 1);
-    assert_eq!(proxied.load(Ordering::SeqCst), 0, "the proxy is bypassed");
+    assert_eq!(proxied.load(Ordering::SeqCst), 1, "sent to the proxy");
+    assert_eq!(direct.load(Ordering::SeqCst), 0, "not connected directly");
+    // An address literal is refused before the proxy is reached.
+    let literal = adapter
+        .fetch(&request(&format!("http://[::ffff:127.0.0.1]:{port}/")))
+        .await;
+    assert_eq!(
+        refused(literal),
+        "127.0.0.1 (via ::ffff:127.0.0.1) is not a public address"
+    );
+    assert_eq!(proxied.load(Ordering::SeqCst), 1, "the literal never left");
     peer.abort();
     proxy.abort();
+}
+
+#[test]
+fn a_proxy_variable_is_found_the_way_reqwest_finds_it() {
+    let env = |pairs: &'static [(&'static str, &'static str)]| {
+        move |name: &str| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+        }
+    };
+    assert_eq!(proxy_variable_in_effect(env(&[])), None);
+    assert_eq!(
+        proxy_variable_in_effect(env(&[("https_proxy", "http://p:1")])),
+        Some("https_proxy")
+    );
+    assert_eq!(
+        proxy_variable_in_effect(env(&[("HTTP_PROXY", "http://p:1")])),
+        Some("HTTP_PROXY")
+    );
+    assert_eq!(
+        proxy_variable_in_effect(env(&[("ALL_PROXY", "socks5://p:1")])),
+        Some("ALL_PROXY")
+    );
+    // The upper-case name wins even when empty, as in reqwest: no proxy.
+    assert_eq!(
+        proxy_variable_in_effect(env(&[("HTTPS_PROXY", ""), ("https_proxy", "http://p:1")])),
+        None
+    );
+    // Under CGI, HTTP_PROXY is ignored (httpoxy); HTTPS_PROXY is not.
+    assert_eq!(
+        proxy_variable_in_effect(env(&[
+            ("REQUEST_METHOD", "GET"),
+            ("HTTP_PROXY", "http://p:1")
+        ])),
+        None
+    );
+    assert_eq!(
+        proxy_variable_in_effect(env(&[
+            ("REQUEST_METHOD", "GET"),
+            ("HTTPS_PROXY", "http://p:1")
+        ])),
+        Some("HTTPS_PROXY")
+    );
+    // NO_PROXY alone configures no proxy.
+    assert_eq!(proxy_variable_in_effect(env(&[("NO_PROXY", "*")])), None);
+    assert_eq!(
+        proxy_warning(env(&[("http_proxy", "http://p:1")])).as_deref(),
+        Some(
+            "web_fetch: http_proxy is set; fetches through an HTTP(S) proxy are checked only on the URL's literal address; the proxy resolves names"
+        )
+    );
+    assert_eq!(proxy_warning(env(&[])), None);
 }
 
 #[tokio::test]
