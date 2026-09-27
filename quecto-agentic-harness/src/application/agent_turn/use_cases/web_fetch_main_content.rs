@@ -87,9 +87,11 @@ fn main_text(marked: &str, found: &Found<'_>, page_text: usize) -> Option<String
             continue;
         };
         debug_assert!(open.content_start <= end, "content ends before it starts");
-        let text = text_of_markup(&marked[open.content_start..end]);
-        match share(text.len(), page_text) {
-            Share::Substantial => return Some(text),
+        let content = &marked[open.content_start..end];
+        // Measured as the page is, its nested `<header>` stripped (#2222
+        // review); returned with it.
+        match share(strip_html(content).len(), page_text) {
+            Share::Substantial => return Some(text_of_markup(content)),
             Share::TooLarge => return None,
             Share::TooSmall => continue,
         }
@@ -334,6 +336,9 @@ impl<'a> Iterator for Tags<'a> {
     }
 }
 
+#[cfg(test)]
+#[path = "web_fetch_main_content_share_tests.rs"]
+mod share_tests;
 #[cfg(test)]
 #[path = "web_fetch_main_content_tests.rs"]
 mod tests;
