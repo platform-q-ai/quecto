@@ -565,7 +565,14 @@ As conversations grow, the agent manages context automatically:
 
 The agent tracks estimated token usage against an application-level context
 budget. When the conversation exceeds `max_context_tokens` (configurable,
-default `200000`), the agent applies context pruning:
+default `200000`), the agent applies context pruning. The estimate prices
+text by class: prose at about 4 characters a token, digit-bearing runs
+(numbers, hex, UUIDs, log columns) at about 2, long mixed-case runs with
+digits (base64, JWTs, keys) at about 1.4, and non-ASCII at 1 each. Once the
+provider reports the size of a prompt, the ceiling decides on that count:
+the budget is scaled by the provider's figure over the estimate (clamped to
+1x-4x) until the next report, a model or provider change, or a session
+switch.
 
 1. **Spilling at creation**: Tool outputs *and* conversation (user/assistant)
    messages are written to the session's retention namespace when they are

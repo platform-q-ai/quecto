@@ -109,8 +109,9 @@ fn test_estimate_message_tokens_includes_image_blocks() {
         mime_type: "image/png",
         data: "x".repeat(300), // div_ceil(300,4)=75 tokens image
     }];
-    // 1 text + 75 image + 2 for tool_call_id "call_1" (div_ceil(6,4)=2)
-    assert_eq!(estimate_message_tokens(&msg), 78);
+    // 1 text + 75 image + 3 for tool_call_id "call_1" ("call_" prose 2,
+    // "1" dense 1: #2212)
+    assert_eq!(estimate_message_tokens(&msg), 79);
 }
 
 #[test]

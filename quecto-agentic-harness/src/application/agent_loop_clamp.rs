@@ -50,6 +50,8 @@ impl AgentLoopImpl {
         self.model_context_window = model_context_window;
         self.context_manager
             .set_model_context_window(model_context_window);
+        // #2212: another model may tokenise differently.
+        self.context_manager.forget_calibration();
     }
 
     /// Builder variant: set the per-model output cap at construction time.
@@ -64,9 +66,12 @@ impl AgentLoopImpl {
     /// `max_tokens` is also a cost ceiling), and what the context window has
     /// left beside the prompt; never below the effective limit. The value is
     /// remembered so the reply is judged against what the request asked for.
-    pub(super) fn request_max_tokens(&self, context_tokens: usize) -> u32 {
+    pub(super) fn request_max_tokens(&self, estimated_context_tokens: usize) -> u32 {
         use std::sync::atomic::Ordering::Relaxed;
         let boosted = self.output_boost.swap(false, Relaxed);
+        // #2212: the room beside the prompt at its provider-calibrated size.
+        let scale = self.context_manager.estimate_scale();
+        let context_tokens = scale.calibrated(estimated_context_tokens);
         let effective = self.effective_max_tokens();
         let limit = match (boosted, self.model_max_tokens) {
             (true, Some(cap)) if cap > effective => {

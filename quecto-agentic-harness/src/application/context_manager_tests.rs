@@ -179,9 +179,6 @@ fn context_manager_is_the_agent_loop_context_boundary() {
     assert!(msg.spill_id.is_some());
 }
 
-#[path = "context_gauge_tests.rs"]
-mod gauge_tests;
-
 /// #2160: tokens sent with every request outside the messages (the tool
 /// definitions) shrink the room the messages have.
 #[tokio::test]
@@ -251,4 +248,214 @@ async fn two_consecutive_over_ceiling_appends_latch_the_prefix_dirty_once() {
         .map(|m| m.content.clone())
         .collect();
     assert_eq!(prefix, sent_after_turn_9);
+}
+
+/// #2212: a transcript of dense output whose estimate is under the budget but
+/// whose provider-reported size is over it.
+fn digit_transcript() -> Vec<Message> {
+    let mut messages = vec![Message::user("current prompt")];
+    for turn in 1..=6 {
+        let digits: String = (turn * 1_000..turn * 1_000 + 400)
+            .map(|n| format!("{n} "))
+            .collect();
+        let mut msg = Message::assistant(digits, vec![]);
+        msg.turn = Some(turn);
+        msg.spill_id = Some(format!("turn{turn}:msg:assistant"));
+        messages.push(msg);
+    }
+    messages
+}
+
+#[tokio::test]
+async fn without_provider_usage_the_ceiling_decides_on_the_heuristic() {
+    let estimate = context_pruning::estimate_total_tokens(&digit_transcript());
+    let manager = manager(estimate + estimate / 4);
+    assert_eq!(
+        manager.pruning_ceiling_in_estimate_units(),
+        manager.effective_max_context_tokens(),
+        "no usage yet: the budget is the heuristic's"
+    );
+
+    let mut messages = digit_transcript();
+    let plan = manager
+        .prepare_provider_context(
+            &mut messages,
+            manager.pruning_ceiling_in_estimate_units(),
+            false,
+        )
+        .await;
+
+    assert_eq!(plan.messages_stubbed + plan.messages_dropped, 0);
+}
+
+#[tokio::test]
+async fn with_provider_usage_the_ceiling_decides_on_calibrated_occupancy() {
+    let estimate = context_pruning::estimate_total_tokens(&digit_transcript());
+    let budget = estimate + estimate / 4;
+    let manager = manager(budget);
+    // The provider counted the digits at about twice the estimate.
+    manager.observe_provider_context_gauge(estimate * 2, estimate);
+    assert_eq!(manager.estimate_scale().permille(), 2_000);
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), budget / 2);
+
+    let mut messages = digit_transcript();
+    let plan = manager
+        .prepare_provider_context(
+            &mut messages,
+            manager.pruning_ceiling_in_estimate_units(),
+            false,
+        )
+        .await;
+
+    assert!(
+        plan.messages_stubbed > 0,
+        "calibrated occupancy (2x the estimate) is over the budget"
+    );
+    let kept = context_pruning::estimate_total_tokens(&messages);
+    assert!(
+        manager.estimate_scale().calibrated(kept) <= budget,
+        "the calibrated transcript fits the budget"
+    );
+}
+
+#[test]
+fn the_calibrated_ceiling_is_clamped_to_between_one_and_four_times_the_heuristic() {
+    let manager = manager(100_000);
+    manager.observe_provider_context_gauge(50_000, 100_000);
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 100_000);
+    manager.observe_provider_context_gauge(10_000_000, 100_000);
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 25_000);
+}
+
+#[test]
+fn a_zero_estimate_leaves_the_heuristic_in_place() {
+    let manager = manager(100_000);
+    manager.observe_provider_context_gauge(5_000, 0);
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 100_000);
+}
+
+#[test]
+fn a_session_change_forgets_the_observed_scale() {
+    let mut manager = manager(100_000);
+    manager.observe_provider_context_gauge(200_000, 100_000);
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 50_000);
+
+    manager.set_session_key(SessionIdentity::from_persisted_key("resumed-session"));
+
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 100_000);
+    assert_eq!(
+        manager.reconcile_context_gauge(80),
+        80,
+        "the display gauge no longer carries the old session's provider figure"
+    );
+}
+
+#[test]
+fn the_calibrated_ceiling_follows_the_model_window() {
+    let mut manager = manager(100_000);
+    manager.observe_provider_context_gauge(200_000, 100_000);
+    manager.set_model_context_window(Some(40_000));
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 20_000);
+    manager.forget_calibration();
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 40_000);
+}
+
+#[test]
+fn a_poisoned_gauge_still_yields_the_scale() {
+    let manager = manager(100_000);
+    manager.observe_provider_context_gauge(200_000, 100_000);
+    manager.poison_context_gauge_lock_for_test();
+    assert_eq!(manager.estimate_scale().permille(), 2_000);
+    manager.forget_calibration();
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 100_000);
+}
+
+/// "Real" tokens under a tokeniser at 4 chars/token for prose and 2 for
+/// digit runs: the #2212 QA rates.
+fn probe_real(messages: &[Message]) -> usize {
+    messages
+        .iter()
+        .map(|m| {
+            let digits = m
+                .content
+                .chars()
+                .filter(|c| c.is_ascii_digit() || *c == ' ')
+                .count();
+            match digits * 10 >= m.content.len() * 9 {
+                true => m.content.len().div_ceil(2),
+                false => m.content.len().div_ceil(4),
+            }
+        })
+        .sum()
+}
+
+/// Six prose turns (500 tokens each) under a pinned tail of two dense
+/// turns of `numbers` four-digit numbers each (2.5 real tokens per number).
+fn prose_head_dense_tail(numbers: usize) -> Vec<Message> {
+    let mut messages = vec![Message::user("current prompt")];
+    for turn in 1..=6 {
+        messages.push(long_message(turn));
+    }
+    for turn in 7..=8 {
+        let digits: String = (0..numbers).map(|n| format!("{n:04} ")).collect();
+        let mut msg = Message::assistant(digits, vec![]);
+        msg.turn = Some(turn);
+        msg.spill_id = Some(format!("turn{turn}:msg:assistant"));
+        messages.push(msg);
+    }
+    messages
+}
+
+/// Prune `messages` against 90% of their real size, with the provider's
+/// count observed; returns (real size after, budget, plan).
+async fn prune_at_ninety_percent(messages: &mut Vec<Message>) -> (usize, usize, ContextPlan) {
+    let est = context_pruning::estimate_total_tokens(messages);
+    let real = probe_real(messages);
+    let budget = real * 9 / 10;
+    let manager = manager(budget);
+    manager.observe_provider_context_gauge(real, est);
+    let ceiling = manager.pruning_ceiling_in_estimate_units();
+    let plan = manager
+        .prepare_provider_context(messages, ceiling, false)
+        .await;
+    (probe_real(messages), budget, plan)
+}
+
+/// Review probe C (#2212): dense content in the pinned tail and prose at
+/// the head. A uniform ratio over-valued what stubbing the prose freed
+/// (this shape ended at 82% of the budget); the per-class estimate prices
+/// each message at its own rate, so the pass reaches the 75% low-water
+/// mark (plus the spill manifest the pass adds after the ladder).
+#[tokio::test]
+async fn a_dense_tail_does_not_erode_the_low_water_mark() {
+    let mut messages = prose_head_dense_tail(800);
+    let (real_after, budget, plan) = prune_at_ninety_percent(&mut messages).await;
+    assert!(plan.messages_stubbed > 0);
+    assert_eq!(plan.messages_dropped, 0);
+    assert!(
+        real_after * 100 <= budget * 76,
+        "pruned to {real_after} of {budget}: above the low-water mark"
+    );
+    // Prose and digits at their real rates; the stubs' ids and counts carry
+    // digits, which the estimate prices a little above the probe's model.
+    let estimate = context_pruning::estimate_total_tokens(&messages);
+    assert!(
+        (real_after..=real_after + real_after / 100).contains(&estimate),
+        "{estimate} vs {real_after}"
+    );
+}
+
+/// The probe's own shape: the pinned dense tail alone is 74% of the
+/// budget, so the stubs of every other message put the floor at about
+/// 77%. The ladder deletes stubs only to meet the ceiling itself (#2213:
+/// the drop rung is a last resort), so it stops there, under the ceiling.
+#[tokio::test]
+async fn a_pinned_tail_near_the_low_water_mark_is_the_floor() {
+    let mut messages = prose_head_dense_tail(1_200);
+    let (real_after, budget, plan) = prune_at_ninety_percent(&mut messages).await;
+    assert_eq!(plan.messages_stubbed, 6, "every unpinned message is a stub");
+    assert_eq!(plan.messages_dropped, 0);
+    assert!(!plan.over_budget);
+    assert!(real_after <= budget);
+    assert!(real_after * 100 <= budget * 78, "{real_after} of {budget}");
 }

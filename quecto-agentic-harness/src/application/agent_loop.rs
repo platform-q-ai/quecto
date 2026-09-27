@@ -31,6 +31,8 @@ mod agent_loop_clamp;
 mod agent_loop_effort;
 #[path = "agent_loop_errors.rs"]
 mod agent_loop_errors;
+#[path = "agent_loop_gauge.rs"]
+mod agent_loop_gauge;
 #[path = "agent_loop_preview.rs"]
 pub(crate) mod agent_loop_preview;
 #[path = "agent_loop_pruning.rs"]
@@ -221,9 +223,12 @@ impl AgentLoopImpl {
     pub fn adopt_durable_prefix_latch(&mut self, latch: Arc<DurablePrefixLatch>) {
         self.durable_prefix_dirty = latch;
     }
-    /// Replace the LLM provider after config reload.
+    /// Replace the LLM provider after config reload. A reload may change the
+    /// endpoint behind the same name (a rebuilt router is always `router`),
+    /// so the calibration starts over, as on a model switch (#2212).
     pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
         self.provider = provider;
+        self.context_manager.forget_calibration();
     }
     /// Return the currently configured model name.
     pub fn model(&self) -> &str {
@@ -244,56 +249,6 @@ impl AgentLoopImpl {
     pub fn context_knob_snapshot(&self) -> (u32, u32) {
         self.context_manager.context_knob_snapshot()
     }
-    fn reconcile_context_gauge(&self, estimate: usize) -> usize {
-        self.context_manager.reconcile_context_gauge(estimate)
-    }
-
-    fn observe_provider_context_gauge(&self, reported_tokens: usize, estimate_at_call: usize) {
-        self.context_manager
-            .observe_provider_context_gauge(reported_tokens, estimate_at_call);
-    }
-
-    fn observe_estimated_context_gauge(&self, estimate: usize) {
-        self.context_manager
-            .observe_estimated_context_gauge(estimate);
-    }
-
-    #[doc(hidden)]
-    pub fn reconcile_context_gauge_for_test(&self, estimate: usize) -> usize {
-        self.reconcile_context_gauge(estimate)
-    }
-
-    #[doc(hidden)]
-    pub fn observe_provider_context_gauge_for_test(
-        &self,
-        reported_tokens: usize,
-        estimate_at_call: usize,
-    ) {
-        self.observe_provider_context_gauge(reported_tokens, estimate_at_call);
-    }
-
-    /// Poison the context-gauge mutex so coverage exercises the
-    /// `unwrap_or_else(|e| e.into_inner())` recovery paths (#1128).
-    #[cfg(test)]
-    pub(super) fn poison_context_gauge_lock_for_test(&self) {
-        self.context_manager.poison_context_gauge_lock_for_test();
-    }
-
-    /// Drive all three gauge entry points against a poisoned mutex.
-    #[cfg(test)]
-    pub(super) fn exercise_poisoned_context_gauge_for_test(&self) {
-        self.poison_context_gauge_lock_for_test();
-        assert_eq!(self.reconcile_context_gauge(42), 42);
-        self.observe_provider_context_gauge(1_000, 100);
-        assert_eq!(self.reconcile_context_gauge(80), 980);
-        self.observe_estimated_context_gauge(1);
-        assert_eq!(
-            self.reconcile_context_gauge(80),
-            980,
-            "estimate-only must not clobber provider truth after poison recovery"
-        );
-    }
-
     /// Fire a progress event to the registered callback, if any. Takes a closure
     /// so the event is only constructed when a callback is registered; on the
     /// headless path (`progress_callback = None`) it's never called.
@@ -484,9 +439,9 @@ impl AgentLoopImpl {
         } else {
             estimate_context_tokens
         };
-        if usage.context_input_tokens > 0 {
-            self.observe_provider_context_gauge(context_tokens, end.pre_response_context_tokens);
-        } else {
+        // #2212: `account_response` paired each report with its own estimate;
+        // the run's last usage may be an earlier call's, so never pair it here.
+        if usage.context_input_tokens == 0 {
             self.observe_estimated_context_gauge(estimate_context_tokens);
         }
         AgentResult {

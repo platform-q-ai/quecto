@@ -164,7 +164,8 @@ impl AgentLoopImpl {
         // Emit Thinking before every LLM call so the REPL spinner activates
         // immediately, including during multi-turn tool loops. The gauge value
         // is provider-truth when known, calibrated across estimate-only
-        // pruning/collapse changes; pruning itself still uses the estimate.
+        // pruning/collapse changes; pruning uses the estimate at the
+        // provider-observed scale (#2212).
         self.notify(|| AgentProgressEvent::Thinking {
             context_tokens: display_context_tokens,
             max_context_tokens: self.effective_max_context_tokens(),
@@ -246,6 +247,13 @@ impl AgentLoopImpl {
                 .await;
             if let Some(ref usage) = response.usage {
                 usage_totals.record(usage);
+                // #2212: every reported prompt size calibrates the estimate
+                // the next pruning pass decides with, not only the last one
+                // of a run; `context_tokens` is the estimate that was sent.
+                let reported = usage.context_input_tokens() as usize;
+                if reported > 0 {
+                    self.observe_provider_context_gauge(reported, context_tokens);
+                }
             }
         }
     }
@@ -380,7 +388,9 @@ impl AgentLoopImpl {
     ) -> AgentResult {
         // Emit Done so the spinner is cleared before the limit message.
         self.notify(|| AgentProgressEvent::Done);
-        let estimated_context_tokens = context_pruning::estimate_total_tokens(messages);
+        // With the tool definitions, as every other estimate path (#2212).
+        let estimated_context_tokens = context_pruning::estimate_total_tokens(messages)
+            .saturating_add(self.tool_definition_tokens());
         // `context_input_tokens` is the latest call's provider-reported
         // occupancy (assigned, not accumulated, by UsageTotals::record), so
         // report it directly; estimate-only providers observe the estimate.
