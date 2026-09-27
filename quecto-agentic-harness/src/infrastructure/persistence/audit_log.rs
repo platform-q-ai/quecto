@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 use crate::application::audit::ports::AuditSink;
 use crate::domain::audit::{AuditEnvelope, AuditEvent};
 use crate::domain::error::DomainError;
-use crate::infrastructure::persistence::filename::sanitize_session_key;
+use crate::infrastructure::persistence::filename::{digest_session_key, sanitize_session_key};
 
 /// The most one session's log holds before it stops (#2150): a runaway
 /// session cannot fill the disk.
@@ -26,13 +26,94 @@ pub struct AuditLog {
     session_key: String,
     parent: Option<String>,
     cap_bytes: u64,
+    /// A second handle on the same append-mode file, for the one line a
+    /// dying process writes from its panic hook (#2192).
+    crash_file: Option<std::sync::Arc<std::fs::File>>,
+    /// Set once the log is capped — before its `log_capped` record is
+    /// written — and shared with the crash line, which writes nothing once
+    /// it is set (#2192 review: nothing follows `log_capped`).
+    stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The bytes of the file taken so far — what it held when opened, and
+    /// every line reserved since — shared with the crash line (#2192
+    /// review): each writer reserves its line's bytes here, atomically and
+    /// before it writes, so the two together never pass the cap. No lock:
+    /// the panic hook reserves too.
+    reserved: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
-/// The open file and how much it holds.
+/// Where a panic hook writes the `error` event of a fatal panic (#2192):
+/// the session's log, through its own append-mode handle, synchronously.
+/// One `write` of one line: on an `O_APPEND` file it lands whole after any
+/// line already written. The async writer also writes each line with one
+/// `write`, but a regular file does not promise that a concurrent write is
+/// not interleaved with one in progress, whatever its size (a line with a
+/// long message and location is several KiB), so a line being written at
+/// that instant may be split. The line is written only while the log is
+/// not yet capped and its bytes can be reserved within the cap, from the
+/// budget the async writer reserves from too: the cap is exact.
+#[derive(Debug, Clone)]
+pub struct AuditCrashLine {
+    file: std::sync::Arc<std::fs::File>,
+    session_key: String,
+    parent: Option<String>,
+    cap_bytes: u64,
+    stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    reserved: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl AuditCrashLine {
+    /// Append `event`, filed under `turn`, as one line, when the log is not
+    /// capped and its bytes can be reserved under the cap. Never panics and
+    /// takes no lock; a failure (or a full or capped log) is an error — the
+    /// crash record still says why.
+    pub fn write(&self, turn: u32, event: AuditEvent) -> std::io::Result<()> {
+        use std::io::Write;
+        use std::sync::atomic::Ordering;
+        let line = envelope_line(&self.session_key, self.parent.as_ref(), turn, event)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let admitted = match self.stopped.load(Ordering::Acquire) {
+            false => reserve(&self.reserved, line.len() as u64, self.cap_bytes),
+            true => false,
+        };
+        match admitted {
+            true => (&*self.file).write_all(line.as_bytes()),
+            false => Err(std::io::Error::new(
+                std::io::ErrorKind::StorageFull,
+                "the event log is at its cap",
+            )),
+        }
+    }
+
+    /// The session this line's log is filed under.
+    pub fn session_key(&self) -> &str {
+        &self.session_key
+    }
+
+    /// The log of session `session_key` under `base_dir`, named for the
+    /// same parent and held to the same cap as this line's (#2192 review:
+    /// the log follows a session switch, and its crash line with it).
+    pub fn log_for(&self, base_dir: &Path, session_key: &str) -> Result<AuditLog, DomainError> {
+        Ok(AuditLog::open_sync(base_dir, session_key)?
+            .with_parent(self.parent.clone())
+            .with_cap(self.cap_bytes))
+    }
+}
+
+/// The open file, and whether it is capped.
 struct Writer {
     file: tokio::fs::File,
-    written: u64,
     capped: bool,
+}
+
+/// Reserve `len` bytes of the budget `reserved` holds under `cap`: taken
+/// whole, atomically, or (it would pass the cap) not at all.
+fn reserve(reserved: &std::sync::atomic::AtomicU64, len: u64, cap: u64) -> bool {
+    use std::sync::atomic::Ordering;
+    reserved
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| {
+            held.checked_add(len).filter(|taken| *taken <= cap)
+        })
+        .is_ok()
 }
 
 impl std::fmt::Debug for AuditLog {
@@ -93,21 +174,25 @@ impl AuditLog {
             ))
         })?;
         tighten(&std_file, 0o600, &shown);
+        let crash_file = std_file.try_clone().ok().map(std::sync::Arc::new);
         let written = std_file
             .metadata()
             .map_err(|e| DomainError::Session(format!("failed to read audit log: {e}")))?
             .len();
         let stopped = ends_capped(&std_file, written);
+        let capped = stopped || written >= DEFAULT_CAP_BYTES;
 
         Ok(Self {
             writer: Mutex::new(Writer {
                 file: tokio::fs::File::from_std(std_file),
-                written,
-                capped: stopped || written >= DEFAULT_CAP_BYTES,
+                capped,
             }),
             session_key: session_key.to_string(),
             parent: None,
             cap_bytes: DEFAULT_CAP_BYTES,
+            crash_file,
+            stopped: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(capped)),
+            reserved: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(written)),
         })
     }
 
@@ -122,29 +207,29 @@ impl AuditLog {
     pub fn with_cap(mut self, cap_bytes: u64) -> Self {
         assert!(cap_bytes > 0, "an audit log holds something");
         self.cap_bytes = cap_bytes;
+        let held = self.reserved.load(std::sync::atomic::Ordering::Acquire);
         let writer = self.writer.get_mut();
-        writer.capped = writer.capped || writer.written >= cap_bytes;
+        writer.capped = writer.capped || held >= cap_bytes;
+        self.stopped
+            .store(writer.capped, std::sync::atomic::Ordering::Release);
         self
     }
 
     fn line(&self, turn: u32, event: AuditEvent) -> Result<String, DomainError> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let envelope = AuditEnvelope {
-            ts: now_utc_iso8601(),
-            unix_ms: u64::try_from(now.as_millis()).unwrap_or(u64::MAX),
-            pid: std::process::id(),
-            host: host_name(),
-            session: self.session_key.clone(),
+        envelope_line(&self.session_key, self.parent.as_ref(), turn, event)
+    }
+
+    /// The handle a panic hook writes this log's last line through (#2192);
+    /// `None` when the file could not be opened a second time.
+    pub fn crash_line(&self) -> Option<AuditCrashLine> {
+        self.crash_file.as_ref().map(|file| AuditCrashLine {
+            file: file.clone(),
+            session_key: self.session_key.clone(),
             parent: self.parent.clone(),
-            turn,
-            event,
-        };
-        let mut line =
-            serde_json::to_string(&envelope).map_err(|e| DomainError::Other(e.to_string()))?;
-        line.push('\n');
-        Ok(line)
+            cap_bytes: self.cap_bytes,
+            stopped: self.stopped.clone(),
+            reserved: self.reserved.clone(),
+        })
     }
 
     /// Emit a single audit event.
@@ -152,7 +237,9 @@ impl AuditLog {
     /// Serialises with envelope fields, writes one JSONL line, and flushes.
     /// The flush is critical — the log must survive crashes. A line that
     /// would take the file past its cap is not written: one `log_capped`
-    /// record is, and nothing after it.
+    /// record is, and nothing after it. A line's bytes are reserved from
+    /// the budget the crash line shares before it is written, and stay
+    /// reserved if the write fails (part of it may have landed).
     pub async fn emit(&self, turn: u32, event: AuditEvent) -> Result<(), DomainError> {
         let line = self.line(turn, event)?;
         // Write directly — no BufWriter since we need every line flushed for
@@ -165,19 +252,28 @@ impl AuditLog {
         // a drop of the File (or a process crash) can lose the last line —
         // exactly the case the contract test caught.
         let mut writer = self.writer.lock().await;
-        let fits = writer.written.saturating_add(line.len() as u64) <= self.cap_bytes;
-        let line = match (writer.capped, fits) {
-            (false, true) => line,
-            (false, false) => {
+        let fits = match writer.capped {
+            false => reserve(&self.reserved, line.len() as u64, self.cap_bytes),
+            true => return Ok(()),
+        };
+        let line = match fits {
+            true => line,
+            false => {
                 writer.capped = true;
-                self.line(
+                // Before the record: a crash line after it would follow it.
+                self.stopped
+                    .store(true, std::sync::atomic::Ordering::Release);
+                let capped = self.line(
                     turn,
                     AuditEvent::LogCapped {
                         cap_bytes: self.cap_bytes,
                     },
-                )?
+                )?;
+                // The one record past the cap, counted all the same.
+                self.reserved
+                    .fetch_add(capped.len() as u64, std::sync::atomic::Ordering::AcqRel);
+                capped
             }
-            (true, _) => return Ok(()),
         };
         writer
             .file
@@ -189,7 +285,6 @@ impl AuditLog {
             .flush()
             .await
             .map_err(|e| DomainError::Session(format!("audit log flush failed: {e}")))?;
-        writer.written = writer.written.saturating_add(line.len() as u64);
 
         Ok(())
     }
@@ -201,6 +296,62 @@ impl AuditLog {
         let filename = format!("{}.jsonl", sanitize_session_key(session_key));
         base_dir.join("audit").join(filename)
     }
+
+    /// The directory a session's log and crash record live in (#2192).
+    pub fn directory(base_dir: &Path) -> PathBuf {
+        base_dir.join("audit")
+    }
+
+    /// The subdirectory of [`Self::directory`] crash records live in
+    /// (#2192): their own, so the event logs of every session never crowd
+    /// a record out of a bounded listing.
+    pub const CRASH_DIRECTORY: &'static str = "crash";
+
+    /// Where crash records live: [`Self::CRASH_DIRECTORY`] in the audit
+    /// directory.
+    pub fn crash_directory(base_dir: &Path) -> PathBuf {
+        Self::directory(base_dir).join(Self::CRASH_DIRECTORY)
+    }
+
+    /// The name of a session's crash record in [`Self::crash_directory`],
+    /// whether or not its log is kept (#2192): named by the key's digest
+    /// ([`digest_session_key`]), never its readable form, so no two
+    /// sessions share a record (#2192 review: `telegram:123` and
+    /// `telegram_123` would).
+    pub fn crash_record_name(session_key: &str) -> String {
+        format!("{}.crash", digest_session_key(session_key))
+    }
+
+    /// Resolve the host name now, so a panic hook later reads it cached.
+    pub fn warm_host_name() {
+        let _ = host_name();
+    }
+}
+
+/// One audit line: the envelope around `event`, newline-terminated.
+fn envelope_line(
+    session_key: &str,
+    parent: Option<&String>,
+    turn: u32,
+    event: AuditEvent,
+) -> Result<String, DomainError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let envelope = AuditEnvelope {
+        ts: now_utc_iso8601(),
+        unix_ms: u64::try_from(now.as_millis()).unwrap_or(u64::MAX),
+        pid: std::process::id(),
+        host: host_name(),
+        session: session_key.to_string(),
+        parent: parent.cloned(),
+        turn,
+        event,
+    };
+    let mut line =
+        serde_json::to_string(&envelope).map_err(|e| DomainError::Other(e.to_string()))?;
+    line.push('\n');
+    Ok(line)
 }
 
 impl AuditSink for AuditLog {

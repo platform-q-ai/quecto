@@ -195,6 +195,117 @@ tokio would also quietly turn a panic in any spawned task into a
      one contained panic into a fatal one elsewhere. Reviewers check this;
      an architecture test may take it over later.
 
+7. **A fatal panic leaves a record of why the process died.** At startup
+   the agent prepares its crash target (`<base>/audit/crash`, a directory
+   of its own beside the event logs, and the log's crash line) and arms it once it has claimed its
+   session, removing the records an earlier run of the session left and
+   never touching another owner's. The target follows the session: a
+   switch moves it to the new key, and a session that leaves nothing behind
+   disarms it. When the agent's event log was the departing session's own,
+   the switch also opens the arriving session's log (same parent, same
+   cap): the agent writes its events there from then on, and the crash line
+   moves with it, so a fatal `error` event lands in the log of the session
+   it happened in. A log of its own key (an agent without a session) stays.
+   The hook takes no lock: the target is set once and the session it
+   records for, and the crash line, are swapped atomically (each old value
+   leaked, never freed). A dispatch test drives `/new` and checks both
+   moved.
+   - A fatal panic, after it is reported, writes `<digest>.crash` (message,
+     location, the calls running, and — for a second panic inside a call —
+     that call and the panic it struck) and an `error` event (source
+     `panic`, its message redacted of secret shapes and bounded as the
+     call's own result is, filed under the turn it happened in: the struck call's, or
+     the last call's for a panic outside any; a process test checks the
+     real hook) within the log's cap and only while the log is not capped:
+     the async writer marks the log capped, in state it shares with the
+     crash line, before it writes `log_capped`, so nothing follows that
+     record — the crash record still says why. The cap is exact: the
+     crash line and the async writer reserve each line's bytes from one
+     shared budget (an atomic compare-and-swap, no lock — the hook takes
+     none) before writing it, so neither can take room the other has
+     already reserved, nor overlook bytes the other wrote. A reservation
+     whose write fails stays taken (part of the line may have landed). A panic outside any call
+     is attributed to none of the running calls.
+   - A contained panic (the one its call keeps) writes its own call's
+     provisional record, `<digest>.crash.provisional.<pid>.<scope>`, removed
+     by name when the call ends however it ends (contained or cancelled),
+     or when the call's code catches the panic itself (`catch_in_call`).
+     One still there means the process ended first. A reader prefers the
+     fatal record.
+   - A record is named by `<digest>`, the SHA-256 of the session key's
+     exact bytes in hex, never the key's readable file name: that maps
+     `:` to `_` for a legacy-safe key, so `telegram:123` and
+     `telegram_123` would share a record, and one session's new run would
+     clear the other's. The digest has a fixed length whatever the key's.
+     Each record also says the exact key it was written for, and a reader
+     takes a record only when it names the session asked about — one
+     naming another session, or none, is rejected.
+   - A new run of a session also clears the temporary files its writes
+     left (a process killed between creating one and renaming it), and
+     each start sweeps the crash directory of every session's records and
+     temporary files older than 30 days (`STALE_RECORD_AGE`): a session
+     never resumed does not keep its records for ever. Both remove only
+     names of a record's exact shapes (`<digest>.crash`,
+     `<digest>.crash.provisional.<pid>.<scope>`, and `.<either>.<16
+     hex>.tmp`); the sweep removes only regular files, judged by their
+     own modification time (`fstatat`, no link followed), from a bounded
+     number of entries examined, and says when it stopped short.
+   - Crash records live apart from the event logs (`audit/crash/`, not
+     `audit/`): every session's `.jsonl` log is in `audit/`, and a bounded
+     listing of it could miss a record, or have one crowded out by names
+     anyone can create. The fatal record is read by name; only provisional
+     records are listed.
+   - A reader asks for one process's records: the pid it expects, when it
+     knows one. The fatal record counts only if it names that pid; a
+     provisional record only if it is under that pid's name and names the
+     same pid. A record naming another pid — however new — never stands
+     in for the expected one. The pid is the record's own JSON, not
+     authenticated: within the same-uid trust model anyone who can write
+     `audit/crash/` can forge a record naming the expected pid, and it is
+     accepted. The check keeps one process's records from being taken for
+     another's; it is not a defence against a forger with write access. A
+     reader that knows no pid reads the newest of any, and believes none
+     of it.
+   - Provisional names are read only in their exact form,
+     `<digest>.crash.provisional.<pid>.<scope>` in decimal digits, the newest
+     scopes first and at most 64: names that merely start like one
+     (squatters) are skipped before the bound, and skipping is logged. A
+     squatter using well-formed names with the expected pid can still
+     crowd the bound; that is the same forgery the pid check does not
+     stop.
+   - A provisional record is withdrawn from the session it was written
+     under — the scope notes that key — not from the one the process
+     records for by then (a switch between the two would leave it). The
+     call's end always withdraws, noted or not (removing a missing record
+     is no error); a hook that notes its record after the call ended on
+     another thread sees the scope closed and withdraws it itself, so a
+     provisional record never outlives its call.
+   - Records are written whole (a temporary file renamed into place)
+     through the crash directory's handle (`audit` and `crash` each opened
+     without following a link), never through a link, and listed and read
+     through that handle too — never by path — from at most a bounded
+     number of entries, only from a regular file of bounded size, without
+     blocking on a FIFO; every text is bounded again on read. A listing
+     that stops short of the directory's end, at its bound or on a read
+     error, says so (logged), never silently. Every entry read counts
+     toward the bound, names that are not UTF-8 included, and a listing
+     that reaches the bound reads once more to tell a directory of exactly
+     that many entries from a larger one.
+   - Removing an entry asks what it is (`fstatat`, no link followed):
+     a directory is removed with `AT_REMOVEDIR`, anything else as a file —
+     never guessed from the platform's unlink error (`EISDIR` on Linux,
+     `EPERM` on macOS).
+   - A directory planted under `<digest>.crash` does not stop the fatal
+     record: an empty one is removed (by the write, and by a new run's
+     clear); a non-empty one leaves the record under this process's
+     fallback name `<digest>.crash.provisional.<pid>.0` (no call's scope is
+     0, so no call's end withdraws it), found by a reader of that process
+     and still marked not provisional.
+   - The temporary file's name carries 64 random bits (`getrandom`; a mix
+     of time, pid, a serial and an address where none can be had), and a
+     name someone already created is skipped for another, up to eight
+     times: a co-tenant cannot stop a record by pre-creating its name.
+
 ## Why unwinding is safe now
 
 - The only frames a contained panic unwinds through are the call's own. The
@@ -205,7 +316,7 @@ tokio would also quietly turn a panic in any spawned task into a
 
 ## Consequences
 
-- One tool bug costs one call.
+- One tool bug costs one call, and an agent that does die says why.
 - Release binaries are somewhat larger, because they carry unwind tables.
 - Code outside the harness's `main` (tests, embeddings) has no hook, so
   Rust's default behaviour applies there. The `panic_hook` process tests

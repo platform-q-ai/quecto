@@ -212,10 +212,38 @@ fn logged(world: &mut QuectoWorld) {
             .iter()
             .any(|record| record["event"] == "request_observed")
     );
-    let mode = |path: PathBuf| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode(run.dir("base/audit")), 0o700);
+    let mode = |path: &PathBuf| {
+        std::fs::symlink_metadata(path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    assert_eq!(mode(&run.dir("base/audit")), 0o700);
+    // Every log is a private file; the one directory beside them is the
+    // crash records' own (#2192), private too, and so is what it holds.
+    let crash = run.dir("base/audit/crash");
     for entry in std::fs::read_dir(run.dir("base/audit")).unwrap() {
-        assert_eq!(mode(entry.unwrap().path()), 0o600);
+        let path = entry.unwrap().path();
+        match path == crash {
+            true => assert_eq!(mode(&path), 0o700, "{}", path.display()),
+            false => {
+                assert!(
+                    path.symlink_metadata().unwrap().is_file(),
+                    "{}",
+                    path.display()
+                );
+                assert_eq!(mode(&path), 0o600, "{}", path.display());
+            }
+        }
+    }
+    assert!(
+        crash.symlink_metadata().is_ok_and(|meta| meta.is_dir()),
+        "the crash directory"
+    );
+    for entry in std::fs::read_dir(&crash).unwrap() {
+        let path = entry.unwrap().path();
+        assert_eq!(mode(&path), 0o600, "{}", path.display());
     }
 }
 

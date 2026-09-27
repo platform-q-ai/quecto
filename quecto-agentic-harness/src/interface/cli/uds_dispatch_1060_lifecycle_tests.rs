@@ -284,3 +284,84 @@ async fn new_session_while_streaming_answers_the_refusal_and_keeps_the_session()
         "no save ran before the admission refusal"
     );
 }
+
+/// The variable naming the base a [`crash_target_child`] arms under.
+const CRASH_CHILD_BASE: &str = "QUECTO_2192_SWITCH_CRASH_BASE";
+
+/// Child side of [`a_new_session_moves_the_crash_target_and_its_log`]: the
+/// crash target is process-wide, so it is armed in a process of its own.
+#[tokio::test]
+async fn crash_target_child() {
+    use crate::infrastructure::persistence::{audit_log::AuditLog, crash_record};
+    let Some(base) = std::env::var_os(CRASH_CHILD_BASE).map(std::path::PathBuf::from) else {
+        return;
+    };
+    let mut fx = Fixture::new();
+    let log = AuditLog::open_sync(&base, &fx.session_key).unwrap();
+    crash_record::prepare(crash_record::CrashTarget {
+        base_dir: Some(base.clone()),
+        session_key: Some(fx.session_key.clone()),
+        event_log: log.crash_line(),
+    });
+    crash_record::arm_prepared();
+    fx.agent.set_audit_log(Some(std::sync::Arc::new(log)));
+    {
+        let mut ctx = fx.ctx();
+        assert!(!handle_new_session(&mut ctx, None, "new_session").await);
+    }
+    // What the hook does on a fatal panic, called directly: no panic, no
+    // abort, in this child.
+    let record = crate::domain::crash_record::CrashRecord::new(
+        crate::domain::crash_record::PanicReport::new("after /new", None),
+        std::process::id(),
+        1,
+    );
+    crash_record::record_fatal(&record, "panic", 4);
+    println!("ARRIVED {}", fx.agent.session_key());
+}
+
+/// #2192 review (F7, F2): `/new` moves the crash target — the crash record
+/// and the event log its fatal `error` event goes to — to the new session.
+#[test]
+fn a_new_session_moves_the_crash_target_and_its_log() {
+    use crate::infrastructure::persistence::audit_log::AuditLog;
+    let base = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "interface::cli::uds::uds_dispatch::lifecycle_1060_tests::crash_target_child",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(CRASH_CHILD_BASE, base.path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{stdout} {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let arrived = stdout
+        .lines()
+        .find_map(|line| line.split_once("ARRIVED ").map(|(_, rest)| rest))
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or_else(|| panic!("the child ran: {stdout}"))
+        .to_string();
+    assert_ne!(arrived, "cli:test", "the session switched");
+    let crash = AuditLog::crash_directory(base.path());
+    assert!(
+        crash.join(AuditLog::crash_record_name(&arrived)).is_file(),
+        "the crash record follows the switch"
+    );
+    assert!(!crash.join(AuditLog::crash_record_name("cli:test")).exists());
+    let errors = |key: &str| {
+        std::fs::read_to_string(AuditLog::file_path(base.path(), key))
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.contains(r#""event":"error""#))
+            .count()
+    };
+    assert_eq!((errors("cli:test"), errors(&arrived)), (0, 1));
+}

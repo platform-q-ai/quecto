@@ -51,8 +51,11 @@ fn unkeyed() -> String {
     format!("unkeyed-{}-{started}", std::process::id())
 }
 
-/// Give `agent` its audit log when it keeps one; a failure to open is a
-/// warning, never a failed start.
+/// Give `agent` its audit log when it keeps one, and prepare the crash
+/// record a fatal panic leaves (#2192): beside the log, for every session
+/// that may leave something behind, with the log's crash line when it keeps
+/// one. The record is armed only once the session is claimed. A failure to
+/// open either is a warning, never a failed start.
 pub(super) fn attach(
     agent: &mut AgentLoopImpl,
     base_dir: &Path,
@@ -61,15 +64,32 @@ pub(super) fn attach(
     event_log: bool,
     stderr: &mut String,
 ) {
-    let Some(key) = log_key(flags.workflow, ephemeral(flags), session_key, event_log) else {
-        return;
+    use crate::infrastructure::persistence::audit_log::AuditLog;
+    use crate::infrastructure::persistence::crash_record::{CrashTarget, prepare};
+    let crash_line = match log_key(flags.workflow, ephemeral(flags), session_key, event_log) {
+        Some(key) => match AuditLog::open_sync(base_dir, &key) {
+            Ok(log) => {
+                let log = log.with_parent(flags.parent_id.clone());
+                let crash_line = log.crash_line();
+                agent.set_audit_log(Some(Arc::new(log) as Arc<dyn AuditSink>));
+                crash_line
+            }
+            Err(e) => {
+                stderr.push_str(&format!("WARNING: failed to open audit log: {e}\n"));
+                None
+            }
+        },
+        None => None,
     };
-    match crate::infrastructure::persistence::audit_log::AuditLog::open_sync(base_dir, &key) {
-        Ok(log) => agent.set_audit_log(Some(
-            Arc::new(log.with_parent(flags.parent_id.clone())) as Arc<dyn AuditSink>
-        )),
-        Err(e) => stderr.push_str(&format!("WARNING: failed to open audit log: {e}\n")),
-    }
+    let keeps_record = match (ephemeral(flags), session_key.is_empty()) {
+        (false, false) => Some(session_key.to_string()),
+        (true, _) | (false, true) => None,
+    };
+    prepare(CrashTarget {
+        base_dir: Some(base_dir.to_path_buf()),
+        session_key: keeps_record,
+        event_log: crash_line,
+    });
 }
 
 #[cfg(test)]

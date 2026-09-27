@@ -381,6 +381,14 @@ impl AgentLoopImpl {
         self.audit_log = log;
     }
 
+    /// Write events to `log` from now on, when a session switch opened one
+    /// for the arriving session (#2192 review); none keeps the current log.
+    pub fn follow_audit_log(&mut self, log: Option<Arc<dyn AuditSink>>) {
+        if let Some(log) = log {
+            self.audit_log = Some(log);
+        }
+    }
+
     /// Emit an audit event if audit logging is enabled.
     ///
     /// Write failures are logged via `tracing::warn!` but never crash the agent.

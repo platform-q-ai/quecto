@@ -5,6 +5,9 @@ use std::process::{Command, Stdio};
 /// The environment variable that turns [`child_entry`] into a scenario.
 const CHILD: &str = "QUECTO_2192_PANIC_HOOK_CHILD";
 
+/// Where a child arms its crash record (the session `cli:child`).
+const CHILD_BASE: &str = "QUECTO_2192_PANIC_HOOK_BASE";
+
 /// Compared by address, as `quecto_fail_fast`'s own
 /// `the_production_end_is_an_abort` explains: an abort cannot be run by a
 /// test, and no type tells one diverging function from another.
@@ -152,7 +155,13 @@ fn the_contained_report_names_the_tool_where_and_why() {
 
 /// Run this test binary again with only [`child_entry`], as `scenario`.
 fn run_child(scenario: &str) -> std::process::Output {
+    run_child_in(scenario, &std::env::temp_dir())
+}
+
+/// As [`run_child`], its crash record armed under `base`.
+fn run_child_in(scenario: &str, base: &std::path::Path) -> std::process::Output {
     test_support::without_core_dumps(&mut Command::new(std::env::current_exe().unwrap()))
+        .env(CHILD_BASE, base)
         .args([
             "--exact",
             "interface::panic_hook::tests::child_entry",
@@ -164,6 +173,16 @@ fn run_child(scenario: &str) -> std::process::Output {
         .stdin(Stdio::null())
         .output()
         .unwrap()
+}
+
+/// A value whose drop ends the process: a death during an unwind that no
+/// hook sees (as a stack overflow or an out-of-memory abort would be).
+struct ExitsOnDrop;
+impl Drop for ExitsOnDrop {
+    fn drop(&mut self) {
+        // SAFETY: `_exit` runs no destructor or handler and never returns.
+        unsafe { libc::_exit(test_support::FATAL_EXIT_CODE) }
+    }
 }
 
 /// A value whose drop panics: a destructor that fails during an unwind.
@@ -188,6 +207,10 @@ fn contain<F: std::future::Future>(runtime: &tokio::runtime::Runtime, tool: &str
     );
 }
 
+fn base_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var_os(CHILD_BASE).unwrap())
+}
+
 /// The child side of the process tests: a no-op in an ordinary run.
 #[test]
 fn child_entry() {
@@ -202,6 +225,22 @@ fn child_entry() {
     }
     install();
     install(); // a second install is a no-op, not a second hook
+    let base = base_dir();
+    // The turn scenarios keep an event log, as an agent with one does.
+    let event_log = match scenario.starts_with("turn-") {
+        true => {
+            crate::infrastructure::persistence::audit_log::AuditLog::open_sync(&base, "cli:child")
+                .unwrap()
+                .crash_line()
+        }
+        false => None,
+    };
+    crash_record::prepare(crash_record::CrashTarget {
+        base_dir: Some(base),
+        session_key: Some("cli:child".into()),
+        event_log,
+    });
+    crash_record::arm_prepared();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -258,7 +297,12 @@ fn child_entry() {
         "caught-only" => {
             let scope = ToolScope::new("edit");
             let answer = runtime.block_on(tool_panic_scope::scoped(scope.clone(), async {
-                tool_panic_scope::catch_in_call(|| -> u8 { panic!("handled") }).is_err()
+                let caught = tool_panic_scope::catch_in_call(|| -> u8 { panic!("handled") });
+                let dir = crash_record::RecordDir::existing(&base_dir()).unwrap();
+                let left = crash_record::SessionRecords::new("cli:child")
+                    .read(&dir, Some(std::process::id()));
+                println!("LEFT WHILE RUNNING {}", left.is_some());
+                caught.is_err()
             }));
             println!("ANSWER {answer} RECORDED {:?}", scope.recorded_panic());
         }
@@ -274,6 +318,59 @@ fn child_entry() {
             cannot_unwind_out();
             println!("UNREACHABLE");
         }),
+        // L-3: a provisional record the call never noted (the hook wrote it
+        // as the call ended on another thread) is still withdrawn at its end.
+        "unnoted" => {
+            let scope = ToolScope::new("edit");
+            let record = CrashRecord::new(PanicReport::new("unnoted", None), 1, 1).provisional();
+            let under = crash_record::record_provisional(scope.id(), &record);
+            println!("WRITTEN {under:?}");
+            runtime.block_on(tool_panic_scope::scoped(scope, async {}));
+        }
+        "ends-while-unwinding" => contain(&runtime, "edit", async {
+            tokio::task::yield_now().await;
+            let _ends_the_process = ExitsOnDrop;
+            panic!("first: the process ends before this is contained");
+        }),
+        "cancelled" => runtime.block_on(async {
+            let (tx, rx) = std::sync::mpsc::channel::<()>();
+            let call = tool_panic_scope::scoped(ToolScope::new("grep"), async move {
+                // Carried work panics; the call is cancelled before it joins.
+                let _join =
+                    crate::infrastructure::tools::call_work::spawn_blocking_in_call(move || {
+                        let _ = tx.send(());
+                        panic!("carried work of a call that was then cancelled");
+                    });
+                std::future::pending::<()>().await;
+            });
+            let mut call = Box::pin(call);
+            let _ = futures::poll!(call.as_mut());
+            rx.recv().unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let dir = crash_record::RecordDir::existing(&base_dir()).unwrap();
+            let left =
+                crash_record::SessionRecords::new("cli:child").read(&dir, Some(std::process::id()));
+            println!("WHILE RUNNING {}", left.is_some());
+            drop(call);
+        }),
+        // #2192 review (F8): the fatal `error` event is filed under the
+        // turn of the call it struck, or — outside any call — the turn of
+        // the call started last.
+        "turn-in-call" => runtime.block_on(tool_panic_scope::scoped(
+            ToolScope::in_turn("edit", 7),
+            async {
+                tokio::task::yield_now().await;
+                let _fails_while_unwinding = PanicsOnDrop;
+                panic!("first: the tool's own panic in turn 7");
+            },
+        )),
+        "turn-after-call" => {
+            runtime.block_on(tool_panic_scope::scoped(
+                ToolScope::in_turn("edit", 5),
+                async {},
+            ));
+            panic!("outside any call, after turn 5's");
+        }
         "core-limit" => {
             let mut limit = libc::rlimit {
                 rlim_cur: 1,
@@ -367,8 +464,8 @@ fn a_second_panic_while_a_contained_one_unwinds_aborts_and_is_reported() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains(
-            "quecto: fatal panic (tool calls running: edit; it struck the call's own \
-             panic while that unwound: first: the tool's own panic at "
+            "quecto: fatal panic (tool calls running: edit; it struck the call's own panic \
+             while that unwound: first: the tool's own panic at "
         ),
         "{stderr}"
     );
@@ -408,10 +505,175 @@ fn a_panic_the_tool_handled_is_not_taken_for_a_second_one() {
 
 #[test]
 fn a_panic_the_tool_handled_leaves_its_call_clean() {
-    let output = run_child("caught-only");
+    let base = tempfile::tempdir().unwrap();
+    let output = run_child_in("caught-only", base.path());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "{:?} {stdout}", output.status);
     assert!(stdout.contains("ANSWER true RECORDED None"), "{stdout}");
+    assert!(
+        stdout.contains("LEFT WHILE RUNNING false"),
+        "the handled panic's provisional record is withdrawn at the catch: {stdout}"
+    );
+    assert_eq!(child_record(base.path()), None);
+}
+
+#[test]
+fn a_call_end_withdraws_a_provisional_record_it_never_noted() {
+    let base = tempfile::tempdir().unwrap();
+    let output = run_child_in("unnoted", base.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{output:?}");
+    assert!(stdout.contains("WRITTEN Some(\"cli:child\")"), "{stdout}");
+    assert_eq!(
+        child_record(base.path()),
+        None,
+        "withdrawn at the call's end"
+    );
+}
+
+/// A closed scope: a call that already ended.
+/// A scope whose panic `message` was recorded while its call ran, and whose
+/// call has ended since: the hook's record landed before the close, and
+/// its provisional record is left after it.
+fn ended_scope_with(tool: &str, message: &str) -> std::sync::Arc<ToolScope> {
+    let scope = ToolScope::new(tool);
+    let call = tool_panic_scope::scoped(scope.clone(), async {});
+    assert_eq!(scope.record_panic(site(message)), Recording::Kept);
+    drop(call);
+    assert!(!scope.is_open());
+    // A record after the close is refused: the panic is fatal then.
+    assert_eq!(scope.record_panic(site("after")), Recording::Refused);
+    scope
+}
+
+fn site(message: &str) -> PanicSite {
+    PanicSite {
+        message: message.into(),
+        location: None,
+    }
+}
+
+#[test]
+fn a_provisional_record_left_while_its_call_ends_is_withdrawn_by_the_hook() {
+    let scope = ended_scope_with("edit", "late");
+    let mut withdrawn = Vec::new();
+    leave_provisional(
+        &scope,
+        || Some("cli:a".to_string()),
+        |id, under| withdrawn.push((id, under.map(str::to_string))),
+    );
+    assert_eq!(withdrawn, [(scope.id(), Some("cli:a".to_string()))]);
+    assert_eq!(scope.take_provisional(), None, "withdrawn once");
+}
+
+#[test]
+fn a_provisional_record_of_a_running_call_is_noted_for_its_end() {
+    let scope = ToolScope::new("edit");
+    assert_eq!(scope.record_panic(site("running")), Recording::Kept);
+    let mut withdrawn = Vec::new();
+    leave_provisional(
+        &scope,
+        || Some("cli:a".to_string()),
+        |id, under| withdrawn.push((id, under.map(str::to_string))),
+    );
+    assert!(withdrawn.is_empty(), "the call's end withdraws it");
+    assert_eq!(scope.take_provisional().as_deref(), Some("cli:a"));
+    // Nothing written (disarmed): nothing noted, nothing withdrawn.
+    let scope = ended_scope_with("edit", "unwritten");
+    leave_provisional(
+        &scope,
+        || None,
+        |id, under| withdrawn.push((id, under.map(str::to_string))),
+    );
+    assert!(withdrawn.is_empty());
+}
+
+/// The crash record a child left under `base`: any process's, since the
+/// test does not learn the child's pid.
+fn child_record(base: &std::path::Path) -> Option<CrashRecord> {
+    crash_record::SessionRecords::new("cli:child")
+        .read(&crash_record::RecordDir::existing(base).ok()?, None)
+}
+
+#[test]
+fn a_fatal_panic_leaves_a_crash_record_after_reporting_it() {
+    let base = tempfile::tempdir().unwrap();
+    let output = run_child_in("outside", base.path());
+    aborted(&output, "an ordinary bug outside any tool");
+    let record = child_record(base.path()).expect("a crash record");
+    assert_eq!(record.panic.message, "an ordinary bug outside any tool");
+    assert!(
+        record
+            .panic
+            .location
+            .unwrap()
+            .contains("panic_hook_tests.rs:")
+    );
+    assert_eq!(
+        (record.call, record.earlier, record.provisional),
+        (None, None, false)
+    );
+}
+
+#[test]
+fn a_contained_panic_leaves_no_record() {
+    let base = tempfile::tempdir().unwrap();
+    let output = run_child_in("tool", base.path());
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        child_record(base.path()),
+        None,
+        "the provisional record was withdrawn"
+    );
+}
+
+#[test]
+fn a_second_panic_during_the_unwind_is_recorded_with_both_panics() {
+    let base = tempfile::tempdir().unwrap();
+    let output = run_child_in("second", base.path());
+    aborted(&output, "second: a destructor panicked during the unwind");
+    let record = child_record(base.path()).expect("a crash record");
+    assert_eq!(
+        record.panic.message,
+        "second: a destructor panicked during the unwind"
+    );
+    assert_eq!(record.call.as_deref(), Some("edit"));
+    assert_eq!(
+        record.earlier.map(|earlier| earlier.message).as_deref(),
+        Some("first: the tool's own panic")
+    );
+}
+
+#[test]
+fn a_process_that_ends_before_its_call_contains_a_panic_leaves_the_provisional_record() {
+    let base = tempfile::tempdir().unwrap();
+    let output = run_child_in("ends-while-unwinding", base.path());
+    assert_eq!(
+        output.status.code(),
+        Some(test_support::FATAL_EXIT_CODE),
+        "{output:?}"
+    );
+    let record = child_record(base.path()).expect("the provisional record stayed");
+    assert!(record.provisional);
+    assert_eq!(record.call.as_deref(), Some("edit"));
+    assert_eq!(
+        record.panic.message,
+        "first: the process ends before this is contained"
+    );
+}
+
+#[test]
+fn a_cancelled_call_withdraws_the_record_its_contained_panic_left() {
+    let base = tempfile::tempdir().unwrap();
+    let output = run_child_in("cancelled", base.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{output:?}");
+    assert!(stdout.contains("WHILE RUNNING true"), "{stdout}");
+    assert_eq!(
+        child_record(base.path()),
+        None,
+        "withdrawn when the call was dropped"
+    );
 }
 
 #[test]
@@ -437,136 +699,32 @@ fn a_panic_in_an_extern_c_function_is_fatal_at_its_boundary_and_names_the_first(
     );
 }
 
-/// #2192 review (PRRT_kwDORUxnPM6mf9Bd): a panic's location never records
-/// an absolute build path.
-#[test]
-fn a_panic_location_is_recorded_relative_to_its_crate() {
-    assert_eq!(
-        workspace_location("/home/u/work/quecto/quecto-agentic-harness/src/tools/edit.rs"),
-        "quecto-agentic-harness/src/tools/edit.rs"
-    );
-    assert_eq!(
-        workspace_location(
-            "/home/u/.cargo/registry/src/index.crates.io-1/tokio-1.47.0/src/runtime/task.rs"
-        ),
-        "tokio-1.47.0/src/runtime/task.rs",
-        "the last /src/ decides"
-    );
-    assert_eq!(
-        workspace_location("quecto-agentic-harness/src/a.rs"),
-        "quecto-agentic-harness/src/a.rs",
-        "a relative path is kept"
-    );
-    assert_eq!(workspace_location("/build/generated.rs"), "generated.rs");
-    assert_eq!(workspace_location("/src/a.rs"), "src/a.rs");
+/// The fatal `error` event a child left in its event log under `base`.
+fn fatal_event(base: &std::path::Path) -> serde_json::Value {
+    let path =
+        crate::infrastructure::persistence::audit_log::AuditLog::file_path(base, "cli:child");
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    text.lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|event| event["event"] == "error" && event["source"] == "panic")
+        .unwrap_or_else(|| panic!("no fatal error event in {text:?}"))
 }
 
-/// The functions the hook calls, by file: what runs inside the panic hook.
-const HOOK_PATH: &[(&str, &[&str])] = &[
-    (
-        include_str!("panic_hook.rs"),
-        &[
-            "disposition",
-            "can_unwind",
-            "can_unwind_in",
-            "contained_report",
-            "report_line",
-            "fatal_context",
-            "panic_site",
-            "workspace_location",
-        ],
-    ),
-    (
-        include_str!("../application/tool_panic_scope.rs"),
-        &[
-            "current",
-            "begin_contained_unwind",
-            "in_flight_tools",
-            "payload_message",
-            "thread_token",
-            "record_panic",
-            "recorded_panic",
-            "with_site",
-            "record",
-            "has_thread",
-            "is_open",
-            "tool",
-        ],
-    ),
-];
-
-/// Macros and methods that print (and panic on a failed write) or panic:
-/// in the hook, either is an abort without the report.
-const PANICKING_CALLS: &[&str] = &[
-    "eprintln",
-    "eprint",
-    "println",
-    "print",
-    "panic",
-    "assert",
-    "assert_eq",
-    "assert_ne",
-    "unreachable",
-    "todo",
-    "unimplemented",
-    "unwrap",
-    "expect",
-];
-
-/// The macro and method names each function of `source` calls, by name.
-fn calls_by_function(source: &str) -> std::collections::HashMap<String, Vec<String>> {
-    use syn::visit::Visit;
-    #[derive(Default)]
-    struct Calls(Vec<String>);
-    impl<'a> Visit<'a> for Calls {
-        fn visit_macro(&mut self, mac: &'a syn::Macro) {
-            if let Some(last) = mac.path.segments.last() {
-                self.0.push(last.ident.to_string());
-            }
-        }
-        fn visit_expr_method_call(&mut self, call: &'a syn::ExprMethodCall) {
-            self.0.push(call.method.to_string());
-            syn::visit::visit_expr_method_call(self, call);
-        }
-    }
-    let file = syn::parse_file(source).expect("the source parses");
-    let mut found = std::collections::HashMap::new();
-    let mut add = |name: String, block: &syn::Block| {
-        let mut calls = Calls::default();
-        calls.visit_block(block);
-        found.insert(name, calls.0);
-    };
-    for item in &file.items {
-        match item {
-            syn::Item::Fn(function) => add(function.sig.ident.to_string(), &function.block),
-            syn::Item::Impl(implementation) => {
-                for inner in &implementation.items {
-                    if let syn::ImplItem::Fn(method) = inner {
-                        add(method.sig.ident.to_string(), &method.block);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    found
-}
-
-/// #2192 review (PRRT_kwDORUxnPM6mf9Bk): nothing the hook calls prints
-/// through a macro that panics on a failed write, or panics itself.
+/// #2192 review (F8): the real hook files the fatal event under the turn
+/// it happened in — the struck call's, or the last call's outside one.
 #[test]
-fn nothing_the_hook_calls_prints_or_panics() {
-    for (source, functions) in HOOK_PATH {
-        let calls = calls_by_function(source);
-        for function in *functions {
-            let called = calls
-                .get(*function)
-                .unwrap_or_else(|| panic!("the hook-path function {function} exists"));
-            let banned: Vec<&String> = called
-                .iter()
-                .filter(|name| PANICKING_CALLS.contains(&name.as_str()))
-                .collect();
-            assert!(banned.is_empty(), "{function} calls {banned:?} in the hook");
-        }
-    }
+fn the_fatal_event_is_filed_under_the_turn_it_happened_in() {
+    let base = tempfile::tempdir().unwrap();
+    let output = run_child_in("turn-in-call", base.path());
+    aborted(&output, "second: a destructor panicked during the unwind");
+    let event = fatal_event(base.path());
+    assert_eq!(event["turn"], 7, "{event}");
+    assert_eq!(event["tool"], "edit", "{event}");
+
+    let base = tempfile::tempdir().unwrap();
+    let output = run_child_in("turn-after-call", base.path());
+    aborted(&output, "outside any call, after turn 5's");
+    let event = fatal_event(base.path());
+    assert_eq!(event["turn"], 5, "{event}");
+    assert!(event["tool"].is_null(), "{event}");
 }

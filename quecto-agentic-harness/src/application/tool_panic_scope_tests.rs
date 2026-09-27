@@ -394,6 +394,7 @@ fn recorded(message: &str, thread: u64) -> Recorded {
             location: None,
         },
         thread,
+        provisional: None,
     }
 }
 
@@ -497,4 +498,33 @@ fn a_record_says_whether_it_was_kept() {
     };
     assert_eq!(scope.record_panic(site("first")), Recording::Kept);
     assert_eq!(scope.record_panic(site("second")), Recording::Remembered);
+}
+
+#[test]
+fn only_the_kept_panic_has_a_provisional_record_and_it_is_taken_once() {
+    let scope = ToolScope::new("edit");
+    scope.note_provisional("cli:early".into());
+    assert_eq!(
+        scope.take_provisional(),
+        None,
+        "no panic, nothing to note on"
+    );
+    assert_eq!(
+        scope.record_panic(PanicSite {
+            message: "first".into(),
+            location: None,
+        }),
+        Recording::Kept
+    );
+    assert_eq!(
+        scope.record_panic(PanicSite {
+            message: "second".into(),
+            location: None,
+        }),
+        Recording::Remembered
+    );
+    scope.note_provisional("cli:a".into());
+    assert_eq!(scope.take_provisional().as_deref(), Some("cli:a"));
+    assert_eq!(scope.take_provisional(), None);
+    assert_eq!(scope.recorded_panic().unwrap().message, "first");
 }
