@@ -3,17 +3,34 @@
 //! A page that marks its main content (one `<main>`, one `role="main"`
 //! element, or one `<article>`, tried in that order) is read from that
 //! element alone, headings in its own `<header>` included, under the page's
-//! title and a one-line note, when the element holds a substantial share
-//! of the page's text. Every other page reads exactly as
+//! title and a one-line note saying how much text outside it was left out,
+//! when the element holds at least a third of the page's text, however much
+//! more (#2225: most documentation pages keep over nine tenths of their text
+//! in `<main>`, and their chrome is still worth dropping). Every other page
+//! reads exactly as
 //! [`strip_html`] reads it. One pass finds the landmarks and at most three
 //! more read them: linear in the page.
-use super::{
-    TagEnd, decode_entities, find_configured_close_tag, push_collapsed_line, remove_tag_blocks,
-    strip_html, tag_end, text_of_markup,
-};
+use super::{find_configured_close_tag, remove_tag_blocks, strip_html, text_of_markup};
+use crate::domain::html_text::{TagEnd, decode_entities, push_collapsed_line, tag_end};
 
-/// The one line said when only the main content is kept.
-pub const MAIN_CONTENT_NOTE: &str = "[Main content only; main_only: false returns the whole page]";
+/// How the one line said when only the main content is kept starts.
+pub const MAIN_CONTENT_NOTE_LEAD: &str = "[Main content only; ";
+
+/// The one line said when only the main content is kept: how many bytes of
+/// the page's readable text were dropped, and how to get them.
+pub fn main_content_note(dropped_bytes: usize) -> String {
+    format!(
+        "{MAIN_CONTENT_NOTE_LEAD}{dropped_bytes} bytes of page text dropped; main_only: false returns the whole page]"
+    )
+}
+
+/// The bytes of `text` that are not whitespace: text measured alike however
+/// its lines and blocks were separated.
+fn text_bytes(text: &str) -> usize {
+    text.bytes()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .count()
+}
 
 /// A landmark must hold at least a third of the page's text to be trusted.
 /// Below that it is more likely a hero banner in `<main>` or one teaser
@@ -21,11 +38,6 @@ pub const MAIN_CONTENT_NOTE: &str = "[Main content only; main_only: false return
 /// drop most of what the page says; real article and documentation pages
 /// measure well above it (#2165 fixtures: 68% and 69%).
 const LEAST_SHARE: (usize, usize) = (1, 3);
-
-/// A landmark holding more than nine tenths of the page's text is the
-/// page: it drops too little to be worth the note, so the page reads as a
-/// whole (and no smaller landmark inside it is tried).
-const MOST_SHARE: (usize, usize) = (9, 10);
 
 /// The elements `role="main"` is honoured on: containers that close.
 const ROLE_MAIN_CONTAINERS: &[&str] = &["div", "section", "main", "article"];
@@ -51,34 +63,37 @@ pub fn readable_html(html: &str) -> String {
     let whole = strip_html(html);
     let marked = remove_tag_blocks(html, LANDMARK_STRIPPED_BLOCK_TAGS);
     let found = scan(&marked);
-    match main_text(&marked, &found, whole.len()) {
-        Some(text) => with_title(found.title, &text),
-        None => whole,
-    }
+    let Some(main) = main_text(&marked, &found, whole.len()) else {
+        return whole;
+    };
+    let title = found.title.map(title_line).filter(|line| !line.is_empty());
+    // The whole page's text beyond the title and the landmark (measured as
+    // the page is): what is dropped.
+    let shown = main.text_bytes + title.as_deref().map_or(0, text_bytes);
+    with_title(
+        title.as_deref(),
+        text_bytes(&whole).saturating_sub(shown),
+        &main.text,
+    )
 }
 
-/// How much of the page's text a landmark holds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Share {
-    TooSmall,
-    Substantial,
-    TooLarge,
+/// The kept landmark: its text, and its [`text_bytes`] measured as the
+/// page is.
+#[derive(Debug)]
+struct MainText {
+    text: String,
+    text_bytes: usize,
 }
 
-fn share(part: usize, whole: usize) -> Share {
-    let at_least = part.saturating_mul(LEAST_SHARE.1) >= whole.saturating_mul(LEAST_SHARE.0);
-    let at_most = part.saturating_mul(MOST_SHARE.1) <= whole.saturating_mul(MOST_SHARE.0);
-    match (part > 0 && at_least, at_most) {
-        (true, true) => Share::Substantial,
-        (true, false) => Share::TooLarge,
-        (false, _) => Share::TooSmall,
-    }
+/// Whether a landmark holding `part` of the page's `whole` text holds
+/// enough of it to be trusted: at least [`LEAST_SHARE`], and something.
+fn is_substantial(part: usize, whole: usize) -> bool {
+    part > 0 && part.saturating_mul(LEAST_SHARE.1) >= whole.saturating_mul(LEAST_SHARE.0)
 }
 
 /// The text of the first landmark that is present, unambiguous, closed and
-/// substantial. A landmark too large to be worth the note is the page:
-/// nothing after it is tried.
-fn main_text(marked: &str, found: &Found<'_>, page_text: usize) -> Option<String> {
+/// substantial.
+fn main_text(marked: &str, found: &Found<'_>, page_text: usize) -> Option<MainText> {
     for seen in [found.main, found.role_main, found.article] {
         let Some(open) = seen.first.filter(|_| seen.count == 1) else {
             continue;
@@ -90,24 +105,32 @@ fn main_text(marked: &str, found: &Found<'_>, page_text: usize) -> Option<String
         let content = &marked[open.content_start..end];
         // Measured as the page is, its nested `<header>` stripped (#2222
         // review); returned with it.
-        match share(strip_html(content).len(), page_text) {
-            Share::Substantial => return Some(text_of_markup(content)),
-            Share::TooLarge => return None,
-            Share::TooSmall => continue,
+        let measured = strip_html(content);
+        if is_substantial(measured.len(), page_text) {
+            return Some(MainText {
+                text: text_of_markup(content),
+                text_bytes: text_bytes(&measured),
+            });
         }
     }
     None
 }
 
-fn with_title(title: Option<&str>, text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + MAIN_CONTENT_NOTE.len() + 256);
+/// A title as its line reads: entities decoded, whitespace collapsed.
+fn title_line(title: &str) -> String {
+    let mut line = String::with_capacity(title.len());
+    push_collapsed_line(&mut line, &decode_entities(title));
+    line
+}
+
+fn with_title(title: Option<&str>, dropped_bytes: usize, text: &str) -> String {
+    let note = main_content_note(dropped_bytes);
+    let mut out = String::with_capacity(text.len() + note.len() + 256);
     if let Some(title) = title {
-        push_collapsed_line(&mut out, &decode_entities(title));
-    }
-    if !out.is_empty() {
+        out.push_str(title);
         out.push('\n');
     }
-    out.push_str(MAIN_CONTENT_NOTE);
+    out.push_str(&note);
     out.push_str("\n\n");
     out.push_str(text);
     out

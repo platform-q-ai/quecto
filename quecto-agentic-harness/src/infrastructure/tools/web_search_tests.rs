@@ -393,3 +393,58 @@ async fn an_empty_query_is_refused_before_searching() {
         );
     }
 }
+
+/// #2211: Brave's `<strong>` highlights and HTML entities read as plain
+/// text in titles and snippets, and a snippet is cut after, not before.
+#[tokio::test]
+async fn test_brave_markup_and_entities_read_as_plain_text() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let long = format!(
+        "<strong>{}</strong>",
+        "b".repeat(MAX_WEB_SEARCH_RESULT_TEXT_CHARS)
+    );
+    let response = serde_json::json!({
+        "web": {"results": [
+            {
+                "title": "Rust Ownership &amp; <strong>Lifetimes</strong> | it&#x27;s",
+                "url": "https://example.com/a",
+                "description": "A &#x27;lifetime&#x27; is <strong>how long a reference lives for</strong> &amp; more"
+            },
+            {"title": "Long", "url": "https://example.com/b", "description": long}
+        ]}
+    });
+    Mock::given(method("GET"))
+        .and(path("/res/v1/web/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+        .mount(&server)
+        .await;
+
+    let tool =
+        WebSearchTool::with_base_urls(Some("test-key".to_string()), &server.uri(), "http://unused");
+    let result = tool.execute(r#"{"query":"rust"}"#).await.unwrap();
+    assert!(!result.is_error);
+    assert!(
+        result
+            .content
+            .contains("1. Rust Ownership & Lifetimes | it's - https://example.com/a\n"),
+        "{}",
+        result.content
+    );
+    assert!(
+        result
+            .content
+            .contains("   A 'lifetime' is how long a reference lives for & more\n"),
+        "{}",
+        result.content
+    );
+    for raw in ["<strong>", "</strong>", "&#x27;", "&amp;"] {
+        assert!(!result.content.contains(raw), "{raw}: {}", result.content);
+    }
+    // The limit counts the text, not the markup it came in: exactly at the
+    // limit, it is not cut.
+    let long_line = result.content.lines().nth(3).unwrap().trim();
+    assert_eq!(long_line, "b".repeat(MAX_WEB_SEARCH_RESULT_TEXT_CHARS));
+}

@@ -41,7 +41,8 @@ fn measure(fixture: &str, output: &str) -> (f64, f64) {
     )
 }
 
-const NOTE: &str = "[Main content only; main_only: false returns the whole page]";
+/// How every note starts; its count of omitted bytes follows.
+const NOTE: &str = "[Main content only; ";
 
 /// The docs page keeps its `<main>`: the title, then the note, then the
 /// article, without the sidebar, the table of contents or the languages.
@@ -53,7 +54,7 @@ fn a_docs_page_keeps_its_main_content() {
         lines.next(),
         Some("Array.prototype.map() - JavaScript | MDN")
     );
-    assert_eq!(lines.next(), Some(NOTE));
+    assert!(lines.next().is_some_and(|line| line.starts_with(NOTE)));
     assert!(
         text.lines().any(|line| line == "Array.prototype.map()"),
         "lost the h1: {text}"
@@ -146,17 +147,21 @@ fn a_small_landmark_is_not_trusted() {
     }
 }
 
-/// A landmark holding nearly all the text gains nothing: no note, no change.
+/// #2225: a landmark holding nearly all the text is still kept alone, the
+/// note saying how much was left out.
 #[test]
-fn a_landmark_holding_nearly_everything_changes_nothing() {
-    for (inside, outside, changes) in [(93, 7, false), (85, 15, true)] {
+fn a_landmark_holding_nearly_everything_is_kept() {
+    for (inside, outside) in [(93, 7), (98, 2), (85, 15)] {
         let html = page(&format!(
             "<main>{}</main>{}",
             words(inside, "in"),
             words(outside, "ot")
         ));
         let text = readable_html(&html);
-        assert_eq!(text != strip_html(&html), changes, "{inside}: {text}");
+        assert!(
+            text.contains(NOTE) && !text.contains("ot"),
+            "{inside}: {text}"
+        );
     }
 }
 
@@ -325,7 +330,10 @@ fn without_a_title_the_note_leads() {
         words(60, "in")
     );
     let text = readable_html(&html);
-    assert!(text.starts_with(&format!("{NOTE}\n\nin in")), "{text}");
+    assert!(
+        text.starts_with(NOTE) && text.contains("]\n\nin in"),
+        "{text}"
+    );
 }
 
 /// Pages of unclosed or unterminated markup are read in linear time.
@@ -386,10 +394,11 @@ fn a_tag_name_is_matched_whole() {
     );
 }
 
-/// A `<main>` or `role="main"` holding nearly everything is the page: a
-/// smaller `<article>` inside it does not win over it.
+/// #2225: a `<main>` or `role="main"` holding everything is kept whole, a
+/// smaller `<article>` inside it not winning over it, and nothing is
+/// omitted.
 #[test]
-fn a_landmark_too_large_to_note_keeps_the_whole_page() {
+fn a_landmark_holding_everything_omits_nothing() {
     for open in ["<main>", "<div role=\"main\">"] {
         let close = if open == "<main>" {
             "</main>"
@@ -403,7 +412,13 @@ fn a_landmark_too_large_to_note_keeps_the_whole_page() {
             words(15, "comment")
         ));
         let text = readable_html(&html);
-        assert_eq!(text, strip_html(&html), "{open}");
+        assert!(
+            text.starts_with(&format!("T\n{}\n\n", main_content_note(0))),
+            "{open}: {text}"
+        );
+        for kept in ["intro", "a a", "comment"] {
+            assert!(text.contains(kept), "{open}: {text}");
+        }
     }
 }
 
@@ -456,7 +471,10 @@ fn the_head_ends_at_the_first_body_tag() {
         words(60, "in")
     );
     let text = readable_html(&html);
-    assert!(text.starts_with(&format!("{NOTE}\n\nin in")), "{text}");
+    assert!(
+        text.starts_with(NOTE) && text.contains("]\n\nin in"),
+        "{text}"
+    );
     let html = format!(
         "<html><meta charset=utf-8><title>Kept</title><div>{}</div><main>{}</main></html>",
         words(20, "side"),

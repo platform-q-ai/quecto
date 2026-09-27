@@ -175,6 +175,25 @@ fn given_mock_redirects_to_mapped_self(world: &mut QuectoWorld) {
     );
 }
 
+/// #2209: a redirect to a local port nothing listens on.
+#[given("the mock web server redirects to a closed port")]
+fn given_mock_redirects_to_closed_port(world: &mut QuectoWorld) {
+    let server = world._web_fetch_mock_server.expect("mock server not set");
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .expect("a free local port")
+        .port();
+    mount_web_fetch_mock(
+        server,
+        wiremock::Mock::given(wiremock::matchers::method("GET")).respond_with(
+            wiremock::ResponseTemplate::new(302).insert_header(
+                "location",
+                format!("http://web-fetch.test:{closed}/gone").as_str(),
+            ),
+        ),
+    );
+}
+
 // ─── When steps ──────────────────────────────────────────────────────────────
 
 #[when("the agent executes tool \"web_fetch\" with mock URL")]
@@ -200,6 +219,21 @@ fn when_execute_web_fetch_mock_raw(world: &mut QuectoWorld) {
         .expect("mock URI not set")
         .clone();
     let args = serde_json::json!({"url": uri, "raw": true}).to_string();
+    let registry = world.tool_registry.as_ref().expect("tool registry not set");
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(registry.execute("web_fetch", &args));
+    world.tool_result = Some(result.map_err(|e| e.to_string()));
+}
+
+#[when("the agent executes tool \"web_fetch\" with mock URL and main_only false")]
+fn when_execute_web_fetch_mock_whole_page(world: &mut QuectoWorld) {
+    let uri = world
+        ._web_fetch_mock_uri
+        .as_ref()
+        .expect("mock URI not set")
+        .clone();
+    let args = serde_json::json!({"url": uri, "main_only": false}).to_string();
     let registry = world.tool_registry.as_ref().expect("tool registry not set");
     let result = tokio::runtime::Runtime::new()
         .unwrap()

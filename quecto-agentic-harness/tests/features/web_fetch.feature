@@ -56,8 +56,39 @@ Feature: Web Fetch Tool
     When the agent executes tool "web_fetch" with mock URL
     Then the [ToolResult] should contain "Install Guide"
     And the [ToolResult] should contain "Main content only"
+    And the [ToolResult] should contain "bytes of page text dropped; main_only: false returns the whole page"
     And the [ToolResult] should contain "run the installer"
     And the [ToolResult] should not contain "Popular posts"
+    And the [ToolResult] should not be an error
+
+  # #2225: documentation pages keep over nine tenths of their text in
+  # <main>; their navigation is still dropped.
+  @done
+  Scenario: Fetch keeps the main content even when it holds nearly all the text
+    Given a tool workspace with a web_fetch tool backed by a mock server
+    And the mock web server returns HTML:
+      """
+      <html><head><title>Array.map</title></head><body>
+      <div class="sidebar"><span>Navigation</span><a href="/a">Arrays</a><a href="/b">Maps</a></div>
+      <main><h1>Array.prototype.map()</h1><p>The map() method of Array instances creates a new array populated with the results of calling a provided function on every element in the calling array. It does not change the array it is called on, and it skips the empty slots of sparse arrays.</p></main>
+      </body></html>
+      """
+    When the agent executes tool "web_fetch" with mock URL
+    Then the [ToolResult] should contain "Main content only; 20 bytes of page text dropped"
+    And the [ToolResult] should contain "creates a new array"
+    And the [ToolResult] should not contain "Navigation"
+    And the [ToolResult] should not be an error
+
+  # #2225: the whole page keeps adjacent labels apart.
+  @done
+  Scenario: The whole page keeps adjacent labels apart
+    Given a tool workspace with a web_fetch tool backed by a mock server
+    And the mock web server returns HTML:
+      """
+      <html><body><div><span>Navigation</span><a href="/a">Introduction to Node.js</a><a href="/b">Getting Started</a></div></body></html>
+      """
+    When the agent executes tool "web_fetch" with mock URL and main_only false
+    Then the [ToolResult] should contain "Navigation Introduction to Node.js Getting Started"
     And the [ToolResult] should not be an error
 
   @done
@@ -219,6 +250,15 @@ Feature: Web Fetch Tool
     When the agent executes tool "web_fetch" with mock URL
     Then the tool call should fail with "restricted address; refused: the redirect to http://[::ffff:7f00:1]:"
     And the mock web server should have received 1 request
+
+  # #2209: a failed hop is named, with the cause, not the URL asked for.
+  @done
+  Scenario: A redirect to a closed port names the hop and the cause
+    Given a tool workspace with a web_fetch tool backed by a mock server
+    And the mock web server redirects to a closed port
+    When the agent executes tool "web_fetch" with mock URL
+    Then the tool call should fail with "Fetch failed: connection refused on the redirect hop to http://web-fetch.test:"
+    And the tool call should fail with "Connection refused"
 
   # ─── Plain text passthrough ─────────────────────────────────────────────────
 

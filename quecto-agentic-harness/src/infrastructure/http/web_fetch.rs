@@ -46,6 +46,10 @@ use crate::domain::network_destination::{
     NonPublicAddress, authorize_destination, authorize_under, is_fetchable_name,
 };
 use std::{future::Future, net::IpAddr, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
+
+#[path = "web_fetch_failure.rs"]
+mod failure_detail;
+
 const MAX_RAW_BYTES: usize = 5 * 1024 * 1024;
 /// One deadline for the whole fetch, every redirect included, as reqwest's
 /// request timeout was (#1942 changes only who is reached).
@@ -533,9 +537,10 @@ fn authorized_answers(
     Ok(admitted.into_iter().map(|(answer, _)| answer).collect())
 }
 
-/// A refusal anywhere in `error`'s chain, or else a timeout or transport
-/// failure.
-fn failure(error: reqwest::Error) -> FetchFailure {
+/// A refusal anywhere in `error`'s chain, or else a timeout or a transport
+/// failure saying its cause (#2209): `attempted` is the URL requested when
+/// it failed, `requested` the one the fetch was asked for.
+fn failure(error: reqwest::Error, requested: &url::Url, attempted: &url::Url) -> FetchFailure {
     let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(&error);
     while let Some(current) = cause {
         if let Some(refused) = current.downcast_ref::<Refused>() {
@@ -546,7 +551,10 @@ fn failure(error: reqwest::Error) -> FetchFailure {
     if error.is_timeout() {
         FetchFailure::TimedOut
     } else {
-        FetchFailure::Transport(error.to_string())
+        // Named by the detail without its userinfo, never by reqwest's
+        // message, which names the URL as requested.
+        let error = error.without_url();
+        FetchFailure::Transport(failure_detail::describe(&error, requested, attempted))
     }
 }
 
@@ -580,7 +588,7 @@ impl ReqwestFetchWebContent {
             let response = request
                 .send()
                 .await
-                .map_err(|error| self.hinted(failure(error)))?;
+                .map_err(|error| self.hinted(failure(error, url, &current)))?;
             let status = response.status().as_u16();
             let Some(next) = redirect_target(status, response.headers(), &current)? else {
                 return Ok(response);
@@ -627,13 +635,20 @@ impl FetchWebContent for ReqwestFetchWebContent {
                 .get(reqwest::header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_owned);
-            read_body(response, MAX_RAW_BYTES)
+            read_body(response, MAX_RAW_BYTES, url)
                 .await
                 .map(|body| FetchOutcome::SuccessBody { body, content_type })
         })
     }
 }
-async fn read_body(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>, FetchFailure> {
+/// The body of `response` to `requested` (perhaps after redirects), at
+/// most `max` bytes.
+async fn read_body(
+    mut response: reqwest::Response,
+    max: usize,
+    requested: &url::Url,
+) -> Result<Vec<u8>, FetchFailure> {
+    let attempted = response.url().clone();
     if let Some(n) = response.content_length() {
         if n as usize > max {
             return Err(FetchFailure::TooLarge {
@@ -643,11 +658,13 @@ async fn read_body(mut response: reqwest::Response, max: usize) -> Result<Vec<u8
         }
     }
     let mut out = Vec::with_capacity(max.min(256 * 1024));
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|e| FetchFailure::Read(e.to_string()))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|e| {
+        FetchFailure::Read(failure_detail::describe(
+            &e.without_url(),
+            requested,
+            &attempted,
+        ))
+    })? {
         out.extend_from_slice(&chunk);
         if out.len() > max {
             return Err(FetchFailure::TooLarge {
@@ -659,6 +676,9 @@ async fn read_body(mut response: reqwest::Response, max: usize) -> Result<Vec<u8
     Ok(out)
 }
 
+#[cfg(test)]
+#[path = "web_fetch_cause_tests.rs"]
+mod cause_tests;
 #[cfg(test)]
 #[path = "web_fetch_destination_tests.rs"]
 mod destination_tests;
