@@ -128,7 +128,7 @@ async fn non_public_address_literals_in_any_spelling_never_call_port() {
             content_type: None,
         });
         assert_eq!(
-            u.execute(url, false).await.unwrap(),
+            u.execute(url, HtmlView::MainContent).await.unwrap(),
             WebFetchResult::RestrictedInitialHost(reason.into()),
             "{url}"
         );
