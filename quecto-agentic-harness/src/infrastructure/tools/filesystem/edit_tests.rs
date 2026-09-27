@@ -323,21 +323,19 @@ async fn test_edit_diff_uses_minus_plus_markers() {
 
 #[test]
 fn test_plain_lf_without_bom_normalise_and_restore_are_identity() {
+    use crate::infrastructure::tools::filesystem::edit_bytes::LineEnding;
     let plain = "first\nsecond\n";
     assert_eq!(&*base_normalise(plain), plain);
-    assert_eq!(&*restore_file_format(plain, LineEnding::Lf, false), plain);
+    assert_eq!(with_span_endings(plain, "", LineEnding::Lf), plain);
 }
 
 #[test]
 fn test_crlf_and_bom_paths_preserve_observable_format() {
+    use crate::infrastructure::tools::filesystem::edit_bytes::LineEnding;
     assert_eq!(&*base_normalise("first\r\nsecond\r\n"), "first\nsecond\n");
     assert_eq!(
-        &*restore_file_format("first\nsecond\n", LineEnding::Crlf, false),
+        with_span_endings("first\nsecond\n", "", LineEnding::Crlf),
         "first\r\nsecond\r\n"
-    );
-    assert_eq!(
-        &*restore_file_format("first\nsecond\n", LineEnding::Lf, true),
-        "\u{FEFF}first\nsecond\n"
     );
 }
 

@@ -161,6 +161,15 @@ Feature: EditTool — Quecto compatibility
     And the file "unix.txt" should contain "EDITED"
     And the [ToolResult] should not be an error
 
+  @done
+  Scenario: A lone carriage return outside the edit is kept (#2242)
+    Given a tool workspace
+    And a file "progress.log" exists with content "progress 1%\rprogress 50%\rdone\nx\n"
+    When the agent edits "progress.log" replacing "x" with "y"
+    Then the [ToolResult] should not be an error
+    And the file "progress.log" should read exactly "progress 1%\rprogress 50%\rdone\ny\n"
+    And the [ToolResult] should contain "+2 y"
+
   # --- BOM preservation ---
 
   @done

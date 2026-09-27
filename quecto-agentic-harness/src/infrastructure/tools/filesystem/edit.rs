@@ -1,6 +1,7 @@
 // EditTool — tool name: "edit"
-// Two-stage exact→fuzzy matching, CRLF/BOM preservation, no-op detection,
-// LCS-based unified diff (edit_diff.rs).
+// Two-stage exact→fuzzy matching, no-op detection, LCS-based unified diff
+// (edit_diff.rs). The edit is spliced into the file's own bytes: nothing
+// outside the matched span changes, line endings included (#2242).
 
 use std::borrow::Cow;
 use std::future::Future;
@@ -13,8 +14,9 @@ use crate::domain::error::DomainError;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
+use super::edit_bytes::{line_view, span_line_ending, splice, view_offset, with_span_endings};
 use super::edit_diff::{Change, make_edit_diff};
-use super::edit_match::{Location, Unmappable, locate};
+use super::edit_match::{Location, Unmappable, base_mapped, locate};
 use super::edit_refusal::{FileLines, ambiguous, load_text, not_found, write_refusal};
 use super::fs_failure::refused;
 use super::resolve_and_validate;
@@ -41,19 +43,6 @@ fn unmappable_match(path: &str) -> ToolResult {
          so nothing was written. Copy oldText exactly from the file and retry.",
         path
     ))
-}
-
-/// Replace `range` of `content` with `new`, or `None` when the range is not
-/// on character boundaries of `content`.
-fn splice(content: &str, range: std::ops::Range<usize>, new: &str) -> Option<String> {
-    let range = (range.start <= range.end).then_some(range)?;
-    let before = content.get(..range.start)?;
-    let after = content.get(range.end..)?;
-    let mut out = String::with_capacity(before.len() + new.len() + after.len());
-    out.push_str(before);
-    out.push_str(new);
-    out.push_str(after);
-    Some(out)
 }
 
 pub struct EditTool {
@@ -137,23 +126,21 @@ impl Tool for EditTool {
                 Err(refusal) => return Ok(refusal),
             };
 
-            // Detect original line ending BEFORE normalisation.
-            let original_ending = detect_line_ending(&raw);
-            // Detect BOM BEFORE normalisation.
-            let has_bom = raw.starts_with('\u{FEFF}');
-
-            // Exact match first, then the fuzzy fallback, on BOM-stripped /
-            // CRLF-normalised text.
-            let content = base_normalise(&raw);
+            // Match on the normalised text (BOM stripped, every line break
+            // `\n`), exact first, then the fuzzy fallback; the offset map
+            // places the match in the file's own bytes (#2242).
+            let Ok(mapped) = base_mapped(&raw) else {
+                return Ok(unmappable_match(path));
+            };
+            let content = mapped.text.as_str();
             let base_old = base_normalise(old_text);
 
-            // `content` is what we splice into — the base-normalised file. The
-            // range is proven to be on character boundaries of `content`.
-            let range = match locate(&content, &base_old) {
+            // The range is proven to be on character boundaries of `content`.
+            let range = match locate(content, &base_old) {
                 Ok(Location::Unique(range)) => range,
                 Ok(Location::NotFound) => {
                     let lines = FileLines::of(&raw);
-                    return Ok(not_found(&content, &lines, &base_old, path));
+                    return Ok(not_found(content, &lines, &base_old, path));
                 }
                 Ok(Location::Ambiguous(matches)) => {
                     let lines = FileLines::of(&raw);
@@ -162,13 +149,23 @@ impl Tool for EditTool {
                 Err(Unmappable) => return Ok(unmappable_match(path)),
             };
 
+            // newText's line breaks take the endings of the lines they
+            // replace; every byte outside the matched span is kept as it is.
+            let Some(raw_range) = mapped.original_range(&raw, range) else {
+                return Ok(unmappable_match(path));
+            };
             let normalised_new = base_normalise(new_text);
-            let Some(updated_lf) = splice(&content, range.clone(), &normalised_new) else {
+            let replaced = raw.get(raw_range.clone()).unwrap_or_default();
+            let beyond = span_line_ending(&raw, raw_range.clone());
+            let inserted = with_span_endings(&normalised_new, replaced, beyond);
+            let Some(updated) = splice(&raw, raw_range.clone(), &inserted) else {
                 return Ok(unmappable_match(path));
             };
 
-            // No-op detection: if the result is byte-identical, reject.
-            if updated_lf == content {
+            // No-op: the same bytes, or the same lines as read shows them
+            // (only a line break's form would change).
+            let (old_view, new_view) = (line_view(&raw), line_view(&updated));
+            if updated == raw || new_view == old_view {
                 return Ok(ToolResult {
                     content: format!(
                         "No changes made to {}. The replacement produced identical content.",
@@ -180,14 +177,14 @@ impl Tool for EditTool {
                 });
             }
 
-            // Produce diff before restoring line endings (work in LF space).
-            let change = Change::of_splice(&content, &updated_lf, range, normalised_new.len());
-            let diff = make_edit_diff(path, &content, &updated_lf, &change);
+            // The diff shows the file's lines as read does: its own line
+            // breaks number them.
+            let view_start = view_offset(&raw, raw_range.start);
+            let view_range = view_start..view_offset(&raw, raw_range.end);
+            let change = Change::of_splice(&old_view, &new_view, view_range, normalised_new.len());
+            let diff = make_edit_diff(path, &old_view, &new_view, &change);
 
-            // Restore original line endings and BOM before writing.
-            let write_content = restore_file_format(&updated_lf, original_ending, has_bom);
-
-            if let Err(error) = tokio::fs::write(&full_path, write_content.as_bytes()).await {
+            if let Err(error) = tokio::fs::write(&full_path, updated.as_bytes()).await {
                 return Ok(write_refusal(path, &error));
             }
 
@@ -198,37 +195,6 @@ impl Tool for EditTool {
                 delivery_metadata: None,
             })
         })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LineEnding {
-    Lf,
-    Crlf,
-}
-
-/// Detect dominant line ending style via first occurrence heuristic.
-fn detect_line_ending(s: &str) -> LineEnding {
-    // Find position of first \r\n vs first lone \n.
-    let crlf_pos = s.find("\r\n");
-    let lf_pos = s.find('\n');
-    match (crlf_pos, lf_pos) {
-        (Some(cr), Some(lf)) if cr <= lf => LineEnding::Crlf,
-        _ => LineEnding::Lf,
-    }
-}
-
-/// Restore original line endings and re-prepend BOM if present.
-fn restore_file_format(lf_content: &str, ending: LineEnding, has_bom: bool) -> Cow<'_, str> {
-    let body = if ending == LineEnding::Crlf {
-        Cow::Owned(lf_content.replace('\n', "\r\n"))
-    } else {
-        Cow::Borrowed(lf_content)
-    };
-    if has_bom {
-        Cow::Owned(format!("\u{FEFF}{}", body))
-    } else {
-        body
     }
 }
 
@@ -260,3 +226,7 @@ mod tests;
 #[cfg(test)]
 #[path = "edit_fuzzy_file_tests.rs"]
 mod fuzzy_file_tests;
+
+#[cfg(test)]
+#[path = "edit_bytes_tests.rs"]
+mod bytes_tests;
