@@ -379,3 +379,36 @@ async fn concurrent_fetches_of_a_mixed_answer_never_connect_the_denied_address()
     assert_eq!(denied.load(Ordering::SeqCst), 0);
     tasks.iter().for_each(|task| task.abort());
 }
+
+/// Every name: the allowed 127.0.0.2 first, then the refused 127.0.0.1.
+fn allowed_then_refused(_: String) -> Answer {
+    Box::pin(async {
+        Ok(vec![
+            SocketAddr::from(([127, 0, 0, 2], 0)),
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+        ])
+    })
+}
+
+/// Row 9: the denied answer is not a fallback. The allowed address refuses
+/// the connection; the connector, which tries its addresses in turn, has
+/// only that one, so the listening denied address is never reached.
+#[tokio::test]
+async fn a_denied_answer_is_never_a_fallback_when_the_allowed_one_fails() {
+    let denied = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = denied.local_addr().unwrap().port();
+    let (denied_accepted, task) = serve(denied, Answering::Ok);
+    let result = adapter(
+        WebFetchClientRecipe::default(),
+        SECOND_LOOPBACK,
+        allowed_then_refused,
+    )
+    .fetch(&request(&format!("http://mixed.test:{port}/")))
+    .await;
+    assert!(
+        matches!(result, Err(FetchFailure::Transport(_))),
+        "{result:?}"
+    );
+    assert_eq!(denied_accepted.load(Ordering::SeqCst), 0);
+    task.abort();
+}
