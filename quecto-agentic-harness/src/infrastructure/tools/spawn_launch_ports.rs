@@ -628,3 +628,6 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
 #[cfg(test)]
 #[path = "spawn_launch_ports_cov_tests.rs"]
 mod cov_tests;
+#[cfg(test)]
+#[path = "spawn_launch_ports_nested_tests.rs"]
+mod nested_tests;
