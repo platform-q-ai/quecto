@@ -6,6 +6,7 @@ use super::super::*;
 use super::transcript;
 use crate::application::sessions::ports::SessionStore;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
+use std::os::unix::fs::MetadataExt;
 use tempfile::TempDir;
 
 fn key(k: &str) -> SessionIdentity {
@@ -251,19 +252,33 @@ async fn a_same_length_foreign_file_is_compacted_over_however_it_was_swapped_in(
             .unwrap();
         let path = store.session_path(&key("cli:i"));
         let foreign = same_length_foreign(&std::fs::read(&path).unwrap());
+        let original = std::fs::metadata(&path).unwrap();
         match swap {
+            // Only the inode differs: same length, same modification time.
             "rename" => {
                 let staged = path.with_extension("foreign");
                 std::fs::write(&staged, &foreign).unwrap();
+                let file = std::fs::File::options().write(true).open(&staged).unwrap();
+                file.set_modified(original.modified().unwrap()).unwrap();
                 std::fs::rename(&staged, &path).unwrap();
             }
+            // Only the modification time differs: same inode, same length.
             _ => {
                 let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
                 std::io::Write::write_all(&mut &file, &foreign).unwrap();
-                let later = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
+                let later = original.modified().unwrap() + std::time::Duration::from_secs(2);
                 file.set_modified(later).unwrap();
             }
         }
+        let swapped = std::fs::metadata(&path).unwrap();
+        assert_eq!(
+            (
+                swapped.ino() != original.ino(),
+                swapped.modified().unwrap() != original.modified().unwrap()
+            ),
+            (swap == "rename", swap != "rename"),
+            "{swap}: exactly one identity field differs"
+        );
         assert_eq!(
             std::fs::metadata(&path).unwrap().len() as usize,
             foreign.len()
@@ -301,5 +316,39 @@ async fn the_store_vouches_for_the_file_a_compaction_renamed_into_place() {
         lines(&store, "cli:j"),
         2,
         "a vouched-for file is appended to"
+    );
+}
+
+/// A file swapped while it was being loaded is not vouched for: the load
+/// records the file only if it is the one the read began on (#2235 review).
+#[tokio::test]
+async fn a_file_swapped_during_its_load_is_not_vouched_for() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    store
+        .save_clean_delta(&key("cli:k"), &transcript(2), 0, None)
+        .await
+        .unwrap();
+    let path = store.session_path(&key("cli:k"));
+    let (data, before) = store.intact.read(&path).await.unwrap();
+    let staged = path.with_extension("foreign");
+    std::fs::write(&staged, same_length_foreign(data.as_bytes())).unwrap();
+    std::fs::rename(&staged, &path).unwrap();
+    store
+        .intact
+        .observe_read(&path, before, data.len(), true)
+        .await;
+    assert!(
+        !store.intact.appendable(&path).await,
+        "the read began on another file"
+    );
+    let (data, before) = store.intact.read(&path).await.unwrap();
+    store
+        .intact
+        .observe_read(&path, before, data.len(), true)
+        .await;
+    assert!(
+        store.intact.appendable(&path).await,
+        "an unchanged file is vouched for"
     );
 }
