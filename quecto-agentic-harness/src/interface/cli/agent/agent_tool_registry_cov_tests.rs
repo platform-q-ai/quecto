@@ -421,7 +421,7 @@ fn build_tool_registry_registers_web_tools_as_bundled_native_official_tools() {
         config: &config,
         http_client: &http,
         web_fetch_tool: Some(crate::composition::web_fetch::build(
-            reqwest::Client::builder(),
+            crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default(),
             1024,
         )),
         flags: &flags,

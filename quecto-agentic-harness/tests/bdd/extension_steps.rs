@@ -381,7 +381,7 @@ fn when_build_native_extensions(world: &mut QuectoWorld) {
         &client,
         config.tools.web.fetch.enabled.then(|| {
             quecto::composition::web_fetch::build(
-                reqwest::Client::builder(),
+                quecto::infrastructure::http::web_fetch::WebFetchClientRecipe::default(),
                 config.tools.web.fetch.max_response_kb,
             )
         }),

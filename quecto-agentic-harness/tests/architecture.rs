@@ -48,6 +48,8 @@ mod teardown_authority;
 mod teardown_layers;
 #[path = "architecture/use_case_construction.rs"]
 mod use_case_construction;
+#[path = "architecture/web_fetch_boundary.rs"]
+mod web_fetch_boundary;
 
 /// Recursively collect all .rs files under a directory.
 fn collect_rs_files(dir: &Path, files: &mut Vec<String>) {

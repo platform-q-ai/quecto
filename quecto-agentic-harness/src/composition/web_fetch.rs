@@ -1,24 +1,25 @@
 use crate::{
     application::agent_turn::use_cases::web_fetch::{FetchWebContent, WebFetchUseCase},
     application::tools::ports::Tool,
-    infrastructure::http::web_fetch::ReqwestFetchWebContent,
+    infrastructure::http::web_fetch::{ReqwestFetchWebContent, WebFetchClientRecipe},
     interface::tools::web_fetch::WebFetchTool,
 };
 use std::sync::Arc;
-/// The web-fetch graph over the shared client recipe: its headers, TLS trust
-/// and timeouts are kept, and the adapter lays destination enforcement over
-/// them (#1942).
-pub fn build(client: reqwest::ClientBuilder, max_response_kb: u32) -> Arc<dyn Tool> {
-    graph(ReqwestFetchWebContent::new(client), max_response_kb)
+/// The web-fetch graph over its client recipe (the settings production
+/// chooses, [`crate::interface::shared::web_fetch_client_recipe`]): the
+/// adapter builds its client from it and lays destination enforcement over
+/// it (#1942).
+pub fn build(recipe: WebFetchClientRecipe, max_response_kb: u32) -> Arc<dyn Tool> {
+    graph(ReqwestFetchWebContent::new(recipe), max_response_kb)
 }
 /// [`build`] for tests whose local servers listen on 127.0.0.1.
 #[cfg(any(test, feature = "test-support"))]
 pub fn build_allowing_loopback_for_tests(
-    client: reqwest::ClientBuilder,
+    recipe: WebFetchClientRecipe,
     max_response_kb: u32,
 ) -> Arc<dyn Tool> {
     graph(
-        ReqwestFetchWebContent::allowing_loopback_for_tests(client),
+        ReqwestFetchWebContent::allowing_loopback_for_tests(recipe),
         max_response_kb,
     )
 }
@@ -29,7 +30,3 @@ fn graph(adapter: ReqwestFetchWebContent, max_response_kb: u32) -> Arc<dyn Tool>
         max_response_kb,
     ))))
 }
-
-#[cfg(test)]
-#[path = "web_fetch_tests.rs"]
-mod tests;

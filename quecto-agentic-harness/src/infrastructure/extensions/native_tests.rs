@@ -151,7 +151,7 @@ fn test_build_native_extensions_brave_enabled() {
         &client,
         web.fetch.enabled.then(|| {
             crate::composition::web_fetch::build(
-                reqwest::Client::builder(),
+                crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default(),
                 web.fetch.max_response_kb,
             )
         }),
@@ -170,7 +170,7 @@ fn test_build_native_extensions_ddg_enabled() {
         &client,
         web.fetch.enabled.then(|| {
             crate::composition::web_fetch::build(
-                reqwest::Client::builder(),
+                crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default(),
                 web.fetch.max_response_kb,
             )
         }),
@@ -189,7 +189,7 @@ fn test_build_native_extensions_all_disabled() {
         &client,
         web.fetch.enabled.then(|| {
             crate::composition::web_fetch::build(
-                reqwest::Client::builder(),
+                crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default(),
                 web.fetch.max_response_kb,
             )
         }),
@@ -206,7 +206,7 @@ fn test_build_native_extensions_brave_enabled_no_key_falls_back() {
         &client,
         web.fetch.enabled.then(|| {
             crate::composition::web_fetch::build(
-                reqwest::Client::builder(),
+                crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default(),
                 web.fetch.max_response_kb,
             )
         }),
@@ -223,7 +223,7 @@ fn test_build_native_extensions_fetch_enabled() {
         &client,
         web.fetch.enabled.then(|| {
             crate::composition::web_fetch::build(
-                reqwest::Client::builder(),
+                crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default(),
                 web.fetch.max_response_kb,
             )
         }),
@@ -243,7 +243,7 @@ fn test_build_native_extensions_search_and_fetch() {
         &client,
         web.fetch.enabled.then(|| {
             crate::composition::web_fetch::build(
-                reqwest::Client::builder(),
+                crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default(),
                 web.fetch.max_response_kb,
             )
         }),
@@ -263,7 +263,7 @@ fn test_build_native_extensions_fetch_disabled() {
         &client,
         web.fetch.enabled.then(|| {
             crate::composition::web_fetch::build(
-                reqwest::Client::builder(),
+                crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default(),
                 web.fetch.max_response_kb,
             )
         }),

@@ -79,7 +79,7 @@ fn ipv6_loopback_only(address: IpAddr) -> Result<(), NonPublicAddress> {
 #[tokio::test]
 async fn a_name_resolving_only_to_non_public_addresses_is_refused_unsent() {
     let (port, accepted, peer) = counting_peer(ok).await;
-    let result = ReqwestFetchWebContent::without_proxies(DNS_ONLY)
+    let result = ReqwestFetchWebContent::with_policy(DNS_ONLY)
         .fetch(&request(&format!("http://localhost:{port}/secret")))
         .await;
     let reason = refused(result);
@@ -146,12 +146,11 @@ async fn twin_peers() -> (u16, [Arc<AtomicUsize>; 2], [tokio::task::JoinHandle<(
 async fn a_refused_dns_answer_is_never_connected_even_beside_an_allowed_one() {
     let (port, [refused_accepted, allowed_accepted], peers) = twin_peers().await;
     let result = ReqwestFetchWebContent::with_lookup(
-        reqwest::Client::builder().no_proxy(),
+        WebFetchClientRecipe::default(),
         DestinationPolicy {
             address: second_loopback_only,
             name: any_name,
         },
-        ProxyEnvironment::default(),
         refused_then_allowed,
     )
     .fetch(&request(&format!("http://both.test:{port}/")))
@@ -196,7 +195,7 @@ fn only_authorized_answers_are_kept_and_an_empty_answer_is_refused() {
 #[tokio::test]
 async fn an_address_literal_is_refused_by_the_adapter_itself_unsent() {
     let (port, accepted, peer) = counting_peer(ok).await;
-    let adapter = ReqwestFetchWebContent::without_proxies(DestinationPolicy::PRODUCTION);
+    let adapter = ReqwestFetchWebContent::with_policy(DestinationPolicy::PRODUCTION);
     for (url, reason) in [
         (
             format!("http://127.0.0.1:{port}/"),
@@ -205,6 +204,24 @@ async fn an_address_literal_is_refused_by_the_adapter_itself_unsent() {
         (
             format!("http://[::ffff:127.0.0.1]:{port}/"),
             "127.0.0.1 (via ::ffff:127.0.0.1) is not a public address",
+        ),
+        // Ledger row 2: 6to4 is decoded and the embedded address judged.
+        (
+            format!("http://[2002:7f00:1::1]:{port}/"),
+            "127.0.0.1 (via 2002:7f00:1::1) is not a public address",
+        ),
+        (
+            format!("http://[2002:a9fe:a9fe::1]:{port}/"),
+            "169.254.169.254 (via 2002:a9fe:a9fe::1) is not a public address",
+        ),
+        // Ledger rows 1 and 8: space outside the allowed allocations.
+        (
+            format!("http://240.0.0.1:{port}/"),
+            "240.0.0.1 is not a public address",
+        ),
+        (
+            format!("http://[3ffe::1]:{port}/"),
+            "3ffe::1 is not a public address",
         ),
         // The courtesy local-name check holds in the adapter too.
         (
@@ -234,7 +251,7 @@ async fn a_redirect_to_a_non_public_address_is_refused_before_it_is_followed() {
     // redirect names the same listener in its IPv4-mapped spelling, so a
     // followed redirect would be a second connection.
     let (port, accepted, peer) = counting_peer(redirect_to_mapped_loopback).await;
-    let result = ReqwestFetchWebContent::without_proxies(LOOPBACK_FOR_TESTS)
+    let result = ReqwestFetchWebContent::with_policy(LOOPBACK_FOR_TESTS)
         .fetch(&request(&format!("http://localhost:{port}/start")))
         .await;
     assert_eq!(
@@ -256,7 +273,7 @@ fn redirect_to_self(port: u16) -> String {
 #[tokio::test]
 async fn the_redirect_limit_is_unchanged_at_ten_follows() {
     let (port, accepted, peer) = counting_peer(redirect_to_self).await;
-    let result = ReqwestFetchWebContent::without_proxies(LOOPBACK_FOR_TESTS)
+    let result = ReqwestFetchWebContent::with_policy(LOOPBACK_FOR_TESTS)
         .fetch(&request(&format!("http://localhost:{port}/start")))
         .await;
     match result {
@@ -275,168 +292,43 @@ async fn the_redirect_limit_is_unchanged_at_ten_follows() {
 
 #[test]
 fn a_redirect_is_authorized_by_scheme_and_address_and_a_name_is_left_to_dns() {
-    let proxies = ["proxy.corp".to_owned()];
     let hop = |url: &str| {
         authorize_hop(
             &reqwest::Url::parse(url).unwrap(),
             DestinationPolicy::PRODUCTION,
-            &proxies,
         )
     };
     assert_eq!(hop("https://example.com/next"), Ok(()));
     assert_eq!(hop("http://8.8.8.8/"), Ok(()));
     assert_eq!(
         hop("http://10.0.0.1/"),
-        Err(Refused(
+        Err(FetchFailure::Refused(
             "the redirect to http://10.0.0.1/: 10.0.0.1 is not a public address".into()
         ))
     );
     // A hop is held to the courtesy local-name check, as the first URL is.
     assert_eq!(
         hop("http://metadata.google.internal./computeMetadata/"),
-        Err(Refused(
+        Err(FetchFailure::Refused(
             "the redirect to http://metadata.google.internal./computeMetadata/: metadata.google.internal. is a local name".into()
         ))
     );
     assert_eq!(
-        hop("http://Proxy.Corp./"),
-        Err(Refused(
-            "the redirect to http://proxy.corp./: proxy.corp is a configured proxy host, not a fetch target".into()
-        ))
-    );
-    assert_eq!(
         hop("ftp://example.com/"),
-        Err(Refused(
+        Err(FetchFailure::Refused(
             "the redirect to ftp://example.com/: only http and https are fetched".into()
         ))
     );
 }
 
-/// A proxy is honoured as before: the request goes to it, and the name is
-/// not resolved here (the proxy resolves it). Only address literals are
-/// still refused before anything is sent.
-#[tokio::test]
-async fn a_proxy_on_the_injected_builder_is_used_and_resolves_names_itself() {
-    let (port, direct, peer) = counting_peer(ok).await;
-    let (proxy_port, proxied, proxy) = counting_peer(ok).await;
-    let adapter = ReqwestFetchWebContent::with_environment(
-        reqwest::Client::builder()
-            .no_proxy()
-            .proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{proxy_port}")).unwrap()),
-        DNS_ONLY,
-        ProxyEnvironment::default(),
-    );
-    // Direct, `localhost` would be refused (it resolves only to loopback):
-    // through the proxy it is not resolved here, so it is sent.
-    let result = adapter
-        .fetch(&request(&format!("http://localhost:{port}/")))
-        .await;
-    assert!(
-        matches!(result, Ok(FetchOutcome::SuccessBody { .. })),
-        "{result:?}"
-    );
-    assert_eq!(proxied.load(Ordering::SeqCst), 1, "sent to the proxy");
-    assert_eq!(direct.load(Ordering::SeqCst), 0, "not connected directly");
-    // An address literal is refused before the proxy is reached.
-    let literal = adapter
-        .fetch(&request(&format!("http://[::ffff:127.0.0.1]:{port}/")))
-        .await;
-    assert_eq!(
-        refused(literal),
-        "127.0.0.1 (via ::ffff:127.0.0.1) is not a public address"
-    );
-    assert_eq!(proxied.load(Ordering::SeqCst), 1, "the literal never left");
-    peer.abort();
-    proxy.abort();
-}
-
-/// The environment reqwest would read for `HTTPS_PROXY=http://localhost:<port>`
-/// (and the same for plain HTTP): the builder below carries that proxy, as
-/// reqwest would take it from these variables.
-fn localhost_proxy_environment() -> crate::infrastructure::http::proxy_env::ProxyEnvironment {
-    crate::infrastructure::http::proxy_env::proxy_environment(false, |name| {
-        matches!(name, "HTTP_PROXY" | "HTTPS_PROXY").then(|| "http://localhost:3128".to_owned())
-    })
-}
-
-/// #1942 review: reqwest reaches a proxy through the same connector, so the
-/// proxy's own name goes through the resolver. A proxy named by a
-/// non-public name (`localhost`, `proxy.corp` on 10.x) is passed unfiltered,
-/// so it keeps working as before; every other name is still filtered.
-#[tokio::test]
-async fn a_proxy_given_by_a_non_public_name_is_still_reached() {
-    let (port, direct, peer) = counting_peer(ok).await;
-    let (proxy_port, proxied, proxy) = counting_peer(ok).await;
-    let builder = || {
-        reqwest::Client::builder()
-            .no_proxy()
-            .proxy(reqwest::Proxy::all(format!("http://localhost:{proxy_port}")).unwrap())
-    };
-    let adapter = ReqwestFetchWebContent::with_environment(
-        builder(),
-        DestinationPolicy::PRODUCTION,
-        localhost_proxy_environment(),
-    );
-    let result = adapter
-        .fetch(&request(&format!("http://fetch.example:{port}/")))
-        .await;
-    assert!(
-        matches!(result, Ok(FetchOutcome::SuccessBody { .. })),
-        "{result:?}"
-    );
-    assert_eq!(proxied.load(Ordering::SeqCst), 1, "sent to the named proxy");
-    assert_eq!(direct.load(Ordering::SeqCst), 0);
-    // Without the exemption the proxy's own name is refused, which is why
-    // the exemption exists.
-    let unexempted = ReqwestFetchWebContent::with_environment(
-        builder(),
-        DestinationPolicy::PRODUCTION,
-        ProxyEnvironment::default(),
-    )
-    .fetch(&request(&format!("http://fetch.example:{port}/")))
-    .await;
-    assert!(refused(unexempted).starts_with("localhost resolves to no public address"),);
-    assert_eq!(
-        proxied.load(Ordering::SeqCst),
-        1,
-        "never reached unexempted"
-    );
-    peer.abort();
-    proxy.abort();
-}
-
-#[test]
-fn only_a_proxy_name_is_passed_unfiltered() {
-    let v4: SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let proxies = ["localhost".to_owned()];
-    assert_eq!(
-        admitted_answers("localhost", vec![v4], authorize_destination, &proxies),
-        Ok(vec![v4])
-    );
-    assert_eq!(
-        admitted_answers("LOCALHOST", vec![v4], authorize_destination, &proxies),
-        Ok(vec![v4]),
-        "names compare case-insensitively"
-    );
-    assert_eq!(
-        admitted_answers("localhost..", vec![v4], authorize_destination, &proxies),
-        Ok(vec![v4]),
-        "and without trailing dots"
-    );
-    assert!(admitted_answers("other.test", vec![v4], authorize_destination, &proxies).is_err());
-    assert!(admitted_answers("localhost", vec![], authorize_destination, &proxies).is_err());
-}
-
 #[tokio::test]
 async fn a_client_that_cannot_be_built_fails_every_fetch_closed() {
     let (port, accepted, peer) = counting_peer(ok).await;
-    let adapter = ReqwestFetchWebContent::with_environment(
-        reqwest::Client::builder()
-            .no_proxy()
-            .use_preconfigured_tls(()),
-        LOOPBACK_FOR_TESTS,
-        ProxyEnvironment::default(),
-    );
+    let adapter = ReqwestFetchWebContent {
+        client: Err("the web-fetch client could not be built: test".into()),
+        policy: LOOPBACK_FOR_TESTS,
+        timeout: REQUEST_TIMEOUT,
+    };
     let result = timeout(
         Duration::from_secs(5),
         adapter.fetch(&request(&format!("http://localhost:{port}/"))),
