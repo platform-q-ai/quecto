@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::context_calibration::{MessageBudget, message_budget};
 
 impl AgentLoopImpl {
     pub(super) async fn apply_context_pruning(
@@ -8,37 +9,42 @@ impl AgentLoopImpl {
         spills_dirty: bool,
     ) -> usize {
         // Every request carries the tool definitions too (#2160): they count
-        // against the budget and in the estimate. The messages keep at least
-        // a quarter of it, so oversized tools cannot empty every turn.
+        // against the budget and in the estimate. #2212: all in estimate
+        // units at the provider-observed residual scale; the ladder sums
+        // per-class estimates against it, the scale applying to all alike.
         let fixed_tokens = self.tool_definition_tokens();
-        // #2212: in estimate units at the provider-observed residual scale.
-        // The ladder sums per-class estimates against it; the scale applies
-        // to all of them alike.
         let effective = self.context_manager.pruning_ceiling_in_estimate_units();
-        let budget = match effective.checked_sub(fixed_tokens) {
-            Some(room) if room >= effective / 4 => room,
-            Some(_) | None => {
-                tracing::warn!(
-                    target: "context_prune",
-                    fixed_tokens,
-                    effective,
-                    "the tool definitions take most of the context budget; the messages keep a quarter of it"
-                );
-                effective / 4
-            }
-        };
-        let plan = self
+        let window = self.context_manager.window_in_estimate_units();
+        let MessageBudget {
+            tokens: budget,
+            window_exceeded,
+        } = message_budget(effective, window, fixed_tokens);
+        if budget.saturating_add(fixed_tokens) > effective {
+            tracing::warn!(
+                target: "context_prune",
+                fixed_tokens,
+                effective,
+                budget,
+                window_exceeded,
+                "the tool definitions take most of the context budget; the messages keep a quarter of it"
+            );
+        }
+        let mut plan = self
             .context_manager
             .prepare_provider_context(messages, budget, spills_dirty)
             .await;
+        // The tools alone fill the model's window: no transcript fits.
+        plan.over_budget |= window_exceeded;
         if plan.over_budget {
-            // The pinned/exempt set alone exceeds the budget (#1044 AC1).
+            // The pinned/exempt set alone exceeds the budget (#1044 AC1), or
+            // the tool definitions alone fill the window.
             tracing::warn!(
                 target: "context_prune",
                 budget,
+                window_exceeded,
                 total_tokens = context_pruning::estimate_total_tokens(messages),
                 turn = current_turn,
-                "context ceiling unmet: the pinned set alone exceeds the budget"
+                "context ceiling unmet: the pinned set or the tool definitions exceed the budget"
             );
         }
         if plan.durable_prefix_dirty {

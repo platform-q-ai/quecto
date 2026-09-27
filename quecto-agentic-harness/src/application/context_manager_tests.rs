@@ -356,7 +356,7 @@ fn the_calibrated_ceiling_follows_the_model_window() {
     manager.observe_provider_context_gauge(200_000, 100_000);
     manager.set_model_context_window(Some(40_000));
     assert_eq!(manager.pruning_ceiling_in_estimate_units(), 20_000);
-    manager.forget_estimate_scale();
+    manager.forget_calibration();
     assert_eq!(manager.pruning_ceiling_in_estimate_units(), 40_000);
 }
 
@@ -366,7 +366,7 @@ fn a_poisoned_gauge_still_yields_the_scale() {
     manager.observe_provider_context_gauge(200_000, 100_000);
     manager.poison_context_gauge_lock_for_test();
     assert_eq!(manager.estimate_scale().permille(), 2_000);
-    manager.forget_estimate_scale();
+    manager.forget_calibration();
     assert_eq!(manager.pruning_ceiling_in_estimate_units(), 100_000);
 }
 

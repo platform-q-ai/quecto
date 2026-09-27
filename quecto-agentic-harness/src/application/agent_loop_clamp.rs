@@ -51,7 +51,7 @@ impl AgentLoopImpl {
         self.context_manager
             .set_model_context_window(model_context_window);
         // #2212: another model may tokenise differently.
-        self.context_manager.forget_estimate_scale();
+        self.context_manager.forget_calibration();
     }
 
     /// Builder variant: set the per-model output cap at construction time.

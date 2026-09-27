@@ -73,23 +73,6 @@ fn every_observation_replaces_the_scale() {
 }
 
 #[test]
-fn a_forgotten_scale_is_the_heuristic_and_the_gauge_keeps_its_truth() {
-    let mut gauge = ContextGaugeCalibration::default();
-    gauge.observe_provider_truth(2_000, 1_000);
-
-    gauge.forget_estimate_scale();
-
-    assert_eq!(gauge.estimate_scale(), EstimateScale::IDENTITY);
-    assert_eq!(
-        gauge.reconcile_before_call(1_100),
-        2_100,
-        "the display gauge still carries the provider figure forward"
-    );
-    gauge.observe_provider_truth(3_000, 1_000);
-    assert_eq!(gauge.estimate_scale().permille(), 3_000);
-}
-
-#[test]
 fn a_forgotten_calibration_starts_the_gauge_over() {
     let mut gauge = ContextGaugeCalibration::default();
     gauge.observe_provider_truth(2_000, 1_000);

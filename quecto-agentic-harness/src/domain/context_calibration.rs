@@ -113,6 +113,56 @@ impl Default for EstimateScale {
     }
 }
 
+/// The room the messages of one request have, in estimate units (#2160,
+/// #2212 PR review).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MessageBudget {
+    /// What the pruning ladder may leave in the messages.
+    pub tokens: usize,
+    /// The tool definitions alone fill the model's window: no transcript
+    /// fits, and the request is over budget whatever the ladder does.
+    pub window_exceeded: bool,
+}
+
+/// The messages' budget beside `fixed` tokens every request carries (the
+/// tool definitions), all in estimate units at the observed scale.
+///
+/// `ceiling` is the pruning ceiling (the configured budget, capped by the
+/// window). The messages get what the tools leave of it, but at least a
+/// quarter of it (#2182), so oversized tools cannot empty every turn. That
+/// floor may pass the configured budget, never the model's `window`, a
+/// hard provider limit: when known, the messages get at most what the tools
+/// leave of the window. When the tools alone fill the window, no budget
+/// fits; the floor stands (emptying the transcript would not help) and the
+/// budget reports `window_exceeded`.
+pub fn message_budget(ceiling: usize, window: Option<usize>, fixed: usize) -> MessageBudget {
+    let floor = ceiling / 4;
+    let soft = match ceiling.checked_sub(fixed) {
+        Some(room) if room >= floor => room,
+        Some(_) | None => floor,
+    };
+    let budget = match window.map(|window| window.checked_sub(fixed)) {
+        None => MessageBudget {
+            tokens: soft,
+            window_exceeded: false,
+        },
+        Some(Some(room)) if room > 0 => MessageBudget {
+            tokens: soft.min(room),
+            window_exceeded: false,
+        },
+        Some(Some(_) | None) => MessageBudget {
+            tokens: soft,
+            window_exceeded: true,
+        },
+    };
+    debug_assert!(
+        budget.window_exceeded
+            || window.is_none_or(|window| budget.tokens.saturating_add(fixed) <= window),
+        "a budget that is not reported exceeded fits the window"
+    );
+    budget
+}
+
 #[cfg(test)]
 #[path = "context_calibration_tests.rs"]
 mod tests;

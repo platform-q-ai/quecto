@@ -185,6 +185,11 @@ async fn a_reload_to_another_provider_forgets_the_observed_scale() {
         agent.context_manager.estimate_scale(),
         EstimateScale::IDENTITY
     );
+    assert_eq!(
+        agent.reconcile_context_gauge_for_test(1_100),
+        1_100,
+        "the old tokeniser's occupancy is not shown for the new provider"
+    );
 }
 
 /// A config reload that rebuilds the same provider for the same model
@@ -197,6 +202,7 @@ async fn a_reload_to_the_same_provider_keeps_the_observed_scale() {
     agent.swap_provider(Arc::new(NamedProvider("mock")));
 
     assert_eq!(agent.context_manager.estimate_scale().permille(), 2_000);
+    assert_eq!(agent.reconcile_context_gauge_for_test(1_100), 2_100);
 }
 
 /// #2212 review 2: the gauge recorded at the tool-iteration limit counts
@@ -244,4 +250,102 @@ async fn a_model_switch_forgets_the_observed_scale() {
         agent.context_manager.pruning_ceiling_in_estimate_units(),
         agent.effective_max_context_tokens()
     );
+    assert_eq!(
+        agent.reconcile_context_gauge_for_test(1_100),
+        1_100,
+        "the old model's occupancy is not shown for the new one"
+    );
+}
+
+/// Audit sink capturing the `budget_unmet` flag of every ContextPruned.
+#[derive(Debug, Default)]
+struct PrunedAudit {
+    unmet: std::sync::Mutex<Vec<bool>>,
+}
+
+impl crate::application::audit::ports::AuditSink for PrunedAudit {
+    fn emit(
+        &self,
+        _turn: u32,
+        event: crate::domain::audit::AuditEvent,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
+                + Send
+                + '_,
+        >,
+    > {
+        if let crate::domain::audit::AuditEvent::ContextPruned { budget_unmet, .. } = event {
+            self.unmet.lock().unwrap().push(budget_unmet);
+        }
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// An agent with 40 tools, a model window of `window_tenths_of_tools`
+/// tenths of the tools' estimate, and a provider scale of 2x observed.
+fn tool_heavy_agent(
+    window_tenths_of_tools: usize,
+) -> (AgentLoopImpl, usize, usize, Arc<PrunedAudit>) {
+    let mut registry = MockRegistry::new();
+    for i in 0..40 {
+        registry.register(Arc::new(MockTool::new(&format!("tool_{i}"), "ok")));
+    }
+    let tools: usize = registry
+        .cached_definitions
+        .iter()
+        .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+        .sum();
+    let window = tools * window_tenths_of_tools / 10;
+    let audit = Arc::new(PrunedAudit::default());
+    let agent = AgentLoopImpl::new(crate::application::agent_loop::AgentLoopConfig {
+        audit_log: Some(audit.clone() as Arc<dyn crate::application::audit::ports::AuditSink>),
+        ..test_config(Arc::new(MockProvider::new(vec![])), Box::new(registry))
+    })
+    .with_model_context_window(Some(window));
+    agent.observe_provider_context_gauge_for_test(2_000, 1_000);
+    (agent, tools, window, audit)
+}
+
+/// #2212 PR review: at a 2x scale the window in estimate units is half the
+/// window; the quarter floor must not grant the messages more than the
+/// tools leave of it.
+#[tokio::test]
+async fn tools_and_messages_fit_the_window_at_the_calibrated_size() {
+    // Window 2.4x the tools: 1.2x in estimate units, so the tools leave
+    // 0.2x of their size where the floor would grant 0.3x.
+    let (agent, tools, window, audit) = tool_heavy_agent(24);
+    // Eight small spilled turns: the two pinned ones fit what is left.
+    let mut messages: Vec<Message> = (1..=8)
+        .map(|turn| {
+            let mut msg = Message::assistant("x".repeat(160), vec![]);
+            msg.turn = Some(turn);
+            msg.spill_id = Some(format!("turn{turn}:msg:assistant"));
+            msg
+        })
+        .collect();
+    messages.push(Message::user("go"));
+
+    agent.apply_context_pruning(&mut messages, 1, false).await;
+
+    let total = crate::application::context_pruning::estimate_total_tokens(&messages) + tools;
+    let scale = agent.context_manager.estimate_scale();
+    assert!(
+        scale.calibrated(total) <= window,
+        "{} calibrated tokens in a {window}-token window",
+        scale.calibrated(total)
+    );
+    assert_eq!(*audit.unmet.lock().unwrap(), vec![false]);
+}
+
+#[tokio::test]
+async fn tools_that_fill_the_window_are_reported_over_budget() {
+    // Window 1.5x the tools: 0.75x in estimate units, under the tools alone.
+    let (agent, _, _, audit) = tool_heavy_agent(15);
+    let mut messages = vec![Message::user("go")];
+
+    agent.apply_context_pruning(&mut messages, 1, false).await;
+
+    assert_eq!(*audit.unmet.lock().unwrap(), vec![true]);
+    assert_eq!(messages.len(), 1, "the in-flight prompt is kept");
 }

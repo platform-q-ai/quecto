@@ -144,18 +144,20 @@ impl ContextManager {
         }
     }
 
-    /// The budget the pruning ceiling compares the estimate with (#2212):
-    /// the effective budget in estimate units at the provider-observed
-    /// scale, so the ladder prunes on calibrated occupancy. Without an
-    /// observation the scale is 1 and this is the effective budget.
+    /// The effective budget in estimate units at the provider-observed
+    /// scale (#2212), so the ladder prunes on calibrated occupancy.
     pub fn pruning_ceiling_in_estimate_units(&self) -> usize {
         let effective = self.effective_max_context_tokens();
         let ceiling = self.estimate_scale().in_estimate_units(effective);
-        debug_assert!(
-            ceiling <= effective,
-            "calibration only tightens the ceiling"
-        );
+        debug_assert!(ceiling <= effective, "calibration only tightens");
         ceiling
+    }
+
+    /// The model's window (a hard provider limit) in estimate units.
+    pub fn window_in_estimate_units(&self) -> Option<usize> {
+        let scale = self.estimate_scale();
+        self.model_context_window
+            .map(|window| scale.in_estimate_units(window))
     }
 
     pub fn estimate_scale(&self) -> EstimateScale {
@@ -165,12 +167,13 @@ impl ContextManager {
             .estimate_scale()
     }
 
-    /// Forget the observed scale (a model switch or a session change).
-    pub fn forget_estimate_scale(&self) {
+    /// Forget the provider figure and the scale (a model or provider
+    /// change: another tokeniser; see `ContextGaugeCalibration`).
+    pub fn forget_calibration(&self) {
         self.gauge
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .forget_estimate_scale();
+            .forget_calibration();
     }
 
     pub fn reconcile_context_gauge(&self, estimate: usize) -> usize {

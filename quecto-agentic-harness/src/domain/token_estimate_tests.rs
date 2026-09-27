@@ -191,3 +191,42 @@ fn long_runs_need_upper_lower_and_digits_to_be_high_entropy() {
     // Sixteen characters: high entropy.
     assert_eq!(estimate_tokens("Ab1Cd2Ef3Gh4Ij5K"), high_entropy(16));
 }
+
+/// #2212 PR review: paths and identifiers carry mixed case and digits and
+/// are joined by `/` and `-`, but switch between upper case, lower case and
+/// digits rarely; base64 switches on most characters. Measured against
+/// cl100k: `src/Foo2Bar/README-v2/documentation.md` is 11 tokens.
+#[test]
+fn paths_and_identifiers_are_not_high_entropy() {
+    for text in [
+        "src/Foo2Bar/README-v2/documentation.md",
+        "x86_64-unknown-linux-gnu/release/Build3Script",
+        "README-v2/documentation",
+        "SessionIdentityV2Parser",
+        "quecto-agentic-harness/src/Application2/ContextManager",
+    ] {
+        let estimate = estimate_tokens(text);
+        assert!(
+            estimate < high_entropy(text.len()),
+            "{text}: {estimate} is the high-entropy rate"
+        );
+        assert!(estimate <= text.len().div_ceil(2), "{text}: {estimate}");
+    }
+    // The path's words keep their own classes: "src/" prose, "Foo2Bar/"
+    // dense, "README-" prose, "v2/" dense, "documentation.md" prose.
+    assert_eq!(
+        estimate_tokens("src/Foo2Bar/README-v2/documentation.md"),
+        (4usize + 7 + 16).div_ceil(4) + (8usize + 3).div_ceil(2)
+    );
+}
+
+#[test]
+fn keys_and_tokens_that_switch_class_often_are_high_entropy() {
+    for key in [
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+        "ghp_16C7e42F292c6912E7710c838347Ae178B4a",
+        "Ab1Cd2Ef3Gh4Ij5K",
+    ] {
+        assert_eq!(estimate_tokens(key), high_entropy(key.len()), "{key}");
+    }
+}

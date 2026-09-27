@@ -13,8 +13,11 @@
 //!   UUIDs, versions, CSV and log columns fall here. Padding after the
 //!   first separator (`cat -n`, aligned columns) is prose again;
 //! - high entropy (runs of 16 or more characters of letters, digits and
-//!   `+ / = - _` carrying upper case, lower case and a digit): about 1.4
-//!   characters per token. Base64, JWTs, API keys and random ids fall here;
+//!   `+ / = - _` carrying upper case, lower case and a digit, that switch
+//!   between those classes on at least 2 characters in 5): about 1.4
+//!   characters per token. Base64, JWTs, API keys and random ids fall here
+//!   (random base64 switches on about 65% of characters); paths and
+//!   CamelCase identifiers, which switch only at word boundaries, do not;
 //! - non-ASCII: about 1 token per character (CJK, emoji).
 //!
 //! What remains (tokeniser differences, JSON punctuation, framing) is the
@@ -28,6 +31,9 @@ pub const DENSE_CHARS_PER_TOKEN: usize = 2;
 pub const HIGH_ENTROPY_TOKENS_PER_SEVEN_CHARS: usize = 5;
 /// The shortest run that can be high entropy.
 pub const HIGH_ENTROPY_MIN_RUN: usize = 16;
+/// The fewest class switches (upper, lower, digit) per 10 characters of a
+/// high-entropy run.
+pub const HIGH_ENTROPY_MIN_SWITCHES_PER_TEN: usize = 4;
 
 /// Estimate the tokens of `text` by class (see the module docs). Never
 /// below [`estimate_opaque_tokens`]: every class is at least as dense as
@@ -81,8 +87,50 @@ struct Run {
     upper: bool,
     lower: bool,
     digit: bool,
+    /// Adjacent alphanumerics of different classes (upper, lower, digit).
+    switches: usize,
+    /// The previous character's class; `None` after a joiner.
+    last_class: Option<AlnumClass>,
     prose: usize,
     dense: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AlnumClass {
+    Upper,
+    Lower,
+    Digit,
+}
+
+impl AlnumClass {
+    fn of(c: char) -> Self {
+        match c {
+            'A'..='Z' => Self::Upper,
+            'a'..='z' => Self::Lower,
+            _ => Self::Digit,
+        }
+    }
+}
+
+impl Run {
+    fn push_alnum(&mut self, c: char) {
+        debug_assert!(c.is_ascii_alphanumeric());
+        let class = AlnumClass::of(c);
+        self.switches += usize::from(self.last_class.is_some_and(|last| last != class));
+        self.last_class = Some(class);
+        self.len += 1;
+        self.upper |= class == AlnumClass::Upper;
+        self.lower |= class == AlnumClass::Lower;
+        self.digit |= class == AlnumClass::Digit;
+    }
+
+    fn is_high_entropy(&self) -> bool {
+        self.len >= HIGH_ENTROPY_MIN_RUN
+            && self.upper
+            && self.lower
+            && self.digit
+            && self.switches * 10 >= self.len * HIGH_ENTROPY_MIN_SWITCHES_PER_TEN
+    }
 }
 
 impl ClassCounts {
@@ -90,15 +138,13 @@ impl ClassCounts {
         if c.is_ascii_alphanumeric() {
             self.word_len += 1;
             self.word_has_digit |= c.is_ascii_digit();
-            self.run.len += 1;
-            self.run.upper |= c.is_ascii_uppercase();
-            self.run.lower |= c.is_ascii_lowercase();
-            self.run.digit |= c.is_ascii_digit();
+            self.run.push_alnum(c);
             return;
         }
         if joins_a_run(c) && self.run.len > 0 {
             self.end_word();
             self.run.len += 1;
+            self.run.last_class = None;
             match self.take_separator_class() {
                 true => self.run.dense += 1,
                 false => self.run.prose += 1,
@@ -138,8 +184,7 @@ impl ClassCounts {
         self.end_word();
         let run = std::mem::take(&mut self.run);
         debug_assert_eq!(run.len, run.prose + run.dense, "every run char is classed");
-        let high_entropy = run.len >= HIGH_ENTROPY_MIN_RUN && run.upper && run.lower && run.digit;
-        if high_entropy {
+        if run.is_high_entropy() {
             self.high_entropy += run.len;
             self.next_separator_dense = false;
         } else {

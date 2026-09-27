@@ -715,13 +715,13 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/composition/retention.rs", 35),
     ("src/interface/cli/retention_handles.rs", 33),
     ("src/infrastructure/tools/recall.rs", 183),
-    // #2212: the gauge moved to its own module (336 → 329).
-    ("src/application/context.rs", 329),
+    // #2212: the gauge moved to its own module (336 → 332).
+    ("src/application/context.rs", 332),
     // #2212: new modules (the gauge and its estimate scale; the pure ratio;
     // the per-class estimate).
-    ("src/application/context_gauge.rs", 102),
-    ("src/domain/context_calibration.rs", 118),
-    ("src/domain/token_estimate.rs", 162),
+    ("src/application/context_gauge.rs", 98),
+    ("src/domain/context_calibration.rs", 168),
+    ("src/domain/token_estimate.rs", 207),
     // #2212: the estimate doc points at the per-class module (244 → 242).
     ("src/application/context_pruning.rs", 242),
     // #2213: the demotion-ladder ceiling moved to its own module (304 → 217).

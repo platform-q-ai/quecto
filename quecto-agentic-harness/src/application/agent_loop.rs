@@ -232,7 +232,7 @@ impl AgentLoopImpl {
         if calibration_holds {
             return;
         }
-        self.context_manager.forget_estimate_scale();
+        self.context_manager.forget_calibration();
     }
     /// Return the currently configured model name.
     pub fn model(&self) -> &str {

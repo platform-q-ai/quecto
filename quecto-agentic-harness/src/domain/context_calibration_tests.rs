@@ -101,3 +101,68 @@ fn a_budget_that_fits_in_estimate_units_fits_in_calibrated_units() {
         }
     }
 }
+
+/// Messages have the ceiling less the tool definitions when that is at
+/// least a quarter of the ceiling (#2160).
+#[test]
+fn the_message_budget_is_the_room_the_tools_leave() {
+    assert_eq!(
+        message_budget(10_000, Some(10_000), 3_000),
+        MessageBudget {
+            tokens: 7_000,
+            window_exceeded: false
+        }
+    );
+    assert_eq!(message_budget(10_000, None, 3_000).tokens, 7_000);
+}
+
+/// Without a known window the quarter floor (#2182) stands: the ceiling is
+/// the configured hot-context budget, not a provider limit.
+#[test]
+fn without_a_window_oversized_tools_leave_the_messages_a_quarter() {
+    assert_eq!(
+        message_budget(8_000, None, 7_000),
+        MessageBudget {
+            tokens: 2_000,
+            window_exceeded: false
+        }
+    );
+}
+
+/// #2212 PR review, the reviewer's numbers: an 8,000-token window at a 2x
+/// scale is a 4,000 estimate-unit ceiling; 3,500 of tools left the floor
+/// granting 1,000, so 4,500 estimated (9,000 real) went to the provider.
+#[test]
+fn the_quarter_floor_never_grants_more_than_the_window_leaves() {
+    let scale = EstimateScale::observed(2_000, 1_000);
+    let window = scale.in_estimate_units(8_000);
+    let budget = message_budget(window, Some(window), 3_500);
+    assert_eq!(
+        budget,
+        MessageBudget {
+            tokens: 500,
+            window_exceeded: false
+        }
+    );
+    assert!(scale.calibrated(3_500 + budget.tokens) <= 8_000);
+}
+
+/// The floor overshot at 1x too, before any calibration.
+#[test]
+fn the_window_guard_holds_without_calibration() {
+    let budget = message_budget(8_000, Some(8_000), 7_000);
+    assert_eq!(budget.tokens, 1_000);
+    assert!(!budget.window_exceeded);
+    // A configured ceiling under the window keeps its own floor when the
+    // window has room for it.
+    assert_eq!(message_budget(8_000, Some(100_000), 7_000).tokens, 2_000);
+}
+
+#[test]
+fn tools_that_fill_the_window_are_reported_not_fitted() {
+    for fixed in [4_000, 4_200, usize::MAX] {
+        let budget = message_budget(4_000, Some(4_000), fixed);
+        assert!(budget.window_exceeded, "{fixed}");
+        assert_eq!(budget.tokens, 1_000, "the messages keep the quarter floor");
+    }
+}

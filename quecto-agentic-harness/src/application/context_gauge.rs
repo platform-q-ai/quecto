@@ -14,10 +14,11 @@
 //! the scale a pass uses was measured on the transcript the previous pass
 //! left. A pass that stubs dense content leaves the old, higher scale in
 //! place until the next response: it errs towards pruning, never away from
-//! it. A model switch or a provider swap (another tokeniser) forgets the
-//! scale; a session change (another transcript) forgets the provider figure
-//! too. Until the next observation the estimate stands, as it does for a
-//! resumed session and for providers that report no usage.
+//! it. A model switch, a provider swap (another tokeniser) and a session
+//! change (another transcript) forget both the scale and the provider
+//! figure, so the next Thinking event shows no stale occupancy. Until the
+//! next observation the estimate stands, as it does for a resumed session
+//! and for providers that report no usage.
 
 use crate::domain::context_calibration::EstimateScale;
 
@@ -83,17 +84,12 @@ impl ContextGaugeCalibration {
         self.scale
     }
 
-    /// Another session's transcript (#2212 review): neither the provider
-    /// figure nor the scale describes it; the gauge starts over.
+    /// The last observation no longer describes what the next request
+    /// sends (another session's transcript, another model's or provider's
+    /// tokeniser): neither the provider figure nor the scale holds, so the
+    /// gauge starts over and the estimate stands until the next report.
     pub(in crate::application) fn forget_calibration(&mut self) {
         *self = Self::default();
-    }
-
-    /// The last observation no longer describes what the next request
-    /// sends (another model, another session): the heuristic stands until
-    /// the next observation. The display gauge is left as it is.
-    pub(in crate::application) fn forget_estimate_scale(&mut self) {
-        self.scale = EstimateScale::IDENTITY;
     }
 }
 
