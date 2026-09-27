@@ -39,6 +39,44 @@ Feature: EditTool — Quecto compatibility
     Then the [ToolResult] should be an error
     And the [ToolResult] should contain "matches"
 
+  # --- Refusals that say what to do next (#2193) ---
+
+  @done
+  Scenario: Every match of an ambiguous oldText is counted
+    Given a tool workspace
+    And a file "triple.txt" exists with content "triple triple triple\n"
+    When the agent edits "triple.txt" replacing "triple" with "x"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "oldText matches 3 times in triple.txt, all on line 1"
+    And the [ToolResult] should contain "Add surrounding lines"
+
+  @done
+  Scenario: Editing a missing file points to write
+    Given a tool workspace
+    When the agent edits "missing.txt" replacing "a" with "b"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "file not found: missing.txt"
+    And the [ToolResult] should contain "use write to create a new one"
+
+  @done
+  Scenario: A binary file is refused as not UTF-8 text
+    Given a tool workspace
+    And a binary file "blob.bin" exists
+    When the agent edits "blob.bin" replacing "a" with "b"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "blob.bin is not UTF-8 text"
+    And the [ToolResult] should contain "xxd"
+
+  @done
+  Scenario: oldText indented unlike the file gets an indentation hint
+    Given a tool workspace
+    And a file "indent.txt" exists with content "\tindented text\n"
+    When the agent edits "indent.txt" replacing "    indented text" with "x"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "matches at line 1 if indentation is ignored"
+    And the [ToolResult] should contain "line 1 is indented with 1 tab in the file, 4 spaces in oldText"
+    And the file "indent.txt" should read exactly "\tindented text\n"
+
   # --- Fuzzy content matching ---
 
   @done
@@ -191,3 +229,24 @@ Feature: EditTool — Quecto compatibility
     And the [ToolResult] should contain "lines changed total"
     And the tool result should be at most 4096 bytes
     And the [ToolResult] should not be an error
+
+  @done
+  Scenario: A change at the end of a 1 MiB line is shown in the diff
+    Given a tool workspace
+    And a file "large.txt" exists with 1048569 "a" characters then "ENDING!"
+    When the agent edits "large.txt" replacing "ENDING!" with "FINISH!"
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] should contain "aaaENDING!"
+    And the [ToolResult] should contain "aaaFINISH!"
+    And the [ToolResult] should contain "the change starts at column 1048570"
+    And the tool result should be at most 600 bytes
+
+  @done
+  Scenario: A line added next to a changed long line does not hide the change
+    Given a tool workspace
+    And a file "long.txt" exists with 2000 "a" characters then "ENDING!"
+    When the agent edits "long.txt" replacing "aaaaENDING!" with "aaaaFINISH!\n// footer"
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] should contain "aaaENDING!"
+    And the [ToolResult] should contain "aaaFINISH!"
+    And the [ToolResult] should contain "// footer"

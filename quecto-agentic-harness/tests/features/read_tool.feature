@@ -157,3 +157,12 @@ Feature: ReadTool — Quecto compatibility
       | limit | 10      |
     Then the tool result should not be an error
     And the tool result should contain "more lines in file"
+
+  # --- Refusals (#2193) ---
+
+  @done
+  Scenario: Reading a missing file names it
+    When the agent executes tool "read" with args:
+      | path | missing.txt |
+    Then the tool result should be an error
+    And the tool result should contain "file not found: missing.txt"

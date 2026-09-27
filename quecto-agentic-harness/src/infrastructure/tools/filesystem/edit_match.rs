@@ -12,10 +12,69 @@ use std::ops::Range;
 pub(super) enum Location {
     /// No match, exact or fuzzy.
     NotFound,
-    /// More than one match; the count stops at 2.
-    Ambiguous(usize),
+    /// More than one match: every one counted (#2193).
+    Ambiguous(Matches),
     /// Exactly one match: the byte range of the original text to replace.
     Unique(Range<usize>),
+}
+
+/// The matches of an ambiguous `oldText`, counted by the same rule that
+/// makes it ambiguous: overlapping matches count, and a fuzzy match counts
+/// only when its edges fit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Matches {
+    /// How many matches there are, all of them.
+    pub(super) count: usize,
+    /// The first [`LISTED_MATCHES`] matches, in file order.
+    pub(super) first: Vec<Range<usize>>,
+    /// A match starts before an earlier one ends.
+    pub(super) overlapping: bool,
+}
+
+/// How many matches an ambiguous edit names by position.
+pub(super) const LISTED_MATCHES: usize = 3;
+
+/// Counts matches as they are found, in file order.
+#[derive(Debug, Default)]
+struct Tally {
+    count: usize,
+    first: Vec<Range<usize>>,
+    overlapping: bool,
+    furthest_end: usize,
+}
+
+impl Tally {
+    fn push(&mut self, range: Range<usize>) {
+        debug_assert!(range.start <= range.end, "{range:?}");
+        self.overlapping |= range.start < self.furthest_end;
+        self.furthest_end = self.furthest_end.max(range.end);
+        self.count += 1;
+        if self.first.len() < LISTED_MATCHES {
+            self.first.push(range);
+        }
+    }
+
+    /// The one match, the ambiguity, or none; `Unique` is unproven here.
+    fn into_location(self) -> Location {
+        match self.count {
+            0 => Location::NotFound,
+            1 => {
+                debug_assert_eq!(self.first.len(), 1);
+                self.first
+                    .into_iter()
+                    .next()
+                    .map_or(Location::NotFound, Location::Unique)
+            }
+            count => {
+                debug_assert_eq!(self.first.len(), count.min(LISTED_MATCHES));
+                Location::Ambiguous(Matches {
+                    count,
+                    first: self.first,
+                    overlapping: self.overlapping,
+                })
+            }
+        }
+    }
 }
 
 /// The fuzzy match could not be mapped back to the original text, so the
@@ -33,43 +92,41 @@ pub(super) struct Unmappable;
 /// whitespace there too ([`Edges`]), so `newText`'s whitespace replaces the
 /// file's instead of adding to it. Only matches whose edges fit are counted.
 pub(super) fn locate(content: &str, old: &str) -> Result<Location, Unmappable> {
-    let exact: Vec<usize> = occurrences(content, old).take(2).collect();
-    match exact.as_slice() {
-        [start] => return exact_range(content, *start, old.len()),
-        [_, _] => return Ok(Location::Ambiguous(2)),
-        [] => {}
-        _ => return Err(Unmappable),
+    let mut exact = Tally::default();
+    for start in occurrences(content, old) {
+        let end = start.checked_add(old.len()).ok_or(Unmappable)?;
+        exact.push(start..end);
+    }
+    match exact.into_location() {
+        Location::Unique(range) => return exact_range(content, range.start, old.len()),
+        Location::Ambiguous(matches) => return Ok(Location::Ambiguous(matches)),
+        Location::NotFound => {}
     }
     let needle = fuzzy_normalise(old)?.text;
     let haystack = fuzzy_normalise(content)?;
     let edges = Edges::of(old);
-    let mut found: Vec<Range<usize>> = Vec::with_capacity(2);
+    let mut fuzzy = Tally::default();
     for start in occurrences(&haystack.text, &needle) {
         let core = haystack
             .original_range(content, start..start + needle.len())
             .ok_or(Unmappable)?;
         if let Some(range) = edges.fit(content, core) {
-            found.push(range);
-        }
-        if found.len() == 2 {
-            break;
+            fuzzy.push(range);
         }
     }
-    match found.as_slice() {
-        [] => Ok(Location::NotFound),
-        [_, _] => Ok(Location::Ambiguous(2)),
-        [range] => {
-            let proof = prove_fuzzy_range(content, range, &needle);
+    match fuzzy.into_location() {
+        Location::Unique(range) => {
+            let proof = prove_fuzzy_range(content, &range, &needle);
             debug_assert_eq!(proof, Ok(()), "{range:?} does not map back to {needle:?}");
             proof?;
-            Ok(Location::Unique(range.clone()))
+            Ok(Location::Unique(range))
         }
-        _ => Err(Unmappable),
+        other => Ok(other),
     }
 }
 
 /// Whitespace within a line: everything `trim_end` drops except the newline.
-fn is_line_space(c: char) -> bool {
+pub(super) fn is_line_space(c: char) -> bool {
     c.is_whitespace() && c != '\n'
 }
 
@@ -258,7 +315,10 @@ fn fuzzy_char(c: char) -> char {
 /// every candidate and may reject most of them at their edges, so restarting
 /// a substring search after each one would be quadratic on periodic text.
 /// A UTF-8 needle only matches UTF-8 text on character boundaries.
-fn occurrences<'a>(haystack: &'a str, needle: &'a str) -> impl Iterator<Item = usize> + 'a {
+pub(super) fn occurrences<'a>(
+    haystack: &'a str,
+    needle: &'a str,
+) -> impl Iterator<Item = usize> + 'a {
     let pattern = needle.as_bytes();
     let fallback = kmp_fallback(pattern);
     let mut text = haystack.as_bytes().iter().enumerate();

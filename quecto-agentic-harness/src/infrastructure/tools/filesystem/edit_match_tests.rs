@@ -109,23 +109,75 @@ fn an_exact_match_wins_over_a_fuzzy_one() {
     assert_eq!(unique("it\u{2019}s it's", "it's"), 7..11);
 }
 
+fn ambiguous(
+    count: usize,
+    first: &[Range<usize>],
+    overlapping: bool,
+) -> Result<Location, Unmappable> {
+    Ok(Location::Ambiguous(Matches {
+        count,
+        first: first.to_vec(),
+        overlapping,
+    }))
+}
+
 #[test]
 fn exact_and_fuzzy_ambiguity_are_both_refused() {
-    assert_eq!(locate("ab ab", "ab"), Ok(Location::Ambiguous(2)));
+    assert_eq!(locate("ab ab", "ab"), ambiguous(2, &[0..2, 3..5], false));
     assert_eq!(
         locate("\u{2018}x\u{2019} 'x'", "\u{2019}x'"),
-        Ok(Location::Ambiguous(2))
+        ambiguous(2, &[0..7, 8..11], false)
     );
 }
 
 #[test]
 fn overlapping_matches_are_ambiguous() {
-    assert_eq!(locate("aaa", "aa"), Ok(Location::Ambiguous(2)));
+    assert_eq!(locate("aaa", "aa"), ambiguous(2, &[0..2, 1..3], true));
     assert_eq!(
         locate("\u{2019}-'-\u{2018}", "'-'"),
-        Ok(Location::Ambiguous(2))
+        ambiguous(2, &[0..5, 4..9], true)
     );
     assert_eq!(unique("\u{754C}\u{754C}a", "\u{754C}a"), 3..7);
+}
+
+/// #2193: three matches are three, not "2" (the count used to stop there).
+#[test]
+fn every_match_is_counted_and_the_first_three_are_listed() {
+    assert_eq!(
+        locate("triple triple triple\n", "triple"),
+        ambiguous(3, &[0..6, 7..13, 14..20], false)
+    );
+    let many = locate(&"x ".repeat(1000), "x");
+    assert_eq!(many, ambiguous(1000, &[0..1, 2..3, 4..5], false));
+    assert_eq!(
+        locate("aaaa", "aa"),
+        ambiguous(3, &[0..2, 1..3, 2..4], true)
+    );
+}
+
+/// #2193: the fuzzy path counts every match whose edges fit, and only those.
+#[test]
+fn fuzzy_matches_are_all_counted() {
+    assert_eq!(
+        locate("it\u{2019}s\nit\u{2018}s\nit\u{201B}s\n", "it's"),
+        ambiguous(3, &[0..6, 7..13, 14..20], false)
+    );
+    // Only the first `a` has whitespace after it for oldText's space.
+    assert_eq!(unique("a b ab", "a\u{2003}"), 0..2);
+}
+
+/// Every match is read, so a match-dense 1 MiB file is still quick.
+#[test]
+fn counting_every_match_of_a_dense_file_stays_linear() {
+    let content = "a".repeat(1024 * 1024);
+    let started = std::time::Instant::now();
+    let location = locate(&content, "aa");
+    let took = started.elapsed();
+    assert_eq!(
+        location,
+        ambiguous(1024 * 1024 - 1, &[0..2, 1..3, 2..4], true)
+    );
+    assert!(took < std::time::Duration::from_secs(3), "took {took:?}");
 }
 
 #[test]
@@ -407,7 +459,20 @@ fn spec_locate(content: &str, old: &str) -> Location {
     match fitting.as_slice() {
         [] => Location::NotFound,
         [one] => Location::Unique(one.clone()),
-        many => Location::Ambiguous(many.len().min(2)),
+        many => {
+            let mut sorted = many.to_vec();
+            sorted.sort_by_key(|r| (r.start, r.end));
+            let overlapping = sorted.iter().enumerate().any(|(i, a)| {
+                sorted[..i]
+                    .iter()
+                    .any(|b| a.start < b.end && b.start < a.end)
+            });
+            Location::Ambiguous(Matches {
+                count: sorted.len(),
+                first: sorted.into_iter().take(3).collect(),
+                overlapping,
+            })
+        }
     }
 }
 

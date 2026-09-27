@@ -580,16 +580,20 @@ fn test_read_description_includes_example() {
     );
 }
 
+/// #2193: a missing file is a refusal that names it, as edit's is.
 #[tokio::test]
 async fn test_read_missing_file_returns_tool_error() {
     let (ws, sb, _tmp) = test_tools();
     let tool = ReadTool::new(ws, sb);
-    let err = tool
+    let result = tool
         .execute(r#"{"path": "does-not-exist.txt"}"#)
         .await
-        .unwrap_err();
-    let msg = format!("{err}");
-    assert!(msg.contains("read failed"), "unexpected error: {msg}");
+        .unwrap();
+    assert!(result.is_error);
+    assert_eq!(
+        result.content,
+        "file not found: does-not-exist.txt. Check the path with ls or find."
+    );
 }
 
 #[tokio::test]
@@ -631,11 +635,7 @@ async fn a_dangling_symlink_names_its_missing_target() {
     let (ws, sb, tmp) = test_tools();
     std::os::unix::fs::symlink("/nonexistent/target", tmp.path().join("link")).unwrap();
     let tool = ReadTool::new(ws.clone(), sb.clone());
-    let message = tool
-        .execute(r#"{"path": "link"}"#)
-        .await
-        .unwrap_err()
-        .to_string();
+    let message = tool.execute(r#"{"path": "link"}"#).await.unwrap().content;
     assert!(message.contains("symbolic link"), "{message}");
     assert!(message.contains("/nonexistent/target"), "{message}");
 
@@ -647,8 +647,8 @@ async fn a_dangling_symlink_names_its_missing_target() {
     let message = ReadTool::new(ws, sb)
         .execute(r#"{"path": "a"}"#)
         .await
-        .unwrap_err()
-        .to_string();
+        .unwrap()
+        .content;
     let gone = tmp.path().join("gone");
     assert!(message.contains(&gone.display().to_string()), "{message}");
     assert!(message.contains("which does not exist"), "{message}");
