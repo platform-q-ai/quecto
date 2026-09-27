@@ -1,0 +1,51 @@
+# cargo-mutants configuration (https://mutants.rs/). CI's "Mutation Testing
+# (diff)" workflow (.github/workflows/mutation.yml) mutates only the lines a PR
+# changes: `cargo mutants --in-diff pr.diff --shard k/N --in-place`.
+# Do not run it on a workstation: every mutant is a rebuild plus a test run.
+
+# The same shape as CI's Workspace Tests job and the `workspace` rust-cache
+# entry cache-warm.yml saves: `--workspace --features
+# quecto-agentic-harness/test-support`. The harness integration targets need
+# `test-support`, and Cargo refuses `quecto-agentic-harness/test-support`
+# when only another member is selected (`-p quecto-tui`), so tests run over
+# the whole workspace rather than the mutated package alone.
+test_workspace = true
+features = ["quecto-agentic-harness/test-support"]
+test_tool = "nextest"
+# libtest targets only, for the build phase (`cargo nextest run --no-run`) as
+# well as the test phase: `additional_cargo_args` reaches both, where
+# `additional_cargo_test_args` would reach only the test phase and every
+# mutant would still build every test target. Left out: the cucumber
+# `bdd`/`*_bdd` targets (`harness = false`, which nextest cannot list; they run
+# sharded elsewhere), the two real-process targets (parent_loss,
+# selected_termination) and the docs and architecture suites (structure, not
+# behaviour). Code that only those suites pin shows as MISSED here.
+additional_cargo_args = [
+    "--bins",
+    "--lib",
+    "--test", "contracts",
+    "--test", "integration",
+]
+
+# Timeouts are passed explicitly by CI (`--baseline=skip --timeout
+# --build-timeout`, see mutation.yml): without a baseline run there is no
+# measured test time to multiply.
+
+# `#[cfg(test)]` items and modules are skipped by cargo-mutants itself. These
+# are test code or test-only support compiled in by the `test-support` /
+# `test-harness` features, plus the thin binary entry points.
+exclude_globs = [
+    "**/tests/**",
+    "**/*_tests.rs",
+    "**/*test_support*.rs",
+    "**/test_support/**",
+    "**/*_test_api.rs",
+    "**/tui_harness*.rs",
+    "**/session_record_read_faults.rs",
+    "quecto-tui/src/shell/test_executable.rs",
+    "quecto-tui/src/shell/warn_capture.rs",
+    "**/main.rs",
+]
+# Inline test-support modules that are not `#[cfg(test)]`
+# (e.g. interface/cli/uds_shutdown.rs `pub mod test_support`).
+exclude_re = ["test_support::"]
