@@ -525,14 +525,17 @@ async fn match_lines_are_file_lines_in_a_crlf_file() {
 /// #2193 (B16): a missing file is named, with the tool that creates one.
 #[tokio::test]
 async fn a_missing_file_is_named_with_the_way_to_create_it() {
-    let (ws, sb, _tmp) = test_tools();
+    let (ws, sb, tmp) = test_tools();
     let tool = EditTool::new(ws, sb);
     let result = edit(&tool, "sub/missing.txt", "a", "b").await;
     assert!(result.is_error);
     assert_eq!(
         result.content,
-        "file not found: sub/missing.txt. edit changes an existing file; \
-         use write to create a new one."
+        format!(
+            "file not found: sub/missing.txt (looked for {}). edit changes an existing file; \
+             use write to create a new one.",
+            tmp.path().join("sub/missing.txt").display()
+        )
     );
 }
 
@@ -563,7 +566,7 @@ async fn a_binary_file_is_refused_as_not_text() {
     assert!(
         result
             .content
-            .starts_with("blob.dat is not UTF-8 text (6B): binary"),
+            .starts_with("blob.dat is not UTF-8 text: it is a binary file (6B), and edit"),
         "{}",
         result.content
     );

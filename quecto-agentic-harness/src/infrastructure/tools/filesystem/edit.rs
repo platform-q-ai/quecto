@@ -15,9 +15,8 @@ use crate::infrastructure::security::sandbox::Sandbox;
 
 use super::edit_diff::{Change, make_edit_diff};
 use super::edit_match::{Location, Unmappable, locate};
-use super::edit_refusal::{
-    FileLines, ambiguous, edit_refused, load_text, not_found, write_refusal,
-};
+use super::edit_refusal::{FileLines, ambiguous, load_text, not_found, write_refusal};
+use super::fs_failure::refused;
 use super::resolve_and_validate;
 
 pub(super) const MAX_EDIT_FILE_BYTES: u64 = 1024 * 1024;
@@ -37,7 +36,7 @@ fn missing_edit_arg(param: &str) -> ToolResult {
 
 /// #2191: a match that cannot be placed exactly in the file is never written.
 fn unmappable_match(path: &str) -> ToolResult {
-    edit_refused(format!(
+    refused(format!(
         "edit refused: the match could not be mapped back to the text of {} exactly, \
          so nothing was written. Copy oldText exactly from the file and retry.",
         path

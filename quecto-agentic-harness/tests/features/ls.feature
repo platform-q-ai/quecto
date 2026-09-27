@@ -69,3 +69,18 @@ Feature: LsTool — Quecto compatibility
     Then the ls result should list sorted entries 21 to 40 of the directory
     And the ls result should contain "Next: offset=40"
     And the ls result should not be an error
+
+  @done
+  Scenario: Listing a file says to read it instead (#2189)
+    Given ls workspace file "notes.txt"
+    When I list the path "notes.txt"
+    Then the ls result should be a refusal
+    And the ls result should contain "notes.txt is a file, not a directory; read it with read."
+
+  @done
+  Scenario: Listing a missing directory names the directory to list instead (#2189)
+    Given ls workspace directory "src"
+    When I list the path "src/missing"
+    Then the ls result should be a refusal
+    And the ls result should contain "directory not found: src/missing (looked for "
+    And the ls result should contain "Check the path, or list src with ls."

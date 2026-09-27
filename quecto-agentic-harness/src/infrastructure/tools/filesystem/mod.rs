@@ -7,6 +7,7 @@ mod edit_diff;
 mod edit_indent;
 mod edit_match;
 mod edit_refusal;
+mod fs_failure;
 mod ls;
 mod read;
 mod write;
@@ -39,35 +40,4 @@ pub(super) fn resolve_and_validate(
 /// Wrap a path in single quotes for use in a shell command hint.
 pub(super) fn shell_escape_single(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
-}
-
-/// For a path that was not found: the target that does not exist when the
-/// path is a symbolic link, following a chain of links and resolving
-/// relative targets against each link's own directory (#2166); `None` when
-/// the path is not a link or its chain cannot be walked.
-pub(super) async fn dangling_link_target(path: &Path) -> Option<PathBuf> {
-    let mut link = path.to_path_buf();
-    // Bounded: a loop of links is reported by the system as such.
-    for _ in 0..32 {
-        let target = tokio::fs::read_link(&link).await.ok()?;
-        let target = match link.parent() {
-            Some(dir) if target.is_relative() => dir.join(target),
-            Some(_) | None => target,
-        };
-        match tokio::fs::symlink_metadata(&target).await {
-            Ok(meta) if meta.file_type().is_symlink() => link = target,
-            Ok(_) => return None,
-            Err(_) => {
-                // Shown plainly: its directory exists, so resolve it.
-                let plain = match (target.parent(), target.file_name()) {
-                    (Some(dir), Some(name)) => tokio::fs::canonicalize(dir)
-                        .await
-                        .map_or_else(|_| target.clone(), |dir| dir.join(name)),
-                    _ => target,
-                };
-                return Some(plain);
-            }
-        }
-    }
-    None
 }

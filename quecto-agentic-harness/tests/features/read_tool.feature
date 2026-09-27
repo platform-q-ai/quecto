@@ -165,4 +165,13 @@ Feature: ReadTool — Quecto compatibility
     When the agent executes tool "read" with args:
       | path | missing.txt |
     Then the tool result should be an error
-    And the tool result should contain "file not found: missing.txt"
+    And the tool result should contain "file not found: missing.txt (looked for "
+    And the tool result should contain "Check the path, or list . with ls."
+
+  @done
+  Scenario: Reading a directory says to list it (#2189)
+    Given a directory "docs" exists in the tool workspace
+    When the agent executes tool "read" with args:
+      | path | docs |
+    Then the tool result should be an error
+    And the tool result should contain "docs is a directory, not a file; list it with ls."

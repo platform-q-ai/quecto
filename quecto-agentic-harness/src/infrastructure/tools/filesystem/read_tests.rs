@@ -101,11 +101,12 @@ async fn test_read_fractional_offset_is_error() {
     let result = tool
         .execute(r#"{"path": "f.txt", "offset": 3.5, "limit": 10}"#)
         .await;
+    let result = result.unwrap();
     assert!(
-        result.is_err(),
-        "fractional offset must error, not default-head"
+        result.is_error,
+        "fractional offset must be refused, not default-head"
     );
-    let msg = result.unwrap_err().to_string();
+    let msg = result.content;
     assert!(
         msg.contains("offset"),
         "error should name the field, got: {msg}"
@@ -121,8 +122,9 @@ async fn test_read_negative_limit_is_error() {
     let result = tool
         .execute(r#"{"path": "f.txt", "offset": 1, "limit": -1}"#)
         .await;
-    assert!(result.is_err(), "negative limit must error");
-    let msg = result.unwrap_err().to_string();
+    let result = result.unwrap();
+    assert!(result.is_error, "negative limit must be refused");
+    let msg = result.content;
     assert!(
         msg.contains("limit"),
         "error should name the field, got: {msg}"
@@ -138,11 +140,12 @@ async fn test_read_string_offset_is_error() {
     let result = tool
         .execute(r#"{"path": "f.txt", "offset": "5", "limit": 1}"#)
         .await;
+    let result = result.unwrap();
     assert!(
-        result.is_err(),
-        "string offset must error, no string coerce"
+        result.is_error,
+        "string offset must be refused, no string coerce"
     );
-    let msg = result.unwrap_err().to_string();
+    let msg = result.content;
     assert!(
         msg.contains("offset"),
         "error should name the field, got: {msg}"
@@ -256,8 +259,9 @@ async fn test_read_offset_beyond_eof_error() {
 
     let result = tool
         .execute(r#"{"path": "small.txt", "offset": 999}"#)
-        .await;
-    assert!(result.is_err());
+        .await
+        .unwrap();
+    assert!(result.is_error);
 }
 
 #[tokio::test]
@@ -266,9 +270,12 @@ async fn test_read_offset_zero_is_error() {
     let tool = ReadTool::new(ws, sb);
     std::fs::write(tmp.path().join("f.txt"), "hello").unwrap();
 
-    let result = tool.execute(r#"{"path": "f.txt", "offset": 0}"#).await;
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("1-indexed"));
+    let result = tool
+        .execute(r#"{"path": "f.txt", "offset": 0}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("1-indexed"));
 }
 
 #[tokio::test]
@@ -583,7 +590,7 @@ fn test_read_description_includes_example() {
 /// #2193: a missing file is a refusal that names it, as edit's is.
 #[tokio::test]
 async fn test_read_missing_file_returns_tool_error() {
-    let (ws, sb, _tmp) = test_tools();
+    let (ws, sb, tmp) = test_tools();
     let tool = ReadTool::new(ws, sb);
     let result = tool
         .execute(r#"{"path": "does-not-exist.txt"}"#)
@@ -592,7 +599,11 @@ async fn test_read_missing_file_returns_tool_error() {
     assert!(result.is_error);
     assert_eq!(
         result.content,
-        "file not found: does-not-exist.txt. Check the path with ls or find."
+        format!(
+            "file not found: does-not-exist.txt (looked for {}). Check the path, or list . \
+             with ls.",
+            tmp.path().join("does-not-exist.txt").display()
+        )
     );
 }
 

@@ -11,6 +11,7 @@ use crate::domain::error::DomainError;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
+use super::fs_failure::{Access, explain};
 use super::resolve_and_validate;
 
 /// Default maximum number of directory entries to show (Quecto compatibility: 500).
@@ -100,19 +101,27 @@ impl Tool for LsTool {
             };
             assert!((1..=LS_MAX_LIMIT).contains(&limit) && offset <= LS_MAX_OFFSET);
 
-            let mut entries_raw = tokio::fs::read_dir(&full_path)
-                .await
-                .map_err(|e| DomainError::Tool(format!("ls failed: {}", e)))?;
+            let mut entries_raw = match tokio::fs::read_dir(&full_path).await {
+                Ok(entries) => entries,
+                Err(error) => {
+                    let reason = explain(Access::List, &full_path, path, &error).await;
+                    return Ok(listing_result(reason, true));
+                }
+            };
             // The whole directory is read so the listing is its true sorted
             // start (#2188); only the first offset + limit are kept. There
             // is no deadline: the tool port carries no cancellation token,
             // and a dropped call stops at the next entry's await.
             let mut window = SortedWindow::new(offset + limit);
-            while let Some(entry) = entries_raw
-                .next_entry()
-                .await
-                .map_err(|e| DomainError::Tool(format!("ls entry error: {}", e)))?
-            {
+            loop {
+                let entry = match entries_raw.next_entry().await {
+                    Ok(Some(entry)) => entry,
+                    Ok(None) => break,
+                    Err(error) => {
+                        let reason = explain(Access::List, &full_path, path, &error).await;
+                        return Ok(listing_result(reason, true));
+                    }
+                };
                 let name = entry.file_name().to_string_lossy().to_string();
                 let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
                 window.offer(if is_dir { format!("{name}/") } else { name });

@@ -36,3 +36,13 @@ fn given_file_with_n_lines(world: &mut QuectoWorld, filename: String, n: usize) 
     let content: String = (1..=n).map(|i| format!("line{}\n", i)).collect();
     std::fs::write(ws.join(&filename), content).expect("write line file");
 }
+
+/// A directory in the tool workspace (#2189).
+#[given(regex = r#"^a directory "([^"]+)" exists in the tool workspace$"#)]
+fn given_directory(world: &mut QuectoWorld, name: String) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    std::fs::create_dir_all(ws.join(&name)).expect("create directory");
+}

@@ -18,7 +18,8 @@ use crate::infrastructure::tools::truncate::{
     DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncatedBy, format_size,
 };
 
-use super::{dangling_link_target, shell_escape_single};
+use super::fs_failure::{Access, explain, not_utf8_text, refused};
+use super::shell_escape_single;
 
 pub struct ReadTool {
     workspace: Arc<PathBuf>,
@@ -121,12 +122,18 @@ impl Tool for ReadTool {
             let offset = match args.get("offset") {
                 None => None,
                 Some(v) if v.is_null() => None,
-                Some(v) => parse_optional_usize_arg(v, "offset").map_err(DomainError::Tool)?,
+                Some(v) => match parse_optional_usize_arg(v, "offset") {
+                    Ok(offset) => offset,
+                    Err(message) => return Ok(refused(message)),
+                },
             };
             let limit = match args.get("limit") {
                 None => None,
                 Some(v) if v.is_null() => None,
-                Some(v) => parse_optional_usize_arg(v, "limit").map_err(DomainError::Tool)?,
+                Some(v) => match parse_optional_usize_arg(v, "limit") {
+                    Ok(limit) => limit,
+                    Err(message) => return Ok(refused(message)),
+                },
             };
             let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
 
@@ -191,22 +198,16 @@ impl Tool for ReadTool {
             let content = match String::from_utf8(raw_bytes) {
                 Ok(content) => content,
                 Err(error) => {
-                    let size = format_size(error.as_bytes().len());
-                    let hint = shell_escape_single(path);
-                    return Ok(ToolResult {
-                        content: format!(
-                            "{path} is not UTF-8 text ({size}): binary, or text in another \
-                             encoding. Inspect it with bash, e.g. xxd {hint} | head -n 40, or \
-                             convert it, e.g. iconv -f latin1 -t utf-8 {hint}"
-                        ),
-                        is_error: true,
-                        image_blocks: vec![],
-                        delivery_metadata: None,
-                    });
+                    return Ok(refused(not_utf8_text(Access::Read, path, error.as_bytes())));
                 }
             };
 
-            let selected = select_read_text(&content, offset, limit)?;
+            // A paging argument the file cannot honour is refused (#2189).
+            let selected = match select_read_text(&content, offset, limit) {
+                Ok(selected) => selected,
+                Err(DomainError::Tool(message)) => return Ok(refused(message)),
+                Err(other) => return Err(other),
+            };
             let hash = sha256_hex(selected.as_bytes());
             let line_count = selected.lines().count();
             let key = ReadCacheKey {
@@ -587,30 +588,13 @@ fn truncate_head_from_offset(
     }
 }
 
-/// Why a read failed. A missing file, or a symbolic link (or chain of
-/// them) whose target is missing, is a refusal the model can act on
-/// (#2166, #2193); anything else is the system's own error.
+/// Why a read failed, named and with a next step (#2166, #2189).
 async fn read_failure(
     full_path: &std::path::Path,
     path: &str,
     error: &std::io::Error,
 ) -> Result<ToolResult, DomainError> {
-    let content = match error.kind() {
-        std::io::ErrorKind::NotFound => match dangling_link_target(full_path).await {
-            Some(target) => format!(
-                "{path} is a symbolic link to {}, which does not exist",
-                target.display()
-            ),
-            None => format!("file not found: {path}. Check the path with ls or find."),
-        },
-        _ => return Err(DomainError::Tool(format!("read failed: {error}"))),
-    };
-    Ok(ToolResult {
-        content,
-        is_error: true,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    })
+    Ok(refused(explain(Access::Read, full_path, path, error).await))
 }
 
 #[cfg(test)]

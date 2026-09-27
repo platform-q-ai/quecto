@@ -110,9 +110,28 @@ fn when_ls_with_limit_and_offset(world: &mut QuectoWorld, limit: usize, offset: 
     ));
 }
 
+#[when(regex = r#"^I list the path "([^"]+)"$"#)]
+fn when_ls_path(world: &mut QuectoWorld, path: String) {
+    let tool = make_ls_tool(world);
+    world.ls_result = Some(run_ls(tool, serde_json::json!({ "path": path })));
+}
+
 // ---------------------------------------------------------------------------
 // Then
 // ---------------------------------------------------------------------------
+
+/// A refusal the model acts on (#2189): an error result that is not the
+/// harness's own "tool error".
+#[then("the ls result should be a refusal")]
+fn then_ls_is_refusal(world: &mut QuectoWorld) {
+    let r = world.ls_result.as_ref().expect("no ls result");
+    assert!(r.is_error, "expected a refusal, got: {}", r.content);
+    assert!(
+        !r.content.contains("tool error"),
+        "a refusal, not a tool error: {}",
+        r.content
+    );
+}
 
 #[then(regex = r#"^the ls result should contain "([^"]+)"$"#)]
 fn then_ls_contains(world: &mut QuectoWorld, expected: String) {
