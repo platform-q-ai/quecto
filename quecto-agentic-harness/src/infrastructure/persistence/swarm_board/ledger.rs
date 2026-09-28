@@ -98,7 +98,7 @@ impl<'a> Stored<'a> {
                 let text = bytes.split(|&byte| byte == 0).next().unwrap_or_default();
                 TransactionError::board(format!(
                     "{CONTENDED}: Could not decode to UTF-8 column '{column}' with text '{}'",
-                    String::from_utf8_lossy(text)
+                    replaced_per_byte(text)
                 ))
             }),
             ValueRef::Blob(bytes) => Ok(Self::Blob(bytes)),
@@ -123,10 +123,43 @@ impl<'a> Stored<'a> {
     }
 }
 
+/// `bytes` as CPython's error message reads them: valid UTF-8 as itself and
+/// one U+FFFD for every byte of an invalid sequence (not one per maximal
+/// subpart, as `String::from_utf8_lossy` replaces).
+fn replaced_per_byte(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len());
+    let mut rest = bytes;
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(valid) => {
+                text.push_str(valid);
+                return text;
+            }
+            Err(error) => {
+                let (valid, invalid) = rest.split_at(error.valid_up_to());
+                // The first `valid_up_to` bytes are UTF-8 by definition.
+                text.push_str(std::str::from_utf8(valid).unwrap_or_default());
+                let skipped = error.error_len().unwrap_or(invalid.len());
+                debug_assert!(skipped > 0, "an invalid sequence has at least one byte");
+                text.extend(std::iter::repeat_n('\u{fffd}', skipped));
+                rest = &invalid[skipped..];
+            }
+        }
+    }
+}
+
 /// The text `json.loads(bytes)` decodes, for bytes its `detect_encoding`
 /// reads as UTF-8 (a UTF-8 BOM is dropped). Bytes it reads as UTF-16 or
 /// UTF-32, or UTF-8 holding an encoded surrogate, are refused here with
 /// this module's own text (a permitted divergence, epic #2265 P3).
+///
+/// Permitted divergence (#2269 review N2): Python raises a non-`SwarmError`
+/// for a BLOB it cannot read, with other text: for a double UTF-8 BOM
+/// (only one goes with the encoding) `JSONDecodeError` "Expecting value:
+/// line 1 column 1 (char 0)", where [`py_json::decode`] reports the second
+/// BOM as `json.loads(str)` does, and for invalid UTF-8 `UnicodeDecodeError`
+/// "'utf-8' codec can't decode byte ...", where this is "the stored result
+/// is not UTF-8 JSON". `ledger_tests.rs` pins both.
 fn utf8_json(bytes: &[u8]) -> Result<&str, TransactionError> {
     let wide = bytes.starts_with(b"\xff\xfe")
         || bytes.starts_with(b"\xfe\xff")

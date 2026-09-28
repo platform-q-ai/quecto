@@ -9,8 +9,20 @@
 //! INTEGER, `float` is REAL and `str` is TEXT. Python refuses a `list` or a
 //! `dict`, an `int` beyond 64 bits and a `str` holding a lone surrogate, so
 //! these are errors here too (with this module's own text).
+//!
+//! Deliberate divergence (#2269 review M1): a `float` is bound as REAL, as
+//! Python binds it, but where SQLite turns a REAL into TEXT (TEXT affinity
+//! on store or comparison, `CAST`, `||`) the text is the linked library's.
+//! The bundled SQLite (3.53) writes 17 significant digits (`1/3` is
+//! `0.33333333333333332`), as Arch's system 3.53 does; Debian's 3.46.1 and
+//! Ubuntu 24.04's 3.45.1 write 15 (`0.333333333333333`). Python's text thus
+//! already differs between hosts, and board SQL reaches the conversion only
+//! for a loosely typed float meeting a TEXT column (a float `recipient` in
+//! `send`, which Python does not type-check), so the bundled conversion is
+//! kept rather than emulating one host's library.
+//! `binding_tests.rs` pins it.
 
-use rusqlite::types::Value;
+use rusqlite::{Connection, Statement, types::Value};
 
 use super::py_json::PyJson;
 
@@ -58,6 +70,36 @@ pub fn bind(value: &PyJson) -> Result<Value, BindingError> {
 /// The first parameter's [`BindingError`].
 pub fn bind_all(values: &[PyJson]) -> Result<Vec<Value>, BindingError> {
     values.iter().map(bind).collect()
+}
+
+/// `sql` prepared on `connection` with `parameters` bound in order, as
+/// Python's `cursor.execute(sql, parameters)` prepares and binds it. Board
+/// SQL goes through here rather than rusqlite's own binding: Python checks
+/// the count before binding any parameter and reports every surplus one,
+/// where rusqlite's check stops counting at the first.
+///
+/// # Errors
+/// The SQLite error preparing `sql` (one statement only);
+/// [`rusqlite::Error::InvalidParameterCount`] with the true counts, which
+/// the store reports as Python's "Incorrect number of bindings supplied".
+pub fn bound_statement<'c>(
+    connection: &'c Connection,
+    sql: &str,
+    parameters: &[Value],
+) -> rusqlite::Result<Statement<'c>> {
+    let mut statement = connection.prepare(sql)?;
+    let needed = statement.parameter_count();
+    if parameters.len() == needed {
+        for (index, parameter) in parameters.iter().enumerate() {
+            statement.raw_bind_parameter(index + 1, parameter)?;
+        }
+        Ok(statement)
+    } else {
+        Err(rusqlite::Error::InvalidParameterCount(
+            parameters.len(),
+            needed,
+        ))
+    }
 }
 
 #[cfg(test)]

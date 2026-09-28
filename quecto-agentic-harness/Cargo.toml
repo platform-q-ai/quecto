@@ -39,8 +39,8 @@ ryu = "1"
 
 # The swarm board's SQLite driver (#2269): the same file format the Python
 # board writes. `bundled` compiles SQLite itself, so no system libsqlite3 is
-# needed.
-rusqlite = { version = "0.40", features = ["bundled"] }
+# needed; `limits` reads the variable limit the store checks on open.
+rusqlite = { version = "0.40", features = ["bundled", "limits"] }
 
 # Utilities
 uuid = { version = "1", features = ["v4"] }

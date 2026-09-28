@@ -14,11 +14,27 @@
 //! Errors carry Python's text: a SQLite failure is `coordination store
 //! unavailable or contended: {sqlite3_errmsg}`, and a board refusal raised
 //! inside the transaction rolls it back and is returned unchanged.
+//!
+//! # Permitted divergences
+//!
+//! Each is deliberate and pinned by a test (epic #2265 P3):
+//! - A relative path under a deleted working directory: Python's
+//!   `pathlib` raises `FileNotFoundError`, not a `SwarmError`; here it is
+//!   the unavailable refusal with the `getcwd` error (L4).
+//! - A non-UTF-8 path in the #2145 missing-store message: Python shows the
+//!   byte by `surrogateescape` (`\udcff`), a Rust message shows U+FFFD (N1).
+//! - A leading `//`: `pathlib` keeps it (`file:////h/x`); Rust's path
+//!   components fold it to one root (`file:///h/x`), the same file (N3).
+//! - A SQLite built without the system library's variable limit refuses to
+//!   open (Python cannot be built so); see [`variable_limit_checked`].
+//! - The stored-result BLOBs of `ledger` (N2) and the REAL-to-TEXT
+//!   conversion of `binding` (M1) are recorded in those modules.
 
 use std::ffi::CStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use rusqlite::limits::Limit;
 use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior, ffi};
 
 use super::schema::{ADDED_COLUMNS, schema_statements};
@@ -27,6 +43,10 @@ use super::schema::{ADDED_COLUMNS, schema_statements};
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub(super) const CONTENDED: &str = "coordination store unavailable or contended";
+
+/// `SQLITE_MAX_VARIABLE_NUMBER` of the system libsqlite3 Python uses on
+/// Debian/Ubuntu and Arch, which `.cargo/config.toml` builds in.
+pub const SYSTEM_VARIABLE_LIMIT: i32 = 250_000;
 
 /// A board refusal: the exact message the board raises (Python's
 /// `SwarmError`), as the store returns it from a transaction.
@@ -90,8 +110,7 @@ impl BoardStore {
         create: bool,
         body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
     ) -> Result<T, StoreRefusal> {
-        let path =
-            absolute(&self.path).map_err(|error| StoreRefusal(format!("{CONTENDED}: {error}")))?;
+        let path = absolutised(&self.path, std::env::current_dir)?;
         // Opened only to create it, or where it is; anything else is a store
         // deleted from under its run (#2145), and mode=rw never recreates it.
         if create || path.exists() {
@@ -113,19 +132,52 @@ impl BoardStore {
     }
 }
 
-/// `pathlib.Path(path).absolute()`: an empty path is the working directory,
-/// and the path is normalised as pathlib parses it (no `.` components,
-/// repeated or trailing separators); `..` is kept, and symlinks are not
-/// resolved.
-fn absolute(path: &Path) -> std::io::Result<PathBuf> {
+/// `pathlib.Path(path).absolute()`: an empty path is the working directory
+/// (`current_dir`, consulted only for a relative path), and the path is
+/// normalised as pathlib parses it (no `.` components, repeated or trailing
+/// separators); `..` is kept, and symlinks are not resolved.
+///
+/// Permitted divergences: a failing `current_dir` (a deleted working
+/// directory) is the unavailable refusal, where Python raises
+/// `FileNotFoundError`; a leading `//` folds to one root, where `pathlib`
+/// keeps it.
+fn absolutised(
+    path: &Path,
+    current_dir: impl FnOnce() -> std::io::Result<PathBuf>,
+) -> Result<PathBuf, StoreRefusal> {
     let given = if path.as_os_str().is_empty() {
         Path::new(".")
     } else {
         path
     };
-    let absolute: PathBuf = std::path::absolute(given)?.components().collect();
+    let joined = if given.is_absolute() {
+        given.to_path_buf()
+    } else {
+        current_dir()
+            .map_err(|error| StoreRefusal(format!("{CONTENDED}: {error}")))?
+            .join(given)
+    };
+    let absolute: PathBuf = joined.components().collect();
     debug_assert!(absolute.is_absolute(), "an absolutised path is absolute");
     Ok(absolute)
+}
+
+/// Refuses a SQLite whose variable limit is below the system library's.
+///
+/// The limit comes from `LIBSQLITE3_FLAGS` in `.cargo/config.toml`, which a
+/// build ignores when the variable is already set in its environment. A
+/// refusal, not a `debug_assert!`: the build that loses the flag is most
+/// likely a release `cargo install`, where an assertion is compiled out and
+/// the board would silently refuse `IN (...)` lists Python accepts. Every
+/// store failure is a [`StoreRefusal`], so the refusal names the build fault.
+fn variable_limit_checked(limit: i32) -> Result<(), StoreRefusal> {
+    if limit >= SYSTEM_VARIABLE_LIMIT {
+        Ok(())
+    } else {
+        Err(StoreRefusal(format!(
+            "coordination store refused: this build's SQLite binds at most {limit} SQL variables, not the system library's {SYSTEM_VARIABLE_LIMIT} (build it with LIBSQLITE3_FLAGS from .cargo/config.toml)"
+        )))
+    }
 }
 
 /// `sqlite3.connect(path.as_uri() + '?mode=rw[c]', uri=True, timeout=0.5)`.
@@ -146,6 +198,10 @@ fn open(path: &Path, create: bool) -> Result<Connection, StoreRefusal> {
     let uri = format!("{}?mode={mode}", file_uri(path));
     let connection = Connection::open_with_flags(&uri, flags)
         .map_err(|error| StoreRefusal(format!("{CONTENDED}: {}", opening_message(&error, &uri))))?;
+    let limit = connection
+        .limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER)
+        .map_err(|error| contended(&error))?;
+    variable_limit_checked(limit)?;
     connection
         .busy_timeout(BUSY_TIMEOUT)
         .map_err(|error| contended(&error))?;
@@ -268,7 +324,9 @@ fn contended(error: &rusqlite::Error) -> StoreRefusal {
 /// Python's `str()` of the `sqlite3.Error` the same call raises. SQLite's
 /// own failures carry `sqlite3_errmsg`; rusqlite adds the SQL and offset to
 /// an input error, and words its own checks (the parameter count, one
-/// statement per call) differently from Python's `sqlite3` module.
+/// statement per call) differently from Python's `sqlite3` module. The
+/// parameter count is Python's only when it carries the true count, as
+/// [`bound_statement`](super::binding::bound_statement) reports it.
 fn sqlite_message(error: &rusqlite::Error) -> String {
     match error {
         rusqlite::Error::SqliteFailure(_, Some(message)) => message.clone(),
