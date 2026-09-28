@@ -231,7 +231,7 @@ pub(crate) fn cmd_agent(
         return 1;
     };
     flags.adopt_context(ctx);
-    if !swarm_runtime::admit(&mut flags, stderr) {
+    if !swarm_runtime::admit(&mut flags, stderr) || !swarm_runtime::admit_backend(&flags, stderr) {
         return 1;
     }
 

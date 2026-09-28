@@ -7,6 +7,12 @@
 //! reads on stdin, and exits 0 at stdin EOF, as `claude -p
 //! --input-format stream-json` does.
 //!
+//! An interrupt line (`"type":"control_request"`, #2287) starts no turn:
+//! the mock answers it at once with a success `control_response` naming
+//! nothing withdrawn, as claude 2.1.280 answers an interrupt with nothing
+//! queued. `@UUID@` in a turn's lines is replaced by the `uuid` of the
+//! user line that started it, as claude echoes it (`user_message_uuids`).
+//!
 //! - `QUECTO_MOCK_CLAUDE_SCRIPT` is the scenario: an NDJSON capture whose
 //!   Nth turn is the lines up to and including its Nth `result` line.
 //!   Directives, test-only, are never emitted as they are:
@@ -27,7 +33,10 @@
 //!     itself exits;
 //!   - `@stderr-after <secs> <text>` (anywhere) starts a background
 //!     grandchild that writes `<text>` to stderr `<secs>` after the start:
-//!     last words that arrive after the mock itself may have exited.
+//!     last words that arrive after the mock itself may have exited;
+//!   - `@await-interrupt` holds its turn there, running, until the next
+//!     input line: an interrupt is answered, then the rest of the turn (its
+//!     stopped `result`) is written.
 //! - `QUECTO_MOCK_CLAUDE_ARGS_OUT`, when not empty, is where the mock
 //!   writes, at start: its working directory (`cwd=`), pid (`pid=`),
 //!   process group (`pgid=`), the `ls -ld` mode of `$HOME` (`home_mode=`)
@@ -130,15 +139,21 @@ if [ -n "$QUECTO_MOCK_CLAUDE_ARGS_OUT" ]; then
   mv "$QUECTO_MOCK_CLAUDE_ARGS_OUT.tmp" "$QUECTO_MOCK_CLAUDE_ARGS_OUT"
 fi
 if [ -n "$stall" ]; then sleep "$stall"; fi
-turn=0
-while IFS= read -r line; do
-  turn=$((turn + 1))
+recorded() {{
   if [ -n "$QUECTO_MOCK_CLAUDE_ARGS_OUT" ]; then
-    printf 'input=%s\n' "$line" >> "$QUECTO_MOCK_CLAUDE_ARGS_OUT"
+    printf 'input=%s\n' "$1" >> "$QUECTO_MOCK_CLAUDE_ARGS_OUT"
   fi
-  awk -v want="$turn" -v record="$QUECTO_MOCK_CLAUDE_ARGS_OUT" '
-    BEGIN {{ current = 1; block = ""; for (i = 0; i < 1024; i++) block = block "x" }}
+}}
+answer_control() {{
+  rid=$(printf '%s' "$1" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+  printf '{{"type":"control_response","response":{{"subtype":"success","request_id":"%s","response":{{"still_queued":[],"cancelled":[]}}}}}}\n' "$rid"
+}}
+replay() {{
+  awk -v want="$turn" -v part="$1" -v uuid="$uuid" -v record="$QUECTO_MOCK_CLAUDE_ARGS_OUT" '
+    BEGIN {{ current = 1; after = 0; block = ""; for (i = 0; i < 1024; i++) block = block "x" }}
     /^@stubborn$/ || /^@stall-input [0-9]+$/ || /^@linger / || /^@stderr-after / {{ next }}
+    current == want && /^@await-interrupt$/ {{ if (part == 1) {{ fflush(); exit 3 }} after = 1; next }}
+    current == want && part == 2 && !after {{ next }}
     current == want && /^@stderr-fill [0-9]+$/ {{
       n = $2 + 0
       while (n >= 1024) {{ printf "%s", block > "/dev/stderr"; n -= 1024 }}
@@ -152,9 +167,26 @@ while IFS= read -r line; do
       if (record != "") {{ print "record=" substr($0, 9) >> record; close(record) }}
       next
     }}
-    current == want {{ print }}
+    current == want {{ gsub(/@UUID@/, uuid); print }}
     /"type": *"result"/ {{ current++ }}
   ' "$QUECTO_MOCK_CLAUDE_SCRIPT"
+}}
+turn=0
+while IFS= read -r line; do
+  recorded "$line"
+  case "$line" in
+    *'"type":"control_request"'*) answer_control "$line"; continue ;;
+  esac
+  turn=$((turn + 1))
+  uuid=$(printf '%s' "$line" | sed -n 's/.*"uuid":"\([^"]*\)".*/\1/p')
+  replay 1
+  if [ $? -eq 3 ]; then
+    if IFS= read -r held; then
+      recorded "$held"
+      answer_control "$held"
+    fi
+    replay 2
+  fi
 done
 if [ -n "$stubborn" ]; then
   while :; do sleep 1; done

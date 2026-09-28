@@ -235,3 +235,76 @@ async fn waiting_for_the_exit_while_discarding_does_not_hang_on_unread_output() 
         .expect("exited_discarding_output() does not hang on output no one reads");
     assert_eq!(exit, ExternalAgentExit::Code(0));
 }
+
+/// A result names the user turn it answers by the id its send returned,
+/// and an interrupt is answered in the stream: the running turn still ends
+/// with its one (stopped) `result`, and the process keeps taking turns
+/// (#2287).
+#[tokio::test]
+async fn a_result_names_its_turn_and_an_interrupt_is_answered() {
+    use quecto::domain::external_agent::stream::{ExternalAgentEvent, InterruptReceipt};
+    let root = tempfile::tempdir().unwrap();
+    let scenario = root.path().join("interrupt.jsonl");
+    std::fs::write(
+        &scenario,
+        concat!(
+            r#"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","user_message_uuids":["@UUID@"]}"#,
+            "\n",
+            r#"{"type":"system","subtype":"thinking_tokens","estimated_tokens":5}"#,
+            "\n@await-interrupt\n",
+            r#"{"type":"result","subtype":"success","is_error":true,"terminal_reason":"aborted_streaming","user_message_uuids":["@UUID@"]}"#,
+            "\n",
+            r#"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","user_message_uuids":["@UUID@"]}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let rig = MockClaudeRig::replaying(&scenario);
+    let process = rig.start("m1").await;
+    let ids_of_last = |events: Vec<ExternalAgentEvent>| match events.last() {
+        Some(ExternalAgentEvent::Result(result)) => result.user_turn_ids.clone(),
+        other => panic!("the turn ends with its result: {other:?}"),
+    };
+
+    let first = process.send_user_turn("one").await.unwrap();
+    assert_eq!(
+        ids_of_last(events_to_turn_end(process.as_ref()).await),
+        [first.0.clone()]
+    );
+
+    let second = process.send_user_turn("two").await.unwrap();
+    assert_ne!(first, second);
+    let thinking = tokio::time::timeout(BOUND, process.next_event())
+        .await
+        .expect("bounded");
+    assert!(
+        matches!(thinking, Some(ExternalAgentEvent::ThinkingTokens { .. })),
+        "{thinking:?}"
+    );
+    process.interrupt().await.expect("the interrupt is written");
+    let answer = tokio::time::timeout(BOUND, process.next_event())
+        .await
+        .expect("bounded");
+    assert_eq!(
+        answer,
+        Some(ExternalAgentEvent::InterruptAnswered(InterruptReceipt {
+            accepted: true,
+            cancelled: Vec::new(),
+        }))
+    );
+    let stopped = events_to_turn_end(process.as_ref()).await;
+    match stopped.last() {
+        Some(ExternalAgentEvent::Result(result)) => {
+            assert_eq!(result.user_turn_ids, [second.0.clone()]);
+            assert_eq!(result.terminal_reason.as_deref(), Some("aborted_streaming"));
+        }
+        other => panic!("the stopped turn ends with its result: {other:?}"),
+    }
+
+    let third = process.send_user_turn("three").await.unwrap();
+    assert_eq!(
+        ids_of_last(events_to_turn_end(process.as_ref()).await),
+        [third.0]
+    );
+    assert_eq!(exit_of(process.as_ref()).await, ExternalAgentExit::Code(0));
+}

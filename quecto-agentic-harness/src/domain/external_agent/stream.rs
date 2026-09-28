@@ -42,6 +42,10 @@ pub enum ExternalAgentEvent {
     RateLimit(RateLimitInfo),
     /// `result`: the end of one user turn.
     Result(ResultEvent),
+    /// `control_response`: the answer to an interrupt, the only control
+    /// request a member sends (#2287). The stopped turn's own `result`, if
+    /// a turn was running, may come before or after it.
+    InterruptAnswered(InterruptReceipt),
     /// An event type (or `system` subtype, or assistant block type) this
     /// vocabulary does not know. Logged by the codec, never a panic.
     Unknown { kind: String },
@@ -67,6 +71,16 @@ pub enum SkippedLineReason {
     OverCap,
     /// Not UTF-8, so not JSON.
     NotUtf8,
+}
+
+/// What an interrupt's `control_response` says.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct InterruptReceipt {
+    /// Whether the agent accepted the interrupt (`subtype: success`).
+    pub accepted: bool,
+    /// The ids of queued user turns the interrupt withdrew
+    /// (`cancel_queued`): no `result` will ever name them.
+    pub cancelled: Vec<String>,
 }
 
 /// `system/init`.
@@ -249,6 +263,10 @@ pub struct ResultEvent {
     pub permission_denials: Vec<PermissionDenial>,
     pub num_turns: Option<u32>,
     pub duration_ms: Option<u64>,
+    /// The ids of the user turns this turn consumed
+    /// (`user_message_uuids`, else `user_message_uuid`): a turn's own and
+    /// every one folded into it mid-turn. Empty when the CLI names none.
+    pub user_turn_ids: Vec<String>,
 }
 
 /// Token counts: one turn's (`result.usage`) or cumulative (`modelUsage`).

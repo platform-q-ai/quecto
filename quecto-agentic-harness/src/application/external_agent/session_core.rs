@@ -53,7 +53,7 @@ impl SessionCore {
     /// The running turn, if one runs.
     pub(crate) fn running_turn(&self) -> Option<u64> {
         match self.phase {
-            SessionPhase::Busy { turn } => Some(turn),
+            SessionPhase::Busy { turn } | SessionPhase::Interrupting { turn } => Some(turn),
             SessionPhase::NotStarted | SessionPhase::Idle | SessionPhase::Ended => None,
         }
     }
@@ -74,6 +74,7 @@ impl SessionCore {
         match (self.phase, behavior) {
             (SessionPhase::NotStarted, _) => Err(SessionRefusal::NotStarted),
             (SessionPhase::Ended, _) => Err(SessionRefusal::Ended),
+            (SessionPhase::Interrupting { .. }, _) => Err(SessionRefusal::Interrupting),
             (SessionPhase::Idle, _) => Ok(Admission::Write(PromptAccepted::Started {
                 turn: self.begin_turn(),
             })),

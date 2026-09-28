@@ -22,7 +22,7 @@ pub(crate) fn run(ctx: &CliContext, flags: &AgentFlags, stderr: &mut String) -> 
         stderr.push_str("agent: the claude-code member capability is not composed\n");
         return 1;
     };
-    let handles = build(&ClaudeMemberSettings {
+    let built = build(&ClaudeMemberSettings {
         member: flags
             .session_name
             .clone()
@@ -34,6 +34,13 @@ pub(crate) fn run(ctx: &CliContext, flags: &AgentFlags, stderr: &mut String) -> 
             .unwrap_or_else(|| std::path::PathBuf::from(".")),
         base_dir: ctx.base_dir(),
     });
+    let handles = match built {
+        Ok(handles) => handles,
+        Err(refusal) => {
+            stderr.push_str(&format!("agent: {refusal}\n"));
+            return 1;
+        }
+    };
     let runtime = match super::build_tokio_runtime() {
         Ok(runtime) => runtime,
         Err(error) => {
@@ -51,7 +58,7 @@ async fn start_and_end(handles: &ClaudeMemberHandles, stderr: &mut String) -> i3
         stderr.push_str(&format!("agent: {refusal}\n"));
         return 1;
     }
-    let ended = handles.session.abort().await;
+    let ended = handles.session.close().await;
     assert!(ended.is_ok(), "a started member can be ended: {ended:?}");
     stderr.push_str("agent: the claude-code member serves no endpoint yet (#2288); it was ended\n");
     1

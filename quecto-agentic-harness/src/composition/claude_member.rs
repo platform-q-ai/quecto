@@ -8,11 +8,13 @@ use std::ffi::OsString;
 use std::sync::Arc;
 
 use crate::application::external_agent::dto::{
-    CredentialEnv, ExternalAgentLaunchSpec, ExternalAgentSessionSettings, SKIPPED_LINE_GRACE,
+    CredentialEnv, ExternalAgentLaunchSpec, ExternalAgentSessionSettings, INTERRUPT_GRACE,
+    SKIPPED_LINE_GRACE,
 };
 use crate::application::external_agent::use_cases::DriveExternalAgentSession;
 use crate::infrastructure::external_agents::claude_code::environment::CREDENTIAL_VARIABLES;
 use crate::infrastructure::external_agents::claude_code::process::ClaudeCodeLauncher;
+use crate::infrastructure::external_agents::clock::TokioExternalAgentClock;
 use crate::infrastructure::external_agents::telemetry::TracingExternalAgentTelemetry;
 use crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor;
 use crate::interface::cli::claude_member::{ClaudeMemberHandles, ClaudeMemberSettings};
@@ -29,8 +31,10 @@ pub const DEFAULT_CLAUDE_MODEL: &str = "sonnet";
 pub const DEFAULT_TURN_BUDGET_USD: f64 = 5.0;
 
 /// A claude-code member's handles over this process's environment and
-/// supervisor.
-pub fn build_claude_member_handles(settings: &ClaudeMemberSettings) -> ClaudeMemberHandles {
+/// supervisor, or why none can be built.
+pub fn build_claude_member_handles(
+    settings: &ClaudeMemberSettings,
+) -> Result<ClaudeMemberHandles, String> {
     build_over(
         settings,
         std::env::vars_os().collect(),
@@ -44,20 +48,22 @@ pub(crate) fn build_over(
     settings: &ClaudeMemberSettings,
     parent_environment: Vec<(OsString, OsString)>,
     supervisor: Arc<OwnedChildSupervisor>,
-) -> ClaudeMemberHandles {
-    let credential = credential_from(&parent_environment);
+) -> Result<ClaudeMemberHandles, String> {
+    let credential = credential_from(&parent_environment)?;
     let launcher = Arc::new(ClaudeCodeLauncher::new(supervisor, parent_environment));
     let session = DriveExternalAgentSession::new(
         launcher,
         Arc::new(TracingExternalAgentTelemetry),
+        Arc::new(TokioExternalAgentClock::new()),
         ExternalAgentSessionSettings {
             launch: launch_spec(settings, credential),
             skipped_line_grace: SKIPPED_LINE_GRACE,
+            interrupt_grace: INTERRUPT_GRACE,
         },
     );
-    ClaudeMemberHandles {
+    Ok(ClaudeMemberHandles {
         session: Arc::new(session),
-    }
+    })
 }
 
 fn launch_spec(
@@ -92,7 +98,7 @@ fn launch_spec(
 /// [`CREDENTIAL_VARIABLES`]' order. Interim until #2293 selects the mode
 /// by config: with none, the first is named without a value, which the
 /// launcher refuses before anything runs.
-fn credential_from(parent_environment: &[(OsString, OsString)]) -> CredentialEnv {
+fn credential_from(parent_environment: &[(OsString, OsString)]) -> Result<CredentialEnv, String> {
     let value_of = |name: &str| {
         parent_environment
             .iter()
@@ -105,10 +111,10 @@ fn credential_from(parent_environment: &[(OsString, OsString)]) -> CredentialEnv
         .iter()
         .find_map(|name| value_of(name).map(|value| (*name, value)))
         .unwrap_or((CREDENTIAL_VARIABLES[0], String::new()));
-    CredentialEnv {
+    Ok(CredentialEnv {
         name: name.to_string(),
         value,
-    }
+    })
 }
 
 #[cfg(test)]

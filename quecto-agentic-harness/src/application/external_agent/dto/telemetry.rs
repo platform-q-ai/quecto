@@ -6,6 +6,11 @@
 
 use super::PromptAccepted;
 
+/// The most of a tool's name a [`SessionRecord::ToolCalled`] keeps, in
+/// bytes; it keeps only ASCII letters, digits and `_ - . :`, each other
+/// character becoming `?`.
+pub const TOOL_NAME_RECORD_BYTES: usize = 64;
+
 /// One decision or effect of a member session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionRecord {
@@ -21,22 +26,45 @@ pub enum SessionRecord {
     /// A prompt of `bytes` bytes was refused (a [`super::SessionRefusal`]
     /// kind).
     PromptRefused { refusal: &'static str, bytes: usize },
-    /// Turn `turn` called tool `tool` (its name only).
+    /// Turn `turn` called tool `tool` (its name only, bounded by
+    /// [`TOOL_NAME_RECORD_BYTES`]).
     ToolCalled { turn: Option<u64>, tool: String },
     /// A line of `bytes` bytes was skipped during `turn`.
     LineSkipped { turn: Option<u64>, bytes: usize },
     /// Turn `turn` ended: `completed`, `failed`, `aborted` (the agent's
-    /// own abort), `lost` or `exited`, with what its result said it took.
+    /// own abort, or an interrupt's) or `exited`, with what its result
+    /// said it took.
     TurnEnded {
         turn: u64,
         outcome: &'static str,
         duration_ms: Option<u64>,
         cost_micro_usd: u64,
     },
+    /// A result came for turn `turn` while `owed` user turns written into
+    /// it are still unanswered: the turn goes on.
+    TurnContinued { turn: u64, owed: usize },
+    /// Turn `turn` was interrupted: `abort`, or `lost` (a skipped line,
+    /// then silence).
+    Interrupted { turn: u64, cause: &'static str },
+    /// Interrupted turn `turn` did not answer in time, or the interrupt
+    /// could not be written: the member was ended.
+    Abandoned { turn: u64 },
     /// A queued follow-up started turn `turn`.
     FollowUpStarted { turn: u64, bytes: usize },
+    /// The follow-up of `bytes` bytes that was to start turn `turn` could
+    /// not be written (a [`super::SessionRefusal`] kind).
+    FollowUpFailed {
+        turn: u64,
+        bytes: usize,
+        refusal: &'static str,
+    },
     /// The member was aborted, ending `turn` and dropping the follow-ups.
     Aborted {
+        turn: Option<u64>,
+        dropped_follow_ups: usize,
+    },
+    /// The member was closed, ending `turn` and dropping the follow-ups.
+    Closed {
         turn: Option<u64>,
         dropped_follow_ups: usize,
     },
@@ -55,7 +83,12 @@ impl SessionRecord {
             Self::ToolCalled { .. } => "tool_called",
             Self::LineSkipped { .. } => "line_skipped",
             Self::TurnEnded { .. } => "turn_ended",
+            Self::TurnContinued { .. } => "turn_continued",
+            Self::Interrupted { .. } => "interrupted",
+            Self::Abandoned { .. } => "abandoned",
             Self::FollowUpStarted { .. } => "follow_up_started",
+            Self::FollowUpFailed { .. } => "follow_up_failed",
+            Self::Closed { .. } => "closed",
             Self::Aborted { .. } => "aborted",
             Self::Ended { .. } => "ended",
         }

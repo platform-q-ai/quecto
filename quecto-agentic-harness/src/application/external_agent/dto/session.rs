@@ -36,7 +36,8 @@ pub struct SessionTotals {
     pub skipped_lines: usize,
 }
 
-/// The most follow-ups a busy member holds.
+/// The most follow-ups a busy member holds: quecto's own pending-prompt
+/// bound (`UdsSession::MAX_PENDING`).
 pub const FOLLOW_UP_QUEUE_CAPACITY: usize = 16;
 
 /// How long the stream may stay quiet after a skipped line of a running
@@ -44,12 +45,19 @@ pub const FOLLOW_UP_QUEUE_CAPACITY: usize = 16;
 /// its `result`, which would never come again.
 pub const SKIPPED_LINE_GRACE: Duration = Duration::from_secs(60);
 
+/// How long an interrupted turn may take to answer: its `result`, and the
+/// withdrawal of every user turn it owed, before the member is ended
+/// (its state is then unknown, so nothing more may be written to it).
+pub const INTERRUPT_GRACE: Duration = Duration::from_secs(30);
+
 /// What a member session is started with.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternalAgentSessionSettings {
     pub launch: ExternalAgentLaunchSpec,
     /// See [`SKIPPED_LINE_GRACE`].
     pub skipped_line_grace: Duration,
+    /// See [`INTERRUPT_GRACE`].
+    pub interrupt_grace: Duration,
 }
 
 /// How a prompt is delivered while a turn runs: quecto's
@@ -84,6 +92,8 @@ pub enum SessionRefusal {
     Busy,
     /// [`FOLLOW_UP_QUEUE_CAPACITY`] follow-ups already wait.
     QueueFull,
+    /// The running turn is being interrupted: nothing is written into it.
+    Interrupting,
     /// The member has ended: aborted, or its agent exited.
     Ended,
     /// The agent could not be started.
@@ -100,6 +110,7 @@ impl SessionRefusal {
             Self::AlreadyStarted => "already_started",
             Self::Busy => "busy",
             Self::QueueFull => "queue_full",
+            Self::Interrupting => "interrupting",
             Self::Ended => "ended",
             Self::Launch(_) => "launch",
             Self::Input(_) => "input",
@@ -117,6 +128,10 @@ impl std::fmt::Display for SessionRefusal {
             Self::QueueFull => write!(
                 f,
                 "the follow-up queue is full ({FOLLOW_UP_QUEUE_CAPACITY}); wait for the running turn to end"
+            ),
+            Self::Interrupting => write!(
+                f,
+                "the claude-code member is stopping its turn; send a follow-up or wait"
             ),
             Self::Ended => write!(f, "the claude-code member has ended"),
             Self::Launch(error) => write!(f, "{error}"),
@@ -136,17 +151,23 @@ pub enum SessionPhase {
     Idle,
     /// Turn `turn` runs.
     Busy { turn: u64 },
+    /// Turn `turn` was interrupted (an abort, or a lost turn): the session
+    /// waits for every result it is owed and writes nothing new meanwhile.
+    Interrupting { turn: u64 },
     /// The member has ended; nothing more is accepted.
     Ended,
 }
 
-/// What `abort` ended.
+/// What `abort` (or `close`) ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AbortOutcome {
     /// The turn that was running, if one was.
     pub turn: Option<u64>,
     /// The follow-ups that were waiting and are dropped.
     pub dropped_follow_ups: usize,
+    /// Whether the member itself ended: `close`, or an interrupt that
+    /// could not be written. An abort otherwise leaves it alive.
+    pub member_ended: bool,
 }
 
 /// What one read of the agent's stream changed.
@@ -155,8 +176,15 @@ pub enum SessionStep {
     /// An event was folded; a turn it ended starts the next follow-up.
     Folded(ProjectionStep),
     /// Turn `turn` was given up: a line of it was skipped and the stream
-    /// then stayed quiet for the grace period.
+    /// then stayed quiet for the grace period. It is interrupted; the
+    /// session stays busy until every result it is owed has come.
     TurnLost { turn: u64 },
+    /// Turn `turn` was interrupted and did not answer within the grace
+    /// (or the interrupt could not be written): the member was ended.
+    Abandoned { turn: u64 },
+    /// The follow-up that was to start turn `turn` could not be written;
+    /// the member is idle.
+    FollowUpFailed { turn: u64, refusal: SessionRefusal },
     /// The agent's output ended, cutting `turn` short if one ran: the
     /// member has ended.
     Ended {

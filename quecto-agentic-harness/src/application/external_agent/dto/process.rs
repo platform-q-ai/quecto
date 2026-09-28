@@ -71,6 +71,17 @@ impl std::fmt::Display for ExternalAgentLaunchError {
 
 impl std::error::Error for ExternalAgentLaunchError {}
 
+/// The id a user turn was written under (#2287). The agent's `result`
+/// names the user turns it consumed by these ids, so the session binds
+/// each result to the prompts it answers. Opaque: the adapter mints it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UserTurnId(pub String);
+
+/// Milliseconds on the monotonic scale an [`crate::application::external_agent::ports::ExternalAgentClock`]
+/// chooses (#2287).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AgentClockInstant(pub u64);
+
 /// Why a user turn could not be written to the agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExternalAgentInputError {
