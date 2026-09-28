@@ -5,7 +5,12 @@ use serde_json::json;
 
 use super::*;
 
-const SAMPLES: &[(&str, &str)] = &[
+/// Decode one line with a fresh decoder.
+pub(super) fn decode(line: &str) -> Result<Vec<ExternalAgentEvent>, StreamJsonError> {
+    StreamJsonDecoder::new().decode_line(line)
+}
+
+pub(super) const SAMPLES: &[(&str, &str)] = &[
     (
         "rt",
         include_str!("../../../../tests/fixtures/claude_code/rt.stream.jsonl"),
@@ -22,24 +27,36 @@ const SAMPLES: &[(&str, &str)] = &[
         "kill",
         include_str!("../../../../tests/fixtures/claude_code/kill.stream.jsonl"),
     ),
+    // Synthesized from claude 2.1.280's result schema (`error_max_turns`,
+    // `error_max_budget_usd`, `error_during_execution`), not captured.
+    (
+        "errors",
+        include_str!("../../../../tests/fixtures/claude_code/errors.stream.jsonl"),
+    ),
 ];
 
 /// Event types the samples may carry that this vocabulary leaves
 /// `Unknown` on purpose. None today: every captured type is typed.
 const LISTED_UNKNOWN: &[&str] = &[];
 
-fn sample(name: &str) -> Vec<ExternalAgentEvent> {
+/// Every event of a sample, decoded by one decoder.
+pub(super) fn sample(name: &str) -> Vec<ExternalAgentEvent> {
     let (_, text) = SAMPLES
         .iter()
         .find(|(sample, _)| *sample == name)
         .expect("a known sample");
+    let mut decoder = StreamJsonDecoder::new();
     text.lines()
-        .flat_map(|line| decode_line(line).expect("every sample line decodes"))
+        .flat_map(|line| {
+            decoder
+                .decode_line(line)
+                .expect("every sample line decodes")
+        })
         .collect()
 }
 
-fn single(line: serde_json::Value) -> ExternalAgentEvent {
-    let mut events = decode_line(&line.to_string()).expect("decodes");
+pub(super) fn single(line: serde_json::Value) -> ExternalAgentEvent {
+    let mut events = decode(&line.to_string()).expect("decodes");
     assert_eq!(events.len(), 1, "{events:?}");
     events.remove(0)
 }
@@ -50,7 +67,7 @@ fn every_line_of_every_spike_sample_decodes() {
     for (name, text) in SAMPLES {
         for (index, line) in text.lines().enumerate() {
             lines += 1;
-            let events = decode_line(line)
+            let events = decode(line)
                 .unwrap_or_else(|err| panic!("{name}:{} does not decode: {err}", index + 1));
             assert!(
                 !events.is_empty(),
@@ -68,7 +85,7 @@ fn every_line_of_every_spike_sample_decodes() {
             }
         }
     }
-    assert_eq!(lines, 43 + 16 + 18 + 11);
+    assert_eq!(lines, 43 + 16 + 18 + 11 + 7);
 }
 
 // Mapping row: `system/init` {session_id, model, tools, mcp_servers,
@@ -177,7 +194,7 @@ fn a_hook_refusal_decodes_as_a_denied_error_result() {
         .iter()
         .find_map(|e| match e {
             ExternalAgentEvent::ToolResult(r)
-                if r.tool_use_id == "toolu_01UMUaeXRrMxrLbPpWRpnq4e" =>
+                if r.tool_use_id.as_deref() == Some("toolu_01UMUaeXRrMxrLbPpWRpnq4e") =>
             {
                 Some(r)
             }
@@ -369,7 +386,7 @@ fn the_not_logged_in_shape_decodes_its_error_signals() {
         ]},
         "error": "authentication_failed"
     });
-    let events = decode_line(&assistant.to_string()).expect("decodes");
+    let events = decode(&assistant.to_string()).expect("decodes");
     assert_eq!(
         events,
         vec![
@@ -456,12 +473,15 @@ fn an_unknown_type_is_unknown_not_a_panic() {
 #[test]
 fn a_line_that_is_not_a_json_object_is_an_error() {
     assert!(matches!(
-        decode_line("not json"),
+        decode("not json"),
         Err(StreamJsonError::NotJson(_))
     ));
-    assert_eq!(decode_line("[1, 2]"), Err(StreamJsonError::NotAnObject));
-    assert!(matches!(
-        decode_line(r#"{"type": "result", "num_turns": "four"}"#),
-        Err(StreamJsonError::Malformed { kind, .. }) if kind == "result"
-    ));
+    assert_eq!(decode("[1, 2]"), Err(StreamJsonError::NotAnObject));
 }
+
+#[cfg(test)]
+#[path = "stream_json_projection_tests.rs"]
+mod projection;
+#[cfg(test)]
+#[path = "stream_json_tolerance_tests.rs"]
+mod tolerance;

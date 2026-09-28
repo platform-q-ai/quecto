@@ -27,6 +27,15 @@ pub struct TurnFailure {
     /// The `error` an assistant event of the turn carried
     /// (`authentication_failed` …).
     pub assistant_error: Option<String>,
+    /// The result's `errors[]`.
+    pub errors: Vec<String>,
+}
+
+impl TurnFailure {
+    /// A one-line account of the failure, for a report that has no text.
+    pub fn describe(&self) -> String {
+        String::new()
+    }
 }
 
 impl TurnEnd {
@@ -46,6 +55,7 @@ impl TurnEnd {
                 terminal_reason: result.terminal_reason.clone(),
                 api_error_status: result.api_error_status,
                 assistant_error: assistant_error.map(str::to_string),
+                errors: result.errors.clone(),
             }),
         }
     }

@@ -1,15 +1,20 @@
 //! The member's final report (#2285).
 
+use crate::domain::external_agent::turn::TurnFailure;
+
 /// A final report is delivered in pages of this many bytes, the same
 /// budget as a quecto child's final report (#2114).
 pub const FINAL_REPORT_PAGE_BYTES: usize = 64 * 1024;
 
-/// The member's final report: the last turn's `result` text.
+/// The member's final report: the last turn's `result` text, or, for a
+/// failed turn without one, the failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FinalReport {
     pub content: String,
     /// The last assistant message with text when the report arrived.
     pub message_ordinal: Option<u64>,
+    /// Why the turn that gave this report failed; `None` when it completed.
+    pub failure: Option<TurnFailure>,
 }
 
 impl FinalReport {

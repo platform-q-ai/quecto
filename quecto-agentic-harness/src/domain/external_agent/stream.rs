@@ -106,7 +106,9 @@ pub enum AssistantContent {
 /// A `tool_result` block.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolResultEvent {
-    pub tool_use_id: String,
+    /// The call this answers; `None` when the line did not name it (the
+    /// projection then closes the oldest open call).
+    pub tool_use_id: Option<String>,
     /// The tool's result: a string or a list of content blocks.
     pub content: Value,
     pub is_error: bool,
@@ -214,6 +216,10 @@ pub struct ResultEvent {
     pub stop_reason: Option<String>,
     pub api_error_status: Option<u16>,
     pub result_text: Option<String>,
+    /// An error result's reasons (`error_max_turns`,
+    /// `error_max_budget_usd`, `error_during_execution` carry these and no
+    /// `result`), and any the codec adds for a malformed turn end.
+    pub errors: Vec<String>,
     pub usage: TokenCounts,
     pub total_cost_usd: Option<f64>,
     pub model_usage: Vec<ModelUsage>,

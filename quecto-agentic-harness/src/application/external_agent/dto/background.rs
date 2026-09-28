@@ -1,5 +1,9 @@
 //! Bash commands the external agent tracks as tasks (#2285).
 
+/// The projection tracks at most this many live jobs; the oldest is
+/// dropped past it.
+pub const BACKGROUND_JOB_CAPACITY: usize = 64;
+
 /// A Bash command the CLI tracks as a task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackgroundJob {

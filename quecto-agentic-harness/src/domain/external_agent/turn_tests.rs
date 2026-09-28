@@ -15,9 +15,10 @@ fn completed() -> ResultEvent {
 // assistant `error` → end classification ("never use `subtype` alone").
 #[test]
 fn a_success_subtype_with_is_error_is_a_failed_turn() {
-    // The not-logged-in capture: `subtype:"success"` (which this type does
-    // not even carry), `is_error:true`, `terminal_reason:"api_error"`, and a
-    // synthetic assistant message whose `error` is `authentication_failed`.
+    // The not-logged-in shape: the CLI's `subtype` says "success" (a field
+    // `ResultEvent` deliberately does not model), yet `is_error` is true and
+    // `terminal_reason` is "api_error", after a synthetic assistant message
+    // whose `error` is "authentication_failed".
     let not_logged_in = ResultEvent {
         is_error: Some(true),
         terminal_reason: Some("api_error".into()),
@@ -31,6 +32,7 @@ fn a_success_subtype_with_is_error_is_a_failed_turn() {
             terminal_reason: Some("api_error".into()),
             api_error_status: None,
             assistant_error: Some("authentication_failed".into()),
+            errors: Vec::new(),
         })
     );
 }
@@ -57,13 +59,56 @@ fn completed_requires_terminal_reason_completed_and_no_error() {
             terminal_reason: Some("api_error".into()),
             api_error_status: Some(529),
             assistant_error: None,
+            errors: Vec::new(),
         })
     );
+}
 
-    let assistant_error = TurnEnd::classify(&completed(), Some("rate_limit"));
+#[test]
+fn an_assistant_error_does_not_fail_a_result_that_says_completed() {
+    // The CLI's result is followed; the projection records the error as a
+    // warning.
+    assert_eq!(
+        TurnEnd::classify(&completed(), Some("rate_limit")),
+        TurnEnd::Completed
+    );
+}
+
+#[test]
+fn an_error_result_carries_its_errors_into_the_failure() {
+    let max_turns = ResultEvent {
+        is_error: Some(true),
+        terminal_reason: Some("max_turns".into()),
+        errors: vec!["Reached maximum number of turns (5)".into()],
+        ..ResultEvent::default()
+    };
+    let TurnEnd::Failed(failure) = TurnEnd::classify(&max_turns, None) else {
+        panic!("an error result is a failed turn");
+    };
+    assert_eq!(failure.errors, vec!["Reached maximum number of turns (5)"]);
+    let described = failure.describe();
+    assert!(described.contains("max_turns"), "{described}");
     assert!(
-        !assistant_error.is_completed(),
-        "an assistant error fails the turn"
+        described.contains("Reached maximum number of turns (5)"),
+        "{described}"
+    );
+}
+
+#[test]
+fn a_failure_describes_every_signal_it_has() {
+    let bare = TurnFailure::default().describe();
+    assert_eq!(bare, "the turn failed");
+    let full = TurnFailure {
+        terminal_reason: Some("api_error".into()),
+        api_error_status: Some(401),
+        assistant_error: Some("authentication_failed".into()),
+        errors: vec!["one".into(), "two".into()],
+    }
+    .describe();
+    assert_eq!(
+        full,
+        "the turn failed (terminal_reason: api_error; api_error_status: 401; \
+         assistant error: authentication_failed): one; two"
     );
 }
 

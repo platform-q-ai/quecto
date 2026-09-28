@@ -6,11 +6,16 @@ pub mod background;
 pub mod message;
 pub mod report;
 pub mod session;
+pub mod step;
 pub mod turn;
 
-pub use audit::GuardrailDenial;
-pub use background::BackgroundJob;
-pub use message::{ExecutionState, MessageRole, ProjectedMessage, ProjectedToolCall};
-pub use report::{FINAL_REPORT_PAGE_BYTES, FinalReport};
-pub use session::SessionTotals;
-pub use turn::TurnOutcome;
+pub use self::audit::{
+    ADMISSION_WARNING_CAPACITY, AUDIT_INPUT_PREVIEW_BYTES, GUARDRAIL_AUDIT_CAPACITY,
+    GuardrailDenial,
+};
+pub use self::background::{BACKGROUND_JOB_CAPACITY, BackgroundJob};
+pub use self::message::{ExecutionState, MessageRole, ProjectedMessage, ProjectedToolCall};
+pub use self::report::{FINAL_REPORT_PAGE_BYTES, FinalReport};
+pub use self::session::SessionTotals;
+pub use self::step::ProjectionStep;
+pub use self::turn::{TurnOutcome, TurnWarning};

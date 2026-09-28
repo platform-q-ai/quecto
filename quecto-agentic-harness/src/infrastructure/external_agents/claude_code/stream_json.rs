@@ -33,8 +33,27 @@ pub enum StreamJsonError {
     Malformed { kind: String, reason: String },
 }
 
-/// Decode one NDJSON line.
-pub fn decode_line(line: &str) -> Result<Vec<ExternalAgentEvent>, StreamJsonError> {
+/// Decodes a stream line by line.
+#[derive(Debug, Default)]
+pub struct StreamJsonDecoder {}
+
+impl StreamJsonDecoder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Decode one NDJSON line.
+    pub fn decode_line(&mut self, line: &str) -> Result<Vec<ExternalAgentEvent>, StreamJsonError> {
+        decode_line(line)
+    }
+
+    /// How many distinct unknown event kinds were logged.
+    pub fn unknown_kinds_logged(&self) -> usize {
+        0
+    }
+}
+
+fn decode_line(line: &str) -> Result<Vec<ExternalAgentEvent>, StreamJsonError> {
     let value: Value =
         serde_json::from_str(line).map_err(|err| StreamJsonError::NotJson(err.to_string()))?;
     let Value::Object(object) = &value else {
@@ -328,7 +347,7 @@ fn user_block(block: Value, denied: &[String]) -> ExternalAgentEvent {
             is_error,
         }) => ExternalAgentEvent::ToolResult(ToolResultEvent {
             permission_denied: denied.contains(&tool_use_id),
-            tool_use_id,
+            tool_use_id: Some(tool_use_id),
             content,
             is_error,
         }),
@@ -434,6 +453,7 @@ fn result(wire: WireResult) -> ResultEvent {
         stop_reason: wire.stop_reason,
         api_error_status: wire.api_error_status.as_ref().and_then(http_status),
         result_text: wire.result,
+        errors: Vec::new(),
         usage: tokens(
             wire.usage.input_tokens,
             wire.usage.output_tokens,

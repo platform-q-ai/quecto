@@ -8,6 +8,7 @@ fn a_long_report_is_paged_at_64_kib_on_character_boundaries() {
     let report = FinalReport {
         content: content.clone(),
         message_ordinal: None,
+        failure: None,
     };
     let pages = report.pages();
     assert_eq!(pages.len(), 2);
@@ -16,6 +17,7 @@ fn a_long_report_is_paged_at_64_kib_on_character_boundaries() {
     let empty = FinalReport {
         content: String::new(),
         message_ordinal: None,
+        failure: None,
     };
     assert_eq!(empty.pages(), vec![""]);
 }

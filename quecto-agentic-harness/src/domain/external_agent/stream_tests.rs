@@ -38,7 +38,7 @@ fn the_launch_check_needs_the_exact_tool_list() {
 
 fn tool_result(content: serde_json::Value) -> ToolResultEvent {
     ToolResultEvent {
-        tool_use_id: "toolu_1".into(),
+        tool_use_id: Some("toolu_1".into()),
         content,
         is_error: false,
         permission_denied: false,

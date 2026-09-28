@@ -14,7 +14,7 @@ use crate::domain::external_agent::turn::TurnFailure;
 
 const HAIKU: &str = "claude-haiku-4-5-20251001";
 
-fn init() -> ExternalAgentEvent {
+pub(super) fn init() -> ExternalAgentEvent {
     ExternalAgentEvent::Init(InitEvent {
         session_id: Some("00000000-0000-4000-8000-000000000001".into()),
         model: Some(HAIKU.into()),
@@ -45,11 +45,11 @@ fn thinking(message_id: &str) -> ExternalAgentEvent {
     block(message_id, AssistantContent::Thinking { text: None })
 }
 
-fn text(message_id: &str, text: &str) -> ExternalAgentEvent {
+pub(super) fn text(message_id: &str, text: &str) -> ExternalAgentEvent {
     block(message_id, AssistantContent::Text(text.into()))
 }
 
-fn tool_use(message_id: &str, id: &str, name: &str) -> ExternalAgentEvent {
+pub(super) fn tool_use(message_id: &str, id: &str, name: &str) -> ExternalAgentEvent {
     block(
         message_id,
         AssistantContent::ToolUse {
@@ -60,16 +60,20 @@ fn tool_use(message_id: &str, id: &str, name: &str) -> ExternalAgentEvent {
     )
 }
 
-fn tool_result(id: &str, content: serde_json::Value, is_error: bool) -> ExternalAgentEvent {
+pub(super) fn tool_result(
+    id: &str,
+    content: serde_json::Value,
+    is_error: bool,
+) -> ExternalAgentEvent {
     ExternalAgentEvent::ToolResult(ToolResultEvent {
-        tool_use_id: id.into(),
+        tool_use_id: Some(id.into()),
         content,
         is_error,
         permission_denied: false,
     })
 }
 
-fn tokens(input: u64, output: u64, cache_read: u64, cache_write: u64) -> TokenCounts {
+pub(super) fn tokens(input: u64, output: u64, cache_read: u64, cache_write: u64) -> TokenCounts {
     TokenCounts {
         input,
         output,
@@ -79,13 +83,19 @@ fn tokens(input: u64, output: u64, cache_read: u64, cache_write: u64) -> TokenCo
 }
 
 /// A completed turn's result with `rt`'s shape.
-fn result(text: &str, usage: TokenCounts, total: f64, cumulative: TokenCounts) -> ResultEvent {
+pub(super) fn result(
+    text: &str,
+    usage: TokenCounts,
+    total: f64,
+    cumulative: TokenCounts,
+) -> ResultEvent {
     ResultEvent {
         is_error: Some(false),
         terminal_reason: Some("completed".into()),
         stop_reason: Some("end_turn".into()),
         api_error_status: None,
         result_text: Some(text.into()),
+        errors: Vec::new(),
         usage,
         total_cost_usd: Some(total),
         model_usage: vec![ModelUsage {
@@ -100,7 +110,7 @@ fn result(text: &str, usage: TokenCounts, total: f64, cumulative: TokenCounts) -
 }
 
 const RT_REPORT_1: &str = "Done! Task T1 has been submitted.";
-const RT_REPORT_2: &str =
+pub(super) const RT_REPORT_2: &str =
     "Done! I've replied to the coordinator.\n\n**The task id I submitted earlier was T1.**";
 
 fn rt_turn_1() -> Vec<ExternalAgentEvent> {
@@ -151,17 +161,26 @@ fn rt_turn_2() -> Vec<ExternalAgentEvent> {
     ]
 }
 
-fn fold(projector: &mut Projector, events: &[ExternalAgentEvent]) -> Vec<TurnOutcome> {
-    events.iter().filter_map(|e| projector.apply(e)).collect()
+/// Fold `events`; the turn ends they gave.
+pub(super) fn fold(projector: &mut Projector, events: &[ExternalAgentEvent]) -> Vec<TurnOutcome> {
+    events
+        .iter()
+        .filter_map(|e| projector.apply(e).turn_end)
+        .collect()
 }
 
-fn roundtrip() -> Projector {
+/// `rt`'s two turns: the projector and both turn ends.
+fn roundtrip_turns() -> (Projector, Vec<TurnOutcome>) {
     let mut projector = Projector::new();
     projector.record_user_turn("Work the board: claim T1 and submit it.");
-    fold(&mut projector, &rt_turn_1());
+    let mut turns = fold(&mut projector, &rt_turn_1());
     projector.record_user_turn("What task id did you submit earlier?");
-    fold(&mut projector, &rt_turn_2());
-    projector
+    turns.extend(fold(&mut projector, &rt_turn_2()));
+    (projector, turns)
+}
+
+pub(super) fn roundtrip() -> Projector {
+    roundtrip_turns().0
 }
 
 // Mapping row: `assistant` with a `text` block (group by `message.id`,
@@ -213,8 +232,7 @@ fn a_block_of_an_earlier_message_after_a_tool_result_keeps_that_message_ordinal(
 // process) → `SessionStats.costMicroUsd`.
 #[test]
 fn cost_is_the_delta_of_cumulative_total_cost() {
-    let projector = roundtrip();
-    let turns = projector.turns();
+    let (projector, turns) = roundtrip_turns();
     assert_eq!(turns.len(), 2);
     assert_eq!(turns[0].usage.cost_micro_usd, 44_864);
     // 0.0530647 rounds once to 53_065 micro-USD; less 44_864.
@@ -227,8 +245,7 @@ fn cost_is_the_delta_of_cumulative_total_cost() {
 // and `result.modelUsage[*]` → `SessionStats.tokens` (cumulative).
 #[test]
 fn turn_usage_is_per_turn_not_cumulative() {
-    let projector = roundtrip();
-    let turns = projector.turns();
+    let (projector, turns) = roundtrip_turns();
     assert_eq!(turns[0].usage.tokens, tokens(58, 1069, 86550, 15403));
     assert_eq!(turns[1].usage.tokens, tokens(26, 362, 46907, 837));
     assert_eq!(
@@ -258,14 +275,14 @@ fn a_hook_denial_is_a_tool_error_and_an_audit_entry() {
     }];
     let mut projector = Projector::new();
     projector.record_user_turn("push it");
-    fold(
+    let ends = fold(
         &mut projector,
         &[
             init(),
             thinking("msg_g"),
             tool_use("msg_g", "toolu_g", "Bash"),
             ExternalAgentEvent::ToolResult(ToolResultEvent {
-                tool_use_id: "toolu_g".into(),
+                tool_use_id: Some("toolu_g".into()),
                 content: json!(reason),
                 is_error: true,
                 permission_denied: true,
@@ -289,25 +306,23 @@ fn a_hook_denial_is_a_tool_error_and_an_audit_entry() {
     assert_eq!(tool.tool_call_id.as_deref(), Some("toolu_g"));
     assert_eq!(tool.content, reason);
     assert_eq!(
-        projector.guardrail_audit(),
-        &[GuardrailDenial {
+        projector.guardrail_audit().cloned().collect::<Vec<_>>(),
+        vec![GuardrailDenial {
             tool_name: "Bash".into(),
             tool_use_id: "toolu_g".into(),
-            tool_input: json!({"command": "git push origin HEAD --dry-run"}),
+            tool_input_preview: r#"{"command":"git push origin HEAD --dry-run"}"#.into(),
             turn: 0,
         }]
     );
-    assert!(
-        projector.turns()[0].end.is_completed(),
-        "a refusal is not a failed turn"
-    );
+    assert_eq!(projector.session_totals().guardrail_denials, 1);
+    assert!(ends[0].end.is_completed(), "a refusal is not a failed turn");
 }
 
 #[test]
 fn a_permission_denied_result_is_a_tool_error_even_unmarked() {
     let mut projector = Projector::new();
     projector.apply(&ExternalAgentEvent::ToolResult(ToolResultEvent {
-        tool_use_id: "toolu_x".into(),
+        tool_use_id: Some("toolu_x".into()),
         content: json!("refused"),
         is_error: false,
         permission_denied: true,
@@ -352,7 +367,7 @@ fn a_mid_turn_wake_folds_into_one_result() {
     ));
 
     assert_eq!(ends.len(), 1, "one result for both inputs");
-    assert_eq!(projector.turns().len(), 1);
+    assert_eq!(projector.session_totals().turns, 1);
     let users: Vec<_> = projector
         .messages()
         .iter()
@@ -396,7 +411,7 @@ fn init_repeated_each_turn_does_not_reset_state() {
     projector.apply(&init());
 
     assert_eq!(projector.messages().len(), messages_after_turn_1);
-    assert_eq!(projector.turns().len(), 1);
+    assert_eq!(projector.session_totals().turns, 1);
     assert_eq!(
         projector.report().map(|r| r.content.as_str()),
         Some(RT_REPORT_1)
@@ -411,11 +426,12 @@ fn init_repeated_each_turn_does_not_reset_state() {
     );
 
     projector.record_user_turn("turn two");
-    fold(&mut projector, &rt_turn_2()[1..]);
+    let turn_two = fold(&mut projector, &rt_turn_2()[1..]);
     let ordinals: Vec<u64> = projector.messages().iter().map(|m| m.ordinal).collect();
     let expected: Vec<u64> = (0..ordinals.len() as u64).collect();
     assert_eq!(ordinals, expected, "ordinals continue across turns");
-    assert_eq!(projector.turns()[1].usage.cost_micro_usd, 8_201);
+    assert_eq!(turn_two[0].usage.cost_micro_usd, 8_201);
+    assert_eq!(projector.last_turn(), turn_two.first());
 }
 
 // Mapping row: `result.result` → final report {messageId: last assistant
@@ -430,22 +446,22 @@ fn the_report_is_the_last_result_text() {
         .messages()
         .iter()
         .rev()
-        .find(|m| m.role == MessageRole::Assistant)
-        .expect("an assistant message");
+        .find(|m| m.role == MessageRole::Assistant && !m.content.is_empty())
+        .expect("an assistant message with text");
     assert_eq!(report.message_ordinal, Some(last_text.ordinal));
     assert_eq!(report.pages(), vec![RT_REPORT_2]);
+    assert_eq!(report.failure, None);
 }
 
 #[test]
-fn a_result_without_text_keeps_the_previous_report() {
+fn a_completed_result_without_text_does_not_report_the_previous_answer() {
     let mut projector = roundtrip();
     let mut bare = result("", TokenCounts::default(), 0.06, tokens(1, 1, 1, 1));
     bare.result_text = None;
     projector.apply(&ExternalAgentEvent::Result(bare));
-    assert_eq!(
-        projector.report().map(|r| r.content.as_str()),
-        Some(RT_REPORT_2)
-    );
+    let report = projector.report().expect("a report");
+    assert_eq!(report.content, "");
+    assert_eq!(report.failure, None);
 }
 
 // Mapping rows: `system/thinking_tokens` → thinking; `assistant` `text` →
@@ -455,18 +471,34 @@ fn a_result_without_text_keeps_the_previous_report() {
 fn the_stream_drives_the_execution_state() {
     let mut projector = Projector::new();
     assert_eq!(projector.state(), ExecutionState::Idle);
-    fold(&mut projector, &rt_turn_1()[..6]);
+    let transitions: Vec<ExecutionState> = rt_turn_1()[..6]
+        .iter()
+        .filter_map(|event| projector.apply(event).transition)
+        .collect();
     assert_eq!(
-        projector.transitions(),
-        &[
+        transitions,
+        [
             ExecutionState::Thinking,
             ExecutionState::Streaming,
             ExecutionState::RunningTool,
             ExecutionState::Thinking,
         ]
     );
-    fold(&mut projector, &rt_turn_1()[6..]);
-    assert_eq!(projector.state(), ExecutionState::Idle);
+    let events = rt_turn_1();
+    let (last, middle) = events[6..].split_last().expect("a result");
+    fold(&mut projector, middle);
+    let step = projector.apply(last);
+    assert_eq!(step.transition, Some(ExecutionState::Idle));
+    assert!(step.turn_end.is_some());
+    assert_eq!(
+        projector.apply(&thinking_tokens()).transition,
+        Some(ExecutionState::Thinking)
+    );
+    assert_eq!(
+        projector.apply(&thinking_tokens()).transition,
+        None,
+        "no change, no transition"
+    );
 }
 
 // Mapping row: `assistant` with a `tool_use` block → `message.toolCalls[]`
@@ -563,10 +595,14 @@ fn a_rate_limit_warning_is_an_admission_warning() {
     };
     let mut projector = Projector::new();
     projector.apply(&ExternalAgentEvent::RateLimit(allowed.clone()));
-    assert!(projector.admission_warnings().is_empty());
+    assert_eq!(projector.admission_warnings().count(), 0);
     projector.apply(&ExternalAgentEvent::RateLimit(warning.clone()));
     projector.apply(&ExternalAgentEvent::RateLimit(allowed.clone()));
-    assert_eq!(projector.admission_warnings(), &[warning]);
+    assert_eq!(
+        projector.admission_warnings().cloned().collect::<Vec<_>>(),
+        vec![warning]
+    );
+    assert_eq!(projector.session_totals().admission_warnings, 1);
     assert_eq!(projector.rate_limit(), Some(&allowed));
 }
 
@@ -601,9 +637,13 @@ fn a_not_logged_in_turn_ends_failed_with_every_signal() {
             terminal_reason: Some("api_error".into()),
             api_error_status: None,
             assistant_error: Some("authentication_failed".into()),
+            errors: Vec::new(),
         })
     );
     assert_eq!(ends[0].stop_reason, Some(StopReason::EndTurn));
+    let report = projector.report().expect("a report");
+    assert_eq!(report.content, "Not logged in · Please run /login");
+    assert!(report.failure.is_some(), "the report says the turn failed");
     assert_eq!(ends[0].usage.cost_micro_usd, 0);
     assert_eq!(projector.state(), ExecutionState::Idle);
 }
@@ -627,9 +667,11 @@ fn an_assistant_error_belongs_to_its_own_turn_only() {
             0.01,
             tokens(1, 1, 0, 0),
         )))
+        .turn_end
         .expect("a result ends a turn");
     assert_eq!(outcome.end, TurnEnd::Completed);
     assert_eq!(outcome.stop_reason, Some(StopReason::EndTurn));
+    assert_eq!(outcome.warnings, Vec::new());
 }
 
 #[test]
@@ -640,9 +682,9 @@ fn an_unknown_event_is_counted_and_changes_nothing_else() {
         projector.apply(&ExternalAgentEvent::Unknown {
             kind: "system/hook_started".into()
         }),
-        None
+        ProjectionStep::default()
     );
-    assert_eq!(projector.unknown_events(), 1);
+    assert_eq!(projector.session_totals().unknown_events, 1);
     assert_eq!(projector.messages().len(), before);
     assert_eq!(projector.state(), ExecutionState::Idle);
 }
