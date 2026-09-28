@@ -528,9 +528,19 @@ impl TeardownCompensation for RegistryDelegatedAgents {
                 .find(|(id, _)| id == key)
                 .and_then(|(_, entry)| entry.exit_signal_tx.as_ref())
                 .and_then(|tx| tx.borrow().clone());
+            // A monitor whose EOF won the terminal claim runs this very
+            // compensation, and an abort lands at the task's next yield:
+            // aborting it here would cancel the note (it awaits the crash
+            // record) and the release below (#2260). Every other monitor is
+            // aborted now; the running one only once nothing is left to do.
+            let running = tokio::task::try_id();
+            let mut own_monitor = None;
             for (id, entry) in &removed {
                 if let Some(ref handle) = entry.monitor_handle {
-                    handle.abort();
+                    match running == Some(handle.id()) {
+                        true => own_monitor = Some(std::sync::Arc::clone(handle)),
+                        false => handle.abort(),
+                    }
                 }
                 // Descendants fell with the subtree; they carry no exit
                 // status of their own. The target's own signal is the
@@ -588,6 +598,10 @@ impl TeardownCompensation for RegistryDelegatedAgents {
             // run for a row that has left the registry.
             for (_, entry) in removed.iter().chain(&already_ended) {
                 super::subagent_cascade::mark_entry_compensated(entry);
+            }
+            // Nothing below awaits: the running monitor ends as it returns.
+            if let Some(handle) = own_monitor {
+                handle.abort();
             }
             Compensated {
                 removed: removed
