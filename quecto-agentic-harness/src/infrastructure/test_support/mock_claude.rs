@@ -14,6 +14,11 @@
 //!     writes `n` bytes of `x` to stderr, in their turn;
 //!   - `@stall-input <secs>` (anywhere) makes the mock sleep that long
 //!     before it reads its first input line, so its stdin pipe fills;
+//!   - `@printf <format>` writes `printf '<format>'` to stdout in its
+//!     turn: raw bytes (`\377` is not UTF-8) the scenario file cannot
+//!     hold as a line of its own; the format must not hold a `'`;
+//!   - `@record <text>` appends `record=<text>` to the args file when the
+//!     turn reaches it: how far the mock got while its stdout was held;
 //!   - `@stubborn` (anywhere) makes the mock ignore TERM, start a
 //!     background `sleep` grandchild (which inherits the ignored TERM) and
 //!     keep running after stdin EOF: only KILL to its group ends it.
@@ -115,7 +120,7 @@ while IFS= read -r line; do
   if [ -n "$QUECTO_MOCK_CLAUDE_ARGS_OUT" ]; then
     printf 'input=%s\n' "$line" >> "$QUECTO_MOCK_CLAUDE_ARGS_OUT"
   fi
-  awk -v want="$turn" '
+  awk -v want="$turn" -v record="$QUECTO_MOCK_CLAUDE_ARGS_OUT" '
     BEGIN {{ current = 1; block = ""; for (i = 0; i < 1024; i++) block = block "x" }}
     /^@stubborn$/ || /^@stall-input [0-9]+$/ {{ next }}
     current == want && /^@stderr-fill [0-9]+$/ {{
@@ -125,6 +130,12 @@ while IFS= read -r line; do
       next
     }}
     current == want && /^@stderr / {{ print substr($0, 9) > "/dev/stderr"; next }}
+    current == want && /^@printf / {{ fflush(); system("printf \047" substr($0, 9) "\047"); next }}
+    current == want && /^@record / {{
+      fflush()
+      if (record != "") {{ print "record=" substr($0, 9) >> record; close(record) }}
+      next
+    }}
     current == want {{ print }}
     /"type": *"result"/ {{ current++ }}
   ' "$QUECTO_MOCK_CLAUDE_SCRIPT"

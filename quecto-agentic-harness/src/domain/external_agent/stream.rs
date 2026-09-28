@@ -45,6 +45,28 @@ pub enum ExternalAgentEvent {
     /// An event type (or `system` subtype, or assistant block type) this
     /// vocabulary does not know. Logged by the codec, never a panic.
     Unknown { kind: String },
+    /// A line of the stream that could not be read and was skipped
+    /// (#2286). It may have been the turn's `result`, so the session can
+    /// end the turn on it instead of waiting for a `result` that never
+    /// comes.
+    LineSkipped(SkippedLine),
+}
+
+/// A skipped line of the stream: why, and how long it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SkippedLine {
+    pub reason: SkippedLineReason,
+    /// The line's length on the wire, in bytes (its newline included).
+    pub bytes: usize,
+}
+
+/// Why a line of the stream was skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkippedLineReason {
+    /// Longer than the adapter reads as one line.
+    OverCap,
+    /// Not UTF-8, so not JSON.
+    NotUtf8,
 }
 
 /// `system/init`.

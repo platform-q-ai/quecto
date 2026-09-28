@@ -22,6 +22,8 @@ pub const STDERR_TAIL_CAPACITY: usize = 4096;
 pub struct StderrTail {
     bytes: Arc<Mutex<VecDeque<u8>>>,
     eof: watch::Receiver<bool>,
+    /// The most bytes kept, and the most a snapshot's text holds.
+    capacity: usize,
 }
 
 impl StderrTail {
@@ -53,7 +55,11 @@ impl StderrTail {
             // Sent before the sender drops: a waiter always observes `true`.
             let _ = eof_tx.send(true);
         });
-        Self { bytes, eof }
+        Self {
+            bytes,
+            eof,
+            capacity,
+        }
     }
 
     /// Wait, bounded by `timeout`, for the pipe to reach EOF so a report
@@ -71,8 +77,13 @@ impl StderrTail {
         let mut contiguous = Vec::with_capacity(bytes.len());
         contiguous.extend_from_slice(head);
         contiguous.extend_from_slice(rest);
-        String::from_utf8_lossy(&contiguous).trim().to_string()
+        tail_text(&contiguous, self.capacity)
     }
+}
+
+/// Red stub (#2286): not yet bounded after the lossy conversion.
+pub(crate) fn tail_text(bytes: &[u8], _capacity: usize) -> String {
+    String::from_utf8_lossy(bytes).trim().to_string()
 }
 
 fn retain_tail(sink: &Mutex<VecDeque<u8>>, chunk: &[u8], capacity: usize) {

@@ -80,6 +80,9 @@ pub const STREAM_LINE_CAP_BYTES: usize = 16 * 1024 * 1024;
 /// buffer if a member is ever seen near it.
 const EVENT_BUFFER: usize = 256;
 
+/// The `tracing` target of a member process's telemetry.
+pub const TELEMETRY_TARGET: &str = "quecto::external_agent";
+
 /// Whole turns queued ahead of the stdin writer; a full queue holds the
 /// sender (cancel-safely: an unqueued turn is simply not sent).
 const INPUT_QUEUE: usize = 16;
@@ -110,6 +113,11 @@ impl ClaudeCodeLauncher {
     /// instead of [`TerminationBudget::DEFAULT`].
     pub fn with_termination_budget(mut self, budget: TerminationBudget) -> Self {
         self.termination = budget;
+        self
+    }
+
+    /// Red stub (#2286): the line cap and buffer budget are not applied yet.
+    pub fn with_stream_limits(self, _line_cap: usize, _buffer_bytes: usize) -> Self {
         self
     }
 
@@ -153,10 +161,7 @@ impl ClaudeCodeLauncher {
             .supervisor
             .spawn(command, ProcessGroup::Own)
             .await
-            .map_err(|error| match error.kind() {
-                std::io::ErrorKind::NotFound => not_found(),
-                _ => ExternalAgentLaunchError::Spawn(format!("{}: {error}", program.display())),
-            })?;
+            .map_err(|error| spawn_error(error, &program, &checkout))?;
         let handle = spawned.handle;
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (spawned.stdin, spawned.stdout, spawned.stderr)
@@ -214,6 +219,18 @@ fn environment_error(error: MemberEnvironmentError) -> ExternalAgentLaunchError 
         MemberEnvironmentError::Directory { .. } => {
             ExternalAgentLaunchError::MemberDirectory(error.to_string())
         }
+    }
+}
+
+/// Red stub (#2286): a missing checkout still reads as a missing claude.
+fn spawn_error(
+    error: std::io::Error,
+    program: &Path,
+    _checkout: &Path,
+) -> ExternalAgentLaunchError {
+    match error.kind() {
+        std::io::ErrorKind::NotFound => not_found(),
+        _ => ExternalAgentLaunchError::Spawn(format!("{}: {error}", program.display())),
     }
 }
 
@@ -541,5 +558,21 @@ fn end_child(
 }
 
 #[cfg(test)]
+#[path = "process_test_rig.rs"]
+mod test_rig;
+
+#[cfg(test)]
 #[path = "process_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "process_input_tests.rs"]
+mod input_tests;
+
+#[cfg(test)]
+#[path = "process_stream_tests.rs"]
+mod stream_tests;
+
+#[cfg(test)]
+#[path = "process_telemetry_tests.rs"]
+mod telemetry_tests;

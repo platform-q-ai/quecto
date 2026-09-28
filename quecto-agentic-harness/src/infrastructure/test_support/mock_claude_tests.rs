@@ -92,3 +92,28 @@ fn the_start_record_names_the_pid_group_and_private_dir_modes() {
     assert_eq!(mock.recorded("config_mode"), vec![String::new()]);
     assert!(mock.recorded("grandchild").is_empty());
 }
+
+#[test]
+fn printf_writes_raw_bytes_and_record_marks_progress_in_its_turn() {
+    let root = tempfile::tempdir().unwrap();
+    let scenario = root.path().join("scenario.jsonl");
+    std::fs::write(
+        &scenario,
+        "@printf \\377\\376{}\\n\n@record reached\n{\"type\": \"result\"}\n",
+    )
+    .unwrap();
+    let mock = write_mock_claude(&root.path().join("bin"), &scenario);
+    let mut child = Command::new(mock.bin_dir.join(MOCK_CLAUDE_PROGRAM))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"go\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        output.stdout,
+        b"\xff\xfe{}\n{\"type\": \"result\"}\n".to_vec()
+    );
+    assert_eq!(mock.recorded("record"), vec!["reached".to_string()]);
+}
