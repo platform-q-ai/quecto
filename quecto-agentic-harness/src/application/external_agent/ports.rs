@@ -38,15 +38,20 @@ pub trait ExternalAgentProcess: Send + Sync {
     ) -> PortFuture<'a, Result<(), ExternalAgentInputError>>;
 
     /// The next event of the agent's stream, in order; `None` once its
-    /// output has ended. A line the adapter cannot decode is skipped and
-    /// logged, never the end of the stream.
+    /// output has ended. A line the adapter cannot read (too long, not
+    /// text) is an [`ExternalAgentEvent::LineSkipped`], one it cannot
+    /// decode is logged; neither is the end of the stream.
     fn next_event(&self) -> PortFuture<'_, Option<ExternalAgentEvent>>;
 
     /// Close the agent's input: it finishes and exits with status 0.
-    /// Idempotent; no turn can be written afterwards.
+    /// Idempotent; no turn can be written afterwards — a send not yet being
+    /// written, even one already waiting, is answered
+    /// [`ExternalAgentInputError::Closed`].
     fn close_input(&self) -> PortFuture<'_, ()>;
 
-    /// Wait for the process to end.
+    /// Wait for the process to end. Events not read yet are drained and
+    /// discarded meanwhile, so a caller that stopped reading can never hold
+    /// the process, and this wait, forever: read the events you need first.
     fn exited(&self) -> PortFuture<'_, ExternalAgentExit>;
 
     /// The last [`super::dto::EXTERNAL_AGENT_STDERR_TAIL_BYTES`] of its

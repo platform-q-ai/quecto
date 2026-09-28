@@ -671,14 +671,7 @@ impl OwnedChildSupervisor {
         protocol: std::pin::Pin<Box<dyn Future<Output = ProtocolOutcome> + Send>>,
         budget: TerminationBudget,
     ) {
-        if !self.retains(id) {
-            return;
-        }
-        let supervisor = Arc::clone(self);
-        self.handle.spawn(async move {
-            let outcome = supervisor.terminate(id, protocol, budget).await;
-            tracing::info!(handle = ?id, ?outcome, "owned child termination finished");
-        });
+        self.request_termination_observed(id, protocol, budget, Box::new(|_, _| {}));
     }
 
     /// Send one signal kind at most once, only while the handle is unreaped,

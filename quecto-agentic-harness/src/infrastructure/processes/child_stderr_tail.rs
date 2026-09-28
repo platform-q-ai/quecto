@@ -70,7 +70,8 @@ impl StderrTail {
         let _ = tokio::time::timeout(timeout, eof.wait_for(|done| *done)).await;
     }
 
-    /// The retained tail as trimmed, lossy UTF-8.
+    /// The retained tail as trimmed, lossy UTF-8, at most its capacity in
+    /// bytes.
     pub fn snapshot(&self) -> String {
         let bytes = self.bytes.lock().unwrap_or_else(|e| e.into_inner());
         let (head, rest) = bytes.as_slices();
@@ -81,9 +82,19 @@ impl StderrTail {
     }
 }
 
-/// Red stub (#2286): not yet bounded after the lossy conversion.
-pub(crate) fn tail_text(bytes: &[u8], _capacity: usize) -> String {
-    String::from_utf8_lossy(bytes).trim().to_string()
+/// `bytes` as trimmed, lossy UTF-8 of at most `capacity` bytes (#2286).
+/// The lossy conversion turns each invalid byte into U+FFFD — three bytes
+/// — so the text is cut again, from the front, on a character boundary.
+fn tail_text(bytes: &[u8], capacity: usize) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let text = text.trim();
+    let mut start = text.len().saturating_sub(capacity);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let tail = text[start..].trim_start();
+    assert!(tail.len() <= capacity, "the tail's text fits its capacity");
+    tail.to_string()
 }
 
 fn retain_tail(sink: &Mutex<VecDeque<u8>>, chunk: &[u8], capacity: usize) {

@@ -12,9 +12,11 @@
 //!
 //! The member directory must be a real directory (not a symlink) owned by
 //! this user that no one else can write: that is what keeps its entries
-//! from being swapped under the launcher. Each private directory is opened
-//! `O_NOFOLLOW | O_DIRECTORY`, checked and narrowed through that one open
-//! descriptor, so no check is ever about a different file than the change.
+//! from being swapped under the launcher. Each private directory is made
+//! and opened relative to the checked member directory's own descriptor
+//! (`mkdirat`, `openat` with `O_NOFOLLOW | O_DIRECTORY`), then checked and
+//! narrowed through that one open descriptor, so no check is ever about a
+//! different file than the change.
 //!
 //! Decisions left to E2-S9 (#2293, credentials, config and the container
 //! image):
@@ -37,9 +39,9 @@ use std::path::{Path, PathBuf};
 
 use crate::application::external_agent::dto::CredentialEnv;
 
-/// The only variables copied from the parent environment: locale and
-/// login (as spike #2264 passed them), and the proxy and CA settings in
-/// both the upper and lower case tools read.
+/// The only variables copied from the parent environment: locale, time
+/// zone and login (as spike #2264 passed them), and the proxy and CA
+/// settings in both the upper and lower case tools read.
 pub const INHERITED_VARIABLES: &[&str] = &[
     "PATH",
     "LANG",
@@ -55,6 +57,9 @@ pub const INHERITED_VARIABLES: &[&str] = &[
     "http_proxy",
     "https_proxy",
     "no_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "TZ",
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
     "NODE_EXTRA_CA_CERTS",
@@ -134,9 +139,9 @@ pub fn member_environment(
             detail: "the member directory must be an absolute path".into(),
         });
     }
-    member_directory(member_dir)?;
-    let home = private_dir(&member_dir.join(MEMBER_HOME_DIR))?;
-    let config_dir = private_dir(&member_dir.join(MEMBER_CLAUDE_CONFIG_DIR))?;
+    let member = member_directory(member_dir)?;
+    let home = private_dir(&member, member_dir, MEMBER_HOME_DIR)?;
+    let config_dir = private_dir(&member, member_dir, MEMBER_CLAUDE_CONFIG_DIR)?;
     let mut variables: Vec<(String, OsString)> = INHERITED_VARIABLES
         .iter()
         .filter_map(|name| inherited(parent, name).map(|value| (name.to_string(), value)))
@@ -222,8 +227,9 @@ fn effective_uid() -> u32 {
 
 /// Make `member_dir` (and its missing parents) if missing, then accept it
 /// only as a real directory owned by this user that only its owner may
-/// write. Its mode is otherwise left as it is.
-fn member_directory(member_dir: &Path) -> Result<(), MemberEnvironmentError> {
+/// write. Its mode is otherwise left as it is. The checked directory's
+/// descriptor is returned: its private directories are made through it.
+fn member_directory(member_dir: &Path) -> Result<std::fs::File, MemberEnvironmentError> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt};
     let refuse = refusal(member_dir);
     std::fs::DirBuilder::new()
@@ -239,7 +245,7 @@ fn member_directory(member_dir: &Path) -> Result<(), MemberEnvironmentError> {
     let owned = metadata.uid() == uid;
     let owner_only_writes = metadata.mode() & 0o022 == 0;
     if owned && owner_only_writes {
-        return Ok(());
+        return Ok(directory);
     }
     Err(refuse(format!(
         "must be owned by uid {uid} and writable by its owner only (uid {}, mode {:o})",
@@ -248,36 +254,96 @@ fn member_directory(member_dir: &Path) -> Result<(), MemberEnvironmentError> {
     )))
 }
 
-/// Make `path` a real directory owned by this user with mode
-/// [`PRIVATE_DIR_MODE`] inside the already-checked member directory; an
-/// existing one is narrowed to it. The check and the narrowing go through
-/// one `O_NOFOLLOW` descriptor, so a symlink swapped in is never followed.
-fn private_dir(path: &Path) -> Result<PathBuf, MemberEnvironmentError> {
-    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
-    let refuse = refusal(path);
-    match std::fs::DirBuilder::new()
-        .mode(PRIVATE_DIR_MODE)
-        .create(path)
-    {
+/// A private directory's name: one plain path component.
+fn plain_leaf(leaf: &str) -> bool {
+    !leaf.is_empty()
+        && leaf
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Make `leaf` a real directory owned by this user with mode
+/// [`PRIVATE_DIR_MODE`] inside the already-checked member directory,
+/// through `member`'s descriptor (`mkdirat`, `openat`) — never by a path
+/// rebuilt from `member_dir`, which a swapped component could redirect.
+/// An existing one is narrowed to the mode. The check and the narrowing
+/// go through one `O_NOFOLLOW` descriptor, so a symlink swapped in is
+/// never followed. Returns the directory's path, for the environment.
+fn private_dir(
+    member: &std::fs::File,
+    member_dir: &Path,
+    leaf: &str,
+) -> Result<PathBuf, MemberEnvironmentError> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::fs::MetadataExt;
+    assert!(
+        plain_leaf(leaf),
+        "a private directory is one plain component"
+    );
+    let path = member_dir.join(leaf);
+    let refuse = refusal(&path);
+    let name = std::ffi::CString::new(leaf).expect("a plain leaf holds no NUL");
+    // `member` is an open directory descriptor and `name` a NUL-terminated
+    // string, both alive for the whole call; `mkdirat` only reads them.
+    // SAFETY: valid descriptor and C string, neither kept by the call.
+    let made = unsafe {
+        libc::mkdirat(
+            member.as_raw_fd(),
+            name.as_ptr(),
+            PRIVATE_DIR_MODE as libc::mode_t,
+        )
+    };
+    let created = match made {
+        0 => Ok(()),
+        _ => Err(std::io::Error::last_os_error()),
+    };
+    match created {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(refuse(format!("create: {error}"))),
     }
-    let directory = open_directory(path)?;
+    // As for `mkdirat`; `openat` returns a new descriptor (or -1).
+    // SAFETY: valid descriptor and C string, neither kept by the call.
+    let fd = unsafe {
+        libc::openat(
+            member.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    let opened = fd >= 0;
+    let directory = if opened {
+        // `fd` was just returned by `openat`, is open, and nothing else
+        // owns it: the `File` takes sole ownership and closes it.
+        // SAFETY: a fresh, open, unowned descriptor.
+        unsafe { std::fs::File::from_raw_fd(fd) }
+    } else {
+        let error = std::io::Error::last_os_error();
+        return Err(refuse(format!(
+            "open as a directory, not following a symlink: {error}"
+        )));
+    };
     let metadata = directory
         .metadata()
         .map_err(|error| refuse(format!("stat: {error}")))?;
     assert!(metadata.is_dir(), "an O_DIRECTORY open yields a directory");
     let uid = effective_uid();
     let owned = metadata.uid() == uid;
-    if !owned {
-        return Err(refuse(format!(
-            "owned by uid {}, not {uid}",
-            metadata.uid()
-        )));
+    if owned {
+        return narrowed(&directory, &path);
     }
-    // Only a directory this user owns is narrowed. `File::set_permissions`
-    // is `fchmod` on the open descriptor.
+    Err(refuse(format!(
+        "owned by uid {}, not {uid}",
+        metadata.uid()
+    )))
+}
+
+/// Narrow the open `directory` (one this user owns) to
+/// [`PRIVATE_DIR_MODE`] and confirm it took. `File::set_permissions` is
+/// `fchmod` on the open descriptor.
+fn narrowed(directory: &std::fs::File, path: &Path) -> Result<PathBuf, MemberEnvironmentError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let refuse = refusal(path);
     directory
         .set_permissions(std::fs::Permissions::from_mode(PRIVATE_DIR_MODE))
         .map_err(|error| refuse(format!("chmod: {error}")))?;
