@@ -1,34 +1,56 @@
 //! Differential test of the Python-compatible JSON codec (#2268): every
-//! corpus value is written by `python3` and by the Rust codec, in both
-//! styles, and the texts must be byte-identical.
+//! corpus value, and the value of every corpus text, is written by
+//! `python3` and by the Rust codec in both styles, and the texts must be
+//! byte-identical; every invalid text must be refused by both.
 
-use quecto::infrastructure::persistence::swarm_board::py_json;
-use serde_json::Value;
+use quecto::infrastructure::persistence::swarm_board::py_json::{self, PyJson, PyStr};
 
 const CORPUS: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/swarm_board/json_corpus.json"
 );
 
-/// Prints, per corpus value, its `encode` text then its plain `dumps` text,
-/// one per line (`ensure_ascii` keeps every text on one line).
+/// Prints, per corpus value and then per text's value, its `encode` text
+/// and its plain `dumps` text, one per line (`ensure_ascii` keeps every
+/// text on one line), then `refused` or `accepted` per invalid text.
 const PYTHON_WRITER: &str = "import json, sys
 corpus = json.load(open(sys.argv[1], encoding='utf-8'))
-for value in corpus['values']:
+values = corpus['values'] + [json.loads(text) for text in corpus['texts']]
+for value in values:
     print(json.dumps(value, sort_keys=True, separators=(',', ':')))
     print(json.dumps(value))
+for text in corpus['invalid']:
+    try:
+        json.loads(text)
+        print('accepted')
+    except (ValueError, RecursionError):
+        print('refused')
 ";
 
-fn corpus_values() -> Vec<Value> {
+/// The corpus, read by the codec under test.
+fn corpus() -> PyJson {
     let text = std::fs::read_to_string(CORPUS).expect("corpus fixture is readable");
-    let corpus: Value = serde_json::from_str(&text).expect("corpus fixture is JSON");
-    corpus["values"]
-        .as_array()
-        .expect("corpus has a values list")
-        .clone()
+    py_json::decode(&text).expect("corpus fixture is JSON")
 }
 
-fn python_texts() -> Vec<String> {
+fn section<'a>(corpus: &'a PyJson, name: &str) -> &'a [PyJson] {
+    match corpus {
+        PyJson::Object(object) => match object.get(&PyStr::from(name)) {
+            Some(PyJson::List(items)) => items,
+            other => panic!("corpus {name} is a list, got {other:?}"),
+        },
+        other => panic!("corpus is an object, got {other:?}"),
+    }
+}
+
+fn text_of(item: &PyJson) -> &str {
+    match item {
+        PyJson::Str(text) => text.as_str().expect("corpus texts are valid UTF-8"),
+        other => panic!("corpus texts are strings, got {other:?}"),
+    }
+}
+
+fn python_lines() -> Vec<String> {
     let output = std::process::Command::new("python3")
         .args(["-I", "-c", PYTHON_WRITER, CORPUS])
         .env("PYTHONDONTWRITEBYTECODE", "1")
@@ -47,28 +69,60 @@ fn python_texts() -> Vec<String> {
         .collect()
 }
 
+fn rust_line(written: Result<String, py_json::PyJsonError>) -> String {
+    written.unwrap_or_else(|error| format!("<error: {error}>"))
+}
+
 #[test]
 fn encode_and_dumps_are_byte_identical_to_python_for_a_corpus() {
-    let values = corpus_values();
-    let texts = python_texts();
+    let corpus = corpus();
+    let values = section(&corpus, "values");
+    let texts = section(&corpus, "texts");
+    let invalid = section(&corpus, "invalid");
+    let decoded: Vec<PyJson> = texts
+        .iter()
+        .map(|text| py_json::decode(text_of(text)).expect("Python reads every corpus text"))
+        .collect();
+    let lines = python_lines();
     assert!(values.len() >= 200, "corpus holds about 200 values");
-    assert_eq!(texts.len(), values.len() * 2, "two Python texts per value");
+    let written = values.len() + decoded.len();
+    assert_eq!(
+        lines.len(),
+        written * 2 + invalid.len(),
+        "one line per Python output"
+    );
 
     let mut mismatches = Vec::new();
-    for (index, (value, pair)) in values.iter().zip(texts.chunks(2)).enumerate() {
-        let encoded = py_json::encode(value);
+    for (index, (value, pair)) in values
+        .iter()
+        .chain(&decoded)
+        .zip(lines.chunks(2))
+        .enumerate()
+    {
+        let encoded = rust_line(py_json::encode(value));
         if encoded != pair[0] {
             mismatches.push(format!(
                 "#{index} encode\n  rust:   {encoded}\n  python: {}",
                 pair[0]
             ));
         }
-        let dumped = py_json::dumps(value);
+        let dumped = rust_line(py_json::dumps(value));
         if dumped != pair[1] {
             mismatches.push(format!(
                 "#{index} dumps\n  rust:   {dumped}\n  python: {}",
                 pair[1]
             ));
+        }
+    }
+    for (text, verdict) in invalid.iter().zip(&lines[written * 2..]) {
+        let text = text_of(text);
+        let rust = if py_json::decode(text).is_ok() {
+            "accepted"
+        } else {
+            "refused"
+        };
+        if rust != verdict || verdict != "refused" {
+            mismatches.push(format!("invalid {text:?}: rust {rust}, python {verdict}"));
         }
     }
     assert!(
