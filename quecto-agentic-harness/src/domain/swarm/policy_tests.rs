@@ -2,7 +2,7 @@
 use serde_json::{Value, json};
 
 use super::*;
-use crate::domain::swarm::records::{CriterionKind, EvidenceRef, MemberState, RunState, TaskState};
+use crate::domain::swarm::records::{CriterionKind, MemberState, RunState, TaskState};
 
 fn run(status: RunState) -> RunRecord {
     RunRecord {
@@ -28,17 +28,19 @@ fn member(id: &str, status: MemberState, reservation: &str) -> MemberRecord {
 }
 
 fn task(status: TaskState, revisions: &[&str]) -> TaskRecord {
+    let evidence: Vec<Value> = revisions
+        .iter()
+        .map(|revision| json!({"artifact": "log", "revision": revision}))
+        .collect();
+    task_with(status, Value::Array(evidence))
+}
+
+fn task_with(status: TaskState, evidence: Value) -> TaskRecord {
     TaskRecord {
         id: 1,
         status,
         owner: None,
-        evidence: revisions
-            .iter()
-            .map(|revision| EvidenceRef {
-                artifact: "log".into(),
-                revision: (*revision).into(),
-            })
-            .collect(),
+        evidence,
     }
 }
 
@@ -224,12 +226,12 @@ fn admission_is_idempotent_for_the_same_live_reservation() {
     for status in [MemberState::LIVE, MemberState::RESERVED] {
         let prior = member("worker", status, "token");
         assert_eq!(
-            admission(&running(), Some(&prior), "token", 1, 50.0),
+            admission(&running(), Some(&prior), Some("token"), 1, 50.0),
             Ok(false)
         );
     }
     assert_eq!(
-        admission(&run(RunState::SETUP), None, "token", 1, 500.0),
+        admission(&run(RunState::SETUP), None, Some("token"), 1, 500.0),
         Ok(true)
     );
 }
@@ -238,29 +240,32 @@ fn admission_is_idempotent_for_the_same_live_reservation() {
 fn admission_counts_capacity_before_identity_reuse() {
     let reused = member("worker", MemberState::LIVE, "old");
     assert_eq!(
-        message(admission(&running(), Some(&reused), "new", 2, 50.0)),
+        message(admission(&running(), Some(&reused), Some("new"), 2, 50.0)),
         "swarm limit 2, current usage 2; reuse the existing pool"
     );
     // The same live reservation is answered before capacity (Python order).
     let same = member("worker", MemberState::LIVE, "token");
     assert_eq!(
-        admission(&running(), Some(&same), "token", 2, 50.0),
+        admission(&running(), Some(&same), Some("token"), 2, 50.0),
         Ok(false)
     );
     assert_eq!(
-        message(admission(&running(), Some(&reused), "new", 1, 50.0)),
+        message(admission(&running(), Some(&reused), Some("new"), 1, 50.0)),
         "member identity already used; choose a stable new identity"
     );
     let dead = member("worker", MemberState::DEAD, "token");
     assert_eq!(
-        message(admission(&running(), Some(&dead), "token", 1, 50.0)),
+        message(admission(&running(), Some(&dead), Some("token"), 1, 50.0)),
         "member identity already used; choose a stable new identity"
     );
     assert_eq!(
-        message(admission(&running(), None, "token", 3, 50.0)),
+        message(admission(&running(), None, Some("token"), 3, 50.0)),
         "swarm limit 2, current usage 3; reuse the existing pool"
     );
-    assert_eq!(admission(&running(), None, "token", 1, 50.0), Ok(true));
+    assert_eq!(
+        admission(&running(), None, Some("token"), 1, 50.0),
+        Ok(true)
+    );
 }
 
 #[test]
@@ -276,13 +281,13 @@ fn admission_refuses_stopped_and_expired_runs() {
         let expected = format!("run is {}; no new admission", status.as_str());
         let same = member("worker", MemberState::LIVE, "token");
         assert_eq!(
-            message(admission(&run(status), Some(&same), "token", 0, 0.0)),
+            message(admission(&run(status), Some(&same), Some("token"), 0, 0.0)),
             expected
         );
     }
     let same = member("worker", MemberState::LIVE, "token");
     assert_eq!(
-        message(admission(&running(), Some(&same), "token", 1, 100.0)),
+        message(admission(&running(), Some(&same), Some("token"), 1, 100.0)),
         "run is running; no new admission"
     );
 }
@@ -555,15 +560,102 @@ fn unknown_statuses_found_in_a_file_are_refused_affirmatively() {
     );
     let odd_prior = member("worker", MemberState::new("zombie"), "token");
     assert_eq!(
-        message(admission(&running(), Some(&odd_prior), "token", 1, 50.0)),
+        message(admission(
+            &running(),
+            Some(&odd_prior),
+            Some("token"),
+            1,
+            50.0
+        )),
         "member identity already used; choose a stable new identity"
     );
     assert_eq!(
         message(require_unsubmitted(&task(TaskState::new("odd"), &[]))),
-        "submitted evidence is immutable; release and reclaim before revising"
+        "task status 'odd' is not a known status; no revision permitted"
     );
     assert_eq!(
-        message(admission(&run(RunState::new("odd")), None, "token", 0, 0.0)),
+        message(admission(
+            &run(RunState::new("odd")),
+            None,
+            Some("token"),
+            0,
+            0.0
+        )),
         "run is odd; no new admission"
     );
+}
+
+#[test]
+fn completion_reads_task_evidence_as_stored() {
+    // `submit` checks only truthiness, so stored evidence may carry any JSON.
+    let r7 = json!("7");
+    let numeric = task_with(
+        TaskState::COMPLETED,
+        json!([{"artifact": "log", "revision": 7}]),
+    );
+    assert_eq!(
+        message(completion(
+            &criteria(),
+            &accepted("7"),
+            &[numeric],
+            false,
+            &r7
+        )),
+        "task evidence refers to stale revision"
+    );
+    let loose = json!([{"artifact": ["x"], "revision": "7", "note": "n"}]);
+    let odd = task_with(TaskState::COMPLETED, loose.clone());
+    assert_eq!(
+        completion(
+            &criteria(),
+            &accepted("7"),
+            std::slice::from_ref(&odd),
+            false,
+            &r7
+        ),
+        Ok(RunState::SUCCEEDED)
+    );
+    assert_eq!(odd.evidence, loose, "extra keys are kept verbatim");
+    for missing in [json!(null), json!([])] {
+        assert_eq!(
+            message(completion(
+                &criteria(),
+                &accepted("7"),
+                &[task_with(TaskState::COMPLETED, missing)],
+                false,
+                &r7
+            )),
+            "task evidence refers to stale revision"
+        );
+    }
+}
+
+#[test]
+fn admission_retries_a_null_reservation_idempotently() {
+    // Python compares `None == None`: a retry without a reservation is idempotent.
+    let unreserved = MemberRecord {
+        id: "worker".into(),
+        status: MemberState::LIVE,
+        reservation: None,
+    };
+    assert_eq!(
+        admission(&running(), Some(&unreserved), None, 2, 50.0),
+        Ok(false)
+    );
+    assert_eq!(
+        message(admission(
+            &running(),
+            Some(&unreserved),
+            Some("token"),
+            1,
+            50.0
+        )),
+        "member identity already used; choose a stable new identity"
+    );
+    let reserved = member("worker", MemberState::LIVE, "token");
+    assert_eq!(
+        message(admission(&running(), Some(&reserved), None, 1, 50.0)),
+        "member identity already used; choose a stable new identity"
+    );
+    assert_eq!(admission(&running(), None, None, 1, 50.0), Ok(true));
 }

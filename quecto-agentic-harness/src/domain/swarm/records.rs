@@ -81,20 +81,16 @@ pub struct MemberRecord {
     pub reservation: Option<String>,
 }
 
-/// One `{artifact, revision}` entry of a task's evidence.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EvidenceRef {
-    pub artifact: String,
-    pub revision: String,
-}
-
 /// A `tasks` row, as far as policy reads it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TaskRecord {
     pub id: i64,
     pub status: TaskState,
     pub owner: Option<String>,
-    pub evidence: Vec<EvidenceRef>,
+    /// `tasks.evidence` as stored: `null` before a submission, then the
+    /// list of objects `submit` or `revalidate_task` accepted, extra keys and
+    /// loosely typed values included (`submit` checks only truthiness).
+    pub evidence: serde_json::Value,
 }
 
 /// How a criterion is satisfied: a command check, or a parent-reviewed requirement.

@@ -139,7 +139,7 @@ pub fn validate_extension(seconds: &Value) -> Result<i64, BoardError> {
 pub fn admission(
     run: &RunRecord,
     prior: Option<&MemberRecord>,
-    reservation: &str,
+    reservation: Option<&str>,
     usage: i64,
     now: f64,
 ) -> Result<bool, BoardError> {
@@ -150,8 +150,9 @@ pub fn admission(
             run.status.as_str()
         )));
     }
-    if prior.is_some_and(|prior| prior.reservation.as_deref() == Some(reservation) && alive(prior))
-    {
+    if prior.is_some_and(|prior| {
+        reservation.is_some() && prior.reservation.as_deref() == reservation && alive(prior)
+    }) {
         return Ok(false);
     }
     debug_assert!(
@@ -207,7 +208,13 @@ pub fn completion(
         ));
     }
     let current = |task: &TaskRecord| {
-        !task.evidence.is_empty() && task.evidence.iter().all(|entry| entry.revision == revision)
+        task.evidence.as_array().is_some_and(|entries| {
+            !entries.is_empty()
+                && entries.iter().all(|entry| {
+                    entry.get("artifact").is_some_and(Value::is_string)
+                        && entry.get("revision").and_then(Value::as_str) == Some(revision)
+                })
+        })
     };
     if !tasks.iter().all(current) {
         return Err(BoardError::new("task evidence refers to stale revision"));

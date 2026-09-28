@@ -16,8 +16,8 @@ pub use policy::{
     require_budget, require_unsubmitted, resume_blockers, revalidation, validate_extension,
 };
 pub use records::{
-    Criterion, CriterionKind, EvidenceRef, EvidenceRow, MemberRecord, MemberState, RunRecord,
-    RunState, TaskRecord, TaskState,
+    Criterion, CriterionKind, EvidenceRow, MemberRecord, MemberState, RunRecord, RunState,
+    TaskRecord, TaskState,
 };
 pub use validation::{bounded, bounded_text, criteria};
 
