@@ -28,6 +28,10 @@ const HARNESS_RUNNER: &str = "run_both";
 const SELF_TEST_PREFIX: &str = "harness_self_test_";
 /// The file holding the pin table.
 const PIN_TABLE: &str = "tests/integration/swarm_board_diff_loose.rs";
+/// The file defining the harness and its `run_both`.
+const HARNESS_FILE: &str = "tests/common/swarm_board_diff/scenario.rs";
+/// A test file that is neither.
+const ELSEWHERE: &str = "tests/integration/a_scenario.rs";
 /// The pin table's constants: every string literal in them names a
 /// divergence or the test pinning it.
 const PIN_CONSTANTS: [&str; 2] = ["PERMITTED_DIVERGENCES", "EXTERNAL_PINS"];
@@ -236,7 +240,8 @@ fn harness_tokens(tokens: TokenStream) -> usize {
 /// The violations in one file's `source`; a harness token the syntax walk
 /// did not see as a direct call or a plain import is a violation of its
 /// own.
-fn violations(source: &str) -> Vec<String> {
+fn violations(path: &str, source: &str) -> Vec<String> {
+    let _ = path;
     let file = syn::parse_file(source).expect("the test file parses");
     let mut calls = Calls::new(pinned_tests());
     calls.visit_file(&file);
@@ -289,7 +294,7 @@ fn differential_hooks_tamper_only_in_self_tests_or_expected_differences() {
         if source.contains(HARNESS) {
             calling_files += 1;
             failures.extend(
-                violations(&source)
+                violations(&path.to_string_lossy(), &source)
                     .into_iter()
                     .map(|failure| format!("{}: {failure}", path.display())),
             );
@@ -306,21 +311,27 @@ fn differential_hooks_tamper_only_in_self_tests_or_expected_differences() {
 /// in an ordinary test, or a call hidden in a macro, is caught.
 #[test]
 fn the_hook_checker_rejects_tampering_outside_self_tests() {
-    let permitted = r#"
+    let harness = r#"
         pub fn try_run_both(steps: &[Step], after: impl FnMut()) -> Result<(), String> { Ok(()) }
         fn run_both(steps: &[Step]) {
             if let Err(difference) = try_run_both(steps, |_, _, _| {}) { panic!("{difference}"); }
         }
+    "#;
+    assert_eq!(violations(HARNESS_FILE, harness), Vec::<String>::new());
+    let self_test = r#"
         #[test]
         fn harness_self_test_tampers() {
             let difference = try_run_both(&steps, |index, rust, _| { tamper(rust) });
         }
+    "#;
+    assert_eq!(violations(ELSEWHERE, self_test), Vec::<String>::new());
+    let pinned = r#"
         #[test]
         fn outside_edited_columns() {
             let difference = scenario::try_run_both(&steps, |_, _, _| {}).unwrap_err();
         }
     "#;
-    assert_eq!(violations(permitted), Vec::<String>::new());
+    assert_eq!(violations(PIN_TABLE, pinned), Vec::<String>::new());
 
     let ordinary = r#"
         #[test]
@@ -328,7 +339,7 @@ fn the_hook_checker_rejects_tampering_outside_self_tests() {
             try_run_both(&steps, |_, rust, _| { tamper(rust) }).unwrap();
         }
     "#;
-    let found = violations(ordinary);
+    let found = violations(ELSEWHERE, ordinary);
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].contains("in a_scenario"), "{found:?}");
 
@@ -338,14 +349,14 @@ fn the_hook_checker_rejects_tampering_outside_self_tests() {
             check(try_run_both(&steps, |_, rust, _| { tamper(rust) })).unwrap_err();
         }
     "#;
-    assert_eq!(violations(wrapped).len(), 1);
+    assert_eq!(violations(ELSEWHERE, wrapped).len(), 1);
 
     let hidden = r#"
         fn a_scenario() {
             assert!(try_run_both(&steps, |_, rust, _| { tamper(rust) }).is_ok());
         }
     "#;
-    let found = violations(hidden);
+    let found = violations(ELSEWHERE, hidden);
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].contains("inside a macro"), "{found:?}");
 }
@@ -363,11 +374,12 @@ fn the_hook_checker_requires_expected_differences_to_be_pinned() {
         }
         #[test]
         fn integer_beyond_i64_is_refused() {
-            let held = try_run_both(&steps, |_, _, _| {});
-            let difference = held.unwrap_err();
+            for args in cases {
+                let difference = try_run_both(&steps, |_, _, _| {}).expect_err("a difference");
+            }
         }
     "#;
-    assert_eq!(violations(pinned), Vec::<String>::new());
+    assert_eq!(violations(PIN_TABLE, pinned), Vec::<String>::new());
 
     for unpinned in [
         "fn a_scenario() { let d = try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
@@ -376,7 +388,7 @@ fn the_hook_checker_requires_expected_differences_to_be_pinned() {
         // `run_both` is the harness's, and never expects a difference.
         "fn run_both(steps: &[Step]) { try_run_both(steps, |_, _, _| {}).unwrap_err(); }",
     ] {
-        let found = violations(unpinned);
+        let found = violations(PIN_TABLE, unpinned);
         assert_eq!(found.len(), 1, "{unpinned}: {found:?}");
         assert!(
             found[0].contains("outside a pinned divergence test"),
@@ -386,11 +398,12 @@ fn the_hook_checker_requires_expected_differences_to_be_pinned() {
 
     // A pinned test compares the boards as they are: it may not tamper.
     let tampering = r#"
+        #[test]
         fn outside_edited_columns() {
             try_run_both(&steps, |_, rust, _| { tamper(rust) }).unwrap_err();
         }
     "#;
-    let found = violations(tampering);
+    let found = violations(PIN_TABLE, tampering);
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].contains("a tampering hook"), "{found:?}");
 }
@@ -404,7 +417,7 @@ fn the_hook_checker_rejects_renamed_or_indirect_harness_uses() {
         use swarm_board_diff::scenario::{run_both, step, try_run_both};
         use super::scenario::try_run_both;
     "#;
-    assert_eq!(violations(imports), Vec::<String>::new());
+    assert_eq!(violations(ELSEWHERE, imports), Vec::<String>::new());
 
     for renamed in [
         "use swarm_board_diff::scenario::try_run_both as t;\n\
@@ -412,7 +425,7 @@ fn the_hook_checker_rejects_renamed_or_indirect_harness_uses() {
         "use scenario::{step, try_run_both as run};",
         "use scenario::{step, try_run_both as try_run_both};",
     ] {
-        let found = violations(renamed);
+        let found = violations(ELSEWHERE, renamed);
         assert_eq!(found.len(), 1, "{renamed}: {found:?}");
         assert!(found[0].contains("renames"), "{renamed}: {found:?}");
     }
@@ -422,11 +435,81 @@ fn the_hook_checker_rejects_renamed_or_indirect_harness_uses() {
         "fn a_scenario() { (try_run_both)(&steps, |_, rust, _| { tamper(rust) }).unwrap(); }",
         "fn a_scenario() { apply(try_run_both); }",
     ] {
-        let found = violations(indirect);
+        let found = violations(ELSEWHERE, indirect);
         assert_eq!(found.len(), 1, "{indirect}: {found:?}");
         assert!(
             found[0].contains("not called directly"),
             "{indirect}: {found:?}"
+        );
+    }
+}
+
+/// Only the pin table's own tests may expect a difference (#2270 round-4
+/// review L2): a `#[test]` function of `swarm_board_diff_loose.rs` named
+/// by `PERMITTED_DIVERGENCES` and pinned there (not by `EXTERNAL_PINS`),
+/// whose harness call is the receiver of `.unwrap_err()` or
+/// `.expect_err(..)`; and only the harness file's own `run_both` compares
+/// without one.
+#[test]
+fn the_hook_checker_permits_only_the_pin_tables_own_tests() {
+    for (path, bypass) in [
+        // A divergence pinned outside the suite names no caller here.
+        (
+            PIN_TABLE,
+            "#[test] fn real_to_text_digits() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
+        ),
+        (
+            PIN_TABLE,
+            "#[test] fn unknown_member_status_is_not_alive() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
+        ),
+        // Nor does the external test pinning it.
+        (
+            PIN_TABLE,
+            "#[test] fn a_null_member_status_is_not_alive() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
+        ),
+        // The reviewer's bypass: a helper, not a test, discarding the Err.
+        (
+            PIN_TABLE,
+            "fn real_to_text_digits() { let _ = try_run_both(&steps, |_, _, _| {}); }",
+        ),
+        (
+            PIN_TABLE,
+            "fn outside_edited_columns() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
+        ),
+        // A pinned name outside the pin table's file.
+        (
+            ELSEWHERE,
+            "#[test] fn outside_edited_columns() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
+        ),
+        // A pinned test that does not check the Err.
+        (
+            PIN_TABLE,
+            "#[test] fn outside_edited_columns() { let _ = try_run_both(&steps, |_, _, _| {}); }",
+        ),
+        (
+            PIN_TABLE,
+            "#[test] fn outside_edited_columns() { let held = try_run_both(&steps, |_, _, _| {}); held.unwrap_err(); }",
+        ),
+        (
+            PIN_TABLE,
+            "#[test] fn outside_edited_columns() { try_run_both(&steps, |_, _, _| {}).ok(); }",
+        ),
+        // A function nested in a pinned test is not that test.
+        (
+            PIN_TABLE,
+            "#[test] fn outside_edited_columns() { fn outside_edited_columns() { let _ = try_run_both(&steps, |_, _, _| {}); } }",
+        ),
+        // A `run_both` of another file is not the harness's.
+        (
+            ELSEWHERE,
+            "fn run_both(steps: &[Step]) { let _ = try_run_both(steps, |_, _, _| {}); }",
+        ),
+    ] {
+        let found = violations(path, bypass);
+        assert_eq!(found.len(), 1, "{path}: {bypass}: {found:?}");
+        assert!(
+            found[0].contains("outside a pinned divergence test"),
+            "{path}: {bypass}: {found:?}"
         );
     }
 }

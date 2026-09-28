@@ -23,8 +23,8 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   with `py_json::decode` (`json.loads`) and converted, and a value no
 ///   `Value` holds is refused before any board call: a non-finite float
 ///   (`NaN`, `Infinity`, or a literal such as `1e400` that overflows), a
-///   string holding a lone surrogate escape, an integer beyond u64, or
-///   nesting deeper than `SERDE_MAX_DEPTH`. Python binds or stores each of
+///   string holding a lone surrogate escape, an integer outside
+///   i64 ∪ u64, or nesting deeper than `SERDE_MAX_DEPTH`. Python binds or stores each of
 ///   them (or, for an integer beyond i64, raises `OverflowError`). S13/S14
 ///   must parse member input with `py_json`, as the harness does; a
 ///   `PyJson` dispatcher would end this divergence.
@@ -36,15 +36,18 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 /// - `outside_edited_columns`: a `run` column `_snapshot` reads as a
 ///   number (`deadline`, `member_limit`) holding anything but the number
 ///   the board writes (NULL, text, a REAL `member_limit`), or a BLOB in
-///   any column read, is refused as a store failure; Python answers with
-///   the value (or, for a BLOB, fails to write its JSON). Conversely,
-///   Python's `create` fetches the whole run row (`SELECT *`) and so fails
-///   on text that is not UTF-8 in any run column, where the Rust `create`
-///   reads only the two columns Python's code reads (status and
-///   coordinator) and succeeds. `_bootstrap` reads no column on either
-///   side; a NULL run or member status, a NULL coordinator, a NULL member
-///   id, added member columns and loosely typed pids are read as Python
-///   reads them.
+///   any column `_snapshot` or `_status` reads, is refused as a store
+///   failure; Python answers with the value (or, for a BLOB, fails to
+///   write its JSON). Everything else a file edited outside the board may
+///   hold is read as Python reads it
+///   (`outside_edited_text_reads_as_python_reads_it` and the tests before
+///   it): text that is not UTF-8 in any column of a row Python fetches is
+///   refused with Python's `Could not decode to UTF-8` text; `create`
+///   fetches the whole run row and takes a status or coordinator that is
+///   not text (a BLOB, a number) as not the setup placeholder;
+///   `_bootstrap` reads no column; a NULL run or member status, a NULL
+///   coordinator, a NULL member id, added member columns and loosely typed
+///   pids are read as they are stored.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
@@ -247,6 +250,10 @@ fn arguments_beyond_a_serde_value() {
             "18446744073709551616",
             "integer 18446744073709551616 is outside i64 and u64",
         ),
+        (
+            "-9223372036854775809",
+            "integer -9223372036854775809 is outside i64 and u64",
+        ),
         (&deep, "nesting deeper than 128 levels"),
     ] {
         let text = create_text(extra);
@@ -402,27 +409,43 @@ fn outside_edited_columns() {
         .unwrap();
     let outcome = board.call("parent", "_snapshot", &json!([]), NOW);
     assert!(refused_with(&outcome, CONTENDED), "{outcome:?}");
-    // Text that is not UTF-8 in a run column `create` does not read:
-    // Python's `SELECT *` fails on it, the Rust board creates.
-    let difference = try_run_both(
-        &[
+}
+
+/// Text that is not UTF-8 in any column of a row Python fetches is refused
+/// with Python's text (#2270 round-4 review L1, L3), its bytes shown with
+/// one U+FFFD each: a run's status, coordinator or goal under `create`
+/// (which fetches the whole row), `_snapshot` and `_status`, and a
+/// member's `started` under `_snapshot`. A status or coordinator that is
+/// not text is not the setup placeholder, so `create` refuses to reset it.
+#[test]
+fn outside_edited_text_reads_as_python_reads_it() {
+    let create = |now| step_text("parent", "create_run", &create_text("1"), now);
+    for edit in [
+        "UPDATE run SET status=CAST(x'ff' AS TEXT)",
+        "UPDATE run SET coordinator=CAST(x'706172e282ff656e74' AS TEXT)",
+        "UPDATE run SET goal=CAST(x'ff' AS TEXT)",
+        "UPDATE members SET started=CAST(x'31ff32' AS TEXT)",
+    ] {
+        run_both(&[
             step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
-            sql("UPDATE run SET goal=CAST(x'ff' AS TEXT)"),
-            step_text("parent", "create_run", &create_text("1"), NOW + 1.0),
-        ],
-        |_, _, _| {},
-    )
-    .unwrap_err();
-    assert!(
-        difference.starts_with("step 2: create_run") && difference.contains("results differ"),
-        "{difference}"
-    );
-    assert!(
-        difference.contains(&format!(
-            "python Refused(\"{CONTENDED}Could not decode to UTF-8"
-        )) && difference.contains("rust   Ok(Null)"),
-        "{difference}"
-    );
+            sql(edit),
+            create(NOW + 1.0),
+            step("parent", "_snapshot", json!([]), NOW + 2.0),
+            step("supervisor", "_status", json!([]), NOW + 3.0),
+        ]);
+    }
+    for edit in [
+        "UPDATE run SET status=x'7365747570'",
+        "UPDATE run SET status=1",
+        "UPDATE run SET coordinator=x'706172656e74'",
+        "UPDATE run SET coordinator=2.5",
+    ] {
+        run_both(&[
+            step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+            sql(edit),
+            create(NOW + 1.0),
+        ]);
+    }
 }
 
 /// Each named divergence has its test in this file, and each test here

@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use super::SqliteBoardRepository;
-use crate::application::swarm::dto::{BoardLocation, MemberClaimCounts, NewMember};
+use crate::application::swarm::dto::{BoardLocation, MemberClaimCounts, NewMember, RunOwnerRow};
 use crate::application::swarm::ports::{BoardRepository, BoardTransaction};
 use crate::domain::swarm::{BoardError, MemberState};
 
@@ -171,6 +171,75 @@ fn a_missing_board_is_refused_before_any_work() {
         .map(|()| "created"),
         Ok("created")
     );
+}
+
+/// `create` fetches the whole run row as Python does (#2270 round-4 review
+/// L1): text that is not UTF-8 in any column is Python's `Could not decode`
+/// refusal, its bytes one U+FFFD each, and a status or coordinator that is
+/// not text reads as `None`, never the setup placeholder.
+#[test]
+fn the_run_owner_row_is_fetched_as_python_fetches_it() {
+    let (dir, repository) = repository();
+    within(&repository, true, |_| Ok(())).unwrap();
+    let edit = |sql: &str| {
+        rusqlite::Connection::open(dir.path().join("swarm.sqlite"))
+            .unwrap()
+            .execute_batch(sql)
+            .unwrap();
+    };
+    edit("INSERT INTO run(id,coordinator,deadline,status) VALUES('r','p',1.0,'setup')");
+    for (sql, column, text) in [
+        (
+            "UPDATE run SET goal=CAST(x'61e282ff62' AS TEXT)",
+            "goal",
+            "a\u{fffd}\u{fffd}\u{fffd}b",
+        ),
+        (
+            "UPDATE run SET goal='', status=CAST(x'ff' AS TEXT)",
+            "status",
+            "\u{fffd}",
+        ),
+        (
+            "UPDATE run SET status='setup', coordinator=CAST(x'70ff00ff' AS TEXT)",
+            "coordinator",
+            "p\u{fffd}",
+        ),
+    ] {
+        edit(sql);
+        let refused = within(&repository, false, |transaction| {
+            transaction.run_owner().map(|_| ())
+        })
+        .unwrap_err();
+        assert_eq!(
+            refused.0,
+            format!(
+                "coordination store unavailable or contended: Could not decode to UTF-8 column '{column}' with text '{text}'"
+            ),
+            "{sql}"
+        );
+    }
+    for (sql, coordinator) in [
+        (
+            "UPDATE run SET status=x'7365747570', coordinator='p'",
+            Some("p"),
+        ),
+        ("UPDATE run SET status=1, coordinator=x'70'", None),
+        ("UPDATE run SET status=NULL, coordinator=2.5", None),
+    ] {
+        edit(sql);
+        within(&repository, false, |transaction| {
+            assert_eq!(
+                transaction.run_owner()?,
+                Some(RunOwnerRow {
+                    status: None,
+                    coordinator: coordinator.map(str::to_owned),
+                }),
+                "{sql}"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
 }
 
 /// `_bootstrap`'s member statement, as `swarm.py` holds it: `pid`,
