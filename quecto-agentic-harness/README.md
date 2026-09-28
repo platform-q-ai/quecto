@@ -954,7 +954,7 @@ All test commands pipe through `scripts/test-filter.sh` which strips the per-tes
 
 `--no-fail-fast` ensures all failures are reported in a single run, not just the first.
 
-Two-tier local hooks: pre-commit performs lightweight staged-file hygiene and formatting; pre-push runs fast quality rules, changed-package strict Clippy, and architecture/repository invariants. Full tests, BDD, coverage, dependency policy, and mock E2E run in authoritative CI only after the `merge-requested` label is applied. A subsequent push removes that label. Install via `scripts/install-hooks.sh`.
+Two-tier local hooks: pre-commit performs lightweight staged-file hygiene and formatting; pre-push runs fast quality rules, changed-package strict Clippy, and architecture/repository invariants. Full tests, BDD, coverage, dependency policy, and mock E2E run in authoritative CI only after the `merge-requested` label is applied; the same label starts advisory mutation testing of the PR's changed lines (see CONTRIBUTIONS.md). A subsequent push removes that label. Install via `scripts/install-hooks.sh`.
 
 ### Sharded BDD (24-way parallel)
 
