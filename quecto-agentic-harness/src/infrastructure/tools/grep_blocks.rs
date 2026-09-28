@@ -2,9 +2,10 @@
 //! with its context, every line shown once per run of blocks in a file, and
 //! a matching line always shown as a match, with rg's own text for it.
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::PathBuf;
 
-use super::{BEYOND_CACHE, RgMatch, read_file_for_cache, truncate_line};
+use super::{BEYOND_CACHE, Decoded, RgMatch, read_file_for_cache, show_line};
 
 /// Format parsed matches with file-cache-based context extraction (Quecto compatibility).
 /// Configuration shared across all match blocks during formatting.
@@ -24,7 +25,9 @@ pub(super) struct MatchedLine {
     /// The match's score, on its first line only.
     score: Option<f64>,
     /// The line as rg reported it.
-    text: Option<String>,
+    text: Option<Decoded>,
+    /// Where the match lies on it (#2201).
+    hits: Vec<Range<usize>>,
 }
 
 /// The lines each match in `matches` spans, by file.
@@ -38,6 +41,7 @@ pub(super) fn matched_lines(matches: &[RgMatch]) -> HashMap<PathBuf, HashMap<usi
                 MatchedLine {
                     score: m.score.filter(|_| offset == 0),
                     text: m.text.as_ref().and_then(|text| text.get(offset).cloned()),
+                    hits: m.hits.get(offset).cloned().unwrap_or_default(),
                 },
             );
         }
@@ -60,7 +64,7 @@ pub(super) struct FormatState {
 /// Returns `false` when the byte limit is exceeded and formatting should stop.
 pub(super) fn format_match_block(
     m: &RgMatch,
-    file_cache: &mut HashMap<PathBuf, Vec<String>>,
+    file_cache: &mut HashMap<PathBuf, Vec<Decoded>>,
     cfg: &BlockConfig<'_>,
     state: &mut FormatState,
 ) -> bool {
@@ -106,28 +110,35 @@ pub(super) fn format_match_block(
             continue;
         }
         let matched = own || matched_line.is_some();
+        // rg's text for a matching line, with where the match lies on it.
         let reported = matched_line
-            .and_then(|line| line.text.as_deref())
+            .and_then(|line| Some((line.text.as_ref()?, line.hits.as_slice())))
             .or_else(|| {
                 own.then(|| {
-                    m.text
-                        .as_ref()?
-                        .get(current - m.line_number)
-                        .map(String::as_str)
+                    let offset = current - m.line_number;
+                    let text = m.text.as_ref()?.get(offset)?;
+                    Some((text, m.hits.get(offset).map_or(&[][..], Vec::as_slice)))
                 })
                 .flatten()
             });
-        let line_text = match (reported, file_lines.get(current - 1), matched) {
+        let beyond_cache;
+        let (line_text, hits) = match (reported, file_lines.get(current - 1), matched) {
             // A matching line as rg reported it, however far into its file.
-            (Some(text), _, _) => text,
-            (None, Some(line), _) => line.as_str(),
+            (Some(reported), _, _) => reported,
+            // A context line, or a matching line rg reported no text for:
+            // with no hits to place windows around, a long line here is
+            // shown from its start.
+            (None, Some(line), _) => (line, &[][..]),
             // Past what the context cache read (the first 1 MB): say so
             // rather than print an empty match line; skip empty context.
-            (None, None, true) => BEYOND_CACHE,
+            (None, None, true) => {
+                beyond_cache = Decoded::new(BEYOND_CACHE.as_bytes());
+                (&beyond_cache, &[][..])
+            }
             (None, None, false) => continue,
         };
-        let sanitized = line_text.trim_end_matches('\n');
-        let (display_text, was_truncated) = truncate_line(sanitized, cfg.max_line_bytes);
+        // A long line is shown around its matches (#2201), else its start.
+        let (display_text, was_truncated) = show_line(line_text, hits, cfg.max_line_bytes);
         if was_truncated {
             state.lines_truncated = true;
         }

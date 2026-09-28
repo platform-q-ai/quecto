@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -15,6 +16,8 @@ use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::truncate::format_size;
 
+#[path = "grep_binary.rs"]
+mod grep_binary;
 #[path = "grep_blocks.rs"]
 mod grep_blocks;
 #[path = "grep_listing.rs"]
@@ -27,6 +30,10 @@ mod grep_request;
 mod grep_run;
 #[path = "grep_search.rs"]
 mod grep_search;
+#[path = "grep_text.rs"]
+mod grep_text;
+#[path = "grep_window.rs"]
+mod grep_window;
 
 use grep_blocks::{BlockConfig, FormatState, format_match_block, matched_lines};
 use grep_rank::Ranking;
@@ -35,10 +42,13 @@ use grep_run::RG_TIMEOUT;
 #[cfg(test)]
 use grep_run::run_rg;
 use grep_search::{PendingRecord, SearchContext, SearchFacts, search};
+use grep_text::{Decoded, line_hits, reported_block, reported_lines, spanned_lines, split_lines};
+use grep_window::show_line;
 
 use crate::application::search::ports::{RelevanceJudge, SearchLog};
 
-/// Maximum line length before truncation (chars); matches Quecto's GREP_MAX_LINE_LENGTH.
+/// The most bytes of a line shown: a longer one is cut to this much, around
+/// its matches (#2201); matches Quecto's GREP_MAX_LINE_LENGTH.
 const MAX_LINE_BYTES: usize = 500;
 /// Maximum total output bytes (50KB); matches Quecto's DEFAULT_MAX_BYTES.
 const MAX_OUTPUT_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
@@ -201,10 +211,15 @@ fn base_definition() -> ToolDefinition {
                  and checks paths against the sandbox. \
                  Returns file:line: content matches with optional context lines (file-N- format), \
                  capped at {} matches (or files) or {}KB. Use output=files or output=count to scope \
-                 a search cheaply before reading matches. \
+                 a search cheaply before reading matches. A line over {} bytes is shown around its \
+                 matches, with their byte offsets. A directory search skips binary files (a NUL \
+                 byte): when it finds nothing, a note names those holding a match; name one as \
+                 path to search it. It stops reading a file at a NUL byte after a match (content \
+                 output notes it; count output leaves the file out). \
                  Example: {{\"pattern\": \"search_term\", \"type\": [\"rust\"]}}",
                 DEFAULT_MATCH_LIMIT,
-                MAX_OUTPUT_BYTES / 1024
+                MAX_OUTPUT_BYTES / 1024,
+                MAX_LINE_BYTES
             )
             .into(),
             parameters_schema: r#"{
@@ -252,6 +267,17 @@ fn with_rank_by(mut definition: ToolDefinition) -> ToolDefinition {
 // rg invocation
 // ---------------------------------------------------------------------------
 
+/// What an rg run is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    /// The search itself.
+    Search,
+    /// Which binary files a directory search that found nothing skipped
+    /// hold a match (#2202): the same search with `--binary`, listing
+    /// paths only (#2251 review).
+    BinaryCheck,
+}
+
 /// Build the ripgrep command for `request`: `--json` for matching lines
 /// (context comes from a file cache, not `--context`), `--null` listings
 /// for files and counts. Patterns always go through `-e` and the path
@@ -261,6 +287,7 @@ fn build_rg_command(
     workspace: &Path,
     full_path: &Path,
     request: &GrepRequest,
+    pass: Pass,
 ) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(rg_cmd);
     cmd.current_dir(workspace)
@@ -270,10 +297,14 @@ fn build_rg_command(
         .arg("--line-number")
         .arg("--color=never")
         .arg("--hidden");
-    match request.output {
-        OutputMode::Content => cmd.arg("--json"),
-        OutputMode::Files => cmd.arg("--files-with-matches").arg("--null"),
-        OutputMode::Count => cmd
+    match (pass, request.output) {
+        (Pass::BinaryCheck, _) => cmd
+            .arg("--binary")
+            .arg("--files-with-matches")
+            .arg("--null"),
+        (Pass::Search, OutputMode::Content) => cmd.arg("--json"),
+        (Pass::Search, OutputMode::Files) => cmd.arg("--files-with-matches").arg("--null"),
+        (Pass::Search, OutputMode::Count) => cmd
             .arg("--count-matches")
             .arg("--with-filename")
             .arg("--null"),
@@ -292,7 +323,7 @@ fn build_rg_command(
             cmd.arg(flag);
         }
     }
-    if let Some(max) = request.max_per_file {
+    if let (Pass::Search, Some(max)) = (pass, request.max_per_file) {
         cmd.arg("--max-count").arg(max.to_string());
     }
     for glob in &request.globs {
@@ -324,13 +355,18 @@ struct RgMatch {
     line_count: usize,
     /// Its relevance to `rank_by`, when judged (#2136 slice B).
     score: Option<f64>,
-    /// Where the match starts in its first line (a byte offset), as rg
-    /// reports it: a long line is shown to the judge around this.
+    /// Where the match starts in its first line's text (a byte offset,
+    /// moved as the line's decoding moved it): a long line is shown to the
+    /// judge around this.
     column: Option<usize>,
     /// The lines the match spans, as rg reported them (#2163): shown for the
     /// match however far into its file it is, where the file cache holds
-    /// only the first 1 MB (and is used for context).
-    text: Option<Vec<String>>,
+    /// only the first 1 MB (and is used for context). Decoded lossily when
+    /// not UTF-8, with where the decoding moved rg's offsets (#2251 review).
+    text: Option<Vec<Decoded>>,
+    /// Where the match lies on each line it spans, as raw byte ranges
+    /// (#2201): a long line is shown around them.
+    hits: Vec<Vec<Range<usize>>>,
 }
 
 /// Parse `rg --json` output: extract only `"match"` type events.
@@ -355,59 +391,30 @@ fn parse_rg_matches(json_output: &str) -> Vec<RgMatch> {
         };
         // rg reports the lines a match spans in `lines.text`, ending in a
         // newline: a multiline match spans several (#2136).
-        let line_count = spanned_lines(&event["data"]["lines"]);
-        let text = reported_lines(&event["data"]["lines"]);
+        let block = reported_block(&event["data"]["lines"]);
+        let line_count = spanned_lines(block.as_deref());
+        let text = reported_lines(block.as_deref());
+        let hits = line_hits(block.as_deref(), &event["data"]["submatches"]);
         matches.push(RgMatch {
             file_path: PathBuf::from(file_path),
             line_number: line_number as usize,
             line_count,
             score: None,
+            // Where the match starts in its first line's decoded text.
             column: event["data"]["submatches"][0]["start"]
                 .as_u64()
-                .and_then(|start| usize::try_from(start).ok()),
+                .and_then(|start| usize::try_from(start).ok())
+                .map(
+                    |start| match text.as_ref().and_then(|lines| lines.first()) {
+                        Some(line) => line.shown_at(start),
+                        None => start,
+                    },
+                ),
             text,
+            hits,
         });
     }
     matches
-}
-
-/// The lines rg reports a match spanning, without their line breaks: from
-/// `text`, or decoded (lossily) from base64 `bytes` when not valid UTF-8.
-fn reported_lines(lines: &serde_json::Value) -> Option<Vec<String>> {
-    use base64::Engine as _;
-    let text = match (lines["text"].as_str(), lines["bytes"].as_str()) {
-        (Some(text), _) => text.to_string(),
-        (None, Some(encoded)) => {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(encoded)
-                .ok()?;
-            String::from_utf8_lossy(&bytes).into_owned()
-        }
-        (None, None) => return None,
-    };
-    let text = text.strip_suffix('\n').unwrap_or(&text);
-    Some(
-        text.split('\n')
-            .map(|line| line.trim_end_matches('\r').to_string())
-            .collect(),
-    )
-}
-
-/// How many lines a match spans: rg gives them as `text`, or as base64
-/// `bytes` when they are not valid UTF-8.
-fn spanned_lines(lines: &serde_json::Value) -> usize {
-    use base64::Engine as _;
-    let newlines = match (lines["text"].as_str(), lines["bytes"].as_str()) {
-        (Some(text), _) => text.trim_end_matches('\n').matches('\n').count(),
-        (None, Some(encoded)) => base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .map_or(0, |bytes| {
-                let trimmed = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
-                trimmed.iter().filter(|b| **b == b'\n').count()
-            }),
-        (None, None) => 0,
-    };
-    newlines + 1
 }
 
 /// How matches are formatted: bounds and where paths are relative to.
@@ -483,7 +490,7 @@ async fn format_matches(all_matches: Vec<RgMatch>, a: &MatchFormat<'_>) -> Strin
             .map(|m| m.file_path.clone())
             .collect()
     };
-    let mut file_cache: HashMap<PathBuf, Vec<String>> = HashMap::new();
+    let mut file_cache: HashMap<PathBuf, Vec<Decoded>> = HashMap::new();
     for path in unique_paths {
         let p = path.clone();
         let lines = tokio::task::spawn_blocking(move || read_file_for_cache(&p))
@@ -532,7 +539,9 @@ async fn format_matches(all_matches: Vec<RgMatch>, a: &MatchFormat<'_>) -> Strin
     }
     if state.lines_truncated {
         notices.push(format!(
-            "Some lines truncated to {} chars. Use read tool to see full lines",
+            "Lines over {} bytes are cut to that: a matching line around its matches, any other \
+             from its start; …[N bytes]… marks text left out. To see more of a line, use bash, \
+             e.g. sed -n '<line>p' <file> | cut -b <from>-<to>",
             a.max_line_bytes
         ));
     }
@@ -548,14 +557,14 @@ async fn format_matches(all_matches: Vec<RgMatch>, a: &MatchFormat<'_>) -> Strin
 
 /// Read a file into a line vector for the context cache.
 /// Caps at `MAX_FILE_CACHE_BYTES` to prevent OOM from large files.
-fn read_file_for_cache(path: &Path) -> Vec<String> {
+fn read_file_for_cache(path: &Path) -> Vec<Decoded> {
     read_capped_lines(path).0
 }
 
 /// A file's lines up to `MAX_FILE_CACHE_BYTES`, and whether the last of
 /// them was cut part-way by that cap: decided from the bytes read (one past
 /// the cap), never from a second look at a file that may have changed.
-fn read_capped_lines(path: &Path) -> (Vec<String>, bool) {
+fn read_capped_lines(path: &Path) -> (Vec<Decoded>, bool) {
     use std::io::Read;
     let Ok(f) = std::fs::File::open(path) else {
         return (Vec::new(), false);
@@ -575,27 +584,7 @@ fn read_capped_lines(path: &Path) -> (Vec<String>, bool) {
         None => false,
     };
     buf.truncate(MAX_FILE_CACHE_BYTES);
-    let lines = String::from_utf8_lossy(&buf)
-        .replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .lines()
-        .map(str::to_string)
-        .collect();
-    (lines, cut)
-}
-
-/// Truncate a line to max_bytes, appending a size hint if truncated.
-/// Returns (display_text, was_truncated).
-fn truncate_line(line: &str, max_bytes: usize) -> (String, bool) {
-    if line.len() <= max_bytes {
-        return (line.to_string(), false);
-    }
-    let end = (0..=max_bytes)
-        .rev()
-        .find(|&i| line.is_char_boundary(i))
-        .unwrap_or(0);
-    let size_hint = format_size(line.len());
-    (format!("{}… [line is {}]", &line[..end], size_hint), true)
+    (split_lines(&buf), cut)
 }
 
 // ===========================================================================
@@ -621,6 +610,14 @@ mod read_limit_tests;
 #[cfg(test)]
 #[path = "grep_output_tests.rs"]
 mod output_tests;
+
+#[cfg(test)]
+#[path = "grep_long_line_tests.rs"]
+mod long_line_tests;
+
+#[cfg(test)]
+#[path = "grep_binary_tests.rs"]
+mod binary_tests;
 
 #[cfg(test)]
 mod install_guidance_tests {

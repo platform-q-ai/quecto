@@ -13,6 +13,9 @@ use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::path_utils::resolve_to_cwd;
 use crate::infrastructure::tools::truncate::format_size;
 
+use super::grep_binary::{
+    CHECK_TIMEOUT, Checked, check, check_due, notice, stopped_files, stopped_notice,
+};
 use super::grep_listing::{ListedFile, ListingFormat, format_listing, parse_listing};
 use super::grep_rank::{Ranking, rank};
 use super::grep_request::{OutputMode, parse_request};
@@ -20,7 +23,7 @@ use super::grep_run::{
     CONTENT_STDOUT_CAP, Cut, RANKED_STDOUT_CAP, RG_STDOUT_CAP, ReadLimit, human_duration, run_rg,
 };
 use super::{
-    MAX_LINE_BYTES, MAX_OUTPUT_BYTES, MatchFormat, RgMatch, build_rg_command, format_matches,
+    MAX_LINE_BYTES, MAX_OUTPUT_BYTES, MatchFormat, Pass, RgMatch, build_rg_command, format_matches,
     parse_rg_matches,
 };
 
@@ -89,7 +92,13 @@ pub(super) async fn search(
         .validate_path(&full_path.to_string_lossy())
         .map_err(|e| DomainError::Security(e.to_string()))?;
 
-    let cmd = build_rg_command(&ctx.rg_cmd, &ctx.workspace, &full_path, &request);
+    let cmd = build_rg_command(
+        &ctx.rg_cmd,
+        &ctx.workspace,
+        &full_path,
+        &request,
+        Pass::Search,
+    );
     // A search that will be ranked (a judge configured, matches asked for)
     // reads as many matches as it may judge (#2142), far past what a plain
     // one shows; the byte cap is only a backstop. `rank_by` with a listing
@@ -111,6 +120,10 @@ pub(super) async fn search(
             matches: None,
         },
     };
+    // A named file is searched whole; a directory search skips binary
+    // files (#2202), and stops reading a file at a NUL byte found after a
+    // match.
+    let searched_a_directory = full_path.is_dir();
     let rg = run_rg(cmd, ctx.rg_timeout, limit).await?;
     let stderr = String::from_utf8_lossy(&rg.stderr).into_owned();
     // Not copied unless rg printed invalid UTF-8.
@@ -133,10 +146,15 @@ pub(super) async fn search(
         }),
     };
     // Parsed once; the output itself is dropped before any ranking waits.
+    let mut stopped = Vec::new();
     let parsed = match request.output {
         OutputMode::Content => {
             let mut matches = parse_rg_matches(&stdout);
             matches.retain(|m| kept(&m.file_path));
+            if searched_a_directory {
+                let matched = matches.iter().map(|m| m.file_path.clone()).collect();
+                stopped = stopped_files(&stdout, &matched);
+            }
             Found::Matches(matches)
         }
         OutputMode::Files | OutputMode::Count => {
@@ -229,6 +247,29 @@ pub(super) async fn search(
         }
     }
     facts.incomplete = rg.cut.is_some() || !notices.is_empty();
+    // Found nothing in a directory: which binary files it skipped hold a
+    // match (#2202). Only then, as the check repeats the search (#2251
+    // review): with nothing found, every file it lists was skipped.
+    let checked = match check_due(searched_a_directory, found) {
+        true => {
+            let cmd = build_rg_command(
+                &ctx.rg_cmd,
+                &ctx.workspace,
+                &full_path,
+                &request,
+                Pass::BinaryCheck,
+            );
+            match check(cmd, ctx.rg_timeout.min(CHECK_TIMEOUT)).await {
+                Checked::Found { files, complete } => Checked::Found {
+                    files: shown_paths(files, &ctx.workspace, &mut kept),
+                    complete,
+                },
+                Checked::NotNeeded => Checked::NotNeeded,
+            }
+        }
+        false => Checked::NotNeeded,
+    };
+    let stopped = shown_paths(stopped, &ctx.workspace, &mut kept);
     let complete = searched_whole(rg.exit_code, rg.cut, rg.held_open);
 
     let result = match parsed {
@@ -298,6 +339,8 @@ pub(super) async fn search(
         )),
         (Some(Cut::Matches(_) | Cut::Bytes), false, false) | (None, _, _) => {}
     }
+    notices.extend(stopped_notice(&stopped));
+    notices.extend(notice(&checked, request.output));
     answered(match notices.as_slice() {
         [] => result,
         notices => format!("{result}\n\n[{}]", notices.join(". ")),
@@ -373,6 +416,33 @@ impl Drop for PendingRecord {
 
 fn elapsed_ms(started: std::time::Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// A path rg printed as the results show it: relative to the workspace
+/// (a search of "." prints `<workspace>/./x`; comparing by components
+/// drops the `.`, so this is `x`).
+fn shown_path(path: &str, workspace: &Path) -> String {
+    Path::new(path)
+        .strip_prefix(workspace)
+        .unwrap_or(Path::new(path))
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// `paths` rg printed, outside the excluded directories, as the results
+/// show them, in path order (rg's own order varies).
+fn shown_paths(
+    paths: Vec<String>,
+    workspace: &Path,
+    kept: &mut impl FnMut(&Path) -> bool,
+) -> Vec<String> {
+    let mut shown: Vec<String> = paths
+        .into_iter()
+        .filter(|path| kept(Path::new(path)))
+        .map(|path| shown_path(&path, workspace))
+        .collect();
+    shown.sort();
+    shown
 }
 
 /// A resolved path outside every (resolved) excluded directory.
