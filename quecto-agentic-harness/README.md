@@ -993,9 +993,6 @@ cargo test --workspace --features quecto-agentic-harness/test-support --bins --t
 # and run per shard. CI uses --shards 8 on 4-vcpu runners.)
 bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
 
-# Same lane with function coverage; the instrumented build persists in
-# target/llvm-cov-non-real-bdd so repeat runs only re-execute the scenarios.
-bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m --coverage --coverage-threshold 72
 
 # Mocked e2e suite (free, deterministic, authoritative CI lane — no API key)
 bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 12m --tag mock-llm
