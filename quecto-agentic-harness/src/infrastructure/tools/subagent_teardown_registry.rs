@@ -532,13 +532,14 @@ impl TeardownCompensation for RegistryDelegatedAgents {
             // compensation, and an abort lands at the task's next yield:
             // aborting it here would cancel the note (it awaits the crash
             // record) and the release below (#2260). Every other monitor is
-            // aborted now; the running one only once nothing is left to do.
+            // aborted now. The running one is never aborted: it ends as it
+            // returns, and both monitor exit paths return straight after
+            // this compensation without awaiting.
             let running = tokio::task::try_id();
-            let mut own_monitor = None;
             for (id, entry) in &removed {
                 if let Some(ref handle) = entry.monitor_handle {
                     match running == Some(handle.id()) {
-                        true => own_monitor = Some(std::sync::Arc::clone(handle)),
+                        true => {}
                         false => handle.abort(),
                     }
                 }
@@ -598,10 +599,6 @@ impl TeardownCompensation for RegistryDelegatedAgents {
             // run for a row that has left the registry.
             for (_, entry) in removed.iter().chain(&already_ended) {
                 super::subagent_cascade::mark_entry_compensated(entry);
-            }
-            // Nothing below awaits: the running monitor ends as it returns.
-            if let Some(handle) = own_monitor {
-                handle.abort();
             }
             Compensated {
                 removed: removed
