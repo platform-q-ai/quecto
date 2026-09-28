@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use super::*;
@@ -34,6 +34,9 @@ pub(super) struct Wire {
     pub(super) interrupts: AtomicUsize,
     /// Interrupts fail to be written, as on a closed input.
     pub(super) refuse_interrupts: AtomicBool,
+    /// Closes this session while an interrupt is being written, before
+    /// the write returns `Ok`: `close` racing `abort` (#2287 review 2).
+    pub(super) close_on_interrupt: Mutex<Option<Weak<DriveExternalAgentSession>>>,
 }
 
 impl Wire {
@@ -90,6 +93,13 @@ impl ExternalAgentProcess for FakeProcess {
                 true => Err(ExternalAgentInputError::Closed),
                 false => {
                     self.0.interrupts.fetch_add(1, Ordering::SeqCst);
+                    let racing = self.0.close_on_interrupt.lock().unwrap().clone();
+                    if let Some(session) = racing.and_then(|racing| racing.upgrade()) {
+                        session
+                            .close()
+                            .await
+                            .expect("the racing close ends the member");
+                    }
                     Ok(())
                 }
             }
@@ -242,6 +252,17 @@ pub(super) fn rig_with(refuse: bool) -> Rig {
 pub(super) async fn started() -> Rig {
     let rig = rig_with(false);
     rig.session.start().await.expect("the member starts");
+    rig
+}
+
+/// A started session whose agent has named the user turn its first result
+/// answered (`u1`, turn 1), as claude 2.1.280 does: it takes steers. Its
+/// next user turn is `u2`.
+pub(super) async fn named_started() -> Rig {
+    let rig = started().await;
+    rig.session.prompt("zero", None).await.unwrap();
+    rig.feed(answered(&["u1"], "completed", "zero")).await;
+    assert_eq!(rig.phase(), SessionPhase::Idle);
     rig
 }
 

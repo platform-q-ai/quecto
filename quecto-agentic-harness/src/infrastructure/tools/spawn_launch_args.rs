@@ -7,7 +7,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use crate::domain::external_agent::backend::MemberBackend;
+use crate::domain::external_agent::backend::{BackendLaunchContext, MemberBackend};
 use crate::domain::subagent::SubagentConfig;
 
 /// Parse the spawn tool's `backend` argument (#2287): absent or null is
@@ -22,6 +22,27 @@ pub(super) fn parse_backend_arg(arg: Option<&serde_json::Value>) -> Result<Membe
             .as_str()
             .and_then(MemberBackend::from_spawn_value)
             .ok_or_else(|| format!("backend must be one of: {}", MemberBackend::SPAWN_VALUES)),
+    }
+}
+
+/// Who launches `config`, as the backend rule asks (#2287): a swarm
+/// participant, under an inherited tool policy, and forwarding a config.
+/// What the launch would hand the child outside `config` is part of the
+/// rule, so a restricted launcher cannot shed its restrictions (#957).
+pub(super) fn backend_launch_context(
+    tool: &super::spawn::SpawnTool,
+    config: &SubagentConfig,
+) -> BackendLaunchContext {
+    BackendLaunchContext {
+        launcher_is_swarm_participant: tool.launches_swarm_worker(),
+        inherited_tool_policy: super::spawn_inherited_policy::snapshot(&tool.inherited_tool_policy)
+            .is_some(),
+        forwards_config: super::spawn_entry::forwarded_config_path(
+            &config.container,
+            config.config_path.as_ref(),
+            tool.parent_config_path.as_ref(),
+        )
+        .is_some(),
     }
 }
 

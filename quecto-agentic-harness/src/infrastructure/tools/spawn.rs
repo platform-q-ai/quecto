@@ -470,9 +470,7 @@ impl SpawnTool {
         };
         crate::domain::external_agent::backend::validate_backend(
             &config,
-            crate::domain::external_agent::backend::BackendLaunchContext {
-                launcher_is_swarm_participant: self.launches_swarm_worker(),
-            },
+            super::spawn_launch_args::backend_launch_context(self, &config),
         )
         .map_err(|e| match e {
             DomainError::Tool(reason) => reason,

@@ -239,3 +239,111 @@ async fn a_busy_abort_interrupts_the_claude_turn_and_the_member_takes_the_next()
     assert!(inputs[1].contains(r#""subtype":"interrupt""#), "{inputs:?}");
     session.close().await.unwrap();
 }
+
+/// #2287 review round 2: a credential that is not UTF-8 is refused, naming
+/// its variable and never its value; it is never lossily converted into
+/// one the member would then run under.
+#[test]
+fn a_credential_that_is_not_utf8_is_refused_naming_only_its_variable() {
+    use std::os::unix::ffi::OsStringExt;
+    let value = OsString::from_vec(b"sk-ant-SECRET\xff".to_vec());
+    let refusal = credential_from(&[(OsString::from("ANTHROPIC_API_KEY"), value)])
+        .expect_err("a non-UTF-8 credential is refused");
+    assert_eq!(
+        refusal,
+        "ANTHROPIC_API_KEY is not valid UTF-8; a claude-code member takes a UTF-8 credential"
+    );
+    assert!(!refusal.contains("SECRET"), "{refusal}");
+    // A non-UTF-8 value of another variable is none of the member's.
+    let other = OsString::from_vec(b"\xff".to_vec());
+    let credential = credential_from(&[
+        (OsString::from("UNRELATED"), other),
+        (OsString::from("ANTHROPIC_API_KEY"), OsString::from("k")),
+    ])
+    .expect("only the credential variables are read");
+    assert_eq!(credential.value, "k");
+}
+
+/// Reads the member's stream until it is idle again.
+async fn until_idle(session: &DriveExternalAgentSession) {
+    let settled = tokio::time::timeout(BOUND, async {
+        while session.state().phase != SessionPhase::Idle {
+            assert!(session.next_step().await.is_some(), "the member lives on");
+        }
+    })
+    .await;
+    assert!(settled.is_ok(), "the turn settles within the bound");
+}
+
+/// #2287 review round 2 (L9): through the real adapter and the mock
+/// `claude`, faithful to the CLI: a steer written mid-turn folds into the
+/// running turn, whose one result names both; a steer still queued when
+/// the turn is aborted is withdrawn by the interrupt (`cancel_queued`) and
+/// never runs, and the member takes the next turn.
+#[tokio::test]
+async fn steers_fold_into_the_claude_turn_and_an_abort_withdraws_a_queued_one() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("checkout")).unwrap();
+    let scenario = root.path().join("scenario.jsonl");
+    let result = |reason: &str, text: &str| {
+        format!(
+            "{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":{},\"terminal_reason\":\"{reason}\",\"result\":\"{text}\",\"user_message_uuids\":[@UUIDS@]}}\n",
+            reason != "completed"
+        )
+    };
+    std::fs::write(
+        &scenario,
+        [
+            result("completed", "first"),
+            "@await-steers 1\n".into(),
+            result("completed", "folded"),
+            "@await-interrupt\n".into(),
+            result("aborted_streaming", "stopped"),
+            result("completed", "after"),
+        ]
+        .concat(),
+    )
+    .unwrap();
+    let mock = write_mock_claude(&root.path().join("bin"), &scenario);
+    let path = format!("{}:/usr/bin:/bin", mock.bin_dir.display());
+    let session = build_over(
+        &settings(root.path(), None),
+        environment(&[("PATH", &path), ("ANTHROPIC_API_KEY", "member-key")]),
+        Arc::new(OwnedChildSupervisor::new()),
+    )
+    .expect("one credential")
+    .session;
+    session.start().await.expect("the mock starts");
+    session.prompt("one", None).await.unwrap();
+    until_idle(&session).await;
+
+    // Folding: claude names both user turns in the turn's one result.
+    session.prompt("two", None).await.unwrap();
+    assert_eq!(
+        session.steer("three").await,
+        Ok(PromptAccepted::Steered { turn: 2 })
+    );
+    until_idle(&session).await;
+    assert_eq!(session.report().unwrap().content, "folded");
+    assert_eq!(session.state().totals.turns, 2, "one result for both");
+
+    // Withdrawal: the queued steer is cancelled by the interrupt.
+    session.prompt("four", None).await.unwrap();
+    session.steer("five").await.unwrap();
+    assert!(!session.abort().await.unwrap().member_ended);
+    until_idle(&session).await;
+    assert_eq!(session.state().totals.turns, 3);
+
+    // The withdrawn steer never ran: the next prompt gets the next turn.
+    assert_eq!(
+        session.prompt("six", None).await,
+        Ok(PromptAccepted::Started { turn: 4 })
+    );
+    until_idle(&session).await;
+    assert_eq!(session.report().unwrap().content, "after");
+    assert_eq!(session.state().totals.turns, 4);
+    let inputs = mock.recorded("input");
+    assert_eq!(inputs.len(), 7, "{inputs:?}");
+    assert!(inputs[5].contains(r#""subtype":"interrupt""#), "{inputs:?}");
+    session.close().await.unwrap();
+}

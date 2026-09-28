@@ -86,7 +86,10 @@ async fn swarm_worker_launch_revalidates_workflow_before_effects() {
 
 /// #2287 (O1): `backend` picks the child's brain; `claude_code` is
 /// accepted only under the domain's backend rule, with its exact refusal.
+/// Serial: the rule reads `QUECTO_RUNTIME_CONFIG_PATH`, which other tests
+/// set.
 #[test]
+#[serial_test::serial]
 fn the_backend_parameter_selects_the_brain_under_the_backend_rule() {
     use crate::application::tools::ports::Tool;
     use crate::domain::external_agent::backend::{CLAUDE_CODE_WORKERS_ONLY, MemberBackend};
@@ -129,4 +132,68 @@ fn the_backend_parameter_selects_the_brain_under_the_backend_rule() {
     assert!(!definition.parameters_schema.contains("claude_code"));
     assert!(!definition.description.contains("backend"));
     assert!(!definition.description.contains("claude_code"));
+}
+
+/// Runs `body` with `QUECTO_RUNTIME_CONFIG_PATH` set to `value` (unset for
+/// `None`), restoring it after. Callers are `#[serial_test::serial]`.
+fn with_runtime_config(value: Option<&str>, body: impl FnOnce()) {
+    let old = std::env::var_os("QUECTO_RUNTIME_CONFIG_PATH");
+    // SAFETY: serialized by #[serial_test::serial]; restored below.
+    unsafe {
+        match value {
+            Some(value) => std::env::set_var("QUECTO_RUNTIME_CONFIG_PATH", value),
+            None => std::env::remove_var("QUECTO_RUNTIME_CONFIG_PATH"),
+        }
+    }
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+    // SAFETY: as above.
+    unsafe {
+        match old {
+            Some(old) => std::env::set_var("QUECTO_RUNTIME_CONFIG_PATH", old),
+            None => std::env::remove_var("QUECTO_RUNTIME_CONFIG_PATH"),
+        }
+    }
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+/// #2287 review round 2 (M3): the launch hands a child more than its
+/// `SubagentConfig`: the inherited tool policy
+/// (`--inherited-tool-policy-snapshot`) and a forwarded `--config`. A
+/// claude worker would honour neither, so a coordinator under either is
+/// refused `claude_code` (#957), and still launches quecto children.
+#[test]
+#[serial_test::serial]
+fn claude_code_is_refused_to_a_launcher_whose_restrictions_it_would_drop() {
+    use crate::domain::external_agent::backend::{
+        CLAUDE_CODE_NO_FORWARDED_CONFIG, CLAUDE_CODE_NO_INHERITED_TOOL_POLICY,
+    };
+    let claude = r#"{"agent_id":"w1","backend":"claude_code"}"#;
+    with_runtime_config(None, || {
+        let restricted = swarm_tool(true);
+        super::super::spawn_inherited_policy::set_from_tools(
+            &restricted.inherited_tool_policy,
+            std::collections::BTreeMap::new(),
+        );
+        assert_eq!(
+            restricted.parse_args(claude).unwrap_err(),
+            CLAUDE_CODE_NO_INHERITED_TOOL_POLICY
+        );
+        restricted
+            .parse_args(r#"{"agent_id":"w1"}"#)
+            .expect("a quecto child takes the policy");
+        swarm_tool(true)
+            .parse_args(claude)
+            .expect("an unrestricted coordinator launches a claude worker");
+    });
+    with_runtime_config(Some("/run/quecto/global.toml"), || {
+        assert_eq!(
+            swarm_tool(true).parse_args(claude).unwrap_err(),
+            CLAUDE_CODE_NO_FORWARDED_CONFIG
+        );
+        swarm_tool(true)
+            .parse_args(r#"{"agent_id":"w1"}"#)
+            .expect("a quecto child takes the config");
+    });
 }

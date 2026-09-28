@@ -24,9 +24,13 @@ fn config(backend: MemberBackend) -> SubagentConfig {
 
 const HOST: BackendLaunchContext = BackendLaunchContext {
     launcher_is_swarm_participant: false,
+    inherited_tool_policy: false,
+    forwards_config: false,
 };
 const COORDINATOR: BackendLaunchContext = BackendLaunchContext {
     launcher_is_swarm_participant: true,
+    inherited_tool_policy: false,
+    forwards_config: false,
 };
 
 const WORKFLOW_REFUSAL: &str =
@@ -246,4 +250,45 @@ fn claude_code_refuses_every_field_it_would_ignore() {
     });
     quecto.backend = MemberBackend::Quecto;
     validate_backend(&quecto, HOST).expect("quecto takes every field");
+}
+
+/// #2287 review round 2 (M3): what the launch forwards outside
+/// `SubagentConfig` is part of the rule. A launcher under an inherited
+/// tool policy, or one whose config the launch would forward, could
+/// otherwise start a claude worker free of its restrictions (#957).
+#[test]
+fn claude_code_refuses_a_launcher_whose_restrictions_it_would_drop() {
+    let claude = config(MemberBackend::ClaudeCode);
+    let restricted = BackendLaunchContext {
+        inherited_tool_policy: true,
+        ..COORDINATOR
+    };
+    assert_eq!(
+        refusal_text(validate_backend(&claude, restricted).expect_err("inherited policy")),
+        "backend claude_code cannot honour the tool policy this agent inherited; a restricted \
+         agent launches only backend quecto"
+    );
+    assert_eq!(
+        refusal_text(validate_backend(&claude, restricted).unwrap_err()),
+        CLAUDE_CODE_NO_INHERITED_TOOL_POLICY
+    );
+    let configured = BackendLaunchContext {
+        forwards_config: true,
+        ..COORDINATOR
+    };
+    assert_eq!(
+        refusal_text(validate_backend(&claude, configured).expect_err("forwarded config")),
+        "backend claude_code cannot honour the config this agent runs under and would forward; \
+         an agent under a config launches only backend quecto"
+    );
+    assert_eq!(
+        refusal_text(validate_backend(&claude, configured).unwrap_err()),
+        CLAUDE_CODE_NO_FORWARDED_CONFIG
+    );
+    // quecto children take both, as before.
+    let quecto = config(MemberBackend::Quecto);
+    for context in [restricted, configured] {
+        validate_backend(&quecto, context).expect("quecto honours both");
+    }
+    validate_backend(&claude, COORDINATOR).expect("an unrestricted coordinator");
 }

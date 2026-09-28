@@ -58,6 +58,13 @@ pub struct BackendLaunchContext {
     /// The launcher takes part in a swarm: it runs in the swarm's
     /// container, so a launch with `container` omitted lands there.
     pub launcher_is_swarm_participant: bool,
+    /// A tool policy the launcher inherited is in force: the launch hands
+    /// it to the child (`--inherited-tool-policy-snapshot`), and a
+    /// `claude_code` member's tools are claude's own, not quecto's.
+    pub inherited_tool_policy: bool,
+    /// The launch forwards a config of the launcher's (`--config`), whose
+    /// restrictions a `claude_code` member would not apply.
+    pub forwards_config: bool,
 }
 
 /// The refusal for a launcher that is not a swarm participant.
@@ -80,6 +87,13 @@ pub const CLAUDE_CODE_TAKES_NO_SYSTEM: &str =
     "backend claude_code takes no system prompt; omit system";
 /// The refusal for a launch that sets `config`.
 pub const CLAUDE_CODE_TAKES_NO_CONFIG: &str = "backend claude_code takes no config; omit config";
+/// The refusal for a launcher under an inherited tool policy (#957): the
+/// member would not be held to it.
+pub const CLAUDE_CODE_NO_INHERITED_TOOL_POLICY: &str = "backend claude_code cannot honour the \
+     tool policy this agent inherited; a restricted agent launches only backend quecto";
+/// The refusal for a launch that would forward the launcher's config.
+pub const CLAUDE_CODE_NO_FORWARDED_CONFIG: &str = "backend claude_code cannot honour the config \
+     this agent runs under and would forward; an agent under a config launches only backend quecto";
 /// The refusal for a model of another provider.
 pub const CLAUDE_CODE_ANTHROPIC_MODELS_ONLY: &str =
     "backend claude_code runs anthropic models only; omit model or name an anthropic/ model";

@@ -216,3 +216,77 @@ fn a_claude_code_member_must_be_an_admitted_swarm_worker() {
         );
     }
 }
+
+/// Whether `name` holds a member row in the container at `checkout`, as
+/// its coordinator reads the board.
+fn has_member_row(checkout: &std::path::Path, name: &str) -> bool {
+    let board = member(checkout, "coordinator")
+        .call("_snapshot", serde_json::json!([]))
+        .expect("the coordinator reads the board");
+    board.to_string().contains(&format!("\"{name}\""))
+}
+
+/// #2287 review round 2 (L4): the backend is decided BEFORE the join, from
+/// the membership-free run status and the creator flag, so a refused
+/// claude-code process never leaves a member row behind (#1715).
+#[test]
+fn a_claude_code_member_is_decided_before_it_joins() {
+    let claude = || flags_with(&["--backend", "claude-code"]);
+
+    // An ordinary container: no created run to be a worker of.
+    let ordinary = tempfile::tempdir().unwrap();
+    bootstrapped(ordinary.path());
+    let mut stderr = String::new();
+    assert!(!admit_with(
+        Some(member(ordinary.path(), "claude-ordinary")),
+        false,
+        &mut claude(),
+        &mut stderr
+    ));
+    assert_eq!(stderr, CLAUDE_CODE_NOT_A_SWARM_WORKER);
+    assert!(
+        !has_member_row(ordinary.path(), "claude-ordinary"),
+        "a refused process leaves no member row"
+    );
+
+    // A created run: its creator is the coordinator, not a worker.
+    let swarm = tempfile::tempdir().unwrap();
+    create_run(&bootstrapped(swarm.path()));
+    let mut stderr = String::new();
+    assert!(!admit_with(
+        Some(member(swarm.path(), "claude-creator")),
+        true,
+        &mut claude(),
+        &mut stderr
+    ));
+    assert_eq!(stderr, CLAUDE_CODE_NOT_A_SWARM_WORKER);
+    assert!(!has_member_row(swarm.path(), "claude-creator"));
+
+    // A worker of the created run is admitted and joins.
+    let mut flags = claude();
+    let mut stderr = String::new();
+    assert!(
+        admit_with(
+            Some(member(swarm.path(), "claude-worker")),
+            false,
+            &mut flags,
+            &mut stderr
+        ),
+        "{stderr}"
+    );
+    assert!(flags.swarm_participation.participating());
+    assert!(has_member_row(swarm.path(), "claude-worker"));
+
+    // No container at all: nothing to be a worker of.
+    let mut stderr = String::new();
+    assert!(!admit_with(None, false, &mut claude(), &mut stderr));
+    assert_eq!(stderr, CLAUDE_CODE_NOT_A_SWARM_WORKER);
+
+    // quecto needs no swarm identity.
+    assert!(admit_with(
+        None,
+        false,
+        &mut flags_with(&[]),
+        &mut String::new()
+    ));
+}
