@@ -24,4 +24,6 @@ pub struct SessionTotals {
     pub admission_warnings: usize,
     /// Every event of a type the vocabulary does not know.
     pub unknown_events: usize,
+    /// Every line of the stream the adapter skipped unread (#2286).
+    pub skipped_lines: usize,
 }

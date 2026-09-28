@@ -5777,6 +5777,7 @@ fn external_agent_application_depends_only_inward() {
         "std::path::Path::exists",
         "std::future::ready",
         "futures::Stream",
+        "std::error::request_ref",
     ] {
         assert!(
             !external_agent_application_dependency_allowed(dep),
@@ -5793,6 +5794,7 @@ fn external_agent_application_depends_only_inward() {
         "std::future::Future",
         "std::pin::Pin",
         "std::path::PathBuf",
+        "std::error::Error",
     ] {
         assert!(
             external_agent_application_dependency_allowed(dep),

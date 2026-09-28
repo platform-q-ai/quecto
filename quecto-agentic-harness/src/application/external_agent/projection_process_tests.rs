@@ -258,3 +258,19 @@ fn a_reused_task_id_is_a_new_running_task() {
         "the running reused task is not evicted as finished"
     );
 }
+
+#[test]
+fn a_skipped_line_is_counted_and_is_not_a_turn_end() {
+    use crate::domain::external_agent::stream::{SkippedLine, SkippedLineReason};
+    let mut projector = roundtrip();
+    let before = projector.messages().len();
+    for reason in [SkippedLineReason::OverCap, SkippedLineReason::NotUtf8] {
+        let step = projector.apply(&ExternalAgentEvent::LineSkipped(SkippedLine {
+            reason,
+            bytes: 17,
+        }));
+        assert_eq!(step.turn_end, None, "the session decides whether it ends");
+    }
+    assert_eq!(projector.session_totals().skipped_lines, 2);
+    assert_eq!(projector.messages().len(), before);
+}

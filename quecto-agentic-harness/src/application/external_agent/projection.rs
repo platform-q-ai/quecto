@@ -128,6 +128,8 @@ impl Projector {
             ExternalAgentEvent::RateLimit(info) => self.record_rate_limit(info),
             ExternalAgentEvent::Result(result) => return Some(self.result(result)),
             ExternalAgentEvent::Unknown { .. } => self.unknown_events += 1,
+            // Red stub (#2286): not yet counted.
+            ExternalAgentEvent::LineSkipped(_) => {}
         }
         None
     }
@@ -411,6 +413,7 @@ impl Projector {
             guardrail_denials: self.guardrail_denial_count,
             admission_warnings: self.admission_warning_count,
             unknown_events: self.unknown_events,
+            skipped_lines: 0,
         }
     }
 }
