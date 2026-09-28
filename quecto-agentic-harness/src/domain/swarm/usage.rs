@@ -79,6 +79,11 @@ pub fn usage_budget_decision(budget: &UsageBudget, totals: &UsageTotals) -> Usag
 /// 128 characters, each measured field null or an integer (never a boolean or
 /// a float) of 0 through `2**32 - 1`, an attempt count of the same range and a
 /// known outcome.
+///
+/// Callers must decode the record with S3's Python-compatible JSON codec
+/// (#2268), which reads `-0` as Python's int 0: serde_json reads it as the
+/// float -0.0, refused here as Python refuses a JSON `-0.0`.
+/// TODO(#2270): S5 wires that codec in; until then `-0` counts are refused.
 pub fn request_measurement(record: &Value) -> Result<(u64, u64, u64), BoardError> {
     let observation = || BoardError::new("invalid request observation");
     let fields = match record.as_object() {
@@ -96,13 +101,13 @@ pub fn request_measurement(record: &Value) -> Result<(u64, u64, u64), BoardError
         };
     }
     let attempts = fields.get("instrumented_attempts").and_then(count);
-    let outcome = fields.get("outcome").and_then(Value::as_str);
-    let (Some(attempts), Some(outcome @ ("succeeded" | "failed" | "cancelled" | "rejected"))) =
-        (attempts, outcome)
-    else {
+    let outcome = fields
+        .get("outcome")
+        .and_then(Value::as_str)
+        .filter(|outcome| REQUEST_OUTCOMES.contains(outcome));
+    let (Some(attempts), Some(outcome)) = (attempts, outcome) else {
         return Err(observation());
     };
-    debug_assert!(REQUEST_OUTCOMES.contains(&outcome), "a known outcome");
     let [_, context, output, _, _] = counts;
     let answered = matches!(outcome, "succeeded" | "failed");
     let (tokens, known) = match (context, output) {

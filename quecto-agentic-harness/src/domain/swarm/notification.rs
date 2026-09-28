@@ -64,6 +64,10 @@ pub struct NotificationState {
 /// amended contract wakes everyone; evidence and a confirmed death wake the
 /// coordinator, as does a submitted or blocked task still in that status.
 /// Whenever ready work exists, a ready-work event wakes its takers.
+///
+/// Fails, as Python's `sorted(targets)` raises, when a message names a
+/// recipient that is not a string beside a named target; a non-string
+/// recipient alone wakes nobody.
 pub fn notification_targets(
     run: &RunRecord,
     actor: &str,
@@ -90,15 +94,30 @@ pub fn notification_targets(
         .map(|member| member.id.clone())
         .collect();
     let mut targets = BTreeSet::new();
+    // Python type names of targets that are not member names (#2267 review):
+    // `send` binds its recipient unchecked, so an event can name `5`.
+    let mut strays: Vec<&'static str> = Vec::new();
     for event in events {
         let action = event.action.as_str();
         match action {
             "message_accepted" => {
                 let unread =
                     detail_id(event, "message").is_some_and(|id| state.unread.contains(&id));
-                let recipient = detail(event, "recipient").and_then(Value::as_str);
-                if let (true, Some(recipient)) = (unread, recipient) {
-                    targets.insert(recipient.to_owned());
+                // Python reads the recipient only for an unread message.
+                match unread.then(|| detail(event, "recipient")).flatten() {
+                    Some(Value::String(recipient)) => {
+                        targets.insert(recipient.clone());
+                    }
+                    Some(stray @ (Value::Array(_) | Value::Object(_))) => {
+                        return Err(BoardError::new(format!(
+                            "unhashable type: '{}'",
+                            python_type(stray)
+                        )));
+                    }
+                    Some(stray @ (Value::Null | Value::Bool(_) | Value::Number(_))) => {
+                        strays.push(python_type(stray));
+                    }
+                    None => {}
                 }
             }
             "amended" => targets.extend(live.keys().map(|id| (*id).to_owned())),
@@ -121,6 +140,9 @@ pub fn notification_targets(
             }
             targets.extend(takers);
         }
+    }
+    if let Some(error) = sort_error(!targets.is_empty(), &strays) {
+        return Err(BoardError::new(error));
     }
     let woken: Vec<MemberRecord> = targets
         .iter()
@@ -204,9 +226,62 @@ fn detail<'a>(event: &'a NotificationEvent, key: &str) -> Option<&'a Value> {
     value
 }
 
-/// An integer id from the detail; any other JSON value matches no id.
+/// A detail id as Python's dict and set lookups match it against the
+/// board's integer ids: `true` is 1 and `false` 0, a float with no
+/// fractional part in `i64` range is that integer (`1.0 == 1`, `-0.0 == 0`),
+/// and any other value matches no id.
 fn detail_id(event: &NotificationEvent, key: &str) -> Option<i64> {
-    detail(event, key).and_then(Value::as_i64)
+    match detail(event, key)? {
+        Value::Bool(flag) => Some(i64::from(*flag)),
+        Value::Number(number) => number
+            .as_i64()
+            .or_else(|| number.as_f64().and_then(integral)),
+        Value::Null | Value::String(_) | Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
+/// The integer a float equals, when it is whole and within `i64`.
+fn integral(value: f64) -> Option<i64> {
+    const BOUND: f64 = 9_223_372_036_854_775_808.0; // 2**63, exact in f64
+    let whole = value.fract() == 0.0 && (-BOUND..BOUND).contains(&value);
+    // The range check makes the cast exact; outside it the value is unused.
+    whole.then_some(value as i64)
+}
+
+/// Python's `type(value).__name__` for a decoded JSON value.
+fn python_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "NoneType",
+        Value::Bool(_) => "bool",
+        Value::Number(number) if number.is_f64() => "float",
+        Value::Number(_) => "int",
+        Value::String(_) => "str",
+        Value::Array(_) => "list",
+        Value::Object(_) => "dict",
+    }
+}
+
+/// The TypeError Python's `sorted(targets)` raises when the target set mixes
+/// kinds that do not order against each other: numbers (`int`, `bool`,
+/// `float`), `None` and strings. Python compares whichever pair its
+/// hash-seeded set order meets first; this names the first stray kind, then
+/// `None`, then `str`.
+fn sort_error(named: bool, strays: &[&'static str]) -> Option<String> {
+    let numeric = strays
+        .iter()
+        .copied()
+        .find(|kind| matches!(*kind, "int" | "bool" | "float"));
+    let none = strays.iter().copied().find(|kind| *kind == "NoneType");
+    let kinds: Vec<&str> = [numeric, none, named.then_some("str")]
+        .into_iter()
+        .flatten()
+        .collect();
+    match kinds.as_slice() {
+        [left, right, ..] => Some(format!(
+            "'<' not supported between instances of '{left}' and '{right}'"
+        )),
+        [] | [_] => None,
+    }
 }
 
 #[cfg(test)]
