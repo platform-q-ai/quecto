@@ -95,6 +95,10 @@ mod environment_process_commands;
 mod environment_registry_store;
 #[path = "contracts/extension.rs"]
 mod extension;
+#[path = "contracts/external_agent_launcher.rs"]
+mod external_agent_launcher;
+#[path = "contracts/external_agent_process.rs"]
+mod external_agent_process;
 #[path = "contracts/fleet_settlement.rs"]
 mod fleet_settlement;
 #[path = "contracts/fresh_session_identity_generator.rs"]
@@ -111,6 +115,8 @@ mod llm_provider;
 mod loaded_catalogue_inputs;
 #[path = "contracts/loaded_refresh_inputs.rs"]
 mod loaded_refresh_inputs;
+#[path = "common/mock_claude.rs"]
+mod mock_claude;
 #[path = "contracts/overlay_trust_store.rs"]
 mod overlay_trust_store;
 #[path = "contracts/provider_runtime_factory.rs"]

@@ -4862,6 +4862,9 @@ const SUBAGENT_PROCESS_MODULES: &[&str] = &[
     "src/composition/subagent_teardown.rs",
     "src/composition/subagent_lifecycle.rs",
     "src/composition/environments.rs",
+    // The claude member process adapter (#2286) spawns through the
+    // supervisor and never holds or signals its child.
+    "src/infrastructure/external_agents/claude_code/process.rs",
 ];
 
 /// A source file with every `#[cfg(test)]`-gated item removed (see
@@ -5716,9 +5719,12 @@ fn external_agent_application_dependency_allowed(path: &str) -> bool {
         [
             "std",
             "collections" | "fmt" | "cmp" | "mem" | "ops" | "iter" | "str" | "string" | "vec"
-            | "option" | "result" | "num" | "borrow" | "convert" | "default",
+            | "option" | "result" | "num" | "borrow" | "convert" | "default" | "error",
             ..,
         ] => true,
+        // The process ports (#2286): boxed futures, and the path values
+        // a launch spec carries (never a filesystem call).
+        ["std", "future", "Future"] | ["std", "pin", "Pin"] | ["std", "path", "PathBuf"] => true,
         // A name already in scope (prelude, local item or checked import)
         // and an associated item of one (`Self::…`, `MessageRole::User`).
         [single] => single.starts_with(char::is_alphabetic),
@@ -5751,6 +5757,9 @@ fn external_agent_application_depends_only_inward() {
         "serde_json::from_str",
         "tracing::warn",
         "libc::kill",
+        "std::path::Path::exists",
+        "std::future::ready",
+        "futures::Stream",
     ] {
         assert!(
             !external_agent_application_dependency_allowed(dep),
@@ -5764,12 +5773,59 @@ fn external_agent_application_depends_only_inward() {
         "std::collections::VecDeque",
         "String",
         "Self::Idle",
+        "std::future::Future",
+        "std::pin::Pin",
+        "std::path::PathBuf",
     ] {
         assert!(
             external_agent_application_dependency_allowed(dep),
             "external_agent guard must accept {dep}"
         );
     }
+}
+
+/// The ports the external-agent capability declares (#2286), and nothing
+/// else. Later slices of epic #2284 append theirs.
+const EXTERNAL_AGENT_PORTS: &[&str] = &["ExternalAgentLauncher", "ExternalAgentProcess"];
+
+#[test]
+fn external_agent_ports_are_capability_local_and_contracted() {
+    let ports_path = "src/application/external_agent/ports.rs";
+    let mut actual = declared_pub_traits(ports_path);
+    let mut expected: Vec<String> = EXTERNAL_AGENT_PORTS.iter().map(|p| p.to_string()).collect();
+    actual.sort();
+    expected.sort();
+    assert_eq!(
+        actual, expected,
+        "{ports_path} must declare exactly EXTERNAL_AGENT_PORTS"
+    );
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in &files {
+        let (path, source) = file.split_once(":\n").expect("a file entry");
+        if path == ports_path {
+            continue;
+        }
+        for port in EXTERNAL_AGENT_PORTS {
+            assert!(
+                !source.contains(&format!("trait {port}")),
+                "{path} redeclares external-agent port {port}"
+            );
+        }
+    }
+    let contracts = active_contract_modules();
+    for port in EXTERNAL_AGENT_PORTS {
+        assert!(
+            contracts.contains(&to_snake_case(port)),
+            "{port} has no contract suite tests/contracts/{}.rs",
+            to_snake_case(port)
+        );
+    }
+    // The launch spec is a DTO of the capability, not a port's own type.
+    assert!(
+        Path::new("src/application/external_agent/dto/launch_spec.rs").exists(),
+        "the launch spec is an application DTO"
+    );
 }
 
 /// The domain keeps only pure environment entities, transitions and
