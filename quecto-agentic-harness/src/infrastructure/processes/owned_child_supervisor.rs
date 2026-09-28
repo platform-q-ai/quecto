@@ -23,6 +23,13 @@
 //! runtime happened to be current at launch: a launcher that builds a
 //! runtime per call (tests, embedders) cannot orphan a reap, and a
 //! `tokio::process::Child` never exists outside this module.
+//!
+//! No caller code runs on the supervisor's runtime except the termination
+//! protocol (#1935): its one worker thread reaps every child and runs every
+//! termination, so the line pumps and the stderr tail run there as data
+//! the supervisor's own module tree builds, never as a caller's closure,
+//! future or trait object (#2286; the `supervisor_runtime` architecture
+//! test).
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -144,10 +151,12 @@ pub struct OwnedChildSupervisor {
     /// Bounded ring of retired handles' signal records.
     retired: Mutex<std::collections::VecDeque<RetiredRecord>>,
     next: AtomicU64,
-    /// The supervisor's own runtime: every spawn and reap runs here.
+    /// The supervisor's own runtime: every spawn and reap runs here. Only
+    /// `Drop` reaches it, to shut it down.
     runtime: Mutex<Option<tokio::runtime::Runtime>>,
-    /// Private to this file: only its allowlisted spawners run anything on
-    /// the runtime (the `supervisor_runtime` architecture test).
+    /// Private to this module tree: only its allowlisted helpers reach it,
+    /// and no caller code runs on the runtime except the termination
+    /// protocol (the `supervisor_runtime` architecture test).
     handle: tokio::runtime::Handle,
     /// Test seam: record instead of dispatching real signals.
     #[cfg(any(test, feature = "test-support"))]

@@ -173,20 +173,48 @@ async fn the_exit_is_returned_with_stderrs_last_words_in_the_tail() {
     }
 }
 
+/// Kills the lingering grandchild when dropped, so a failed assertion
+/// cannot leak it.
+struct KillOnDrop(u32);
+
+impl KillOnDrop {
+    /// The grandchild the mock recorded: a real pid, never 0 or 1 (which
+    /// `kill` would read as a group or init).
+    fn of(recorded: &str) -> Self {
+        let pid: u32 = recorded
+            .trim()
+            .parse()
+            .unwrap_or_else(|e| panic!("the grandchild's pid {recorded:?}: {e}"));
+        assert!(pid > 1, "the grandchild is a real process, not {pid}");
+        Self(pid)
+    }
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        // KILL: the grandchild is a sleep; nothing of it is worth a clean
+        // exit, and KILL dumps no core.
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &self.0.to_string()])
+            .status();
+    }
+}
+
 /// A descendant holding stderr open cannot hold the exit past the grace.
 #[tokio::test]
 async fn a_descendant_holding_stderr_open_delays_the_exit_by_the_grace_only() {
     let grace = Duration::from_millis(300);
     let rig = with_grace("@linger 30\n", grace);
     let process = rig.start().await;
-    let grandchild = super::test_rig::recorded_at_start(&rig.mock, "grandchild").await;
+    let grandchild =
+        KillOnDrop::of(&super::test_rig::recorded_at_start(&rig.mock, "grandchild").await);
     process.close_input().await;
     let started = Instant::now();
     let exit = tokio::time::timeout(BOUND, process.exited())
         .await
         .expect("exit is bounded");
     let waited = started.elapsed();
-    let _ = std::process::Command::new("kill").arg(&grandchild).status();
+    drop(grandchild);
     assert_eq!(exit, ExternalAgentExit::Code(0));
     assert!(
         waited < grace + Duration::from_secs(3),

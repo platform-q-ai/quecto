@@ -4,7 +4,9 @@
 //! own runtime, so a runtime the caller drops can end neither the stream
 //! nor the input of a child that lives on. The supervisor runs each as a
 //! [`PipeTask`], which only this module builds, from a pipe and its own
-//! bookkeeping: no caller code rides along. They move bytes only: what a
+//! bookkeeping: no caller code rides along, for no caller code runs on
+//! the supervisor's runtime except the termination protocol (#1935).
+//! They move bytes only: what a
 //! line means is the caller's business, decoded on the caller's side,
 //! never on the supervisor's one worker thread.
 //!

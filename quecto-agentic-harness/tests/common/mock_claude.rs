@@ -67,6 +67,13 @@ impl MockClaudeRig {
         }
     }
 
+    /// This rig, its launcher reading lines of at most `line_cap` bytes
+    /// with at most `buffer_bytes` of them waiting for the reader.
+    pub fn with_stream_limits(mut self, line_cap: usize, buffer_bytes: usize) -> Self {
+        self.launcher = self.launcher.with_stream_limits(line_cap, buffer_bytes);
+        self
+    }
+
     /// The member directory of `member`.
     pub fn member_dir(&self, member: &str) -> PathBuf {
         self.root.path().join("members").join(member)
