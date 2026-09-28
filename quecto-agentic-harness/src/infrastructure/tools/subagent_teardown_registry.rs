@@ -138,6 +138,12 @@ impl RegistryDelegatedAgents {
         }
     }
 
+    /// How long a natural exit's note waits for the reaper to publish an
+    /// owned child's exit status (#2260). Red-phase stub.
+    pub fn with_exit_status_wait(self, _wait: Duration) -> Self {
+        self
+    }
+
     pub fn with_compensation_wait(mut self, wait: Duration) -> Self {
         self.compensation_wait = wait;
         self

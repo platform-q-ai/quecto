@@ -237,3 +237,109 @@ async fn the_transcript_is_offered_only_when_it_can_be_read() {
         );
     }
 }
+
+/// #2260: the note for a child this harness held, built when its end was
+/// observed before the reaper published the exit status (the monitor's
+/// EOF wins the claim), with the reaper publishing `exit` after `late` —
+/// never, when `late` is `None`. The exit-status wait is `wait` when
+/// given, else the default.
+async fn owned_exit_note(
+    base: &std::path::Path,
+    exit: Option<ExitSignal>,
+    late: Option<Duration>,
+    wait: Option<Duration>,
+) -> SubagentNotification {
+    let registry = new_registry();
+    let (exit_tx, _exit_rx) = new_exit_signal_channel();
+    let mut entry = SubagentEntry::with_identity(
+        AgentUuid::new(UUID),
+        "alpha".into(),
+        PathBuf::from("/tmp/a.sock"),
+        7,
+    );
+    entry.origin = crate::domain::child_end::ChildOrigin::Launched;
+    entry.launch_generation = Some(LaunchGeneration::new(1));
+    entry.exit_signal_tx = Some(exit_tx.clone());
+    entry.owned_child =
+        Some(crate::infrastructure::processes::owned_child_supervisor::ChildHandleId::probe(1));
+    registry.lock().unwrap().insert(UUID.into(), entry);
+    let (notify_tx, mut notify_rx) = new_notification_channel();
+    let port = RegistryDelegatedAgents::new(
+        registry,
+        None,
+        Some(notify_tx),
+        crate::composition::environments::build_member_finalizer,
+    )
+    .with_ended_child(Some(
+        crate::composition::subagent_lifecycle::build_ended_child_inspection(base),
+    ));
+    let port = match wait {
+        Some(wait) => port.with_exit_status_wait(wait),
+        None => port,
+    };
+    // The delayed reaper: it publishes the reaped status only after `late`.
+    let reaper = late.map(|late| {
+        tokio::spawn(async move {
+            tokio::time::sleep(late).await;
+            exit_tx.send_replace(exit);
+        })
+    });
+    let target = DelegatedAgentIdentity::new(UUID, LaunchGeneration::new(1));
+    assert_eq!(port.claim_terminal(&target), TerminalClaim::Claimed);
+    port.compensate(
+        &target,
+        TerminationCause::Exit(ExitObservation::ConnectionClosed),
+    )
+    .await;
+    if let Some(reaper) = reaper {
+        reaper.abort();
+    }
+    notify_rx.try_recv().expect("an exited note").notification
+}
+
+/// #2260 acceptance: a crashed owned child's note names its signal even
+/// when the reaper publishes it late (here half a second, well inside the
+/// default bound).
+#[tokio::test]
+async fn a_crashed_owned_childs_note_waits_for_a_late_reaper() {
+    let base = tempfile::tempdir().unwrap();
+    crash(base.path());
+    let note = owned_exit_note(
+        base.path(),
+        signal(6),
+        Some(Duration::from_millis(500)),
+        None,
+    )
+    .await;
+    let SubagentNotification::Exited { detail, .. } = &note else {
+        panic!("{note:?}")
+    };
+    assert_eq!(
+        detail.as_deref(),
+        Some(format!("{REASON} (connection_closed)").as_str())
+    );
+}
+
+/// #2260: the wait is bounded. A reaper that never publishes is waited for
+/// up to the bound — and no longer — and the note then says plainly that
+/// no exit status was observed.
+#[tokio::test]
+async fn a_reaper_that_never_publishes_is_waited_for_only_up_to_the_bound() {
+    let base = tempfile::tempdir().unwrap();
+    let bound = Duration::from_millis(300);
+    let started = std::time::Instant::now();
+    let note = owned_exit_note(base.path(), None, None, Some(bound)).await;
+    let waited = started.elapsed();
+    assert!(
+        waited >= bound,
+        "the note did not wait for the reaper: {waited:?}"
+    );
+    assert!(
+        waited < Duration::from_secs(10),
+        "the wait was not bounded: {waited:?}"
+    );
+    assert_eq!(
+        note.to_message(),
+        "Sub-agent 'alpha' ended; no exit status or crash record was observed (connection_closed)."
+    );
+}
