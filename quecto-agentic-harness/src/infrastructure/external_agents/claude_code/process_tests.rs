@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use super::{ClaudeCodeLauncher, claude_arguments};
+use super::{ClaudeCodeLauncher, claude_arguments, resolve_on_path};
 use crate::application::external_agent::dto::{
     CredentialEnv, ExternalAgentExit, ExternalAgentLaunchError, ExternalAgentLaunchSpec,
 };
@@ -326,4 +326,33 @@ async fn dropping_the_process_ends_and_forgets_its_child() {
     })
     .await
     .expect("the dropped process's child ends and is retired");
+}
+
+#[test]
+fn only_an_executable_file_in_an_absolute_path_dir_is_claude() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let plain = root.path().join("plain");
+    let dir_named = root.path().join("dir-named");
+    let real = root.path().join("real");
+    for dir in [&plain, &dir_named, &real] {
+        std::fs::create_dir(dir).unwrap();
+    }
+    std::fs::write(plain.join("claude"), "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(plain.join("claude"), std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::create_dir(dir_named.join("claude")).unwrap();
+    crate::infrastructure::test_support::executable::write_executable(
+        &real.join("claude"),
+        "#!/bin/sh\n",
+    );
+    let path = std::env::join_paths([
+        PathBuf::from("relative"),
+        plain.clone(),
+        dir_named.clone(),
+        real.clone(),
+    ])
+    .unwrap();
+    assert_eq!(resolve_on_path(&path, "claude"), Some(real.join("claude")));
+    let without = std::env::join_paths([plain, dir_named]).unwrap();
+    assert_eq!(resolve_on_path(&without, "claude"), None);
 }

@@ -269,6 +269,13 @@ impl OwnedChildSupervisor {
         mut command: tokio::process::Command,
         group: ProcessGroup,
     ) -> std::io::Result<SpawnedChild> {
+        // `Own` means the child leads a process group of its own
+        // (`pgid == pid`), which the fallback signals address as a whole;
+        // the supervisor makes it so rather than trusting each caller to.
+        #[cfg(unix)]
+        if group == ProcessGroup::Own {
+            command.process_group(0);
+        }
         let supervisor = Arc::clone(self);
         self.handle
             .spawn(async move {
@@ -298,6 +305,16 @@ impl OwnedChildSupervisor {
         stderr: tokio::process::ChildStderr,
     ) -> super::child_stderr_tail::StderrTail {
         super::child_stderr_tail::StderrTail::pump(&self.handle, stderr)
+    }
+
+    /// [`Self::retain_stderr_tail`], retaining the last `capacity` bytes:
+    /// a long-lived child's diagnostics (#2286).
+    pub fn retain_stderr_tail_within(
+        &self,
+        stderr: tokio::process::ChildStderr,
+        capacity: usize,
+    ) -> super::child_stderr_tail::StderrTail {
+        super::child_stderr_tail::StderrTail::pump_within(&self.handle, stderr, capacity)
     }
 
     /// Record signals instead of sending them (tests with fake pids).

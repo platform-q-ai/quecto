@@ -272,7 +272,8 @@ async fn own_process_group_signals_the_whole_group() {
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
-    cmd.process_group(0);
+    // No `process_group(0)` here: `ProcessGroup::Own` makes the supervisor
+    // put the child in a group of its own (#2286).
     let (id, DisplayPid(pid)) = adopt(&supervisor, cmd, ProcessGroup::Own).await;
     let outcome = supervisor.terminate(id, negative(), fast()).await;
     assert!(

@@ -26,8 +26,20 @@ pub struct StderrTail {
 
 impl StderrTail {
     /// Drain `stderr` on `runtime` until EOF, retaining the bounded tail.
-    pub fn pump(runtime: &tokio::runtime::Handle, mut stderr: tokio::process::ChildStderr) -> Self {
-        let bytes = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_CAPACITY)));
+    pub fn pump(runtime: &tokio::runtime::Handle, stderr: tokio::process::ChildStderr) -> Self {
+        Self::pump_within(runtime, stderr, STDERR_TAIL_CAPACITY)
+    }
+
+    /// [`Self::pump`], retaining the last `capacity` bytes (at least one).
+    pub fn pump_within(
+        runtime: &tokio::runtime::Handle,
+        mut stderr: tokio::process::ChildStderr,
+        capacity: usize,
+    ) -> Self {
+        assert!(capacity > 0, "a stderr tail keeps at least one byte");
+        let bytes = Arc::new(Mutex::new(VecDeque::with_capacity(
+            capacity.min(STDERR_TAIL_CAPACITY),
+        )));
         let (eof_tx, eof) = watch::channel(false);
         let sink = Arc::clone(&bytes);
         runtime.spawn(async move {
@@ -35,7 +47,7 @@ impl StderrTail {
             loop {
                 match stderr.read(&mut buf).await {
                     Ok(0) | Err(_) => break,
-                    Ok(n) => retain_tail(&sink, &buf[..n]),
+                    Ok(n) => retain_tail(&sink, &buf[..n], capacity),
                 }
             }
             // Sent before the sender drops: a waiter always observes `true`.
@@ -63,16 +75,16 @@ impl StderrTail {
     }
 }
 
-fn retain_tail(sink: &Mutex<VecDeque<u8>>, chunk: &[u8]) {
+fn retain_tail(sink: &Mutex<VecDeque<u8>>, chunk: &[u8], capacity: usize) {
     let mut bytes = sink.lock().unwrap_or_else(|e| e.into_inner());
-    let start = chunk.len().saturating_sub(STDERR_TAIL_CAPACITY);
+    let start = chunk.len().saturating_sub(capacity);
     for &byte in &chunk[start..] {
-        if bytes.len() == STDERR_TAIL_CAPACITY {
+        if bytes.len() == capacity {
             bytes.pop_front();
         }
         bytes.push_back(byte);
     }
-    debug_assert!(bytes.len() <= STDERR_TAIL_CAPACITY);
+    debug_assert!(bytes.len() <= capacity);
 }
 
 #[cfg(test)]
