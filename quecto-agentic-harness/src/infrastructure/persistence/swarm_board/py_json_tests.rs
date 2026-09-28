@@ -136,3 +136,33 @@ fn decode_refuses_the_non_finite_tokens_python_accepts() {
     assert!(decode("NaN").is_err());
     assert!(decode("Infinity").is_err());
 }
+
+#[test]
+fn a_tie_between_two_shortest_digit_strings_rounds_to_even_like_python() {
+    // Both `…254.2` and `…254.3` round-trip to 1059438285926254.25 and lie
+    // equally close; Python's `repr` keeps the even digit (std's `{:e}`
+    // would write `…254.3`).
+    // Each tie is an integer plus an exact binary fraction, built by
+    // addition so the literals stay within f64 precision.
+    assert_eq!(
+        float_repr(1_059_438_285_926_254.0 + 0.25),
+        "1059438285926254.2"
+    );
+    assert_eq!(
+        float_repr(-(1_425_502_010_969_177.0 + 0.25)),
+        "-1425502010969177.2"
+    );
+    assert_eq!(
+        float_repr(26_363_981_746_409.0 + 0.3125),
+        "26363981746409.312"
+    );
+}
+
+#[test]
+fn decode_reads_a_float_exactly_so_its_python_text_survives_re_encoding() {
+    // serde_json's default (inexact) float parser reads this one ULP off,
+    // which then re-encodes as `-3.8225971226343834e-90`.
+    let text = "[-3.822597122634383e-90]";
+
+    assert_eq!(encode(&decode(text).expect("JSON")), text);
+}

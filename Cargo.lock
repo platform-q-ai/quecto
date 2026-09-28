@@ -1599,6 +1599,7 @@ dependencies = [
  "rcgen",
  "regex",
  "reqwest",
+ "ryu",
  "serde",
  "serde_json",
  "serial_test",
