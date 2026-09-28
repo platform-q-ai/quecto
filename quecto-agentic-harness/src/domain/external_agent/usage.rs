@@ -29,19 +29,19 @@ pub struct UsageLedger {
 impl UsageLedger {
     /// Record one turn's `result`. The turn's cost is the new cumulative
     /// total (rounded once, to micro-USD) less the previous one; a result
-    /// without a usable total leaves the total as it was.
+    /// without a usable total leaves the total as it was, and a lower total
+    /// is a new process charged its whole total.
     pub fn record(&mut self, result: &ResultEvent) -> TurnUsage {
         let previous = self.total_cost_micro_usd;
-        let total = result
-            .total_cost_usd
-            .and_then(micro_usd)
-            .unwrap_or(previous);
-        debug_assert!(
-            total >= previous,
-            "a cumulative cost never shrinks: {previous} then {total} micro-USD"
-        );
-        let cost = total.saturating_sub(previous);
-        self.total_cost_micro_usd = total.max(previous);
+        let reported = result.total_cost_usd.and_then(micro_usd);
+        // The total is external data: a drop means a new process (its
+        // total restarted from zero), charged its whole total.
+        let (total, cost, reset_from) = match reported {
+            Some(total) if total >= previous => (total, total - previous, None),
+            Some(total) => (total, total, Some(previous)),
+            None => (previous, 0, None),
+        };
+        self.total_cost_micro_usd = total;
         let cumulative = result
             .model_usage
             .iter()
@@ -53,8 +53,8 @@ impl UsageLedger {
         TurnUsage {
             tokens: result.usage,
             cost_micro_usd: cost,
-            total_cost_micro_usd: self.total_cost_micro_usd,
-            cumulative_reset_from: None,
+            total_cost_micro_usd: total,
+            cumulative_reset_from: reset_from,
         }
     }
 
@@ -73,12 +73,17 @@ impl UsageLedger {
 /// non-negative amount that fits.
 pub fn micro_usd(usd: f64) -> Option<u64> {
     let micro = (usd * 1_000_000.0).round();
-    match micro.is_finite() && micro >= 0.0 && micro <= u64::MAX as f64 {
-        // The range is checked just above, so the cast cannot saturate.
+    // 2^64 itself does not fit (`u64::MAX as f64` rounds up to it), so the
+    // range is half-open (NaN and infinities are outside it); inside it the
+    // cast is exact for these whole numbers.
+    match (0.0..TWO_POW_64).contains(&micro) {
         true => Some(micro as u64),
         false => None,
     }
 }
+
+/// 2^64, the first integer a `u64` cannot hold.
+const TWO_POW_64: f64 = 18_446_744_073_709_551_616.0;
 
 #[cfg(test)]
 #[path = "usage_tests.rs"]

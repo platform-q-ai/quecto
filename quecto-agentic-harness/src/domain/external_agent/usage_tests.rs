@@ -108,7 +108,7 @@ fn micro_usd_rounds_once_and_refuses_unusable_amounts() {
     assert_eq!(micro_usd(-0.01), None);
     assert_eq!(micro_usd(f64::INFINITY), None);
     assert_eq!(micro_usd(f64::NAN), None);
-    // 2^64 micro-USD does not fit a u64 (and `u64::MAX as f64` is 2^64).
-    assert_eq!(micro_usd(18_446_744_073_709.551_616), None);
+    // Past 2^64 micro-USD does not fit a u64 (and `u64::MAX as f64` is 2^64).
+    assert_eq!(micro_usd(1.9e13), None);
     assert_eq!(micro_usd(1e12), Some(1_000_000_000_000_000_000));
 }

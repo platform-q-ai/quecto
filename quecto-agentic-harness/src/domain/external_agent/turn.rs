@@ -34,24 +34,41 @@ pub struct TurnFailure {
 impl TurnFailure {
     /// A one-line account of the failure, for a report that has no text.
     pub fn describe(&self) -> String {
-        String::new()
+        let signals: Vec<String> = [
+            self.terminal_reason
+                .as_ref()
+                .map(|reason| format!("terminal_reason: {reason}")),
+            self.api_error_status
+                .map(|status| format!("api_error_status: {status}")),
+            self.assistant_error
+                .as_ref()
+                .map(|kind| format!("assistant error: {kind}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let mut text = String::from("the turn failed");
+        if let [_, ..] = signals.as_slice() {
+            text.push_str(&format!(" ({})", signals.join("; ")));
+        }
+        if let [_, ..] = self.errors.as_slice() {
+            text.push_str(&format!(": {}", self.errors.join("; ")));
+        }
+        text
     }
 }
 
 impl TurnEnd {
     /// Classify a turn from its `result` and any assistant error the turn
     /// carried. Completed only when the stream affirms both halves:
-    /// `terminal_reason` is `completed` and `is_error` is `false`. A
-    /// missing field, or an assistant error, is a failure. `subtype` is
-    /// never consulted.
+    /// `terminal_reason` is `completed` and `is_error` is `false`; a
+    /// missing field is a failure. The result is followed over an
+    /// assistant `error` (the projection records that as a warning), which
+    /// a failure carries. `subtype` is never consulted.
     pub fn classify(result: &ResultEvent, assistant_error: Option<&str>) -> Self {
-        let completed = match (result.terminal_reason.as_deref(), result.is_error) {
-            (Some(TERMINAL_REASON_COMPLETED), Some(false)) => assistant_error.is_none(),
-            _ => false,
-        };
-        match completed {
-            true => Self::Completed,
-            false => Self::Failed(TurnFailure {
+        match (result.terminal_reason.as_deref(), result.is_error) {
+            (Some(TERMINAL_REASON_COMPLETED), Some(false)) => Self::Completed,
+            _ => Self::Failed(TurnFailure {
                 terminal_reason: result.terminal_reason.clone(),
                 api_error_status: result.api_error_status,
                 assistant_error: assistant_error.map(str::to_string),

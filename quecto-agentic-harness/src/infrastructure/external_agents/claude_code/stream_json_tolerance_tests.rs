@@ -7,6 +7,7 @@ use serde_json::json;
 
 use super::super::*;
 use super::{decode, single};
+use crate::domain::external_agent::stream::ResultEvent;
 use crate::domain::external_agent::turn::TurnEnd;
 
 fn result_of(line: serde_json::Value) -> ResultEvent {
