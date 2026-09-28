@@ -49,10 +49,16 @@ mod sessions_epic_close_retirement;
 /// protocol (#1935; #2286).
 #[path = "architecture/supervisor_runtime.rs"]
 mod supervisor_runtime;
+/// Every differential-harness call that tampers with the Rust side is a
+/// harness self-test or expects the difference (#2270 round-2 review L3).
+#[path = "architecture/swarm_board_diff_hooks.rs"]
+mod swarm_board_diff_hooks;
 /// The board dispatcher serves its test-only methods in test builds only
 /// (#2270 review M2).
 #[path = "architecture/swarm_board_test_methods.rs"]
 mod swarm_board_test_methods;
+/// Epic #1929 close (#1940): process-effect allowlist, no-pid teardown,
+/// retired-name sweep, single owners and whole-crate layer baselines.
 #[path = "architecture/teardown_authority.rs"]
 mod teardown_authority;
 #[path = "architecture/teardown_layers.rs"]
