@@ -34,7 +34,9 @@ pub const WORKING_STATUSES: [&str; 2] = ["claimed", "blocked"];
 #[derive(Clone, Debug, PartialEq)]
 pub struct NotificationEvent {
     pub action: String,
-    /// The event's JSON detail object; ids in it are integers.
+    /// The event's JSON detail object. Ids in it are usually integers, but
+    /// `submit`, `block` and `send` store the agent's value unchecked, so a
+    /// float, a boolean or any other JSON value can appear.
     pub detail: Value,
     /// The member that caused the event, when the event records one.
     pub actor: Option<String>,
@@ -101,18 +103,15 @@ pub fn notification_targets(
         let action = event.action.as_str();
         match action {
             "message_accepted" => {
-                let unread =
-                    detail_id(event, "message").is_some_and(|id| state.unread.contains(&id));
+                let unread = detail_id(event, "message", Lookup::SetElement)?
+                    .is_some_and(|id| state.unread.contains(&id));
                 // Python reads the recipient only for an unread message.
                 match unread.then(|| detail(event, "recipient")).flatten() {
                     Some(Value::String(recipient)) => {
                         targets.insert(recipient.clone());
                     }
                     Some(stray @ (Value::Array(_) | Value::Object(_))) => {
-                        return Err(BoardError::new(format!(
-                            "unhashable type: '{}'",
-                            python_type(stray)
-                        )));
+                        return Err(unhashable(stray, Lookup::SetElement));
                     }
                     Some(stray @ (Value::Null | Value::Bool(_) | Value::Number(_))) => {
                         strays.push(python_type(stray));
@@ -125,7 +124,7 @@ pub fn notification_targets(
                 targets.insert(run.coordinator.clone());
             }
             "submitted" | "blocked" => {
-                let task = detail_id(event, "task").and_then(|id| tasks.get(&id));
+                let task = detail_id(event, "task", Lookup::DictKey)?.and_then(|id| tasks.get(&id));
                 if task.is_some_and(|task| task.status.as_str() == action) {
                     targets.insert(run.coordinator.clone());
                 }
@@ -229,15 +228,43 @@ fn detail<'a>(event: &'a NotificationEvent, key: &str) -> Option<&'a Value> {
 /// A detail id as Python's dict and set lookups match it against the
 /// board's integer ids: `true` is 1 and `false` 0, a float with no
 /// fractional part in `i64` range is that integer (`1.0 == 1`, `-0.0 == 0`),
-/// and any other value matches no id.
-fn detail_id(event: &NotificationEvent, key: &str) -> Option<i64> {
-    match detail(event, key)? {
-        Value::Bool(flag) => Some(i64::from(*flag)),
-        Value::Number(number) => number
+/// and a string or `null` matches no id. A list or an object cannot be
+/// hashed: Python's lookup raises, and so does this.
+fn detail_id(
+    event: &NotificationEvent,
+    key: &str,
+    lookup: Lookup,
+) -> Result<Option<i64>, BoardError> {
+    match detail(event, key) {
+        Some(Value::Bool(flag)) => Ok(Some(i64::from(*flag))),
+        Some(Value::Number(number)) => Ok(number
             .as_i64()
-            .or_else(|| number.as_f64().and_then(integral)),
-        Value::Null | Value::String(_) | Value::Array(_) | Value::Object(_) => None,
+            .or_else(|| number.as_f64().and_then(integral))),
+        Some(value @ (Value::Array(_) | Value::Object(_))) => Err(unhashable(value, lookup)),
+        Some(Value::Null | Value::String(_)) | None => Ok(None),
     }
+}
+
+/// Where Python hashes a detail value: `in unread` or `targets.add` (a set),
+/// or `tasks.get` (a dict).
+#[derive(Clone, Copy, Debug)]
+enum Lookup {
+    SetElement,
+    DictKey,
+}
+
+/// The TypeError Python raises when it hashes a list or a dict. The text is
+/// CPython 3.14's (the runtime the Python board runs on); earlier versions
+/// say only `unhashable type: 'list'`.
+fn unhashable(value: &Value, lookup: Lookup) -> BoardError {
+    let kind = python_type(value);
+    let role = match lookup {
+        Lookup::SetElement => "a set element",
+        Lookup::DictKey => "a dict key",
+    };
+    BoardError::new(format!(
+        "cannot use '{kind}' as {role} (unhashable type: '{kind}')"
+    ))
 }
 
 /// The integer a float equals, when it is whole and within `i64`.
@@ -248,7 +275,10 @@ fn integral(value: f64) -> Option<i64> {
     whole.then_some(value as i64)
 }
 
-/// Python's `type(value).__name__` for a decoded JSON value.
+/// Python's `type(value).__name__` for a decoded JSON value. serde_json
+/// reads `-0` and integers beyond `u64` as floats, so they name `float` where
+/// Python's `json.loads` gives `int`. TODO(#2270): S5 decodes events with
+/// S3's Python-compatible JSON codec (#2268), which keeps them integers.
 fn python_type(value: &Value) -> &'static str {
     match value {
         Value::Null => "NoneType",
@@ -263,25 +293,25 @@ fn python_type(value: &Value) -> &'static str {
 
 /// The TypeError Python's `sorted(targets)` raises when the target set mixes
 /// kinds that do not order against each other: numbers (`int`, `bool`,
-/// `float`), `None` and strings. Python compares whichever pair its
-/// hash-seeded set order meets first; this names the first stray kind, then
-/// `None`, then `str`.
+/// `float`), `None` and strings. With `None` in the set (hashed to a
+/// constant since CPython 3.12) Python compares `str < None` when a name is
+/// present, else `number < None`; without it, the stray number against a
+/// string, whose order Python's hash-seeded set iteration decides.
 fn sort_error(named: bool, strays: &[&'static str]) -> Option<String> {
     let numeric = strays
         .iter()
         .copied()
         .find(|kind| matches!(*kind, "int" | "bool" | "float"));
-    let none = strays.iter().copied().find(|kind| *kind == "NoneType");
-    let kinds: Vec<&str> = [numeric, none, named.then_some("str")]
-        .into_iter()
-        .flatten()
-        .collect();
-    match kinds.as_slice() {
-        [left, right, ..] => Some(format!(
-            "'<' not supported between instances of '{left}' and '{right}'"
-        )),
-        [] | [_] => None,
-    }
+    let none = strays.contains(&"NoneType");
+    let (left, right) = match (none, named, numeric) {
+        (true, true, _) => ("str", "NoneType"),
+        (true, false, Some(number)) => (number, "NoneType"),
+        (false, true, Some(number)) => (number, "str"),
+        (true, false, None) | (false, _, _) => return None,
+    };
+    Some(format!(
+        "'<' not supported between instances of '{left}' and '{right}'"
+    ))
 }
 
 #[cfg(test)]
