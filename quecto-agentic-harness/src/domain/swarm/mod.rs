@@ -4,13 +4,25 @@
 //!
 //! The coordination board's pure decisions (#2265, #2266) live in the
 //! submodules: value records, the policy ported from `swarm_policy.py`, and
-//! input validation. No I/O and no storage format.
+//! input validation, wake notification, owner liveness and the usage
+//! budget. No I/O and no storage format.
 use super::error::DomainError;
 
+pub mod notification;
+pub mod owner;
 pub mod policy;
 pub mod records;
+pub mod usage;
 pub mod validation;
 
+pub use notification::{
+    NotificationEvent, NotificationState, OWNERSHIP_ACTIONS, READY_WORK_ACTIONS, TaskSummary,
+    WORK_HOLDING_STATUSES, WORKING_STATUSES, notification_targets, ready_work_takers,
+};
+pub use owner::{
+    ADDRESSABLE_OWNER_STATES, OWNER_IDLE_AFTER, OWNER_STATES, OwnerState, idle_transition,
+    owner_recovery, owner_state,
+};
 pub use policy::{
     Access, PROPOSED_OUTCOMES, STOP_STATUSES, admission, authorize, completion, describe, expired,
     require_budget, require_unsubmitted, resume_blockers, revalidation, validate_extension,
@@ -18,6 +30,9 @@ pub use policy::{
 pub use records::{
     Criterion, CriterionKind, EvidenceRow, MemberRecord, MemberState, RunRecord, RunState,
     TaskRecord, TaskState,
+};
+pub use usage::{
+    UsageBudget, UsageDecision, UsageTotals, request_measurement, usage_budget_decision,
 };
 pub use validation::{bounded, bounded_text, criteria};
 
