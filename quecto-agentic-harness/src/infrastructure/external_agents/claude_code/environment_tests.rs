@@ -1,0 +1,191 @@
+use std::collections::BTreeSet;
+use std::ffi::OsString;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+
+use super::{
+    CREDENTIAL_VARIABLES, INHERITED_VARIABLES, MEMBER_CLAUDE_CONFIG_DIR, MEMBER_HOME_DIR,
+    MemberEnvironmentError, PRIVATE_DIR_MODE, member_environment,
+};
+use crate::application::external_agent::dto::CredentialEnv;
+
+fn vars(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
+    pairs
+        .iter()
+        .map(|(name, value)| (OsString::from(name), OsString::from(value)))
+        .collect()
+}
+
+fn api_key(value: &str) -> CredentialEnv {
+    CredentialEnv {
+        name: "ANTHROPIC_API_KEY".into(),
+        value: value.into(),
+    }
+}
+
+fn mode(path: &Path) -> u32 {
+    std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+/// Every name the parent session or the operator can leak, by name.
+const DROPPED: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CONFIG_DIR",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "GH_TOKEN",
+    "QUECTO_BASE_DIR",
+    "QUECTO_SWARM_MEMBER",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_SYSTEM",
+    "XDG_CONFIG_HOME",
+    "SSH_AUTH_SOCK",
+];
+
+#[test]
+fn only_allowlisted_variables_reach_claude() {
+    let member = tempfile::tempdir().unwrap();
+    let mut parent = vars(&[
+        ("PATH", "/usr/bin:/bin"),
+        ("LANG", "C.UTF-8"),
+        ("LC_ALL", "C.UTF-8"),
+        ("TERM", "xterm"),
+        ("TMPDIR", "/tmp"),
+        ("HOME", "/home/operator"),
+        ("ANTHROPIC_API_KEY", "the-operators-key"),
+    ]);
+    for name in DROPPED {
+        parent.push((OsString::from(name), OsString::from(format!("leak-{name}"))));
+    }
+    let env = member_environment(&parent, member.path(), &api_key("member-key")).unwrap();
+
+    let names: BTreeSet<&str> = env.names().into_iter().collect();
+    let expected: BTreeSet<&str> = INHERITED_VARIABLES
+        .iter()
+        .copied()
+        .chain(["HOME", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY"])
+        .collect();
+    assert_eq!(names, expected);
+    assert_eq!(env.names().len(), expected.len(), "no name is given twice");
+    for name in DROPPED {
+        assert!(
+            env.get(name).is_none() || *name == "CLAUDE_CONFIG_DIR",
+            "{name} leaked"
+        );
+        assert!(
+            env.variables
+                .iter()
+                .all(|(_, value)| value != &OsString::from(format!("leak-{name}"))),
+            "the parent's {name} value leaked"
+        );
+    }
+    assert_eq!(env.get("ANTHROPIC_API_KEY").unwrap(), "member-key");
+    assert_eq!(env.get("PATH").unwrap(), "/usr/bin:/bin");
+    assert_eq!(
+        env.get("HOME").unwrap(),
+        member.path().join(MEMBER_HOME_DIR).as_os_str()
+    );
+    assert_eq!(
+        env.get("CLAUDE_CONFIG_DIR").unwrap(),
+        member.path().join(MEMBER_CLAUDE_CONFIG_DIR).as_os_str()
+    );
+    assert!(!format!("{env:?}").contains("member-key"), "{env:?}");
+}
+
+#[test]
+fn an_inherited_variable_the_parent_lacks_is_simply_absent() {
+    let member = tempfile::tempdir().unwrap();
+    let env = member_environment(&vars(&[("PATH", "/bin")]), member.path(), &api_key("k")).unwrap();
+    assert_eq!(
+        env.names(),
+        vec!["PATH", "HOME", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY"]
+    );
+}
+
+#[test]
+fn home_and_config_dir_are_per_member_and_private() {
+    let base = tempfile::tempdir().unwrap();
+    let parent = vars(&[("PATH", "/bin")]);
+    let one = member_environment(&parent, &base.path().join("members/one"), &api_key("k")).unwrap();
+    let two = member_environment(&parent, &base.path().join("members/two"), &api_key("k")).unwrap();
+    for env in [&one, &two] {
+        for dir in [&env.home, &env.config_dir] {
+            assert!(dir.is_dir(), "{} is made before spawn", dir.display());
+            assert_eq!(mode(dir), PRIVATE_DIR_MODE, "{}", dir.display());
+        }
+    }
+    assert_ne!(one.home, two.home);
+    assert_ne!(one.config_dir, two.config_dir);
+    assert!(one.home.starts_with(base.path().join("members/one")));
+    assert!(one.config_dir.starts_with(base.path().join("members/one")));
+}
+
+#[test]
+fn an_existing_private_dir_is_made_owner_only() {
+    let member = tempfile::tempdir().unwrap();
+    let home = member.path().join(MEMBER_HOME_DIR);
+    std::fs::create_dir(&home).unwrap();
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let env = member_environment(&vars(&[]), member.path(), &api_key("k")).unwrap();
+    assert_eq!(mode(&env.home), PRIVATE_DIR_MODE);
+}
+
+#[test]
+fn a_symlinked_private_dir_is_refused() {
+    let member = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(
+        elsewhere.path(),
+        member.path().join(MEMBER_CLAUDE_CONFIG_DIR),
+    )
+    .unwrap();
+    let error = member_environment(&vars(&[]), member.path(), &api_key("k")).unwrap_err();
+    assert!(
+        matches!(error, MemberEnvironmentError::Directory { .. }),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_relative_member_dir_is_refused() {
+    let error =
+        member_environment(&vars(&[]), Path::new("members/one"), &api_key("k")).unwrap_err();
+    assert!(
+        matches!(error, MemberEnvironmentError::Directory { .. }),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn only_a_known_nonempty_credential_is_given() {
+    let member = tempfile::tempdir().unwrap();
+    for name in CREDENTIAL_VARIABLES {
+        let credential = CredentialEnv {
+            name: name.to_string(),
+            value: "v".into(),
+        };
+        let env = member_environment(&vars(&[]), member.path(), &credential).unwrap();
+        assert_eq!(env.get(name).unwrap(), "v");
+    }
+    for credential in [
+        CredentialEnv {
+            name: "GH_TOKEN".into(),
+            value: "v".into(),
+        },
+        CredentialEnv {
+            name: "PATH".into(),
+            value: "/evil".into(),
+        },
+        api_key(""),
+    ] {
+        let error = member_environment(&vars(&[]), member.path(), &credential).unwrap_err();
+        assert!(
+            matches!(error, MemberEnvironmentError::Credential(_)),
+            "{credential:?}: {error:?}"
+        );
+    }
+}

@@ -1,9 +1,12 @@
 //! The external-agent capability's own DTOs (#2285): what the projection
-//! answers. The interface layer renders them on the wire.
+//! answers, and what its process ports take and answer (#2286). The
+//! interface layer renders them on the wire.
 
 pub mod audit;
 pub mod background;
+pub mod launch_spec;
 pub mod message;
+pub mod process;
 pub mod report;
 pub mod session;
 pub mod step;
@@ -14,9 +17,14 @@ pub use self::audit::{
     GuardrailDenial,
 };
 pub use self::background::{BACKGROUND_JOB_CAPACITY, BackgroundJob, TERMINAL_TASK_STATUSES};
+pub use self::launch_spec::{CredentialEnv, ExternalAgentLaunchSpec};
 pub use self::message::{
     ExecutionState, MessageRole, ProjectedMessage, ProjectedToolCall, TOOL_RESULT_CONTENT_BYTES,
     TRUNCATION_MARKER,
+};
+pub use self::process::{
+    EXTERNAL_AGENT_STDERR_TAIL_BYTES, ExternalAgentExit, ExternalAgentInputError,
+    ExternalAgentLaunchError,
 };
 pub use self::report::{FINAL_REPORT_PAGE_BYTES, FinalReport};
 pub use self::session::SessionTotals;
