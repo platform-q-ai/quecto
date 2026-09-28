@@ -1,0 +1,19 @@
+[
+  ["table", "events", "events", "CREATE TABLE events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT)"],
+  ["index", "events_by_actor", "events", "CREATE INDEX events_by_actor ON events(actor,id)"],
+  ["table", "evidence", "evidence", "CREATE TABLE evidence (criterion TEXT, artifact TEXT, revision TEXT, kind TEXT,\n actor TEXT, accepted INTEGER, PRIMARY KEY(criterion, actor))"],
+  ["table", "files", "files", "CREATE TABLE files (path TEXT PRIMARY KEY, task INTEGER, owner TEXT, claim TEXT, token TEXT)"],
+  ["table", "members", "members", "CREATE TABLE members (id TEXT PRIMARY KEY, reservation TEXT UNIQUE, status TEXT,\n pid INTEGER, started TEXT, socket TEXT, launcher TEXT)"],
+  ["table", "messages", "messages", "CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, body TEXT, status TEXT, revision TEXT, supersedes INTEGER, superseded_by INTEGER)"],
+  ["table", "notification_cursors", "notification_cursors", "CREATE TABLE notification_cursors (actor TEXT PRIMARY KEY, event INTEGER)"],
+  ["table", "requests", "requests", "CREATE TABLE requests (actor TEXT, request TEXT, payload TEXT, result TEXT,\n PRIMARY KEY(actor, request))"],
+  ["table", "run", "run", "CREATE TABLE run (id TEXT PRIMARY KEY, goal TEXT, constraints TEXT, criteria TEXT,\n coordinator TEXT, integrator TEXT, member_limit INTEGER, deadline REAL, status TEXT, outcome TEXT, outcome_reason TEXT)"],
+  ["index", "sqlite_autoindex_evidence_1", "evidence", null],
+  ["index", "sqlite_autoindex_files_1", "files", null],
+  ["index", "sqlite_autoindex_members_1", "members", null],
+  ["index", "sqlite_autoindex_members_2", "members", null],
+  ["index", "sqlite_autoindex_notification_cursors_1", "notification_cursors", null],
+  ["index", "sqlite_autoindex_requests_1", "requests", null],
+  ["index", "sqlite_autoindex_run_1", "run", null],
+  ["table", "tasks", "tasks", "CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT, acceptance TEXT, dependencies TEXT,\n status TEXT, owner TEXT, token TEXT, evidence TEXT, blocker TEXT)"]
+]

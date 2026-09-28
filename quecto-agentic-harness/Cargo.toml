@@ -37,6 +37,11 @@ serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 # strings to even, as Python's `repr` does.
 ryu = "1"
 
+# The swarm board's SQLite driver (#2269): the same file format the Python
+# board writes. `bundled` compiles SQLite itself, so no system libsqlite3 is
+# needed.
+rusqlite = { version = "0.40", features = ["bundled"] }
+
 # Utilities
 uuid = { version = "1", features = ["v4"] }
 humantime = "2"
