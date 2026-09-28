@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
+use super::BoardError;
 use super::records::{MemberRecord, RunRecord, TaskState};
 
 /// Events after which ready work may be waiting for a taker (#2127).
@@ -69,10 +70,10 @@ pub fn notification_targets(
     members: &[MemberRecord],
     events: &[NotificationEvent],
     state: &NotificationState,
-) -> Vec<MemberRecord> {
+) -> Result<Vec<MemberRecord>, BoardError> {
     match run.status.as_str() {
         "running" => {}
-        _ => return Vec::new(),
+        _ => return Ok(Vec::new()),
     }
     // Python's dict comprehensions: a later duplicate id wins.
     let tasks: BTreeMap<i64, &TaskSummary> =
@@ -131,7 +132,7 @@ pub fn notification_targets(
             .all(|member| member.id != actor && is_live(member)),
         "only live members other than the actor are woken"
     );
-    woken
+    Ok(woken)
 }
 
 /// Who an event hands ready work to (#2127), from the event actor's view.

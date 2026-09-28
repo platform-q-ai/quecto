@@ -186,3 +186,23 @@ fn request_measurement_counts_unknown_only_for_answered_attempts() {
         .remove("context_input_tokens");
     assert_eq!(request_measurement(&missing), Ok((0, 1, 1)));
 }
+
+#[test]
+fn a_negative_zero_count_decoded_by_serde_json_is_refused_until_the_py_json_codec() {
+    // Documented difference, pinned until S5 (#2270) decodes records with
+    // S3's PyJson codec (#2268): Python's `json.loads` reads `-0` as the int
+    // 0 and accepts it, but serde_json reads it as the float -0.0, which the
+    // policy cannot tell from a JSON `-0.0` that Python refuses.
+    let record: Value = serde_json::from_str(
+        r#"{"request_id":"r","context_input_tokens":-0,"output_tokens":0,"instrumented_attempts":1,"outcome":"succeeded"}"#,
+    )
+    .expect("valid JSON");
+    assert_eq!(
+        refusal(record),
+        "invalid request usage context_input_tokens"
+    );
+    assert_eq!(
+        refusal(with("output_tokens", json!(-0.0))),
+        "invalid request usage output_tokens"
+    );
+}
