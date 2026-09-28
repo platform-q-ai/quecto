@@ -50,11 +50,27 @@ const COMPENSATION_WAIT_SLACK: Duration = Duration::from_secs(6);
 pub const DEFAULT_COMPENSATION_WAIT: Duration =
     OWNED_HANDLE_LADDER.saturating_add(COMPENSATION_WAIT_SLACK);
 
+/// How long a natural exit's note waits for the reaper to publish the exit
+/// status of a child this harness held (#2260). The monitor's EOF can win
+/// the terminal claim once the supervisor has reaped the process but before
+/// the reaper task has published what it reaped; the publish is then a task
+/// wake-up away, so the bound only matters on a badly loaded host. It is
+/// far inside [`DEFAULT_COMPENSATION_WAIT`], so a joiner never gives up on
+/// a compensation that is only waiting here.
+pub const DEFAULT_EXIT_STATUS_WAIT: Duration = Duration::from_secs(5);
+const _: () = assert!(
+    DEFAULT_EXIT_STATUS_WAIT.as_nanos() < DEFAULT_COMPENSATION_WAIT.as_nanos(),
+    "the exit-status wait must end before a joiner stops waiting"
+);
+
 pub struct RegistryDelegatedAgents {
     registry: SubagentRegistry,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     notify_tx: Option<NotificationTx>,
     compensation_wait: Duration,
+    /// How long a natural exit's note waits for an owned child's reaped
+    /// exit status (#2260).
+    exit_status_wait: Duration,
     /// Composition's builder of the final-member environment cleanup
     /// (#1939) a compensation runs for each membership it removes.
     finalizer: super::subagent_cleanup::MemberFinalizer,
@@ -80,6 +96,7 @@ impl RegistryDelegatedAgents {
             broadcast_tx,
             notify_tx,
             compensation_wait: DEFAULT_COMPENSATION_WAIT,
+            exit_status_wait: DEFAULT_EXIT_STATUS_WAIT,
             finalizer,
             ended: None,
         }
@@ -104,10 +121,7 @@ impl RegistryDelegatedAgents {
         observation: &str,
     ) -> Option<String> {
         let (ended, target) = (self.ended.as_ref()?, target?);
-        let exit = target
-            .exit_signal_tx
-            .as_ref()
-            .and_then(|tx| tx.borrow().clone());
+        let exit = self.published_exit(target).await;
         let crash = ended
             .crash(
                 &target.agent_uuid,
@@ -138,9 +152,42 @@ impl RegistryDelegatedAgents {
         }
     }
 
+    /// The exit status published for `target`. For a child this harness
+    /// held, the reaper publishes what it reaped, and the end may have been
+    /// observed first (the monitor's EOF after the reap, before the
+    /// publish): the note waits for it, up to `exit_status_wait` (#2260).
+    /// Any other row's status is set by the compensation itself, after the
+    /// note, so it is read as it stands.
+    async fn published_exit(&self, target: &SubagentEntry) -> Option<ExitSignal> {
+        let tx = target.exit_signal_tx.as_ref()?;
+        match target.owned_child {
+            Some(_) => {
+                let mut published = tx.subscribe();
+                let exit = tokio::time::timeout(
+                    self.exit_status_wait,
+                    published.wait_for(Option::is_some),
+                )
+                .await
+                .ok()
+                .and_then(|seen| seen.ok().and_then(|exit| exit.clone()));
+                match &exit {
+                    Some(_) => {}
+                    None => tracing::warn!(
+                        agent = %target.agent_uuid,
+                        wait = ?self.exit_status_wait,
+                        "exit note: the reaper had not published the child's exit status in time"
+                    ),
+                }
+                exit
+            }
+            None => tx.borrow().clone(),
+        }
+    }
+
     /// How long a natural exit's note waits for the reaper to publish an
-    /// owned child's exit status (#2260). Red-phase stub.
-    pub fn with_exit_status_wait(self, _wait: Duration) -> Self {
+    /// owned child's exit status (#2260).
+    pub fn with_exit_status_wait(mut self, wait: Duration) -> Self {
+        self.exit_status_wait = wait;
         self
     }
 

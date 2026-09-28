@@ -343,3 +343,28 @@ async fn a_reaper_that_never_publishes_is_waited_for_only_up_to_the_bound() {
         "Sub-agent 'alpha' ended; no exit status or crash record was observed (connection_closed)."
     );
 }
+
+/// #2260: only a child this harness held has a reaper to wait for; any
+/// other row's note is built at once, as it stands.
+#[tokio::test]
+async fn a_row_without_an_owned_child_is_not_waited_for() {
+    let base = tempfile::tempdir().unwrap();
+    let started = std::time::Instant::now();
+    let note = exit_note(
+        base.path(),
+        None,
+        true,
+        TerminationCause::Exit(ExitObservation::ConnectionClosed),
+    )
+    .await
+    .unwrap();
+    assert!(
+        started.elapsed() < DEFAULT_EXIT_STATUS_WAIT,
+        "a row with no reaper waited: {:?}",
+        started.elapsed()
+    );
+    assert!(
+        matches!(&note, SubagentNotification::Exited { detail: None, .. }),
+        "{note:?}"
+    );
+}
