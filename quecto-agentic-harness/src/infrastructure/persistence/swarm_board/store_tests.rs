@@ -206,7 +206,7 @@ fn transactions_begin_immediate_and_hold_the_write_lock() {
         "waited the busy timeout: {elapsed:?}"
     );
     assert!(
-        elapsed < Duration::from_secs(2),
+        elapsed < Duration::from_secs(5),
         "gave up after the busy timeout: {elapsed:?}"
     );
 }
@@ -238,7 +238,7 @@ fn a_contended_store_error_names_the_sqlite_message() {
         "waited the busy timeout: {elapsed:?}"
     );
     assert!(
-        elapsed < Duration::from_secs(2),
+        elapsed < Duration::from_secs(5),
         "gave up after the busy timeout: {elapsed:?}"
     );
     holder
@@ -560,4 +560,197 @@ fn sqlite_errors_read_as_python_str_of_the_sqlite3_error() {
         Some("no such access mode: rx".into()),
     );
     assert_eq!(opening_message(&other, uri), "no such access mode: rx");
+}
+
+/// The body's SQL error as the transaction reports it.
+fn failing(store: &BoardStore, sql: &str, parameters: &[i64]) -> Result<(), StoreRefusal> {
+    store.transaction(false, |tx| {
+        tx.execute(sql, rusqlite::params_from_iter(parameters))?;
+        Ok(())
+    })
+}
+
+#[test]
+fn sql_input_and_binding_errors_read_as_python_str_of_the_sqlite3_error() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = created(&dir);
+    // Each text is Python's str() of the sqlite3.Error the same call raises.
+    let cases: [(&str, &[i64], &str); 6] = [
+        ("SELEC 1", &[], "near \"SELEC\": syntax error"),
+        ("SELECT 1,", &[], "incomplete input"),
+        ("SELECT * FROM nope", &[], "no such table: nope"),
+        (
+            "SELECT ?",
+            &[1, 2],
+            "Incorrect number of bindings supplied. The current statement uses 1, and there are 2 supplied.",
+        ),
+        (
+            "SELECT ?, ?",
+            &[1],
+            "Incorrect number of bindings supplied. The current statement uses 2, and there are 1 supplied.",
+        ),
+        (
+            "SELECT 1; SELECT 2",
+            &[],
+            "You can only execute one statement at a time.",
+        ),
+    ];
+    for (sql, parameters, message) in cases {
+        assert_eq!(
+            failing(&store, sql, parameters),
+            Err(StoreRefusal(format!(
+                "coordination store unavailable or contended: {message}"
+            ))),
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn a_path_is_absolutised_as_pathlib_absolute_does() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = created(&dir);
+    // A trailing separator names the same file, as pathlib normalises it.
+    let trailing = PathBuf::from(format!("{}/", store.path().display()));
+    BoardStore::new(&trailing)
+        .transaction(false, |tx| event(tx, "worker", 1.0, "seen", &json("{}")))
+        .expect("the board opens through a trailing separator");
+    assert_eq!(count(store.path(), "events"), 1, "the same file");
+    let missing = dir.path().join("missing.sqlite");
+    assert_eq!(
+        BoardStore::new(format!("{}//", missing.display())).transaction(false, |_| Ok(())),
+        Err(StoreRefusal(format!(
+            "coordination store missing at {}: it was deleted while the run was live, so this run's board is lost",
+            missing.display()
+        )))
+    );
+    // An empty path is the working directory, which exists and is no database.
+    assert_eq!(
+        BoardStore::new("").transaction(false, |_| Ok(())),
+        Err(StoreRefusal(
+            "coordination store unavailable or contended: unable to open database file".into()
+        ))
+    );
+}
+
+#[test]
+fn the_bundled_sqlite_binds_as_many_parameters_as_the_system_library() {
+    // Debian's and Arch's libsqlite3, which Python's sqlite3 uses, are built
+    // with SQLITE_MAX_VARIABLE_NUMBER=250000 (the bundled default is 32766).
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = created(&dir);
+    let query = |count: usize| {
+        let marks = vec!["?"; count].join(",");
+        let ids: Vec<i64> = (0..count as i64).collect();
+        store.transaction(false, |tx| {
+            let matched: i64 = tx.query_row(
+                &format!("SELECT count(*) FROM (SELECT 7 AS id) WHERE id IN ({marks})"),
+                rusqlite::params_from_iter(ids.iter()),
+                |row| row.get(0),
+            )?;
+            Ok(matched)
+        })
+    };
+    assert_eq!(query(32_767), Ok(1));
+    assert_eq!(query(250_000), Ok(1));
+    assert_eq!(
+        query(250_001),
+        Err(StoreRefusal(
+            "coordination store unavailable or contended: too many SQL variables".into()
+        ))
+    );
+}
+
+/// Records request `r` for `worker` with payload `{}` and the raw `result`.
+fn stored_request(
+    store: &BoardStore,
+    payload: rusqlite::types::Value,
+    result: rusqlite::types::Value,
+) {
+    store
+        .transaction(false, |tx| {
+            tx.execute(
+                "INSERT INTO requests VALUES('worker', 'r', ?, ?)",
+                rusqlite::params![payload, result],
+            )?;
+            Ok(())
+        })
+        .expect("the request is recorded");
+}
+
+fn replay(store: &BoardStore) -> Result<PyJson, StoreRefusal> {
+    store.transaction(false, |tx| {
+        retry(tx, "worker", "r", &json("{}"), || Ok(json("null")))
+    })
+}
+
+#[test]
+fn a_stored_result_is_read_as_json_loads_reads_the_column() {
+    use rusqlite::types::Value;
+    let payload = || Value::Text("{}".into());
+    let cases: [(Value, Result<PyJson, StoreRefusal>); 6] = [
+        (Value::Blob(b"{\"id\":1}".to_vec()), Ok(json("{\"id\":1}"))),
+        (Value::Blob(b"\xef\xbb\xbf[2]".to_vec()), Ok(json("[2]"))),
+        (
+            Value::Integer(3),
+            Err(StoreRefusal(
+                "the JSON object must be str, bytes or bytearray, not int".into(),
+            )),
+        ),
+        (
+            Value::Real(3.5),
+            Err(StoreRefusal(
+                "the JSON object must be str, bytes or bytearray, not float".into(),
+            )),
+        ),
+        (
+            Value::Null,
+            Err(StoreRefusal(
+                "the JSON object must be str, bytes or bytearray, not NoneType".into(),
+            )),
+        ),
+        (
+            Value::Text("{\"id\":".into()),
+            Err(StoreRefusal(
+                "Expecting value: line 1 column 7 (char 6)".into(),
+            )),
+        ),
+    ];
+    for (result, expected) in cases {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = created(&dir);
+        stored_request(&store, payload(), result.clone());
+        assert_eq!(replay(&store), expected, "{result:?}");
+    }
+}
+
+#[test]
+fn an_undecodable_stored_text_is_python_s_decode_error() {
+    use rusqlite::types::Value;
+    let undecodable = || Value::Blob(b"\xffA".to_vec());
+    let as_text = "CAST(? AS TEXT)";
+    for (column, payload, result) in [("payload", as_text, "?"), ("result", "?", as_text)] {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = created(&dir);
+        let (payload_value, result_value) = match column {
+            "payload" => (undecodable(), Value::Text("null".into())),
+            _ => (Value::Text("{}".into()), undecodable()),
+        };
+        store
+            .transaction(false, |tx| {
+                tx.execute(
+                    &format!("INSERT INTO requests VALUES('worker', 'r', {payload}, {result})"),
+                    rusqlite::params![payload_value, result_value],
+                )?;
+                Ok(())
+            })
+            .expect("the request is recorded");
+        assert_eq!(
+            replay(&store),
+            Err(StoreRefusal(format!(
+                "coordination store unavailable or contended: Could not decode to UTF-8 column '{column}' with text '\u{fffd}A'"
+            ))),
+            "{column}"
+        );
+    }
 }

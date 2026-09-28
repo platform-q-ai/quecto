@@ -64,28 +64,70 @@ fn binding_matches_python_sqlite3_affinity() {
     );
 }
 
+/// `SELECT typeof(?1), hex(?1), length(?1)` for each JSON text's value, as
+/// Python's `sqlite3` binds `json.loads(text)` (captured from Python 3.14.7
+/// with SQLite 3.53.4): a NaN is stored as NULL, `-0.0` reads back as a
+/// REAL whose text is `0.0`, and a string keeps its embedded NUL.
+const PYTHON_BINDINGS: &[(&str, &str, &str, Option<i64>)] = &[
+    ("null", "null", "", None),
+    ("true", "integer", "31", Some(1)),
+    ("false", "integer", "30", Some(1)),
+    (
+        "-9223372036854775808",
+        "integer",
+        "2D39323233333732303336383534373735383038",
+        Some(20),
+    ),
+    (
+        "9223372036854775807",
+        "integer",
+        "39323233333732303336383534373735383037",
+        Some(19),
+    ),
+    ("2.5", "real", "322E35", Some(3)),
+    ("\"x\"", "text", "78", Some(1)),
+    ("NaN", "null", "", None),
+    ("Infinity", "real", "496E66", Some(3)),
+    ("-Infinity", "real", "2D496E66", Some(4)),
+    ("-0.0", "real", "302E30", Some(3)),
+    ("\"a\\u0000b\"", "text", "610062", Some(1)),
+];
+
 #[test]
 fn each_json_scalar_binds_as_the_sqlite_type_python_gives_it() {
     let connection = Connection::open_in_memory().expect("in-memory SQLite opens");
-    let cases = [
-        ("null", "null", Value::Null),
-        ("true", "integer", Value::Integer(1)),
-        ("false", "integer", Value::Integer(0)),
-        ("-9223372036854775808", "integer", Value::Integer(i64::MIN)),
-        ("9223372036854775807", "integer", Value::Integer(i64::MAX)),
-        ("2.5", "real", Value::Real(2.5)),
-        ("\"x\"", "text", Value::Text("x".into())),
-    ];
-    for (text, kind, value) in cases {
+    for &(text, kind, hex, length) in PYTHON_BINDINGS {
         let bound = bind(&json(text)).expect("a scalar binds");
-        assert_eq!(bound, value, "{text}");
-        let stored: (String, Value) = connection
-            .query_row("SELECT typeof(?1), ?1", [&bound], |row| {
-                Ok((row.get(0)?, row.get(1)?))
+        let stored: (String, String, Option<i64>) = connection
+            .query_row("SELECT typeof(?1), hex(?1), length(?1)", [&bound], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
             })
             .expect("the bound value reads back");
-        assert_eq!(stored, (kind.to_owned(), value), "{text}");
+        assert_eq!(stored, (kind.to_owned(), hex.to_owned(), length), "{text}");
     }
+    let cases = [
+        ("null", Value::Null),
+        ("true", Value::Integer(1)),
+        ("false", Value::Integer(0)),
+        ("-9223372036854775808", Value::Integer(i64::MIN)),
+        ("9223372036854775807", Value::Integer(i64::MAX)),
+        ("2.5", Value::Real(2.5)),
+        ("Infinity", Value::Real(f64::INFINITY)),
+        ("\"a\\u0000b\"", Value::Text("a\0b".into())),
+    ];
+    for (text, value) in cases {
+        assert_eq!(bind(&json(text)), Ok(value), "{text}");
+    }
+    let negative_zero = bind(&json("-0.0"));
+    assert!(
+        matches!(negative_zero, Ok(Value::Real(zero)) if zero == 0.0 && zero.is_sign_negative()),
+        "-0.0 binds as a REAL -0.0: {negative_zero:?}"
+    );
+    let nan = bind(&json("NaN"));
+    assert!(
+        matches!(nan, Ok(Value::Real(value)) if value.is_nan()),
+        "NaN binds as a REAL NaN: {nan:?}"
+    );
 }
 
 #[test]

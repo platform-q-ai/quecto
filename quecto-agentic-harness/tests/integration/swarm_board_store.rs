@@ -12,6 +12,10 @@ use std::time::{Duration, Instant};
 use quecto::infrastructure::persistence::swarm_board::store::{BoardStore, StoreRefusal};
 use serial_test::serial;
 
+const SCHEMA_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/swarm_board/schema_after_create.json"
+);
 const SOURCES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
 
 /// Drives `swarm_store.Store` on the board at `argv[2]`: `create` creates
@@ -172,6 +176,11 @@ fn a_python_created_board_opens_in_rust_with_no_schema_change() {
     let board = dir.path().join("swarm.sqlite");
     assert_eq!(run_python("create", &board), "created");
     let before = master(&board);
+    let fixture: Vec<(String, String, String, Option<String>)> = serde_json::from_str(
+        &std::fs::read_to_string(SCHEMA_FIXTURE).expect("the schema fixture is readable"),
+    )
+    .expect("the schema fixture is [type, name, tbl_name, sql] rows");
+    assert_eq!(before, fixture, "Python writes the fixture's schema");
     let store = BoardStore::new(&board);
     store
         .transaction(false, |_| Ok(()))
