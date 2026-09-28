@@ -148,3 +148,72 @@ fn a_missing_board_is_refused_before_any_work() {
         Ok("created")
     );
 }
+
+/// `_bootstrap`'s member statement, as `swarm.py` holds it: `pid`,
+/// `started` and `socket` are its 3rd, 4th and 5th parameters, since
+/// `status` is the literal `'live'`.
+const PYTHON_BOOTSTRAP_MEMBER_INSERT: &str =
+    "INSERT INTO members(id,reservation,status,pid,started,socket) VALUES(?,?,'live',?,?,?)";
+
+/// The 1-based parameter `column` binds in `statement`: the `?`s among the
+/// values up to the column's own.
+fn parameter_of(statement: &str, column: &str) -> usize {
+    let (columns, values) = statement
+        .split_once(") VALUES(")
+        .expect("an INSERT ... VALUES statement");
+    let columns: Vec<&str> = columns
+        .split_once('(')
+        .expect("a column list")
+        .1
+        .split(',')
+        .collect();
+    let values: Vec<&str> = values.trim_end_matches(')').split(',').collect();
+    assert_eq!(columns.len(), values.len(), "{statement}");
+    let index = columns
+        .iter()
+        .position(|name| *name == column)
+        .unwrap_or_else(|| panic!("{column} in {statement}"));
+    assert_eq!(values[index], "?", "{column} is bound");
+    values[..=index]
+        .iter()
+        .filter(|value| **value == "?")
+        .count()
+}
+
+/// A member value Python's `sqlite3` cannot bind is refused naming the
+/// parameter Python names (#2270 review M1): its position in `_bootstrap`'s
+/// statement, not in the Rust statement, which also binds the status and
+/// the launcher.
+#[test]
+fn an_unbindable_member_value_names_pythons_parameter() {
+    let python = include_str!("../../tools/swarm_helpers/swarm.py");
+    assert!(
+        python.contains(PYTHON_BOOTSTRAP_MEMBER_INSERT),
+        "swarm.py still binds _bootstrap's member row this way"
+    );
+    for column in ["pid", "started", "socket"] {
+        let position = parameter_of(PYTHON_BOOTSTRAP_MEMBER_INSERT, column);
+        let mut row = member("parent", MemberState::LIVE);
+        let unbindable = json!([1]);
+        match column {
+            "pid" => row.pid = unbindable,
+            "started" => row.started = unbindable,
+            "socket" => row.socket = unbindable,
+            _ => unreachable!("{column}"),
+        }
+        let (_dir, repository) = repository();
+        let refused = within(&repository, true, |transaction| {
+            transaction.insert_member(&row)
+        })
+        .unwrap_err();
+        assert_eq!(
+            refused.0,
+            format!(
+                "coordination store unavailable or contended: \
+                 Error binding parameter {position}: type 'list' is not supported"
+            ),
+            "{column}"
+        );
+    }
+    assert_eq!(parameter_of(PYTHON_BOOTSTRAP_MEMBER_INSERT, "pid"), 3);
+}

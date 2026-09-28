@@ -273,7 +273,8 @@ fn dump_of(statements: &str) -> (tempfile::TempDir, Dump) {
 }
 
 /// Each storage class is its own value: an INTEGER never equals a REAL,
-/// TEXT never a BLOB or an INTEGER, NULL never empty text.
+/// TEXT never a BLOB or an INTEGER, NULL never empty text, and a REAL is
+/// its bits (`-0.0` is not `0.0`).
 #[test]
 fn the_comparator_compares_typed_values() {
     let table = "CREATE TABLE t (x);";
@@ -283,6 +284,8 @@ fn the_comparator_compares_typed_values() {
         ("x'31'", "'1'"),
         ("NULL", "''"),
         ("1.5", "'1.5'"),
+        // A REAL compares by its bits: Python's `-0.0` is not `0.0`.
+        ("0.0", "-0.0"),
     ];
     for (left, right) in pairs {
         let (_a, python) = dump_of(&format!("{table} INSERT INTO t VALUES({left});"));
