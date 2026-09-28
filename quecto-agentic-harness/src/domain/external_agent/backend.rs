@@ -68,6 +68,21 @@ pub const CLAUDE_CODE_OWN_CONTAINER_ONLY: &str =
     "backend claude_code launches only into the coordinator's own container; omit container";
 /// The refusal for a launch that sets `effort`.
 pub const CLAUDE_CODE_TAKES_NO_EFFORT: &str = "backend claude_code takes no effort; omit effort";
+/// The refusal for a launch that sets `read_only`: the member's tools are
+/// its own (#2291), not quecto's.
+pub const CLAUDE_CODE_TAKES_NO_READ_ONLY: &str =
+    "backend claude_code takes no read_only; omit read_only";
+/// The refusal for a launch that sets `disable_tools`.
+pub const CLAUDE_CODE_TAKES_NO_DISABLE_TOOLS: &str =
+    "backend claude_code takes no disable_tools; omit disable_tools";
+/// The refusal for a launch that sets `system`.
+pub const CLAUDE_CODE_TAKES_NO_SYSTEM: &str =
+    "backend claude_code takes no system prompt; omit system";
+/// The refusal for a launch that sets `config`.
+pub const CLAUDE_CODE_TAKES_NO_CONFIG: &str = "backend claude_code takes no config; omit config";
+/// The refusal for a model of another provider.
+pub const CLAUDE_CODE_ANTHROPIC_MODELS_ONLY: &str =
+    "backend claude_code runs anthropic models only; omit model or name an anthropic/ model";
 
 /// Whether `config`'s backend may be launched in `context`. `Quecto` always
 /// may. `ClaudeCode` may only when every one of these holds (O1): the

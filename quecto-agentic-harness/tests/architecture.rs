@@ -1423,7 +1423,11 @@ fn application_path_allowed(path: &str) -> bool {
             | "EXTERNAL_AGENT_STDERR_TAIL_BYTES"
             // The session telemetry adapter (#2287) logs the records the
             // capability's telemetry port is given.
-            | "SessionRecord",
+            | "SessionRecord"
+            // The id a user turn is written under, and the clock
+            // adapter's instants (#2287).
+            | "UserTurnId"
+            | "AgentClockInstant",
             ..,
         ] => true,
         ["crate", "application", ..] => false,
@@ -5757,12 +5761,13 @@ fn external_agent_application_dependency_allowed(path: &str) -> bool {
         // a launch spec carries (never a filesystem call).
         ["std", "future", "Future"] | ["std", "pin", "Pin"] | ["std", "path", "PathBuf"] => true,
         // The session use case (#2287): its shared state, the write gate,
-        // the end signal and the skipped-line grace timer. No I/O, no
-        // spawn, no clock read.
+        // the end signal, and the durations it hands its clock port. No
+        // I/O, no spawn, no timer and no clock read of its own: time is
+        // the `ExternalAgentClock` port's. tokio's async locks and signal
+        // are plain synchronisation, as `sessions` (`RwLock`, `Semaphore`)
+        // and `extensions` (`oneshot`) use them.
         ["std", "sync", "Arc" | "Mutex" | "MutexGuard"] | ["std", "time", "Duration"] => true,
-        ["tokio", "select"]
-        | ["tokio", "sync", "Mutex" | "watch", ..]
-        | ["tokio", "time", "sleep"] => true,
+        ["tokio", "select"] | ["tokio", "sync", "Mutex" | "watch", ..] => true,
         // A name already in scope (prelude, local item or checked import)
         // and an associated item of one (`Self::…`, `MessageRole::User`).
         [single] => single.starts_with(char::is_alphabetic),
@@ -5784,6 +5789,12 @@ fn external_agent_application_depends_only_inward() {
             .filter(|dep| !external_agent_application_dependency_allowed(dep))
             .collect();
         assert!(refused.is_empty(), "{path} depends outward: {refused:?}");
+        // Paths inside a macro (`tokio::select!`) escape the parse above:
+        // the session's time is its clock port's, never tokio's (#2287).
+        assert!(
+            !source.contains("tokio::time"),
+            "{path} reads tokio's time; use the ExternalAgentClock port"
+        );
     }
     for dep in [
         "crate::infrastructure::external_agents::claude_code::stream_json::StreamJsonDecoder",
@@ -5805,6 +5816,9 @@ fn external_agent_application_depends_only_inward() {
         "std::time::Instant",
         "std::sync::atomic::AtomicBool",
         "tokio::sync::mpsc::channel",
+        "tokio::time::sleep",
+        "tokio::time::timeout",
+        "std::time::SystemTime",
     ] {
         assert!(
             !external_agent_application_dependency_allowed(dep),
@@ -5825,7 +5839,6 @@ fn external_agent_application_depends_only_inward() {
         "std::sync::Arc",
         "std::time::Duration",
         "tokio::sync::watch::Sender",
-        "tokio::time::sleep",
     ] {
         assert!(
             external_agent_application_dependency_allowed(dep),
@@ -5840,6 +5853,7 @@ const EXTERNAL_AGENT_PORTS: &[&str] = &[
     "ExternalAgentLauncher",
     "ExternalAgentProcess",
     "ExternalAgentTelemetry",
+    "ExternalAgentClock",
 ];
 
 #[test]
@@ -5899,6 +5913,8 @@ const EXTERNAL_AGENT_PROCESS_DTOS: &[&str] = &[
     "ExternalAgentLaunchError",
     "ExternalAgentInputError",
     "ExternalAgentExit",
+    "UserTurnId",
+    "AgentClockInstant",
 ];
 
 /// Where each of [`EXTERNAL_AGENT_PROCESS_DTOS`] is declared as a

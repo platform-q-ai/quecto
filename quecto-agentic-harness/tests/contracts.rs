@@ -95,6 +95,8 @@ mod environment_process_commands;
 mod environment_registry_store;
 #[path = "contracts/extension.rs"]
 mod extension;
+#[path = "contracts/external_agent_clock.rs"]
+mod external_agent_clock;
 #[path = "contracts/external_agent_launcher.rs"]
 mod external_agent_launcher;
 #[path = "contracts/external_agent_process.rs"]

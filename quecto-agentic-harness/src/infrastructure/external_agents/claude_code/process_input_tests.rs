@@ -12,22 +12,65 @@ use super::test_rig::{
     BOUND, FALLBACK_BOUND, Rig, events_to_turn_end, finish, turns_read, until_retired,
 };
 use crate::application::external_agent::dto::{ExternalAgentExit, ExternalAgentInputError};
+use crate::domain::external_agent::stream::{ExternalAgentEvent, InterruptReceipt};
 
 #[tokio::test]
 async fn a_user_turn_is_written_as_one_stream_json_user_message() {
-    let rig = Rig::new("{\"type\": \"result\", \"subtype\": \"success\"}\n");
+    let rig = Rig::new(&"{\"type\": \"result\", \"subtype\": \"success\"}\n".repeat(2));
     let process = rig.start().await;
-    process.send_user_turn("hello\nworld").await.unwrap();
+    let id = process.send_user_turn("hello\nworld").await.unwrap();
+    events_to_turn_end(process.as_ref()).await;
+    let again = process.send_user_turn("again").await.unwrap();
     events_to_turn_end(process.as_ref()).await;
     finish(process.as_ref()).await;
     let input = rig.mock.recorded("input");
-    assert_eq!(input.len(), 1, "one line per turn: {input:?}");
+    assert_eq!(input.len(), 2, "one line per turn: {input:?}");
     let sent: serde_json::Value = serde_json::from_str(&input[0]).unwrap();
+    // The id the result will name the turn by (#2287): a UUID, as the
+    // CLI's SDK sends (`SDKUserMessage.uuid`), fresh for every turn.
     assert_eq!(
         sent,
-        json!({"type": "user", "message": {"role": "user", "content": [
+        json!({"type": "user", "uuid": id.0, "message": {"role": "user", "content": [
             {"type": "text", "text": "hello\nworld"}
         ]}})
+    );
+    assert!(uuid::Uuid::parse_str(&id.0).is_ok(), "{id:?}");
+    assert_ne!(id, again, "each turn has its own id");
+}
+
+/// An interrupt (#2287) is one stream-json control request, as the CLI's
+/// SDK sends it (`subtype: interrupt`), withdrawing the queued turns too
+/// (`cancel_queued`); the agent answers it in its stream.
+#[tokio::test]
+async fn an_interrupt_is_one_control_request_line_and_is_answered() {
+    let rig = Rig::new("{\"type\": \"result\", \"subtype\": \"success\"}\n");
+    let process = rig.start().await;
+    process.interrupt().await.unwrap();
+    let answer = tokio::time::timeout(BOUND, process.next_event())
+        .await
+        .expect("the answer is bounded");
+    assert_eq!(
+        answer,
+        Some(ExternalAgentEvent::InterruptAnswered(InterruptReceipt {
+            accepted: true,
+            cancelled: Vec::new(),
+        }))
+    );
+    finish(process.as_ref()).await;
+    assert_eq!(
+        process.interrupt().await,
+        Err(ExternalAgentInputError::Closed),
+        "nothing is written once the input is closed"
+    );
+    let input = rig.mock.recorded("input");
+    assert_eq!(input.len(), 1, "{input:?}");
+    let sent: serde_json::Value = serde_json::from_str(&input[0]).unwrap();
+    let request_id = sent["request_id"].as_str().unwrap_or_default().to_string();
+    assert!(uuid::Uuid::parse_str(&request_id).is_ok(), "{sent}");
+    assert_eq!(
+        sent,
+        json!({"type": "control_request", "request_id": request_id,
+            "request": {"subtype": "interrupt", "cancel_queued": true}})
     );
 }
 
@@ -109,7 +152,10 @@ async fn no_line_waiting_at_the_close_is_written_after_it() {
     })
     .await
     .expect("every send is answered once the stuck write lands");
-    assert_eq!(first, Ok(()), "the line in flight at the close lands whole");
+    assert!(
+        first.is_ok(),
+        "the line in flight at the close lands whole: {first:?}"
+    );
     assert_eq!(rest.len(), INPUT_QUEUE);
     assert!(
         rest.iter()

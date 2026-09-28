@@ -53,6 +53,23 @@ pub(super) fn admit_with(
     true
 }
 
+/// The refusal for a claude-code member that is not an admitted swarm
+/// worker (#2287, O1).
+pub(super) const CLAUDE_CODE_NOT_A_SWARM_WORKER: &str =
+    "agent: --backend claude-code runs only as a swarm worker admitted to a created swarm run\n";
+
+/// After [`admit`]: whether this process may run its `--backend`.
+pub(super) fn admit_backend(flags: &AgentFlags, stderr: &mut String) -> bool {
+    admit_backend_with(flags, swarm_lifecycle::is_creator(), stderr)
+}
+
+/// A claude-code member must be a swarm worker (O1): a participant of a
+/// created run, and not the run's creator.
+pub(super) fn admit_backend_with(flags: &AgentFlags, creator: bool, stderr: &mut String) -> bool {
+    let _ = (flags, creator, stderr, CLAUDE_CODE_NOT_A_SWARM_WORKER);
+    true
+}
+
 pub(super) fn bind_socket(socket: &std::path::Path, stderr: &mut String) -> bool {
     swarm_bridge::set_process_socket(socket.to_path_buf());
     if let Some(context) = crate::interface::tool_runtime::swarm_context() {

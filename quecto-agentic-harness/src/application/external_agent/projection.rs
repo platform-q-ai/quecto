@@ -128,6 +128,9 @@ impl Projector {
             ExternalAgentEvent::BackgroundTasksChanged { tasks } => self.background_set(tasks),
             ExternalAgentEvent::RateLimit(info) => self.record_rate_limit(info),
             ExternalAgentEvent::Result(result) => return Some(self.result(result)),
+            // Which user turns an interrupt withdrew is the session's
+            // bookkeeping (#2287): nothing of the conversation changes.
+            ExternalAgentEvent::InterruptAnswered(_) => {}
             ExternalAgentEvent::Unknown { .. } => self.unknown_events += 1,
             // Only counted here: whether a skipped line ends the turn is
             // the session's call (S3), which sees the event itself.

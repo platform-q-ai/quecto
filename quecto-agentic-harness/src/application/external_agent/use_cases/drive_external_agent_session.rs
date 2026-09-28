@@ -27,7 +27,7 @@ use crate::application::external_agent::dto::{
     StreamingBehavior,
 };
 use crate::application::external_agent::ports::{
-    ExternalAgentLauncher, ExternalAgentProcess, ExternalAgentTelemetry,
+    ExternalAgentClock, ExternalAgentLauncher, ExternalAgentProcess, ExternalAgentTelemetry,
 };
 use crate::application::external_agent::session_core::{Admission, Folded, SessionCore};
 
@@ -37,6 +37,7 @@ type Process = Arc<dyn ExternalAgentProcess>;
 pub struct DriveExternalAgentSession {
     launcher: Arc<dyn ExternalAgentLauncher>,
     telemetry: Arc<dyn ExternalAgentTelemetry>,
+    clock: Arc<dyn ExternalAgentClock>,
     settings: ExternalAgentSessionSettings,
     core: Mutex<SessionCore>,
     process: Mutex<Option<Process>>,
@@ -50,11 +51,13 @@ impl DriveExternalAgentSession {
     pub fn new(
         launcher: Arc<dyn ExternalAgentLauncher>,
         telemetry: Arc<dyn ExternalAgentTelemetry>,
+        clock: Arc<dyn ExternalAgentClock>,
         settings: ExternalAgentSessionSettings,
     ) -> Self {
         Self {
             launcher,
             telemetry,
+            clock,
             settings,
             core: Mutex::default(),
             process: Mutex::default(),
@@ -68,7 +71,10 @@ impl DriveExternalAgentSession {
         let _writes = self.writes.lock().await;
         match self.core().phase {
             SessionPhase::NotStarted => {}
-            SessionPhase::Idle | SessionPhase::Busy { .. } | SessionPhase::Ended => {
+            SessionPhase::Idle
+            | SessionPhase::Busy { .. }
+            | SessionPhase::Interrupting { .. }
+            | SessionPhase::Ended => {
                 return Err(SessionRefusal::AlreadyStarted);
             }
         }
@@ -130,7 +136,9 @@ impl DriveExternalAgentSession {
         let (turn, dropped_follow_ups) = {
             let mut core = self.core();
             match core.phase {
-                SessionPhase::Idle | SessionPhase::Busy { .. } => core.end(),
+                SessionPhase::Idle
+                | SessionPhase::Busy { .. }
+                | SessionPhase::Interrupting { .. } => core.end(),
                 SessionPhase::NotStarted => return Err(SessionRefusal::NotStarted),
                 SessionPhase::Ended => return Err(SessionRefusal::Ended),
             }
@@ -143,12 +151,18 @@ impl DriveExternalAgentSession {
         let outcome = AbortOutcome {
             turn,
             dropped_follow_ups,
+            member_ended: true,
         };
         self.record(SessionRecord::Aborted {
             turn,
             dropped_follow_ups,
         });
         Ok(outcome)
+    }
+
+    /// End the member: its turn, its follow-ups and its agent's process.
+    pub async fn close(&self) -> Result<AbortOutcome, SessionRefusal> {
+        self.abort().await
     }
 
     /// Read and fold the agent's next event: `None` once the member has
@@ -182,6 +196,9 @@ impl DriveExternalAgentSession {
     }
 
     pub fn state(&self) -> SessionView {
+        debug_assert!(
+            self.clock.now() >= crate::application::external_agent::dto::AgentClockInstant(0)
+        );
         let core = self.core();
         SessionView {
             phase: core.phase,
@@ -264,11 +281,11 @@ impl DriveExternalAgentSession {
         let written = tokio::select! {
             biased;
             () = self.until_ended() => Err(SessionRefusal::Ended),
-            sent = process.send_user_turn(text) => sent.map_err(SessionRefusal::Input),
+            sent = process.send_user_turn(text) => sent.map(|_| ()).map_err(SessionRefusal::Input),
         };
         let mut core = self.core();
         match &written {
-            Ok(()) => {
+            Ok(_) => {
                 core.projector.record_user_turn(text);
             }
             Err(_) => core.write_failed(accepted),
@@ -301,5 +318,13 @@ impl DriveExternalAgentSession {
 }
 
 #[cfg(test)]
+#[path = "drive_external_agent_session_rig_tests.rs"]
+mod test_rig;
+
+#[cfg(test)]
 #[path = "drive_external_agent_session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "drive_external_agent_session_interrupt_tests.rs"]
+mod interrupt_tests;

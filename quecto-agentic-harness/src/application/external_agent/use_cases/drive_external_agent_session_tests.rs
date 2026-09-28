@@ -5,252 +5,14 @@
 //! runs is refused unless it names a `streamingBehavior`; `steer` is
 //! delivered into the running turn, `follow_up` once the turn ends.
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-
+use super::test_rig::*;
 use super::*;
 use crate::application::external_agent::dto::{
-    CredentialEnv, ExecutionState, ExternalAgentExit, ExternalAgentInputError,
-    ExternalAgentLaunchError, ExternalAgentLaunchSpec, FOLLOW_UP_QUEUE_CAPACITY, MessageRole,
-    SessionPhase, SessionRecord,
+    ExecutionState, ExternalAgentExit, FOLLOW_UP_QUEUE_CAPACITY, SessionPhase, SessionRecord,
 };
-use crate::application::external_agent::ports::{ExternalAgentProcess, PortFuture};
 use crate::domain::external_agent::stream::{
-    AssistantContent, ExternalAgentEvent, ResultEvent, SkippedLine, SkippedLineReason,
+    AssistantContent, ExternalAgentEvent, SkippedLine, SkippedLineReason,
 };
-
-const BOUND: Duration = Duration::from_secs(5);
-const GRACE: Duration = Duration::from_secs(60);
-
-/// What the test sees of the fake process.
-#[derive(Default)]
-struct Wire {
-    sent: Mutex<Vec<String>>,
-    events: Mutex<VecDeque<Option<ExternalAgentEvent>>>,
-    ready: tokio::sync::Notify,
-    closed: AtomicBool,
-    dropped: AtomicBool,
-}
-
-impl Wire {
-    fn sent(&self) -> Vec<String> {
-        self.sent.lock().unwrap().clone()
-    }
-
-    /// The agent emits `event`.
-    fn emit(&self, event: ExternalAgentEvent) {
-        self.events.lock().unwrap().push_back(Some(event));
-        self.ready.notify_one();
-    }
-
-    /// The agent's output ends.
-    fn end_output(&self) {
-        self.events.lock().unwrap().push_back(None);
-        self.ready.notify_one();
-    }
-}
-
-struct FakeProcess(Arc<Wire>);
-
-impl ExternalAgentProcess for FakeProcess {
-    fn send_user_turn<'a>(
-        &'a self,
-        text: &'a str,
-    ) -> PortFuture<'a, Result<(), ExternalAgentInputError>> {
-        Box::pin(async move {
-            match self.0.closed.load(Ordering::SeqCst) {
-                true => Err(ExternalAgentInputError::Closed),
-                false => {
-                    self.0.sent.lock().unwrap().push(text.to_string());
-                    Ok(())
-                }
-            }
-        })
-    }
-
-    fn next_event(&self) -> PortFuture<'_, Option<ExternalAgentEvent>> {
-        Box::pin(async move {
-            loop {
-                let notified = self.0.ready.notified();
-                if let Some(event) = self.0.events.lock().unwrap().pop_front() {
-                    return event;
-                }
-                notified.await;
-            }
-        })
-    }
-
-    fn close_input(&self) -> PortFuture<'_, ()> {
-        Box::pin(async move { self.0.closed.store(true, Ordering::SeqCst) })
-    }
-
-    fn exited(&self) -> PortFuture<'_, ExternalAgentExit> {
-        Box::pin(async { ExternalAgentExit::Code(0) })
-    }
-
-    fn exited_discarding_output(&self) -> PortFuture<'_, ExternalAgentExit> {
-        self.exited()
-    }
-
-    fn stderr_tail(&self) -> String {
-        String::new()
-    }
-}
-
-impl Drop for FakeProcess {
-    fn drop(&mut self) {
-        self.0.dropped.store(true, Ordering::SeqCst);
-    }
-}
-
-struct FakeLauncher {
-    wire: Arc<Wire>,
-    refuse: bool,
-    starts: Mutex<Vec<ExternalAgentLaunchSpec>>,
-}
-
-impl ExternalAgentLauncher for FakeLauncher {
-    fn start<'a>(
-        &'a self,
-        spec: ExternalAgentLaunchSpec,
-    ) -> PortFuture<'a, Result<Box<dyn ExternalAgentProcess>, ExternalAgentLaunchError>> {
-        Box::pin(async move {
-            self.starts.lock().unwrap().push(spec);
-            match self.refuse {
-                true => Err(ExternalAgentLaunchError::NotFound {
-                    program: "claude".into(),
-                    required_for: "claude-code members".into(),
-                }),
-                false => {
-                    Ok(Box::new(FakeProcess(self.wire.clone())) as Box<dyn ExternalAgentProcess>)
-                }
-            }
-        })
-    }
-}
-
-#[derive(Default)]
-struct Records(Mutex<Vec<SessionRecord>>);
-
-impl ExternalAgentTelemetry for Records {
-    fn record(&self, record: &SessionRecord) {
-        self.0.lock().unwrap().push(record.clone());
-    }
-}
-
-impl Records {
-    fn all(&self) -> Vec<SessionRecord> {
-        self.0.lock().unwrap().clone()
-    }
-
-    fn kinds(&self) -> Vec<&'static str> {
-        self.all().iter().map(SessionRecord::kind).collect()
-    }
-}
-
-struct Rig {
-    session: Arc<DriveExternalAgentSession>,
-    wire: Arc<Wire>,
-    records: Arc<Records>,
-    launcher: Arc<FakeLauncher>,
-}
-
-fn settings() -> ExternalAgentSessionSettings {
-    ExternalAgentSessionSettings {
-        launch: ExternalAgentLaunchSpec {
-            model: "claude-sonnet".into(),
-            tools: Vec::new(),
-            mcp_config: serde_json::json!({}),
-            settings: serde_json::json!({}),
-            max_budget_usd: 1.0,
-            checkout: "/work".into(),
-            member_dir: "/members/w1".into(),
-            credential: CredentialEnv {
-                name: "ANTHROPIC_API_KEY".into(),
-                value: "sk-ant-api03-SECRETSECRETSECRET".into(),
-            },
-        },
-        skipped_line_grace: GRACE,
-    }
-}
-
-fn rig_with(refuse: bool) -> Rig {
-    let wire = Arc::new(Wire::default());
-    let launcher = Arc::new(FakeLauncher {
-        wire: wire.clone(),
-        refuse,
-        starts: Mutex::default(),
-    });
-    let records = Arc::new(Records::default());
-    let session = Arc::new(DriveExternalAgentSession::new(
-        launcher.clone(),
-        records.clone(),
-        settings(),
-    ));
-    Rig {
-        session,
-        wire,
-        records,
-        launcher,
-    }
-}
-
-async fn started() -> Rig {
-    let rig = rig_with(false);
-    rig.session.start().await.expect("the member starts");
-    rig
-}
-
-impl Rig {
-    /// The next step, within [`BOUND`].
-    async fn step(&self) -> Option<SessionStep> {
-        tokio::time::timeout(BOUND, self.session.next_step())
-            .await
-            .expect("a step is bounded")
-    }
-
-    /// Emit `event` and fold it.
-    async fn feed(&self, event: ExternalAgentEvent) -> SessionStep {
-        self.wire.emit(event);
-        self.step().await.expect("the session is live")
-    }
-
-    fn phase(&self) -> SessionPhase {
-        self.session.state().phase
-    }
-}
-
-fn result(is_error: bool, terminal_reason: &str, text: Option<&str>) -> ExternalAgentEvent {
-    ExternalAgentEvent::Result(ResultEvent {
-        is_error: Some(is_error),
-        terminal_reason: Some(terminal_reason.into()),
-        result_text: text.map(str::to_string),
-        duration_ms: Some(1200),
-        ..ResultEvent::default()
-    })
-}
-
-fn completed(text: &str) -> ExternalAgentEvent {
-    result(false, "completed", Some(text))
-}
-
-fn text_block(id: &str, text: &str) -> ExternalAgentEvent {
-    ExternalAgentEvent::AssistantBlock {
-        message_id: id.into(),
-        block: AssistantContent::Text(text.into()),
-    }
-}
-
-fn user_messages(session: &DriveExternalAgentSession) -> Vec<String> {
-    session
-        .messages(0, 100)
-        .into_iter()
-        .filter(|m| m.role == MessageRole::User)
-        .map(|m| m.content)
-        .collect()
-}
 
 // quecto: `prompt` while running without `streamingBehavior` is rejected
 // with "agent is running; provide streamingBehavior" (handle_busy_prompt).
@@ -347,9 +109,11 @@ async fn queue_overflow_is_refused() {
     }
     let refusal = rig.session.follow_up("one too many").await.unwrap_err();
     assert_eq!(refusal, SessionRefusal::QueueFull);
+    // quecto's own text and bound (`uds_pending.rs`, `MAX_PENDING`).
+    assert_eq!(FOLLOW_UP_QUEUE_CAPACITY, 64);
     assert_eq!(
         refusal.to_string(),
-        "the follow-up queue is full (16); wait for the running turn to end"
+        "pending prompt queue is full; instruction was not retained"
     );
     assert_eq!(
         rig.session.state().queued_follow_ups,
@@ -384,81 +148,6 @@ async fn a_failed_turn_returns_to_idle_and_reports_the_failure() {
         rig.session.prompt("again", None).await,
         Ok(PromptAccepted::Started { turn: 2 })
     );
-}
-
-// Owner decision (#2287 risks): claude has no abort message on stdin, so
-// `abort` ends the member: its turn, its follow-ups and its process.
-#[tokio::test]
-async fn abort_ends_the_turn() {
-    let rig = started().await;
-    rig.session.prompt("one", None).await.unwrap();
-    rig.session.follow_up("two").await.unwrap();
-    // A reader is waiting on the stream when the abort lands.
-    let reader = tokio::spawn({
-        let session = rig.session.clone();
-        async move { session.next_step().await }
-    });
-    tokio::task::yield_now().await;
-    assert_eq!(
-        rig.session.abort().await,
-        Ok(AbortOutcome {
-            turn: Some(1),
-            dropped_follow_ups: 1,
-        })
-    );
-    let step = tokio::time::timeout(BOUND, reader)
-        .await
-        .expect("the waiting reader is released")
-        .unwrap();
-    assert_eq!(step, None, "the aborted member has no more steps");
-    assert!(
-        rig.wire.dropped.load(Ordering::SeqCst),
-        "the agent process is ended"
-    );
-    assert_eq!(rig.wire.sent(), ["one"], "the follow-up is dropped");
-    assert_eq!(rig.phase(), SessionPhase::Ended);
-    assert_eq!(rig.session.state().queued_follow_ups, 0);
-    assert_eq!(
-        rig.session.prompt("three", None).await,
-        Err(SessionRefusal::Ended)
-    );
-    assert_eq!(rig.session.abort().await, Err(SessionRefusal::Ended));
-    assert_eq!(rig.session.next_step().await, None);
-}
-
-#[tokio::test]
-async fn an_idle_abort_ends_the_member_without_a_turn() {
-    let rig = started().await;
-    assert_eq!(
-        rig.session.abort().await,
-        Ok(AbortOutcome {
-            turn: None,
-            dropped_follow_ups: 0,
-        })
-    );
-    assert!(rig.wire.dropped.load(Ordering::SeqCst));
-    assert_eq!(rig.phase(), SessionPhase::Ended);
-}
-
-// S2 review: a skipped line may have been the turn's `result`. The turn is
-// given up once the stream then stays quiet for the grace period; the
-// next follow-up starts.
-#[tokio::test(start_paused = true)]
-async fn a_skipped_line_then_silence_ends_the_turn_as_lost() {
-    let rig = started().await;
-    rig.session.prompt("one", None).await.unwrap();
-    rig.session.follow_up("two").await.unwrap();
-    let skipped = ExternalAgentEvent::LineSkipped(SkippedLine {
-        reason: SkippedLineReason::OverCap,
-        bytes: 17 * 1024 * 1024,
-    });
-    assert!(matches!(rig.feed(skipped).await, SessionStep::Folded(_)));
-    let started = tokio::time::Instant::now();
-    let step = rig.session.next_step().await;
-    assert_eq!(step, Some(SessionStep::TurnLost { turn: 1 }));
-    assert!(started.elapsed() >= GRACE, "only after the grace period");
-    assert_eq!(rig.wire.sent(), ["one", "two"], "the follow-up starts");
-    assert_eq!(rig.phase(), SessionPhase::Busy { turn: 2 });
 }
 
 #[tokio::test(start_paused = true)]
@@ -613,6 +302,10 @@ async fn every_decision_and_effect_is_recorded_without_its_text() {
                 cost_micro_usd: 0,
             },
             SessionRecord::FollowUpStarted { turn: 2, bytes },
+            SessionRecord::Interrupted {
+                turn: 2,
+                cause: "abort",
+            },
             SessionRecord::Aborted {
                 turn: Some(2),
                 dropped_follow_ups: 0,
@@ -646,4 +339,58 @@ async fn a_refused_start_and_an_exit_are_recorded() {
         duration_ms: None,
         cost_micro_usd: 0,
     }));
+}
+
+// Telemetry nit (#2287 review): a tool's name is recorded bounded, with
+// only allowlisted characters, whatever the agent sent.
+#[tokio::test]
+async fn a_recorded_tool_name_is_bounded_and_allowlisted() {
+    let rig = started().await;
+    rig.session.prompt("one", None).await.unwrap();
+    for name in [
+        "mcp__board__board_inbox".to_string(),
+        format!("Bash\u{1b}[31m {}", "x".repeat(200)),
+        "é".repeat(40),
+    ] {
+        rig.feed(ExternalAgentEvent::AssistantBlock {
+            message_id: "m1".into(),
+            block: AssistantContent::ToolUse {
+                id: "t1".into(),
+                name,
+                input: serde_json::json!({}),
+            },
+        })
+        .await;
+    }
+    let tools: Vec<String> = rig
+        .records
+        .all()
+        .into_iter()
+        .filter_map(|record| match record {
+            SessionRecord::ToolCalled { tool, .. } => Some(tool),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tools[0], "mcp__board__board_inbox");
+    assert_eq!(tools[1], format!("Bash??31m?{}", "x".repeat(54)));
+    assert_eq!(tools[2], "?".repeat(40), "one ? per character");
+    for tool in &tools {
+        assert!(tool.len() <= crate::application::external_agent::dto::TOOL_NAME_RECORD_BYTES);
+    }
+}
+
+// A result names the user turns it consumed (claude's
+// `user_message_uuids`): a steer folded mid-turn is answered by the turn's
+// one result.
+#[tokio::test]
+async fn a_result_naming_the_steer_ends_the_steered_turn() {
+    let rig = started().await;
+    rig.session.prompt("one", None).await.unwrap();
+    rig.session.steer("two").await.unwrap();
+    let SessionStep::Folded(step) = rig.feed(answered(&["u1", "u2"], "completed", "done")).await
+    else {
+        panic!("the result is folded")
+    };
+    assert!(step.turn_end.is_some());
+    assert_eq!(rig.phase(), SessionPhase::Idle);
 }

@@ -36,5 +36,7 @@ impl std::fmt::Debug for ClaudeMemberHandles {
 }
 
 /// Composition's builder of a claude-code member's handles (#2287),
-/// injected through [`super::super::CliComposition`].
-pub type ClaudeMemberHandlesBuilder = fn(&ClaudeMemberSettings) -> ClaudeMemberHandles;
+/// injected through [`super::super::CliComposition`]: the handles, or why
+/// the member cannot be built (a refusal to print).
+pub type ClaudeMemberHandlesBuilder =
+    fn(&ClaudeMemberSettings) -> Result<ClaudeMemberHandles, String>;

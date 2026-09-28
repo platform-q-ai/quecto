@@ -64,7 +64,7 @@ use super::environment::{MemberEnvironmentError, check_credential, member_enviro
 use super::stream_json::StreamJsonDecoder;
 use crate::application::external_agent::dto::{
     EXTERNAL_AGENT_STDERR_TAIL_BYTES, ExternalAgentExit, ExternalAgentInputError,
-    ExternalAgentLaunchError, ExternalAgentLaunchSpec,
+    ExternalAgentLaunchError, ExternalAgentLaunchSpec, UserTurnId,
 };
 use crate::application::external_agent::ports::{
     ExternalAgentLauncher, ExternalAgentProcess, PortFuture,
@@ -521,16 +521,21 @@ impl ExternalAgentProcess for ClaudeCodeProcess {
     fn send_user_turn<'a>(
         &'a self,
         text: &'a str,
-    ) -> PortFuture<'a, Result<(), ExternalAgentInputError>> {
+    ) -> PortFuture<'a, Result<UserTurnId, ExternalAgentInputError>> {
         Box::pin(async move {
             self.input
                 .write_line(user_message_line(text))
                 .await
+                .map(|()| UserTurnId(String::new()))
                 .map_err(|error| match error {
                     LineWriteError::Closed => ExternalAgentInputError::Closed,
                     LineWriteError::Failed(detail) => ExternalAgentInputError::Write(detail),
                 })
         })
+    }
+
+    fn interrupt(&self) -> PortFuture<'_, Result<(), ExternalAgentInputError>> {
+        Box::pin(async { Ok(()) })
     }
 
     fn next_event(&self) -> PortFuture<'_, Option<ExternalAgentEvent>> {

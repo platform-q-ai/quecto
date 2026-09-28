@@ -117,10 +117,16 @@ fn the_backend_parameter_selects_the_brain_under_the_backend_rule() {
             "{input}"
         );
     }
-    let schema: serde_json::Value =
-        serde_json::from_str(&SpawnTool::new(vec![]).definition().parameters_schema).unwrap();
-    assert_eq!(
-        schema["properties"]["backend"]["enum"],
-        serde_json::json!(["quecto", "claude_code"])
+    // #2287 review (M3): not advertised until S4 (#2288) serves the
+    // member; S4 adds the property back to the schema.
+    let definition = SpawnTool::new(vec![]).definition();
+    let schema: serde_json::Value = serde_json::from_str(&definition.parameters_schema).unwrap();
+    assert!(
+        schema["properties"].get("backend").is_none(),
+        "{}",
+        definition.parameters_schema
     );
+    assert!(!definition.parameters_schema.contains("claude_code"));
+    assert!(!definition.description.contains("backend"));
+    assert!(!definition.description.contains("claude_code"));
 }
