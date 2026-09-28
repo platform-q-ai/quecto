@@ -102,10 +102,13 @@ pub const CLAUDE_CODE_ANTHROPIC_MODELS_ONLY: &str =
 /// may. `ClaudeCode` may only when every one of these holds (O1): the
 /// launcher is a swarm participant; the launch goes into its own container
 /// (`container` omitted); no workflow is requested
-/// ([`crate::domain::swarm::validate_workflow`]); no `effort` is set; and
-/// it sets no field the member would ignore (#2287 review): `read_only`,
-/// `disable_tools`, `system`, `config`, or a model of another provider.
-/// Each unmet condition has its own refusal, checked in that order.
+/// ([`crate::domain::swarm::validate_workflow`]); the launch hands the
+/// child no restriction outside `config` that it would drop (#2287 review
+/// round 2, #957): no inherited tool policy, no forwarded config; no
+/// `effort` is set; and it sets no field the member would ignore (#2287
+/// review): `read_only`, `disable_tools`, `system`, `config`, or a model of
+/// another provider. Each unmet condition has its own refusal, checked in
+/// that order.
 pub fn validate_backend(
     config: &SubagentConfig,
     context: BackendLaunchContext,
@@ -139,8 +142,14 @@ fn claude_code_launch_allowed(
         config_path,
         model,
     } = config;
+    // The context's destructuring is an allowlist too.
+    let BackendLaunchContext {
+        launcher_is_swarm_participant,
+        inherited_tool_policy,
+        forwards_config,
+    } = context;
     let refuse = |reason: &str| Err(DomainError::Tool(reason.to_string()));
-    match (context.launcher_is_swarm_participant, container) {
+    match (launcher_is_swarm_participant, container) {
         (true, ContainerSelection::Local) => {}
         (true, _) => return refuse(CLAUDE_CODE_OWN_CONTAINER_ONLY),
         (false, _) => return refuse(CLAUDE_CODE_WORKERS_ONLY),
@@ -150,6 +159,8 @@ fn claude_code_launch_allowed(
         *workflow || *workflow_guards || workflow_spec.is_some(),
     )?;
     let unhonoured = [
+        (inherited_tool_policy, CLAUDE_CODE_NO_INHERITED_TOOL_POLICY),
+        (forwards_config, CLAUDE_CODE_NO_FORWARDED_CONFIG),
         (effort.is_some(), CLAUDE_CODE_TAKES_NO_EFFORT),
         (*read_only, CLAUDE_CODE_TAKES_NO_READ_ONLY),
         (

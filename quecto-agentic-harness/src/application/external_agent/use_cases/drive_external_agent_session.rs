@@ -21,7 +21,22 @@
 //!   interrupt cannot be written, claude's state is unknown and the member
 //!   is ended.
 //! - `close` ends the member: its turn, its follow-ups and its process. A
-//!   reader or a writer waiting on it is released.
+//!   reader or a writer waiting on it is released. It takes no write gate
+//!   (a write blocked on a full pipe must not hold it up), so every
+//!   decision taken after an await allows for the member having ended.
+//!
+//! Two bounds are heuristics, not claude's word:
+//! - The lost-turn timer: a skipped line followed by
+//!   [`ExternalAgentSessionSettings::skipped_line_grace`] of silence is
+//!   taken for a lost `result`. A turn that really goes on generating in
+//!   silence for longer than that after a skipped line (a long tool run)
+//!   is interrupted by mistake; only that turn is lost, and the member
+//!   lives on if claude answers the interrupt.
+//! - The owed-result bound: an interrupted turn has
+//!   [`ExternalAgentSessionSettings::interrupt_grace`] to deliver every
+//!   result it owes (or have them withdrawn). A turn slower than that to
+//!   stop (a tool that ignores the abort) ends the member, whose state is
+//!   then unknown.
 //!
 //! Writes are serialised (a follow-up's turn cannot be overtaken by a
 //! steer), and every decision and effect is a [`SessionRecord`]. Time is
@@ -216,6 +231,13 @@ impl DriveExternalAgentSession {
                 return Some(step);
             }
             let process = self.slot().clone()?;
+            // An overdue interrupt is acted on before another event is
+            // read: a stream that keeps talking cannot starve it.
+            if self.core().interrupt_overdue(self.clock.now()).is_some()
+                && let Some(step) = self.abandon_if_overdue().await
+            {
+                return Some(step);
+            }
             let wait = self.core().wait();
             let timer = self.timer(wait);
             // `None`: the timer ran out; `Some(None)`: the output ended.
@@ -314,14 +336,21 @@ impl DriveExternalAgentSession {
             written = process.interrupt() => written,
         };
         drop(process);
-        match written {
-            Ok(()) => {
-                let deadline = self.deadline_after(self.settings.interrupt_grace);
-                self.core().interrupting(turn, deadline);
+        let deadline = self.deadline_after(self.settings.interrupt_grace);
+        // `close` may have ended the member while the interrupt was being
+        // written: then there is nothing to wait for, or to abandon.
+        let mut core = self.core();
+        match (written, core.ended()) {
+            (_, true) => Interrupt::MemberEnded,
+            (Ok(()), false) => {
+                let waiting = core.interrupting(turn, deadline);
+                assert!(waiting, "a member that has not ended waits");
+                drop(core);
                 self.record(SessionRecord::Interrupted { turn, cause });
                 Interrupt::Written
             }
-            Err(_) => {
+            (Err(_), false) => {
+                drop(core);
                 self.abandon(turn);
                 Interrupt::Abandoned
             }
@@ -344,11 +373,11 @@ impl DriveExternalAgentSession {
     /// Interrupted turn `turn` never answered, or could not be
     /// interrupted: claude's state is unknown, so the member is ended.
     fn abandon(&self, turn: u64) -> SessionStep {
-        self.core().end();
+        let (_, dropped_follow_ups) = self.core().end();
         self.release_process();
         self.record(SessionRecord::Abandoned {
             turn,
-            dropped_follow_ups: 0,
+            dropped_follow_ups,
         });
         SessionStep::Abandoned { turn }
     }

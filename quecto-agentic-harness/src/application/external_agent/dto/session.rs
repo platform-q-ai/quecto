@@ -46,15 +46,28 @@ pub const FOLLOW_UP_QUEUE_CAPACITY: usize = 64;
 /// overwrites the last slot past that), so a 65th could never be named and
 /// the session would stay busy for good. One below the CLI's bound.
 pub const USER_TURNS_PER_TURN_CAPACITY: usize = 63;
+const _: () = assert!(USER_TURNS_PER_TURN_CAPACITY < 64, "below the CLI's 64 ids");
 
 /// How long the stream may stay quiet after a skipped line of a running
 /// turn before the turn is given up as lost: the skipped line may have been
 /// its `result`, which would never come again.
+///
+/// A heuristic, with a known limit: a turn that goes on generating in
+/// silence for longer than this right after a skipped line that was not
+/// its result (a long tool run) is interrupted by mistake. Only that turn
+/// is lost: the member lives on if claude answers the interrupt within
+/// [`INTERRUPT_GRACE`]. Any event after the skipped line disarms it.
 pub const SKIPPED_LINE_GRACE: Duration = Duration::from_secs(60);
 
 /// How long an interrupted turn may take to answer: its `result`, and the
 /// withdrawal of every user turn it owed, before the member is ended
 /// (its state is then unknown, so nothing more may be written to it).
+///
+/// The bound on owed results, from the interrupt's write: claude answers
+/// an interrupt at once and ends the stopped turn with its one `result`,
+/// but a turn slower than this to stop (a tool that ignores the abort)
+/// ends the member rather than leaving it busy for good. The interrupt's
+/// own answer does not extend it.
 pub const INTERRUPT_GRACE: Duration = Duration::from_secs(30);
 
 /// What a member session is started with.

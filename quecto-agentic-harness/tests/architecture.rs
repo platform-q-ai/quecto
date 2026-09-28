@@ -5844,12 +5844,73 @@ fn external_agent_application_refusals(path: &str, source: &str) -> Vec<String> 
         .into_iter()
         .filter(|dep| !external_agent_application_dependency_allowed(dep))
         .collect();
-    // Paths inside a macro (`tokio::select!`) escape the parse above:
-    // the session's time is its clock port's, never tokio's (#2287).
-    if source.contains("tokio::time") {
-        refused.push("tokio::time".into());
-    }
+    // Paths inside a macro's tokens (`tokio::select!`) are read by the
+    // parse above only when crate-relative: every other one is read here,
+    // however it is spaced, so the session's time is its clock port's,
+    // never tokio's (#2287 review round 2).
+    let file = syn::parse_file(source).unwrap_or_else(|_| panic!("parse {path}"));
+    refused.extend(
+        macro_token_paths(&file)
+            .into_iter()
+            .filter(|dep| !external_agent_application_dependency_allowed(dep)),
+    );
     refused
+}
+
+/// Every path of two or more segments spelt inside a macro's tokens whose
+/// root is not `crate`, `super` or `self` (those the dependency parse reads
+/// and resolves): `tokio :: time :: sleep` and `::std::time::Instant`
+/// alike.
+fn macro_token_paths(file: &syn::File) -> Vec<String> {
+    use proc_macro2::TokenTree;
+    use syn::visit::Visit;
+    fn paths_in(stream: proc_macro2::TokenStream, found: &mut Vec<String>) {
+        let tokens: Vec<TokenTree> = stream.into_iter().collect();
+        let mut at = 0;
+        while at < tokens.len() {
+            let first = match &tokens[at] {
+                TokenTree::Group(group) => {
+                    paths_in(group.stream(), found);
+                    at += 1;
+                    continue;
+                }
+                TokenTree::Ident(first) => first.to_string(),
+                TokenTree::Punct(_) | TokenTree::Literal(_) => {
+                    at += 1;
+                    continue;
+                }
+            };
+            let mut segments = vec![first];
+            let mut next = at + 1;
+            while let (
+                Some(TokenTree::Punct(a)),
+                Some(TokenTree::Punct(b)),
+                Some(TokenTree::Ident(segment)),
+            ) = (tokens.get(next), tokens.get(next + 1), tokens.get(next + 2))
+            {
+                if a.as_char() != ':' || b.as_char() != ':' {
+                    break;
+                }
+                segments.push(segment.to_string());
+                next += 3;
+            }
+            let crate_relative = matches!(segments[0].as_str(), "crate" | "super" | "self");
+            if segments.len() > 1 && !crate_relative {
+                found.push(segments.join("::"));
+            }
+            at = next;
+        }
+    }
+    struct Macros(Vec<String>);
+    impl<'ast> Visit<'ast> for Macros {
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            paths_in(mac.tokens.clone(), &mut self.0);
+            syn::visit::visit_macro(self, mac);
+        }
+    }
+    let mut macros = Macros(Vec::new());
+    macros.visit_file(file);
+    macros.0
 }
 
 #[test]
