@@ -74,7 +74,6 @@ fn owner_state_names_match_the_python_table() {
 fn a_fractional_last_activity_compares_exactly() {
     // 1000.0 - 700.1 is 299.9 minus a rounding error: still active, as in Python.
     let active = owner_state(Some("live"), false, Some(700.1), 1000.0, OWNER_IDLE_AFTER);
-    assert!(1000.0 - 700.1 < OWNER_IDLE_AFTER);
     assert_eq!(active, OwnerState::Active);
     let idle = owner_state(Some("live"), false, Some(699.9), 1000.0, OWNER_IDLE_AFTER);
     assert_eq!(idle, OwnerState::Idle);

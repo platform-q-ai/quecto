@@ -56,25 +56,156 @@ pub struct NotificationState {
     pub unread: BTreeSet<i64>,
 }
 
-/// The live members (never `actor`) that `events` wake, sorted by id.
+/// The live members that `events` wake, sorted by id: never `actor`, and
+/// only while the run is running. Each event is judged from its own actor's
+/// view (`event.actor`, else `actor`), so the sender and a receiver's
+/// re-check agree. A message wakes its recipient while it is unread; an
+/// amended contract wakes everyone; evidence and a confirmed death wake the
+/// coordinator, as does a submitted or blocked task still in that status.
+/// Whenever ready work exists, a ready-work event wakes its takers.
 pub fn notification_targets(
-    _run: &RunRecord,
-    _actor: &str,
-    _members: &[MemberRecord],
-    _events: &[NotificationEvent],
-    _state: &NotificationState,
+    run: &RunRecord,
+    actor: &str,
+    members: &[MemberRecord],
+    events: &[NotificationEvent],
+    state: &NotificationState,
 ) -> Vec<MemberRecord> {
-    Vec::new()
+    match run.status.as_str() {
+        "running" => {}
+        _ => return Vec::new(),
+    }
+    // Python's dict comprehensions: a later duplicate id wins.
+    let tasks: BTreeMap<i64, &TaskSummary> =
+        state.tasks.iter().map(|task| (task.id, task)).collect();
+    let ready = tasks.values().any(|task| ready_to_take(task, &tasks));
+    let live: BTreeMap<&str, &MemberRecord> = members
+        .iter()
+        .filter(|member| is_live(member) && member.id != actor)
+        .map(|member| (member.id.as_str(), member))
+        .collect();
+    let everyone: BTreeSet<String> = members
+        .iter()
+        .filter(|member| is_live(member))
+        .map(|member| member.id.clone())
+        .collect();
+    let mut targets = BTreeSet::new();
+    for event in events {
+        let action = event.action.as_str();
+        match action {
+            "message_accepted" => {
+                let unread =
+                    detail_id(event, "message").is_some_and(|id| state.unread.contains(&id));
+                let recipient = detail(event, "recipient").and_then(Value::as_str);
+                if let (true, Some(recipient)) = (unread, recipient) {
+                    targets.insert(recipient.to_owned());
+                }
+            }
+            "amended" => targets.extend(live.keys().map(|id| (*id).to_owned())),
+            "evidence" | "death_confirmed" => {
+                targets.insert(run.coordinator.clone());
+            }
+            "submitted" | "blocked" => {
+                let task = detail_id(event, "task").and_then(|id| tasks.get(&id));
+                if task.is_some_and(|task| task.status.as_str() == action) {
+                    targets.insert(run.coordinator.clone());
+                }
+            }
+            _ => {}
+        }
+        if ready && READY_WORK_ACTIONS.contains(&action) {
+            let event_actor = event.actor.as_deref().unwrap_or(actor);
+            let mut takers = ready_work_takers(run, event_actor, &everyone, &tasks);
+            if OWNERSHIP_ACTIONS.contains(&action) {
+                takers.remove(&run.coordinator);
+            }
+            targets.extend(takers);
+        }
+    }
+    let woken: Vec<MemberRecord> = targets
+        .iter()
+        .filter_map(|identity| live.get(identity.as_str()).map(|member| (*member).clone()))
+        .collect();
+    debug_assert!(
+        woken
+            .iter()
+            .all(|member| member.id != actor && is_live(member)),
+        "only live members other than the actor are woken"
+    );
+    woken
 }
 
 /// Who an event hands ready work to (#2127), from the event actor's view.
+///
+/// A member holding a claimed, blocked or submitted task has its work, so
+/// ready work is for the others. When none of them but the coordinator (which
+/// never claims) is free, members that only wait for review (parked) take it
+/// after all, so it is never left idle. The event's actor is never a taker.
+/// As in Python, a free set holding anyone but the coordinator is returned
+/// whole, the coordinator included.
 pub fn ready_work_takers(
-    _run: &RunRecord,
-    _event_actor: &str,
-    _everyone: &BTreeSet<String>,
-    _tasks: &BTreeMap<i64, &TaskSummary>,
+    run: &RunRecord,
+    event_actor: &str,
+    everyone: &BTreeSet<String>,
+    tasks: &BTreeMap<i64, &TaskSummary>,
 ) -> BTreeSet<String> {
-    BTreeSet::new()
+    let others = || {
+        everyone
+            .iter()
+            .filter(|identity| identity.as_str() != event_actor)
+    };
+    let holding = owners(tasks, &WORK_HOLDING_STATUSES);
+    let free: BTreeSet<String> = others()
+        .filter(|identity| !holding.contains(identity.as_str()))
+        .cloned()
+        .collect();
+    if free.iter().any(|identity| *identity != run.coordinator) {
+        return free;
+    }
+    let working = owners(tasks, &WORKING_STATUSES);
+    others()
+        .filter(|identity| !working.contains(identity.as_str()))
+        .cloned()
+        .collect()
+}
+
+fn is_live(member: &MemberRecord) -> bool {
+    member.status.as_str() == "live"
+}
+
+/// A ready task whose every dependency the board holds as completed.
+fn ready_to_take(task: &TaskSummary, tasks: &BTreeMap<i64, &TaskSummary>) -> bool {
+    task.status.as_str() == "ready"
+        && task.dependencies.iter().all(|dependency| {
+            tasks
+                .get(dependency)
+                .is_some_and(|dependency| dependency.status.as_str() == "completed")
+        })
+}
+
+/// The owners (a nonempty name) of the tasks in one of `statuses`.
+fn owners<'a>(tasks: &BTreeMap<i64, &'a TaskSummary>, statuses: &[&str]) -> BTreeSet<&'a str> {
+    tasks
+        .values()
+        .filter(|task| statuses.contains(&task.status.as_str()))
+        .filter_map(|task| task.owner.as_deref().filter(|owner| !owner.is_empty()))
+        .collect()
+}
+
+/// A key the board always writes into this action's detail. Python raises
+/// `KeyError` without it; here a missing key matches nothing in release.
+fn detail<'a>(event: &'a NotificationEvent, key: &str) -> Option<&'a Value> {
+    let value = event.detail.get(key);
+    debug_assert!(
+        value.is_some(),
+        "a {} event carries its key {key}",
+        event.action
+    );
+    value
+}
+
+/// An integer id from the detail; any other JSON value matches no id.
+fn detail_id(event: &NotificationEvent, key: &str) -> Option<i64> {
+    detail(event, key).and_then(Value::as_i64)
 }
 
 #[cfg(test)]

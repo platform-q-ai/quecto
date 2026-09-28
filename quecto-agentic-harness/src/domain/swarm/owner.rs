@@ -22,36 +22,71 @@ pub enum OwnerState {
 
 impl OwnerState {
     pub fn as_str(self) -> &'static str {
-        "unknown"
+        match self {
+            Self::Active => "active",
+            Self::Idle => "idle",
+            Self::Reserved => "reserved",
+            Self::Lost => "lost",
+            Self::Dead => "dead",
+            Self::Unknown => "unknown",
+        }
     }
 
-    /// Whether `send` accepts an owner in this state as a recipient.
+    /// Whether `send` accepts an owner in this state as a recipient
+    /// ([`ADDRESSABLE_OWNER_STATES`]).
     pub fn addressable(self) -> bool {
-        false
+        match self {
+            Self::Active | Self::Idle => true,
+            Self::Reserved | Self::Lost | Self::Dead | Self::Unknown => false,
+        }
     }
 }
 
-/// The owner's state from its member status, whether a lost-scope record is
-/// newer than its latest activation, and its most recent board event.
+/// The store's affirmative view of a task owner (#1969), read-side only.
+///
+/// Authoritative store signals first: `dead` (the launcher's harness
+/// confirmed the exit), `lost` (a `scope_unknown` record newer than the
+/// member's latest activation), `reserved` (admitted, never launched). Only a
+/// `live` member reads `active`/`idle` from its most recent board event
+/// (`last_activity`, Unix seconds) against the store clock `now`. Every other
+/// status, and a live member without an event, is `unknown`. A provider
+/// suspension is a harness fact the store cannot see and is never claimed.
 pub fn owner_state(
-    _member_status: Option<&str>,
-    _lost: bool,
-    _last_activity: Option<f64>,
-    _now: f64,
-    _idle_after: f64,
+    member_status: Option<&str>,
+    lost: bool,
+    last_activity: Option<f64>,
+    now: f64,
+    idle_after: f64,
 ) -> OwnerState {
-    OwnerState::Unknown
+    match (member_status, lost, last_activity) {
+        (Some("dead"), _, _) => OwnerState::Dead,
+        (Some("live" | "reserved"), true, _) => OwnerState::Lost,
+        (Some("reserved"), false, _) => OwnerState::Reserved,
+        (Some("live"), false, Some(at)) if now - at >= idle_after => OwnerState::Idle,
+        (Some("live"), false, Some(_)) => OwnerState::Active,
+        _ => OwnerState::Unknown,
+    }
 }
 
 /// How the coordinator moves work off an owner `send` cannot reach.
-pub fn owner_recovery(_state: OwnerState) -> &'static str {
-    ""
+pub fn owner_recovery(state: OwnerState) -> &'static str {
+    match state {
+        OwnerState::Dead => "recover(task) or revoke(task, reason)",
+        OwnerState::Lost => {
+            "resume the run (agent_cmd swarm_control resume), then revoke(task, reason)"
+        }
+        OwnerState::Active | OwnerState::Idle | OwnerState::Reserved | OwnerState::Unknown => {
+            "revoke(task, reason)"
+        }
+    }
 }
 
-/// When a live owner last active at `last_activity` turns idle; `None` once
-/// it already has.
-pub fn idle_transition(_last_activity: Option<f64>, _now: f64, _idle_after: f64) -> Option<f64> {
-    None
+/// When a live owner last active at `last_activity` turns idle: that instant
+/// while it is still after `now`, else `None` (read side; nothing schedules
+/// anything on it).
+pub fn idle_transition(last_activity: Option<f64>, now: f64, idle_after: f64) -> Option<f64> {
+    let at = last_activity? + idle_after;
+    (at > now).then_some(at)
 }
 
 #[cfg(test)]

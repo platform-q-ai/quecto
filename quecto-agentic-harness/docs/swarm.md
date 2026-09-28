@@ -443,8 +443,9 @@ checks and reservation writes share the same immediate transaction. SQL-facing
 workbench/task adapters retain dispatch and the existing task implementation.
 The board is moving to Rust (#2265): `src/domain/swarm/policy.rs`,
 `records.rs` and `validation.rs` port that policy with identical decisions and
-error text, and the Python board stays the one in use until the harness
-switches over.
+error text; `notification.rs`, `owner.rs` and `usage.rs` port the
+wake-notification, owner-liveness and usage-budget decisions (#2267). The
+Python board stays the one in use until the harness switches over.
 
 The Rust domain (`src/domain/swarm/mod.rs`) holds the typed membership, process
 identity and outcome vocabulary; the coordination, run-control, process control
