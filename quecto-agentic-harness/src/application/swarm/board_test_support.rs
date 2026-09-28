@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::application::swarm::dto::{
-    MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow, RunStatusRow,
+    LaunchIdentity, MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow,
+    RunStatusRow,
 };
 use crate::application::swarm::ports::{
     BoardEncoding, BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
@@ -138,6 +139,15 @@ impl BoardRuns for MemoryTransaction<'_> {
         }))
     }
 
+    fn run_coordinator(&self) -> Result<Option<Option<String>>, BoardError> {
+        Ok(self
+            .state
+            .borrow()
+            .run
+            .as_ref()
+            .map(|run| run.record.coordinator.clone()))
+    }
+
     fn insert_run(&self, run: &NewRun) -> Result<(), BoardError> {
         self.note(format!("insert_run {}", run.id));
         let mut state = self.state.borrow_mut();
@@ -250,6 +260,102 @@ impl BoardMembers for MemoryTransaction<'_> {
         ));
         Ok(())
     }
+
+    fn member_row(
+        &self,
+        id: &str,
+        reservation: Option<&str>,
+    ) -> Result<Option<MemberRow>, BoardError> {
+        Ok(self
+            .state
+            .borrow()
+            .members
+            .iter()
+            .find(|row| {
+                row.text("id") == Some(id)
+                    && reservation.is_none_or(|wanted| row.text("reservation") == Some(wanted))
+            })
+            .cloned())
+    }
+
+    fn reserve_member(
+        &self,
+        id: &str,
+        reservation: &str,
+        launcher: &str,
+    ) -> Result<(), BoardError> {
+        self.note(format!("reserve_member {id} by {launcher}"));
+        self.insert_member(&NewMember {
+            id: id.to_owned(),
+            reservation: reservation.to_owned(),
+            status: MemberState::RESERVED,
+            pid: Value::Null,
+            started: Value::Null,
+            socket: Value::Null,
+            launcher: Some(launcher.to_owned()),
+        })
+    }
+
+    fn activate_member(
+        &self,
+        id: &str,
+        launch: &LaunchIdentity,
+        socket: Option<&str>,
+    ) -> Result<(), BoardError> {
+        self.note(format!("activate_member {id}"));
+        self.update(id, |row| {
+            set(row, "status", Value::from("live"));
+            set(row, "pid", Value::from(launch.pid));
+            set(row, "started", Value::from(launch.started.as_str()));
+            set(row, "socket", socket.map_or(Value::Null, Value::from));
+        });
+        Ok(())
+    }
+
+    fn record_launch(&self, id: &str, launch: &LaunchIdentity) -> Result<(), BoardError> {
+        self.note(format!("record_launch {id}"));
+        self.update(id, |row| {
+            set(row, "pid", Value::from(launch.pid));
+            set(row, "started", Value::from(launch.started.as_str()));
+        });
+        Ok(())
+    }
+
+    fn mark_member_dead_unlaunched(&self, id: &str) -> Result<(), BoardError> {
+        self.note(format!("mark_member_dead_unlaunched {id}"));
+        self.update(id, |row| set(row, "status", Value::from("dead")));
+        Ok(())
+    }
+
+    fn set_socket(&self, id: &str, socket: Option<&str>) -> Result<(), BoardError> {
+        self.note(format!("set_socket {id}"));
+        self.update(id, |row| {
+            set(row, "socket", socket.map_or(Value::Null, Value::from));
+        });
+        Ok(())
+    }
+}
+
+impl MemoryTransaction<'_> {
+    /// `UPDATE members SET … WHERE id=?`: every row with that id.
+    fn update(&self, id: &str, change: impl Fn(&mut MemberRow)) {
+        let mut state = self.state.borrow_mut();
+        for row in &mut state.members {
+            if row.text("id") == Some(id) {
+                change(row);
+            }
+        }
+    }
+}
+
+/// Sets `column` of `row`, which the board's rows all hold.
+fn set(row: &mut MemberRow, column: &str, value: Value) {
+    let slot = row
+        .columns
+        .iter_mut()
+        .find(|(name, _)| name == column)
+        .expect("the board's member rows hold every column");
+    slot.1 = value;
 }
 
 impl BoardEvents for MemoryTransaction<'_> {

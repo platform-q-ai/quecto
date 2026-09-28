@@ -12,13 +12,22 @@ const DISPATCH: &str = "src/infrastructure/tools/swarm_board_dispatch.rs";
 
 /// Method names only a test or `test-support` build serves, by the
 /// `Method` variant each parses to.
-const TEST_ONLY: [(&str, &str); 2] = [
+const TEST_ONLY: [(&str, &str); 3] = [
     ("create_run", "CreateRun"),
     ("bootstrap_run", "BootstrapRun"),
+    ("bootstrap_join", "BootstrapJoin"),
 ];
 
 /// Method names every build serves.
-const SERVED: [(&str, &str); 2] = [("_status", "Status"), ("_snapshot", "Snapshot")];
+const SERVED: [(&str, &str); 7] = [
+    ("_status", "Status"),
+    ("_snapshot", "Snapshot"),
+    ("_admit", "Admit"),
+    ("_activate", "Activate"),
+    ("_record_launch", "RecordLaunch"),
+    ("_release_unlaunched", "ReleaseUnlaunched"),
+    ("_socket", "Socket"),
+];
 
 /// Each `Method` variant and whether it is test-gated.
 fn variants(file: &syn::File) -> Vec<(String, bool)> {

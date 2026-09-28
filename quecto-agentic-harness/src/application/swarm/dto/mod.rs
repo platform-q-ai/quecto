@@ -4,9 +4,15 @@
 //! a member's JSON arguments and renders the responses in Python's shape.
 
 pub mod location;
+pub mod membership;
 pub mod run;
 
 pub use location::BoardLocation;
+pub use membership::{
+    ActivateMemberRequest, AdmissionDecision, AdmitMemberRequest, AdmittedMember, JoinRunRequest,
+    Joined, LaunchIdentity, RecordMemberLaunchRequest, RegisterMemberSocketRequest,
+    ReleaseUnlaunchedMemberRequest,
+};
 pub use run::{
     BootstrapRunRequest, Bootstrapped, CreateBranch, CreateRunRequest, CreatedRun,
     MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow, RunSnapshotView,

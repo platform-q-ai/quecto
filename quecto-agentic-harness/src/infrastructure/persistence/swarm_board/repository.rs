@@ -29,16 +29,13 @@ use super::ledger;
 use super::py_json::{self, PyJson};
 use super::store::{BoardStore, CONTENDED, TransactionError, Undecodable, contended};
 use crate::application::swarm::dto::{
-    BoardLocation, MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow,
-    RunStatusRow,
+    BoardLocation, MemberRow, NewRun, RunContract, RunOwnerRow, RunStatusRow,
 };
-use crate::application::swarm::ports::{
-    BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork,
-};
-use crate::domain::swarm::{BoardError, MemberRecord, MemberState, RunRecord, RunState};
+use crate::application::swarm::ports::{BoardEvents, BoardRepository, BoardRuns, BoardWork};
+use crate::domain::swarm::{BoardError, RunRecord, RunState};
 
 /// `swarm_repository.ACTIVE_CLAIM`.
-const ACTIVE_CLAIM: &str = "('claimed','blocked','submitted')";
+pub(super) const ACTIVE_CLAIM: &str = "('claimed','blocked','submitted')";
 
 /// The parameters a refused member value is numbered by (#2270 review M1):
 /// its position in Python's `_bootstrap` statement,
@@ -54,9 +51,9 @@ const ACTIVE_CLAIM: &str = "('claimed','blocked','submitted')";
 /// 3.12 and later wording, which counts from 1; CI pins Python 3.13.
 /// Earlier versions count from 0 and write `Error binding parameter N -
 /// probably unsupported type.`
-const PYTHON_PID_PARAMETER: usize = 3;
-const PYTHON_STARTED_PARAMETER: usize = 4;
-const PYTHON_SOCKET_PARAMETER: usize = 5;
+pub(super) const PYTHON_PID_PARAMETER: usize = 3;
+pub(super) const PYTHON_STARTED_PARAMETER: usize = 4;
+pub(super) const PYTHON_SOCKET_PARAMETER: usize = 5;
 
 /// The board file of one run.
 #[derive(Clone, Debug)]
@@ -86,8 +83,8 @@ impl BoardRepository for SqliteBoardRepository {
 }
 
 /// The role ports over one open transaction.
-struct SqliteBoard<'c> {
-    connection: &'c Connection,
+pub(super) struct SqliteBoard<'c> {
+    pub(super) connection: &'c Connection,
 }
 
 impl BoardRuns for SqliteBoard<'_> {
@@ -139,6 +136,10 @@ impl BoardRuns for SqliteBoard<'_> {
             .map_err(failed)
     }
 
+    fn run_coordinator(&self) -> Result<Option<Option<String>>, BoardError> {
+        Err(BoardError::new("not implemented (#2271)"))
+    }
+
     fn insert_run(&self, run: &NewRun) -> Result<(), BoardError> {
         let contract = &run.contract;
         self.connection
@@ -188,83 +189,6 @@ impl BoardRuns for SqliteBoard<'_> {
     }
 }
 
-impl BoardMembers for SqliteBoard<'_> {
-    fn member(&self, id: &str) -> Result<Option<MemberRecord>, BoardError> {
-        self.connection
-            .query_row("SELECT * FROM members WHERE id=?", [id], |row| {
-                fetched(row)?;
-                Ok(MemberRecord {
-                    id: row.get("id")?,
-                    status: row
-                        .get::<_, Option<String>>("status")?
-                        .map(MemberState::new),
-                    reservation: row.get("reservation")?,
-                })
-            })
-            .optional()
-            .map_err(failed)
-    }
-
-    fn members(&self) -> Result<Vec<MemberRow>, BoardError> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT * FROM members")
-            .map_err(failed)?;
-        let rows = statement.query_map([], member_row).map_err(failed)?;
-        rows.collect::<rusqlite::Result<_>>().map_err(failed)
-    }
-
-    fn usage(&self) -> Result<i64, BoardError> {
-        self.count("SELECT count(*) FROM members WHERE status IN ('live','reserved')")
-    }
-
-    fn not_dead(&self) -> Result<i64, BoardError> {
-        self.count("SELECT count(*) FROM members WHERE status!='dead'")
-    }
-
-    fn claim_counts(&self, coordinator: Option<&str>) -> Result<MemberClaimCounts, BoardError> {
-        let members_without_claim = self
-            .connection
-            .query_row(
-                &format!(
-                    "SELECT count(*) FROM members m WHERE m.status IN ('live','reserved') AND m.id IS NOT ? \
-                     AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.owner=m.id AND t.status IN {ACTIVE_CLAIM})"
-                ),
-                [coordinator],
-                |row| row.get(0),
-            )
-            .map_err(failed)?;
-        let members_dead = self.count("SELECT count(*) FROM members WHERE status='dead'")?;
-        Ok(MemberClaimCounts {
-            members_without_claim,
-            members_dead,
-        })
-    }
-
-    fn insert_member(&self, member: &NewMember) -> Result<(), BoardError> {
-        let parameters = [
-            SqlValue::Text(member.id.clone()),
-            SqlValue::Text(member.reservation.clone()),
-            SqlValue::Text(member.status.as_str().to_owned()),
-            loose(PYTHON_PID_PARAMETER, &member.pid)?,
-            loose(PYTHON_STARTED_PARAMETER, &member.started)?,
-            loose(PYTHON_SOCKET_PARAMETER, &member.socket)?,
-            member
-                .launcher
-                .clone()
-                .map_or(SqlValue::Null, SqlValue::Text),
-        ];
-        binding::bound_statement(
-            self.connection,
-            "INSERT INTO members(id,reservation,status,pid,started,socket,launcher) VALUES(?,?,?,?,?,?,?)",
-            &parameters,
-        )
-        .and_then(|mut statement| statement.raw_execute())
-        .map_err(failed)?;
-        Ok(())
-    }
-}
-
 impl BoardEvents for SqliteBoard<'_> {
     fn event(
         &self,
@@ -284,7 +208,7 @@ impl BoardEvents for SqliteBoard<'_> {
 }
 
 impl SqliteBoard<'_> {
-    fn count(&self, sql: &str) -> Result<i64, BoardError> {
+    pub(super) fn count(&self, sql: &str) -> Result<i64, BoardError> {
         self.connection
             .query_row(sql, [], |row| row.get(0))
             .map_err(failed)
@@ -298,7 +222,7 @@ impl SqliteBoard<'_> {
 /// `ProgrammingError` text, and an integer beyond i64, which Python raises
 /// as `OverflowError` rather than refuses, with its text (the
 /// `integer_beyond_i64_is_refused` divergence).
-fn loose(position: usize, value: &Value) -> Result<SqlValue, BoardError> {
+pub(super) fn loose(position: usize, value: &Value) -> Result<SqlValue, BoardError> {
     PyJson::try_from(value)
         .map_err(|error| error.to_string())
         .and_then(|value| binding::bind(&value).map_err(|error| error.to_string()))
@@ -311,7 +235,7 @@ fn loose(position: usize, value: &Value) -> Result<SqlValue, BoardError> {
 
 /// Python's fetch of `row`: every column is decoded, so the first TEXT
 /// that is not UTF-8 is refused with Python's text ([`Undecodable`]).
-fn fetched(row: &Row<'_>) -> rusqlite::Result<()> {
+pub(super) fn fetched(row: &Row<'_>) -> rusqlite::Result<()> {
     use rusqlite::types::ValueRef;
     for index in 0..row.as_ref().column_count() {
         match row.get_ref(index)? {
@@ -386,7 +310,7 @@ fn run_record(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
 
 /// `dict(row)` of a `SELECT * FROM members` row: every column, in table
 /// order, as stored.
-fn member_row(row: &Row<'_>) -> rusqlite::Result<MemberRow> {
+pub(super) fn member_row(row: &Row<'_>) -> rusqlite::Result<MemberRow> {
     fetched(row)?;
     let columns = (0..row.as_ref().column_count())
         .map(|index| {
@@ -405,7 +329,7 @@ fn encoded(value: &Value) -> Result<SqlValue, BoardError> {
         .map_err(|error| BoardError::new(error.to_string()))
 }
 
-fn failed(error: rusqlite::Error) -> BoardError {
+pub(super) fn failed(error: rusqlite::Error) -> BoardError {
     BoardError(contended(&error).0)
 }
 

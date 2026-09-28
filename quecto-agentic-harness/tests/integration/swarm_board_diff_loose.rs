@@ -60,9 +60,10 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   `admission` refuse only a member whose status is `'dead'`, so an
 ///   unknown or NULL status counts as alive there; Rust accepts only
 ///   `live` or `reserved` (an affirmative guard), so such a member may
-///   read but not mutate, and is not an idempotent admission retry. No
-///   method this slice serves reaches it: `_snapshot` reads, and the
-///   `bootstrap_run` driver alias skips `_join`.
+///   read but not mutate, and is not an idempotent admission retry. The
+///   membership methods (#2271) keep it: `_activate` and `_record_launch`
+///   take such a member's reservation as stale, where Python goes on
+///   (pinned by `activate_member_tests` and `record_member_launch_tests`).
 pub const PERMITTED_DIVERGENCES: [&str; 5] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
@@ -485,7 +486,7 @@ fn every_permitted_divergence_is_pinned_by_name() {
 
 /// Divergences pinned outside this suite: the name, the test file's
 /// source and the pinning test in it.
-const EXTERNAL_PINS: [(&str, &str, &str); 3] = [
+const EXTERNAL_PINS: [(&str, &str, &str); 5] = [
     (
         "real_to_text_digits",
         include_str!("../../src/infrastructure/persistence/swarm_board/binding_tests.rs"),
@@ -500,5 +501,15 @@ const EXTERNAL_PINS: [(&str, &str, &str); 3] = [
         "unknown_member_status_is_not_alive",
         include_str!("../../src/domain/swarm/policy_null_status_tests.rs"),
         "a_null_member_status_is_not_alive",
+    ),
+    (
+        "unknown_member_status_is_not_alive",
+        include_str!("../../src/application/swarm/use_cases/activate_member_tests.rs"),
+        "an_unknown_member_status_is_not_activated",
+    ),
+    (
+        "unknown_member_status_is_not_alive",
+        include_str!("../../src/application/swarm/use_cases/record_member_launch_tests.rs"),
+        "an_unknown_member_status_records_no_launch",
     ),
 ];

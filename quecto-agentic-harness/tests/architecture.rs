@@ -1443,21 +1443,40 @@ fn application_path_allowed(path: &str) -> bool {
             "application",
             "swarm",
             "use_cases",
-            "BootstrapRun" | "CreateRun" | "ReadRunSnapshot" | "ReadRunStatus",
+            "ActivateMember"
+            | "AdmitMember"
+            | "BootstrapRun"
+            | "CreateRun"
+            | "JoinRun"
+            | "ReadRunSnapshot"
+            | "ReadRunStatus"
+            | "RecordMemberLaunch"
+            | "RegisterMemberSocket"
+            | "ReleaseUnlaunchedMember",
         ]
         | [
             "crate",
             "application",
             "swarm",
             "dto",
-            "BoardLocation"
+            "ActivateMemberRequest"
+            | "AdmissionDecision"
+            | "AdmitMemberRequest"
+            | "AdmittedMember"
+            | "BoardLocation"
             | "BootstrapRunRequest"
             | "CreateBranch"
             | "CreateRunRequest"
+            | "JoinRunRequest"
+            | "Joined"
+            | "LaunchIdentity"
             | "MemberClaimCounts"
             | "MemberRow"
             | "NewMember"
             | "NewRun"
+            | "RecordMemberLaunchRequest"
+            | "RegisterMemberSocketRequest"
+            | "ReleaseUnlaunchedMemberRequest"
             | "RunContract"
             | "RunOwnerRow"
             | "RunSnapshotView"

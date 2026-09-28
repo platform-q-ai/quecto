@@ -10,7 +10,8 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use super::dto::{
-    MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow, RunStatusRow,
+    LaunchIdentity, MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow,
+    RunStatusRow,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -150,6 +151,10 @@ pub trait BoardRuns {
     /// The columns `_status` reads, as stored, when the store holds a run:
     /// only those, so a column it does not read is never decoded.
     fn run_status(&self) -> Result<Option<RunStatusRow>, BoardError>;
+    /// The run's coordinator column alone (`join_process`'s `SELECT
+    /// coordinator FROM run`): `None` when the store holds no run, and
+    /// `Some(None)` for a coordinator that is NULL or not text.
+    fn run_coordinator(&self) -> Result<Option<Option<String>>, BoardError>;
     fn insert_run(&self, run: &NewRun) -> Result<(), BoardError>;
     /// `create` over the setup placeholder: the new contract, and the run
     /// is running.
@@ -171,6 +176,30 @@ pub trait BoardMembers {
     /// `member_claim_counts(coordinator)` (#1969).
     fn claim_counts(&self, coordinator: Option<&str>) -> Result<MemberClaimCounts, BoardError>;
     fn insert_member(&self, member: &NewMember) -> Result<(), BoardError>;
+    /// `SELECT * FROM members WHERE id=?` (and `AND reservation=?` when
+    /// `reservation` is given) as `dict(row)`.
+    fn member_row(
+        &self,
+        id: &str,
+        reservation: Option<&str>,
+    ) -> Result<Option<MemberRow>, BoardError>;
+    /// `Transaction.reserve_member`: a `reserved` row with no process yet,
+    /// launched by `launcher` (#1961).
+    fn reserve_member(&self, id: &str, reservation: &str, launcher: &str)
+    -> Result<(), BoardError>;
+    /// The member is live in the process `launch` at `socket`.
+    fn activate_member(
+        &self,
+        id: &str,
+        launch: &LaunchIdentity,
+        socket: Option<&str>,
+    ) -> Result<(), BoardError>;
+    /// The launcher's record of the member's process.
+    fn record_launch(&self, id: &str, launch: &LaunchIdentity) -> Result<(), BoardError>;
+    /// An admission that was never launched is abandoned: the member is dead.
+    fn mark_member_dead_unlaunched(&self, id: &str) -> Result<(), BoardError>;
+    /// The member's endpoint; a member without a row is left as it is.
+    fn set_socket(&self, id: &str, socket: Option<&str>) -> Result<(), BoardError>;
 }
 
 /// The `events` log.

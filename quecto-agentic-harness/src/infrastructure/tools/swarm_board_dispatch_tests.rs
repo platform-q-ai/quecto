@@ -373,3 +373,223 @@ fn a_secret_shaped_member_id_is_redacted_in_telemetry() {
     assert!(log.contains("op=\"_snapshot\""), "{log}");
     assert!(!log.contains(secret), "{log}");
 }
+
+/// A running run of three coordinated by `parent` (#2271).
+fn running(handles: &SwarmBoardHandles) {
+    call(handles, "parent", "create_run", create_args()).unwrap();
+}
+
+/// `_admit` answers the member's row as `dict(row)`, in table order; the
+/// other membership methods answer `null`.
+#[test]
+fn membership_methods_render_pythons_shape() {
+    let (_dir, handles) = board(1_000.0);
+    running(&handles);
+    let row = call(&handles, "parent", "_admit", json!(["worker", "r"])).unwrap();
+    assert_eq!(
+        serde_json::to_string(&row).unwrap(),
+        r#"{"id":"worker","reservation":"r","status":"reserved","pid":null,"started":null,"socket":null,"launcher":"parent"}"#
+    );
+    for (method, args) in [
+        ("_record_launch", json!(["worker", "r", 7, "t"])),
+        (
+            "_activate",
+            json!({"member": "worker", "reservation": "r", "pid": 7, "started": "t", "socket": null}),
+        ),
+        ("_socket", json!(["/p.sock"])),
+    ] {
+        assert_eq!(
+            call(&handles, "parent", method, args).unwrap(),
+            Value::Null,
+            "{method}"
+        );
+    }
+    call(&handles, "parent", "_admit", json!(["spare", "s"])).unwrap();
+    assert_eq!(
+        call(&handles, "parent", "_release_unlaunched", json!(["spare"])).unwrap(),
+        Value::Null
+    );
+    // The spare's death freed its place: the join is admitted into it.
+    assert_eq!(
+        call(&handles, "joiner", "bootstrap_join", json!([9, "t", null])).unwrap(),
+        Value::Null
+    );
+    assert_eq!(
+        call(&handles, "late", "bootstrap_join", json!([10, "t", null])).unwrap_err(),
+        BoardError::new("swarm limit 3, current usage 3; reuse the existing pool")
+    );
+}
+
+/// The launch identity binds as the Rust callers pass it
+/// (`swarm_coordination.rs`): the pid an INTEGER, `started` and a
+/// reservation TEXT, a socket TEXT or null (epic P2: calling syntax with
+/// this module's own text). `_admit`'s member stays loose: the board
+/// bounds it with Python's text.
+#[test]
+fn launch_identities_bind_as_the_harness_passes_them() {
+    let (_dir, handles) = board(1_000.0);
+    running(&handles);
+    for (method, args, message) in [
+        (
+            "_activate",
+            json!(["w", "r", "7", "t", null]),
+            "_activate: pid must be an integer",
+        ),
+        (
+            "_activate",
+            json!(["w", "r", true, "t", null]),
+            "_activate: pid must be an integer",
+        ),
+        (
+            "_activate",
+            json!(["w", "r", 7.0, "t", null]),
+            "_activate: pid must be an integer",
+        ),
+        (
+            "_activate",
+            json!(["w", "r", 7, 5, null]),
+            "_activate: started must be a string",
+        ),
+        (
+            "_activate",
+            json!(["w", "r", 7, "t", 5]),
+            "_activate: socket must be a string or null",
+        ),
+        (
+            "_activate",
+            json!([5, "r", 7, "t", null]),
+            "_activate: member must be a string",
+        ),
+        (
+            "_activate",
+            json!(["w", 5, 7, "t", null]),
+            "_activate: reservation must be a string or null",
+        ),
+        (
+            "_record_launch",
+            json!(["w", null, 7, "t"]),
+            "_record_launch: reservation must be a string",
+        ),
+        (
+            "_record_launch",
+            json!(["w", "r", null, "t"]),
+            "_record_launch: pid must be an integer",
+        ),
+        (
+            "_admit",
+            json!(["w", 5]),
+            "_admit: reservation must be a string",
+        ),
+        (
+            "_release_unlaunched",
+            json!([null]),
+            "_release_unlaunched: member must be a string",
+        ),
+        (
+            "_socket",
+            json!([["/p"]]),
+            "_socket: socket must be a string or null",
+        ),
+        (
+            "bootstrap_join",
+            json!([7, "t", null, 5]),
+            "bootstrap_join: reservation must be a string or null",
+        ),
+        (
+            "_socket",
+            json!([]),
+            "_socket: missing required argument socket",
+        ),
+    ] {
+        assert_eq!(
+            call(&handles, "parent", method, args.clone()).unwrap_err(),
+            BoardError::new(message),
+            "{method} {args}"
+        );
+    }
+    assert_eq!(
+        call(&handles, "parent", "_admit", json!([5, "r"])).unwrap_err(),
+        BoardError::new("member must be nonempty and at most 128 bytes")
+    );
+    // `bootstrap_join`'s reservation defaults to none, as `_bootstrap`'s.
+    call(
+        &handles,
+        "joiner",
+        "bootstrap_join",
+        json!([9, "t", "/j.sock"]),
+    )
+    .unwrap();
+}
+
+/// Each membership call leaves one INFO record with its decision, and no
+/// argument text: a secret-shaped reservation, start time or socket never
+/// reaches the log (#2271).
+#[test]
+fn membership_calls_record_their_decisions_without_argument_text() {
+    let secret = "sk-ant-api03-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+    let other = "sk-ant-api03-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
+    let log = captured(9, |handles| {
+        running(handles);
+        call(handles, "parent", "_admit", json!(["worker", secret])).unwrap();
+        call(handles, "parent", "_admit", json!(["worker", secret])).unwrap();
+        call(
+            handles,
+            "parent",
+            "_record_launch",
+            json!(["worker", secret, 7, secret]),
+        )
+        .unwrap();
+        call(
+            handles,
+            "parent",
+            "_activate",
+            json!(["worker", secret, 7, secret, secret]),
+        )
+        .unwrap();
+        call(handles, "worker", "_socket", json!([secret])).unwrap();
+        call(handles, "parent", "_release_unlaunched", json!(["worker"])).unwrap_err();
+        call(
+            handles,
+            "joiner",
+            "bootstrap_join",
+            json!([8, secret, secret, other]),
+        )
+        .unwrap();
+        call(
+            handles,
+            "joiner",
+            "bootstrap_join",
+            json!([8, secret, secret]),
+        )
+        .unwrap();
+    });
+    let records: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains(TELEMETRY_TARGET))
+        .collect();
+    let expected = [
+        ("create_run", "ok", "fresh"),
+        ("_admit", "ok", "reserved"),
+        ("_admit", "ok", "retry"),
+        ("_record_launch", "ok", "recorded"),
+        ("_activate", "ok", "activated"),
+        ("_socket", "ok", "registered"),
+        ("_release_unlaunched", "refused", "none"),
+        ("bootstrap_join", "ok", "admitted"),
+        ("bootstrap_join", "ok", "already_live"),
+    ];
+    assert_eq!(records.len(), expected.len(), "{log}");
+    for (record, (op, outcome, decision)) in records.iter().zip(expected) {
+        for field in [
+            " INFO ".to_owned(),
+            format!("op=\"{op}\""),
+            format!("outcome=\"{outcome}\""),
+            format!("decision=\"{decision}\""),
+            "duration_us=".to_owned(),
+        ] {
+            assert!(record.contains(&field), "{field} missing from {record}");
+        }
+    }
+    assert!(!log.contains(secret) && !log.contains(other), "{log}");
+    assert!(!log.contains("sk-ant"), "{log}");
+}
