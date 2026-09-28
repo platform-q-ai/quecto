@@ -52,6 +52,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut parent_control: Option<std::path::PathBuf> = None;
     let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
     let mut spawned = false;
+    let mut backend = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -103,9 +104,12 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 max_time = Some(parse_pos_u64(val, "--max-time", stderr)?);
                 i += 2;
             }
-            "--mode" => {
-                let val = next_arg(args, i, "--mode requires a value (e.g. uds)", stderr)?;
-                uds_mode = parse_agent_mode(val, stderr)?;
+            f @ ("--mode" | "--backend") => {
+                let val = next_arg(args, i, flag_parse::value_hint(f), stderr)?;
+                match f {
+                    "--mode" => uds_mode = parse_agent_mode(val, stderr)?,
+                    _ => backend = Some(flag_parse::parse_backend(val, stderr)?),
+                }
                 i += 2;
             }
             "--socket" => {
@@ -204,7 +208,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         stdin_is_tty: false,
         admission_context,
         parent_control,
-        backend: None,
+        backend,
     };
     flags = flag_parse::validate_agent_flags(flags, stderr)?;
     if let Some(path) = inherited_tool_policy_path {

@@ -1,8 +1,8 @@
 //! Capability-local effect ports of the external-agent capability (#2286).
 //!
-//! The session use case (S3) starts, and for the abort fallback restarts,
-//! the agent through [`ExternalAgentLauncher`] and drives it through
-//! [`ExternalAgentProcess`]. Signatures name only domain types and this
+//! The session use case (#2287) starts the agent through
+//! [`ExternalAgentLauncher`], drives it through [`ExternalAgentProcess`]
+//! and records its decisions through [`ExternalAgentTelemetry`]. Signatures name only domain types and this
 //! capability's DTOs: no process, pipe, runtime or wire vocabulary crosses
 //! this boundary. Each port has a contract suite in
 //! `tests/contracts/<port>.rs`, proven on the production adapter against a

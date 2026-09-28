@@ -18,8 +18,43 @@ const DEFAULT_MEMBER: &str = "claude-member";
 /// Run a claude-code member for `flags`, through the handles composition
 /// builds. Returns the process's exit code.
 pub(crate) fn run(ctx: &CliContext, flags: &AgentFlags, stderr: &mut String) -> i32 {
-    let _ = (ctx, flags, stderr, DEFAULT_MEMBER);
-    0
+    let Some(build) = ctx.claude_member else {
+        stderr.push_str("agent: the claude-code member capability is not composed\n");
+        return 1;
+    };
+    let handles = build(&ClaudeMemberSettings {
+        member: flags
+            .session_name
+            .clone()
+            .unwrap_or_else(|| DEFAULT_MEMBER.to_string()),
+        model: flags.model_override.clone(),
+        checkout: ctx
+            .cwd
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from(".")),
+        base_dir: ctx.base_dir(),
+    });
+    let runtime = match super::build_tokio_runtime() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            stderr.push_str(&format!("agent: failed to create runtime: {error}\n"));
+            return 1;
+        }
+    };
+    runtime.block_on(start_and_end(&handles, stderr))
+}
+
+/// Start the member and end it again: without its UDS server (#2288)
+/// nothing can reach it, so it is not left running.
+async fn start_and_end(handles: &ClaudeMemberHandles, stderr: &mut String) -> i32 {
+    if let Err(refusal) = handles.session.start().await {
+        stderr.push_str(&format!("agent: {refusal}\n"));
+        return 1;
+    }
+    let ended = handles.session.abort().await;
+    assert!(ended.is_ok(), "a started member can be ended: {ended:?}");
+    stderr.push_str("agent: the claude-code member serves no endpoint yet (#2288); it was ended\n");
+    1
 }
 
 #[cfg(test)]

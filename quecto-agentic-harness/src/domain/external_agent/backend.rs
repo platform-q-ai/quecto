@@ -79,9 +79,31 @@ pub fn validate_backend(
     config: &SubagentConfig,
     context: BackendLaunchContext,
 ) -> Result<(), DomainError> {
-    // #2287 red: every launch accepted until the rule is written.
-    let _ = (config, context, ContainerSelection::Local);
-    Ok(())
+    match config.backend {
+        MemberBackend::Quecto => Ok(()),
+        MemberBackend::ClaudeCode => claude_code_launch_allowed(config, context),
+    }
+}
+
+/// `ClaudeCode` is allowed iff every O1 condition holds.
+fn claude_code_launch_allowed(
+    config: &SubagentConfig,
+    context: BackendLaunchContext,
+) -> Result<(), DomainError> {
+    let refuse = |reason: &str| Err(DomainError::Tool(reason.to_string()));
+    match (context.launcher_is_swarm_participant, &config.container) {
+        (true, ContainerSelection::Local) => {}
+        (true, _) => return refuse(CLAUDE_CODE_OWN_CONTAINER_ONLY),
+        (false, _) => return refuse(CLAUDE_CODE_WORKERS_ONLY),
+    }
+    crate::domain::swarm::validate_workflow(
+        true,
+        config.workflow || config.workflow_guards || config.workflow_spec.is_some(),
+    )?;
+    match config.effort {
+        None => Ok(()),
+        Some(_) => refuse(CLAUDE_CODE_TAKES_NO_EFFORT),
+    }
 }
 
 #[cfg(test)]

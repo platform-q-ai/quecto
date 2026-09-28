@@ -12,6 +12,11 @@ pub struct TracingExternalAgentTelemetry;
 
 impl ExternalAgentTelemetry for TracingExternalAgentTelemetry {
     fn record(&self, record: &SessionRecord) {
-        let _ = (record, TELEMETRY_TARGET);
+        tracing::info!(
+            target: TELEMETRY_TARGET,
+            kind = record.kind(),
+            record = ?record,
+            "external agent session"
+        );
     }
 }

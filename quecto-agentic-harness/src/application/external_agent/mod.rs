@@ -8,4 +8,5 @@
 pub mod dto;
 pub mod ports;
 pub mod projection;
+mod session_core;
 pub mod use_cases;

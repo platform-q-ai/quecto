@@ -1420,7 +1420,10 @@ fn application_path_allowed(path: &str) -> bool {
             | "ExternalAgentLaunchError"
             | "ExternalAgentInputError"
             | "ExternalAgentExit"
-            | "EXTERNAL_AGENT_STDERR_TAIL_BYTES",
+            | "EXTERNAL_AGENT_STDERR_TAIL_BYTES"
+            // The session telemetry adapter (#2287) logs the records the
+            // capability's telemetry port is given.
+            | "SessionRecord",
             ..,
         ] => true,
         ["crate", "application", ..] => false,
@@ -5753,6 +5756,13 @@ fn external_agent_application_dependency_allowed(path: &str) -> bool {
         // The process ports (#2286): boxed futures, and the path values
         // a launch spec carries (never a filesystem call).
         ["std", "future", "Future"] | ["std", "pin", "Pin"] | ["std", "path", "PathBuf"] => true,
+        // The session use case (#2287): its shared state, the write gate,
+        // the end signal and the skipped-line grace timer. No I/O, no
+        // spawn, no clock read.
+        ["std", "sync", "Arc" | "Mutex" | "MutexGuard"] | ["std", "time", "Duration"] => true,
+        ["tokio", "select"]
+        | ["tokio", "sync", "Mutex" | "watch", ..]
+        | ["tokio", "time", "sleep"] => true,
         // A name already in scope (prelude, local item or checked import)
         // and an associated item of one (`Self::…`, `MessageRole::User`).
         [single] => single.starts_with(char::is_alphabetic),
@@ -5789,6 +5799,12 @@ fn external_agent_application_depends_only_inward() {
         "std::future::ready",
         "futures::Stream",
         "std::error::request_ref",
+        "tokio::spawn",
+        "tokio::task::spawn_blocking",
+        "tokio::time::Instant",
+        "std::time::Instant",
+        "std::sync::atomic::AtomicBool",
+        "tokio::sync::mpsc::channel",
     ] {
         assert!(
             !external_agent_application_dependency_allowed(dep),
@@ -5806,6 +5822,10 @@ fn external_agent_application_depends_only_inward() {
         "std::pin::Pin",
         "std::path::PathBuf",
         "std::error::Error",
+        "std::sync::Arc",
+        "std::time::Duration",
+        "tokio::sync::watch::Sender",
+        "tokio::time::sleep",
     ] {
         assert!(
             external_agent_application_dependency_allowed(dep),
@@ -5816,7 +5836,11 @@ fn external_agent_application_depends_only_inward() {
 
 /// The ports the external-agent capability declares (#2286), and nothing
 /// else. Later slices of epic #2284 append theirs.
-const EXTERNAL_AGENT_PORTS: &[&str] = &["ExternalAgentLauncher", "ExternalAgentProcess"];
+const EXTERNAL_AGENT_PORTS: &[&str] = &[
+    "ExternalAgentLauncher",
+    "ExternalAgentProcess",
+    "ExternalAgentTelemetry",
+];
 
 #[test]
 fn external_agent_ports_are_capability_local_and_contracted() {

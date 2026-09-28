@@ -129,6 +129,12 @@ pub(super) fn validate_agent_flags(flags: AgentFlags, stderr: &mut String) -> Op
         stderr.push_str("agent: --no-session and -s are mutually exclusive\n");
         return None;
     }
+    // `--backend` is valid only on a UDS member harness (#2287).
+    let backend_valid = flags.backend.is_none() || flags.uds_mode;
+    if !backend_valid {
+        stderr.push_str("agent: --backend requires --mode uds\n");
+        return None;
+    }
     if flags.persist && !flags.uds_mode {
         stderr.push_str("agent: --persist requires --mode uds\n");
         return None;
@@ -204,6 +210,29 @@ pub(super) fn parse_session_name(args: &[String], i: usize, stderr: &mut String)
         return None;
     }
     Some(name.to_string())
+}
+
+/// The error for a value-taking flag given no value.
+pub(super) fn value_hint(flag: &str) -> &'static str {
+    match flag {
+        "--backend" => "--backend requires a value (quecto or claude-code)",
+        _ => "--mode requires a value (e.g. uds)",
+    }
+}
+
+/// Parse the `--backend` flag value (#2287).
+pub(super) fn parse_backend(
+    val: &str,
+    stderr: &mut String,
+) -> Option<crate::domain::external_agent::backend::MemberBackend> {
+    use crate::domain::external_agent::backend::MemberBackend;
+    MemberBackend::from_flag_value(val).or_else(|| {
+        stderr.push_str(&format!(
+            "agent: --backend '{val}' is not valid; supported: {}\n",
+            MemberBackend::FLAG_VALUES
+        ));
+        None
+    })
 }
 
 /// Parse the `--mode` flag value. Returns `Some(true)` for `"uds"`, `None`

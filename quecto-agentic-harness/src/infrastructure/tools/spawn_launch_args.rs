@@ -7,7 +7,21 @@
 use std::ffi::OsString;
 use std::path::Path;
 
+use crate::domain::external_agent::backend::MemberBackend;
 use crate::domain::subagent::SubagentConfig;
+
+/// Parse the spawn tool's `backend` argument (#2287): absent or null is
+/// quecto; otherwise one of [`MemberBackend::SPAWN_VALUES`]. Whether the
+/// launch may use it is the domain's rule, checked on the whole config.
+pub(super) fn parse_backend_arg(arg: Option<&serde_json::Value>) -> Result<MemberBackend, String> {
+    match arg {
+        None | Some(serde_json::Value::Null) => Ok(MemberBackend::Quecto),
+        Some(value) => value
+            .as_str()
+            .and_then(MemberBackend::from_spawn_value)
+            .ok_or_else(|| format!("backend must be one of: {}", MemberBackend::SPAWN_VALUES)),
+    }
+}
 
 /// Write `data` to `path`, creating it privately: `O_CREAT|O_EXCL` (so a
 /// pre-planted symlink at the path is rejected rather than followed) with
@@ -135,10 +149,17 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         parent_control_path,
     } = *spec;
 
-    let mut args: Vec<OsString> = vec![
-        "agent".into(),
-        "--mode".into(),
-        "uds".into(),
+    let mut args: Vec<OsString> = vec!["agent".into(), "--mode".into(), "uds".into()];
+    // The child's brain (#2287), right after the mode it requires; a
+    // quecto child's argv is unchanged.
+    match config.backend {
+        MemberBackend::Quecto => {}
+        MemberBackend::ClaudeCode => {
+            args.push("--backend".into());
+            args.push(config.backend.flag_value().into());
+        }
+    }
+    args.extend::<[OsString; 5]>([
         "-s".into(),
         session_name.into(),
         "--socket".into(),
@@ -146,7 +167,7 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         // Explicit internal provenance flag (#1319). Always set for SpawnTool
         // children; never inferred from --parent-id / session / env / UDS.
         "--spawned".into(),
-    ];
+    ]);
     // Deliberately no `--persist` (#1937): a launcher-created child is
     // lifetime-scoped to its launcher through the parent control binding
     // (`--parent-control`, #1935). It ignores ordinary client churn because
