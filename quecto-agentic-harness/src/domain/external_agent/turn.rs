@@ -29,7 +29,32 @@ pub struct TurnFailure {
     pub assistant_error: Option<String>,
     /// The result's `errors[]`.
     pub errors: Vec<String>,
+    /// Whether the turn was stopped (an abort) or went wrong.
+    pub kind: FailureKind,
 }
+
+/// How a failed turn failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FailureKind {
+    /// The turn went wrong: an API error, a limit, a malformed result.
+    #[default]
+    Error,
+    /// The turn was stopped before it completed: interrupted, stopped by
+    /// a hook, or deferred (see [`ABORT_TERMINAL_REASONS`]).
+    Aborted,
+}
+
+/// The `terminal_reason`s the CLI treats as a stop, not an error. They are
+/// still failed turns (only `completed` completes one), classified as
+/// [`FailureKind::Aborted`] so an abort is shown as one.
+pub const ABORT_TERMINAL_REASONS: &[&str] = &[
+    "aborted_streaming",
+    "aborted_tools",
+    "hook_stopped",
+    "stop_hook_prevented",
+    "tool_deferred",
+    "background_requested",
+];
 
 impl TurnFailure {
     /// A one-line account of the failure, for a report that has no text.
@@ -73,6 +98,7 @@ impl TurnEnd {
                 api_error_status: result.api_error_status,
                 assistant_error: assistant_error.map(str::to_string),
                 errors: result.errors.clone(),
+                kind: FailureKind::Error,
             }),
         }
     }

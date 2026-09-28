@@ -33,6 +33,7 @@ fn a_success_subtype_with_is_error_is_a_failed_turn() {
             api_error_status: None,
             assistant_error: Some("authentication_failed".into()),
             errors: Vec::new(),
+            kind: FailureKind::Error,
         })
     );
 }
@@ -60,6 +61,7 @@ fn completed_requires_terminal_reason_completed_and_no_error() {
             api_error_status: Some(529),
             assistant_error: None,
             errors: Vec::new(),
+            kind: FailureKind::Error,
         })
     );
 }
@@ -103,6 +105,7 @@ fn a_failure_describes_every_signal_it_has() {
         api_error_status: Some(401),
         assistant_error: Some("authentication_failed".into()),
         errors: vec!["one".into(), "two".into()],
+        kind: FailureKind::Error,
     }
     .describe();
     assert_eq!(
@@ -125,4 +128,36 @@ fn a_result_missing_either_field_is_a_failed_turn() {
     assert!(!TurnEnd::classify(&no_reason, None).is_completed());
     assert!(!TurnEnd::classify(&no_error_flag, None).is_completed());
     assert!(!TurnEnd::classify(&ResultEvent::default(), None).is_completed());
+}
+
+#[test]
+fn an_abort_is_a_failed_turn_classified_as_an_abort() {
+    for reason in ABORT_TERMINAL_REASONS {
+        let stopped = ResultEvent {
+            is_error: Some(false),
+            terminal_reason: Some(reason.to_string()),
+            ..ResultEvent::default()
+        };
+        let TurnEnd::Failed(failure) = TurnEnd::classify(&stopped, None) else {
+            panic!("{reason} does not complete a turn");
+        };
+        assert_eq!(failure.kind, FailureKind::Aborted, "{reason}");
+        assert_eq!(
+            failure.describe(),
+            format!("the turn was aborted (terminal_reason: {reason})")
+        );
+    }
+    let errored = ResultEvent {
+        is_error: Some(true),
+        terminal_reason: Some("api_error".into()),
+        ..ResultEvent::default()
+    };
+    let TurnEnd::Failed(failure) = TurnEnd::classify(&errored, None) else {
+        panic!("an API error fails the turn");
+    };
+    assert_eq!(failure.kind, FailureKind::Error);
+    let TurnEnd::Failed(unknown) = TurnEnd::classify(&ResultEvent::default(), None) else {
+        panic!("a bare result fails the turn");
+    };
+    assert_eq!(unknown.kind, FailureKind::Error);
 }

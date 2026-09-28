@@ -5,16 +5,18 @@
 
 use serde_json::json;
 
-use super::tests::{RT_REPORT_2, fold, init, result, roundtrip, text, tokens, tool_use};
+use super::tests::{
+    RT_REPORT_2, fold, init, result, roundtrip, text, tokens, tool_result, tool_use,
+};
 use super::*;
 use crate::application::external_agent::dto::{
     ADMISSION_WARNING_CAPACITY, AUDIT_INPUT_PREVIEW_BYTES, BACKGROUND_JOB_CAPACITY,
     GUARDRAIL_AUDIT_CAPACITY, TurnWarning,
 };
 use crate::domain::external_agent::stream::{BackgroundTask, RateLimitStatus};
-use crate::domain::external_agent::turn::TurnFailure;
+use crate::domain::external_agent::turn::{FailureKind, TurnFailure};
 
-fn error_result(terminal_reason: &str, error: &str, total: f64) -> ResultEvent {
+pub(super) fn error_result(terminal_reason: &str, error: &str, total: f64) -> ResultEvent {
     ResultEvent {
         is_error: Some(true),
         terminal_reason: Some(terminal_reason.into()),
@@ -52,6 +54,50 @@ fn a_failed_turn_without_text_reports_its_failure_not_the_previous_answer() {
             .contains("Reached maximum number of turns (5)")
     );
     assert_eq!(report.failure.as_ref(), Some(failure));
+    assert_eq!(
+        report.message_ordinal, None,
+        "this turn has no assistant text; the previous turn's answer is not its report"
+    );
+}
+
+#[test]
+fn a_failed_turns_report_points_only_at_its_own_text() {
+    // rt, then a turn that only calls tools and ends in max_turns.
+    let mut projector = roundtrip();
+    fold(
+        &mut projector,
+        &[
+            init(),
+            tool_use("msg_x", "toolu_x", "Bash"),
+            tool_result("toolu_x", json!("ok"), false),
+            ExternalAgentEvent::Result(error_result(
+                "max_turns",
+                "Reached maximum number of turns (1)",
+                0.06,
+            )),
+        ],
+    );
+    assert_eq!(projector.report().and_then(|r| r.message_ordinal), None);
+
+    let ends = fold(
+        &mut projector,
+        &[
+            init(),
+            text("msg_y", "Trying once more."),
+            ExternalAgentEvent::Result(error_result(
+                "max_turns",
+                "Reached maximum number of turns (1)",
+                0.07,
+            )),
+        ],
+    );
+    assert!(!ends[0].end.is_completed());
+    let own = projector
+        .messages()
+        .iter()
+        .find(|m| m.api_message_id.as_deref() == Some("msg_y"))
+        .map(|m| m.ordinal);
+    assert_eq!(projector.report().and_then(|r| r.message_ordinal), own);
 }
 
 #[test]
@@ -93,25 +139,26 @@ fn an_assistant_error_on_a_completed_result_is_a_warning() {
 }
 
 #[test]
-fn a_dropped_cumulative_cost_is_a_new_process_and_a_warning() {
+fn a_dropped_cumulative_cost_inside_a_process_charges_nothing_and_warns() {
     let mut projector = roundtrip();
     let ends = fold(
         &mut projector,
         &[ExternalAgentEvent::Result(result(
             "again",
             tokens(1, 1, 0, 0),
-            0.001,
+            0.0,
             tokens(1, 1, 0, 0),
         ))],
     );
-    assert_eq!(ends[0].usage.cost_micro_usd, 1_000);
+    assert_eq!(ends[0].usage.cost_micro_usd, 0);
     assert_eq!(
         ends[0].warnings,
-        vec![TurnWarning::CumulativeCostReset {
+        vec![TurnWarning::CumulativeCostDropped {
             previous_micro_usd: 53_065,
-            total_micro_usd: 1_000,
+            reported_micro_usd: 0,
         }]
     );
+    assert_eq!(projector.session_totals().cost_micro_usd, 53_065);
 }
 
 #[test]
@@ -289,6 +336,7 @@ fn a_failure_is_described_the_same_in_the_turn_end_and_the_report() {
         api_error_status: None,
         assistant_error: None,
         errors: vec!["Reached maximum budget ($0.5)".into()],
+        kind: FailureKind::Error,
     };
     assert_eq!(ends[0].end, TurnEnd::Failed(expected.clone()));
     assert_eq!(

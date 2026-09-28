@@ -224,3 +224,27 @@ fn an_unknown_type_is_logged_once() {
         .expect("decodes");
     assert_eq!(decoder.unknown_kinds_logged(), 2);
 }
+
+#[test]
+fn a_task_event_without_its_task_id_is_unknown_not_an_error() {
+    let mut decoder = StreamJsonDecoder::new();
+    for _ in 0..2 {
+        assert_eq!(
+            decoder
+                .decode_line(r#"{"type": "system", "subtype": "task_started", "description": "x"}"#)
+                .expect("decodes"),
+            vec![ExternalAgentEvent::Unknown {
+                kind: "system/task_started".into()
+            }]
+        );
+    }
+    assert_eq!(
+        decoder
+            .decode_line(r#"{"type": "system", "subtype": "task_notification", "task_id": 7}"#)
+            .expect("decodes"),
+        vec![ExternalAgentEvent::Unknown {
+            kind: "system/task_notification".into()
+        }]
+    );
+    assert_eq!(decoder.unknown_kinds_logged(), 2, "logged once per kind");
+}

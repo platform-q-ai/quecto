@@ -42,16 +42,71 @@ fn a_result_without_a_usable_total_costs_nothing_and_keeps_the_total() {
 }
 
 #[test]
-fn a_drop_in_the_cumulative_total_is_a_new_process_charged_its_whole_total() {
+fn a_zero_total_inside_a_process_charges_nothing_and_never_double_charges() {
+    // claude reports total_cost_usd 0 after a session crash, a cloud
+    // delivery error or a bridge interrupt, inside the same process.
     let mut ledger = UsageLedger::default();
-    ledger.record(&with_total(0.02));
-    let restarted = ledger.record(&with_total(0.005));
-    assert_eq!(restarted.cost_micro_usd, 5_000);
-    assert_eq!(restarted.total_cost_micro_usd, 5_000);
-    assert_eq!(restarted.cumulative_reset_from, Some(20_000));
-    let next = ledger.record(&with_total(0.006));
-    assert_eq!(next.cost_micro_usd, 1_000);
-    assert_eq!(next.cumulative_reset_from, None);
+    assert_eq!(ledger.record(&with_total(0.053065)).cost_micro_usd, 53_065);
+    let zero = ledger.record(&with_total(0.0));
+    assert_eq!(zero.cost_micro_usd, 0);
+    assert_eq!(
+        zero.total_cost_micro_usd, 53_065,
+        "the session total never drops"
+    );
+    assert_eq!(
+        zero.cost_drop,
+        Some(CostDrop {
+            previous_micro_usd: 53_065,
+            reported_micro_usd: 0,
+        })
+    );
+    let next = ledger.record(&with_total(0.06));
+    assert_eq!(next.cost_micro_usd, 6_935);
+    assert_eq!(next.total_cost_micro_usd, 60_000, "the true total, 0.06");
+    assert_eq!(next.cost_drop, None);
+}
+
+#[test]
+fn a_new_process_is_charged_from_zero() {
+    let mut ledger = UsageLedger::default();
+    ledger.record(&with_total(0.053065));
+    ledger.process_started();
+    let first = ledger.record(&with_total(0.06));
+    assert_eq!(
+        first.cost_micro_usd, 60_000,
+        "a higher first total is not undercounted"
+    );
+    assert_eq!(
+        first.total_cost_micro_usd, 113_065,
+        "the session sums its charges"
+    );
+    assert_eq!(first.cost_drop, None);
+    ledger.process_started();
+    let lower = ledger.record(&with_total(0.005));
+    assert_eq!(lower.cost_micro_usd, 5_000);
+    assert_eq!(lower.cost_drop, None);
+    assert_eq!(ledger.total_cost_micro_usd(), 118_065);
+}
+
+#[test]
+fn session_tokens_sum_each_process_cumulative_usage() {
+    let with_model_usage = |input: u64| ResultEvent {
+        model_usage: vec![ModelUsage {
+            model: "claude-haiku-4-5-20251001".into(),
+            tokens: TokenCounts {
+                input,
+                ..TokenCounts::default()
+            },
+            cost_usd: None,
+        }],
+        ..completed()
+    };
+    let mut ledger = UsageLedger::default();
+    ledger.record(&with_model_usage(10));
+    ledger.record(&with_model_usage(25));
+    ledger.process_started();
+    ledger.record(&with_model_usage(7));
+    assert_eq!(ledger.cumulative_tokens().input, 32);
 }
 
 #[test]

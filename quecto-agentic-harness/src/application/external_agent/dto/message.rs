@@ -27,6 +27,14 @@ pub struct ProjectedToolCall {
     pub arguments: Value,
 }
 
+/// A tool result's content is stored up to this many bytes (cut on a
+/// character boundary, then [`TRUNCATION_MARKER`]); the rest is dropped and
+/// its full length kept in [`ProjectedMessage::truncated_from_bytes`].
+pub const TOOL_RESULT_CONTENT_BYTES: usize = 64 * 1024;
+
+/// Appended to a tool result's stored content when it was cut.
+pub const TRUNCATION_MARKER: &str = "\n[… tool result truncated]";
+
 /// One message of the member's conversation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectedMessage {
@@ -43,6 +51,8 @@ pub struct ProjectedMessage {
     pub is_error: bool,
     /// A tool message whose call a permission rule (a hook) refused.
     pub permission_denied: bool,
+    /// The original length of content cut to [`TOOL_RESULT_CONTENT_BYTES`].
+    pub truncated_from_bytes: Option<usize>,
 }
 
 impl ProjectedMessage {
@@ -57,6 +67,7 @@ impl ProjectedMessage {
             tool_call_id: None,
             is_error: false,
             permission_denied: false,
+            truncated_from_bytes: None,
         }
     }
 }

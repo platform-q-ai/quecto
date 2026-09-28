@@ -71,6 +71,12 @@ impl Projector {
         self.messages[index].ordinal
     }
 
+    /// A new agent process started (the session calls this when it spawns
+    /// one): its cumulative totals start from zero.
+    pub fn process_started(&mut self) {
+        self.ledger.process_started();
+    }
+
     /// Fold one event: what it changed.
     pub fn apply(&mut self, event: &ExternalAgentEvent) -> ProjectionStep {
         let before = self.state;
@@ -251,10 +257,10 @@ impl Projector {
         if let (TurnEnd::Completed, Some(kind)) = (&end, &assistant_error) {
             warnings.push(TurnWarning::AssistantError(kind.clone()));
         }
-        if let Some(previous) = usage.cumulative_reset_from {
-            warnings.push(TurnWarning::CumulativeCostReset {
-                previous_micro_usd: previous,
-                total_micro_usd: usage.total_cost_micro_usd,
+        if let Some(drop) = usage.cost_drop {
+            warnings.push(TurnWarning::CumulativeCostDropped {
+                previous_micro_usd: drop.previous_micro_usd,
+                reported_micro_usd: drop.reported_micro_usd,
             });
         }
         for denial in &result.permission_denials {
@@ -394,6 +400,9 @@ fn audit(denial: &PermissionDenial, turn: usize) -> GuardrailDenial {
 #[cfg(test)]
 #[path = "projection_bounds_tests.rs"]
 mod bounds_tests;
+#[cfg(test)]
+#[path = "projection_process_tests.rs"]
+mod process_tests;
 #[cfg(test)]
 #[path = "projection_tests.rs"]
 mod tests;

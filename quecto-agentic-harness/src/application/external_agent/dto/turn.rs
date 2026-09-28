@@ -23,10 +23,10 @@ pub enum TurnWarning {
     /// An assistant event carried an `error`, yet the result says the
     /// turn completed: the CLI's result is followed.
     AssistantError(String),
-    /// The cumulative cost dropped: a new process. The turn was charged
-    /// the whole new total.
-    CumulativeCostReset {
+    /// The process's cumulative cost went down without a new process
+    /// (the CLI reports 0 after some errors): nothing was charged.
+    CumulativeCostDropped {
         previous_micro_usd: u64,
-        total_micro_usd: u64,
+        reported_micro_usd: u64,
     },
 }

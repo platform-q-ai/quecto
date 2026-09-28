@@ -30,7 +30,8 @@ pub(super) const SAMPLES: &[(&str, &str)] = &[
         "kill",
         include_str!("../../../../tests/fixtures/claude_code/kill.stream.jsonl"),
     ),
-    // Synthesized from claude 2.1.280's result schema (`error_max_turns`,
+    // SYNTHESIZED (see tests/fixtures/claude_code/README.md), not captured:
+    // from claude 2.1.280's result schema (`error_max_turns`,
     // `error_max_budget_usd`, `error_during_execution`), not captured.
     (
         "errors",
