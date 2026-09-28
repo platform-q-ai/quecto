@@ -440,10 +440,13 @@ deadline, admission, completion, and revalidation decisions without I/O.
 Application use cases (`src/application/swarm_use_cases.py`) depend on an atomic
 coordination repository and injected clock. SQLite implements that port; admission
 checks and reservation writes share the same immediate transaction. SQL-facing
-workbench/task adapters retain dispatch and the existing task implementation; this
-is an incremental extraction, not a second implementation of the policy in Rust.
+workbench/task adapters retain dispatch and the existing task implementation.
+The board is moving to Rust (#2265): `src/domain/swarm/policy.rs`,
+`records.rs` and `validation.rs` port that policy with identical decisions and
+error text, and the Python board stays the one in use until the harness
+switches over.
 
-The Rust domain (`src/domain/swarm.rs`) holds the typed membership, process
+The Rust domain (`src/domain/swarm/mod.rs`) holds the typed membership, process
 identity and outcome vocabulary; the coordination, run-control, process control
 and clock ports are the swarm capability's (`src/application/swarm/ports.rs`),
 and `src/application/swarm/mod.rs` owns reconciliation and settlement sequencing. Infrastructure handles Python wire decoding, Linux

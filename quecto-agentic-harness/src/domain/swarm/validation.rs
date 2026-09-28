@@ -56,7 +56,10 @@ fn too_long(label: &str, maximum: usize) -> BoardError {
 /// `Workbench._criteria`: a nonempty list of `{id, kind, description}` with
 /// distinct ids, checked entry by entry in Python's order, then the encoded
 /// list's size. `encoded_len` is the byte length of the list as the board
-/// encodes it, so this rule does not depend on the codec.
+/// encodes it, so this rule does not depend on the codec. The parsed
+/// criteria are for decisions only: callers persist the ORIGINAL `value`
+/// (Python stores the list it was given, extra keys included), never a
+/// re-encoding of the returned vector.
 pub fn criteria(value: &Value, encoded_len: usize) -> Result<Vec<Criterion>, BoardError> {
     let entries = match value {
         Value::Array(entries) if !entries.is_empty() => entries,

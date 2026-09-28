@@ -134,7 +134,9 @@ pub fn validate_extension(seconds: &Value) -> Result<i64, BoardError> {
 
 /// Whether to admit a member under `reservation`: `Ok(false)` when `prior`
 /// already holds that reservation alive (an idempotent retry), `Ok(true)`
-/// for a new admission. `usage` is the count of members not dead. The retry
+/// for a new admission. `usage` is the count of members whose status is
+/// `live` or `reserved`. A `None` reservation matches a prior `None` (Python's
+/// `None == None`), so that retry is idempotent too. The retry
 /// is answered before capacity, and capacity before identity reuse.
 pub fn admission(
     run: &RunRecord,
@@ -150,9 +152,7 @@ pub fn admission(
             run.status.as_str()
         )));
     }
-    if prior.is_some_and(|prior| {
-        reservation.is_some() && prior.reservation.as_deref() == reservation && alive(prior)
-    }) {
+    if prior.is_some_and(|prior| prior.reservation.as_deref() == reservation && alive(prior)) {
         return Ok(false);
     }
     debug_assert!(
@@ -210,10 +210,9 @@ pub fn completion(
     let current = |task: &TaskRecord| {
         task.evidence.as_array().is_some_and(|entries| {
             !entries.is_empty()
-                && entries.iter().all(|entry| {
-                    entry.get("artifact").is_some_and(Value::is_string)
-                        && entry.get("revision").and_then(Value::as_str) == Some(revision)
-                })
+                && entries
+                    .iter()
+                    .all(|entry| entry.get("revision").and_then(Value::as_str) == Some(revision))
         })
     };
     if !tasks.iter().all(current) {
@@ -263,13 +262,16 @@ pub fn revalidation<'a>(
 }
 
 /// Submitted evidence is immutable: only a task in another known status may
-/// be revised.
+/// be revised. An unknown status found in a file is refused by name.
 pub fn require_unsubmitted(task: &TaskRecord) -> Result<(), BoardError> {
     match task.status.as_str() {
         "ready" | "claimed" | "blocked" | "completed" => Ok(()),
-        _ => Err(BoardError::new(
+        "submitted" => Err(BoardError::new(
             "submitted evidence is immutable; release and reclaim before revising",
         )),
+        unknown => Err(BoardError::new(format!(
+            "task status '{unknown}' is not a known status; no revision permitted"
+        ))),
     }
 }
 
