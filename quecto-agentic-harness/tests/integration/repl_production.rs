@@ -94,9 +94,10 @@ fn standalone_oauth_with_redirected_stdin_starts_browser_callbacks() {
             .spawn()
             .unwrap();
         // A real callback listener rejects missing state without contacting a
-        // provider. The request goes out in one write_all: the listener reads
-        // the whole request head before answering (PR #2309), so how the bytes
-        // are split no longer matters, but one write keeps the test simple.
+        // provider. The request goes out in one write_all: the listener frames
+        // the request line and drains the rest before closing (PR #2309), so
+        // how the bytes are split no longer matters, but one write keeps the
+        // test simple.
         let request = format!(
             "GET {path}?code=test HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
         );

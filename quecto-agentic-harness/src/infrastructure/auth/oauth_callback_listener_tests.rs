@@ -206,3 +206,77 @@ async fn a_success_answer_with_unread_body_arrives_whole() {
     );
     assert_eq!(handle.await.unwrap().unwrap(), "ok");
 }
+
+#[test]
+fn canned_responses_declare_their_body_length() {
+    for response in [
+        NOT_FOUND_RESPONSE,
+        STATE_MISMATCH_RESPONSE,
+        MISSING_CODE_RESPONSE,
+        AUTH_FAILURE_RESPONSE,
+    ] {
+        let (head, body) = response.split_once("\r\n\r\n").expect("head and body");
+        let declared = format!("Content-Length: {}", body.len());
+        assert!(head.lines().any(|line| line == declared), "{response:?}");
+    }
+}
+
+#[test]
+fn route_decides_from_the_request_line_alone() {
+    let route = |line: &str| route(line, "/callback", "s");
+    assert_eq!(
+        route("GET /callback?code=a%2Fb&state=s HTTP/1.1"),
+        Route::Authorized("a/b".to_string())
+    );
+    assert_eq!(route("GET / HTTP/1.1"), Route::Declined(NOT_FOUND_RESPONSE));
+    assert_eq!(
+        route("GET /callbackevil?code=x&state=s HTTP/1.1"),
+        Route::Declined(NOT_FOUND_RESPONSE)
+    );
+    assert_eq!(route(""), Route::Declined(NOT_FOUND_RESPONSE));
+    assert_eq!(
+        route("GET /callback?code=x&state=t HTTP/1.1"),
+        Route::Declined(STATE_MISMATCH_RESPONSE)
+    );
+    assert_eq!(
+        route("GET /callback?code=x HTTP/1.1"),
+        Route::Declined(STATE_MISMATCH_RESPONSE)
+    );
+    assert_eq!(
+        route("GET /callback?code=&state=s HTTP/1.1"),
+        Route::Declined(MISSING_CODE_RESPONSE)
+    );
+    assert_eq!(
+        route("GET /callback?state=s HTTP/1.1"),
+        Route::Declined(MISSING_CODE_RESPONSE)
+    );
+    assert_eq!(
+        route("GET /callback?error=access_denied%3Cx%3E&state=s HTTP/1.1"),
+        Route::Denied("access_deniedx".to_string())
+    );
+    assert_eq!(
+        route("GET /callback?error=%3C%3E&state=s HTTP/1.1"),
+        Route::Denied("unknown_error".to_string())
+    );
+}
+
+#[test]
+fn constant_time_eq_matches_only_identical_strings() {
+    assert!(constant_time_eq("", ""));
+    assert!(constant_time_eq("abc", "abc"));
+    assert!(!constant_time_eq("abc", "abd"));
+    assert!(!constant_time_eq("abc", "ab"));
+    assert!(!constant_time_eq("ab", "abc"));
+    assert!(!constant_time_eq("", "a"));
+}
+
+#[tokio::test]
+async fn a_valid_line_whose_head_is_cut_off_does_not_end_the_login() {
+    let (addr, handle) = start(Duration::from_secs(10), fast_limits()).await;
+    // The client stays open but never ends its head: the connection's budget
+    // refuses it and the next callback is served.
+    let _stalled = hold_open(addr, b"GET /callback?code=early&state=s HTTP/1.1\r\n").await;
+    let resp = exchange(addr, VALID).await;
+    assert!(resp.starts_with("HTTP/1.1 200 OK"), "got: {resp:?}");
+    assert_eq!(handle.await.unwrap().unwrap(), "ok");
+}
