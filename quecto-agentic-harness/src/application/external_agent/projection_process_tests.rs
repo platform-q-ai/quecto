@@ -194,3 +194,67 @@ fn a_large_tool_result_is_stored_bounded_with_its_length() {
     assert_eq!(small.content, "small");
     assert_eq!(small.truncated_from_bytes, None);
 }
+
+#[test]
+fn a_restarted_process_does_not_show_the_killed_process_jobs_running() {
+    // kill.stream.jsonl: a background `sleep 300` never finishes before
+    // the process is killed; the next process must not show it running.
+    let mut projector = Projector::new();
+    fold(
+        &mut projector,
+        &[
+            ExternalAgentEvent::BackgroundTasksChanged {
+                tasks: vec![crate::domain::external_agent::stream::BackgroundTask {
+                    task_id: "bup00mo5i".into(),
+                    description: Some("sleep 300".into()),
+                }],
+            },
+            started("bup00mo5i"),
+        ],
+    );
+    projector.process_started();
+    let running: Vec<_> = projector
+        .background_jobs()
+        .filter(|job| !job.is_finished())
+        .map(|job| job.task_id.as_str())
+        .collect();
+    assert_eq!(running, Vec::<&str>::new());
+}
+
+#[test]
+fn a_reused_task_id_is_a_new_running_task() {
+    let mut projector = Projector::new();
+    projector.apply(&ExternalAgentEvent::TaskStarted(TaskStarted {
+        task_id: "t1".into(),
+        tool_use_id: Some("toolu_old".into()),
+        description: Some("old".into()),
+        is_backgrounded: true,
+    }));
+    projector.apply(&finished("t1", "completed"));
+    projector.apply(&ExternalAgentEvent::TaskStarted(TaskStarted {
+        task_id: "t1".into(),
+        tool_use_id: Some("toolu_new".into()),
+        description: Some("new".into()),
+        is_backgrounded: false,
+    }));
+    let job = projector
+        .background_jobs()
+        .find(|job| job.task_id == "t1")
+        .expect("t1 is tracked");
+    assert!(!job.is_finished(), "the new task runs");
+    assert_eq!(job.status, None);
+    assert_eq!(job.description.as_deref(), Some("new"));
+    assert_eq!(job.tool_use_id.as_deref(), Some("toolu_new"));
+    assert!(!job.is_backgrounded);
+
+    // A full list evicts finished jobs first: the reused, running t1 stays.
+    for index in 0..BACKGROUND_JOB_CAPACITY + 3 {
+        let id = format!("done{index:02}");
+        projector.apply(&started(&id));
+        projector.apply(&finished(&id, "completed"));
+    }
+    assert!(
+        projector.background_jobs().any(|job| job.task_id == "t1"),
+        "the running reused task is not evicted as finished"
+    );
+}
