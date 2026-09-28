@@ -56,7 +56,10 @@ fn too_long(label: &str, maximum: usize) -> BoardError {
 /// `Workbench._criteria`: a nonempty list of `{id, kind, description}` with
 /// distinct ids, checked entry by entry in Python's order, then the encoded
 /// list's size. `encoded_len` is the byte length of the list as the board
-/// encodes it, so this rule does not depend on the codec. The parsed
+/// encodes it: Python's `json.dumps(value, sort_keys=True,
+/// separators=(',', ':'))` with `ensure_ascii` (so `é` costs 6 bytes as
+/// `\u00e9`), which is the board codec's `encode` (#2268), never a
+/// `serde_json` encoding. Taking the length keeps this rule codec-free. The parsed
 /// criteria are for decisions only: callers persist the ORIGINAL `value`
 /// (Python stores the list it was given, extra keys included), never a
 /// re-encoding of the returned vector.

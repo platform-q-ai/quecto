@@ -338,7 +338,16 @@ fn completion_rejects_each_unsatisfied_requirement() {
             "completion revision required"
         );
     }
-    let rows: [CompletionRow; 5] = [
+    let rows: [CompletionRow; 7] = [
+        // Python order: evidence, then settle, then stale.
+        (criteria(), vec![], true, done.clone(), EVIDENCE),
+        (
+            criteria(),
+            vec![],
+            false,
+            vec![task(TaskState::COMPLETED, &[])],
+            EVIDENCE,
+        ),
         (vec![], accepted("R2"), false, done.clone(), EVIDENCE),
         (criteria(), vec![], false, done.clone(), EVIDENCE),
         (criteria(), accepted("R2"), true, done.clone(), SETTLE),
@@ -438,6 +447,15 @@ fn revalidation_requires_completed_task_and_matching_revision() {
             "only completed tasks may be revalidated"
         );
     }
+    // The status is checked before the revision.
+    assert_eq!(
+        message(revalidation(
+            &task(TaskState::READY, &[]),
+            &json!(null),
+            &good
+        )),
+        "only completed tasks may be revalidated"
+    );
     let completed = task(TaskState::COMPLETED, &["R1"]);
     let required = "new artifact and revision evidence required";
     for (revision, evidence) in [
