@@ -19,21 +19,14 @@ use std::ffi::CStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior, ffi, types::Value};
+use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior, ffi};
 
-use super::py_json::{self, PyJson};
 use super::schema::{ADDED_COLUMNS, schema_statements};
 
 /// Python's `sqlite3.connect(..., timeout=0.5)`.
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// The most requests the idempotency ledger holds (`Store.retry`).
-pub const REQUEST_LEDGER_CAPACITY: i64 = 10_000;
-
-/// The longest request id, in UTF-8 bytes (`bounded(request, 'request id', 128)`).
-pub const REQUEST_ID_MAX_BYTES: usize = 128;
-
-const CONTENDED: &str = "coordination store unavailable or contended";
+pub(super) const CONTENDED: &str = "coordination store unavailable or contended";
 
 /// A board refusal: the exact message the board raises (Python's
 /// `SwarmError`), as the store returns it from a transaction.
@@ -97,8 +90,8 @@ impl BoardStore {
         create: bool,
         body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
     ) -> Result<T, StoreRefusal> {
-        let path = std::path::absolute(&self.path)
-            .map_err(|error| StoreRefusal(format!("{CONTENDED}: {error}")))?;
+        let path =
+            absolute(&self.path).map_err(|error| StoreRefusal(format!("{CONTENDED}: {error}")))?;
         // Opened only to create it, or where it is; anything else is a store
         // deleted from under its run (#2145), and mode=rw never recreates it.
         if create || path.exists() {
@@ -118,6 +111,21 @@ impl BoardStore {
             )))
         }
     }
+}
+
+/// `pathlib.Path(path).absolute()`: an empty path is the working directory,
+/// and the path is normalised as pathlib parses it (no `.` components,
+/// repeated or trailing separators); `..` is kept, and symlinks are not
+/// resolved.
+fn absolute(path: &Path) -> std::io::Result<PathBuf> {
+    let given = if path.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        path
+    };
+    let absolute: PathBuf = std::path::absolute(given)?.components().collect();
+    debug_assert!(absolute.is_absolute(), "an absolutised path is absolute");
+    Ok(absolute)
 }
 
 /// `sqlite3.connect(path.as_uri() + '?mode=rw[c]', uri=True, timeout=0.5)`.
@@ -257,10 +265,21 @@ fn contended(error: &rusqlite::Error) -> StoreRefusal {
     StoreRefusal(format!("{CONTENDED}: {}", sqlite_message(error)))
 }
 
+/// Python's `str()` of the `sqlite3.Error` the same call raises. SQLite's
+/// own failures carry `sqlite3_errmsg`; rusqlite adds the SQL and offset to
+/// an input error, and words its own checks (the parameter count, one
+/// statement per call) differently from Python's `sqlite3` module.
 fn sqlite_message(error: &rusqlite::Error) -> String {
     match error {
         rusqlite::Error::SqliteFailure(_, Some(message)) => message.clone(),
         rusqlite::Error::SqliteFailure(failure, None) => error_string(failure.extended_code),
+        rusqlite::Error::SqlInputError { msg, .. } => msg.clone(),
+        rusqlite::Error::InvalidParameterCount(given, needed) => format!(
+            "Incorrect number of bindings supplied. The current statement uses {needed}, and there are {given} supplied."
+        ),
+        rusqlite::Error::MultipleStatement => {
+            "You can only execute one statement at a time.".to_owned()
+        }
         other => other.to_string(),
     }
 }
@@ -273,117 +292,6 @@ fn error_string(code: std::ffi::c_int) -> String {
     // SAFETY: the pointer is non-null, NUL-terminated and 'static.
     let text = unsafe { CStr::from_ptr(ffi::sqlite3_errstr(code)) };
     text.to_string_lossy().into_owned()
-}
-
-/// `Store.retry`: the idempotency ledger. A request seen before replays its
-/// stored result when the payload matches; a new one runs `action` and
-/// records its result, while the ledger has room.
-///
-/// # Errors
-/// A board refusal for an empty or over-long request id, a reused id with
-/// a different payload, or a full ledger; `action`'s error; SQLite errors.
-pub fn retry(
-    transaction: &Connection,
-    actor: &str,
-    request: &str,
-    payload: &PyJson,
-    action: impl FnOnce() -> Result<PyJson, TransactionError>,
-) -> Result<PyJson, TransactionError> {
-    bounded_request(request)?;
-    let payload = encoded(payload)?;
-    let stored = transaction
-        .prepare("SELECT * FROM requests WHERE actor=? AND request=?")?
-        .query_row([actor, request], |row| {
-            Ok((
-                row.get::<_, Value>("payload")?,
-                row.get::<_, Value>("result")?,
-            ))
-        });
-    match stored {
-        Ok((stored_payload, stored_result)) => replayed(&stored_payload, &stored_result, &payload),
-        Err(rusqlite::Error::QueryReturnedNoRows) => {
-            let held: i64 =
-                transaction.query_row("SELECT count(*) FROM requests", [], |row| row.get(0))?;
-            if held < REQUEST_LEDGER_CAPACITY {
-                let result = action()?;
-                transaction.execute(
-                    "INSERT INTO requests VALUES(?,?,?,?)",
-                    [actor, request, payload.as_str(), encoded(&result)?.as_str()],
-                )?;
-                Ok(result)
-            } else {
-                Err(TransactionError::board(format!(
-                    "coordination request ledger full ({REQUEST_LEDGER_CAPACITY})"
-                )))
-            }
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-
-/// A stored request: its result when the payload text is the same.
-fn replayed(
-    stored_payload: &Value,
-    stored_result: &Value,
-    payload: &str,
-) -> Result<PyJson, TransactionError> {
-    match (stored_payload, stored_result) {
-        (Value::Text(stored), Value::Text(result)) if stored == payload => {
-            py_json::decode(result).map_err(|error| TransactionError::board(error.to_string()))
-        }
-        (Value::Text(stored), _) if stored == payload => Err(TransactionError::board(
-            "the stored result of this request is not JSON text",
-        )),
-        _ => Err(TransactionError::board(
-            "request id reused with different payload",
-        )),
-    }
-}
-
-/// `Store.event`: one `events` row with the encoded detail.
-///
-/// # Errors
-/// A board refusal for a detail too deep to encode; SQLite errors.
-pub fn event(
-    transaction: &Connection,
-    actor: &str,
-    clock_now: f64,
-    action: &str,
-    detail: &PyJson,
-) -> Result<(), TransactionError> {
-    transaction.execute(
-        "INSERT INTO events(actor,time,action,detail) VALUES(?,?,?,?)",
-        rusqlite::params![actor, clock_now, action, encoded(detail)?],
-    )?;
-    Ok(())
-}
-
-/// The board's `encode()`.
-fn encoded(value: &PyJson) -> Result<String, TransactionError> {
-    py_json::encode(value).map_err(|error| TransactionError::board(error.to_string()))
-}
-
-/// `bounded(request, 'request id', 128)`: nonblank by Python's `str.strip`
-/// and at most 128 UTF-8 bytes.
-fn bounded_request(request: &str) -> Result<(), TransactionError> {
-    if has_content(request) && request.len() <= REQUEST_ID_MAX_BYTES {
-        Ok(())
-    } else {
-        Err(TransactionError::board(format!(
-            "request id must be nonempty and at most {REQUEST_ID_MAX_BYTES} bytes"
-        )))
-    }
-}
-
-/// Whether `text.strip()` leaves anything, by Python's whitespace.
-fn has_content(text: &str) -> bool {
-    text.chars().any(|c| !python_whitespace(c))
-}
-
-/// Python's `str.isspace`: Unicode White_Space plus the separators
-/// U+001C..U+001F, which Python also strips.
-fn python_whitespace(c: char) -> bool {
-    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
 #[cfg(test)]

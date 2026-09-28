@@ -1,0 +1,11 @@
+# The swarm board's bundled SQLite (rusqlite `bundled`, #2269) is compiled
+# with the options of the system libsqlite3 that Python's `sqlite3` uses on
+# Debian/Ubuntu and Arch, where they are observable to board operations:
+# - SQLITE_MAX_VARIABLE_NUMBER=250000 (bundled default 32766): the board
+#   binds one parameter per task owner in `IN (...)` lists.
+# - SQLITE_SECURE_DELETE: freed pages are zeroed, as Python's library does.
+# [env] applies to every cargo command run inside this workspace (CI, the
+# macOS type check, `cargo install --path` from the repository) and never
+# overrides a variable already set in the environment.
+[env]
+LIBSQLITE3_FLAGS = "-DSQLITE_MAX_VARIABLE_NUMBER=250000 -DSQLITE_SECURE_DELETE"
