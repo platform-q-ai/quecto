@@ -102,13 +102,19 @@ fn standalone_oauth_with_redirected_stdin_starts_browser_callbacks() {
                     .set_read_timeout(Some(Duration::from_secs(1)))
                     .unwrap();
                 // A real callback listener rejects missing state without contacting a provider.
-                write!(
-                    stream,
+                // A connection the listener closes before reading (it is still binding, or a
+                // previous listener on the fixed port is going away) is retried until the
+                // deadline rather than failing on the broken pipe.
+                let request = format!(
                     "GET {path}?code=test HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
-                )
-                .unwrap();
-                let _ = stream.read_to_string(&mut response);
-                break;
+                );
+                response.clear();
+                let answered = stream.write_all(request.as_bytes()).is_ok()
+                    && stream.read_to_string(&mut response).is_ok()
+                    && response.starts_with("HTTP/1.1 ");
+                if answered {
+                    break;
+                }
             }
             std::thread::sleep(Duration::from_millis(10));
         }
