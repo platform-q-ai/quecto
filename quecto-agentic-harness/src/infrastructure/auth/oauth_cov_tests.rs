@@ -81,6 +81,20 @@ async fn wait_for_oauth_callback_zero_timeout_errors_without_hanging() {
 }
 
 #[tokio::test]
+async fn wait_for_oauth_callback_with_an_empty_state_errors_without_waiting() {
+    // A long login timeout: the call must fail at once, not wait it out.
+    let err = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        wait_for_oauth_callback_at("127.0.0.1:0", "/callback", "", 300),
+    )
+    .await
+    .expect("an empty state must fail at once")
+    .expect_err("an empty state must be refused")
+    .to_string();
+    assert!(err.contains("non-empty expected state"), "got: {err}");
+}
+
+#[tokio::test]
 async fn refresh_xai_token_error_discards_body_and_reports_status_only() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

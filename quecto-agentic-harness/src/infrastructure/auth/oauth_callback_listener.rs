@@ -43,10 +43,17 @@ pub(super) async fn serve_oauth_callback(
     limits: &CallbackLimits,
 ) -> Result<String, DomainError> {
     // An empty expected state would accept a callback that carries none.
-    assert!(
-        !expected_state.is_empty(),
-        "an OAuth login always expects a state"
-    );
+    // This is reachable from the public `wait_for_oauth_callback_at`, so it
+    // is an error, not a panic.
+    let expects_a_state = !expected_state.is_empty();
+    match expects_a_state {
+        true => {}
+        false => {
+            return Err(DomainError::Provider(
+                "OAuth callback needs a non-empty expected state".to_string(),
+            ));
+        }
+    }
     loop {
         let accept = tokio::time::timeout_at(login_deadline, listener.accept()).await;
         let stream = match accept {
@@ -128,8 +135,10 @@ fn route(line: &str, callback_path: &str, expected_state: &str) -> Route {
         Some((path, query)) => (path, query),
         None => (target, ""),
     };
-    if request_path != callback_path {
-        return Route::Declined(NOT_FOUND_RESPONSE);
+    let is_callback_path = request_path == callback_path;
+    match is_callback_path {
+        true => {}
+        false => return Route::Declined(NOT_FOUND_RESPONSE),
     }
 
     // Parse query params (URL-decode values to handle encoded chars)

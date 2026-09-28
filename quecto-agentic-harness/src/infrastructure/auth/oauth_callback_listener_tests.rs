@@ -208,7 +208,7 @@ async fn a_success_answer_with_unread_body_arrives_whole() {
 }
 
 #[test]
-fn canned_responses_declare_their_body_length() {
+fn canned_route_responses_declare_their_body_length() {
     for response in [
         NOT_FOUND_RESPONSE,
         STATE_MISMATCH_RESPONSE,
@@ -279,4 +279,62 @@ async fn a_valid_line_whose_head_is_cut_off_does_not_end_the_login() {
     let resp = exchange(addr, VALID).await;
     assert!(resp.starts_with("HTTP/1.1 200 OK"), "got: {resp:?}");
     assert_eq!(handle.await.unwrap().unwrap(), "ok");
+}
+
+#[tokio::test]
+async fn an_error_callback_whose_head_is_cut_off_does_not_end_the_login() {
+    let (addr, handle) = start(Duration::from_secs(10), fast_limits()).await;
+    // An OAuth error callback ends the login only once its whole head has
+    // arrived: a stalled one is refused and the next callback is served.
+    let _stalled = hold_open(addr, b"GET /callback?error=x&state=s HTTP/1.1\r\n").await;
+    let resp = exchange(addr, VALID).await;
+    assert!(resp.starts_with("HTTP/1.1 200 OK"), "got: {resp:?}");
+    assert_eq!(handle.await.unwrap().unwrap(), "ok");
+}
+
+#[tokio::test]
+async fn a_trickling_stray_is_cut_off_at_its_total_budget_not_per_read() {
+    // Budget 300 ms, linger 100 ms. The stray sends one byte every 50 ms and
+    // never ends its line: were the budget a per-read timeout, it would hold
+    // the listener for as long as it kept trickling.
+    let limits = CallbackLimits {
+        connection_budget: Duration::from_millis(300),
+        linger: Duration::from_millis(100),
+        ..CallbackLimits::PRODUCTION
+    };
+    let (addr, handle) = start(Duration::from_secs(10), limits).await;
+    let start_at = std::time::Instant::now();
+    let mut stray = hold_open(addr, b"G").await;
+    let trickle = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            match stray.write_all(b"E").await {
+                Ok(()) => {}
+                Err(_) => return,
+            }
+        }
+    });
+    let resp = exchange(addr, VALID).await;
+    trickle.abort();
+    assert!(resp.starts_with("HTTP/1.1 200 OK"), "got: {resp:?}");
+    assert_eq!(handle.await.unwrap().unwrap(), "ok");
+    // 300 ms of budget plus 100 ms of linger plus a generous margin.
+    assert!(
+        start_at.elapsed() < Duration::from_millis(1500),
+        "{:?}",
+        start_at.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn an_empty_expected_state_is_an_error_not_a_panic() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let err = serve_oauth_callback(listener, "/callback", "", deadline, &fast_limits())
+        .await
+        .expect_err("an empty expected state must be refused");
+    assert!(
+        err.to_string().contains("non-empty expected state"),
+        "got: {err}"
+    );
 }
