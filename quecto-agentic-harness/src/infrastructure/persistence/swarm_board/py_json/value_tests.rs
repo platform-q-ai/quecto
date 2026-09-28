@@ -225,3 +225,12 @@ fn debug_prints_the_dumps_text() {
 
     assert_eq!(format!("{value:?}"), r#"{"a": [1, {}], "b": "x"}"#);
 }
+
+#[test]
+fn a_str_debug_prints_its_dumps_text() {
+    // python3: json.dumps('a' + chr(0xE9) + '\n') and json.dumps('a' + chr(0xD800))
+    let accented = PyStr::from_code_points(vec![0x61, 0xE9, 0x0A]).expect("code points");
+    assert_eq!(format!("{accented:?}"), "\"a\\u00e9\\n\"");
+    let lone = PyStr::from_code_points(vec![0x61, 0xD800]).expect("code points");
+    assert_eq!(format!("{lone:?}"), "\"a\\ud800\"");
+}
