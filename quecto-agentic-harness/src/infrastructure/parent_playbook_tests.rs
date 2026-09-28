@@ -113,6 +113,29 @@ fn heavy_verification_is_ci_evidence_not_local_work() {
 #[test]
 fn unsafe_probes_have_hard_deadlines_non_core_termination_and_cleanup() {
     let policy = bundled_policy();
+    let bounded_probes = policy
+        .split_once("### Bounded verification and unsafe probes")
+        .expect("bounded verification section")
+        .1
+        .split_once("\n### ")
+        .expect("bounded verification has next section")
+        .0;
+    let termination_rule = bounded_probes
+        .split_once("Give every unsafe probe")
+        .expect("affirmative unsafe-probe rule")
+        .1
+        .split_once('.')
+        .expect("unsafe-probe rule has a sentence")
+        .0;
+    policy_has_all(
+        "bounded probe safety clauses",
+        termination_rule,
+        &[
+            "hard timeout",
+            "terminate via SIGKILL or `_exit`",
+            "never a core-dumping signal",
+        ],
+    );
     policy_has_all(
         "unsafe probes",
         policy,
@@ -129,6 +152,30 @@ fn unsafe_probes_have_hard_deadlines_non_core_termination_and_cleanup() {
             "scratch",
             "temp",
             "cleanup",
+        ],
+    );
+}
+
+#[test]
+fn planning_sizes_every_pr_independently_of_optional_spikes() {
+    let policy = bundled_policy();
+    let planning = policy
+        .split_once("### Planning and PR sizing")
+        .expect("unconditional planning section")
+        .1
+        .split_once("\n### ")
+        .expect("planning has next section")
+        .0;
+    policy_has_all(
+        "each planned PR remains independently deliverable and mergeable",
+        planning,
+        &[
+            "Each planned PR",
+            "self-contained",
+            "independently testable acceptance behavior",
+            "manageable red-test phase",
+            "master buildable and green after each merge",
+            "duplicate ownership",
         ],
     );
 }
