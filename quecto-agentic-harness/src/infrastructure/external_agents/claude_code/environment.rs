@@ -83,12 +83,110 @@ pub fn member_environment(
     member_dir: &Path,
     credential: &CredentialEnv,
 ) -> Result<MemberEnvironment, MemberEnvironmentError> {
-    let _ = (parent, credential);
+    check_credential(credential)?;
+    if !member_dir.is_absolute() {
+        return Err(MemberEnvironmentError::Directory {
+            path: member_dir.to_path_buf(),
+            detail: "the member directory must be an absolute path".into(),
+        });
+    }
+    let home = private_dir(&member_dir.join(MEMBER_HOME_DIR))?;
+    let config_dir = private_dir(&member_dir.join(MEMBER_CLAUDE_CONFIG_DIR))?;
+    let mut variables: Vec<(String, OsString)> = INHERITED_VARIABLES
+        .iter()
+        .filter_map(|name| inherited(parent, name).map(|value| (name.to_string(), value)))
+        .collect();
+    variables.push(("HOME".into(), home.clone().into_os_string()));
+    variables.push((
+        "CLAUDE_CONFIG_DIR".into(),
+        config_dir.clone().into_os_string(),
+    ));
+    variables.push((credential.name.clone(), OsString::from(&credential.value)));
+    debug_assert!(
+        variables.iter().all(|(name, _)| {
+            INHERITED_VARIABLES.contains(&name.as_str())
+                || CREDENTIAL_VARIABLES.contains(&name.as_str())
+                || name == "HOME"
+                || name == "CLAUDE_CONFIG_DIR"
+        }),
+        "only allowlisted names reach the member"
+    );
     Ok(MemberEnvironment {
-        variables: Vec::new(),
-        home: member_dir.join(MEMBER_HOME_DIR),
-        config_dir: member_dir.join(MEMBER_CLAUDE_CONFIG_DIR),
+        variables,
+        home,
+        config_dir,
     })
+}
+
+/// A credential is given only under a known credential name, and only
+/// with a value.
+fn check_credential(credential: &CredentialEnv) -> Result<(), MemberEnvironmentError> {
+    if !CREDENTIAL_VARIABLES.contains(&credential.name.as_str()) {
+        return Err(MemberEnvironmentError::Credential(format!(
+            "{} is not one of {CREDENTIAL_VARIABLES:?}",
+            credential.name
+        )));
+    }
+    if credential.value.is_empty() {
+        return Err(MemberEnvironmentError::Credential(format!(
+            "{} has no value",
+            credential.name
+        )));
+    }
+    Ok(())
+}
+
+/// The parent's value of `name` (the last one, as `getenv` would see it).
+fn inherited(parent: &[(OsString, OsString)], name: &str) -> Option<OsString> {
+    parent
+        .iter()
+        .rev()
+        .find(|(candidate, _)| candidate == name)
+        .map(|(_, value)| value.clone())
+}
+
+/// Make `path` (and its missing parents) a real directory owned by this
+/// user with mode [`PRIVATE_DIR_MODE`]; an existing one is narrowed to
+/// it. A symlink, or anything but a directory, is refused.
+fn private_dir(path: &Path) -> Result<PathBuf, MemberEnvironmentError> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    let refuse = |detail: String| MemberEnvironmentError::Directory {
+        path: path.to_path_buf(),
+        detail,
+    };
+    match std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(PRIVATE_DIR_MODE)
+        .create(path)
+    {
+        Ok(()) => {}
+        Err(error) => return Err(refuse(format!("create: {error}"))),
+    }
+    let metadata = std::fs::symlink_metadata(path).map_err(|e| refuse(format!("stat: {e}")))?;
+    if !metadata.file_type().is_dir() {
+        return Err(refuse("not a directory (a symlink is refused)".into()));
+    }
+    // SAFETY: `geteuid` has no preconditions and cannot fail.
+    let uid = unsafe { libc::geteuid() };
+    if metadata.uid() != uid {
+        return Err(refuse(format!(
+            "owned by uid {}, not {uid}",
+            metadata.uid()
+        )));
+    }
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(PRIVATE_DIR_MODE))
+        .map_err(|e| refuse(format!("chmod: {e}")))?;
+    let mode = std::fs::symlink_metadata(path)
+        .map_err(|e| refuse(format!("stat: {e}")))?
+        .permissions()
+        .mode()
+        & 0o7777;
+    if mode != PRIVATE_DIR_MODE {
+        return Err(refuse(format!(
+            "mode is {mode:o}, not {PRIVATE_DIR_MODE:o}"
+        )));
+    }
+    Ok(path.to_path_buf())
 }
 
 #[cfg(test)]

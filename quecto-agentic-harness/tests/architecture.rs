@@ -1402,6 +1402,23 @@ fn application_path_allowed(path: &str) -> bool {
             | "AuthorityAdminError",
             ..,
         ] => true,
+        // The claude process adapter (#2286) implements the external-agent
+        // capability's process ports in their own launch and exit
+        // vocabulary: the spec it is given, the credential it hands on,
+        // and the errors, exit and stderr bound it answers with.
+        [
+            "crate",
+            "application",
+            "external_agent",
+            "dto",
+            "ExternalAgentLaunchSpec"
+            | "CredentialEnv"
+            | "ExternalAgentLaunchError"
+            | "ExternalAgentInputError"
+            | "ExternalAgentExit"
+            | "EXTERNAL_AGENT_STDERR_TAIL_BYTES",
+            ..,
+        ] => true,
         ["crate", "application", ..] => false,
         // Every other crate path must start at a layer infrastructure
         // may name: a root alias (`pub use application::x as y;` in

@@ -296,10 +296,6 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
     if let Some(reservation) = &reservation {
         reservation.configure(&mut cmd);
     }
-    #[cfg(unix)]
-    if reservation.is_some() {
-        cmd.process_group(0);
-    }
     cmd.args(child.cli_args);
     apply_common_child_env(&mut cmd, child.base_dir);
     // The child's stderr is drained for its whole life and its tail kept,
