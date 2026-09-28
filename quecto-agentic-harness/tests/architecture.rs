@@ -49,6 +49,10 @@ mod sessions_epic_close_retirement;
 /// protocol (#1935; #2286).
 #[path = "architecture/supervisor_runtime.rs"]
 mod supervisor_runtime;
+/// The board dispatcher serves its test-only methods in test builds only
+/// (#2270 review M2).
+#[path = "architecture/swarm_board_test_methods.rs"]
+mod swarm_board_test_methods;
 #[path = "architecture/teardown_authority.rs"]
 mod teardown_authority;
 #[path = "architecture/teardown_layers.rs"]

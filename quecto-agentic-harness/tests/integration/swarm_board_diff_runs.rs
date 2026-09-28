@@ -3,14 +3,15 @@
 //! result, refusal text and logical database dump.
 
 #[path = "../common/swarm_board_diff/mod.rs"]
-mod swarm_board_diff;
+pub(crate) mod swarm_board_diff;
 
 use rusqlite::Connection;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
+use swarm_board_diff::Outcome;
 use swarm_board_diff::dump::{Dump, first_difference, logical_dump};
 use swarm_board_diff::scenario::{run_both, step, try_run_both};
 
-const NOW: f64 = 1_700_000_000.25;
+pub(crate) const NOW: f64 = 1_700_000_000.25;
 const HOUR: f64 = 3_600.0;
 const DAY: f64 = 86_400.0;
 
@@ -170,7 +171,7 @@ fn harness_self_test_detects_a_difference() {
         step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
         step("supervisor", "_status", json!([]), NOW),
     ];
-    let difference = try_run_both(&steps, |index, rust| {
+    let difference = try_run_both(&steps, |index, rust, _| {
         if index == 0 {
             Connection::open(rust)
                 .unwrap()
@@ -188,7 +189,7 @@ fn harness_self_test_detects_a_difference() {
     assert!(difference.contains("container_setup"), "{difference}");
 
     // A changed column is caught as well as a changed row.
-    let difference = try_run_both(&steps, |index, rust| {
+    let difference = try_run_both(&steps, |index, rust, _| {
         if index == 0 {
             Connection::open(rust)
                 .unwrap()
@@ -198,6 +199,66 @@ fn harness_self_test_detects_a_difference() {
     })
     .unwrap_err();
     assert!(difference.contains("boards differ"), "{difference}");
+}
+
+/// The result comparison can fail (#2270 review M1): a Rust answer that
+/// differs while both files still match is reported as a result
+/// difference, not passed over.
+#[test]
+fn harness_self_test_detects_a_result_difference() {
+    let steps = [
+        step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+        step("supervisor", "_status", json!([]), NOW),
+    ];
+    let difference = try_run_both(&steps, |index, _, rust| {
+        if index == 0 {
+            *rust = Outcome::Ok(json!(1));
+        }
+    })
+    .unwrap_err();
+    assert!(
+        difference.starts_with("step 0: bootstrap_run"),
+        "{difference}"
+    );
+    assert!(difference.contains("results differ"), "{difference}");
+    // A refusal in place of an answer, and a changed refusal text, too.
+    for tampered in [Outcome::Refused("no".to_owned()), Outcome::Ok(Value::Null)] {
+        let difference = try_run_both(&steps, |index, _, rust| {
+            if index == 1 {
+                *rust = tampered.clone();
+            }
+        })
+        .unwrap_err();
+        assert!(difference.starts_with("step 1: _status"), "{difference}");
+        assert!(difference.contains("results differ"), "{difference}");
+    }
+}
+
+/// Key order is part of a result (#2270 review L4): Python's dicts keep
+/// insertion order and the tool output shows it, so the same entries in
+/// another order are a difference.
+#[test]
+fn harness_self_test_detects_a_key_order_difference() {
+    let steps = [
+        step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+        step("supervisor", "_status", json!([]), NOW),
+    ];
+    let mut reordered = false;
+    let difference = try_run_both(&steps, |index, _, rust| {
+        if let (1, Outcome::Ok(Value::Object(entries))) = (index, &*rust) {
+            let reversed: Map<String, Value> = entries
+                .iter()
+                .rev()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            *rust = Outcome::Ok(Value::Object(reversed));
+            reordered = true;
+        }
+    })
+    .unwrap_err();
+    assert!(reordered, "_status answered a dict to reorder");
+    assert!(difference.starts_with("step 1: _status"), "{difference}");
+    assert!(difference.contains("results differ"), "{difference}");
 }
 
 fn dump_of(statements: &str) -> (tempfile::TempDir, Dump) {

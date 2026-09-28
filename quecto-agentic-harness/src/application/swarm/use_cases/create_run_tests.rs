@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 
 use super::CreateRun;
 use crate::application::swarm::dto::{CreateBranch, CreateRunRequest};
+use crate::application::swarm::ports::BoardEncoding;
 use crate::application::swarm::use_cases::fakes::{
     BoardState, CompactEncoding, CounterIds, MemoryBoard, SteppingClock, member_row, running_board,
 };
@@ -327,4 +328,25 @@ fn members_not_confirmed_dead_must_fit_the_new_limit() {
         board.snapshot().run.unwrap().record.status,
         RunState::RUNNING
     );
+}
+
+/// The size bound is on the encoded text, as the real codec writes it
+/// (`ensure_ascii`): 1,400 `é` are 2,800 UTF-8 bytes but 8,400 escaped,
+/// over the 8,192-byte bound, so the fake encoding escapes too.
+#[test]
+fn constraints_are_bounded_on_their_ascii_escaped_encoding() {
+    let board = MemoryBoard::with(BoardState::default());
+    let refused = create_run(&board, SteppingClock::fixed(NOW))
+        .execute(with(|request| {
+            request.constraints = json!(["é".repeat(1_400)]);
+        }))
+        .unwrap_err();
+    assert_eq!(
+        refused,
+        BoardError::new("constraints must be nonempty and at most 8192 bytes")
+    );
+    let encoded = CompactEncoding
+        .encode(&json!({"b": ["é😀"], "a": 1}))
+        .unwrap();
+    assert_eq!(encoded, r#"{"a":1,"b":["é😀"]}"#);
 }

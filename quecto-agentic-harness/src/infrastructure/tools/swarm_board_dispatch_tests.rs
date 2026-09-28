@@ -168,33 +168,40 @@ fn snapshot_renders_every_member_row_as_a_dict() {
     );
 }
 
+/// P3 (#2270 review L3): `bootstrap_run`'s arguments bind as Python's
+/// `sqlite3` binds them, `True` as 1, and the column affinity decides what
+/// is stored: the snapshot shows it.
 #[test]
-fn bootstrap_arguments_are_typed_at_the_boundary() {
-    let (_dir, handles) = board(1_000.0);
-    for (args, message) in [
-        (
-            json!(["7", "Mon", "/s"]),
-            "bootstrap_run: pid must be an integer or null",
-        ),
-        (
-            json!([7.5, "Mon", "/s"]),
-            "bootstrap_run: pid must be an integer or null",
-        ),
-        (
-            json!([7, 1, "/s"]),
-            "bootstrap_run: started must be a string or null",
-        ),
-        (
-            json!([7, "Mon", false]),
-            "bootstrap_run: socket must be a string or null",
-        ),
+fn bootstrap_arguments_bind_as_python_binds_them() {
+    for (args, pid, started, socket) in [
+        (json!([true, 5, null]), "1", r#""5""#, "null"),
+        (json!(["7", 1.5, false]), "7", r#""1.5""#, r#""0""#),
+        (json!([7.5, "Mon", "/s"]), "7.5", r#""Mon""#, r#""/s""#),
+        (json!(["abc", null, 3]), r#""abc""#, "null", r#""3""#),
     ] {
+        let (_dir, handles) = board(1_000.0);
+        call(&handles, "parent", "bootstrap_run", args.clone()).unwrap();
+        let snapshot = call(&handles, "parent", "_snapshot", json!([])).unwrap();
+        let row = &snapshot["members"][0];
+        let text = |key: &str| serde_json::to_string(&row[key]).unwrap();
         assert_eq!(
-            call(&handles, "parent", "bootstrap_run", args.clone()).unwrap_err(),
-            BoardError::new(message),
+            [text("pid"), text("started"), text("socket")],
+            [pid, started, socket],
             "{args}"
         );
     }
+    // A list binds as nothing: the store refuses it and keeps no row.
+    let (_dir, handles) = board(1_000.0);
+    let refused = call(&handles, "parent", "bootstrap_run", json!([[1], "s", null])).unwrap_err();
+    assert!(
+        refused
+            .0
+            .starts_with("coordination store unavailable or contended: "),
+        "{refused}"
+    );
+    call(&handles, "parent", "bootstrap_run", json!([7, "s", null])).unwrap();
+    let snapshot = call(&handles, "parent", "_snapshot", json!([])).unwrap();
+    assert_eq!(snapshot["members"].as_array().map(Vec::len), Some(1));
 }
 
 #[test]

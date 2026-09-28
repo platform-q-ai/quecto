@@ -27,6 +27,33 @@ pub fn step(member: &str, method: &str, args: Value, now: f64) -> Step {
     }
 }
 
+/// The method name of a [`sql`] step: never a board method (the dispatcher
+/// and the Python driver both refuse it), so it cannot shadow one.
+const SQL_STEP: &str = "<sql>";
+
+/// Not a board call: `statement` runs on both board files alike, as a file
+/// edited outside the board would be, and answers `null` on both sides. A
+/// later step then shows how each board reads what the edit left.
+pub fn sql(statement: &str) -> Step {
+    Step {
+        member: String::new(),
+        method: SQL_STEP.to_owned(),
+        args: Value::String(statement.to_owned()),
+        now: 0.0,
+    }
+}
+
+/// Runs a [`sql`] step's statement on `database`.
+fn edit(database: &Path, statement: &Value) -> Outcome {
+    let Value::String(statement) = statement else {
+        panic!("a sql step carries its statement as a string: {statement}");
+    };
+    rusqlite::Connection::open(database)
+        .and_then(|connection| connection.execute_batch(statement))
+        .unwrap_or_else(|error| panic!("{statement} on {}: {error}", database.display()));
+    Outcome::Ok(Value::Null)
+}
+
 /// One side's board file, in its own directory.
 struct Side {
     root: PathBuf,
@@ -54,15 +81,19 @@ impl Side {
 
 /// Runs `steps` on both boards and panics with the first difference.
 pub fn run_both(steps: &[Step]) {
-    if let Err(difference) = try_run_both(steps, |_, _| {}) {
+    if let Err(difference) = try_run_both(steps, |_, _, _| {}) {
         panic!("{difference}");
     }
 }
 
-/// Runs `steps` on both boards, calling `after(index, rust_database)` once
-/// each step has run on both and before they are compared (the harness's
-/// self-test tampers there); the first difference is the error.
-pub fn try_run_both(steps: &[Step], mut after: impl FnMut(usize, &Path)) -> Result<(), String> {
+/// Runs `steps` on both boards, calling `after(index, rust_database,
+/// rust_outcome)` once each step has run on both and before they are
+/// compared (the harness's self-tests tamper with the Rust side's file or
+/// answer there); the first difference is the error.
+pub fn try_run_both(
+    steps: &[Step],
+    mut after: impl FnMut(usize, &Path, &mut Outcome),
+) -> Result<(), String> {
     let dir = tempfile::tempdir().expect("a directory for the two boards");
     let python_side = Side::new(dir.path(), "python");
     let rust_side = Side::new(dir.path(), "rust");
@@ -75,11 +106,18 @@ pub fn try_run_both(steps: &[Step], mut after: impl FnMut(usize, &Path)) -> Resu
                 step.method, step.member, step.args, step.now
             )
         };
-        let python_outcome =
-            python_side.neutral(python.call(&step.member, &step.method, &step.args, step.now));
-        let rust_outcome =
-            rust_side.neutral(rust.call(&step.member, &step.method, &step.args, step.now));
-        after(index, &rust_side.database);
+        let (python_outcome, mut rust_outcome) = if step.method == SQL_STEP {
+            (
+                edit(&python_side.database, &step.args),
+                edit(&rust_side.database, &step.args),
+            )
+        } else {
+            (
+                python_side.neutral(python.call(&step.member, &step.method, &step.args, step.now)),
+                rust_side.neutral(rust.call(&step.member, &step.method, &step.args, step.now)),
+            )
+        };
+        after(index, &rust_side.database, &mut rust_outcome);
         if let Outcome::Raised(raised) = &python_outcome {
             return Err(format!("{}: Python raised {raised}", context()));
         }
