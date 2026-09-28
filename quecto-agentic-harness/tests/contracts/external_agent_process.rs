@@ -61,6 +61,13 @@ async fn two_turns_over_one_process_then_eof_exits_cleanly() {
     assert_eq!(after, None, "no event follows the process's end");
 }
 
+/// A not-logged-in (API error) turn leaves the process taking turns. The
+/// real-CLI behaviour this pins is spike #2264's surprise 7: `claude -p`
+/// answers an authentication failure with an error `result` and keeps
+/// reading its input. The fixture is synthesized from it: one process
+/// keeps one `apiKeySource` (`none`) across both turns, as the real CLI
+/// does; the second turn completing is the mock's replay, not a claim that
+/// the CLI recovers without a credential.
 #[tokio::test]
 async fn an_api_error_turn_does_not_end_the_process() {
     let rig = MockClaudeRig::replaying(&fixture("not_logged_in"));

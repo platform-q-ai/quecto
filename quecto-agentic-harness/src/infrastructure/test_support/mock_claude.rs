@@ -8,13 +8,21 @@
 //! --input-format stream-json` does.
 //!
 //! - `QUECTO_MOCK_CLAUDE_SCRIPT` is the scenario: an NDJSON capture whose
-//!   Nth turn is the lines up to and including its Nth `result` line. Two
-//!   directives, test-only, are not emitted as they are: `@stderr <text>`
-//!   writes `<text>` to stderr and `@stderr-fill <n>` writes `n` bytes of
-//!   `x` to stderr.
+//!   Nth turn is the lines up to and including its Nth `result` line.
+//!   Directives, test-only, are never emitted as they are:
+//!   - `@stderr <text>` writes `<text>` to stderr and `@stderr-fill <n>`
+//!     writes `n` bytes of `x` to stderr, in their turn;
+//!   - `@stall-input <secs>` (anywhere) makes the mock sleep that long
+//!     before it reads its first input line, so its stdin pipe fills;
+//!   - `@stubborn` (anywhere) makes the mock ignore TERM, start a
+//!     background `sleep` grandchild (which inherits the ignored TERM) and
+//!     keep running after stdin EOF: only KILL to its group ends it.
 //! - `QUECTO_MOCK_CLAUDE_ARGS_OUT`, when not empty, is where the mock
-//!   writes its working directory (`cwd=`), argv (`arg=`) and environment
-//!   (`env=`) at start, then appends each input line it reads (`input=`).
+//!   writes, at start: its working directory (`cwd=`), pid (`pid=`),
+//!   process group (`pgid=`), the `ls -ld` mode of `$HOME` (`home_mode=`)
+//!   and of `$CLAUDE_CONFIG_DIR` (`config_mode=`), a stubborn mock's
+//!   grandchild pid (`grandchild=`), argv (`arg=`) and environment
+//!   (`env=`); then it appends each input line it reads (`input=`).
 //!
 //! Both are assigned in the script itself: the launcher's environment
 //! allowlist drops every `QUECTO_*` variable, so they could not reach the
@@ -78,14 +86,29 @@ fn mock_script(scenario: &Path, args_out: &Path) -> String {
 # A stand-in for `claude -p` stream-json, written by quecto's test support.
 QUECTO_MOCK_CLAUDE_SCRIPT={scenario}
 QUECTO_MOCK_CLAUDE_ARGS_OUT={args_out}
+stubborn=
+grandchild=
+if grep -q '^@stubborn$' "$QUECTO_MOCK_CLAUDE_SCRIPT"; then
+  stubborn=1
+  trap '' TERM
+  sleep 3600 &
+  grandchild=$!
+fi
+stall=$(sed -n 's/^@stall-input \([0-9][0-9]*\)$/\1/p' "$QUECTO_MOCK_CLAUDE_SCRIPT" | head -n 1)
 if [ -n "$QUECTO_MOCK_CLAUDE_ARGS_OUT" ]; then
   {{
     printf 'cwd=%s\n' "$(pwd)"
+    printf 'pid=%s\n' "$$"
+    printf 'pgid=%s\n' "$(ps -o pgid= -p $$ | tr -d ' ')"
+    printf 'home_mode=%s\n' "$(ls -ld "$HOME" 2>/dev/null | cut -c1-10)"
+    printf 'config_mode=%s\n' "$(ls -ld "$CLAUDE_CONFIG_DIR" 2>/dev/null | cut -c1-10)"
+    if [ -n "$grandchild" ]; then printf 'grandchild=%s\n' "$grandchild"; fi
     for arg in "$@"; do printf 'arg=%s\n' "$arg"; done
     env | sed 's/^/env=/'
   }} > "$QUECTO_MOCK_CLAUDE_ARGS_OUT.tmp"
   mv "$QUECTO_MOCK_CLAUDE_ARGS_OUT.tmp" "$QUECTO_MOCK_CLAUDE_ARGS_OUT"
 fi
+if [ -n "$stall" ]; then sleep "$stall"; fi
 turn=0
 while IFS= read -r line; do
   turn=$((turn + 1))
@@ -94,6 +117,7 @@ while IFS= read -r line; do
   fi
   awk -v want="$turn" '
     BEGIN {{ current = 1; block = ""; for (i = 0; i < 1024; i++) block = block "x" }}
+    /^@stubborn$/ || /^@stall-input [0-9]+$/ {{ next }}
     current == want && /^@stderr-fill [0-9]+$/ {{
       n = $2 + 0
       while (n >= 1024) {{ printf "%s", block > "/dev/stderr"; n -= 1024 }}
@@ -105,6 +129,9 @@ while IFS= read -r line; do
     /"type": *"result"/ {{ current++ }}
   ' "$QUECTO_MOCK_CLAUDE_SCRIPT"
 done
+if [ -n "$stubborn" ]; then
+  while :; do sleep 1; done
+fi
 exit 0
 "#,
         scenario = quoted(scenario),
