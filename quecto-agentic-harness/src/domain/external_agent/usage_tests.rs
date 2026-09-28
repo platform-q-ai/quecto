@@ -42,11 +42,16 @@ fn a_result_without_a_usable_total_costs_nothing_and_keeps_the_total() {
 }
 
 #[test]
-#[should_panic(expected = "a cumulative cost never shrinks")]
-fn a_shrinking_cumulative_total_is_an_invariant_breach() {
+fn a_drop_in_the_cumulative_total_is_a_new_process_charged_its_whole_total() {
     let mut ledger = UsageLedger::default();
     ledger.record(&with_total(0.02));
-    ledger.record(&with_total(0.01));
+    let restarted = ledger.record(&with_total(0.005));
+    assert_eq!(restarted.cost_micro_usd, 5_000);
+    assert_eq!(restarted.total_cost_micro_usd, 5_000);
+    assert_eq!(restarted.cumulative_reset_from, Some(20_000));
+    let next = ledger.record(&with_total(0.006));
+    assert_eq!(next.cost_micro_usd, 1_000);
+    assert_eq!(next.cumulative_reset_from, None);
 }
 
 #[test]
@@ -103,4 +108,7 @@ fn micro_usd_rounds_once_and_refuses_unusable_amounts() {
     assert_eq!(micro_usd(-0.01), None);
     assert_eq!(micro_usd(f64::INFINITY), None);
     assert_eq!(micro_usd(f64::NAN), None);
+    // 2^64 micro-USD does not fit a u64 (and `u64::MAX as f64` is 2^64).
+    assert_eq!(micro_usd(18_446_744_073_709.551_616), None);
+    assert_eq!(micro_usd(1e12), Some(1_000_000_000_000_000_000));
 }

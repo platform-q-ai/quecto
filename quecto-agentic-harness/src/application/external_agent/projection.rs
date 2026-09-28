@@ -17,9 +17,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use super::dto::audit::input_preview;
 use super::dto::{
     BackgroundJob, ExecutionState, FinalReport, GuardrailDenial, MessageRole, ProjectedMessage,
-    ProjectedToolCall, SessionTotals, TurnOutcome,
+    ProjectedToolCall, ProjectionStep, SessionTotals, TurnOutcome,
 };
 use crate::domain::external_agent::stream::{
     AssistantContent, ExternalAgentEvent, InitEvent, PermissionDenial, RateLimitInfo, ResultEvent,
@@ -33,7 +34,6 @@ use crate::domain::message::StopReason;
 #[derive(Debug, Default)]
 pub struct Projector {
     state: ExecutionState,
-    transitions: Vec<ExecutionState>,
     messages: Vec<ProjectedMessage>,
     by_api_message: HashMap<String, usize>,
     init: Option<InitEvent>,
@@ -61,8 +61,17 @@ impl Projector {
         self.messages[index].ordinal
     }
 
-    /// Fold one event. Returns the turn's outcome when `event` ends one.
-    pub fn apply(&mut self, event: &ExternalAgentEvent) -> Option<TurnOutcome> {
+    /// Fold one event: what it changed.
+    pub fn apply(&mut self, event: &ExternalAgentEvent) -> ProjectionStep {
+        let before = self.state;
+        let turn_end = self.fold(event);
+        ProjectionStep {
+            transition: (self.state != before).then_some(self.state),
+            turn_end,
+        }
+    }
+
+    fn fold(&mut self, event: &ExternalAgentEvent) -> Option<TurnOutcome> {
         match event {
             ExternalAgentEvent::Init(init) => {
                 self.init = Some(init.clone());
@@ -102,7 +111,6 @@ impl Projector {
     fn enter(&mut self, state: ExecutionState) {
         if self.state != state {
             self.state = state;
-            self.transitions.push(state);
         }
     }
 
@@ -147,7 +155,7 @@ impl Projector {
         let index = self.push(MessageRole::Tool);
         let message = &mut self.messages[index];
         message.content = result.content_text();
-        message.tool_call_id = Some(result.tool_use_id.clone());
+        message.tool_call_id = result.tool_use_id.clone();
         message.permission_denied = result.permission_denied;
         // A refused call never ran: it is an error however it is marked.
         message.is_error = result.is_error || result.permission_denied;
@@ -195,6 +203,7 @@ impl Projector {
             usage: self.ledger.record(result),
             num_turns: result.num_turns,
             duration_ms: result.duration_ms,
+            warnings: Vec::new(),
         };
         self.guardrail_audit.extend(
             result
@@ -206,6 +215,7 @@ impl Projector {
             self.report = Some(FinalReport {
                 content: text.clone(),
                 message_ordinal: self.last_assistant_text_ordinal(),
+                failure: None,
             });
         }
         self.turns.push(outcome.clone());
@@ -225,11 +235,6 @@ impl Projector {
         self.state
     }
 
-    /// Every state entered, in order (each differs from the one before).
-    pub fn transitions(&self) -> &[ExecutionState] {
-        &self.transitions
-    }
-
     pub fn messages(&self) -> &[ProjectedMessage] {
         &self.messages
     }
@@ -239,8 +244,9 @@ impl Projector {
         self.init.as_ref()
     }
 
-    pub fn turns(&self) -> &[TurnOutcome] {
-        &self.turns
+    /// The latest turn's outcome.
+    pub fn last_turn(&self) -> Option<&TurnOutcome> {
+        self.turns.last()
     }
 
     pub fn report(&self) -> Option<&FinalReport> {
@@ -252,13 +258,15 @@ impl Projector {
         self.rate_limit.as_ref()
     }
 
-    /// Every rate-limit event whose status was not clear.
-    pub fn admission_warnings(&self) -> &[RateLimitInfo] {
-        &self.admission_warnings
+    /// The latest rate-limit events whose status warranted a warning,
+    /// oldest first.
+    pub fn admission_warnings(&self) -> impl Iterator<Item = &RateLimitInfo> {
+        self.admission_warnings.iter()
     }
 
-    pub fn guardrail_audit(&self) -> &[GuardrailDenial] {
-        &self.guardrail_audit
+    /// The latest permission denials, oldest first.
+    pub fn guardrail_audit(&self) -> impl Iterator<Item = &GuardrailDenial> {
+        self.guardrail_audit.iter()
     }
 
     pub fn background_jobs(&self) -> impl Iterator<Item = &BackgroundJob> {
@@ -281,6 +289,9 @@ impl Projector {
             tokens: self.ledger.cumulative_tokens(),
             cost_micro_usd: self.ledger.total_cost_micro_usd(),
             turns: self.turns.len(),
+            guardrail_denials: self.guardrail_audit.len(),
+            admission_warnings: self.admission_warnings.len(),
+            unknown_events: self.unknown_events,
         }
     }
 }
@@ -289,11 +300,14 @@ fn audit(denial: &PermissionDenial, turn: usize) -> GuardrailDenial {
     GuardrailDenial {
         tool_name: denial.tool_name.clone(),
         tool_use_id: denial.tool_use_id.clone(),
-        tool_input: denial.tool_input.clone(),
+        tool_input_preview: input_preview(&denial.tool_input),
         turn,
     }
 }
 
+#[cfg(test)]
+#[path = "projection_bounds_tests.rs"]
+mod bounds_tests;
 #[cfg(test)]
 #[path = "projection_tests.rs"]
 mod tests;

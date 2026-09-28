@@ -12,4 +12,21 @@ pub struct TurnOutcome {
     pub usage: TurnUsage,
     pub num_turns: Option<u32>,
     pub duration_ms: Option<u64>,
+    /// What the turn's stream said that did not change how it ended; the
+    /// session logs these.
+    pub warnings: Vec<TurnWarning>,
+}
+
+/// A signal of a turn the classification does not act on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TurnWarning {
+    /// An assistant event carried an `error`, yet the result says the
+    /// turn completed: the CLI's result is followed.
+    AssistantError(String),
+    /// The cumulative cost dropped: a new process. The turn was charged
+    /// the whole new total.
+    CumulativeCostReset {
+        previous_micro_usd: u64,
+        total_micro_usd: u64,
+    },
 }

@@ -16,4 +16,11 @@ pub struct SessionTotals {
     /// Cumulative cost at list price, micro-USD.
     pub cost_micro_usd: u64,
     pub turns: usize,
+    /// Every permission denial reported, including those the bounded
+    /// audit no longer holds.
+    pub guardrail_denials: usize,
+    /// Every rate-limit event that warranted a warning.
+    pub admission_warnings: usize,
+    /// Every event of a type the vocabulary does not know.
+    pub unknown_events: usize,
 }
