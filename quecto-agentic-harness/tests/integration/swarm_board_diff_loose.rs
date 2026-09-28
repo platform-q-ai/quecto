@@ -36,9 +36,11 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 /// - `outside_edited_columns`: a `run` column `_snapshot` reads as a
 ///   number (`deadline`, `member_limit`) holding anything but the number
 ///   the board writes (NULL, text, a REAL `member_limit`), or a BLOB in
-///   any column `_snapshot` or `_status` reads, is refused as a store
-///   failure; Python answers with the value (or, for a BLOB, fails to
-///   write its JSON). Everything else a file edited outside the board may
+///   any column `_snapshot` or `_status` reads, or a number in a text
+///   column they read (`status`, `coordinator`, `id` in a table rebuilt
+///   without column types), is refused as a store failure; Python answers
+///   with the value (or, for a BLOB, fails to write its JSON). Everything
+///   else a file edited outside the board may
 ///   hold is read as Python reads it
 ///   (`outside_edited_text_reads_as_python_reads_it` and the tests before
 ///   it): text that is not UTF-8 in any column of a row Python fetches is
@@ -277,10 +279,11 @@ fn arguments_beyond_a_serde_value() {
 }
 
 /// `_bootstrap` asks only whether a run exists (`SELECT 1 FROM run`) and
-/// `create` reads only the run's status and coordinator (#2270 round-3
-/// review N1): columns either leaves unread may hold anything.
+/// `create` fetches the whole run row but uses only its status and
+/// coordinator (#2270 round-3 review N1): columns either leaves unused may
+/// hold anything.
 #[test]
-fn bootstrap_and_create_read_only_the_run_columns_python_reads() {
+fn bootstrap_and_create_use_only_the_run_columns_python_uses() {
     for edit in [
         "UPDATE run SET deadline='soon', member_limit='many'",
         "UPDATE run SET deadline=NULL, member_limit=2.5, integrator=x'00'",
