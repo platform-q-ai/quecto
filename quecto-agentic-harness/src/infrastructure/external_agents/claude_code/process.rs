@@ -43,7 +43,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
@@ -91,6 +91,11 @@ pub const STREAM_LINE_CAP_BYTES: usize = 16 * 1024 * 1024;
 /// stream-json lines are KiB.
 pub const STREAM_BUFFER_BYTES: usize = 32 * 1024 * 1024;
 
+/// How long an exit waits for stderr's end, so the tail carries the
+/// child's last words; a descendant holding stderr open cannot hold the
+/// exit longer.
+pub const STDERR_EOF_GRACE: Duration = Duration::from_millis(500);
+
 /// Whole turns queued ahead of the stdin writer; a full queue holds the
 /// sender (cancel-safely: an unqueued turn is simply not sent).
 const INPUT_QUEUE: usize = 16;
@@ -120,6 +125,7 @@ pub struct ClaudeCodeLauncher {
     parent_environment: Vec<(OsString, OsString)>,
     termination: TerminationBudget,
     limits: LineLimits,
+    stderr_eof_grace: Duration,
 }
 
 impl ClaudeCodeLauncher {
@@ -134,6 +140,7 @@ impl ClaudeCodeLauncher {
             supervisor,
             parent_environment,
             termination: TerminationBudget::DEFAULT,
+            stderr_eof_grace: STDERR_EOF_GRACE,
             limits: LineLimits {
                 line_cap: STREAM_LINE_CAP_BYTES,
                 buffer_bytes: STREAM_BUFFER_BYTES,
@@ -159,6 +166,13 @@ impl ClaudeCodeLauncher {
         };
         assert!(limits.valid(), "invalid stream limits: {limits:?}");
         self.limits = limits;
+        self
+    }
+
+    /// This launcher, waiting at most `grace` for stderr's end before an
+    /// exit is returned, instead of [`STDERR_EOF_GRACE`].
+    pub fn with_stderr_eof_grace(mut self, grace: Duration) -> Self {
+        self.stderr_eof_grace = grace;
         self
     }
 
@@ -644,6 +658,10 @@ impl ExternalAgentProcess for ClaudeCodeProcess {
             self.log_exit(&exit);
             exit
         })
+    }
+
+    fn exited_discarding_output(&self) -> PortFuture<'_, ExternalAgentExit> {
+        self.exited()
     }
 
     fn stderr_tail(&self) -> String {

@@ -21,12 +21,18 @@
 //!     turn reaches it: how far the mock got while its stdout was held;
 //!   - `@stubborn` (anywhere) makes the mock ignore TERM, start a
 //!     background `sleep` grandchild (which inherits the ignored TERM) and
-//!     keep running after stdin EOF: only KILL to its group ends it.
+//!     keep running after stdin EOF: only KILL to its group ends it;
+//!   - `@linger <secs>` (anywhere) starts a background `sleep <secs>`
+//!     grandchild holding the mock's stdout and stderr open after the mock
+//!     itself exits;
+//!   - `@stderr-after <secs> <text>` (anywhere) starts a background
+//!     grandchild that writes `<text>` to stderr `<secs>` after the start:
+//!     last words that arrive after the mock itself may have exited.
 //! - `QUECTO_MOCK_CLAUDE_ARGS_OUT`, when not empty, is where the mock
 //!   writes, at start: its working directory (`cwd=`), pid (`pid=`),
 //!   process group (`pgid=`), the `ls -ld` mode of `$HOME` (`home_mode=`)
-//!   and of `$CLAUDE_CONFIG_DIR` (`config_mode=`), a stubborn mock's
-//!   grandchild pid (`grandchild=`), argv (`arg=`) and environment
+//!   and of `$CLAUDE_CONFIG_DIR` (`config_mode=`), a stubborn or lingering
+//!   mock's grandchild pid (`grandchild=`), argv (`arg=`) and environment
 //!   (`env=`); then it appends each input line it reads (`input=`).
 //!
 //! Both are assigned in the script itself: the launcher's environment
@@ -99,6 +105,16 @@ if grep -q '^@stubborn$' "$QUECTO_MOCK_CLAUDE_SCRIPT"; then
   sleep 3600 &
   grandchild=$!
 fi
+linger=$(sed -n 's/^@linger \([0-9][0-9.]*\)$/\1/p' "$QUECTO_MOCK_CLAUDE_SCRIPT" | head -n 1)
+if [ -n "$linger" ]; then
+  sleep "$linger" &
+  grandchild=$!
+fi
+late=$(sed -n 's/^@stderr-after \([0-9][0-9.]*\) .*$/\1/p' "$QUECTO_MOCK_CLAUDE_SCRIPT" | head -n 1)
+if [ -n "$late" ]; then
+  late_words=$(sed -n 's/^@stderr-after [0-9][0-9.]* \(.*\)$/\1/p' "$QUECTO_MOCK_CLAUDE_SCRIPT" | head -n 1)
+  (sleep "$late"; printf '%s\n' "$late_words" >&2) &
+fi
 stall=$(sed -n 's/^@stall-input \([0-9][0-9]*\)$/\1/p' "$QUECTO_MOCK_CLAUDE_SCRIPT" | head -n 1)
 if [ -n "$QUECTO_MOCK_CLAUDE_ARGS_OUT" ]; then
   {{
@@ -122,7 +138,7 @@ while IFS= read -r line; do
   fi
   awk -v want="$turn" -v record="$QUECTO_MOCK_CLAUDE_ARGS_OUT" '
     BEGIN {{ current = 1; block = ""; for (i = 0; i < 1024; i++) block = block "x" }}
-    /^@stubborn$/ || /^@stall-input [0-9]+$/ {{ next }}
+    /^@stubborn$/ || /^@stall-input [0-9]+$/ || /^@linger / || /^@stderr-after / {{ next }}
     current == want && /^@stderr-fill [0-9]+$/ {{
       n = $2 + 0
       while (n >= 1024) {{ printf "%s", block > "/dev/stderr"; n -= 1024 }}

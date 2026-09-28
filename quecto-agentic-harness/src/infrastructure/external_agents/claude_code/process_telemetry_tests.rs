@@ -37,28 +37,50 @@ impl CapturedLog {
         String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
     }
 
-    /// The captured lines of the external-agent target naming `message`.
-    fn lines_of(&self, message: &str) -> Vec<String> {
+    /// The captured lines of `target` naming `message`.
+    fn lines_of(&self, target: &str, message: &str) -> Vec<String> {
         self.text()
             .lines()
-            .filter(|line| line.contains(super::TELEMETRY_TARGET) && line.contains(message))
+            .filter(|line| line.contains(target) && line.contains(message))
             .map(str::to_string)
             .collect()
     }
 
+    /// The first line of the external-agent target naming `message`.
     async fn until_logged(&self, message: &str) -> String {
+        self.until_logged_under(super::TELEMETRY_TARGET, message)
+            .await
+    }
+
+    async fn until_logged_under(&self, target: &str, message: &str) -> String {
         tokio::time::timeout(BOUND, async {
             loop {
-                if let Some(line) = self.lines_of(message).into_iter().next() {
+                if let Some(line) = self.lines_of(target, message).into_iter().next() {
                     return line;
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
         .await
-        .unwrap_or_else(|_| panic!("{message:?} is logged: {}", self.text()))
+        .unwrap_or_else(|_| panic!("{message:?} is logged under {target}: {}", self.text()))
+    }
+
+    /// The supervisor's record of the member's termination: logged by the
+    /// supervisor itself from the launcher's data-only observation, never
+    /// by a closure of the launcher's run on the supervisor's thread.
+    async fn termination(&self) -> String {
+        let line = self
+            .until_logged_under(SUPERVISOR_TARGET, "owned child termination observed")
+            .await;
+        for expected in ["owner=claude member", "label=m1", "elapsed_ms="] {
+            assert!(line.contains(expected), "{expected}: {line}");
+        }
+        line
     }
 }
+
+/// The `tracing` target of the supervisor's own telemetry.
+const SUPERVISOR_TARGET: &str = "quecto::owned_child";
 
 fn capture() -> (CapturedLog, tracing::subscriber::DefaultGuard) {
     let logs = CapturedLog::default();
@@ -142,8 +164,7 @@ async fn a_member_run_is_logged_from_launch_to_exit_without_secrets() {
     for expected in ["status=0", "wall_ms=", "stderr_tail_bytes="] {
         assert!(exit.contains(expected), "{expected}: {exit}");
     }
-    let termination = logs.until_logged("claude member termination").await;
-    assert!(termination.contains("elapsed_ms="), "{termination}");
+    logs.termination().await;
     until_retired(&rig.supervisor, FALLBACK_BOUND).await;
     assert_nothing_secret(&logs);
 }
@@ -158,8 +179,49 @@ async fn a_member_ended_by_kill_logs_the_signal() {
     let process = rig.start().await;
     drop(process);
     until_retired(&rig.supervisor, FALLBACK_BOUND).await;
-    let termination = logs.until_logged("claude member termination").await;
+    let termination = logs.termination().await;
     assert!(termination.contains("signal=KILL"), "{termination}");
-    assert!(termination.contains("elapsed_ms="), "{termination}");
     assert_nothing_secret(&logs);
+}
+
+/// Output discarded by `exited_discarding_output` is counted in the exit's
+/// telemetry: the decoded events never returned as well as the lines never
+/// decoded (#2286 review round 3).
+#[tokio::test]
+async fn the_exit_counts_the_decoded_events_and_the_lines_it_discarded() {
+    let (logs, _guard) = capture();
+    let blocks = (0..3)
+        .map(|n| format!("{{\"type\": \"text\", \"text\": \"block {n}\"}}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let scenario = format!(
+        "{{\"type\": \"assistant\", \"message\": {{\"id\": \"msg-1\", \"content\": [{blocks}]}}}}\n{RESULT_LINE}"
+    );
+    let rig = Rig::new(&scenario);
+    let process = rig.start().await;
+    process.send_user_turn("go").await.unwrap();
+    let first = tokio::time::timeout(BOUND, process.next_event())
+        .await
+        .expect("an event is bounded");
+    assert!(
+        matches!(
+            first,
+            Some(crate::domain::external_agent::stream::ExternalAgentEvent::AssistantBlock { .. })
+        ),
+        "{first:?}"
+    );
+    // Two of the line's three blocks are decoded and pending; the result
+    // line is not read yet. The input closes once the discard is under way.
+    let (exit, ()) = tokio::join!(
+        tokio::time::timeout(BOUND, process.exited_discarding_output()),
+        async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            process.close_input().await;
+        }
+    );
+    assert_eq!(exit.expect("exit is bounded"), ExternalAgentExit::Code(0));
+    let exit = logs.until_logged("claude member exit").await;
+    for expected in ["discarded_events=2", "discarded_lines=1"] {
+        assert!(exit.contains(expected), "{expected}: {exit}");
+    }
 }

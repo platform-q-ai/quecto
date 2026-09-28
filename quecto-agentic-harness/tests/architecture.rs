@@ -45,6 +45,9 @@ mod sessions_epic_close;
 mod sessions_epic_close_retirement;
 /// Epic #1929 close (#1940): process-effect allowlist, no-pid teardown,
 /// retired-name sweep, single owners and whole-crate layer baselines.
+/// The supervisor's runtime runs no caller code (#2286).
+#[path = "architecture/supervisor_runtime.rs"]
+mod supervisor_runtime;
 #[path = "architecture/teardown_authority.rs"]
 mod teardown_authority;
 #[path = "architecture/teardown_layers.rs"]
@@ -5857,45 +5860,6 @@ fn external_agent_ports_are_capability_local_and_contracted() {
             "{name} is an external-agent application DTO, not {}",
             declared_in[0]
         );
-    }
-}
-
-/// The supervisor's one-thread runtime reaps every child and runs every
-/// termination; it must not become a place to run a caller's work (#2286
-/// review). Of its `pub` methods, only those that take the termination
-/// protocol may take a future at all: pipe pumps take pipe types.
-#[test]
-fn the_supervisor_runtime_takes_no_caller_future() {
-    for path in [
-        "src/infrastructure/processes/owned_child_supervisor.rs",
-        "src/infrastructure/processes/owned_child_supervisor_tasks.rs",
-    ] {
-        let source = production_source(path);
-        let mut signatures = Vec::new();
-        let mut current: Option<String> = None;
-        for line in source.lines() {
-            let trimmed = line.trim_start();
-            let starts = trimmed.starts_with("pub fn ") || trimmed.starts_with("pub async fn ");
-            if starts {
-                current = Some(String::new());
-            }
-            if let Some(signature) = current.as_mut() {
-                signature.push_str(trimmed);
-                signature.push(' ');
-                if trimmed.contains('{') || trimmed.ends_with(';') {
-                    signatures.push(current.take().expect("a signature in progress"));
-                }
-            }
-        }
-        assert!(!signatures.is_empty(), "{path} declares pub methods");
-        for signature in signatures {
-            let takes_future = signature.contains("Future");
-            let protocol_only = signature.contains("ProtocolOutcome");
-            assert!(
-                protocol_only || !takes_future,
-                "{path}: only the termination protocol may be a future: {signature}"
-            );
-        }
     }
 }
 
