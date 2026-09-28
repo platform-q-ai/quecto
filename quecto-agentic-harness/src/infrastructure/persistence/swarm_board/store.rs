@@ -188,7 +188,12 @@ fn variable_limit_checked(limit: i32) -> Result<(), StoreRefusal> {
 /// `0` leaves deleted board content in freed pages, and `2` (FAST) zeroes
 /// only some of them.
 fn secure_delete_checked(secure_delete: i64) -> Result<(), StoreRefusal> {
-    Ok(())
+    match secure_delete {
+        1 => Ok(()),
+        other => Err(StoreRefusal(format!(
+            "coordination store refused: this build's SQLite has secure_delete={other}, not the system library's 1 (build it with LIBSQLITE3_FLAGS from .cargo/config.toml)"
+        ))),
+    }
 }
 
 /// `sqlite3.connect(path.as_uri() + '?mode=rw[c]', uri=True, timeout=0.5)`.
@@ -213,6 +218,10 @@ fn open(path: &Path, create: bool) -> Result<Connection, StoreRefusal> {
         .limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER)
         .map_err(|error| contended(&error))?;
     variable_limit_checked(limit)?;
+    let secure_delete = connection
+        .pragma_query_value(None, "secure_delete", |row| row.get::<_, i64>(0))
+        .map_err(|error| contended(&error))?;
+    secure_delete_checked(secure_delete)?;
     connection
         .busy_timeout(BUSY_TIMEOUT)
         .map_err(|error| contended(&error))?;
