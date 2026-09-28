@@ -69,9 +69,11 @@ fn config_only_invocation_uses_the_live_repl() {
     );
 }
 
-// Both OAuth tests start the provider callback listeners on fixed ports
-// (127.0.0.1:1455 and :56121), a real shared resource: run concurrently, one
-// child's listener answers the other test's probe (observed as a broken pipe).
+// Only this test binds the provider callback listeners' fixed ports
+// (127.0.0.1:1455 and :56121); nothing else in the suite listens there.
+// piped_repl_oauth_fails_promptly_for_both_providers takes the same serial
+// key, although its non-interactive REPL skips the browser callback and binds
+// nothing, so a future change that makes it bind cannot race this test.
 #[test]
 #[serial_test::serial(oauth_callback_ports)]
 fn standalone_oauth_with_redirected_stdin_starts_browser_callbacks() {
@@ -91,38 +93,59 @@ fn standalone_oauth_with_redirected_stdin_starts_browser_callbacks() {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
+        // A real callback listener rejects missing state without contacting a
+        // provider. The request goes out in one write_all: the listener reads
+        // the whole request head before answering (PR #2309), so how the bytes
+        // are split no longer matters, but one write keeps the test simple.
+        let request = format!(
+            "GET {path}?code=test HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+        );
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut response = String::new();
+        let mut last_error: Option<std::io::Error> = None;
+        // Retrying is cheap insurance only: connect fails until the child has
+        // bound its port, and any other failure is kept for the assert message.
         while Instant::now() < deadline {
             if child.try_wait().unwrap().is_some() {
                 break;
             }
-            if let Ok(mut stream) = TcpStream::connect(address) {
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(1)))
-                    .unwrap();
-                // A real callback listener rejects missing state without contacting a provider.
-                // A connection the listener closes before reading (it is still binding, or a
-                // previous listener on the fixed port is going away) is retried until the
-                // deadline rather than failing on the broken pipe.
-                let request = format!(
-                    "GET {path}?code=test HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
-                );
-                response.clear();
-                let answered = stream.write_all(request.as_bytes()).is_ok()
-                    && stream.read_to_string(&mut response).is_ok()
-                    && response.starts_with("HTTP/1.1 ");
-                if answered {
-                    break;
+            match TcpStream::connect(address) {
+                Ok(mut stream) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
+                    stream
+                        .set_write_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
+                    response.clear();
+                    let exchanged = stream
+                        .write_all(request.as_bytes())
+                        .and_then(|()| stream.read_to_string(&mut response));
+                    match exchanged {
+                        Ok(_) if response.starts_with("HTTP/1.1 ") => break,
+                        Ok(_) => {}
+                        Err(error) => last_error = Some(error),
+                    }
                 }
+                Err(error) => last_error = Some(error),
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+        // The child must still be running: a response from some other process
+        // listening on the fixed port must not pass this test.
+        let child_status = child.try_wait().unwrap();
         let _ = child.kill();
         let output = child.wait_with_output().unwrap();
         assert!(
+            child_status.is_none(),
+            "{provider}: login exited ({child_status:?}) before answering; response: \
+             {response:?}; last I/O error: {last_error:?}; stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
             response.starts_with("HTTP/1.1 400"),
-            "{provider}: callback listener unavailable: {response:?}; stderr: {}",
+            "{provider}: callback listener unavailable: {response:?}; last I/O error: \
+             {last_error:?}; stderr: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
