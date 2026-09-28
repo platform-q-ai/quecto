@@ -39,6 +39,7 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 | [0026](adr-0026-shared-inference-admission.md) | Single-host Shared Inference Admission | ✅ Accepted contract (partially superseded by ADR-0028) | Pure policy, private authority, per-attempt transport accounting and safety-first uncertainty; implementation pending #1679 P1–P4. |
 | [0028](adr-0028-advisory-unbound-admission.md) | Advisory admission bindings for usable provider slots | ✅ Accepted | Usable slots without an effective binding remain available without broker gating and produce an advisory warning. |
 | [0027](adr-0027-tui-is-a-single-connection-client.md) | The TUI Is a Single-Connection Client | ✅ Accepted | One TUI owns one connection and one agent; no tab multiplexer, tab-agent registry, workspace manifest, or request-id namespace. |
+| [0029](adr-0029-contain-tool-panics-with-unwind-and-a-fail-fast-hook.md) | Contain Tool Panics: Unwind in Release, Abort Everywhere Else | ✅ Accepted | Release builds unwind; a process hook contains panics inside a tool-execution scope and aborts on every other panic. |
 
 ## The ADR-0008 protocol series
 

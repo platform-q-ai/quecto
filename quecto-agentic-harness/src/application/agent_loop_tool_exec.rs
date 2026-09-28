@@ -3,6 +3,7 @@
 //! in the per-run ledger (#1072).
 
 use super::*;
+use crate::application::tool_panic_scope;
 
 /// An overlapping batch in flight: its calls and each call's result so far.
 /// Dropped at the batch's end or by a cancellation, it gives the response
@@ -151,7 +152,7 @@ impl AgentLoopImpl {
                 .enumerate()
                 .map(|(idx, tc)| async move {
                     let started = std::time::Instant::now();
-                    let outcome = self.execute_single_tool_call(tc).await;
+                    let outcome = self.execute_single_tool_call(current_turn, tc).await;
                     (idx, outcome, started.elapsed())
                 })
                 .collect();
@@ -185,7 +186,7 @@ impl AgentLoopImpl {
                     let tc = &messages[assistant_index].tool_calls[idx];
                     self.audit_tool_call(current_turn, tc).await;
                     let started = std::time::Instant::now();
-                    let outcome = self.execute_single_tool_call(tc).await;
+                    let outcome = self.execute_single_tool_call(current_turn, tc).await;
                     let elapsed = started.elapsed();
                     let finished = FinishedCall {
                         idx,
@@ -311,6 +312,7 @@ impl AgentLoopImpl {
 
     async fn execute_single_tool_call(
         &self,
+        current_turn: u32,
         tc: &ToolCall,
     ) -> (
         String,
@@ -361,9 +363,7 @@ impl AgentLoopImpl {
                 } else if disabled_by_runtime_policy {
                     Ok(disabled())
                 } else {
-                    self.tool_executor()
-                        .execute(&tc.name, &tc.wire_arguments())
-                        .await
+                    self.execute_contained(current_turn, tc).await
                 }
             }
         };
@@ -398,6 +398,108 @@ impl AgentLoopImpl {
             "tool executed"
         );
         (content, image_blocks, delivery_metadata, is_err)
+    }
+
+    /// Run a call's tool with a panic contained to that call (#2192): a tool
+    /// that panics, whether before it returns its future or while it runs,
+    /// answers an error result naming the crash, the event log records an
+    /// `error` event with the panic's message and location, and the turn
+    /// goes on. The call runs inside its tool scope, so the process panic
+    /// hook lets the panic unwind to here instead of aborting, and records
+    /// where it happened. The panic unwinds only through the tool's own
+    /// frames; the loop holds no lock across this await, so none of its
+    /// state is left half-updated.
+    async fn execute_contained(
+        &self,
+        current_turn: u32,
+        tc: &ToolCall,
+    ) -> Result<crate::domain::tool::ToolResult, DomainError> {
+        use futures::FutureExt;
+        let arguments = tc.wire_arguments();
+        let scope = tool_panic_scope::ToolScope::new(tc.name.as_str());
+        let run = async { self.tool_executor().execute(&tc.name, &arguments).await };
+        let contained = std::panic::AssertUnwindSafe(tool_panic_scope::scoped(scope.clone(), run))
+            .catch_unwind()
+            .await;
+        // Caught: the unwind the hook let through is over on this thread.
+        tool_panic_scope::end_contained_unwind();
+        // The call's future is gone, and with it the scope is closed: no
+        // panic can be recorded on it any more (a later one is fatal), so
+        // the record read below is final (#2192 review).
+        assert!(
+            !scope.is_open(),
+            "the call's scope is closed before it is read"
+        );
+        let site = match contained {
+            // A panic the call swallowed (carried work whose join error it
+            // read as "no output") still fails the call: its answer may be
+            // wrong while looking like success (#2192).
+            Ok(result) => match scope.recorded_panic() {
+                None => return result,
+                Some(site) => site,
+            },
+            // The hook saw the panic first and kept its location; without a
+            // hook (an embedding that installed none) the payload names it.
+            Err(payload) => scope
+                .recorded_panic()
+                .unwrap_or_else(|| tool_panic_scope::PanicSite {
+                    message: tool_panic_scope::payload_message(payload.as_ref()),
+                    location: None,
+                }),
+        };
+        // The message goes to the provider and the event log: secret shapes
+        // redacted, and cut to a bound (#2192 review).
+        let message = shown_panic_message(&site.message);
+        tracing::error!(
+            target: "tool_exec",
+            tool_name = tc.name.as_str(),
+            call_id = tc.id.as_str(),
+            panic = message.as_str(),
+            location = site.location.as_deref().unwrap_or("unknown"),
+            "tool panicked; its call answers an error and the turn goes on"
+        );
+        self.audit(
+            current_turn,
+            AuditEvent::Error {
+                source: tool_panic_scope::TOOL_PANIC_SOURCE.to_string(),
+                tool: Some(tc.name.clone()),
+                message: message.clone(),
+                location: site.location.clone(),
+            },
+        )
+        .await;
+        Ok(crashed_tool_result(&tc.name, &message))
+    }
+}
+
+/// The most of a panic's message a result or event carries, in bytes.
+pub const MAX_PANIC_MESSAGE_BYTES: usize = 1024;
+
+/// A panic's message as it may leave the process: known secret shapes
+/// redacted first (so a cut never hides one from the redaction), then cut
+/// on a character boundary to [`MAX_PANIC_MESSAGE_BYTES`], marked "…".
+pub fn shown_panic_message(message: &str) -> String {
+    let redacted = crate::domain::redaction::redact_secrets(message);
+    let mut end = redacted.len().min(MAX_PANIC_MESSAGE_BYTES);
+    while !redacted.is_char_boundary(end) {
+        end -= 1;
+    }
+    match end < redacted.len() {
+        true => format!("{}…", &redacted[..end]),
+        false => redacted,
+    }
+}
+
+/// The error result of a call whose tool panicked (#2192).
+fn crashed_tool_result(tool: &str, message: &str) -> crate::domain::tool::ToolResult {
+    crate::domain::tool::ToolResult {
+        content: format!(
+            "internal error in tool '{tool}': {message}; the call stopped at the panic, and any \
+             partial effects it had already made may remain"
+        ),
+        image_blocks: vec![],
+        delivery_metadata: None,
+        is_error: true,
     }
 }
 

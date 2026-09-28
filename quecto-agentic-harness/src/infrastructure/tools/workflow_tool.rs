@@ -86,10 +86,8 @@ impl WorkflowTool {
         &self.engine
     }
 
-    fn lock_engine(&self) -> Result<std::sync::MutexGuard<'_, WorkflowEngine>, String> {
-        self.engine
-            .lock()
-            .map_err(|e| format!("workflow engine poisoned: {}", e))
+    fn lock_engine(&self) -> std::sync::MutexGuard<'_, WorkflowEngine> {
+        crate::domain::workflow::lock_engine(&self.engine)
     }
 
     fn handle_action(&self, arguments: &str) -> Result<String, String> {
@@ -100,7 +98,7 @@ impl WorkflowTool {
             .and_then(|v| v.as_str())
             .ok_or("missing required field: action")?;
 
-        let mut engine = self.lock_engine()?;
+        let mut engine = self.lock_engine();
         let result = match action {
             "status" => Ok(engine.status_text()),
             "list_templates" => Ok(render_templates(engine.list_templates())),
@@ -455,10 +453,7 @@ impl ToolGuard for WorkflowGuard {
             return Ok(());
         }
         let command = extract_bash_command(arguments);
-        let engine = self
-            .engine
-            .lock()
-            .map_err(|e| format!("workflow engine poisoned: {}", e))?;
+        let engine = crate::domain::workflow::lock_engine(&self.engine);
         let template = match engine.active_template() {
             Some(t) => t,
             None => {

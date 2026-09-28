@@ -193,7 +193,7 @@ pub(super) struct StreamReader {
 
 enum Source {
     Pipe {
-        done: tokio::task::JoinHandle<()>,
+        done: crate::infrastructure::tools::call_work::CarriedJoin<()>,
         capture: Arc<Mutex<Capture>>,
     },
     /// A task that renders its own output (tests model pipes this way).
@@ -211,7 +211,11 @@ impl StreamReader {
     {
         let capture = Arc::new(Mutex::new(Capture::new(max_capture_bytes, stream)));
         let shared = capture.clone();
-        let done = tokio::spawn(async move { read_into(pipe, &shared).await });
+        // The call's own reader: a panic in it resumes in the call when it
+        // is joined; one after the call returned is fatal (#2192).
+        let done = crate::infrastructure::tools::call_work::spawn_in_call(async move {
+            read_into(pipe, &shared).await
+        });
         Self {
             source: Source::Pipe { done, capture },
         }

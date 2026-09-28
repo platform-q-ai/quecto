@@ -413,10 +413,8 @@ pub type WorkflowEngineSlot = std::sync::Arc<
 /// template selected/bound. A merely available, idle engine is not engaged.
 pub fn workflow_engaged(slot: &WorkflowEngineSlot) -> bool {
     slot.get().is_some_and(|engine| {
-        engine
-            .lock()
-            .map(|engine| engine.guards_enabled() || engine.active_template().is_some())
-            .unwrap_or(true)
+        let engine = crate::domain::workflow::lock_engine(engine);
+        engine.guards_enabled() || engine.active_template().is_some()
     })
 }
 

@@ -94,7 +94,10 @@ pub(super) async fn run_rg(
     let stdout = child.stdout.take();
     // stderr drains in its own task, so neither pipe can block rg; it is
     // aborted when this call ends, however it ends (the guard's drop).
-    let stderr_task = tokio::spawn(read_head(child.stderr.take(), RG_STDERR_KEEP));
+    let stderr_task = crate::infrastructure::tools::call_work::spawn_in_call(read_head(
+        child.stderr.take(),
+        RG_STDERR_KEEP,
+    ));
     let _abort_stderr = AbortOnDrop(stderr_task.abort_handle());
     let mut out = Vec::with_capacity(limit.bytes.min(64 * 1024));
     // What is known before the timeout may fire: kept if it does, so a cut

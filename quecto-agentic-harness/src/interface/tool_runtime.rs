@@ -270,6 +270,9 @@ pub(crate) fn build_tool_runtime(
     policy_state.workflow_supported &= !swarm_agent;
     policy_state.inherited_tool_policy = inherited_tool_policy.clone();
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    // Fault injection for the #2192 process tests; not compiled in production.
+    #[cfg(feature = "test-support")]
+    crate::infrastructure::tools::panic_probe::register_if_requested(&mut registry);
     register_bundled_native_tools_with_scope(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
@@ -413,9 +416,7 @@ pub(crate) fn build_tool_runtime(
         let _ = workflow_engine.set(engine.clone());
         let engine = engine.clone();
         swarm_participation.on_participation(move || {
-            if let Ok(mut engine) = engine.lock() {
-                engine.set_selector_nudge(false);
-            }
+            crate::domain::workflow::lock_engine(&engine).set_selector_nudge(false);
         });
     }
 
@@ -628,9 +629,7 @@ fn build_workflow_runtime(
         "the workflow tool must register as the allowlisted entrypoint-only tool"
     );
     if let Some(spec) = bound_spec {
-        let mut engine = state
-            .lock()
-            .map_err(|_| "failed to bind workflow template: engine lock poisoned".to_string())?;
+        let mut engine = crate::domain::workflow::lock_engine(&state);
         engine
             .select_template(&spec.template.id, None)
             .map_err(|error| {

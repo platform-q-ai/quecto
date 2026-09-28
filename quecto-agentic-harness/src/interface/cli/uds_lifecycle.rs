@@ -128,9 +128,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let admission_slots =
         super::uds_admission_warnings::publish_startup_warnings(&catalogue.runtime_store);
     if let (Some(ws), Some(persisted)) = (&workflow_state, opened.workflow_run) {
-        if let Ok(mut engine) = ws.lock() {
-            engine.restore_run(persisted);
-        }
+        crate::domain::workflow::lock_engine(ws).restore_run(persisted);
     }
     if let Some(std_stream) = socket_override {
         // Single-client path: backward-compatible with existing tests.

@@ -5,6 +5,14 @@ use std::time::SystemTime;
 
 use super::{ActiveExecutions, JobRegistry, JobState};
 
+/// A swarm lock, recovered if a panic contained to a tool call poisoned it
+/// (#2192): job and registry state is written by single assignments, so it
+/// is consistent at any point a panic could leave it.
+pub(super) fn recovered<T>(lock: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    lock.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Retain this many finished artifact directories per execution registry.
 pub(crate) const MAX_RETAINED_ARTIFACT_DIRS: usize = 32;
 
@@ -42,22 +50,15 @@ pub(crate) fn prune_artifact_dirs(
     max_retained: usize,
 ) {
     let root = crate::infrastructure::tools::swarm_store_location::artifact_root(workspace);
-    let mut live: Vec<String> = active
-        .lock()
-        .map(|set| set.iter().cloned().collect())
-        .unwrap_or_default();
+    let mut live: Vec<String> = recovered(active).iter().cloned().collect();
     live.extend(
-        jobs.lock()
-            .map(|registry| {
-                registry
-                    .values()
-                    .filter_map(|job| {
-                        let j = job.lock().ok()?;
-                        (!is_terminal(&j.status)).then(|| j.execution_id.clone())
-                    })
-                    .collect::<Vec<_>>()
+        recovered(jobs)
+            .values()
+            .filter_map(|job| {
+                let j = recovered(job);
+                (!is_terminal(&j.status)).then(|| j.execution_id.clone())
             })
-            .unwrap_or_default(),
+            .collect::<Vec<_>>(),
     );
     let prefix = format!("py_{owner}_");
     let Ok(entries) = std::fs::read_dir(&root) else {
@@ -102,7 +103,7 @@ pub(crate) fn evict_finished_jobs(
     let mut finished: Vec<(u128, String)> = registry
         .iter()
         .filter_map(|(id, job)| {
-            let j = job.lock().ok()?;
+            let j = recovered(job);
             is_terminal(&j.status).then(|| (j.completed_ms.unwrap_or(j.started_ms), id.clone()))
         })
         .collect();
@@ -122,7 +123,7 @@ pub(crate) fn register_context_jobs(
     context: &super::super::swarm_bridge::SwarmContext,
     jobs: &JobRegistry,
 ) {
-    let mut registered = CONTEXT_JOBS.lock().unwrap();
+    let mut registered = recovered(&CONTEXT_JOBS);
     registered.retain(|(_, _, weak)| weak.strong_count() > 0);
     registered.push((
         context.checkout.clone(),
@@ -147,9 +148,7 @@ fn cancel_context(
     close: bool,
     through_generation: Option<u64>,
 ) {
-    let jobs: Vec<_> = CONTEXT_JOBS
-        .lock()
-        .unwrap()
+    let jobs: Vec<_> = recovered(&CONTEXT_JOBS)
         .iter()
         .filter(|(checkout, member, _)| checkout == &context.checkout && member == &context.member)
         .filter_map(|(_, _, weak)| weak.upgrade())
@@ -185,7 +184,7 @@ impl ForegroundRegistration {
         id: &str,
         state: Arc<Mutex<JobState>>,
     ) -> Result<Self, crate::domain::error::DomainError> {
-        let mut registry = jobs.lock().unwrap();
+        let mut registry = recovered(jobs);
         if registry.stopped {
             return Err(crate::domain::error::DomainError::Tool(
                 "swarm execution registry stopped".into(),
@@ -197,8 +196,13 @@ impl ForegroundRegistration {
 }
 impl Drop for ForegroundRegistration {
     fn drop(&mut self) {
-        if let Some(state) = self.0.lock().unwrap().remove(&self.1) {
-            let mut state = state.lock().unwrap();
+        if let Some(state) = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.1)
+        {
+            let mut state = recovered(&state);
             state.cancel_requested = true;
             if let Some(pid) = state.pid {
                 super::cancel_job_process(pid);
@@ -212,12 +216,14 @@ pub(crate) fn cancel_jobs(jobs: &JobRegistry) {
 }
 
 fn cancel_jobs_with_admission(jobs: &JobRegistry, close: bool, through_generation: Option<u64>) {
-    if let Ok(mut jobs) = jobs.lock() {
+    {
+        let mut jobs = recovered(jobs);
         if close {
             jobs.stopped = true;
         }
         for job in jobs.values() {
-            if let Ok(mut job) = job.lock() {
+            {
+                let mut job = recovered(job);
                 if through_generation.is_none_or(|generation| job.admitted_generation <= generation)
                     && matches!(job.status.as_str(), "running" | "cancelling")
                 {
@@ -230,3 +236,7 @@ fn cancel_jobs_with_admission(jobs: &JobRegistry, close: bool, through_generatio
         }
     }
 }
+
+#[cfg(test)]
+#[path = "swarm_registry_poison_tests.rs"]
+mod poison_tests;

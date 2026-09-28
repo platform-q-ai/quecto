@@ -9,11 +9,11 @@ pub(super) async fn output_op(
     let id = job_id(v)?;
     let offset = bounded_u64(v, "offset", 0, u64::MAX).map_err(DomainError::Other)? as usize;
     let limit = bounded_u64(v, "limit", 200_000, 1_000_000).map_err(DomainError::Other)? as usize;
-    let Some(job) = jobs.lock().unwrap().get(id).cloned() else {
+    let Some(job) = super::swarm_registry::recovered(&jobs).get(id).cloned() else {
         return ok_json(json!({"status":"not_found","job_id":id}), true);
     };
     let (status, exit_code, outp, errp, result) = {
-        let s = job.lock().unwrap();
+        let s = super::swarm_registry::recovered(&job);
         (
             s.status.clone(),
             s.exit_code,

@@ -37,9 +37,7 @@ struct ActiveGuard(ActiveExecutions, String);
 
 impl Drop for ActiveGuard {
     fn drop(&mut self) {
-        if let Ok(mut set) = self.0.lock() {
-            set.remove(&self.1);
-        }
+        swarm_registry::recovered(&self.0).remove(&self.1);
     }
 }
 
@@ -119,9 +117,11 @@ impl SwarmTool {
 
 impl Drop for SwarmTool {
     fn drop(&mut self) {
-        if let Ok(jobs) = self.jobs.lock() {
+        {
+            let jobs = swarm_registry::recovered(&self.jobs);
             for job in jobs.values() {
-                if let Ok(mut j) = job.lock() {
+                {
+                    let mut j = swarm_registry::recovered(job);
                     // Terminal jobs have already been reaped. Signalling them
                     // would both stall teardown (each kill forks pgrep) and
                     // risk hitting a recycled pid.
@@ -148,9 +148,7 @@ impl Tool for SwarmTool {
         }
     }
     fn set_session_key(&self, session_key: String) {
-        if let Ok(mut g) = self.session_key.lock() {
-            *g = session_key;
-        }
+        *swarm_registry::recovered(&self.session_key) = session_key;
     }
     fn execute(
         &self,
@@ -166,11 +164,7 @@ impl Tool for SwarmTool {
         let jobs = self.jobs.clone();
         let active = self.active.clone();
         let artifact_owner = self.artifact_owner.clone();
-        let session_key = self
-            .session_key
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default();
+        let session_key = swarm_registry::recovered(&self.session_key).clone();
         Box::pin(async move {
             let Some(context) = context else {
                 return tool_err("swarm is container-only: use spawn with a registered isolated container, then create a bounded run inside it".into());
@@ -278,7 +272,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
     let before = {
         let ws = workspace.clone();
         // Recursive stat of the whole workspace: blocking work, not async work.
-        tokio::task::spawn_blocking(move || snapshot_files(&ws))
+        super::call_work::spawn_blocking_in_call(move || snapshot_files(&ws))
             .await
             .map_err(|e| DomainError::Other(e.to_string()))?
     };
@@ -286,9 +280,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
     tokio::fs::create_dir_all(&artifact_dir)
         .await
         .map_err(ioerr)?;
-    if let Ok(mut set) = active.lock() {
-        set.insert(exec_id.clone());
-    }
+    swarm_registry::recovered(&active).insert(exec_id.clone());
     // Held for the rest of the call. A background run also registers a job, so
     // it stays protected after this guard drops at the end of run_op.
     let _active_guard = ActiveGuard(active.clone(), exec_id.clone());
@@ -297,7 +289,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
         let retained_dirs = cfg.retention.artifact_dirs;
         // read_dir plus an unbounded number of remove_dir_all calls must not
         // run on the async worker thread.
-        let _ = tokio::task::spawn_blocking(move || {
+        let _ = super::call_work::spawn_blocking_in_call(move || {
             prune_artifact_dirs(&ws, &jobs, &active, &artifact_owner, retained_dirs)
         })
         .await;
@@ -330,16 +322,15 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
     if spec.background {
         let job_id = format!("job_{}", exec_id);
         {
-            let mut registry = jobs.lock().unwrap();
+            let mut registry = swarm_registry::recovered(&jobs);
             if registry.stopped {
                 return tool_err("swarm execution registry stopped".into());
             }
             let running = registry
                 .values()
                 .filter(|j| {
-                    j.lock()
-                        .map(|s| s.background && !is_terminal(&s.status))
-                        .unwrap_or(false)
+                    let s = swarm_registry::recovered(j);
+                    s.background && !is_terminal(&s.status)
                 })
                 .count();
             if running >= cfg.max_concurrent_jobs {
@@ -367,10 +358,10 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
             // The terminal status is computed here but published only once the
             // result JSON is built. Flipping status first let a caller observe
             // "completed" while `result` was still null.
-            let (canceled, max_output_bytes) = state
-                .lock()
-                .map(|s| (s.cancel_requested, s.max_output_bytes))
-                .unwrap_or((false, spec_bg.max_out));
+            let (canceled, max_output_bytes) = {
+                let s = swarm_registry::recovered(&state);
+                (s.cancel_requested, s.max_output_bytes)
+            };
             let (st, exit_code) = match result {
                 Ok((st, code)) => (st, code),
                 Err(e) => (format!("failed: {e}"), None),
@@ -383,6 +374,8 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
             let completed_ms = now_ms();
             let changed = {
                 let ws = workspace.clone();
+                // The background job outlives its call: not the call's work,
+                // so a panic here is fatal, never contained (#2192).
                 tokio::task::spawn_blocking(move || changed_files(&ws, before))
                     .await
                     .unwrap_or_default()
@@ -415,7 +408,8 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
                 _ => {}
             }
             swarm_result::output_last(&mut res);
-            if let Ok(mut s) = state.lock() {
+            {
+                let mut s = swarm_registry::recovered(&state);
                 s.exit_code = exit_code;
                 s.completed_ms = Some(completed_ms);
                 s.result = Some(res);
@@ -444,7 +438,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
         Some(state.clone()),
     )
     .await?;
-    let status = if state.lock().unwrap().cancel_requested {
+    let status = if swarm_registry::recovered(&state).cancel_requested {
         "cancelled".into()
     } else {
         status
@@ -452,7 +446,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
     let end = now_ms();
     let changed = {
         let ws = workspace.clone();
-        tokio::task::spawn_blocking(move || changed_files(&ws, before))
+        super::call_work::spawn_blocking_in_call(move || changed_files(&ws, before))
             .await
             .map_err(|e| DomainError::Other(e.to_string()))?
     };
@@ -598,7 +592,7 @@ async fn status_op(
     jobs: JobRegistry,
 ) -> Result<ToolResult, DomainError> {
     let id = job_id(v)?;
-    let Some(job) = jobs.lock().unwrap().get(id).cloned() else {
+    let Some(job) = swarm_registry::recovered(&jobs).get(id).cloned() else {
         return ok_json(json!({"status":"not_found","job_id":id}), true);
     };
     let (
@@ -617,7 +611,7 @@ async fn status_op(
         max_output_bytes,
         terminal_result,
     ) = {
-        let s = job.lock().unwrap();
+        let s = swarm_registry::recovered(&job);
         (
             s.status.clone(),
             s.execution_id.clone(),
@@ -684,10 +678,10 @@ async fn status_op(
 
 async fn cancel_op(v: &serde_json::Value, jobs: JobRegistry) -> Result<ToolResult, DomainError> {
     let id = job_id(v)?;
-    let Some(job) = jobs.lock().unwrap().get(id).cloned() else {
+    let Some(job) = swarm_registry::recovered(&jobs).get(id).cloned() else {
         return ok_json(json!({"status":"not_found","job_id":id}), true);
     };
-    let mut s = job.lock().unwrap();
+    let mut s = swarm_registry::recovered(&job);
     if s.status != "running" {
         return ok_json(
             json!({"status":s.status,"job_id":id,"execution_id":s.execution_id,"message":"job is already terminal"}),
@@ -710,7 +704,7 @@ async fn cancel_op(v: &serde_json::Value, jobs: JobRegistry) -> Result<ToolResul
 mod swarm_support;
 pub(crate) use swarm_support::*;
 #[path = "swarm_registry.rs"]
-mod swarm_registry;
+pub(super) mod swarm_registry;
 pub(crate) use swarm_registry::*;
 
 /// End a locally owned execution job (a Python `ExecutionScope` process this

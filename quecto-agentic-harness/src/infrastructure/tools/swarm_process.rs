@@ -65,7 +65,7 @@ pub(crate) async fn run_child(
     // Serialize spawn/identity publication against registry cancellation. A
     // cancellation that wins this lock prevents the child from starting.
     let child = {
-        let mut job = state.as_ref().map(|s| s.lock().unwrap());
+        let mut job = state.as_ref().map(|s| super::swarm_registry::recovered(s));
         if job.as_ref().is_some_and(|s| s.cancel_requested) {
             return Ok(("cancelled".into(), None));
         }
@@ -116,7 +116,7 @@ pub(crate) async fn run_child(
     let drain_timeout = if matches!(outcome, Ok((ref st, _)) if st == "timed_out")
         || state
             .as_ref()
-            .and_then(|st| st.lock().ok().map(|s| s.cancel_requested))
+            .map(|st| super::swarm_registry::recovered(st).cancel_requested)
             .unwrap_or(false)
     {
         Duration::from_millis(500)

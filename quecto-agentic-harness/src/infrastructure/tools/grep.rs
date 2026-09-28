@@ -493,9 +493,11 @@ async fn format_matches(all_matches: Vec<RgMatch>, a: &MatchFormat<'_>) -> Strin
     let mut file_cache: HashMap<PathBuf, Vec<Decoded>> = HashMap::new();
     for path in unique_paths {
         let p = path.clone();
-        let lines = tokio::task::spawn_blocking(move || read_file_for_cache(&p))
-            .await
-            .unwrap_or_default();
+        let lines = crate::infrastructure::tools::call_work::spawn_blocking_in_call(move || {
+            read_file_for_cache(&p)
+        })
+        .await
+        .unwrap_or_default();
         file_cache.insert(path, lines);
     }
 

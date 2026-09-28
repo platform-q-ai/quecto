@@ -1,6 +1,13 @@
 //! Pending turn delivery yields to admitted explicit steering.
 use super::{DispatchCtx, run_drained_message};
 
+// The workflow-engine poison tests (#2192) build on the dispatch test
+// environment beside this module; declared here, at the top, so a test
+// module another change appends at the end never touches these lines.
+#[cfg(test)]
+#[path = "uds_pending_workflow_poison_tests.rs"]
+mod workflow_poison_tests;
+
 pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
     let _busy = crate::interface::cli::uds_multi::BusyGuard::new(&ctx.busy); // #828
     loop {

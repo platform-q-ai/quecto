@@ -105,6 +105,9 @@ pub enum AuditEvent {
         source: String,
         tool: Option<String>,
         message: String,
+        /// Where a panic happened, `file:line:column` (#2192).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        location: Option<String>,
     },
     /// A provider call that ultimately failed (after any retries) on a turn.
     ///

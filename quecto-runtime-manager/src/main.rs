@@ -6,8 +6,17 @@ use reqwest::{Certificate, Client};
 use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The hook is in place before the runtime starts any thread (#2192).
+    quecto_fail_fast::abort_on_panic();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("the async runtime starts")
+        .block_on(run())
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();

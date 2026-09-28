@@ -1,7 +1,16 @@
 use quecto_mcp::{Config, run_extension};
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // The hook is in place before the runtime starts any thread (#2192).
+    quecto_fail_fast::abort_on_panic();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("the async runtime starts")
+        .block_on(run())
+}
+
+async fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();

@@ -98,11 +98,10 @@ impl ScriptEnvironmentCommands {
             None
         };
         match handle {
-            Some(handle) => match handle.spawn_blocking(job).await {
-                Ok(value) => Ok(value),
-                Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
-                Err(error) => Err(format!("retained script runner stopped: {error}")),
-            },
+            // A panic in the script job resumes here, in the call.
+            Some(handle) => super::call_work::spawn_blocking_in_call_on(&handle, job)
+                .await
+                .map_err(|error| format!("retained script runner stopped: {error}")),
             None => Ok(job()),
         }
     }

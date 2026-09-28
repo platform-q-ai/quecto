@@ -53,17 +53,16 @@ pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
 }
 
 pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
-    let workflow = ctx.workflow_state.as_ref().and_then(|ws| {
-        ws.lock().ok().map(|engine| {
-            let mut value = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
-            if let Some(config) = &ctx.workflow_config {
-                value["automation"] = serde_json::json!({
-                    "autoContinue": config.auto_continue,
-                    "completionNudge": config.completion_nudge,
-                });
-            }
-            value
-        })
+    let workflow = ctx.workflow_state.as_ref().map(|ws| {
+        let engine = crate::domain::workflow::lock_engine(ws);
+        let mut value = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
+        if let Some(config) = &ctx.workflow_config {
+            value["automation"] = serde_json::json!({
+                "autoContinue": config.auto_continue,
+                "completionNudge": config.completion_nudge,
+            });
+        }
+        value
     });
     let visible_message_count = user_visible_messages(ctx.messages, ctx.system_prompt).len();
     let session_key = ctx.sessions.current_session_key().await;
@@ -223,9 +222,7 @@ pub(crate) fn build_connect_get_state_line(
 ) -> String {
     let mut live = state.clone();
     let workflow_revision = if let Some(workflow) = workflow_state {
-        let engine = workflow
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let engine = crate::domain::workflow::lock_engine(workflow);
         let revision = engine.revision();
         live.workflow = Some(serde_json::to_value(engine.snapshot(true)).unwrap_or_default());
         revision

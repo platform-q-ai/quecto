@@ -36,7 +36,7 @@ pub async fn control_with_workflow(
     let resuming = op == "resume";
     let op = op.to_owned();
     let participation = participation.clone();
-    let result = tokio::task::spawn_blocking(move || match op.as_str() {
+    let result = super::call_work::spawn_blocking_in_call(move || match op.as_str() {
         "create" => {
             crate::domain::swarm::validate_swarm_creation(super::swarm_bridge::workflow_engaged(
                 &workflow_engine,
@@ -130,7 +130,7 @@ async fn with_resume_wakes(context: &SwarmContext, mut receipt: Value) -> Value 
 }
 
 pub async fn execution_state(context: SwarmContext) -> Result<Value, DomainError> {
-    tokio::task::spawn_blocking(move || context.summary())
+    super::call_work::spawn_blocking_in_call(move || context.summary())
         .await
         .map_err(|e| DomainError::Tool(e.to_string()))?
 }

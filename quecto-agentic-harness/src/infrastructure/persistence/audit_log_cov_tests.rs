@@ -35,6 +35,7 @@ async fn open_sync_and_trait_emit_append_json_lines_to_sanitized_path() {
             source: "unit".into(),
             tool: Some("bash".into()),
             message: "boom".into(),
+            location: None,
         },
     )
     .await
@@ -125,6 +126,7 @@ async fn audit_log_error_mapping_closures_surface_open_and_write_failures() {
                     source: "test".into(),
                     tool: None,
                     message: "fills device".into(),
+                    location: None,
                 },
             )
             .await

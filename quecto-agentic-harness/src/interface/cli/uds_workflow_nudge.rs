@@ -63,7 +63,7 @@ pub(super) async fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<Work
     let workflow_tool_shown = ctx
         .agent
         .is_tool_model_visible(crate::infrastructure::tools::workflow_tool::WORKFLOW_TOOL_NAME);
-    let Ok(engine) = ws.lock() else { return None };
+    let engine = crate::domain::workflow::lock_engine(ws);
     // The engine owns all nudge policy (kept live by `set_automation`): it
     // yields the template selector even with auto-continue disabled, the sole
     // proactive selection channel (#1113 AC3), so a `wc.auto_continue`
@@ -82,7 +82,7 @@ pub(super) async fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<Work
 /// the workflow, so a stuck workflow isn't nudged forever.
 pub(super) fn workflow_progress_fingerprint(ctx: &DispatchCtx<'_>) -> Option<String> {
     let ws = ctx.workflow_state.as_ref()?;
-    let engine = ws.lock().ok()?;
+    let engine = crate::domain::workflow::lock_engine(ws);
     let mut snapshot = engine.snapshot(true);
     snapshot.steps = engine.all_step_statuses();
     serde_json::to_string(&snapshot).ok()
@@ -92,16 +92,14 @@ pub(super) fn workflow_progress_fingerprint(ctx: &DispatchCtx<'_>) -> Option<Str
 /// `Completed` when no workflow is bound or it reached a terminal state,
 /// `Exhausted` when the drain gave up (no-progress tolerance, nudge cap,
 /// nothing runnable) with it unfinished, the only stall-worthy outcome. A
-/// poisoned engine lock yields `Unknown`: completion cannot be established.
+/// poisoned engine is read as it was left (#2192).
 pub(super) fn workflow_idle_reason(ctx: &DispatchCtx<'_>) -> super::protocol::WorkflowIdleReason {
     use super::protocol::WorkflowIdleReason;
     use crate::domain::workflow::WorkflowMode;
     let Some(ws) = ctx.workflow_state.as_ref() else {
         return WorkflowIdleReason::Completed;
     };
-    let Ok(engine) = ws.lock() else {
-        return WorkflowIdleReason::Unknown;
-    };
+    let engine = crate::domain::workflow::lock_engine(ws);
     match engine.mode() {
         WorkflowMode::Complete => WorkflowIdleReason::Completed,
         WorkflowMode::Active | WorkflowMode::SelectingTemplate => WorkflowIdleReason::Exhausted,
