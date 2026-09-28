@@ -7,7 +7,7 @@
 use rusqlite::{Connection, types::ValueRef};
 
 use super::py_json::{self, PyJson};
-use super::store::{CONTENDED, TransactionError};
+use super::store::{CONTENDED, TransactionError, Undecodable};
 
 /// The most requests the idempotency ledger holds (`Store.retry`).
 pub const REQUEST_LEDGER_CAPACITY: i64 = 10_000;
@@ -90,16 +90,12 @@ enum Stored<'a> {
 
 impl<'a> Stored<'a> {
     /// The column's Python value. A TEXT that is not UTF-8 fails the fetch
-    /// with Python's `OperationalError`, which the transaction reports as
-    /// contended; Python formats the C string, so it ends at a NUL.
+    /// with Python's `OperationalError` ([`Undecodable`]), which the
+    /// transaction reports as contended.
     fn read(column: &str, value: ValueRef<'a>) -> Result<Self, TransactionError> {
         match value {
             ValueRef::Text(bytes) => std::str::from_utf8(bytes).map(Self::Text).map_err(|_| {
-                let text = bytes.split(|&byte| byte == 0).next().unwrap_or_default();
-                TransactionError::board(format!(
-                    "{CONTENDED}: Could not decode to UTF-8 column '{column}' with text '{}'",
-                    replaced_per_byte(text)
-                ))
+                TransactionError::board(format!("{CONTENDED}: {}", Undecodable::new(column, bytes)))
             }),
             ValueRef::Blob(bytes) => Ok(Self::Blob(bytes)),
             ValueRef::Integer(_) => Ok(Self::Other("int")),
@@ -120,31 +116,6 @@ impl<'a> Stored<'a> {
             }
         };
         py_json::decode(text).map_err(|error| TransactionError::board(error.to_string()))
-    }
-}
-
-/// `bytes` as CPython's error message reads them: valid UTF-8 as itself and
-/// one U+FFFD for every byte of an invalid sequence (not one per maximal
-/// subpart, as `String::from_utf8_lossy` replaces).
-fn replaced_per_byte(bytes: &[u8]) -> String {
-    let mut text = String::with_capacity(bytes.len());
-    let mut rest = bytes;
-    loop {
-        match std::str::from_utf8(rest) {
-            Ok(valid) => {
-                text.push_str(valid);
-                return text;
-            }
-            Err(error) => {
-                let (valid, invalid) = rest.split_at(error.valid_up_to());
-                // The first `valid_up_to` bytes are UTF-8 by definition.
-                text.push_str(std::str::from_utf8(valid).unwrap_or_default());
-                let skipped = error.error_len().unwrap_or(invalid.len());
-                debug_assert!(skipped > 0, "an invalid sequence has at least one byte");
-                text.extend(std::iter::repeat_n('\u{fffd}', skipped));
-                rest = &invalid[skipped..];
-            }
-        }
     }
 }
 

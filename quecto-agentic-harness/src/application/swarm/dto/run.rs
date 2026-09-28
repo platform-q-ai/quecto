@@ -79,8 +79,10 @@ pub struct RunStatusRow {
 }
 
 /// The `run` columns `Workbench.create` reads of an existing run: its
-/// status and coordinator, each as stored (`None` for NULL, which only a
-/// file edited outside the board holds).
+/// status and coordinator, each the text stored. `None` is NULL or a value
+/// that is not text (a BLOB, or a number in a table rebuilt without TEXT
+/// affinity), which only a file edited outside the board holds: Python compares each with a string, which neither
+/// equals, so neither is the setup placeholder.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunOwnerRow {
     pub status: Option<String>,
@@ -108,6 +110,11 @@ pub struct RunStatusView {
 /// (an id, a status) and columns the board never added, and those are
 /// listed as they are. `_bootstrap` binds the pid the member passed, so it
 /// may be an INTEGER, a REAL or TEXT (epic P3).
+///
+/// The row is keyed by column name for `dict(row)` fidelity (#2270 round-4
+/// review N2): `_snapshot` answers it whole, in table order. No production
+/// code reads a column by name; only the test support's in-memory board
+/// does, through [`MemberRow::get`] and [`MemberRow::text`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemberRow {
     pub columns: Vec<(String, Value)>,

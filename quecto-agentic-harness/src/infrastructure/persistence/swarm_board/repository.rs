@@ -5,16 +5,21 @@
 //! Every SQLite failure is `coordination store unavailable or contended:
 //! {sqlite3_errmsg}`, as Python's `Store.transaction` reports it.
 //!
-//! Rows are read as Python reads them where the board's own writes or a
-//! file edited outside it leave loose values (#2270 review L5, round-2 L2,
-//! round-3 N1/N5): a NULL run status or coordinator is `None`, a member row
-//! is every column the table has, in table order, as stored (`dict(row)`),
-//! `_bootstrap` asks only whether a run exists, `create` reads only the
-//! run's status and coordinator, and `_status` decodes only the columns it
-//! selects. Any other column holding a type the board never writes, or a
-//! BLOB, is refused the same way as a store failure, with the driver's
-//! conversion error where Python would answer the value (the differential
-//! suite's `outside_edited_columns` divergence).
+//! Rows are fetched as Python's `sqlite3` fetches them where the board's
+//! own writes or a file edited outside it leave loose values (#2270 review
+//! L5, round-2 L2, round-3 N1/N5, round-4 L1): every row runs the same
+//! query Python runs, and text that is not UTF-8 in any column of it is
+//! refused with Python's `Could not decode to UTF-8` text ([`fetched`]). A
+//! NULL run status or coordinator is `None`; `create` fetches the whole
+//! run row and reads a status or coordinator that is not text as `None`,
+//! which is never the setup placeholder, as Python's comparison finds; a
+//! member row is every column the table has, in table order, as stored
+//! (`dict(row)`); `_bootstrap` asks only whether a run exists; and
+//! `_status` fetches only the columns it selects. A column `_snapshot` or
+//! `_status` reads holding a type the board never writes, or a BLOB, is
+//! refused the same way as a store failure, with the driver's conversion
+//! error where Python would answer the value (the differential suite's
+//! `outside_edited_columns` divergence).
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::Value;
@@ -22,7 +27,7 @@ use serde_json::Value;
 use super::binding;
 use super::ledger;
 use super::py_json::{self, PyJson};
-use super::store::{BoardStore, CONTENDED, TransactionError, contended};
+use super::store::{BoardStore, CONTENDED, TransactionError, Undecodable, contended};
 use crate::application::swarm::dto::{
     BoardLocation, MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow,
     RunStatusRow,
@@ -103,10 +108,11 @@ impl BoardRuns for SqliteBoard<'_> {
 
     fn run_owner(&self) -> Result<Option<RunOwnerRow>, BoardError> {
         self.connection
-            .query_row("SELECT status, coordinator FROM run", [], |row| {
+            .query_row("SELECT * FROM run", [], |row| {
+                fetched(row)?;
                 Ok(RunOwnerRow {
-                    status: row.get("status")?,
-                    coordinator: row.get("coordinator")?,
+                    status: text(row, "status")?,
+                    coordinator: text(row, "coordinator")?,
                 })
             })
             .optional()
@@ -119,6 +125,7 @@ impl BoardRuns for SqliteBoard<'_> {
                 "SELECT id, status, deadline, coordinator, outcome FROM run",
                 [],
                 |row| {
+                    fetched(row)?;
                     Ok(RunStatusRow {
                         id: row.get("id")?,
                         status: row.get("status")?,
@@ -185,6 +192,7 @@ impl BoardMembers for SqliteBoard<'_> {
     fn member(&self, id: &str) -> Result<Option<MemberRecord>, BoardError> {
         self.connection
             .query_row("SELECT * FROM members WHERE id=?", [id], |row| {
+                fetched(row)?;
                 Ok(MemberRecord {
                     id: row.get("id")?,
                     status: row
@@ -301,16 +309,52 @@ fn loose(position: usize, value: &Value) -> Result<SqlValue, BoardError> {
         })
 }
 
+/// Python's fetch of `row`: every column is decoded, so the first TEXT
+/// that is not UTF-8 is refused with Python's text ([`Undecodable`]).
+fn fetched(row: &Row<'_>) -> rusqlite::Result<()> {
+    use rusqlite::types::ValueRef;
+    for index in 0..row.as_ref().column_count() {
+        match row.get_ref(index)? {
+            ValueRef::Text(bytes) => decoded(row, index, bytes).map(|_| ())?,
+            ValueRef::Null | ValueRef::Integer(_) | ValueRef::Real(_) | ValueRef::Blob(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// A TEXT column's value, or Python's refusal of it.
+fn decoded<'r>(row: &Row<'_>, index: usize, bytes: &'r [u8]) -> rusqlite::Result<&'r str> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Ok(text),
+        Err(_) => Err(rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(Undecodable::new(row.as_ref().column_name(index)?, bytes)),
+        )),
+    }
+}
+
+/// The text `name` holds, `None` for any other storage class: Python
+/// compares it with a string, which a number, bytes or `None` never equals.
+fn text(row: &Row<'_>, name: &str) -> rusqlite::Result<Option<String>> {
+    use rusqlite::types::ValueRef;
+    let index = row.as_ref().column_index(name)?;
+    match row.get_ref(index)? {
+        ValueRef::Text(bytes) => decoded(row, index, bytes).map(|text| Some(text.to_owned())),
+        ValueRef::Null | ValueRef::Integer(_) | ValueRef::Real(_) | ValueRef::Blob(_) => Ok(None),
+    }
+}
+
 /// A column as the JSON value of what it stores: NULL, an INTEGER, a
 /// finite REAL or TEXT. A BLOB, or a REAL JSON cannot write, is a
-/// conversion error.
+/// conversion error; TEXT that is not UTF-8 is Python's refusal.
 fn cell(row: &Row<'_>, name: &str) -> rusqlite::Result<Value> {
     cell_at(row, row.as_ref().column_index(name)?)
 }
 
 /// The column at `index` as [`cell`] reads it.
 fn cell_at(row: &Row<'_>, index: usize) -> rusqlite::Result<Value> {
-    use rusqlite::types::{FromSqlError, ValueRef};
+    use rusqlite::types::ValueRef;
     let name = row.as_ref().column_name(index)?;
     let invalid = |kind: rusqlite::types::Type| {
         rusqlite::Error::InvalidColumnType(index, name.to_owned(), kind)
@@ -321,20 +365,15 @@ fn cell_at(row: &Row<'_>, index: usize) -> rusqlite::Result<Value> {
         ValueRef::Real(real) => serde_json::Number::from_f64(real)
             .map(Value::Number)
             .ok_or_else(|| invalid(rusqlite::types::Type::Real)),
-        ValueRef::Text(text) => std::str::from_utf8(text)
-            .map(|text| Value::String(text.to_owned()))
-            .map_err(|error| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    index,
-                    rusqlite::types::Type::Text,
-                    Box::new(FromSqlError::Other(Box::new(error))),
-                )
-            }),
+        ValueRef::Text(text) => {
+            decoded(row, index, text).map(|text| Value::String(text.to_owned()))
+        }
         ValueRef::Blob(_) => Err(invalid(rusqlite::types::Type::Blob)),
     }
 }
 
 fn run_record(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
+    fetched(row)?;
     Ok(RunRecord {
         status: row.get::<_, Option<String>>("status")?.map(RunState::new),
         coordinator: row.get("coordinator")?,
@@ -348,6 +387,7 @@ fn run_record(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
 /// `dict(row)` of a `SELECT * FROM members` row: every column, in table
 /// order, as stored.
 fn member_row(row: &Row<'_>) -> rusqlite::Result<MemberRow> {
+    fetched(row)?;
     let columns = (0..row.as_ref().column_count())
         .map(|index| {
             let name = row.as_ref().column_name(index)?.to_owned();

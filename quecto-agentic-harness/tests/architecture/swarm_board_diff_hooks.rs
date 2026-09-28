@@ -7,9 +7,14 @@
 //!
 //! - sits in a `harness_self_test_*` function (any hook); or
 //! - passes the no-op hook (a closure whose body is an empty block) and
-//!   sits in a test named in the pin table (`PERMITTED_DIVERGENCES` and
-//!   the tests `EXTERNAL_PINS` names, in `swarm_board_diff_loose.rs`), or
-//!   in the harness's own `run_both` without `.unwrap_err()`.
+//!   either sits in one of the pin table's own tests, checking the `Err`
+//!   (the receiver of `.unwrap_err()` or `.expect_err(..)`), or in the
+//!   harness's own `run_both`, without either (round-4 L2). A pin table's
+//!   own test is a top-level `#[test]` function of
+//!   `swarm_board_diff_loose.rs` named in `PERMITTED_DIVERGENCES` and not
+//!   pinned elsewhere (`EXTERNAL_PINS` names neither it nor its test), and
+//!   the harness's `run_both` is the top-level function of that name in
+//!   the harness's file.
 //!
 //! The harness is reached by its own name and called directly: an import
 //! renaming it (`use …::try_run_both as t;`) is refused, and so is any
@@ -30,11 +35,14 @@ const SELF_TEST_PREFIX: &str = "harness_self_test_";
 const PIN_TABLE: &str = "tests/integration/swarm_board_diff_loose.rs";
 /// The file defining the harness and its `run_both`.
 const HARNESS_FILE: &str = "tests/common/swarm_board_diff/scenario.rs";
+/// The methods that check a harness call's `Err`.
+const EXPECTING_DIFFERENCE: [&str; 2] = ["unwrap_err", "expect_err"];
 /// A test file that is neither.
 const ELSEWHERE: &str = "tests/integration/a_scenario.rs";
-/// The pin table's constants: every string literal in them names a
-/// divergence or the test pinning it.
-const PIN_CONSTANTS: [&str; 2] = ["PERMITTED_DIVERGENCES", "EXTERNAL_PINS"];
+/// The pin table's constants: the divergences, and those pinned outside
+/// the suite (every string literal in it names one or its pinning test).
+const PERMITTED: &str = "PERMITTED_DIVERGENCES";
+const EXTERNAL: &str = "EXTERNAL_PINS";
 
 /// One harness use the rule refuses.
 #[derive(Debug, PartialEq, Eq)]
@@ -54,35 +62,72 @@ impl<'ast> Visit<'ast> for Literals {
     }
 }
 
-/// The test names the pin table allows to expect a difference.
+/// The string literals of the pin table's constant `name`.
+fn constant_literals(file: &syn::File, name: &str) -> Vec<String> {
+    let found: Vec<Vec<String>> = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Const(constant) if constant.ident == name => {
+                let mut literals = Literals::default();
+                literals.visit_expr(&constant.expr);
+                Some(literals.0)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(found.len(), 1, "{PIN_TABLE} defines {name} once");
+    found.into_iter().flatten().collect()
+}
+
+/// The test names the pin table allows to expect a difference: the
+/// divergences it pins itself, so none `EXTERNAL_PINS` names.
 fn pinned_tests() -> Vec<String> {
     let source = std::fs::read_to_string(PIN_TABLE)
         .unwrap_or_else(|error| panic!("read {PIN_TABLE}: {error}"));
     let file = syn::parse_file(&source).expect("the pin table parses");
-    let mut found = Vec::new();
-    let mut constants = 0;
-    for item in &file.items {
-        if let syn::Item::Const(constant) = item
-            && PIN_CONSTANTS.contains(&constant.ident.to_string().as_str())
-        {
-            constants += 1;
-            let mut literals = Literals::default();
-            literals.visit_expr(&constant.expr);
-            found.extend(literals.0);
+    let external = constant_literals(&file, EXTERNAL);
+    assert!(!external.is_empty(), "{EXTERNAL} names its pins");
+    let pinned: Vec<String> = constant_literals(&file, PERMITTED)
+        .into_iter()
+        .filter(|name| !external.contains(name))
+        .collect();
+    assert!(!pinned.is_empty(), "the pin table pins divergences itself");
+    pinned
+}
+
+/// What the file being checked is to the harness.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Role {
+    PinTable,
+    Harness,
+    Other,
+}
+
+impl Role {
+    fn of(path: &str) -> Self {
+        match path {
+            PIN_TABLE => Self::PinTable,
+            HARNESS_FILE => Self::Harness,
+            _ => Self::Other,
         }
     }
-    assert_eq!(
-        constants,
-        PIN_CONSTANTS.len(),
-        "{PIN_TABLE} defines {PIN_CONSTANTS:?}"
-    );
-    assert!(!found.is_empty(), "the pin table names its tests");
-    found
+}
+
+/// The function a harness call sits in.
+#[derive(Clone)]
+struct Function {
+    name: String,
+    /// One of the pin table's own tests.
+    pinned: bool,
+    /// The harness's own `run_both`.
+    runner: bool,
 }
 
 struct Calls {
     pinned: Vec<String>,
-    function: Option<String>,
+    role: Role,
+    function: Option<Function>,
     seen: usize,
     violations: Vec<Violation>,
 }
@@ -116,42 +161,52 @@ fn no_op(hook: &syn::Expr) -> bool {
 }
 
 impl Calls {
-    fn new(pinned: Vec<String>) -> Self {
+    fn new(pinned: Vec<String>, role: Role) -> Self {
         Self {
             pinned,
+            role,
             function: None,
             seen: 0,
             violations: Vec::new(),
         }
     }
 
-    fn in_function(&mut self, name: String, walk: impl FnOnce(&mut Self)) {
-        let outer = self.function.replace(name);
+    /// Walks a function's body as the function `name`: only a top-level
+    /// function is one of the pin table's tests or the harness's runner.
+    fn in_function(&mut self, name: String, test: bool, walk: impl FnOnce(&mut Self)) {
+        let top_level = self.function.is_none();
+        let function = Function {
+            pinned: top_level && test && self.role == Role::PinTable && self.pinned.contains(&name),
+            runner: top_level && self.role == Role::Harness && name == HARNESS_RUNNER,
+            name,
+        };
+        let outer = self.function.replace(function);
         walk(self);
         self.function = outer;
     }
 
     fn refuse(&mut self, span: proc_macro2::Span, problem: &'static str) {
         self.violations.push(Violation {
-            function: self.function.clone(),
+            function: self.function.as_ref().map(|function| function.name.clone()),
             line: span.start().line,
             problem,
         });
     }
 
     /// The problem with one harness call, if any; `expecting_difference`
-    /// when `.unwrap_err()` follows it.
+    /// when `.unwrap_err()` or `.expect_err(..)` follows it.
     fn problem(&self, call: &syn::ExprCall, expecting_difference: bool) -> Option<&'static str> {
-        let function = self.function.as_deref();
-        let self_test = function.is_some_and(|name| name.starts_with(SELF_TEST_PREFIX));
-        let pinned = function.is_some_and(|name| self.pinned.iter().any(|test| test == name));
-        let runner = function == Some(HARNESS_RUNNER) && !expecting_difference;
+        let function = self.function.as_ref();
+        let self_test =
+            function.is_some_and(|function| function.name.starts_with(SELF_TEST_PREFIX));
+        let pinned = function.is_some_and(|function| function.pinned) && expecting_difference;
+        let runner = function.is_some_and(|function| function.runner) && !expecting_difference;
         let quiet = call.args.iter().nth(1).is_some_and(no_op);
         match (self_test, quiet, pinned || runner) {
             (true, _, _) | (false, true, true) => None,
             (false, false, _) => Some("a tampering hook outside a harness self-test"),
             (false, true, false) => Some(
-                "a harness call outside a pinned divergence test (only run_both compares without expecting a difference)",
+                "a harness call outside a pinned divergence test that unwraps its Err (only the harness's run_both compares without expecting a difference)",
             ),
         }
     }
@@ -169,20 +224,28 @@ impl Calls {
 
 impl<'ast> Visit<'ast> for Calls {
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
-        self.in_function(item.sig.ident.to_string(), |calls| {
+        let test = item
+            .attrs
+            .iter()
+            .any(|attribute| attribute.path().is_ident("test"));
+        self.in_function(item.sig.ident.to_string(), test, |calls| {
             syn::visit::visit_item_fn(calls, item);
         });
     }
 
     fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
-        self.in_function(item.sig.ident.to_string(), |calls| {
+        self.in_function(item.sig.ident.to_string(), false, |calls| {
             syn::visit::visit_impl_item_fn(calls, item);
         });
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         match harness_call(&call.receiver) {
-            Some(harness) if call.method == "unwrap_err" => {
+            Some(harness)
+                if EXPECTING_DIFFERENCE
+                    .iter()
+                    .any(|method| call.method == method) =>
+            {
                 self.check(harness, true);
                 for argument in &call.args {
                     self.visit_expr(argument);
@@ -237,13 +300,12 @@ fn harness_tokens(tokens: TokenStream) -> usize {
     count
 }
 
-/// The violations in one file's `source`; a harness token the syntax walk
-/// did not see as a direct call or a plain import is a violation of its
-/// own.
+/// The violations in the `source` of the file at `path` (relative to the
+/// crate); a harness token the syntax walk did not see as a direct call or
+/// a plain import is a violation of its own.
 fn violations(path: &str, source: &str) -> Vec<String> {
-    let _ = path;
     let file = syn::parse_file(source).expect("the test file parses");
-    let mut calls = Calls::new(pinned_tests());
+    let mut calls = Calls::new(pinned_tests(), Role::of(path));
     calls.visit_file(&file);
     let mut found: Vec<String> = calls
         .violations
@@ -363,8 +425,8 @@ fn the_hook_checker_rejects_tampering_outside_self_tests() {
 
 /// An expected difference is a pinned divergence (#2270 round-3 review
 /// L3): outside a harness self-test, only the harness's own `run_both` and
-/// a test named in the pin table (`PERMITTED_DIVERGENCES` and its external
-/// pins) may call `try_run_both`, and only with the no-op hook.
+/// the pin table's own tests (named in `PERMITTED_DIVERGENCES`, pinned in
+/// that file) may call `try_run_both`, and only with the no-op hook.
 #[test]
 fn the_hook_checker_requires_expected_differences_to_be_pinned() {
     let pinned = r#"

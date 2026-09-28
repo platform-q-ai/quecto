@@ -350,7 +350,69 @@ fn sqlite_message(error: &rusqlite::Error) -> String {
         rusqlite::Error::MultipleStatement => {
             "You can only execute one statement at a time.".to_owned()
         }
+        rusqlite::Error::FromSqlConversionFailure(_, _, cause) if cause.is::<Undecodable>() => {
+            cause.to_string()
+        }
         other => other.to_string(),
+    }
+}
+
+/// Python `sqlite3`'s refusal of a fetched TEXT value that is not UTF-8
+/// (#2270 round-4 review L1): `Could not decode to UTF-8 column '{column}'
+/// with text '{text}'`. Python fetches every column of a row, so this is
+/// the first such column in the row. It formats the value as a C string,
+/// so the text ends at a NUL, and decodes the message with one U+FFFD for
+/// every byte of an invalid sequence.
+#[derive(Debug)]
+pub(super) struct Undecodable {
+    column: String,
+    text: String,
+}
+
+impl Undecodable {
+    pub(super) fn new(column: &str, bytes: &[u8]) -> Self {
+        let text = bytes.split(|&byte| byte == 0).next().unwrap_or_default();
+        Self {
+            column: column.to_owned(),
+            text: replaced_per_byte(text),
+        }
+    }
+}
+
+impl std::fmt::Display for Undecodable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Could not decode to UTF-8 column '{}' with text '{}'",
+            self.column, self.text
+        )
+    }
+}
+
+impl std::error::Error for Undecodable {}
+
+/// `bytes` as CPython's error message reads them: valid UTF-8 as itself and
+/// one U+FFFD for every byte of an invalid sequence (not one per maximal
+/// subpart, as `String::from_utf8_lossy` replaces).
+fn replaced_per_byte(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len());
+    let mut rest = bytes;
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(valid) => {
+                text.push_str(valid);
+                return text;
+            }
+            Err(error) => {
+                let (valid, invalid) = rest.split_at(error.valid_up_to());
+                // The first `valid_up_to` bytes are UTF-8 by definition.
+                text.push_str(std::str::from_utf8(valid).unwrap_or_default());
+                let skipped = error.error_len().unwrap_or(invalid.len());
+                debug_assert!(skipped > 0, "an invalid sequence has at least one byte");
+                text.extend(std::iter::repeat_n('\u{fffd}', skipped));
+                rest = &invalid[skipped..];
+            }
+        }
     }
 }
 

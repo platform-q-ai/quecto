@@ -131,13 +131,14 @@ fn a_run_is_inserted_read_updated_and_paused() {
     );
 }
 
-/// Rows edited outside the board (#2270 review L5, round-2 L2): `run()`
-/// reads a NULL coordinator or status as `None`; `run_status()` reads only
-/// `_status`'s columns, `run_owner()` only `create`'s (status and
-/// coordinator) and `run_exists()` none, each as stored, so a column one
-/// does not select never refuses it; a column `run()` needs (for
-/// `_snapshot`) holding a type the board never writes is a store refusal
-/// (the `outside_edited_columns` divergence).
+/// Rows edited outside the board (#2270 review L5, round-2 L2, round-4
+/// L1): `run()` reads a NULL coordinator or status as `None`;
+/// `run_status()` fetches only `_status`'s columns, `run_owner()` the whole
+/// row as `create` does, reading only its status and coordinator, and
+/// `run_exists()` none, each as stored, so a column one does not read
+/// never refuses it unless its text is not UTF-8; a column `run()` needs
+/// (for `_snapshot`) holding a type the board never writes is a store
+/// refusal (the `outside_edited_columns` divergence).
 #[test]
 fn loosely_typed_run_columns_read_as_stored() {
     let (dir, repository) = board();

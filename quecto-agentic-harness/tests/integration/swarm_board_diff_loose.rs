@@ -44,7 +44,8 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   it): text that is not UTF-8 in any column of a row Python fetches is
 ///   refused with Python's `Could not decode to UTF-8` text; `create`
 ///   fetches the whole run row and takes a status or coordinator that is
-///   not text (a BLOB, a number) as not the setup placeholder;
+///   not text (a BLOB, or a number without TEXT affinity) as not the setup
+///   placeholder;
 ///   `_bootstrap` reads no column; a NULL run or member status, a NULL
 ///   coordinator, a NULL member id, added member columns and loosely typed
 ///   pids are read as they are stored.
@@ -416,7 +417,9 @@ fn outside_edited_columns() {
 /// one U+FFFD each: a run's status, coordinator or goal under `create`
 /// (which fetches the whole row), `_snapshot` and `_status`, and a
 /// member's `started` under `_snapshot`. A status or coordinator that is
-/// not text is not the setup placeholder, so `create` refuses to reset it.
+/// not text (a BLOB, or a number in a table rebuilt without TEXT affinity)
+/// is not the setup placeholder, so `create` refuses to reset it; a number
+/// the TEXT affinity stores as its text is not the placeholder either.
 #[test]
 fn outside_edited_text_reads_as_python_reads_it() {
     let create = |now| step_text("parent", "create_run", &create_text("1"), now);
@@ -439,6 +442,9 @@ fn outside_edited_text_reads_as_python_reads_it() {
         "UPDATE run SET status=1",
         "UPDATE run SET coordinator=x'706172656e74'",
         "UPDATE run SET coordinator=2.5",
+        "DROP TABLE run;
+         CREATE TABLE run (id, goal, constraints, criteria, coordinator, integrator, member_limit, deadline, status);
+         INSERT INTO run(id,status,coordinator) VALUES('r',1,2.5)",
     ] {
         run_both(&[
             step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),

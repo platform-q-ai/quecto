@@ -173,10 +173,17 @@ fn a_missing_board_is_refused_before_any_work() {
     );
 }
 
+/// A `run` table rebuilt without column types, holding a numeric status
+/// and coordinator.
+const UNTYPED_RUN: &str = "DROP TABLE run;
+    CREATE TABLE run (id, goal, constraints, criteria, coordinator, integrator, member_limit, deadline, status);
+    INSERT INTO run(id,status,coordinator) VALUES('r',1,2.5)";
+
 /// `create` fetches the whole run row as Python does (#2270 round-4 review
 /// L1): text that is not UTF-8 in any column is Python's `Could not decode`
 /// refusal, its bytes one U+FFFD each, and a status or coordinator that is
-/// not text reads as `None`, never the setup placeholder.
+/// not text (a BLOB, or a number in a table without TEXT affinity) reads
+/// as `None`, never the setup placeholder.
 #[test]
 fn the_run_owner_row_is_fetched_as_python_fetches_it() {
     let (dir, repository) = repository();
@@ -223,8 +230,9 @@ fn the_run_owner_row_is_fetched_as_python_fetches_it() {
             "UPDATE run SET status=x'7365747570', coordinator='p'",
             Some("p"),
         ),
-        ("UPDATE run SET status=1, coordinator=x'70'", None),
-        ("UPDATE run SET status=NULL, coordinator=2.5", None),
+        ("UPDATE run SET status=NULL, coordinator=x'70'", None),
+        // Without TEXT affinity a number stays a number.
+        (UNTYPED_RUN, None),
     ] {
         edit(sql);
         within(&repository, false, |transaction| {
