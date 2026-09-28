@@ -8,7 +8,15 @@ pub struct Uuid4Ids;
 
 impl IdSource for Uuid4Ids {
     fn hex32(&self) -> String {
-        String::new()
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        debug_assert!(
+            id.len() == 32
+                && id
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+            "uuid4().hex is 32 lowercase hex digits: {id}"
+        );
+        id
     }
 }
 
