@@ -5736,9 +5736,12 @@ fn external_agent_application_dependency_allowed(path: &str) -> bool {
         [
             "std",
             "collections" | "fmt" | "cmp" | "mem" | "ops" | "iter" | "str" | "string" | "vec"
-            | "option" | "result" | "num" | "borrow" | "convert" | "default" | "error",
+            | "option" | "result" | "num" | "borrow" | "convert" | "default",
             ..,
         ] => true,
+        // Its errors implement `std::error::Error`, and name nothing else
+        // of `std::error` (#2286 review).
+        ["std", "error", "Error"] => true,
         // The process ports (#2286): boxed futures, and the path values
         // a launch spec carries (never a filesystem call).
         ["std", "future", "Future"] | ["std", "pin", "Pin"] | ["std", "path", "PathBuf"] => true,
@@ -5854,6 +5857,45 @@ fn external_agent_ports_are_capability_local_and_contracted() {
             "{name} is an external-agent application DTO, not {}",
             declared_in[0]
         );
+    }
+}
+
+/// The supervisor's one-thread runtime reaps every child and runs every
+/// termination; it must not become a place to run a caller's work (#2286
+/// review). Of its `pub` methods, only those that take the termination
+/// protocol may take a future at all: pipe pumps take pipe types.
+#[test]
+fn the_supervisor_runtime_takes_no_caller_future() {
+    for path in [
+        "src/infrastructure/processes/owned_child_supervisor.rs",
+        "src/infrastructure/processes/owned_child_supervisor_tasks.rs",
+    ] {
+        let source = production_source(path);
+        let mut signatures = Vec::new();
+        let mut current: Option<String> = None;
+        for line in source.lines() {
+            let trimmed = line.trim_start();
+            let starts = trimmed.starts_with("pub fn ") || trimmed.starts_with("pub async fn ");
+            if starts {
+                current = Some(String::new());
+            }
+            if let Some(signature) = current.as_mut() {
+                signature.push_str(trimmed);
+                signature.push(' ');
+                if trimmed.contains('{') || trimmed.ends_with(';') {
+                    signatures.push(current.take().expect("a signature in progress"));
+                }
+            }
+        }
+        assert!(!signatures.is_empty(), "{path} declares pub methods");
+        for signature in signatures {
+            let takes_future = signature.contains("Future");
+            let protocol_only = signature.contains("ProtocolOutcome");
+            assert!(
+                protocol_only || !takes_future,
+                "{path}: only the termination protocol may be a future: {signature}"
+            );
+        }
     }
 }
 

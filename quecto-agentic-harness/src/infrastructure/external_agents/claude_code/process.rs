@@ -9,36 +9,44 @@
 //!
 //! [`ClaudeCodeProcess`] writes each user turn as one stream-json user
 //! message and decodes stdout through [`super::stream_json`]. Both pipes
-//! are pumped on the supervisor's own runtime
-//! ([`OwnedChildSupervisor::spawn_pump`]), never the caller's: a runtime
-//! the caller drops cannot end the stream or the input of a child that
-//! lives on.
+//! are pumped by the supervisor's line pumps
+//! ([`crate::infrastructure::processes::child_line_pipes`]) on its own
+//! runtime, never the caller's: a runtime the caller drops cannot end the
+//! stream or the input of a child that lives on. The pumps move bytes
+//! only; each line is decoded here, on the reader's side, in
+//! [`ClaudeCodeProcess::next_event`].
 //!
-//! - **Output.** A line that is not a JSON object (or not UTF-8, or longer
-//!   than [`STREAM_LINE_CAP_BYTES`]) is skipped and logged, never the end
-//!   of the stream.
-//! - **Input.** A writer task owns stdin and writes whole lines taken from
-//!   a queue. A turn is queued whole or not at all, so cancelling a send
-//!   never leaves half a line on `claude`'s stdin; a queued turn is
-//!   written whole even if its sender stops waiting. Closing the input
-//!   only closes the queue: it never waits behind a write stuck on a full
-//!   pipe. The writer closes stdin once the queued turns are written.
+//! - **Output.** A line longer than the line cap or not UTF-8 becomes an
+//!   [`ExternalAgentEvent::LineSkipped`] (it may have been the turn's
+//!   `result`); a line that is not a JSON object is skipped and logged.
+//!   Neither ends the stream. Lines wait for the reader within a byte
+//!   budget ([`STREAM_BUFFER_BYTES`]); a reader that stops holds the child.
+//! - **Input.** Each turn is one whole line, queued whole or not at all,
+//!   so cancelling a send never leaves half a line on `claude`'s stdin.
+//!   Closing the input answers every turn not yet taken by the writer
+//!   [`ExternalAgentInputError::Closed`] and writes none of them; the one
+//!   line already being written at the close is written whole. The close
+//!   never waits behind a write stuck on a full pipe.
 //! - Stderr keeps its last [`EXTERNAL_AGENT_STDERR_TAIL_BYTES`].
+//! - **Telemetry.** Structured `tracing` events under
+//!   [`TELEMETRY_TARGET`]: launch, process start, input close, skipped
+//!   line, termination and exit — names, lengths and counts only, never a
+//!   credential, a proxy value, an inline JSON argument or stderr itself.
 //!
 //! Closing the input makes `claude` finish and exit 0. Dropping the process
 //! closes its input and asks the supervisor to end the child — first by
 //! that close, then TERM and KILL to its group if it does not exit within
 //! the launcher's [`TerminationBudget`].
 
+use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Instant;
 
-use quecto_line_io::read_bounded_line_into;
 use serde_json::{Value, json};
-use tokio::io::{AsyncWriteExt, BufReader};
-use tokio::process::{ChildStdin, ChildStdout};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::Mutex;
 
 use super::environment::{MemberEnvironmentError, check_credential, member_environment};
 use super::stream_json::StreamJsonDecoder;
@@ -49,11 +57,15 @@ use crate::application::external_agent::dto::{
 use crate::application::external_agent::ports::{
     ExternalAgentLauncher, ExternalAgentProcess, PortFuture,
 };
-use crate::domain::external_agent::stream::ExternalAgentEvent;
+use crate::domain::external_agent::stream::{ExternalAgentEvent, SkippedLine, SkippedLineReason};
+use crate::domain::redaction::redact_secrets;
+use crate::infrastructure::processes::child_line_pipes::{
+    LineLimits, LineWriteError, StdinLines, StdoutLine, StdoutLines,
+};
 use crate::infrastructure::processes::child_stderr_tail::StderrTail;
 use crate::infrastructure::processes::owned_child_supervisor::{
     ChildExit, ChildHandleId, OwnedChildSupervisor, ProcessGroup, ProtocolOutcome,
-    TerminationBudget,
+    TerminationBudget, TerminationOutcome,
 };
 
 /// The program looked up on `PATH`.
@@ -65,33 +77,49 @@ const PROGRAM_NAME: &str = "claude CLI";
 /// What the program is required for, in the launch error.
 const REQUIRED_FOR: &str = "claude-code members";
 
-/// The longest stdout line decoded; a longer one is skipped and logged.
-pub const STREAM_LINE_CAP_BYTES: usize = 16 * 1024 * 1024;
-
-/// Decoded events buffered ahead of the reader; a full buffer holds the
-/// pump (and so the child's stdout) until the session reads on.
-///
-/// Worst case memory: each buffered event comes from one line of at most
-/// [`STREAM_LINE_CAP_BYTES`], so a reader that stops reading while
-/// `claude` emits only lines at the cap holds up to 256 × 16 MiB = 4 GiB
-/// here, plus the pump's one 16 MiB line buffer. Real stream-json lines
-/// are KiB (a tool result is the largest), and the session reads every
-/// turn to its `result`, so the bound is theoretical; lower the cap or the
-/// buffer if a member is ever seen near it.
-const EVENT_BUFFER: usize = 256;
-
 /// The `tracing` target of a member process's telemetry.
 pub const TELEMETRY_TARGET: &str = "quecto::external_agent";
+
+/// The longest stdout line decoded; a longer one is skipped as a
+/// [`ExternalAgentEvent::LineSkipped`].
+pub const STREAM_LINE_CAP_BYTES: usize = 16 * 1024 * 1024;
+
+/// The bytes of stdout lines buffered ahead of the reader; a full budget
+/// holds the pump (and so the child's stdout) until the session reads on.
+/// Worst case held for one member: this budget plus the one line the pump
+/// is reading (at most [`STREAM_LINE_CAP_BYTES`]), 48 MiB. Real
+/// stream-json lines are KiB.
+pub const STREAM_BUFFER_BYTES: usize = 32 * 1024 * 1024;
 
 /// Whole turns queued ahead of the stdin writer; a full queue holds the
 /// sender (cancel-safely: an unqueued turn is simply not sent).
 const INPUT_QUEUE: usize = 16;
+
+/// Every flag `claude` is given: the only arguments telemetry names (a
+/// flag's value may be inline JSON).
+const CLAUDE_FLAGS: &[&str] = &[
+    "-p",
+    "--input-format",
+    "--output-format",
+    "--verbose",
+    "--model",
+    "--tools",
+    "--mcp-config",
+    "--strict-mcp-config",
+    "--settings",
+    "--setting-sources",
+    "--permission-mode",
+    "--allow-dangerously-skip-permissions",
+    "--no-session-persistence",
+    "--max-budget-usd",
+];
 
 /// Starts `claude` member processes.
 pub struct ClaudeCodeLauncher {
     supervisor: Arc<OwnedChildSupervisor>,
     parent_environment: Vec<(OsString, OsString)>,
     termination: TerminationBudget,
+    limits: LineLimits,
 }
 
 impl ClaudeCodeLauncher {
@@ -106,6 +134,10 @@ impl ClaudeCodeLauncher {
             supervisor,
             parent_environment,
             termination: TerminationBudget::DEFAULT,
+            limits: LineLimits {
+                line_cap: STREAM_LINE_CAP_BYTES,
+                buffer_bytes: STREAM_BUFFER_BYTES,
+            },
         }
     }
 
@@ -116,8 +148,17 @@ impl ClaudeCodeLauncher {
         self
     }
 
-    /// Red stub (#2286): the line cap and buffer budget are not applied yet.
-    pub fn with_stream_limits(self, _line_cap: usize, _buffer_bytes: usize) -> Self {
+    /// This launcher, reading lines of at most `line_cap` bytes with at
+    /// most `buffer_bytes` of them waiting for the reader, instead of
+    /// [`STREAM_LINE_CAP_BYTES`] and [`STREAM_BUFFER_BYTES`]. A line must
+    /// fit the buffer.
+    pub fn with_stream_limits(mut self, line_cap: usize, buffer_bytes: usize) -> Self {
+        let limits = LineLimits {
+            line_cap,
+            buffer_bytes,
+        };
+        assert!(limits.valid(), "invalid stream limits: {limits:?}");
+        self.limits = limits;
         self
     }
 
@@ -130,6 +171,7 @@ impl ClaudeCodeLauncher {
         &self,
         spec: ExternalAgentLaunchSpec,
     ) -> Result<Box<dyn ExternalAgentProcess>, ExternalAgentLaunchError> {
+        let started = Instant::now();
         // Every check of the spec itself comes before any directory is
         // made or anything is spawned.
         let arguments = claude_arguments(&spec)?;
@@ -142,6 +184,15 @@ impl ClaudeCodeLauncher {
         assert!(
             environment.home.is_dir() && environment.config_dir.is_dir(),
             "the member's private directories exist before its child is spawned"
+        );
+        let member = member_name(&spec.member_dir);
+        tracing::info!(
+            target: TELEMETRY_TARGET,
+            member = %member,
+            flags = ?flags_of(&arguments),
+            env = ?environment.names(),
+            dirs = ?[&environment.home, &environment.config_dir],
+            "claude member launch"
         );
         let mut command = tokio::process::Command::new(&program);
         command
@@ -163,10 +214,19 @@ impl ClaudeCodeLauncher {
             .await
             .map_err(|error| spawn_error(error, &program, &checkout))?;
         let handle = spawned.handle;
+        // `ProcessGroup::Own`: the supervisor made the child lead its own
+        // group, so its pgid is its pid.
+        tracing::info!(
+            target: TELEMETRY_TARGET,
+            member = %member,
+            pid = spawned.display_pid.0,
+            pgid = spawned.display_pid.0,
+            "claude member process started"
+        );
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (spawned.stdin, spawned.stdout, spawned.stderr)
         else {
-            end_child(&self.supervisor, handle, self.termination);
+            end_child(&self.supervisor, handle, self.termination, member);
             return Err(ExternalAgentLaunchError::Spawn(
                 "the child's stdio pipes were not all created".into(),
             ));
@@ -174,17 +234,22 @@ impl ClaudeCodeLauncher {
         let stderr = self
             .supervisor
             .retain_stderr_tail_within(stderr, EXTERNAL_AGENT_STDERR_TAIL_BYTES);
-        let (events, receiver) = mpsc::channel(EVENT_BUFFER);
-        let pump = self.supervisor.spawn_pump(pump_stdout(stdout, events));
-        let (input, lines) = mpsc::channel(INPUT_QUEUE);
-        self.supervisor.spawn_pump(write_input(stdin, lines));
+        let lines = self.supervisor.pump_stdout_lines(stdout, self.limits);
+        let input = self.supervisor.pump_stdin_lines(stdin, INPUT_QUEUE);
         Ok(Box::new(ClaudeCodeProcess {
             supervisor: Arc::clone(&self.supervisor),
             handle,
-            input: std::sync::Mutex::new(Some(input)),
-            events: Mutex::new(receiver),
+            member,
+            started,
+            input,
+            events: Mutex::new(EventStream {
+                lines,
+                decoder: StreamJsonDecoder::new(),
+                pending: VecDeque::new(),
+            }),
+            discarded_lines: AtomicUsize::new(0),
+            exit_logged: AtomicBool::new(false),
             stderr,
-            pump,
             termination: self.termination,
         }))
     }
@@ -211,6 +276,23 @@ impl ExternalAgentLauncher for ClaudeCodeLauncher {
     }
 }
 
+/// The member's name in telemetry: its member directory's last component.
+fn member_name(member_dir: &Path) -> String {
+    member_dir
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// The flags of `arguments`, without their values.
+fn flags_of(arguments: &[String]) -> Vec<&str> {
+    arguments
+        .iter()
+        .map(String::as_str)
+        .filter(|argument| CLAUDE_FLAGS.contains(argument))
+        .collect()
+}
+
 /// A refused credential is an invalid spec; only a directory the member's
 /// state cannot live in is a member-directory failure.
 fn environment_error(error: MemberEnvironmentError) -> ExternalAgentLaunchError {
@@ -222,14 +304,16 @@ fn environment_error(error: MemberEnvironmentError) -> ExternalAgentLaunchError 
     }
 }
 
-/// Red stub (#2286): a missing checkout still reads as a missing claude.
-fn spawn_error(
-    error: std::io::Error,
-    program: &Path,
-    _checkout: &Path,
-) -> ExternalAgentLaunchError {
+/// A spawn's `NotFound` is either the working directory or the program:
+/// the checkout is checked again (it was checked before the member's
+/// directories were made, and may have gone since), so a checkout removed
+/// under the launch is never reported as a missing `claude`.
+fn spawn_error(error: std::io::Error, program: &Path, checkout: &Path) -> ExternalAgentLaunchError {
     match error.kind() {
-        std::io::ErrorKind::NotFound => not_found(),
+        std::io::ErrorKind::NotFound => match checked_checkout(checkout) {
+            Ok(_) => not_found(),
+            Err(checkout_gone) => checkout_gone,
+        },
         _ => ExternalAgentLaunchError::Spawn(format!("{}: {error}", program.display())),
     }
 }
@@ -293,6 +377,13 @@ fn json_object(flag: &str, value: &Value) -> Result<String, ExternalAgentLaunchE
 
 /// The argv after the program: the stream-json flags and the spec's values,
 /// each value checked first.
+///
+/// `--mcp-config` and `--settings` are inline JSON, and argv is readable
+/// by every local user through procfs. Nothing secret may be inlined: the
+/// credential reaches `claude` only through its environment, and S5 must
+/// hand bridge tokens over by a file in the member's private directory,
+/// never in this JSON. An argv that would carry the credential's value is
+/// refused.
 pub fn claude_arguments(
     spec: &ExternalAgentLaunchSpec,
 ) -> Result<Vec<String>, ExternalAgentLaunchError> {
@@ -333,6 +424,11 @@ pub fn claude_arguments(
         "project",
         "--permission-mode",
         "bypassPermissions",
+        // Spike #2264's shim passed this whenever the mode was
+        // bypassPermissions. Claude 2.1.280 honoured the mode without it
+        // (round-1 live check), but a version that requires the opt-in
+        // would silently fall back to prompting: match the spike.
+        "--allow-dangerously-skip-permissions",
         "--no-session-persistence",
         "--max-budget-usd",
         &spec.max_budget_usd.to_string(),
@@ -340,104 +436,105 @@ pub fn claude_arguments(
     .iter()
     .map(|argument| argument.to_string())
     .collect();
-    Ok(arguments)
+    debug_assert!(
+        arguments
+            .iter()
+            .filter(|argument| argument.starts_with('-'))
+            .all(|flag| CLAUDE_FLAGS.contains(&flag.as_str())),
+        "every flag is one telemetry may name"
+    );
+    let secret = spec.credential.value.as_str();
+    let argv_clean =
+        secret.is_empty() || arguments.iter().all(|argument| !argument.contains(secret));
+    if argv_clean {
+        return Ok(arguments);
+    }
+    Err(invalid(format!(
+        "the argv would carry the value of {}: argv is readable by every local user",
+        spec.credential.name
+    )))
 }
 
-/// Decode `stdout` line by line into `events` until it ends (or the
-/// process handle is gone). Nothing a line holds ends the stream.
-async fn pump_stdout(stdout: ChildStdout, events: mpsc::Sender<ExternalAgentEvent>) {
-    let mut reader = BufReader::new(stdout);
-    let mut decoder = StreamJsonDecoder::new();
-    let mut line = Vec::new();
-    loop {
-        let read = match read_bounded_line_into(&mut reader, &mut line, STREAM_LINE_CAP_BYTES).await
-        {
-            Ok(Some(read)) => read,
-            Ok(None) => return,
-            Err(error) => {
-                tracing::warn!(%error, "claude stdout: read failed; the stream ends");
-                return;
+/// Stdout's lines and what they decoded to, read under one lock.
+struct EventStream {
+    lines: StdoutLines,
+    decoder: StreamJsonDecoder,
+    /// Events of a line already decoded, not yet returned.
+    pending: VecDeque<ExternalAgentEvent>,
+}
+
+impl EventStream {
+    /// The next event; `None` once stdout has ended. Cancel-safe: the only
+    /// await is the line pump's, and a line is decoded whole before the
+    /// next await.
+    async fn next(&mut self, member: &str) -> Option<ExternalAgentEvent> {
+        loop {
+            if let Some(event) = self.pending.pop_front() {
+                return Some(event);
             }
-        };
-        if read.truncated {
-            tracing::warn!(
-                bytes = read.bytes_read,
-                cap = STREAM_LINE_CAP_BYTES,
-                "claude stream-json: line over the cap skipped"
-            );
-            continue;
-        }
-        let Ok(text) = std::str::from_utf8(&line) else {
-            tracing::warn!("claude stream-json: line that is not UTF-8 skipped");
-            continue;
-        };
-        let text = text.trim_end_matches(['\n', '\r']);
-        if text.trim().is_empty() {
-            continue;
-        }
-        match decoder.decode_line(text) {
-            Ok(decoded) => {
-                for event in decoded {
-                    if events.send(event).await.is_err() {
-                        return;
+            match self.lines.next().await? {
+                StdoutLine::OverCap { bytes } => {
+                    return Some(skipped(member, SkippedLineReason::OverCap, bytes));
+                }
+                StdoutLine::Line(bytes) => {
+                    if let Some(event) = self.decode(member, &bytes) {
+                        return Some(event);
                     }
                 }
             }
-            Err(error) => tracing::warn!(%error, "claude stream-json: line skipped"),
         }
+    }
+
+    /// Decode one line into [`Self::pending`]; a line that is not UTF-8 is
+    /// returned as a skipped line instead.
+    fn decode(&mut self, member: &str, bytes: &[u8]) -> Option<ExternalAgentEvent> {
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            return Some(skipped(member, SkippedLineReason::NotUtf8, bytes.len()));
+        };
+        let text = text.trim_end_matches(['\n', '\r']);
+        let blank = text.trim().is_empty();
+        if blank {
+            return None;
+        }
+        match self.decoder.decode_line(text) {
+            Ok(decoded) => self.pending.extend(decoded),
+            Err(error) => tracing::warn!(
+                target: TELEMETRY_TARGET,
+                member = %member,
+                bytes = bytes.len(),
+                error = %redact_secrets(&error.to_string()),
+                "claude member line not decoded"
+            ),
+        }
+        None
     }
 }
 
-/// One whole line for the stdin writer, and where it answers how the
-/// write went.
-struct InputLine {
-    line: String,
-    written: oneshot::Sender<Result<(), String>>,
-}
-
-/// Write each queued line whole, in order, until the queue closes (the
-/// input was closed, or the process dropped) or a write fails; then close
-/// stdin, which is `claude`'s shutdown request. A failed write ends the
-/// writer: the lines behind it, and any later send, are answered as
-/// failed, never written after a partial line.
-async fn write_input(mut stdin: ChildStdin, mut lines: mpsc::Receiver<InputLine>) {
-    while let Some(InputLine { line, written }) = lines.recv().await {
-        debug_assert!(
-            line.ends_with('\n') && line.matches('\n').count() == 1,
-            "the writer is given exactly one whole line"
-        );
-        let outcome = async {
-            stdin.write_all(line.as_bytes()).await?;
-            stdin.flush().await
-        }
-        .await;
-        match outcome {
-            Ok(()) => {
-                // A sender that stopped waiting still had its turn written.
-                let _ = written.send(Ok(()));
-            }
-            Err(error) => {
-                tracing::warn!(%error, "claude stdin: write failed; the input ends");
-                let _ = written.send(Err(error.to_string()));
-                break;
-            }
-        }
-    }
-    // EOF is the close itself; a failed shutdown of a pipe whose reader
-    // already left changes nothing.
-    let _ = stdin.shutdown().await;
+/// A skipped line, logged.
+fn skipped(member: &str, reason: SkippedLineReason, bytes: usize) -> ExternalAgentEvent {
+    tracing::warn!(
+        target: TELEMETRY_TARGET,
+        member = %member,
+        reason = ?reason,
+        bytes,
+        "claude member line skipped"
+    );
+    ExternalAgentEvent::LineSkipped(SkippedLine { reason, bytes })
 }
 
 /// One running `claude`. See the module docs.
 pub struct ClaudeCodeProcess {
     supervisor: Arc<OwnedChildSupervisor>,
     handle: ChildHandleId,
-    /// The stdin writer's queue; `None` once the input is closed. Held
-    /// only to clone or take it, never across an await.
-    input: std::sync::Mutex<Option<mpsc::Sender<InputLine>>>,
-    events: Mutex<mpsc::Receiver<ExternalAgentEvent>>,
+    /// The member's name, for telemetry.
+    member: String,
+    started: Instant,
+    input: StdinLines,
+    events: Mutex<EventStream>,
+    /// Lines [`ExternalAgentProcess::exited`] discarded unread.
+    discarded_lines: AtomicUsize,
+    exit_logged: AtomicBool,
     stderr: StderrTail,
-    pump: tokio::task::JoinHandle<()>,
     termination: TerminationBudget,
 }
 
@@ -454,37 +551,50 @@ fn user_message_line(text: &str) -> String {
 }
 
 impl ClaudeCodeProcess {
-    fn input(&self) -> std::sync::MutexGuard<'_, Option<mpsc::Sender<InputLine>>> {
-        self.input
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    /// Queue `text` as one whole line and wait until it is written.
-    /// Cancel-safe: dropped before it is queued, nothing is sent; dropped
-    /// after, the line is still written whole.
-    async fn write_turn(&self, text: &str) -> Result<(), ExternalAgentInputError> {
-        let line = user_message_line(text);
-        let queue = self.input().clone();
-        let Some(queue) = queue else {
-            return Err(ExternalAgentInputError::Closed);
-        };
-        let (written, answer) = oneshot::channel();
-        let queued = queue.send(InputLine { line, written }).await;
-        // The clone must not keep the queue open past a close.
-        drop(queue);
-        queued.map_err(|_| gone())?;
-        match answer.await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => Err(ExternalAgentInputError::Write(error)),
-            Err(_) => Err(gone()),
+    /// Close the input, logging the first close and what caused it.
+    fn close(&self, cause: &'static str) {
+        if self.input.close() {
+            tracing::info!(
+                target: TELEMETRY_TARGET,
+                member = %self.member,
+                cause,
+                "claude member stdin closed"
+            );
         }
     }
-}
 
-/// The writer ended (a write failed) before this turn was written.
-fn gone() -> ExternalAgentInputError {
-    ExternalAgentInputError::Write("claude's input ended after a failed write".into())
+    /// Read and discard stdout until it ends, so a child whose output no
+    /// one reads can still finish writing and exit; then wait forever.
+    async fn drain_unread(&self) -> std::convert::Infallible {
+        let mut events = self.events.lock().await;
+        events.pending.clear();
+        while events.lines.next().await.is_some() {
+            self.discarded_lines.fetch_add(1, Ordering::Relaxed);
+        }
+        std::future::pending().await
+    }
+
+    fn log_exit(&self, exit: &ExternalAgentExit) {
+        if self.exit_logged.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let (status, signal, unobservable) = match exit {
+            ExternalAgentExit::Code(code) => (Some(*code), None, None),
+            ExternalAgentExit::Signal(signal) => (None, Some(*signal), None),
+            ExternalAgentExit::Unobservable(detail) => (None, None, Some(redact_secrets(detail))),
+        };
+        tracing::info!(
+            target: TELEMETRY_TARGET,
+            member = %self.member,
+            status,
+            signal,
+            unobservable,
+            wall_ms = self.started.elapsed().as_millis() as u64,
+            stderr_tail_bytes = self.stderr.snapshot().len(),
+            discarded_lines = self.discarded_lines.load(Ordering::Relaxed),
+            "claude member exit"
+        );
+    }
 }
 
 impl ExternalAgentProcess for ClaudeCodeProcess {
@@ -492,32 +602,47 @@ impl ExternalAgentProcess for ClaudeCodeProcess {
         &'a self,
         text: &'a str,
     ) -> PortFuture<'a, Result<(), ExternalAgentInputError>> {
-        Box::pin(self.write_turn(text))
-    }
-
-    fn next_event(&self) -> PortFuture<'_, Option<ExternalAgentEvent>> {
-        Box::pin(async move { self.events.lock().await.recv().await })
-    }
-
-    fn close_input(&self) -> PortFuture<'_, ()> {
-        // Closing the queue is the close: the writer closes stdin once the
-        // turns already queued are written. Nothing here waits on a write.
         Box::pin(async move {
-            let queue = self.input().take();
-            drop(queue);
+            self.input
+                .write_line(user_message_line(text))
+                .await
+                .map_err(|error| match error {
+                    LineWriteError::Closed => ExternalAgentInputError::Closed,
+                    LineWriteError::Failed(detail) => ExternalAgentInputError::Write(detail),
+                })
         })
     }
 
+    fn next_event(&self) -> PortFuture<'_, Option<ExternalAgentEvent>> {
+        Box::pin(async move { self.events.lock().await.next(&self.member).await })
+    }
+
+    fn close_input(&self) -> PortFuture<'_, ()> {
+        // The writer closes stdin once no taken line is left; nothing here
+        // waits on a write.
+        Box::pin(async move { self.close("close_input") })
+    }
+
+    /// Waits for the exit while draining stdout: events not read by now
+    /// are discarded (counted in the exit's telemetry), so a caller that
+    /// stopped reading cannot hold the child, and this wait, forever.
     fn exited(&self) -> PortFuture<'_, ExternalAgentExit> {
         Box::pin(async move {
-            match self.supervisor.wait_exit(self.handle).await {
+            let exit = tokio::select! {
+                biased;
+                exit = self.supervisor.wait_exit(self.handle) => exit,
+                never = self.drain_unread() => match never {},
+            };
+            let exit = match exit {
                 Some(ChildExit::Code(code)) => ExternalAgentExit::Code(code),
                 Some(ChildExit::Signal(signal)) => ExternalAgentExit::Signal(signal),
                 Some(ChildExit::Unobservable(detail)) => ExternalAgentExit::Unobservable(detail),
                 None => ExternalAgentExit::Unobservable(
                     "the supervisor no longer knows this child".into(),
                 ),
-            }
+            };
+            self.log_exit(&exit);
+            exit
         })
     }
 
@@ -528,31 +653,56 @@ impl ExternalAgentProcess for ClaudeCodeProcess {
 
 impl Drop for ClaudeCodeProcess {
     fn drop(&mut self) {
-        self.pump.abort();
         // Closing the input is the shutdown request `claude` answers by
-        // exiting: the writer closes stdin once its queue is drained.
-        let queue = self
-            .input
-            .get_mut()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
-        drop(queue);
-        end_child(&self.supervisor, self.handle, self.termination);
+        // exiting. The stdout pump stops with its `StdoutLines`.
+        self.close("drop");
+        end_child(
+            &self.supervisor,
+            self.handle,
+            self.termination,
+            std::mem::take(&mut self.member),
+        );
+    }
+}
+
+/// The last signal a termination needed.
+fn signal_of(outcome: &TerminationOutcome) -> &'static str {
+    match outcome {
+        TerminationOutcome::ExitedAfterKill { .. } | TerminationOutcome::StillRunning { .. } => {
+            "KILL"
+        }
+        TerminationOutcome::ExitedAfterTerm { .. } => "TERM",
+        TerminationOutcome::NoRetainedHandle
+        | TerminationOutcome::AlreadyExited(_)
+        | TerminationOutcome::ExitedAfterProtocol(_) => "none",
     }
 }
 
 /// Have the supervisor end `handle`'s child once its input is closed: it
 /// exits by itself, or the supervisor's TERM → KILL fallback ends its
-/// group. Its slot is retired once it is reaped.
+/// group. Its slot is retired once it is reaped. Members of its group left
+/// running after the leader is reaped (a grandchild that ignored TERM
+/// before a KILL that never came) are the S8 sweep's (#2292).
 fn end_child(
     supervisor: &Arc<OwnedChildSupervisor>,
     handle: ChildHandleId,
     budget: TerminationBudget,
+    member: String,
 ) {
-    supervisor.request_termination(
+    supervisor.request_termination_observed(
         handle,
         Box::pin(async { ProtocolOutcome::Acknowledged }),
         budget,
+        Box::new(move |outcome, elapsed| {
+            tracing::info!(
+                target: TELEMETRY_TARGET,
+                member = %member,
+                signal = %signal_of(outcome),
+                still_running = matches!(outcome, TerminationOutcome::StillRunning { .. }),
+                elapsed_ms = elapsed.as_millis() as u64,
+                "claude member termination"
+            );
+        }),
     );
     supervisor.retire_when_reaped(handle);
 }
