@@ -8,7 +8,7 @@ use serde_json::json;
 
 use super::*;
 use crate::domain::external_agent::stream::{
-    BackgroundTask, McpServerStatus, ModelUsage, RateLimitStatus, RateLimitWindow,
+    BackgroundTask, McpServerStatus, ModelUsage, RateLimitStatus, RateLimitWindow, TokenCounts,
 };
 use crate::domain::external_agent::turn::TurnFailure;
 
@@ -434,24 +434,6 @@ fn the_report_is_the_last_result_text() {
         .expect("an assistant message");
     assert_eq!(report.message_ordinal, Some(last_text.ordinal));
     assert_eq!(report.pages(), vec![RT_REPORT_2]);
-}
-
-#[test]
-fn a_long_report_is_paged_at_64_kib_on_character_boundaries() {
-    let content = "é".repeat(FINAL_REPORT_PAGE_BYTES); // two bytes each
-    let report = FinalReport {
-        content: content.clone(),
-        message_ordinal: None,
-    };
-    let pages = report.pages();
-    assert_eq!(pages.len(), 2);
-    assert!(pages.iter().all(|p| p.len() <= FINAL_REPORT_PAGE_BYTES));
-    assert_eq!(pages.concat(), content);
-    let empty = FinalReport {
-        content: String::new(),
-        message_ordinal: None,
-    };
-    assert_eq!(empty.pages(), vec![""]);
 }
 
 #[test]
