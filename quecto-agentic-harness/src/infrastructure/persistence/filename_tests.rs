@@ -84,3 +84,26 @@ fn single_dot_hex_encoded() {
     let result = sanitize_session_key(".");
     assert!(result.starts_with("key_"));
 }
+
+/// #2192 review: keys the readable form names alike get distinct digest
+/// names, each of fixed length and hex only, the same for the same key.
+#[test]
+fn digest_names_keys_that_sanitize_alike_apart() {
+    assert_eq!(
+        sanitize_session_key("telegram:123"),
+        sanitize_session_key("telegram_123")
+    );
+    let (colon, underscore) = (
+        digest_session_key("telegram:123"),
+        digest_session_key("telegram_123"),
+    );
+    assert_ne!(colon, underscore);
+    assert_eq!(colon, digest_session_key("telegram:123"), "deterministic");
+    for name in [colon, underscore, digest_session_key(&"k".repeat(10_000))] {
+        assert_eq!(name.len(), DIGEST_NAME_LEN);
+        assert!(
+            name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+            "{name}"
+        );
+    }
+}

@@ -6,6 +6,7 @@ pub mod constants;
 pub mod context_calibration;
 pub mod conversation_edit;
 pub mod conversation_view;
+pub mod crash_record;
 pub mod environment_journal;
 pub mod environment_listing;
 pub mod environment_registry;

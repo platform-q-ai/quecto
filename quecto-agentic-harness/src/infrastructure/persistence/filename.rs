@@ -41,6 +41,22 @@ pub fn sanitize_session_key(key: &str) -> String {
     hex_encode(key)
 }
 
+/// The name of a session key that no other key shares (#2192 review): the
+/// SHA-256 of the key's exact bytes, in lowercase hex — 64 characters,
+/// whatever the key's length, and only `[0-9a-f]`. Unlike
+/// [`sanitize_session_key`], which keeps a legacy-safe key readable and so
+/// names `telegram:123` and `telegram_123` alike, two keys have one name
+/// only if SHA-256 collides.
+pub fn digest_session_key(key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = format!("{:x}", Sha256::digest(key.as_bytes()));
+    debug_assert_eq!(digest.len(), DIGEST_NAME_LEN);
+    digest
+}
+
+/// The length of every [`digest_session_key`] name.
+pub const DIGEST_NAME_LEN: usize = 64;
+
 /// Hex-encode a key with a `key_` prefix for collision-resistant filenames.
 fn hex_encode(key: &str) -> String {
     let mut encoded = String::with_capacity(key.len() * 2 + 4);

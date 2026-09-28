@@ -1,9 +1,8 @@
-//! Adapter of the session-switch runtime ports (D7 #1976, D8 #1977) over
-//! the dispatch loop's runtime: turn accounting, key propagation to the
-//! agent loop and its session-aware tools (the [`AgentSession`] tracker
-//! keeps no copy, D10 #1979), and the effort/workflow reset or restore,
-//! each bumping the tracker's visible generation only when something
-//! changed. The transactions order these; this adapter decides nothing.
+//! Adapter of the session-switch runtime ports (D7 #1976, D8 #1977) over the dispatch loop's
+//! runtime: turn accounting, key propagation to the agent loop, its session-aware tools and its
+//! crash target and event log (#2192; the [`AgentSession`] tracker keeps no copy, D10 #1979), and
+//! the effort/workflow reset or restore, each bumping the tracker's visible generation only when
+//! something changed. The transactions order these; this adapter decides nothing.
 use super::uds_execution_state::ExecutionStateHandle;
 use super::uds_session::AgentSession;
 use super::uds_turn_accounting::LoopTurnAccounting;
@@ -11,6 +10,7 @@ use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
 use crate::application::sessions::ports::{SessionKeyPropagation, SessionSwitchRuntime};
 use crate::domain::session_identity::SessionIdentity;
+use crate::infrastructure::persistence::crash_record;
 use crate::interface::shared::WorkflowStateHandle;
 
 pub struct LoopSessionSwitchRuntime<'a> {
@@ -56,6 +56,8 @@ impl SessionKeyPropagation for LoopSessionSwitchRuntime<'_> {
             self.session.session_changed();
         }
         self.agent.set_session_key(identity.clone());
+        self.agent
+            .follow_audit_log(crash_record::follow(identity.persisted_key()));
     }
 }
 
@@ -78,9 +80,8 @@ impl SessionSwitchRuntime for LoopSessionSwitchRuntime<'_> {
     }
 }
 
-/// Replace the bound workflow engine's run — restore `run`, or reset the
-/// engine when there is none — and bump the tracker's visible generation
-/// when the engine's snapshot changed.
+/// Replace the bound workflow engine's run (restore `run`, or reset it when there is none) and
+/// bump the tracker's visible generation when the engine's snapshot changed.
 fn apply_workflow_run(
     workflow_state: Option<&WorkflowStateHandle>,
     session: &mut AgentSession,

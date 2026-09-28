@@ -541,3 +541,139 @@ fn a_host_name_only_from_a_good_call() {
     assert_eq!(super::host_from(0, b"unterminated"), None);
     assert_eq!(super::host_from(0, b"\0"), None);
 }
+
+#[test]
+fn the_crash_line_stays_inside_the_logs_cap() {
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:capped")
+        .unwrap()
+        .with_cap(64);
+    let error = log
+        .crash_line()
+        .unwrap()
+        .write(
+            0,
+            AuditEvent::Error {
+                source: "panic".into(),
+                tool: None,
+                message: "does not fit".into(),
+                location: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::StorageFull);
+    let path = AuditLog::file_path(base.path(), "cli:capped");
+    assert_eq!(std::fs::metadata(path).unwrap().len(), 0);
+}
+
+/// #2192 review (F1): a log the async writer capped — with room still to
+/// spare — takes no crash line after its `log_capped` record.
+#[tokio::test]
+async fn the_crash_line_writes_nothing_after_the_log_was_capped() {
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:capped")
+        .unwrap()
+        .with_cap(1024);
+    let crash_line = log.crash_line().unwrap();
+    let error = |message: String| AuditEvent::Error {
+        source: "panic".into(),
+        tool: None,
+        message,
+        location: None,
+    };
+    log.emit(0, error("x".repeat(2000))).await.unwrap();
+    let path = AuditLog::file_path(base.path(), "cli:capped");
+    let held = std::fs::metadata(&path).unwrap().len();
+    assert!(held < 512, "capped with room to spare: {held}");
+    let refused = crash_line.write(1, error("small".into())).unwrap_err();
+    assert_eq!(refused.kind(), std::io::ErrorKind::StorageFull);
+    let text = std::fs::read_to_string(&path).unwrap();
+    let last = text.lines().last().unwrap();
+    assert!(last.contains(r#""event":"log_capped""#), "{text}");
+    // A log reopened already capped refuses it too.
+    let reopened = AuditLog::open_sync(base.path(), "cli:capped").unwrap();
+    assert!(
+        reopened
+            .crash_line()
+            .unwrap()
+            .write(1, error("small".into()))
+            .is_err()
+    );
+}
+
+fn panic_event(message: &str) -> AuditEvent {
+    AuditEvent::Error {
+        source: "panic".into(),
+        tool: None,
+        message: message.into(),
+        location: None,
+    }
+}
+
+/// #2192 review: the crash line's bytes count against the cap the async
+/// writer keeps — a line it wrote is not room the async writer still has.
+#[tokio::test]
+async fn a_crash_line_written_counts_against_the_async_writers_cap() {
+    let base = tempfile::tempdir().unwrap();
+    let line_len = |message: &str| {
+        envelope_line("cli:budget", None, 0, panic_event(message))
+            .unwrap()
+            .len() as u64
+    };
+    // Room for two lines of this size, and no more.
+    let cap = 2 * line_len("x".repeat(40).as_str()) + 8;
+    let log = AuditLog::open_sync(base.path(), "cli:budget")
+        .unwrap()
+        .with_cap(cap);
+    log.crash_line()
+        .unwrap()
+        .write(0, panic_event(&"x".repeat(40)))
+        .unwrap();
+    log.emit(0, panic_event(&"y".repeat(40))).await.unwrap();
+    // The async writer alone would think one more fits; with the crash
+    // line's bytes counted it does not, and the log caps.
+    log.emit(0, panic_event("z")).await.unwrap();
+    let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:budget")).unwrap();
+    let last = text.lines().last().unwrap();
+    assert!(last.contains(r#""event":"log_capped""#), "{text}");
+    assert!(!text.contains(r#""message":"z""#), "{text}");
+}
+
+/// #2192 review: bytes the async writer has reserved — its line not yet
+/// on disk — are not room the crash line may take: the cap is exact.
+#[test]
+fn a_line_reserved_but_not_yet_written_leaves_the_crash_line_no_room() {
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:reserved")
+        .unwrap()
+        .with_cap(4096);
+    let crash_line = log.crash_line().unwrap();
+    // As the async writer does, just before its write lands.
+    assert!(reserve(&log.reserved, 4000, 4096));
+    let path = AuditLog::file_path(base.path(), "cli:reserved");
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().len(),
+        0,
+        "nothing on disk"
+    );
+    let refused = crash_line
+        .write(0, panic_event("does not fit"))
+        .unwrap_err();
+    assert_eq!(refused.kind(), std::io::ErrorKind::StorageFull);
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+}
+
+#[test]
+fn a_reservation_is_taken_whole_or_not_at_all() {
+    let budget = std::sync::atomic::AtomicU64::new(10);
+    assert!(reserve(&budget, 5, 20));
+    assert!(!reserve(&budget, 6, 20), "15 + 6 passes 20");
+    assert!(reserve(&budget, 5, 20), "exactly the cap fits");
+    assert!(!reserve(&budget, 1, 20));
+    assert!(!reserve(
+        &std::sync::atomic::AtomicU64::new(u64::MAX),
+        1,
+        u64::MAX
+    ));
+    assert_eq!(budget.load(std::sync::atomic::Ordering::Acquire), 20);
+}

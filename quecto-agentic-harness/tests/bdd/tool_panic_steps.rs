@@ -3,6 +3,7 @@
 //! that asks for one `panic_probe` call, then answers.
 use super::QuectoWorld;
 use cucumber::{given, then, when};
+use quecto::infrastructure::persistence::audit_log::AuditLog;
 use serde_json::{Value, json};
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
@@ -225,5 +226,45 @@ fn aborted(world: &mut QuectoWorld) {
     assert!(
         !String::from_utf8_lossy(&output.stdout).contains("RECOVERED"),
         "nothing ran after the fatal panic"
+    );
+}
+
+#[then("its crash record and event log say why it died")]
+fn crash_recorded(world: &mut QuectoWorld) {
+    let run = world.tool_panic.as_ref().unwrap();
+    let name = AuditLog::crash_record_name("cli:probe");
+    let text = std::fs::read_to_string(run.dir(&format!("base/audit/crash/{name}")))
+        .expect("a crash record in the crash directory beside the event logs");
+    let record: Value = serde_json::from_str(text.trim_end()).unwrap();
+    assert_eq!(
+        record["session"], "cli:probe",
+        "it names its session exactly"
+    );
+    assert_eq!(
+        record["message"],
+        "panic_probe: a panic outside any tool call"
+    );
+    assert!(
+        record["location"]
+            .as_str()
+            .is_some_and(|at| at.contains("panic_probe.rs:")),
+        "{record}"
+    );
+    // Outside any call, it is attributed to none: the running one is named.
+    assert_eq!(record.get("call"), None, "{record}");
+    assert_eq!(record["running"], json!(["panic_probe"]), "{record}");
+    let records = run.records();
+    let error = records
+        .iter()
+        .find(|event| event["event"] == "error" && event["source"] == "panic")
+        .unwrap_or_else(|| panic!("no fatal error event in {records:?}"));
+    assert_eq!(
+        error["message"],
+        "panic_probe: a panic outside any tool call"
+    );
+    assert_eq!(
+        error.get("tool"),
+        Some(&Value::Null),
+        "attributed to no call: {error}"
     );
 }

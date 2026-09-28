@@ -117,8 +117,9 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     // Open the loop's session (#1863, D8 #1977): the transaction claims it
     // (a key owned by another live process is refused at open, #1460),
     // loads it and lets the watermark stand for what the store holds.
+    // Claimed, the session's crash record is this process's too (#2192).
     let opened = match sessions.switch.resume.open_at_startup().await {
-        Ok(opened) => opened,
+        Ok(opened) => crate::infrastructure::persistence::crash_record::claimed(opened),
         Err(err) => {
             eprintln!("{err}");
             return 1;

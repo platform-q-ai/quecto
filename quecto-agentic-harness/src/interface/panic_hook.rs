@@ -19,12 +19,19 @@
 //! writes ignores a failed write: a panic in the hook would abort without
 //! the report.
 //!
+//! A fatal panic, once reported, also leaves a crash record and an `error`
+//! event in the target the agent armed once it claimed its session, so its
+//! parent can say why it died. A contained panic leaves a provisional
+//! record of its own call, withdrawn when that call ends, however it ends.
+//!
 //! Installed first thing by the `quecto` binary. Tests and embeddings that
 //! never install it keep Rust's default behaviour.
 use std::panic::PanicHookInfo;
 use std::sync::Once;
 
 use crate::application::tool_panic_scope::{self, PanicSite, Recording, ToolScope};
+use crate::domain::crash_record::{CrashRecord, PanicReport};
+use crate::infrastructure::persistence::crash_record;
 
 /// What the hook does with one panic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,6 +168,7 @@ pub fn install() {
         let end = FATAL_END;
         #[cfg(any(test, feature = "test-support"))]
         let end = test_support::fatal_end(end);
+        tool_panic_scope::on_call_end(crash_record::withdraw);
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             let scope = tool_panic_scope::current();
@@ -175,10 +183,22 @@ pub fn install() {
             // review).
             let recorded = match (disposed, &scope) {
                 (Disposition::Contain, Some(scope)) => {
+                    // On the scope first: the call's answer needs nothing more.
                     let site = panic_site(info);
                     let line = contained_report(scope.tool(), &site);
-                    match scope.record_panic(site) {
-                        Recording::Kept | Recording::Remembered => Some(line),
+                    match scope.record_panic(site.clone()) {
+                        Recording::Kept => {
+                            // Only the kept panic leaves a provisional
+                            // record: the one the call answers with.
+                            let record = crash(&site, None).in_call(scope.tool()).provisional();
+                            leave_provisional(
+                                scope,
+                                || crash_record::record_provisional(scope.id(), &record),
+                                crash_record::withdraw,
+                            );
+                            Some(line)
+                        }
+                        Recording::Remembered => Some(line),
                         Recording::Refused => None,
                     }
                 }
@@ -194,11 +214,68 @@ pub fn install() {
                     if let Some(context) = fatal_context(&running, struck.as_ref()) {
                         report_line(&context);
                     }
+                    record_fatal(info, scope.as_deref(), struck.as_ref(), running);
                     end();
                 }
             }
         }));
     });
+}
+
+/// Leave the provisional record of `scope`'s kept panic: `write` it, note
+/// the session it went under for the call's end to withdraw, and — should
+/// the call have ended on another thread meanwhile, its end finding nothing
+/// noted — `withdraw` it here, so it cannot outlive the call.
+pub fn leave_provisional(
+    scope: &ToolScope,
+    write: impl FnOnce() -> Option<String>,
+    withdraw: impl FnOnce(u64, Option<&str>),
+) {
+    let Some(session) = write() else {
+        return;
+    };
+    scope.note_provisional(session);
+    if scope.is_open() {
+        return;
+    }
+    if let Some(session) = scope.take_provisional() {
+        withdraw(scope.id(), Some(&session));
+    }
+}
+
+/// A crash record of `site`, which struck `earlier` if it is a second one.
+fn crash(site: &PanicSite, earlier: Option<&PanicSite>) -> CrashRecord {
+    let unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default();
+    // Secret shapes redacted, as in the call's own result (#2192 review);
+    // the report bounds the text.
+    let report = |site: &PanicSite| {
+        PanicReport::new(
+            &crate::domain::redaction::redact_secrets(&site.message),
+            site.location.as_deref(),
+        )
+    };
+    CrashRecord::new(report(site), std::process::id(), unix_ms).after(earlier.map(report))
+}
+
+/// Leave the crash record and the event log's `error` event of a fatal
+/// panic: the calls that were running, and — inside a call, where it is a
+/// second panic — that call and the panic it struck.
+fn record_fatal(
+    info: &PanicHookInfo<'_>,
+    scope: Option<&ToolScope>,
+    struck: Option<&PanicSite>,
+    running: Vec<String>,
+) {
+    let site = panic_site(info);
+    let record = crash(&site, struck).running(running);
+    let (record, turn) = match scope {
+        Some(scope) => (record.in_call(scope.tool()), scope.turn()),
+        None => (record, tool_panic_scope::last_turn()),
+    };
+    crash_record::record_fatal(&record, tool_panic_scope::FATAL_PANIC_SOURCE, turn);
 }
 
 /// How a fatal panic ends the process: the one end every quecto binary uses
@@ -265,6 +342,9 @@ pub mod test_support {
     }
 }
 
+#[cfg(test)]
+#[path = "panic_hook_path_tests.rs"]
+mod path_tests;
 #[cfg(test)]
 #[path = "panic_hook_tests.rs"]
 mod tests;

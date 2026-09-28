@@ -58,10 +58,10 @@ pub(crate) fn run_agent_session(
     let _exit = crate::interface::cli::launch_rollback_wait::WaitForLaunchRollbacks(&rt);
 
     // Open the session (#1863, D8 #1977): the transaction claims it (a key
-    // owned by another live process is refused at open, #1460) and loads
-    // it; an ephemeral run touches the store not at all.
+    // owned by another live process is refused at open, #1460), loads it and
+    // arms its crash record (#2192); an ephemeral run touches no store.
     let mut messages: Vec<Message> = match rt.block_on(sessions.switch.resume.open_at_startup()) {
-        Ok(opened) => opened.messages,
+        Ok(opened) => crate::infrastructure::persistence::crash_record::claimed(opened).messages,
         Err(e) => {
             out.stderr.push_str(&format!("{e}\n"));
             return 1;

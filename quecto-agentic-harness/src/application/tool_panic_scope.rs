@@ -45,6 +45,10 @@ pub struct PanicSite {
 struct Recorded {
     site: PanicSite,
     thread: u64,
+    /// The session its provisional crash record was written under, until
+    /// that record is withdrawn (#2192): withdrawn from there, not from
+    /// whatever session the process records for by then.
+    provisional: Option<String>,
 }
 
 /// The panics recorded on one scope: the first one kept (the call's cause),
@@ -146,16 +150,37 @@ pub enum Recording {
 #[derive(Debug)]
 pub struct ToolScope {
     tool: String,
+    /// Unique in this process: names the scope's provisional crash record.
+    id: u64,
+    /// The turn the call runs in.
+    turn: u32,
     site: Mutex<Records>,
     open: AtomicBool,
 }
 
+static NEXT_SCOPE: AtomicU64 = AtomicU64::new(1);
+/// The turn of the call started last: what a panic outside any call is
+/// filed under.
+static LAST_TURN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The turn of the call started last. Hook-safe.
+pub fn last_turn() -> u32 {
+    LAST_TURN.load(Ordering::Relaxed)
+}
+
 impl ToolScope {
     pub fn new(tool: impl Into<String>) -> Arc<Self> {
+        Self::in_turn(tool, 0)
+    }
+
+    /// The scope of a call to `tool` in `turn`.
+    pub fn in_turn(tool: impl Into<String>, turn: u32) -> Arc<Self> {
         let tool = tool.into();
         assert!(!tool.is_empty(), "a tool scope names its tool");
         Arc::new(Self {
             tool,
+            id: NEXT_SCOPE.fetch_add(1, Ordering::Relaxed),
+            turn,
             site: Mutex::new(Records::default()),
             open: AtomicBool::new(true),
         })
@@ -163,6 +188,14 @@ impl ToolScope {
 
     pub fn tool(&self) -> &str {
         &self.tool
+    }
+
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub fn turn(&self) -> u32 {
+        self.turn
     }
 
     /// Whether the call is still running: a closed scope contains nothing.
@@ -184,23 +217,51 @@ impl ToolScope {
         );
     }
 
-    /// Record a panic the calling thread raised in this scope. The first one
-    /// is kept: it is the cause, and anything after it on the same thread is
-    /// a consequence. Another thread's first panic is remembered too, so the
-    /// scope stays failed if the kept one is forgotten. A closed scope
-    /// records nothing: its call's result is already read, so the panic is
-    /// not the call's to contain. Hook-safe: it never blocks and never
-    /// panics.
+    /// Record a panic the calling thread raised in this scope, answering
+    /// what became of it. The first one is kept: it is the cause, and
+    /// anything after it on the same thread is a consequence. Another
+    /// thread's first panic is remembered too, so the scope stays failed if
+    /// the kept one is forgotten. A closed scope records nothing: its call's
+    /// result is already read, so the panic is not the call's to contain.
+    /// Hook-safe: it never blocks and never panics.
     pub fn record_panic(&self, site: PanicSite) -> Recording {
         let thread = thread_token();
         self.with_site(|records| match self.open.load(Ordering::Acquire) {
-            true => match records.record(Recorded { site, thread }) {
-                true => Recording::Kept,
-                false => Recording::Remembered,
-            },
+            true => {
+                let recorded = Recorded {
+                    site,
+                    thread,
+                    provisional: None,
+                };
+                match records.record(recorded) {
+                    true => Recording::Kept,
+                    false => Recording::Remembered,
+                }
+            }
             false => Recording::Refused,
         })
         .unwrap_or(Recording::Refused)
+    }
+
+    /// Note the session the kept panic's provisional crash record was
+    /// written under; with no kept panic there is nothing to note on.
+    /// Hook-safe.
+    pub fn note_provisional(&self, session: String) {
+        let _ = self.with_site(|records| {
+            if let Some(recorded) = &mut records.kept {
+                recorded.provisional = Some(session);
+            }
+        });
+    }
+
+    /// Take the noted session of the provisional record, to withdraw it:
+    /// whoever takes it withdraws it, so it is withdrawn once. Hook-safe.
+    pub fn take_provisional(&self) -> Option<String> {
+        self.with_site(|records| match &mut records.kept {
+            Some(recorded) => recorded.provisional.take(),
+            None => None,
+        })
+        .flatten()
     }
 
     /// The recorded panic, if any. Hook-safe.
@@ -217,12 +278,14 @@ impl ToolScope {
     }
 
     /// Forget the panics the calling thread raised: that thread caught them
-    /// itself, so they are not the call's. Another thread's stay.
-    fn forget_own_panic(&self) {
+    /// itself, so they are not the call's; another thread's stay. Answers
+    /// the forgotten kept record's provisional session: `Some(None)` when
+    /// the kept one was forgotten with no provisional record noted.
+    fn forget_own_panic(&self) -> Option<Option<String>> {
         let thread = thread_token();
-        let forgotten = self.with_site(|records| records.forget(thread));
-        // Dropped outside the lock: freeing never runs under it.
-        drop(forgotten);
+        self.with_site(|records| records.forget(thread))
+            .flatten()
+            .map(|recorded| recorded.provisional)
     }
 
     /// Run `f` on the recorded panics, retrying a contended lock a bounded
@@ -431,7 +494,11 @@ pub fn catch_in_call<T>(f: impl FnOnce() -> T + std::panic::UnwindSafe) -> std::
     match (&caught, &scope, recorded_before) {
         (Err(_), Some(scope), false) => {
             settle_contained_unwind();
-            scope.forget_own_panic();
+            // Its provisional crash record goes with it: the call is not
+            // crashing.
+            if let Some(provisional) = scope.forget_own_panic() {
+                withdraw_provisional(scope, provisional.as_deref());
+            }
         }
         (Err(_), _, _) => settle_contained_unwind(),
         (Ok(_), _, _) => {}
@@ -454,6 +521,13 @@ impl<F> Drop for InScope<F> {
             deregister_in_flight(id);
             if let Some(scope) = &self.scope {
                 scope.close();
+                // The call is over, however it ended (contained, cancelled):
+                // what was left for a panic in it is withdrawn now (#2192) —
+                // always, since a hook on another thread may have written it
+                // without noting it yet (it withdraws what it notes after
+                // this close itself); removing a missing record is no error.
+                let noted = scope.take_provisional();
+                withdraw_provisional(scope, noted.as_deref());
             }
         }
     }
@@ -473,6 +547,7 @@ impl<F: Future> Future for InScope<F> {
 /// it is polled; dropping it ends the call and closes the scope.
 pub fn scoped<F: Future>(scope: Arc<ToolScope>, future: F) -> InScope<F> {
     assert!(scope.is_open(), "a call runs in a fresh scope");
+    LAST_TURN.store(scope.turn(), Ordering::Relaxed);
     InScope {
         call: Some(register_in_flight(scope.tool())),
         scope: Some(scope),
@@ -501,8 +576,31 @@ pub fn carry_future<F: Future>(future: F) -> InScope<F> {
     }
 }
 
+/// How a provisional crash record is withdrawn (#2192): registered by the
+/// process's panic hook, given the scope's id and the session the record
+/// was noted under (none: not noted, the current session's).
+type WithdrawProvisional = fn(u64, Option<&str>);
+
+static ON_CALL_END: std::sync::OnceLock<WithdrawProvisional> = std::sync::OnceLock::new();
+
+/// Register how a provisional record is withdrawn — when a call ends, and
+/// when a panic in it is caught; the first registration holds.
+pub fn on_call_end(f: WithdrawProvisional) {
+    let _ = ON_CALL_END.set(f);
+}
+
+/// Withdraw the provisional record of `scope`, noted under `session`.
+fn withdraw_provisional(scope: &ToolScope, session: Option<&str>) {
+    if let Some(withdraw) = ON_CALL_END.get() {
+        withdraw(scope.id(), session);
+    }
+}
+
 /// The `source` of the `error` event a contained tool panic records.
 pub const TOOL_PANIC_SOURCE: &str = "tool_panic";
+
+/// The `source` of the `error` event a fatal (uncontained) panic records.
+pub const FATAL_PANIC_SOURCE: &str = "panic";
 
 /// The text of a panic's payload: `panic!` gives a `&'static str` for a
 /// literal message and a `String` for a formatted one; anything else (a

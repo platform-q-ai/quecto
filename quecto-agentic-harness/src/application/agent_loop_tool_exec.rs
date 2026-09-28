@@ -416,7 +416,7 @@ impl AgentLoopImpl {
     ) -> Result<crate::domain::tool::ToolResult, DomainError> {
         use futures::FutureExt;
         let arguments = tc.wire_arguments();
-        let scope = tool_panic_scope::ToolScope::new(tc.name.as_str());
+        let scope = tool_panic_scope::ToolScope::in_turn(tc.name.as_str(), current_turn);
         let run = async { self.tool_executor().execute(&tc.name, &arguments).await };
         let contained = std::panic::AssertUnwindSafe(tool_panic_scope::scoped(scope.clone(), run))
             .catch_unwind()
