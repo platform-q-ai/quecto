@@ -273,14 +273,26 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// Domain files deleted outright because their only content was a port that
+/// moved to the application (#1960). Every other `RETIRED_DOMAIN_PORTS` file
+/// must exist, so a moved file's stale path fails instead of scanning nothing.
+const DELETED_DOMAIN_FILES: &[&str] = &["src/domain/extension.rs"];
+
 /// Why a `RETIRED_DOMAIN_PORTS` row fails for its domain file, if it does.
 fn retired_domain_file_violation(file: &str, retired_port: &str) -> Option<String> {
-    // A domain file whose only content was the port is deleted outright.
-    (Path::new(file).exists()
-        && production_code(file)
+    let exists = Path::new(file).is_file();
+    match (exists, DELETED_DOMAIN_FILES.contains(&file)) {
+        (true, _) => production_code(file)
             .iter()
-            .any(|(_, l)| declares(l, retired_port)))
-    .then(|| format!("{file} re-declares `{retired_port}`, which was moved to the application"))
+            .any(|(_, l)| declares(l, retired_port))
+            .then(|| {
+                format!("{file} re-declares `{retired_port}`, which was moved to the application")
+            }),
+        (false, true) => None,
+        (false, false) => Some(format!(
+            "{file} (the RETIRED_DOMAIN_PORTS row for `{retired_port}`) does not exist; name the file's current path"
+        )),
+    }
 }
 
 /// A row naming a path that does not exist (a moved file) fails loudly
