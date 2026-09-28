@@ -193,7 +193,7 @@ pub struct OwnedChildSupervisor {
     next: AtomicU64,
     /// The supervisor's own runtime: every spawn and reap runs here.
     runtime: Mutex<Option<tokio::runtime::Runtime>>,
-    handle: tokio::runtime::Handle,
+    pub(super) handle: tokio::runtime::Handle,
     /// Test seam: record instead of dispatching real signals.
     #[cfg(any(test, feature = "test-support"))]
     dry_run: std::sync::atomic::AtomicBool,
