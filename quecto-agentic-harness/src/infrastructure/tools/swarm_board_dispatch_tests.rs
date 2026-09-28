@@ -303,29 +303,49 @@ fn each_call_records_one_telemetry_event_without_argument_text() {
         .lines()
         .filter(|line| line.contains(TELEMETRY_TARGET))
         .collect();
+    // A read-only method records at DEBUG, anything else at INFO (#2270
+    // round-3 review N3).
     let expected = [
         (
+            " INFO ",
             "op=\"bootstrap_run\"",
             "outcome=\"ok\"",
             "decision=\"created\"",
         ),
         (
+            " INFO ",
             "op=\"create_run\"",
             "outcome=\"ok\"",
             "decision=\"over_setup\"",
         ),
         (
+            " INFO ",
             "op=\"create_run\"",
             "outcome=\"refused\"",
             "decision=\"none\"",
         ),
-        ("op=\"_snapshot\"", "outcome=\"ok\"", "decision=\"read\""),
-        ("op=\"_status\"", "outcome=\"ok\"", "decision=\"read\""),
-        ("op=\"unknown\"", "outcome=\"refused\"", "decision=\"none\""),
+        (
+            "DEBUG ",
+            "op=\"_snapshot\"",
+            "outcome=\"ok\"",
+            "decision=\"read\"",
+        ),
+        (
+            "DEBUG ",
+            "op=\"_status\"",
+            "outcome=\"ok\"",
+            "decision=\"read\"",
+        ),
+        (
+            " INFO ",
+            "op=\"unknown\"",
+            "outcome=\"refused\"",
+            "decision=\"none\"",
+        ),
     ];
     assert_eq!(records.len(), expected.len(), "{log}");
-    for (record, (op, outcome, decision)) in records.iter().zip(expected) {
-        for field in [op, outcome, decision, "duration_us="] {
+    for (record, (level, op, outcome, decision)) in records.iter().zip(expected) {
+        for field in [level, op, outcome, decision, "duration_us="] {
             assert!(record.contains(field), "{field} missing from {record}");
         }
     }

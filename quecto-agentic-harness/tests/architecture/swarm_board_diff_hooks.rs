@@ -227,8 +227,8 @@ fn the_hook_checker_rejects_tampering_outside_self_tests() {
             let difference = try_run_both(&steps, |index, rust, _| { tamper(rust) });
         }
         #[test]
-        fn expects_a_difference() {
-            let difference = scenario::try_run_both(&steps, |_, rust, _| { tamper(rust) }).unwrap_err();
+        fn outside_edited_columns() {
+            let difference = scenario::try_run_both(&steps, |_, _, _| {}).unwrap_err();
         }
     "#;
     assert_eq!(violations(permitted), Vec::<String>::new());
@@ -259,4 +259,85 @@ fn the_hook_checker_rejects_tampering_outside_self_tests() {
     let found = violations(hidden);
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].contains("inside a macro"), "{found:?}");
+}
+
+/// An expected difference is a pinned divergence (#2270 round-3 review
+/// L3): outside a harness self-test, only the harness's own `run_both` and
+/// a test named in the pin table (`PERMITTED_DIVERGENCES` and its external
+/// pins) may call `try_run_both`, and only with the no-op hook.
+#[test]
+fn the_hook_checker_requires_expected_differences_to_be_pinned() {
+    let pinned = r#"
+        #[test]
+        fn outside_edited_columns() {
+            let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        }
+        #[test]
+        fn integer_beyond_i64_is_refused() {
+            let held = try_run_both(&steps, |_, _, _| {});
+            let difference = held.unwrap_err();
+        }
+    "#;
+    assert_eq!(violations(pinned), Vec::<String>::new());
+
+    for unpinned in [
+        "fn a_scenario() { let d = try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
+        "fn a_scenario() { let held = try_run_both(&steps, |_, _, _| {}); let d = held.unwrap_err(); }",
+        "fn a_scenario() { if let Err(d) = try_run_both(&steps, |_, _, _| {}) { check(d); } }",
+        // `run_both` is the harness's, and never expects a difference.
+        "fn run_both(steps: &[Step]) { try_run_both(steps, |_, _, _| {}).unwrap_err(); }",
+    ] {
+        let found = violations(unpinned);
+        assert_eq!(found.len(), 1, "{unpinned}: {found:?}");
+        assert!(
+            found[0].contains("outside a pinned divergence test"),
+            "{unpinned}: {found:?}"
+        );
+    }
+
+    // A pinned test compares the boards as they are: it may not tamper.
+    let tampering = r#"
+        fn outside_edited_columns() {
+            try_run_both(&steps, |_, rust, _| { tamper(rust) }).unwrap_err();
+        }
+    "#;
+    let found = violations(tampering);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("a tampering hook"), "{found:?}");
+}
+
+/// The harness is reached by its own name, called directly (#2270 round-3
+/// review L4): an import renaming it, or a use that is not a direct call,
+/// would let a call past the walk.
+#[test]
+fn the_hook_checker_rejects_renamed_or_indirect_harness_uses() {
+    let imports = r#"
+        use swarm_board_diff::scenario::{run_both, step, try_run_both};
+        use super::scenario::try_run_both;
+    "#;
+    assert_eq!(violations(imports), Vec::<String>::new());
+
+    for renamed in [
+        "use swarm_board_diff::scenario::try_run_both as t;\n\
+         fn a_scenario() { t(&steps, |_, rust, _| { tamper(rust) }).unwrap(); }",
+        "use scenario::{step, try_run_both as run};",
+        "use scenario::{step, try_run_both as try_run_both};",
+    ] {
+        let found = violations(renamed);
+        assert_eq!(found.len(), 1, "{renamed}: {found:?}");
+        assert!(found[0].contains("renames"), "{renamed}: {found:?}");
+    }
+
+    for indirect in [
+        "fn a_scenario() { let run = try_run_both; run(&steps, |_, rust, _| { tamper(rust) }).unwrap(); }",
+        "fn a_scenario() { (try_run_both)(&steps, |_, rust, _| { tamper(rust) }).unwrap(); }",
+        "fn a_scenario() { apply(try_run_both); }",
+    ] {
+        let found = violations(indirect);
+        assert_eq!(found.len(), 1, "{indirect}: {found:?}");
+        assert!(
+            found[0].contains("not called directly"),
+            "{indirect}: {found:?}"
+        );
+    }
 }

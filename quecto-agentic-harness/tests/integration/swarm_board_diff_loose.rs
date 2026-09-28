@@ -12,7 +12,7 @@ use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::rust::RustBoard;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, run_both, sql, step, try_run_both,
+    Step, run_both, sql, step, step_text, try_run_both,
 };
 
 /// Every way the Rust board may differ from the Python board on the
@@ -38,6 +38,16 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   the value (or, for a BLOB, fails to write its JSON). A NULL run or
 ///   member status, a NULL coordinator and loosely typed pids are read as
 ///   Python reads them.
+/// - `arguments_beyond_a_serde_value` (#2270 round-3 review L1): the
+///   dispatcher takes a `serde_json::Value`, so argument text is parsed
+///   with `py_json::decode` (`json.loads`) and converted, and a value no
+///   `Value` holds is refused before any board call: a non-finite float
+///   (`NaN`, `Infinity`, or a literal such as `1e400` that overflows), a
+///   string holding a lone surrogate escape, an integer beyond u64, or
+///   nesting deeper than `SERDE_MAX_DEPTH`. Python binds or stores each of
+///   them (or, for an integer beyond i64, raises `OverflowError`). S13/S14
+///   must parse member input with `py_json`, as the harness does; a
+///   `PyJson` dispatcher would end this divergence.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
@@ -50,7 +60,8 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   read but not mutate, and is not an idempotent admission retry. No
 ///   method this slice serves reaches it: `_snapshot` reads, and the
 ///   `bootstrap_run` driver alias skips `_join`.
-pub const PERMITTED_DIVERGENCES: [&str; 5] = [
+pub const PERMITTED_DIVERGENCES: [&str; 6] = [
+    "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
     "integer_beyond_u64_is_a_float",
     "outside_edited_columns",
@@ -190,6 +201,108 @@ fn status_after_the_run_row_is_deleted_is_identical() {
     ]);
 }
 
+/// `create_run`'s arguments as JSON text, a criterion's extra key `w`
+/// written as `extra`.
+fn create_text(extra: &str) -> String {
+    format!(
+        r#"["g", [], [{{"id": "c", "kind": "review", "description": "d", "w": {extra}}}], 5, {}]"#,
+        NOW + 3_600.0
+    )
+}
+
+/// Argument text is parsed by each side (#2270 round-3 review L1), and
+/// the Rust side parses it as `json.loads` does: `-0` is the integer 0
+/// (not the float `-0.0`), an exponent makes a float, an integer within
+/// u64 stays exact, and a repeated key keeps its first position with its
+/// last value.
+#[test]
+fn argument_text_parses_as_python_parses_it() {
+    for extra in [
+        "-0",
+        "-0.0",
+        "1E2",
+        "1e-7",
+        "12345678901234567890",
+        r#"{"k": 1, "j": 2, "k": 3}"#,
+        r#""\u00e9\ud83d\ude00""#,
+    ] {
+        run_both(&[
+            step_text("parent", "create_run", &create_text(extra), NOW),
+            step("parent", "_snapshot", json!([]), NOW + 1.0),
+        ]);
+    }
+    run_both(&[
+        step_text("parent", "bootstrap_run", r#"[-0, "s", -0.0]"#, NOW),
+        step("parent", "_snapshot", json!([]), NOW + 1.0),
+    ]);
+}
+
+#[test]
+fn arguments_beyond_a_serde_value() {
+    let deep = format!("{}{}", "[".repeat(200), "]".repeat(200));
+    for (extra, reason) in [
+        ("1e400", "Infinity has no JSON number form"),
+        ("-Infinity", "-Infinity has no JSON number form"),
+        ("NaN", "NaN has no JSON number form"),
+        (r#""\ud800""#, "'\\ud800' holds a lone surrogate"),
+        (
+            "18446744073709551616",
+            "integer 18446744073709551616 is outside i64 and u64",
+        ),
+        (&deep, "nesting deeper than 128 levels"),
+    ] {
+        let text = create_text(extra);
+        let difference = try_run_both(
+            &[step_text("parent", "create_run", &text, NOW)],
+            |_, _, _| {},
+        )
+        .unwrap_err();
+        assert_eq!(
+            difference,
+            format!(
+                "step 0: create_run as parent with {text} at {NOW}: results differ\n  \
+                 python Ok(Null)\n  \
+                 rust   Refused(\"{UNREPRESENTABLE}{reason}\")"
+            ),
+            "{extra}"
+        );
+    }
+}
+
+/// `_bootstrap` asks only whether a run exists (`SELECT 1 FROM run`) and
+/// `create` reads only the run's status and coordinator (#2270 round-3
+/// review N1): columns either leaves unread may hold anything.
+#[test]
+fn bootstrap_and_create_read_only_the_run_columns_python_reads() {
+    for edit in [
+        "UPDATE run SET deadline='soon', member_limit='many'",
+        "UPDATE run SET deadline=NULL, member_limit=2.5, outcome=x'00'",
+    ] {
+        run_both(&[
+            step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+            sql(edit),
+            step("parent", "bootstrap_run", json!([8, "t", null]), NOW + 1.0),
+            step_text("parent", "create_run", &create_text("1"), NOW + 2.0),
+            step("supervisor", "_status", json!([]), NOW + 3.0),
+        ]);
+    }
+}
+
+/// A snapshot's member rows are `dict(row)` (#2270 round-3 review N5):
+/// every column the table has, in table order, each as stored, a NULL id
+/// included.
+#[test]
+fn snapshot_member_rows_are_every_column_as_stored() {
+    run_both(&[
+        step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+        sql("ALTER TABLE members ADD COLUMN extra TEXT"),
+        sql("ALTER TABLE members ADD COLUMN score REAL"),
+        sql("UPDATE members SET extra='x', score=1.5"),
+        sql("INSERT INTO members(id,status,started) VALUES(NULL,'live',3)"),
+        step("parent", "_snapshot", json!([]), NOW + 1.0),
+    ]);
+}
+
 /// A board of its own, driven through the Rust side alone: for inputs the
 /// Python side cannot answer as JSON.
 fn rust_alone(steps: &[(&str, &str, Value)]) -> Vec<Outcome> {
@@ -214,6 +327,9 @@ fn refused_with(outcome: &Outcome, prefix: &str) -> bool {
 }
 
 const CONTENDED: &str = "coordination store unavailable or contended: ";
+
+/// How the Rust side refuses argument text no `Value` holds.
+const UNREPRESENTABLE: &str = "arguments: not representable as a serde_json value: ";
 
 #[test]
 fn integer_beyond_i64_is_refused() {

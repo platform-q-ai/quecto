@@ -9,7 +9,10 @@
 //! the member's `coordination.clock`, and `uuid.uuid4` draws from a counter
 //! whose `.hex` is `format(n, '032x')`, the sequence `rust.rs` draws too.
 //!
-//! Protocol: one JSON line `[member, method, args, now]` in; one line out,
+//! Protocol: one JSON line `[member, method, args, now]` in, where `args`
+//! is the step's argument text as a JSON string, which the driver parses
+//! with `json.loads` (so Python reads the text the step wrote, not a
+//! re-serialization of it); one line out,
 //! `{"ok": result}`, `{"error": text}` for a `SwarmError`, or
 //! `{"exception": text}` for anything else. Driver-only aliases stand in for
 //! the Rust dispatcher's test names (`create_run` is `create` without its
@@ -103,10 +106,11 @@ def _bootstrap_run(board, args):
 _ALIASES = {'create_run': _create_run, 'bootstrap_run': _bootstrap_run}
 
 for _line in sys.stdin:
-    _member, _method, _args, _step_now = json.loads(_line)
+    _member, _method, _args_text, _step_now = json.loads(_line)
     _now[0] = float(_step_now)
     _target = _board(_member)
     try:
+        _args = json.loads(_args_text)
         if _method in _ALIASES:
             _out = {'ok': _ALIASES[_method](_target, _args)}
         else:
@@ -173,7 +177,8 @@ impl PyBoard {
     }
 
     /// One board call as `member` at `now`.
-    pub fn call(&mut self, member: &str, method: &str, args: &Value, now: f64) -> Outcome {
+    /// `args` is JSON text, parsed on the Python side.
+    pub fn call(&mut self, member: &str, method: &str, args: &str, now: f64) -> Outcome {
         let request = json!([member, method, args, now]).to_string();
         let stdin = self.stdin.as_mut().expect("the driver's stdin is open");
         writeln!(stdin, "{request}").expect("send a call to the Python driver");

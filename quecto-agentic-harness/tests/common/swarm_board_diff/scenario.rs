@@ -9,20 +9,31 @@ use super::python::PyBoard;
 use super::rust::RustBoard;
 
 /// One board call: `member` calls `method` with `args` (a JSON array binds
-/// positionally, an object by name) at clock `now`.
+/// positionally, an object by name) at clock `now`. `args` is JSON text,
+/// which each side parses itself (#2270 round-3 review L1): Python with
+/// `json.loads`, Rust with `py_json::decode`, so a text the two parsers
+/// read differently is a difference the harness sees.
 #[derive(Clone, Debug)]
 pub struct Step {
     pub member: String,
     pub method: String,
-    pub args: Value,
+    pub args: String,
     pub now: f64,
 }
 
+/// A step whose arguments are `args` written as JSON.
 pub fn step(member: &str, method: &str, args: Value, now: f64) -> Step {
+    step_text(member, method, &args.to_string(), now)
+}
+
+/// A step whose arguments are the JSON text `args`, exactly as written:
+/// for texts a `Value` cannot carry (`-0`, `1e400`, a lone surrogate
+/// escape).
+pub fn step_text(member: &str, method: &str, args: &str, now: f64) -> Step {
     Step {
         member: member.to_owned(),
         method: method.to_owned(),
-        args,
+        args: args.to_owned(),
         now,
     }
 }
@@ -38,16 +49,13 @@ pub fn sql(statement: &str) -> Step {
     Step {
         member: String::new(),
         method: SQL_STEP.to_owned(),
-        args: Value::String(statement.to_owned()),
+        args: statement.to_owned(),
         now: 0.0,
     }
 }
 
 /// Runs a [`sql`] step's statement on `database`.
-fn edit(database: &Path, statement: &Value) -> Outcome {
-    let Value::String(statement) = statement else {
-        panic!("a sql step carries its statement as a string: {statement}");
-    };
+fn edit(database: &Path, statement: &str) -> Outcome {
     rusqlite::Connection::open(database)
         .and_then(|connection| connection.execute_batch(statement))
         .unwrap_or_else(|error| panic!("{statement} on {}: {error}", database.display()));
@@ -114,7 +122,7 @@ pub fn try_run_both(
         } else {
             (
                 python_side.neutral(python.call(&step.member, &step.method, &step.args, step.now)),
-                rust_side.neutral(rust.call(&step.member, &step.method, &step.args, step.now)),
+                rust_side.neutral(rust.call_text(&step.member, &step.method, &step.args, step.now)),
             )
         };
         after(index, &rust_side.database, &mut rust_outcome);

@@ -57,6 +57,15 @@ impl RustBoard {
         Self { handles, clock }
     }
 
+    /// One board call as `member` at `now`, its arguments the JSON text
+    /// `args`.
+    pub fn call_text(&self, member: &str, method: &str, args: &str, now: f64) -> Outcome {
+        match serde_json::from_str::<Value>(args) {
+            Ok(args) => self.call(member, method, &args, now),
+            Err(error) => Outcome::Refused(format!("arguments: {error}")),
+        }
+    }
+
     /// One board call as `member` at `now`.
     pub fn call(&self, member: &str, method: &str, args: &Value, now: f64) -> Outcome {
         *self.clock.0.lock().unwrap() = now;
