@@ -136,9 +136,21 @@ async fn reaped_child() -> (ChildHandleId, Arc<OwnedChildSupervisor>) {
     (spawned.handle, supervisor)
 }
 
+/// The row's reaped signal as every read of the ended row reports it
+/// (`get_state`, `get_messages`, the default report): from the row's
+/// published exit, through the same lookup they use.
+fn ended_signal(rig: &Rig) -> Option<i32> {
+    super::super::agent_cmd_ended::find_ended(&rig.port.registry, UUID)
+        .expect("the ended row")
+        .signal
+}
+
 /// #2260 (review round 1, F1): the supervisor records the exit in the same
 /// critical section that ends its hold, so a row whose child it reaped is
 /// read from the supervisor at once — no wait for the reaper's publish.
+/// Review round 2: what the note read is published on the row before the
+/// note, so every read of the ended row agrees with it even while the
+/// reaper task has not run.
 #[tokio::test]
 async fn a_reaped_childs_status_is_read_from_the_supervisor_without_waiting() {
     let base = tempfile::tempdir().unwrap();
@@ -152,7 +164,47 @@ async fn a_reaped_childs_status_is_read_from_the_supervisor_without_waiting() {
         started.elapsed()
     );
     assert_eq!(exited_detail(&mut rig).as_deref(), Some(KILLED));
-    assert_eq!(*rig.exit_tx.borrow(), None, "nothing was published");
+    assert_eq!(
+        rig.exit_tx.borrow().as_ref().map(|exit| exit.signal),
+        Some(Some(9)),
+        "the reaped exit is published on the row"
+    );
+    assert_eq!(ended_signal(&rig), Some(9));
+}
+
+/// #2260 (review round 2): the publish does not depend on the note having
+/// anything to say — a port with no ended-child inspection still leaves
+/// the reaped exit on the row.
+#[tokio::test]
+async fn a_reaped_status_is_published_even_when_the_note_reads_nothing() {
+    let base = tempfile::tempdir().unwrap();
+    let (handle, supervisor) = reaped_child().await;
+    let mut rig = rig(base.path(), Owned::Reaped(handle, supervisor), None);
+    Arc::get_mut(&mut rig.port)
+        .expect("the rig's only port")
+        .ended = None;
+    compensate_closed(&rig).await;
+    assert_eq!(exited_detail(&mut rig), None);
+    assert_eq!(ended_signal(&rig), Some(9));
+}
+
+/// #2260 (review round 2): the reaper's own publish, when it came first,
+/// is left as it stands.
+#[tokio::test]
+async fn a_status_the_reaper_already_published_is_left_as_it_stands() {
+    let base = tempfile::tempdir().unwrap();
+    let (handle, supervisor) = reaped_child().await;
+    let mut rig = rig(base.path(), Owned::Reaped(handle, supervisor), None);
+    rig.exit_tx.send_replace(signal(9));
+    let mut published = rig.exit_tx.subscribe();
+    published.mark_unchanged();
+    compensate_closed(&rig).await;
+    assert_eq!(exited_detail(&mut rig).as_deref(), Some(KILLED));
+    assert!(
+        !published.has_changed().unwrap(),
+        "the reaper's publish was rewritten"
+    );
+    assert_eq!(ended_signal(&rig), Some(9));
 }
 
 /// #2260 (review round 1, F1): the reaper retires the handle once its own
@@ -195,6 +247,11 @@ async fn the_monitor_claiming_before_the_reaper_publishes_still_names_the_crash(
         }
     );
     assert_eq!(exited_detail(&mut rig).as_deref(), Some(KILLED));
+    assert_eq!(
+        ended_signal(&rig),
+        Some(9),
+        "get_state agrees with the note"
+    );
 }
 
 /// #2260: with no supervisor record to read, a crashed owned child's note
