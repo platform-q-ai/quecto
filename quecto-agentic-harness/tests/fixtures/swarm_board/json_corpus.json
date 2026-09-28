@@ -3,6 +3,7 @@
  "divergences": {
   "none": "The codec matches json.loads and json.dumps on every value and text here, including NaN/Infinity, integers of any size up to Python's 4300-digit limit, lone surrogates, -0, 1e400 and repeated keys.",
   "nesting-limit": "CPython bounds json nesting by the C stack it has left, so its limit varies with the Python version, the thread and the call depth. The codec reads at least what Python reads, up to 52127 levels (CPython 3.14.7's json.loads called from the top of an 8 MiB main thread; with frames above the call, 52126 arrays already overflow). The corpus stays at 500 levels, which every supported Python reads and writes.",
+  "error-text-version": "Values are decoded and written identically for every CPython. Error text and position match CPython 3.13 and later: 3.12 and earlier report a trailing comma as 'Expecting value' (arrays) or 'Expecting property name enclosed in double quotes' (objects) at the following token, where 3.13 added 'Illegal trailing comma before end of array/object' at the comma. The differential test compares error text only under Python >= 3.13 and otherwise checks that both refuse.",
   "nested-dict-writes": "The codec writes nested lists and nested dicts alike up to 52126 levels; CPython 3.14.7's json.dumps writes nested lists to 52126 levels but stops at 28959 for nested dicts, where the codec writes on."
  },
  "values": [

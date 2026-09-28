@@ -22,6 +22,14 @@
 //! non-finite floats, big integers or lone surrogates. Conversion from a
 //! `Value` is lossless; conversion to one refuses what it cannot hold.
 //!
+//! **Python versions.** Values are decoded and written identically for every
+//! CPython the board runs on. Error *text and position* follow CPython 3.13
+//! and later: 3.12 and earlier report a trailing comma as `Expecting value`
+//! (arrays) or `Expecting property name enclosed in double quotes`
+//! (objects) at the token after it, where 3.13 added `Illegal trailing comma
+//! before end of array/object` at the comma. Every refusal is still a
+//! refusal on any version.
+//!
 //! **Nesting.** CPython bounds `json` nesting by the C stack it has left, so
 //! its limit varies with the Python version, the thread and the call depth
 //! (3.14.7 on an 8 MiB main thread, called from the top level: `loads` reads

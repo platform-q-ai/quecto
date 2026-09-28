@@ -159,7 +159,9 @@ impl<'a> Parser<'a> {
     }
 
     /// After a container item: `true` when the container closes, `false`
-    /// after a `,` (whitespace after it skipped).
+    /// after a `,` (whitespace after it skipped). A trailing comma gets
+    /// CPython 3.13's message at the comma; 3.12 and earlier word it
+    /// differently at the closing bracket (see the module docs).
     fn after_item(&mut self, close: u8, kind: &str) -> Result<bool, PyJsonError> {
         match self.peek() {
             Some(byte) if byte == close => {
