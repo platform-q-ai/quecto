@@ -5,11 +5,15 @@
 //! behaviour and bytes: the JSON codec ([`py_json`]), the verbatim schema
 //! ([`schema`]), Python `sqlite3`'s parameter binding ([`binding`]) and the
 //! connection and transaction discipline ([`store`]), with the request
-//! ledger and event log ([`ledger`]). The repository methods follow in
-//! later slices.
+//! ledger and event log ([`ledger`]). The application's board ports are
+//! implemented over the store by [`repository`] (#2270), with the id source
+//! ([`ids`]) and the encoding the board bounds arguments by ([`encoding`]).
 
 pub mod binding;
+pub mod encoding;
+pub mod ids;
 pub mod ledger;
 pub mod py_json;
+pub mod repository;
 pub mod schema;
 pub mod store;

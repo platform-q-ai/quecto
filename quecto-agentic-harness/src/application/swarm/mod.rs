@@ -1,9 +1,14 @@
 //! Swarm lifecycle capability: sequencing and fail-closed ownership
-//! decisions over the effect ports in [`ports`].
+//! decisions over the effect ports in [`ports`]. The coordination board's
+//! use cases (epic #2265) live in [`use_cases`], over the board ports and
+//! the operation gate (`board_operation`).
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{Member, MemberExit, MemberStatus, Snapshot};
 
+mod board_operation;
+pub mod dto;
 pub mod ports;
+pub mod use_cases;
 
 use ports::{
     Clock, CoordinationPort, PortFuture, ProcessControl, ProcessObservation, SettlementStep,

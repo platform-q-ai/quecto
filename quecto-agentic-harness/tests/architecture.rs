@@ -1423,6 +1423,36 @@ fn application_path_allowed(path: &str) -> bool {
             | "EXTERNAL_AGENT_STDERR_TAIL_BYTES",
             ..,
         ] => true,
+        // The coordination board (#2270, epic #2265): the dispatcher
+        // invokes the board use cases through the handles composition
+        // builds, and builds their requests and renders their views; the
+        // SQLite repository implements the board ports over the rows they
+        // carry. Each later slice adds its own names.
+        [
+            "crate",
+            "application",
+            "swarm",
+            "use_cases",
+            "BootstrapRun" | "CreateRun" | "ReadRunSnapshot" | "ReadRunStatus",
+        ]
+        | [
+            "crate",
+            "application",
+            "swarm",
+            "dto",
+            "BoardLocation"
+            | "BootstrapRunRequest"
+            | "CreateBranch"
+            | "CreateRunRequest"
+            | "MemberClaimCounts"
+            | "MemberRow"
+            | "NewMember"
+            | "NewRun"
+            | "RunContract"
+            | "RunSnapshotView"
+            | "RunStatusView"
+            | "StatusDeadline",
+        ] => true,
         ["crate", "application", ..] => false,
         // Every other crate path must start at a layer infrastructure
         // may name: a root alias (`pub use application::x as y;` in
@@ -6029,6 +6059,199 @@ fn environment_ports_are_capability_local_and_contracted() {
                 "{path} still names the retired {retired}"
             );
         }
+    }
+}
+
+// ─── Swarm board capability (#2270, epic #2265) ──────────────────────────────
+
+/// The coordination board's ports, segregated by role (ADR-0019). Each later
+/// board slice appends its own.
+const SWARM_BOARD_PORTS: &[&str] = &[
+    "BoardRepository",
+    "BoardTransaction",
+    "BoardRuns",
+    "BoardMembers",
+    "BoardEvents",
+    "IdSource",
+    // The board bounds a JSON argument by the text it stores (#2270): the
+    // codec is infrastructure, so the size is asked of it.
+    "BoardEncoding",
+];
+
+/// Where the swarm capability declares ports: `ports.rs` (and a
+/// `ports/` folder, should it grow one).
+fn swarm_port_file(path: &str) -> bool {
+    path == "src/application/swarm/ports.rs" || path.starts_with("src/application/swarm/ports/")
+}
+
+#[test]
+fn swarm_board_ports_are_capability_local_and_contracted() {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    let mut declared = BTreeSet::new();
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        for port in SWARM_BOARD_PORTS {
+            let declaration = format!("trait {port}");
+            let declares = source.lines().any(|line| {
+                let line = line.trim_start();
+                line.strip_prefix("pub ")
+                    .unwrap_or(line)
+                    .strip_prefix(&declaration)
+                    .is_some_and(|rest| rest.starts_with([' ', ':', '<', '{']))
+            });
+            match (declares, swarm_port_file(path)) {
+                (true, true) => {
+                    declared.insert(*port);
+                }
+                (true, false) => {
+                    panic!("{path} declares board port {port} outside application/swarm/ports")
+                }
+                (false, _) => {}
+            }
+        }
+    }
+    let expected: BTreeSet<&str> = SWARM_BOARD_PORTS.iter().copied().collect();
+    assert_eq!(
+        declared, expected,
+        "every board port is declared in application/swarm/ports"
+    );
+    let contracts = active_contract_modules();
+    for port in SWARM_BOARD_PORTS {
+        assert!(
+            contracts.contains(&to_snake_case(port)),
+            "{port} has no contract suite proven on the production adapter"
+        );
+    }
+}
+
+/// Primitive types whose associated functions (`i64::try_from`) are pure.
+const PRIMITIVES: &[&str] = &[
+    "bool", "char", "str", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64",
+    "i128", "isize", "f32", "f64",
+];
+
+/// Application swarm code may name the domain, its own capability, pure
+/// `std` and `serde_json::{Value, Map}`, and nothing else: no `rusqlite`,
+/// no infrastructure, no process, socket, file or clock vocabulary. A single
+/// name is a binding whose import is checked where it is made; a path led
+/// by a type (`Value::from`, `Self::new`) or a primitive is an associated
+/// item of something in scope; a path led by one of the capability's own
+/// modules (`ports::Clock`, `run::NewRun`) is inward by construction.
+fn swarm_application_dependency_allowed(path: &str, local_modules: &BTreeSet<String>) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        [_] => true,
+        ["crate", "domain", ..] | ["crate", "application", "swarm", ..] => true,
+        ["serde_json", "Value" | "Map"] => true,
+        [
+            "std",
+            "sync" | "future" | "pin" | "fmt" | "collections" | "borrow" | "cmp" | "iter" | "ops"
+            | "marker" | "mem" | "error" | "string" | "vec" | "convert" | "result" | "option"
+            | "boxed" | "path",
+            ..,
+        ] => true,
+        ["std", "time", "Duration"] => true,
+        // The lifecycle's settle (#1940) awaits its member terminations
+        // together: a pure combinator over futures the ports return, no
+        // runtime and no effect of its own.
+        ["futures", "future", "join_all"] => true,
+        [first, ..] if first.starts_with(|c: char| c.is_ascii_uppercase()) => true,
+        [first, ..] => PRIMITIVES.contains(first) || local_modules.contains(*first),
+        [] => false,
+    }
+}
+
+/// The modules of `src/application/swarm`, by file stem and folder name.
+fn swarm_application_modules() -> BTreeSet<String> {
+    fn walk(dir: &Path, names: &mut BTreeSet<String>) {
+        for entry in fs::read_dir(dir).expect("read dir") {
+            let path = entry.expect("dir entry").path();
+            if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
+                names.insert(stem.to_string());
+            }
+            if path.is_dir() {
+                walk(&path, names);
+            }
+        }
+    }
+    let mut names = BTreeSet::new();
+    walk(Path::new("src/application/swarm"), &mut names);
+    names.remove("mod");
+    names
+}
+
+#[test]
+fn swarm_application_depends_only_inward() {
+    let local = swarm_application_modules();
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src/application/swarm"), &mut files);
+    assert!(
+        !files.is_empty(),
+        "src/application/swarm holds production sources"
+    );
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        if dependency_scan::test_only_file(path) {
+            continue;
+        }
+        let paths = dependency_paths_at(path, source).unwrap_or_else(|| panic!("parse {path}"));
+        let violations: Vec<_> = paths
+            .iter()
+            .filter(|dep| !swarm_application_dependency_allowed(dep, &local))
+            .collect();
+        assert!(
+            violations.is_empty(),
+            "{path} depends outward or on forbidden vocabulary: {violations:?}"
+        );
+    }
+    for dep in [
+        "rusqlite::Connection",
+        "crate::infrastructure::persistence::swarm_board::store::BoardStore",
+        "crate::infrastructure::tools::swarm_lifecycle::SystemClock",
+        "crate::interface::cli::CliContext",
+        "crate::composition::swarm::build_swarm_board_handles",
+        "crate::application::sessions::ports::SessionStore",
+        "std::process::Command",
+        "std::net::TcpStream",
+        "std::os::unix::net::UnixStream",
+        "std::fs::read",
+        "std::env::var",
+        "std::thread::sleep",
+        "std::time::Instant",
+        "std::time::SystemTime",
+        "tokio::spawn",
+        "serde_json::json",
+        "serde_json::to_string",
+        "tracing::info",
+        "futures::executor::block_on",
+        "uuid::Uuid",
+        "libc::kill",
+    ] {
+        assert!(
+            !swarm_application_dependency_allowed(dep, &local),
+            "swarm application guard must reject {dep}"
+        );
+    }
+    for dep in [
+        "crate::domain::swarm::RunRecord",
+        "crate::application::swarm::ports::BoardRepository",
+        "crate::application::swarm::dto::CreateRunRequest",
+        "serde_json::Value",
+        "serde_json::Map",
+        "std::sync::Arc",
+        "std::time::Duration",
+        "Value",
+        "Value::from",
+        "Self::new",
+        "i64::try_from",
+        "ports::Clock",
+        "use_cases::CreateRun",
+    ] {
+        assert!(
+            swarm_application_dependency_allowed(dep, &local),
+            "swarm application guard must accept {dep}"
+        );
     }
 }
 

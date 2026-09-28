@@ -33,12 +33,14 @@ use super::teardown_authority::{production_code, production_files, walk};
 /// Every use case and ports bundle declared under an application
 /// `use_cases` folder.
 const USE_CASES: &[&str] = &[
+    "BootstrapRun",
     "ChangeActiveModel",
     "ChangeReasoningEffort",
     "ClearConversation",
     "CompensateFailedLaunch",
     "CompensateFailedLaunchPorts",
     "ContainerStatus",
+    "CreateRun",
     "DepartingChildren",
     "DiagnoseContainerRuntime",
     "EndedTranscriptPage",
@@ -68,6 +70,8 @@ const USE_CASES: &[&str] = &[
     "PrepareHarnessShutdown",
     "ReadConfiguration",
     "ReadHistory",
+    "ReadRunSnapshot",
+    "ReadRunStatus",
     "RecallContext",
     "RecoverMessage",
     "RefreshCatalogueSources",

@@ -329,7 +329,7 @@ fn file_uri(path: &Path) -> String {
 
 /// `SwarmError(f'coordination store unavailable or contended: {error}')`,
 /// where Python's `str(sqlite3.Error)` is `sqlite3_errmsg`.
-fn contended(error: &rusqlite::Error) -> StoreRefusal {
+pub(super) fn contended(error: &rusqlite::Error) -> StoreRefusal {
     StoreRefusal(format!("{CONTENDED}: {}", sqlite_message(error)))
 }
 
