@@ -8,13 +8,27 @@
 //! never signals it.
 //!
 //! [`ClaudeCodeProcess`] writes each user turn as one stream-json user
-//! message and decodes stdout through [`super::stream_json`] on a pump
-//! task: a line that is not a JSON object (or not UTF-8, or longer than
-//! [`STREAM_LINE_CAP_BYTES`]) is skipped and logged, never the end of the
-//! stream. Stderr keeps its last [`EXTERNAL_AGENT_STDERR_TAIL_BYTES`].
+//! message and decodes stdout through [`super::stream_json`]. Both pipes
+//! are pumped on the supervisor's own runtime
+//! ([`OwnedChildSupervisor::spawn_pump`]), never the caller's: a runtime
+//! the caller drops cannot end the stream or the input of a child that
+//! lives on.
+//!
+//! - **Output.** A line that is not a JSON object (or not UTF-8, or longer
+//!   than [`STREAM_LINE_CAP_BYTES`]) is skipped and logged, never the end
+//!   of the stream.
+//! - **Input.** A writer task owns stdin and writes whole lines taken from
+//!   a queue. A turn is queued whole or not at all, so cancelling a send
+//!   never leaves half a line on `claude`'s stdin; a queued turn is
+//!   written whole even if its sender stops waiting. Closing the input
+//!   only closes the queue: it never waits behind a write stuck on a full
+//!   pipe. The writer closes stdin once the queued turns are written.
+//! - Stderr keeps its last [`EXTERNAL_AGENT_STDERR_TAIL_BYTES`].
+//!
 //! Closing the input makes `claude` finish and exit 0. Dropping the process
 //! closes its input and asks the supervisor to end the child — first by
-//! that close, then TERM and KILL to its group if it does not exit.
+//! that close, then TERM and KILL to its group if it does not exit within
+//! the launcher's [`TerminationBudget`].
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -24,9 +38,9 @@ use quecto_line_io::read_bounded_line_into;
 use serde_json::{Value, json};
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
-use super::environment::member_environment;
+use super::environment::{MemberEnvironmentError, check_credential, member_environment};
 use super::stream_json::StreamJsonDecoder;
 use crate::application::external_agent::dto::{
     EXTERNAL_AGENT_STDERR_TAIL_BYTES, ExternalAgentExit, ExternalAgentInputError,
@@ -56,12 +70,25 @@ pub const STREAM_LINE_CAP_BYTES: usize = 16 * 1024 * 1024;
 
 /// Decoded events buffered ahead of the reader; a full buffer holds the
 /// pump (and so the child's stdout) until the session reads on.
+///
+/// Worst case memory: each buffered event comes from one line of at most
+/// [`STREAM_LINE_CAP_BYTES`], so a reader that stops reading while
+/// `claude` emits only lines at the cap holds up to 256 × 16 MiB = 4 GiB
+/// here, plus the pump's one 16 MiB line buffer. Real stream-json lines
+/// are KiB (a tool result is the largest), and the session reads every
+/// turn to its `result`, so the bound is theoretical; lower the cap or the
+/// buffer if a member is ever seen near it.
 const EVENT_BUFFER: usize = 256;
+
+/// Whole turns queued ahead of the stdin writer; a full queue holds the
+/// sender (cancel-safely: an unqueued turn is simply not sent).
+const INPUT_QUEUE: usize = 16;
 
 /// Starts `claude` member processes.
 pub struct ClaudeCodeLauncher {
     supervisor: Arc<OwnedChildSupervisor>,
     parent_environment: Vec<(OsString, OsString)>,
+    termination: TerminationBudget,
 }
 
 impl ClaudeCodeLauncher {
@@ -75,7 +102,15 @@ impl ClaudeCodeLauncher {
         Self {
             supervisor,
             parent_environment,
+            termination: TerminationBudget::DEFAULT,
         }
+    }
+
+    /// This launcher, ending a dropped process's child within `budget`
+    /// instead of [`TerminationBudget::DEFAULT`].
+    pub fn with_termination_budget(mut self, budget: TerminationBudget) -> Self {
+        self.termination = budget;
+        self
     }
 
     /// A launcher over this process's own environment.
@@ -87,12 +122,15 @@ impl ClaudeCodeLauncher {
         &self,
         spec: ExternalAgentLaunchSpec,
     ) -> Result<Box<dyn ExternalAgentProcess>, ExternalAgentLaunchError> {
+        // Every check of the spec itself comes before any directory is
+        // made or anything is spawned.
         let arguments = claude_arguments(&spec)?;
+        check_credential(&spec.credential).map_err(environment_error)?;
         let checkout = checked_checkout(&spec.checkout)?;
         let program = self.resolve_program().ok_or_else(not_found)?;
         let environment =
             member_environment(&self.parent_environment, &spec.member_dir, &spec.credential)
-                .map_err(|error| ExternalAgentLaunchError::MemberDirectory(error.to_string()))?;
+                .map_err(environment_error)?;
         assert!(
             environment.home.is_dir() && environment.config_dir.is_dir(),
             "the member's private directories exist before its child is spawned"
@@ -123,7 +161,7 @@ impl ClaudeCodeLauncher {
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (spawned.stdin, spawned.stdout, spawned.stderr)
         else {
-            end_child(&self.supervisor, handle);
+            end_child(&self.supervisor, handle, self.termination);
             return Err(ExternalAgentLaunchError::Spawn(
                 "the child's stdio pipes were not all created".into(),
             ));
@@ -132,14 +170,17 @@ impl ClaudeCodeLauncher {
             .supervisor
             .retain_stderr_tail_within(stderr, EXTERNAL_AGENT_STDERR_TAIL_BYTES);
         let (events, receiver) = mpsc::channel(EVENT_BUFFER);
-        let pump = tokio::spawn(pump_stdout(stdout, events));
+        let pump = self.supervisor.spawn_pump(pump_stdout(stdout, events));
+        let (input, lines) = mpsc::channel(INPUT_QUEUE);
+        self.supervisor.spawn_pump(write_input(stdin, lines));
         Ok(Box::new(ClaudeCodeProcess {
             supervisor: Arc::clone(&self.supervisor),
             handle,
-            stdin: Mutex::new(Some(stdin)),
+            input: std::sync::Mutex::new(Some(input)),
             events: Mutex::new(receiver),
             stderr,
             pump,
+            termination: self.termination,
         }))
     }
 
@@ -162,6 +203,17 @@ impl ExternalAgentLauncher for ClaudeCodeLauncher {
         spec: ExternalAgentLaunchSpec,
     ) -> PortFuture<'a, Result<Box<dyn ExternalAgentProcess>, ExternalAgentLaunchError>> {
         Box::pin(self.launch(spec))
+    }
+}
+
+/// A refused credential is an invalid spec; only a directory the member's
+/// state cannot live in is a member-directory failure.
+fn environment_error(error: MemberEnvironmentError) -> ExternalAgentLaunchError {
+    match error {
+        MemberEnvironmentError::Credential(_) => invalid(error.to_string()),
+        MemberEnvironmentError::Directory { .. } => {
+            ExternalAgentLaunchError::MemberDirectory(error.to_string())
+        }
     }
 }
 
@@ -319,14 +371,57 @@ async fn pump_stdout(stdout: ChildStdout, events: mpsc::Sender<ExternalAgentEven
     }
 }
 
+/// One whole line for the stdin writer, and where it answers how the
+/// write went.
+struct InputLine {
+    line: String,
+    written: oneshot::Sender<Result<(), String>>,
+}
+
+/// Write each queued line whole, in order, until the queue closes (the
+/// input was closed, or the process dropped) or a write fails; then close
+/// stdin, which is `claude`'s shutdown request. A failed write ends the
+/// writer: the lines behind it, and any later send, are answered as
+/// failed, never written after a partial line.
+async fn write_input(mut stdin: ChildStdin, mut lines: mpsc::Receiver<InputLine>) {
+    while let Some(InputLine { line, written }) = lines.recv().await {
+        debug_assert!(
+            line.ends_with('\n') && line.matches('\n').count() == 1,
+            "the writer is given exactly one whole line"
+        );
+        let outcome = async {
+            stdin.write_all(line.as_bytes()).await?;
+            stdin.flush().await
+        }
+        .await;
+        match outcome {
+            Ok(()) => {
+                // A sender that stopped waiting still had its turn written.
+                let _ = written.send(Ok(()));
+            }
+            Err(error) => {
+                tracing::warn!(%error, "claude stdin: write failed; the input ends");
+                let _ = written.send(Err(error.to_string()));
+                break;
+            }
+        }
+    }
+    // EOF is the close itself; a failed shutdown of a pipe whose reader
+    // already left changes nothing.
+    let _ = stdin.shutdown().await;
+}
+
 /// One running `claude`. See the module docs.
 pub struct ClaudeCodeProcess {
     supervisor: Arc<OwnedChildSupervisor>,
     handle: ChildHandleId,
-    stdin: Mutex<Option<ChildStdin>>,
+    /// The stdin writer's queue; `None` once the input is closed. Held
+    /// only to clone or take it, never across an await.
+    input: std::sync::Mutex<Option<mpsc::Sender<InputLine>>>,
     events: Mutex<mpsc::Receiver<ExternalAgentEvent>>,
     stderr: StderrTail,
     pump: tokio::task::JoinHandle<()>,
+    termination: TerminationBudget,
 }
 
 /// One user turn as the stream-json user message, one line.
@@ -342,19 +437,37 @@ fn user_message_line(text: &str) -> String {
 }
 
 impl ClaudeCodeProcess {
+    fn input(&self) -> std::sync::MutexGuard<'_, Option<mpsc::Sender<InputLine>>> {
+        self.input
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Queue `text` as one whole line and wait until it is written.
+    /// Cancel-safe: dropped before it is queued, nothing is sent; dropped
+    /// after, the line is still written whole.
     async fn write_turn(&self, text: &str) -> Result<(), ExternalAgentInputError> {
         let line = user_message_line(text);
-        let mut stdin = self.stdin.lock().await;
-        let Some(pipe) = stdin.as_mut() else {
+        let queue = self.input().clone();
+        let Some(queue) = queue else {
             return Err(ExternalAgentInputError::Closed);
         };
-        let written = async {
-            pipe.write_all(line.as_bytes()).await?;
-            pipe.flush().await
+        let (written, answer) = oneshot::channel();
+        let queued = queue.send(InputLine { line, written }).await;
+        // The clone must not keep the queue open past a close.
+        drop(queue);
+        queued.map_err(|_| gone())?;
+        match answer.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(ExternalAgentInputError::Write(error)),
+            Err(_) => Err(gone()),
         }
-        .await;
-        written.map_err(|error| ExternalAgentInputError::Write(error.to_string()))
     }
+}
+
+/// The writer ended (a write failed) before this turn was written.
+fn gone() -> ExternalAgentInputError {
+    ExternalAgentInputError::Write("claude's input ended after a failed write".into())
 }
 
 impl ExternalAgentProcess for ClaudeCodeProcess {
@@ -370,13 +483,11 @@ impl ExternalAgentProcess for ClaudeCodeProcess {
     }
 
     fn close_input(&self) -> PortFuture<'_, ()> {
+        // Closing the queue is the close: the writer closes stdin once the
+        // turns already queued are written. Nothing here waits on a write.
         Box::pin(async move {
-            let pipe = self.stdin.lock().await.take();
-            if let Some(mut pipe) = pipe {
-                // EOF is the close itself; a failed shutdown of a pipe
-                // whose reader already left changes nothing.
-                let _ = pipe.shutdown().await;
-            }
+            let queue = self.input().take();
+            drop(queue);
         })
     }
 
@@ -401,20 +512,30 @@ impl ExternalAgentProcess for ClaudeCodeProcess {
 impl Drop for ClaudeCodeProcess {
     fn drop(&mut self) {
         self.pump.abort();
-        // Closing stdin is the shutdown request `claude` answers by exiting.
-        drop(self.stdin.get_mut().take());
-        end_child(&self.supervisor, self.handle);
+        // Closing the input is the shutdown request `claude` answers by
+        // exiting: the writer closes stdin once its queue is drained.
+        let queue = self
+            .input
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        drop(queue);
+        end_child(&self.supervisor, self.handle, self.termination);
     }
 }
 
 /// Have the supervisor end `handle`'s child once its input is closed: it
 /// exits by itself, or the supervisor's TERM → KILL fallback ends its
 /// group. Its slot is retired once it is reaped.
-fn end_child(supervisor: &Arc<OwnedChildSupervisor>, handle: ChildHandleId) {
+fn end_child(
+    supervisor: &Arc<OwnedChildSupervisor>,
+    handle: ChildHandleId,
+    budget: TerminationBudget,
+) {
     supervisor.request_termination(
         handle,
         Box::pin(async { ProtocolOutcome::Acknowledged }),
-        TerminationBudget::DEFAULT,
+        budget,
     );
     supervisor.retire_when_reaped(handle);
 }
