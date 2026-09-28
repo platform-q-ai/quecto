@@ -119,14 +119,15 @@ pub struct ToolResultEvent {
 
 impl ToolResultEvent {
     /// The result's text: the string itself, or the `text` of every text
-    /// block joined. Other block kinds (images) carry no text.
+    /// block, joined by newlines. Other block kinds (images) carry no text.
     pub fn content_text(&self) -> String {
         match &self.content {
             Value::String(text) => text.clone(),
             Value::Array(blocks) => blocks
                 .iter()
                 .filter_map(|block| block.get("text").and_then(Value::as_str))
-                .collect(),
+                .collect::<Vec<_>>()
+                .join("\n"),
             _ => String::new(),
         }
     }

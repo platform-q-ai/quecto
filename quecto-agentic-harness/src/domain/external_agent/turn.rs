@@ -44,6 +44,17 @@ pub enum FailureKind {
     Aborted,
 }
 
+impl FailureKind {
+    /// An abort when the `terminal_reason` is one of
+    /// [`ABORT_TERMINAL_REASONS`]; otherwise an error.
+    pub fn of(terminal_reason: Option<&str>) -> Self {
+        match terminal_reason {
+            Some(reason) if ABORT_TERMINAL_REASONS.contains(&reason) => Self::Aborted,
+            _ => Self::Error,
+        }
+    }
+}
+
 /// The `terminal_reason`s the CLI treats as a stop, not an error. They are
 /// still failed turns (only `completed` completes one), classified as
 /// [`FailureKind::Aborted`] so an abort is shown as one.
@@ -72,7 +83,10 @@ impl TurnFailure {
         .into_iter()
         .flatten()
         .collect();
-        let mut text = String::from("the turn failed");
+        let mut text = String::from(match self.kind {
+            FailureKind::Aborted => "the turn was aborted",
+            FailureKind::Error => "the turn failed",
+        });
         if let [_, ..] = signals.as_slice() {
             text.push_str(&format!(" ({})", signals.join("; ")));
         }
@@ -98,7 +112,7 @@ impl TurnEnd {
                 api_error_status: result.api_error_status,
                 assistant_error: assistant_error.map(str::to_string),
                 errors: result.errors.clone(),
-                kind: FailureKind::Error,
+                kind: FailureKind::of(result.terminal_reason.as_deref()),
             }),
         }
     }

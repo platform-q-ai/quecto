@@ -24,7 +24,8 @@ use super::dto::audit::input_preview;
 use super::dto::{
     ADMISSION_WARNING_CAPACITY, BACKGROUND_JOB_CAPACITY, BackgroundJob, ExecutionState,
     FinalReport, GUARDRAIL_AUDIT_CAPACITY, GuardrailDenial, MessageRole, ProjectedMessage,
-    ProjectedToolCall, ProjectionStep, SessionTotals, TurnOutcome, TurnWarning,
+    ProjectedToolCall, ProjectionStep, SessionTotals, TOOL_RESULT_CONTENT_BYTES, TRUNCATION_MARKER,
+    TurnOutcome, TurnWarning,
 };
 use crate::domain::external_agent::stream::{
     AssistantContent, BackgroundTask, ExternalAgentEvent, InitEvent, PermissionDenial,
@@ -41,6 +42,8 @@ pub struct Projector {
     messages: Vec<ProjectedMessage>,
     /// This turn's API messages by id (message ids do not span turns).
     turn_messages: HashMap<String, usize>,
+    /// Where this turn's messages start: its report points only at them.
+    turn_start: usize,
     /// This turn's tool calls without a result yet, oldest first.
     open_tool_calls: VecDeque<String>,
     init: Option<InitEvent>,
@@ -75,6 +78,17 @@ impl Projector {
     /// one): its cumulative totals start from zero.
     pub fn process_started(&mut self) {
         self.ledger.process_started();
+        self.end_turn_state();
+        self.state = ExecutionState::Idle;
+    }
+
+    /// Forget what belongs to the turn that ended (or to a process that
+    /// ended): the next turn starts after the current messages.
+    fn end_turn_state(&mut self) {
+        self.turn_messages.clear();
+        self.open_tool_calls.clear();
+        self.turn_assistant_error = None;
+        self.turn_start = self.messages.len();
     }
 
     /// Fold one event: what it changed.
@@ -172,7 +186,9 @@ impl Projector {
         };
         let index = self.push(MessageRole::Tool);
         let message = &mut self.messages[index];
-        message.content = result.content_text();
+        let (content, truncated_from_bytes) = bounded_tool_content(result.content_text());
+        message.content = content;
+        message.truncated_from_bytes = truncated_from_bytes;
         message.tool_call_id = call;
         message.permission_denied = result.permission_denied;
         // A refused call never ran: it is an error however it is marked.
@@ -191,7 +207,14 @@ impl Projector {
             Some(position) => position,
             None => {
                 if self.background_jobs.len() == BACKGROUND_JOB_CAPACITY {
-                    self.background_jobs.pop_front();
+                    // The oldest finished job goes first; a running one
+                    // only when none has finished.
+                    let evicted = self
+                        .background_jobs
+                        .iter()
+                        .position(BackgroundJob::is_finished)
+                        .unwrap_or(0);
+                    self.background_jobs.remove(evicted);
                 }
                 self.background_jobs.push_back(BackgroundJob {
                     task_id: task_id.to_string(),
@@ -282,8 +305,7 @@ impl Projector {
         };
         self.turns += 1;
         self.last_turn = Some(outcome.clone());
-        self.turn_messages.clear();
-        self.open_tool_calls.clear();
+        self.end_turn_state();
         self.state = ExecutionState::Idle;
         outcome
     }
@@ -307,8 +329,10 @@ impl Projector {
         }
     }
 
+    /// The last assistant message with text of the current turn.
     fn last_assistant_text_ordinal(&self) -> Option<u64> {
-        self.messages
+        assert!(self.turn_start <= self.messages.len());
+        self.messages[self.turn_start..]
             .iter()
             .rev()
             .find(|m| m.role == MessageRole::Assistant && !m.content.is_empty())
@@ -374,6 +398,25 @@ impl Projector {
             guardrail_denials: self.guardrail_denial_count,
             admission_warnings: self.admission_warning_count,
             unknown_events: self.unknown_events,
+        }
+    }
+}
+
+/// A tool result's content as stored: whole up to
+/// [`TOOL_RESULT_CONTENT_BYTES`], else cut on a character boundary with
+/// [`TRUNCATION_MARKER`], and the original length.
+fn bounded_tool_content(mut content: String) -> (String, Option<usize>) {
+    let length = content.len();
+    match length <= TOOL_RESULT_CONTENT_BYTES {
+        true => (content, None),
+        false => {
+            let mut end = TOOL_RESULT_CONTENT_BYTES;
+            while !content.is_char_boundary(end) {
+                end -= 1;
+            }
+            content.truncate(end);
+            content.push_str(TRUNCATION_MARKER);
+            (content, Some(length))
         }
     }
 }

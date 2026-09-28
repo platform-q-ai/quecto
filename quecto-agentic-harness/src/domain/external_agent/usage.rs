@@ -1,7 +1,7 @@
 //! What an external agent's turns used (#2285): `result.usage` is per
 //! turn while `total_cost_usd` is cumulative for the process, so a turn's
-//! cost is the delta of the cumulative total, kept in whole micro-USD and
-//! rounded once per result.
+//! cost is the growth of its process's total, kept in whole micro-USD and
+//! rounded once per result; the session's cost is the sum of those.
 
 use super::stream::{ResultEvent, TokenCounts};
 
@@ -10,7 +10,7 @@ use super::stream::{ResultEvent, TokenCounts};
 pub struct TurnUsage {
     /// This turn's tokens (`result.usage`).
     pub tokens: TokenCounts,
-    /// This turn's cost: the cumulative total's delta, micro-USD.
+    /// This turn's charge: its process total's growth, micro-USD.
     pub cost_micro_usd: u64,
     /// The session's cost after this turn: the sum of every turn's
     /// charge, micro-USD.
@@ -27,59 +27,78 @@ pub struct CostDrop {
     pub reported_micro_usd: u64,
 }
 
-/// Turns a stream of cumulative totals into per-turn usage.
+/// Turns each process's cumulative totals into per-turn charges.
+///
+/// Within one process the total only grows, so a turn is charged its
+/// delta. A zero or lower total inside a process (the CLI reports 0 after
+/// a session crash, a delivery error or a bridge interrupt) is charged
+/// nothing and reported as a [`CostDrop`]; the next higher total is charged
+/// from the highest seen. Only [`UsageLedger::process_started`], which the
+/// session calls when it spawns a process, starts the totals from zero.
+/// The session's cost is the sum of the charges.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UsageLedger {
-    total_cost_micro_usd: u64,
-    cumulative_tokens: TokenCounts,
+    /// The highest cumulative total the current process reported.
+    process_total_micro_usd: u64,
+    /// The sum of every turn's charge.
+    session_cost_micro_usd: u64,
+    /// The current process's cumulative tokens.
+    process_tokens: TokenCounts,
+    /// The tokens of the processes before it.
+    earlier_tokens: TokenCounts,
 }
 
 impl UsageLedger {
-    /// Record one turn's `result`. The turn's cost is the new cumulative
-    /// total (rounded once, to micro-USD) less the previous one; a result
-    /// without a usable total leaves the total as it was, and a lower total
-    /// is a new process charged its whole total.
     /// A new process started: its cumulative totals start from zero.
-    pub fn process_started(&mut self) {}
+    pub fn process_started(&mut self) {
+        self.earlier_tokens = self.earlier_tokens.plus(self.process_tokens);
+        self.process_tokens = TokenCounts::default();
+        self.process_total_micro_usd = 0;
+    }
 
+    /// Record one turn's `result`: charge the process total's growth,
+    /// rounded once to micro-USD. A result without a usable total is
+    /// charged nothing.
     pub fn record(&mut self, result: &ResultEvent) -> TurnUsage {
-        let previous = self.total_cost_micro_usd;
+        let previous = self.process_total_micro_usd;
         let reported = result.total_cost_usd.and_then(micro_usd);
-        // The total is external data: a drop means a new process (its
-        // total restarted from zero), charged its whole total.
-        let (total, cost, reset_from) = match reported {
-            Some(total) if total >= previous => (total, total - previous, None),
-            Some(total) => (total, total, Some(previous)),
-            None => (previous, 0, None),
+        let (cost, cost_drop) = match reported {
+            Some(total) if total >= previous => (total - previous, None),
+            Some(total) => (
+                0,
+                Some(CostDrop {
+                    previous_micro_usd: previous,
+                    reported_micro_usd: total,
+                }),
+            ),
+            None => (0, None),
         };
-        self.total_cost_micro_usd = total;
-        let cumulative = result
+        self.process_total_micro_usd = previous.max(reported.unwrap_or(0));
+        self.session_cost_micro_usd = self.session_cost_micro_usd.saturating_add(cost);
+        let process_tokens = result
             .model_usage
             .iter()
             .fold(TokenCounts::default(), |sum, model| sum.plus(model.tokens));
-        self.cumulative_tokens = match result.model_usage.is_empty() {
-            true => self.cumulative_tokens.plus(result.usage),
-            false => cumulative,
+        self.process_tokens = match result.model_usage.is_empty() {
+            true => self.process_tokens.plus(result.usage),
+            false => process_tokens,
         };
         TurnUsage {
             tokens: result.usage,
             cost_micro_usd: cost,
-            total_cost_micro_usd: total,
-            cost_drop: reset_from.map(|previous| CostDrop {
-                previous_micro_usd: previous,
-                reported_micro_usd: total,
-            }),
+            total_cost_micro_usd: self.session_cost_micro_usd,
+            cost_drop,
         }
     }
 
-    /// The process's cumulative cost, micro-USD.
+    /// The session's cost: the sum of every turn's charge, micro-USD.
     pub fn total_cost_micro_usd(&self) -> u64 {
-        self.total_cost_micro_usd
+        self.session_cost_micro_usd
     }
 
-    /// The process's cumulative tokens (`modelUsage`, summed over models).
+    /// The session's tokens: every process's cumulative `modelUsage`.
     pub fn cumulative_tokens(&self) -> TokenCounts {
-        self.cumulative_tokens
+        self.earlier_tokens.plus(self.process_tokens)
     }
 }
 

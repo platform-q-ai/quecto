@@ -22,6 +22,8 @@ pub const TERMINAL_TASK_STATUSES: &[&str] = &["completed", "failed", "killed", "
 impl BackgroundJob {
     /// Whether a notification reported a terminal status.
     pub fn is_finished(&self) -> bool {
-        false
+        self.status
+            .as_deref()
+            .is_some_and(|status| TERMINAL_TASK_STATUSES.contains(&status))
     }
 }

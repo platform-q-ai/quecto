@@ -6,9 +6,10 @@
 //! list. Every field is read on its own: one of the wrong shape is absent,
 //! never the loss of the event. A `result` is always a turn end; one whose
 //! essentials are malformed is a failed one. An event type this codec does
-//! not know becomes [`ExternalAgentEvent::Unknown`], logged once per kind;
-//! nothing panics. Only a line that is not a JSON object, or a task event
-//! without its task id, is a [`StreamJsonError`].
+//! not know, or a task event without its task id, becomes
+//! [`ExternalAgentEvent::Unknown`], logged once per kind; nothing panics.
+//! Only a line that is not a JSON object is a [`StreamJsonError`], and the
+//! reader (S2) skips and logs it: one bad line never ends the stream.
 
 use std::collections::BTreeSet;
 
@@ -28,14 +29,14 @@ const PERMISSION_RULE: &str = "permission-rule";
 /// Unknown kinds logged per decoder; past this, new kinds go unlogged.
 const UNKNOWN_KINDS_LOGGED_CAPACITY: usize = 64;
 
+/// A line that is not a JSON object. The reader skips and logs it; it is
+/// never the end of the stream.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum StreamJsonError {
     #[error("stream-json line is not JSON: {0}")]
     NotJson(String),
     #[error("stream-json line is not a JSON object")]
     NotAnObject,
-    #[error("stream-json `{kind}` event is malformed: {reason}")]
-    Malformed { kind: String, reason: String },
 }
 
 /// Decodes one process's stream, line by line.
@@ -65,8 +66,12 @@ impl StreamJsonDecoder {
             ("system", "thinking_tokens") => vec![ExternalAgentEvent::ThinkingTokens {
                 estimated_tokens: count(&line, "estimated_tokens"),
             }],
-            ("system", "task_started") => vec![task_started(&line)?],
-            ("system", "task_notification") => vec![task_notification(&line)?],
+            ("system", "task_started") => {
+                vec![task_started(&line).unwrap_or_else(|| self.unknown(&kind, &subtype))]
+            }
+            ("system", "task_notification") => {
+                vec![task_notification(&line).unwrap_or_else(|| self.unknown(&kind, &subtype))]
+            }
             ("system", "background_tasks_changed") => vec![background_tasks(&line)],
             ("assistant", _) => self.assistant(&line),
             ("user", _) => self.user(&line),
@@ -205,25 +210,19 @@ fn init(line: &Object) -> InitEvent {
     }
 }
 
-fn task_id(line: &Object, kind: &str) -> Result<String, StreamJsonError> {
-    text(line, "task_id").ok_or_else(|| StreamJsonError::Malformed {
-        kind: kind.to_string(),
-        reason: "no task_id".to_string(),
-    })
-}
-
-fn task_started(line: &Object) -> Result<ExternalAgentEvent, StreamJsonError> {
-    Ok(ExternalAgentEvent::TaskStarted(TaskStarted {
-        task_id: task_id(line, "system/task_started")?,
+/// A task event names its task; one that does not is `None`.
+fn task_started(line: &Object) -> Option<ExternalAgentEvent> {
+    Some(ExternalAgentEvent::TaskStarted(TaskStarted {
+        task_id: text(line, "task_id")?,
         tool_use_id: text(line, "tool_use_id"),
         description: text(line, "description"),
         is_backgrounded: flag(line, "is_backgrounded").unwrap_or(false),
     }))
 }
 
-fn task_notification(line: &Object) -> Result<ExternalAgentEvent, StreamJsonError> {
-    Ok(ExternalAgentEvent::TaskNotification(TaskNotification {
-        task_id: task_id(line, "system/task_notification")?,
+fn task_notification(line: &Object) -> Option<ExternalAgentEvent> {
+    Some(ExternalAgentEvent::TaskNotification(TaskNotification {
+        task_id: text(line, "task_id")?,
         tool_use_id: text(line, "tool_use_id"),
         status: text(line, "status"),
         summary: text(line, "summary"),
