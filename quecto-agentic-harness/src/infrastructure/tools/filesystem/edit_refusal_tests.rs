@@ -35,39 +35,6 @@ fn file_lines_follow_the_normalised_text() {
     }
 }
 
-/// #2193 review 2: a failed write that may have truncated the file says so,
-/// and how to get the text back; only an error on opening means nothing
-/// was written.
-#[test]
-fn a_write_failure_after_opening_warns_that_text_may_be_lost() {
-    let error = std::io::Error::other("disk full");
-    let refusal = write_refusal("a b.txt", &error);
-    assert!(refusal.is_error);
-    assert_eq!(
-        refusal.content,
-        "writing a b.txt failed: disk full. The file may now be empty or cut short and its \
-         earlier text lost; restore it (e.g. git checkout -- 'a b.txt') or rewrite it with write."
-    );
-    let denied = write_refusal(
-        "f",
-        &std::io::Error::from(std::io::ErrorKind::PermissionDenied),
-    );
-    assert!(
-        denied.content.contains("nothing was written"),
-        "{}",
-        denied.content
-    );
-    let read_only = write_refusal(
-        "f",
-        &std::io::Error::from(std::io::ErrorKind::ReadOnlyFilesystem),
-    );
-    assert!(
-        read_only.content.contains("nothing was written"),
-        "{}",
-        read_only.content
-    );
-}
-
 /// #2193 review 2: more proven matches than are listed are said to exist.
 #[test]
 fn an_indentation_hint_with_more_matches_says_so() {

@@ -45,7 +45,11 @@ pub(super) fn make_edit_diff(
     new_content: &str,
     change: &Change,
 ) -> String {
-    let diff = TextDiff::from_lines(old_content, new_content);
+    // Lines end at "\n" only: a lone "\r" starts no line, as read shows
+    // the file (#2242); `from_lines` would split at it.
+    let old_lines: Vec<&str> = old_content.split_inclusive('\n').collect();
+    let new_lines: Vec<&str> = new_content.split_inclusive('\n').collect();
+    let diff = TextDiff::from_slices(&old_lines, &new_lines);
     let max_line = old_content.lines().count().max(new_content.lines().count());
     let mut lines = DiffLines {
         old: Side::of(diff.old_slices(), old_content, change.old.clone()),

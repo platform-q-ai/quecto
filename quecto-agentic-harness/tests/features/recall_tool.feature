@@ -15,6 +15,13 @@ Feature: Recall tool spill retrieval
     When I run recall with id "turn404:bash:0"
     Then the recall result should be an error
     And the recall result should contain "No spilled output found for id: turn404:bash:0"
+    And the recall result should contain "to see the ids this session has (they look like turn12:bash:0)"
+
+  Scenario: A saved bash output path given to recall is sent to read (#2215)
+    Given a recall tool for session "chat-alpha" with no spilled outputs
+    When I run recall with id "/tmp/quecto-bash-output/bash-output-ydrV3Y.log"
+    Then the recall result should be an error
+    And the recall result should contain "bash-output-ydrV3Y.log looks like a file path: saved bash output is a file, so open it with read, e.g. {"
 
   Scenario: Listing spilled outputs returns an index without full content
     Given a recall tool for session "chat-alpha" with spilled output "turn7:bash:0" from tool "bash" preview "cargo test --all" containing "secret full output"

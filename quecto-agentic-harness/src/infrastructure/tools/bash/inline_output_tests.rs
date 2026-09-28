@@ -92,7 +92,7 @@ async fn output_of_lines_that_fit_keeps_its_notice() {
     let out = truncate_output(text, false).await;
     let note = out.rsplit_once("\n[").unwrap().1;
     assert!(
-        note.starts_with("Showing lines 662-1500 of 1500 (50KB limit). Full output"),
+        note.starts_with("Showing lines 662-1500 of 1500 (50KB limit). Page through the saved file with read (offset/limit). Full output"),
         "{note}"
     );
     assert!(!out.contains("omitted"), "{note}");
@@ -113,7 +113,7 @@ async fn a_long_line_in_a_line_cut_tail_stays_whole() {
     );
     let note = out.rsplit_once("\n[").unwrap().1;
     assert!(
-        note.starts_with("Showing lines 102-2101 of 2101. Full output"),
+        note.starts_with("Showing lines 102-2101 of 2101. Page through the saved file with read (offset/limit). Full output"),
         "{note}"
     );
     let _ = std::fs::remove_file(saved_path(&out));
@@ -128,7 +128,7 @@ async fn only_cut_lines_in_the_tail_are_named() {
     let out = truncate_output(text, false).await;
     let note = out.rsplit_once("\n[").unwrap().1;
     assert!(
-        note.starts_with("Showing lines 11-61 of 61 (50KB limit). Full output"),
+        note.starts_with("Showing lines 11-61 of 61 (50KB limit). Page through the saved file with read (offset/limit). Full output"),
         "{note}"
     );
     let _ = std::fs::remove_file(saved_path(&out));
@@ -154,7 +154,7 @@ async fn a_line_count_cut_of_windowed_output_is_not_the_50kb_limit() {
     let out = truncate_output(text, false).await;
     let note = out.rsplit_once("\n[").unwrap().1;
     assert!(
-        note.starts_with("Showing lines 102-2101 of 2101. Full output"),
+        note.starts_with("Showing lines 102-2101 of 2101. Page through the saved file with read (offset/limit). Full output"),
         "{note}"
     );
     let _ = std::fs::remove_file(saved_path(&out));

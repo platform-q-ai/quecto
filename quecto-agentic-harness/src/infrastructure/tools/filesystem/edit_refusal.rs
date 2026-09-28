@@ -12,16 +12,7 @@ use crate::infrastructure::tools::truncate::format_size;
 use super::edit::{MAX_EDIT_FILE_BYTES, base_normalise};
 use super::edit_indent::{describe_indent, indent_mismatch};
 use super::edit_match::{LISTED_MATCHES, Matches};
-use super::{dangling_link_target, shell_escape_single};
-
-pub(super) fn edit_refused(content: String) -> ToolResult {
-    ToolResult {
-        content,
-        is_error: true,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    }
-}
+use super::fs_failure::{Access, explain, not_utf8_text, refused};
 
 /// The file's text, or a refusal that names the file, says why it cannot
 /// be edited and what to do instead.
@@ -33,12 +24,12 @@ pub(super) async fn load_text(full_path: &Path, path: &str) -> Result<String, To
     match metadata.file_type() {
         kind if kind.is_file() => {}
         kind if kind.is_dir() => {
-            return Err(edit_refused(format!(
+            return Err(refused(format!(
                 "{path} is a directory; edit changes a file. List it with ls to find the file."
             )));
         }
         _ => {
-            return Err(edit_refused(format!(
+            return Err(refused(format!(
                 "{path} is not a regular file; edit changes regular text files only."
             )));
         }
@@ -70,15 +61,8 @@ pub(super) async fn load_text(full_path: &Path, path: &str) -> Result<String, To
         len if len <= MAX_EDIT_FILE_BYTES => bytes,
         _ => return Err(too_large(path, &format!("over {}", limit_size()))),
     };
-    String::from_utf8(bytes).map_err(|error| {
-        let size = format_size(error.as_bytes().len());
-        let hint = shell_escape_single(path);
-        edit_refused(format!(
-            "{path} is not UTF-8 text ({size}): binary, or text in another encoding, and \
-             edit changes UTF-8 text only. Inspect it with bash, e.g. xxd {hint} | head -n 40, \
-             or convert it, e.g. iconv -f latin1 -t utf-8 {hint}"
-        ))
-    })
+    String::from_utf8(bytes)
+        .map_err(|error| refused(not_utf8_text(Access::Edit, path, error.as_bytes())))
 }
 
 fn limit_size() -> String {
@@ -86,7 +70,7 @@ fn limit_size() -> String {
 }
 
 fn too_large(path: &str, size: &str) -> ToolResult {
-    edit_refused(format!(
+    refused(format!(
         "{path} is too large to edit ({size}; edit takes files up to {}). Change it with \
          bash, e.g. sed -i, or rewrite it with write.",
         limit_size()
@@ -95,47 +79,7 @@ fn too_large(path: &str, size: &str) -> ToolResult {
 
 /// Why the file could not be opened or read, in words the model can act on.
 async fn open_refusal(full_path: &Path, path: &str, error: &std::io::Error) -> ToolResult {
-    let hint = shell_escape_single(path);
-    let content = match error.kind() {
-        std::io::ErrorKind::NotFound => match dangling_link_target(full_path).await {
-            Some(target) => format!(
-                "{path} is a symbolic link to {}, which does not exist. Edit the file it \
-                 should point to, or use write to create it.",
-                target.display()
-            ),
-            None => format!(
-                "file not found: {path}. edit changes an existing file; \
-                 use write to create a new one."
-            ),
-        },
-        std::io::ErrorKind::PermissionDenied => format!(
-            "permission denied: cannot edit {path}. Check its permissions with bash, \
-             e.g. ls -l {hint}"
-        ),
-        _ => format!("cannot edit {path}: {error}. Check the path with ls."),
-    };
-    edit_refused(content)
-}
-
-/// Why writing the edited text failed. The write is not atomic: the file
-/// is truncated first, so only an error raised on opening it leaves it
-/// untouched.
-pub(super) fn write_refusal(path: &str, error: &std::io::Error) -> ToolResult {
-    let hint = shell_escape_single(path);
-    edit_refused(match error.kind() {
-        std::io::ErrorKind::PermissionDenied => format!(
-            "permission denied: cannot write {path}, so nothing was written. Check its \
-             permissions with bash, e.g. ls -l {hint}"
-        ),
-        std::io::ErrorKind::ReadOnlyFilesystem => {
-            format!("cannot write {path}: its file system is read-only, so nothing was written.")
-        }
-        _ => format!(
-            "writing {path} failed: {error}. The file may now be empty or cut short and its \
-             earlier text lost; restore it (e.g. git checkout -- {hint}) or rewrite it with \
-             write."
-        ),
-    })
+    refused(explain(Access::Edit, full_path, path, error).await)
 }
 
 /// The file's own line breaks, as offsets into its normalised text
@@ -207,7 +151,7 @@ pub(super) fn ambiguous(file_lines: &FileLines, path: &str, matches: &Matches) -
     } else {
         ""
     };
-    edit_refused(format!(
+    refused(format!(
         "oldText matches {} times in {path}{overlapping}, {place} — it must match exactly \
          once to avoid ambiguous edits. Add surrounding lines to oldText to make it unique.",
         matches.count
@@ -223,7 +167,7 @@ pub(super) fn not_found(
     path: &str,
 ) -> ToolResult {
     let Some(near) = indent_mismatch(content, old) else {
-        return edit_refused(format!(
+        return refused(format!(
             "oldText not found in {path}. Read the file and copy oldText from it exactly, \
              whitespace included."
         ));
@@ -254,7 +198,7 @@ pub(super) fn not_found(
             )
         }
     };
-    edit_refused(format!(
+    refused(format!(
         "oldText not found in {path}, but it matches {place} if indentation is ignored; \
          line {} is indented with {} in the file, {} in oldText. Copy the indentation \
          from the file{unique}.",

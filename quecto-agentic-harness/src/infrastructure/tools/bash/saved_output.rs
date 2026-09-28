@@ -9,6 +9,9 @@
 //!
 //! Off Unix, ownership cannot be proven, so output is never saved there: the
 //! model is told so and pointed at `output_file`.
+use crate::infrastructure::tools::filesystem::{
+    MAX_READ_BYTES, bash_paging_example, read_cap_text,
+};
 use std::ffi::OsStr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -62,15 +65,18 @@ pub(super) struct TailView {
 /// or that it could not be (#2167 review). The saved path ends the note.
 pub(super) fn truncation_hint(saved_to: Option<&str>, view: &TailView) -> String {
     let limit_note = if view.by_bytes { " (50KB limit)" } else { "" };
-    let long_note = match (&view.long_lines, saved_to) {
-        (Some(note), Some(_)) => format!(
+    // read refuses a file over its cap before any offset or limit applies
+    // (#2254 review): such a saved file is paged with bash.
+    let is_readable = u64::try_from(view.combined_len).is_ok_and(|len| len <= MAX_READ_BYTES);
+    let long_note = match (&view.long_lines, saved_to, is_readable) {
+        (Some(note), Some(_), true) => format!(
             "; {note}. `read` the saved file for lines up to 50KB whole, or reformat the output \
              with `jq .` / `fold -w 200`"
         ),
-        (Some(note), None) => format!(
+        (Some(note), Some(_), false) | (Some(note), None, _) => format!(
             "; {note}. Reformat the output with `jq .` / `fold -w 200` to see such lines whole"
         ),
-        (None, _) => String::new(),
+        (None, _, _) => String::new(),
     };
     let shown = format!(
         "Showing lines {}-{} of {}{limit_note}{long_note}",
@@ -83,8 +89,19 @@ pub(super) fn truncation_hint(saved_to: Option<&str>, view: &TailView) -> String
                 true => "Output (start and end; middle omitted)",
                 false => "Full output",
             };
+            // The saved file is opened with read, never recall (#2215); a
+            // note on cut lines already says to read it.
+            let open = match (is_readable, &view.long_lines) {
+                (true, Some(_)) => String::new(),
+                (true, None) => " Page through the saved file with read (offset/limit).".into(),
+                (false, _) => format!(
+                    " It is over read's {} limit: page through it with bash, e.g. {}.",
+                    read_cap_text(),
+                    bash_paging_example(path, true)
+                ),
+            };
             format!(
-                "\n[{shown}. {saved} ({} bytes) saved to: {path}]",
+                "\n[{shown}.{open} {saved} ({} bytes) saved to: {path}]",
                 view.combined_len
             )
         }

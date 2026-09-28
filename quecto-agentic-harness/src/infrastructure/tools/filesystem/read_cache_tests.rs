@@ -263,3 +263,24 @@ async fn test_read_force_false_null_and_non_boolean_do_not_bypass_marker() {
         assert!(!result.content.contains("body"), "{}", result.content);
     }
 }
+
+/// #2189 review: only a bad argument is a refusal; a harness fault such as
+/// a poisoned cache lock stays an error.
+#[tokio::test]
+async fn a_poisoned_cache_is_an_error_not_a_refusal() {
+    let (ws, sb, tmp) = test_tools();
+    let tool = ReadTool::new(ws, sb);
+    std::fs::write(tmp.path().join("f.txt"), "alpha\n").unwrap();
+    let cache = tool.cache.clone();
+    let _ = std::thread::spawn(move || {
+        let _held = cache.lock().unwrap();
+        panic!("poison the cache lock");
+    })
+    .join();
+    let result = tool.execute(r#"{"path": "f.txt"}"#).await;
+    match result {
+        Err(DomainError::Tool(message)) => assert_eq!(message, "read cache lock poisoned"),
+        Err(other) => panic!("expected the lock error, got {other}"),
+        Ok(result) => panic!("expected an error, got: {}", result.content),
+    }
+}

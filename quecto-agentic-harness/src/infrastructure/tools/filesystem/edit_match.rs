@@ -240,17 +240,26 @@ pub(super) struct FuzzyText {
 
 impl FuzzyText {
     /// Map a range of the normalised text back to the original: from the
-    /// start of the first source character to the end of the last one.
-    /// `None` when the range is empty, out of bounds or off a boundary.
-    fn original_range(&self, original: &str, range: Range<usize>) -> Option<Range<usize>> {
+    /// start of the first source character to the end of the last one (a
+    /// `\r\n` is one source character: it made one `\n`). `None` when the
+    /// range is empty, out of bounds or off a boundary.
+    pub(super) fn original_range(
+        &self,
+        original: &str,
+        range: Range<usize>,
+    ) -> Option<Range<usize>> {
         let is_mappable = range.start < range.end
             && self.text.is_char_boundary(range.start)
             && self.text.is_char_boundary(range.end);
         let range = is_mappable.then_some(range)?;
         let start = usize::try_from(*self.source.get(range.start)?).ok()?;
         let last = usize::try_from(*self.source.get(range.end.checked_sub(1)?)?).ok()?;
-        let last_char = original.get(last..)?.chars().next()?;
-        let end = last.checked_add(last_char.len_utf8())?;
+        let source = original.get(last..)?;
+        let last_len = match source.starts_with("\r\n") {
+            true => 2,
+            false => source.chars().next()?.len_utf8(),
+        };
+        let end = last.checked_add(last_len)?;
         let is_boundary_range = start <= end && original.get(start..end).is_some();
         is_boundary_range.then_some(start..end)
     }
@@ -286,6 +295,38 @@ pub(super) fn fuzzy_normalise(s: &str) -> Result<FuzzyText, Unmappable> {
             source.push(offset(newline_at)?);
         }
         line_start = newline_at + 1;
+    }
+    debug_assert_eq!(text.len(), source.len());
+    Ok(FuzzyText { text, source })
+}
+
+/// The file's text as the edit tool matches it (`base_normalise`: BOM
+/// stripped, `\r\n` and a lone `\r` each become `\n`) with the same offset
+/// map as [`fuzzy_normalise`]: each byte points at the character of `raw`
+/// that produced it, so a match is spliced into the file's own bytes and
+/// nothing outside it changes (#2242).
+pub(super) fn base_mapped(raw: &str) -> Result<FuzzyText, Unmappable> {
+    let fits_offset_map = u32::try_from(raw.len()).is_ok();
+    let raw = fits_offset_map.then_some(raw).ok_or(Unmappable)?;
+    let offset = |at: usize| u32::try_from(at).map_err(|_| Unmappable);
+    let body_start = raw.len() - raw.strip_prefix('\u{FEFF}').unwrap_or(raw).len();
+    let mut text = String::with_capacity(raw.len());
+    let mut source = Vec::with_capacity(raw.len());
+    let mut chars = raw
+        .char_indices()
+        .skip_while(|(at, _)| *at < body_start)
+        .peekable();
+    while let Some((at, c)) = chars.next() {
+        let mapped = match c {
+            '\r' => {
+                // A CRLF's "\n" is part of the one line break.
+                chars.next_if(|(_, next)| *next == '\n');
+                '\n'
+            }
+            other => other,
+        };
+        text.push(mapped);
+        source.extend(std::iter::repeat_n(offset(at)?, mapped.len_utf8()));
     }
     debug_assert_eq!(text.len(), source.len());
     Ok(FuzzyText { text, source })

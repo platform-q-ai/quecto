@@ -323,21 +323,19 @@ async fn test_edit_diff_uses_minus_plus_markers() {
 
 #[test]
 fn test_plain_lf_without_bom_normalise_and_restore_are_identity() {
+    use crate::infrastructure::tools::filesystem::edit_bytes::LineEnding;
     let plain = "first\nsecond\n";
     assert_eq!(&*base_normalise(plain), plain);
-    assert_eq!(&*restore_file_format(plain, LineEnding::Lf, false), plain);
+    assert_eq!(with_span_endings(plain, "", LineEnding::Lf), plain);
 }
 
 #[test]
 fn test_crlf_and_bom_paths_preserve_observable_format() {
+    use crate::infrastructure::tools::filesystem::edit_bytes::LineEnding;
     assert_eq!(&*base_normalise("first\r\nsecond\r\n"), "first\nsecond\n");
     assert_eq!(
-        &*restore_file_format("first\nsecond\n", LineEnding::Crlf, false),
+        with_span_endings("first\nsecond\n", "", LineEnding::Crlf),
         "first\r\nsecond\r\n"
-    );
-    assert_eq!(
-        &*restore_file_format("first\nsecond\n", LineEnding::Lf, true),
-        "\u{FEFF}first\nsecond\n"
     );
 }
 
@@ -525,14 +523,17 @@ async fn match_lines_are_file_lines_in_a_crlf_file() {
 /// #2193 (B16): a missing file is named, with the tool that creates one.
 #[tokio::test]
 async fn a_missing_file_is_named_with_the_way_to_create_it() {
-    let (ws, sb, _tmp) = test_tools();
+    let (ws, sb, tmp) = test_tools();
     let tool = EditTool::new(ws, sb);
     let result = edit(&tool, "sub/missing.txt", "a", "b").await;
     assert!(result.is_error);
     assert_eq!(
         result.content,
-        "file not found: sub/missing.txt. edit changes an existing file; \
-         use write to create a new one."
+        format!(
+            "file not found: sub/missing.txt (looked for {}). edit changes an existing file; \
+             use write to create a new one.",
+            tmp.path().join("sub/missing.txt").display()
+        )
     );
 }
 
@@ -563,7 +564,7 @@ async fn a_binary_file_is_refused_as_not_text() {
     assert!(
         result
             .content
-            .starts_with("blob.dat is not UTF-8 text (6B): binary"),
+            .starts_with("blob.dat is not UTF-8 text: it is a binary file (6B), and edit"),
         "{}",
         result.content
     );

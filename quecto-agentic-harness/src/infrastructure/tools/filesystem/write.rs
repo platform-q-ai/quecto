@@ -10,6 +10,7 @@ use crate::domain::error::DomainError;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
+use super::fs_failure::{refused, write_failure, write_file, written_note};
 use super::resolve_and_validate;
 
 pub struct WriteTool {
@@ -79,17 +80,26 @@ impl Tool for WriteTool {
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
 
             if let Some(parent) = full_path.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| DomainError::Tool(format!("create dirs failed: {}", e)))?;
+                if let Err(error) = tokio::fs::create_dir_all(parent).await {
+                    return Ok(refused(format!(
+                        "cannot create the directory of {path}: {error}, so nothing was written. \
+                         Check the path with ls."
+                    )));
+                }
             }
 
-            tokio::fs::write(&full_path, content)
-                .await
-                .map_err(|e| DomainError::Tool(format!("write failed: {}", e)))?;
-
+            // Replaced whole or not at all (#2243).
+            let bytes = content.len();
+            let written = match write_file(full_path, content.as_bytes().to_vec()).await {
+                Ok(written) => written,
+                Err(failure) => return Ok(refused(write_failure(path, &failure))),
+            };
+            let done = format!("Successfully wrote {bytes} bytes to {path}");
             Ok(ToolResult {
-                content: format!("Successfully wrote {} bytes to {}", content.len(), path),
+                content: match written_note(path, written) {
+                    Some(note) => format!("{done}\n{note}"),
+                    None => done,
+                },
                 is_error: false,
                 image_blocks: vec![],
                 delivery_metadata: None,

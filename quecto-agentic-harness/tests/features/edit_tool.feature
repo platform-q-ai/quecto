@@ -161,6 +161,35 @@ Feature: EditTool — Quecto compatibility
     And the file "unix.txt" should contain "EDITED"
     And the [ToolResult] should not be an error
 
+  @done
+  Scenario: A lone carriage return outside the edit is kept (#2242)
+    Given a tool workspace
+    And a file "progress.log" exists with content "progress 1%\rprogress 50%\rdone\nx\n"
+    When the agent edits "progress.log" replacing "x" with "y"
+    Then the [ToolResult] should not be an error
+    And the file "progress.log" should read exactly "progress 1%\rprogress 50%\rdone\ny\n"
+    And the [ToolResult] should contain "+2 y"
+
+  @done
+  Scenario: Editing through a symbolic link keeps the link (#2243)
+    Given a tool workspace
+    And a file "real.txt" exists with content "old line\n"
+    And "link.txt" is a symbolic link to "real.txt"
+    When the agent edits "link.txt" replacing "old" with "new"
+    Then the [ToolResult] should not be an error
+    And "link.txt" should still be a symbolic link
+    And the file "real.txt" should read exactly "new line\n"
+
+  @done
+  Scenario: A hard-linked file is edited in place and the result says so (#2243)
+    Given a tool workspace
+    And a file "a.txt" exists with content "one\ntwo\n"
+    And "b.txt" is a hard link to "a.txt"
+    When the agent edits "a.txt" replacing "two" with "2"
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] should contain "has 2 hard links, so it was written in place to keep them, not atomically"
+    And the file "b.txt" should read exactly "one\n2\n"
+
   # --- BOM preservation ---
 
   @done
