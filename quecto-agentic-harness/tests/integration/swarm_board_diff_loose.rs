@@ -43,7 +43,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   written with the bundled SQLite's digits, which some hosts' libraries
 ///   (and so Python there) write with fewer.
 /// - `unknown_member_status_is_not_alive` (owner decision in #2295, pinned
-///   by `domain::swarm::policy_tests`): Python's `authorize` and
+///   by `domain::swarm::policy_tests` and `policy_null_status_tests`): Python's `authorize` and
 ///   `admission` refuse only a member whose status is `'dead'`, so an
 ///   unknown or NULL status counts as alive there; Rust accepts only
 ///   `live` or `reserved` (an affirmative guard), so such a member may
@@ -350,14 +350,42 @@ fn outside_edited_columns() {
 fn every_permitted_divergence_is_pinned_by_name() {
     let source = include_str!("swarm_board_diff_loose.rs");
     for name in PERMITTED_DIVERGENCES {
-        let pinned = source.contains(&format!("fn {name}()"))
-            || (name == "real_to_text_digits"
-                && include_str!(
-                    "../../src/infrastructure/persistence/swarm_board/binding_tests.rs"
-                )
-                .contains(
-                    "fn a_float_reaching_text_affinity_reads_as_the_bundled_sqlite_writes_it()",
-                ));
-        assert!(pinned, "{name} has no pinning test");
+        let pinned_here = source.contains(&format!("fn {name}()"));
+        let pinned_elsewhere = EXTERNAL_PINS
+            .iter()
+            .filter(|(pinned, _, _)| *pinned == name)
+            .map(|(_, file, test)| file.contains(&format!("fn {test}()")))
+            .collect::<Vec<_>>();
+        assert!(
+            pinned_here
+                || (!pinned_elsewhere.is_empty() && pinned_elsewhere.iter().all(|&found| found)),
+            "{name} has no pinning test"
+        );
+    }
+    for (name, _, test) in EXTERNAL_PINS {
+        assert!(
+            PERMITTED_DIVERGENCES.contains(&name),
+            "{test} pins {name}, which is not a permitted divergence"
+        );
     }
 }
+
+/// Divergences pinned outside this suite: the name, the test file's
+/// source and the pinning test in it.
+const EXTERNAL_PINS: [(&str, &str, &str); 3] = [
+    (
+        "real_to_text_digits",
+        include_str!("../../src/infrastructure/persistence/swarm_board/binding_tests.rs"),
+        "a_float_reaching_text_affinity_reads_as_the_bundled_sqlite_writes_it",
+    ),
+    (
+        "unknown_member_status_is_not_alive",
+        include_str!("../../src/domain/swarm/policy_tests.rs"),
+        "unknown_statuses_found_in_a_file_are_refused_affirmatively",
+    ),
+    (
+        "unknown_member_status_is_not_alive",
+        include_str!("../../src/domain/swarm/policy_null_status_tests.rs"),
+        "a_null_member_status_is_not_alive",
+    ),
+];

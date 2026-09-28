@@ -1,7 +1,8 @@
 //! A NULL `run.status` (#2270 review L2): a run row edited outside the
 //! board, which Python reads as `None`. `None` is no status any decision
 //! names, so each refuses as Python's comparisons do, and the refusals
-//! write it `None`, as Python's f-strings do.
+//! write it `None`, as Python's f-strings do. A NULL member status is the
+//! owner-decided `unknown_member_status_is_not_alive` divergence (#2295).
 use super::*;
 use crate::domain::swarm::records::MemberState;
 
@@ -74,5 +75,43 @@ fn admission_refuses_a_null_status() {
     assert_eq!(
         message(admission(&unset(), None, Some("r"), 0, 0.0)),
         "run is None; no new admission"
+    );
+}
+
+/// A NULL member status (the `unknown_member_status_is_not_alive`
+/// divergence, owner decision in #2295): Python's `None == 'dead'` is
+/// false, so it counts as alive there; Rust accepts only `live` or
+/// `reserved`, so the member may read but not mutate, and holding the same
+/// reservation is not an idempotent admission retry.
+#[test]
+fn a_null_member_status_is_not_alive() {
+    let unknown = MemberRecord {
+        status: None,
+        ..live("parent")
+    };
+    let running = RunRecord {
+        status: Some(RunState::RUNNING),
+        ..unset()
+    };
+    assert_eq!(
+        message(authorize(
+            Some(&running),
+            "parent",
+            Some(&unknown),
+            Access::default()
+        )),
+        "invoking member is unknown or death confirmed"
+    );
+    let reading = Access {
+        read_only: true,
+        ..Access::default()
+    };
+    assert_eq!(
+        authorize(Some(&running), "parent", Some(&unknown), reading),
+        Ok(())
+    );
+    assert_eq!(
+        message(admission(&running, Some(&unknown), Some("r"), 0, 0.0)),
+        "member identity already used; choose a stable new identity"
     );
 }
