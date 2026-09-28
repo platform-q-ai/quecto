@@ -5838,11 +5838,75 @@ fn external_agent_ports_are_capability_local_and_contracted() {
             to_snake_case(port)
         );
     }
-    // The launch spec is a DTO of the capability, not a port's own type.
-    assert!(
-        Path::new("src/application/external_agent/dto/launch_spec.rs").exists(),
-        "the launch spec is an application DTO"
-    );
+    // The process ports' vocabulary is the capability's DTOs, not the
+    // ports' (or an adapter's) own types: each is declared exactly once,
+    // under `application/external_agent/dto/`.
+    for (name, declared_in) in external_agent_process_dto_declarations(&files) {
+        assert_eq!(
+            declared_in.len(),
+            1,
+            "{name} is declared exactly once: {declared_in:?}"
+        );
+        assert!(
+            declared_in[0].starts_with("src/application/external_agent/dto/"),
+            "{name} is an external-agent application DTO, not {}",
+            declared_in[0]
+        );
+    }
+}
+
+/// The types the external-agent process ports take and answer (#2286).
+const EXTERNAL_AGENT_PROCESS_DTOS: &[&str] = &[
+    "ExternalAgentLaunchSpec",
+    "CredentialEnv",
+    "ExternalAgentLaunchError",
+    "ExternalAgentInputError",
+    "ExternalAgentExit",
+];
+
+/// Where each of [`EXTERNAL_AGENT_PROCESS_DTOS`] is declared as a
+/// `struct`, `enum` or `type` (at any module depth), by syn.
+fn external_agent_process_dto_declarations(files: &[String]) -> Vec<(&'static str, Vec<String>)> {
+    struct Declared<'a> {
+        path: &'a str,
+        found: Vec<(String, String)>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Declared<'_> {
+        fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
+            self.found
+                .push((item.ident.to_string(), self.path.to_string()));
+        }
+        fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
+            self.found
+                .push((item.ident.to_string(), self.path.to_string()));
+        }
+        fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+            self.found
+                .push((item.ident.to_string(), self.path.to_string()));
+        }
+    }
+    let mut found = Vec::new();
+    for file in files {
+        let (path, source) = file.split_once(":\n").expect("a file entry");
+        let syntax = syn::parse_file(source).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let mut visitor = Declared {
+            path,
+            found: Vec::new(),
+        };
+        syn::visit::Visit::visit_file(&mut visitor, &syntax);
+        found.extend(visitor.found);
+    }
+    EXTERNAL_AGENT_PROCESS_DTOS
+        .iter()
+        .map(|name| {
+            let declared_in = found
+                .iter()
+                .filter(|(ident, _)| ident == name)
+                .map(|(_, path)| path.clone())
+                .collect();
+            (*name, declared_in)
+        })
+        .collect()
 }
 
 /// The domain keeps only pure environment entities, transitions and

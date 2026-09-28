@@ -55,3 +55,40 @@ fn stderr_directives_write_to_stderr_not_stdout() {
     assert!(stderr.starts_with("hello\n"), "{stderr:?}");
     assert_eq!(stderr.len(), "hello\n".len() + 2050);
 }
+
+#[test]
+fn stall_and_stubborn_directives_are_never_emitted() {
+    // `@stubborn` is not replayed here: a stubborn mock outlives its
+    // input, which only the supervisor's KILL ends (process tests).
+    let scenario = "@stall-input 0\n{\"type\": \"result\"}\n";
+    let (stdout, _) = run(scenario, "go\n");
+    assert_eq!(stdout, "{\"type\": \"result\"}\n");
+}
+
+#[test]
+fn the_start_record_names_the_pid_group_and_private_dir_modes() {
+    let root = tempfile::tempdir().unwrap();
+    let scenario = root.path().join("scenario.jsonl");
+    std::fs::write(&scenario, "").unwrap();
+    let mock = write_mock_claude(&root.path().join("bin"), &scenario);
+    let home = root.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let output = Command::new(mock.bin_dir.join(MOCK_CLAUDE_PROGRAM))
+        .env("HOME", &home)
+        .env("CLAUDE_CONFIG_DIR", root.path().join("absent"))
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let pid = mock.recorded("pid");
+    assert_eq!(pid.len(), 1, "{pid:?}");
+    assert!(pid[0].parse::<u32>().is_ok(), "{pid:?}");
+    assert!(mock.recorded("pgid")[0].parse::<u32>().is_ok());
+    assert!(
+        mock.recorded("home_mode")[0].starts_with('d'),
+        "{:?}",
+        mock.recorded("home_mode")
+    );
+    assert_eq!(mock.recorded("config_mode"), vec![String::new()]);
+    assert!(mock.recorded("grandchild").is_empty());
+}

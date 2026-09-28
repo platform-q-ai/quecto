@@ -50,14 +50,16 @@ const DROPPED: &[&str] = &[
 fn only_allowlisted_variables_reach_claude() {
     let member = tempfile::tempdir().unwrap();
     let mut parent = vars(&[
-        ("PATH", "/usr/bin:/bin"),
-        ("LANG", "C.UTF-8"),
-        ("LC_ALL", "C.UTF-8"),
-        ("TERM", "xterm"),
-        ("TMPDIR", "/tmp"),
         ("HOME", "/home/operator"),
         ("ANTHROPIC_API_KEY", "the-operators-key"),
     ]);
+    for name in INHERITED_VARIABLES {
+        parent.push((
+            OsString::from(name),
+            OsString::from(format!("parent-{name}")),
+        ));
+    }
+    parent.push((OsString::from("PATH"), OsString::from("/usr/bin:/bin")));
     for name in DROPPED {
         parent.push((OsString::from(name), OsString::from(format!("leak-{name}"))));
     }
@@ -188,4 +190,85 @@ fn only_a_known_nonempty_credential_is_given() {
             "{credential:?}: {error:?}"
         );
     }
+}
+
+#[test]
+fn the_login_proxy_and_ca_variables_pass_through() {
+    let member = tempfile::tempdir().unwrap();
+    let passed = [
+        "USER",
+        "LOGNAME",
+        "XDG_RUNTIME_DIR",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "NODE_EXTRA_CA_CERTS",
+    ];
+    let parent: Vec<(OsString, OsString)> = passed
+        .iter()
+        .map(|name| (OsString::from(name), OsString::from(format!("v-{name}"))))
+        .collect();
+    let env = member_environment(&parent, member.path(), &api_key("k")).unwrap();
+    for name in passed {
+        assert!(INHERITED_VARIABLES.contains(&name), "{name} is allowlisted");
+        assert_eq!(
+            env.get(name).unwrap(),
+            OsString::from(format!("v-{name}")).as_os_str(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_symlinked_member_dir_is_refused() {
+    let base = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let member = base.path().join("member");
+    std::os::unix::fs::symlink(elsewhere.path(), &member).unwrap();
+    let error = member_environment(&vars(&[]), &member, &api_key("k")).unwrap_err();
+    assert!(
+        matches!(&error, MemberEnvironmentError::Directory { path, .. } if path == &member),
+        "{error:?}"
+    );
+    assert!(
+        std::fs::read_dir(elsewhere.path())
+            .unwrap()
+            .next()
+            .is_none(),
+        "nothing was made through the symlink"
+    );
+}
+
+#[test]
+fn a_member_dir_others_can_write_is_refused() {
+    for loose in [0o770, 0o707, 0o777] {
+        let base = tempfile::tempdir().unwrap();
+        let member = base.path().join("member");
+        std::fs::create_dir(&member).unwrap();
+        std::fs::set_permissions(&member, std::fs::Permissions::from_mode(loose)).unwrap();
+        let error = member_environment(&vars(&[]), &member, &api_key("k")).unwrap_err();
+        assert!(
+            matches!(&error, MemberEnvironmentError::Directory { path, .. } if path == &member),
+            "{loose:o}: {error:?}"
+        );
+        assert!(
+            !member.join(MEMBER_HOME_DIR).exists(),
+            "{loose:o}: no private dir was made in it"
+        );
+    }
+}
+
+#[test]
+fn a_member_dir_only_its_owner_writes_is_kept_as_it_is() {
+    let base = tempfile::tempdir().unwrap();
+    let member = base.path().join("member");
+    std::fs::create_dir(&member).unwrap();
+    std::fs::set_permissions(&member, std::fs::Permissions::from_mode(0o755)).unwrap();
+    member_environment(&vars(&[]), &member, &api_key("k")).unwrap();
+    assert_eq!(mode(&member), 0o755);
 }

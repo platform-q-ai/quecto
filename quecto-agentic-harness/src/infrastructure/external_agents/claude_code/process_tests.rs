@@ -11,10 +11,26 @@ use crate::application::external_agent::dto::{
 };
 use crate::application::external_agent::ports::{ExternalAgentLauncher, ExternalAgentProcess};
 use crate::domain::external_agent::stream::ExternalAgentEvent;
-use crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor;
+use crate::infrastructure::processes::owned_child_supervisor::{
+    OwnedChildSupervisor, SentSignal, TerminationBudget,
+};
 use crate::infrastructure::test_support::mock_claude::{MockClaude, write_mock_claude};
 
 const BOUND: Duration = Duration::from_secs(20);
+
+/// A short fallback, so a child that ignores its input's close (and TERM)
+/// is ended within [`FALLBACK_BOUND`] rather than the default's seconds.
+const FAST: TerminationBudget = TerminationBudget {
+    exit_after_ack: Duration::from_millis(200),
+    term_grace: Duration::from_millis(300),
+    kill_grace: Duration::from_secs(2),
+};
+
+/// Well inside [`TerminationBudget::DEFAULT`]'s 14 s, well outside `FAST`.
+const FALLBACK_BOUND: Duration = Duration::from_secs(6);
+
+/// A turn's worth of scenario: one `result` line.
+const RESULT_LINE: &str = "{\"type\": \"result\", \"subtype\": \"success\"}\n";
 
 struct Rig {
     root: tempfile::TempDir,
@@ -44,7 +60,8 @@ impl Rig {
         .iter()
         .map(|(name, value)| (OsString::from(name), OsString::from(value)))
         .collect();
-        let launcher = ClaudeCodeLauncher::new(Arc::clone(&supervisor), parent);
+        let launcher =
+            ClaudeCodeLauncher::new(Arc::clone(&supervisor), parent).with_termination_budget(FAST);
         Self {
             root,
             mock,
@@ -280,6 +297,26 @@ async fn an_invalid_spec_is_refused_before_anything_runs() {
             },
         ),
         (
+            "unknown credential name",
+            ExternalAgentLaunchSpec {
+                credential: CredentialEnv {
+                    name: "GH_TOKEN".into(),
+                    value: "v".into(),
+                },
+                ..base.clone()
+            },
+        ),
+        (
+            "empty credential value",
+            ExternalAgentLaunchSpec {
+                credential: CredentialEnv {
+                    name: "ANTHROPIC_API_KEY".into(),
+                    value: String::new(),
+                },
+                ..base.clone()
+            },
+        ),
+        (
             "relative checkout",
             ExternalAgentLaunchSpec {
                 checkout: PathBuf::from("checkout"),
@@ -304,7 +341,7 @@ async fn an_invalid_spec_is_refused_before_anything_runs() {
     }
     assert!(!rig.mock.args_out.exists(), "nothing was spawned");
     assert!(
-        !rig.root.path().join("members/m1").exists(),
+        !rig.root.path().join("members").exists(),
         "no member directory was made for a refused spec"
     );
 }
@@ -355,4 +392,167 @@ fn only_an_executable_file_in_an_absolute_path_dir_is_claude() {
     assert_eq!(resolve_on_path(&path, "claude"), Some(real.join("claude")));
     let without = std::env::join_paths([plain, dir_named]).unwrap();
     assert_eq!(resolve_on_path(&without, "claude"), None);
+}
+
+/// The mock's first recorded `kind` value, once its start record exists.
+async fn recorded_at_start(mock: &MockClaude, kind: &str) -> String {
+    tokio::time::timeout(BOUND, async {
+        loop {
+            if let Some(value) = mock.recorded(kind).into_iter().next() {
+                return value;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the mock records {kind} at start"))
+}
+
+async fn until_retired(supervisor: &OwnedChildSupervisor, bound: Duration) {
+    tokio::time::timeout(bound, async {
+        while supervisor.slot_count() > 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the child is retired within the bound");
+}
+
+#[test]
+fn the_process_outlives_the_runtime_that_started_it() {
+    let rig = Rig::new(RESULT_LINE);
+    let starter = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let process = starter.block_on(rig.start());
+    drop(starter);
+    let reader = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    reader.block_on(async {
+        process.send_user_turn("go").await.unwrap();
+        let events = events_to_turn_end(process.as_ref()).await;
+        assert!(
+            matches!(events.last(), Some(ExternalAgentEvent::Result(_))),
+            "{events:?}"
+        );
+        assert_eq!(finish(process.as_ref()).await, ExternalAgentExit::Code(0));
+    });
+}
+
+#[tokio::test]
+async fn a_cancelled_turn_never_leaves_half_a_line() {
+    // The mock reads nothing for a while, so a turn larger than the pipe
+    // is still being written when its send is cancelled.
+    let rig = Rig::new("@stall-input 2\n");
+    let process = rig.start().await;
+    let big = "a".repeat(256 * 1024);
+    let cancelled =
+        tokio::time::timeout(Duration::from_millis(100), process.send_user_turn(&big)).await;
+    assert!(
+        cancelled.is_err(),
+        "the send was still writing: {cancelled:?}"
+    );
+    process.send_user_turn("after").await.unwrap();
+    assert_eq!(finish(process.as_ref()).await, ExternalAgentExit::Code(0));
+    let input = rig.mock.recorded("input");
+    let texts: Vec<String> = input
+        .iter()
+        .map(|line| {
+            let sent: serde_json::Value = serde_json::from_str(line).unwrap_or_else(|error| {
+                panic!("a whole JSON line ({error}): {} bytes", line.len())
+            });
+            sent["message"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(texts.len(), 2, "each turn is its own whole line");
+    assert_eq!(texts[0], big, "an accepted turn is written whole");
+    assert_eq!(texts[1], "after");
+}
+
+#[tokio::test]
+async fn closing_the_input_does_not_wait_behind_a_stuck_write() {
+    // The mock never reads: a turn larger than the pipe never finishes.
+    let rig = Rig::new("@stall-input 3600\n");
+    let process = rig.start().await;
+    let big = "a".repeat(256 * 1024);
+    {
+        let send = process.send_user_turn(&big);
+        tokio::pin!(send);
+        let pending = tokio::time::timeout(Duration::from_millis(200), &mut send).await;
+        assert!(pending.is_err(), "the write is stuck: {pending:?}");
+        tokio::time::timeout(Duration::from_secs(2), process.close_input())
+            .await
+            .expect("close_input returns while a write is stuck");
+    }
+    assert_eq!(
+        process.send_user_turn("late").await,
+        Err(crate::application::external_agent::dto::ExternalAgentInputError::Closed)
+    );
+    drop(process);
+    until_retired(&rig.supervisor, FALLBACK_BOUND).await;
+}
+
+#[tokio::test]
+async fn the_child_leads_its_own_process_group() {
+    let rig = Rig::new("");
+    let process = rig.start().await;
+    finish(process.as_ref()).await;
+    let pid = rig.mock.recorded("pid");
+    assert_eq!(pid.len(), 1, "{pid:?}");
+    assert_eq!(rig.mock.recorded("pgid"), pid, "pgid == pid");
+}
+
+#[tokio::test]
+async fn the_private_dirs_are_owner_only_before_the_child_runs() {
+    let rig = Rig::new("");
+    let process = rig.start().await;
+    finish(process.as_ref()).await;
+    assert_eq!(rig.mock.recorded("home_mode"), vec!["drwx------"]);
+    assert_eq!(rig.mock.recorded("config_mode"), vec!["drwx------"]);
+}
+
+/// Whether `pid` is gone: no longer in `/proc`, or a zombie left for
+/// whichever ancestor reaps it.
+#[cfg(target_os = "linux")]
+fn dead(pid: u32) -> bool {
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat
+            .rsplit_once(')')
+            .is_some_and(|(_, rest)| rest.trim_start().starts_with('Z')),
+        Err(_) => true,
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn dropping_a_child_that_ignores_eof_and_term_kills_its_group() {
+    let rig = Rig::new("@stubborn\n");
+    let process = rig.start().await;
+    let handles = rig.supervisor.handles();
+    assert_eq!(handles.len(), 1);
+    let grandchild: u32 = recorded_at_start(&rig.mock, "grandchild")
+        .await
+        .parse()
+        .unwrap();
+    assert!(!dead(grandchild), "the grandchild runs");
+    drop(process);
+    until_retired(&rig.supervisor, FALLBACK_BOUND).await;
+    assert_eq!(
+        rig.supervisor.signals_sent(handles[0]),
+        vec![SentSignal::Term, SentSignal::Kill],
+        "the input's close and TERM were not enough; KILL ended the group"
+    );
+    tokio::time::timeout(FALLBACK_BOUND, async {
+        while !dead(grandchild) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the grandchild in the child's group is dead");
 }
