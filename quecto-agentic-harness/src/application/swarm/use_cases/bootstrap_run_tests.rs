@@ -1,18 +1,18 @@
 use serde_json::json;
 
 use super::BootstrapRun;
-use crate::application::swarm::dto::{BootstrapRunRequest, MemberRow};
-use crate::application::swarm::use_cases::fakes::{
+use crate::application::swarm::board_test_support::{
     BoardState, CounterIds, MemoryBoard, SteppingClock, running_board,
 };
+use crate::application::swarm::dto::{BootstrapRunRequest, MemberRow};
 use crate::domain::swarm::RunState;
 
 fn request() -> BootstrapRunRequest {
     BootstrapRunRequest {
         member: "parent".to_owned(),
-        pid: Some(42),
-        started: Some("Mon 1".to_owned()),
-        socket: Some("/run/parent.sock".to_owned()),
+        pid: json!(42),
+        started: json!("Mon 1"),
+        socket: json!("/run/parent.sock"),
     }
 }
 
@@ -43,7 +43,7 @@ fn bootstrap_writes_the_setup_placeholder_once() {
     assert_eq!(run.record.status, RunState::SETUP);
     assert_eq!(run.record.deadline, 0.0);
     assert_eq!(run.record.member_limit, 10);
-    assert_eq!(run.record.coordinator, "parent");
+    assert_eq!(run.record.coordinator.as_deref(), Some("parent"));
     assert_eq!(run.contract.goal, "");
     assert_eq!(run.contract.constraints, json!([]));
     assert_eq!(run.contract.criteria, json!([]));
@@ -52,8 +52,8 @@ fn bootstrap_writes_the_setup_placeholder_once() {
         [MemberRow {
             id: "parent".to_owned(),
             reservation: Some(second),
-            status: "live".to_owned(),
-            pid: Some(42),
+            status: Some("live".to_owned()),
+            pid: json!(42),
             started: Some("Mon 1".to_owned()),
             socket: Some("/run/parent.sock".to_owned()),
             launcher: None,

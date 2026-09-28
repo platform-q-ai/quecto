@@ -63,7 +63,7 @@ impl BootstrapRun {
                 id: member.to_owned(),
                 reservation: self.ids.hex32(),
                 status: MemberState::LIVE,
-                pid: request.pid,
+                pid: request.pid.clone(),
                 started: request.started.clone(),
                 socket: request.socket.clone(),
                 launcher: None,

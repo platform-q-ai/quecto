@@ -31,9 +31,9 @@ fn write_through_every_role(transaction: &dyn BoardTransaction) -> Result<(), Bo
         id: "worker".into(),
         reservation: "w".into(),
         status: MemberState::RESERVED,
-        pid: None,
-        started: None,
-        socket: None,
+        pid: serde_json::Value::Null,
+        started: serde_json::Value::Null,
+        socket: serde_json::Value::Null,
         launcher: Some("parent".into()),
     })?;
     events.event("parent", 1.0, "paused", &json!({}))?;
@@ -44,11 +44,14 @@ fn write_through_every_role(transaction: &dyn BoardTransaction) -> Result<(), Bo
         .expect("the run written through BoardRuns");
     assert_eq!(
         members
-            .claim_counts(Some(&run.coordinator))?
+            .claim_counts(run.coordinator.as_deref())?
             .members_without_claim,
         1
     );
-    assert_eq!(runs.run_id()?.as_deref(), Some("run"));
+    assert_eq!(
+        runs.run_status()?.and_then(|row| row.id).as_deref(),
+        Some("run")
+    );
     assert_eq!(transaction.control_generation()?, 1);
     assert_eq!(transaction.usage()?, 1);
     Ok(())
@@ -84,7 +87,10 @@ fn every_role_shares_one_transaction() {
         .unwrap();
     repository
         .atomic(false, &mut |transaction| {
-            assert_eq!(transaction.run_id()?.as_deref(), Some("run"));
+            assert_eq!(
+                transaction.run_status()?.and_then(|row| row.id).as_deref(),
+                Some("run")
+            );
             assert_eq!(transaction.members()?.len(), 1);
             assert_eq!(transaction.control_generation()?, 1);
             Ok(())

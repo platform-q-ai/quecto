@@ -3,19 +3,26 @@
 //! Python's SQL (`swarm.py`, `swarm_repository.py`) on its connection.
 //!
 //! Every SQLite failure is `coordination store unavailable or contended:
-//! {sqlite3_errmsg}`, as Python's `Store.transaction` reports it. A row
-//! whose columns do not have the types the board writes (only a file edited
-//! outside the board holds one) is refused the same way, with the driver's
-//! conversion error where Python would fail later with its own.
+//! {sqlite3_errmsg}`, as Python's `Store.transaction` reports it.
+//!
+//! Rows are read as Python reads them where the board's own writes or a
+//! file edited outside it leave loose values (#2270 review L5): a NULL
+//! member status or coordinator is `None`, a member's `pid` any storage
+//! class `_bootstrap` bound, and `_status` decodes only the columns it
+//! selects. Any other column holding a type the board never writes, or a
+//! BLOB, is refused the same way as a store failure, with the driver's
+//! conversion error where Python would answer the value (the differential
+//! suite's `outside_edited_columns` divergence).
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::Value;
 
+use super::binding;
 use super::ledger;
 use super::py_json::{self, PyJson};
-use super::store::{BoardStore, TransactionError, contended};
+use super::store::{BoardStore, CONTENDED, TransactionError, contended};
 use crate::application::swarm::dto::{
-    BoardLocation, MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract,
+    BoardLocation, MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunStatusRow,
 };
 use crate::application::swarm::ports::{
     BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork,
@@ -65,9 +72,21 @@ impl BoardRuns for SqliteBoard<'_> {
             .map_err(failed)
     }
 
-    fn run_id(&self) -> Result<Option<String>, BoardError> {
+    fn run_status(&self) -> Result<Option<RunStatusRow>, BoardError> {
         self.connection
-            .query_row("SELECT id FROM run", [], |row| row.get(0))
+            .query_row(
+                "SELECT id, status, deadline, coordinator, outcome FROM run",
+                [],
+                |row| {
+                    Ok(RunStatusRow {
+                        id: row.get("id")?,
+                        status: row.get("status")?,
+                        deadline: cell(row, "deadline")?,
+                        coordinator: row.get("coordinator")?,
+                        outcome: row.get("outcome")?,
+                    })
+                },
+            )
             .optional()
             .map_err(failed)
     }
@@ -127,7 +146,9 @@ impl BoardMembers for SqliteBoard<'_> {
             .query_row("SELECT * FROM members WHERE id=?", [id], |row| {
                 Ok(MemberRecord {
                     id: row.get("id")?,
-                    status: MemberState::new(row.get::<_, String>("status")?),
+                    status: row
+                        .get::<_, Option<String>>("status")?
+                        .map(MemberState::new),
                     reservation: row.get("reservation")?,
                 })
             })
@@ -172,20 +193,25 @@ impl BoardMembers for SqliteBoard<'_> {
     }
 
     fn insert_member(&self, member: &NewMember) -> Result<(), BoardError> {
-        self.connection
-            .execute(
-                "INSERT INTO members(id,reservation,status,pid,started,socket,launcher) VALUES(?,?,?,?,?,?,?)",
-                params![
-                    member.id,
-                    member.reservation,
-                    member.status.as_str(),
-                    member.pid,
-                    member.started,
-                    member.socket,
-                    member.launcher,
-                ],
-            )
-            .map_err(failed)?;
+        let parameters = [
+            SqlValue::Text(member.id.clone()),
+            SqlValue::Text(member.reservation.clone()),
+            SqlValue::Text(member.status.as_str().to_owned()),
+            loose(4, &member.pid)?,
+            loose(5, &member.started)?,
+            loose(6, &member.socket)?,
+            member
+                .launcher
+                .clone()
+                .map_or(SqlValue::Null, SqlValue::Text),
+        ];
+        binding::bound_statement(
+            self.connection,
+            "INSERT INTO members(id,reservation,status,pid,started,socket,launcher) VALUES(?,?,?,?,?,?,?)",
+            &parameters,
+        )
+        .and_then(|mut statement| statement.raw_execute())
+        .map_err(failed)?;
         Ok(())
     }
 }
@@ -216,6 +242,50 @@ impl SqliteBoard<'_> {
     }
 }
 
+/// A member's JSON value bound as Python's `sqlite3` binds it (epic P3):
+/// `True` as 1, a float as REAL, text as TEXT, and the column's affinity
+/// decides what is stored. A value Python cannot bind (a list, an object,
+/// an integer beyond i64) is refused with the store's text and the
+/// parameter's position (the `binding_error_text` divergence).
+fn loose(position: usize, value: &Value) -> Result<SqlValue, BoardError> {
+    PyJson::try_from(value)
+        .map_err(|error| error.to_string())
+        .and_then(|value| binding::bind(&value).map_err(|error| error.to_string()))
+        .map_err(|error| {
+            BoardError(format!(
+                "{CONTENDED}: Error binding parameter {position}: {error}"
+            ))
+        })
+}
+
+/// A column as the JSON value of what it stores: NULL, an INTEGER, a
+/// finite REAL or TEXT. A BLOB, or a REAL JSON cannot write, is a
+/// conversion error.
+fn cell(row: &Row<'_>, name: &str) -> rusqlite::Result<Value> {
+    use rusqlite::types::{FromSqlError, ValueRef};
+    let index = row.as_ref().column_index(name)?;
+    let invalid = |kind: rusqlite::types::Type| {
+        rusqlite::Error::InvalidColumnType(index, name.to_owned(), kind)
+    };
+    match row.get_ref(index)? {
+        ValueRef::Null => Ok(Value::Null),
+        ValueRef::Integer(integer) => Ok(Value::from(integer)),
+        ValueRef::Real(real) => serde_json::Number::from_f64(real)
+            .map(Value::Number)
+            .ok_or_else(|| invalid(rusqlite::types::Type::Real)),
+        ValueRef::Text(text) => std::str::from_utf8(text)
+            .map(|text| Value::String(text.to_owned()))
+            .map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    index,
+                    rusqlite::types::Type::Text,
+                    Box::new(FromSqlError::Other(Box::new(error))),
+                )
+            }),
+        ValueRef::Blob(_) => Err(invalid(rusqlite::types::Type::Blob)),
+    }
+}
+
 fn run_record(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
     Ok(RunRecord {
         status: RunState::new(row.get::<_, String>("status")?),
@@ -232,7 +302,7 @@ fn member_row(row: &Row<'_>) -> rusqlite::Result<MemberRow> {
         id: row.get("id")?,
         reservation: row.get("reservation")?,
         status: row.get("status")?,
-        pid: row.get("pid")?,
+        pid: cell(row, "pid")?,
         started: row.get("started")?,
         socket: row.get("socket")?,
         launcher: row.get("launcher")?,

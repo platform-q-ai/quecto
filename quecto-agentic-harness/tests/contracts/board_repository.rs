@@ -33,9 +33,9 @@ fn an_error_inside_the_work_leaves_no_rows_and_returns_the_refusal() {
             id: "parent".into(),
             reservation: "r".into(),
             status: quecto::domain::swarm::MemberState::LIVE,
-            pid: None,
-            started: None,
-            socket: None,
+            pid: serde_json::Value::Null,
+            started: serde_json::Value::Null,
+            socket: serde_json::Value::Null,
             launcher: None,
         })?;
         transaction.event(

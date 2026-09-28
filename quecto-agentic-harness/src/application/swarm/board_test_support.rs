@@ -1,7 +1,8 @@
-//! In-memory doubles of the board ports for the use-case and gate tests,
-//! in the manner of Python's `MemoryRepository` (`tests/swarm_policy_test.py`):
-//! a transaction works on a copy of the state that replaces it only when
-//! the work succeeds, and every write and id draw is journalled in order.
+//! Test support (compiled only under `cfg(test)`): in-memory doubles of the
+//! board ports for the use-case and gate tests, in the manner of Python's
+//! `MemoryRepository` (`tests/swarm_policy_test.py`): a transaction works
+//! on a copy of the state that replaces it only when the work succeeds, and
+//! every write and id draw is journalled in order.
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -9,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::application::swarm::dto::{
-    MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract,
+    MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunStatusRow,
 };
 use crate::application::swarm::ports::{
     BoardEncoding, BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
@@ -108,8 +109,14 @@ impl BoardRuns for MemoryTransaction<'_> {
             .map(|run| run.record.clone()))
     }
 
-    fn run_id(&self) -> Result<Option<String>, BoardError> {
-        Ok(self.state.borrow().run.as_ref().map(|run| run.id.clone()))
+    fn run_status(&self) -> Result<Option<RunStatusRow>, BoardError> {
+        Ok(self.state.borrow().run.as_ref().map(|run| RunStatusRow {
+            id: Some(run.id.clone()),
+            status: Some(run.record.status.as_str().to_owned()),
+            deadline: Value::from(run.record.deadline),
+            coordinator: run.record.coordinator.clone(),
+            outcome: run.record.outcome.clone(),
+        }))
     }
 
     fn insert_run(&self, run: &NewRun) -> Result<(), BoardError> {
@@ -120,7 +127,7 @@ impl BoardRuns for MemoryTransaction<'_> {
             id: run.id.clone(),
             record: RunRecord {
                 status: run.status.clone(),
-                coordinator: run.coordinator.clone(),
+                coordinator: Some(run.coordinator.clone()),
                 deadline: run.contract.deadline,
                 member_limit: run.contract.member_limit,
                 outcome: None,
@@ -163,7 +170,7 @@ impl BoardMembers for MemoryTransaction<'_> {
             .find(|row| row.id == id)
             .map(|row| MemberRecord {
                 id: row.id.clone(),
-                status: MemberState::new(row.status.clone()),
+                status: row.status.clone().map(MemberState::new),
                 reservation: row.reservation.clone(),
             }))
     }
@@ -190,7 +197,7 @@ impl BoardMembers for MemoryTransaction<'_> {
         let members_without_claim = state
             .members
             .iter()
-            .filter(|row| matches!(row.status.as_str(), "live" | "reserved"))
+            .filter(|row| matches!(row.status.as_deref(), Some("live" | "reserved")))
             .filter(|row| Some(row.id.as_str()) != coordinator)
             .count();
         Ok(MemberClaimCounts {
@@ -210,10 +217,10 @@ impl BoardMembers for MemoryTransaction<'_> {
         state.members.push(MemberRow {
             id: member.id.clone(),
             reservation: Some(member.reservation.clone()),
-            status: member.status.as_str().to_owned(),
-            pid: member.pid,
-            started: member.started.clone(),
-            socket: member.socket.clone(),
+            status: Some(member.status.as_str().to_owned()),
+            pid: integer_affinity(&member.pid),
+            started: text_affinity(&member.started),
+            socket: text_affinity(&member.socket),
             launcher: member.launcher.clone(),
         });
         Ok(())
@@ -248,11 +255,31 @@ impl BoardEvents for MemoryTransaction<'_> {
     }
 }
 
+/// Roughly what an INTEGER column keeps of a bound value: a boolean is its
+/// integer, anything else as given (the SQLite adapter's contract tests
+/// pin the real affinity).
+fn integer_affinity(value: &Value) -> Value {
+    match value {
+        Value::Bool(flag) => Value::from(i64::from(*flag)),
+        other => other.clone(),
+    }
+}
+
+/// Roughly what a TEXT column keeps of a bound value: NULL, or its text.
+fn text_affinity(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::String(text) => Some(text.clone()),
+        Value::Bool(flag) => Some(u8::from(*flag).to_string()),
+        other => Some(other.to_string()),
+    }
+}
+
 fn count(members: &[MemberRow], wanted: impl Fn(&str) -> bool) -> i64 {
     i64::try_from(
         members
             .iter()
-            .filter(|row| wanted(row.status.as_str()))
+            .filter(|row| row.status.as_deref().is_some_and(&wanted))
             .count(),
     )
     .unwrap()
@@ -313,13 +340,47 @@ impl IdSource for CounterIds {
     }
 }
 
-/// Compact JSON: stands in for the board codec, whose exact bytes the
-/// infrastructure's own tests pin.
+/// Stands in for the board codec: sorted keys, compact separators and
+/// `ensure_ascii` escaping, as the real encoder writes them, so a size
+/// bound counts the bytes the board stores (`é` is six). Floats keep
+/// serde's text (`1e16`, where Python writes `1e+16`): the use cases only
+/// measure the encoding, and no test here bounds a float-heavy value.
 pub struct CompactEncoding;
 
 impl BoardEncoding for CompactEncoding {
     fn encode(&self, value: &Value) -> Result<String, BoardError> {
-        Ok(serde_json::to_string(value).unwrap())
+        let compact = serde_json::to_string(&sorted(value)).unwrap();
+        // Outside strings the text is ASCII; inside, each non-ASCII
+        // character becomes its UTF-16 escapes (`\u` and four hex digits).
+        let mut escaped = String::with_capacity(compact.len());
+        for character in compact.chars() {
+            if character.is_ascii() {
+                escaped.push(character);
+            } else {
+                let mut units = [0_u16; 2];
+                for unit in character.encode_utf16(&mut units) {
+                    escaped.push_str(&format!("\\u{unit:04x}"));
+                }
+            }
+        }
+        Ok(escaped)
+    }
+}
+
+/// `value` with every object's keys in code-point order.
+fn sorted(value: &Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
+        Value::Object(entries) => {
+            let mut keys: Vec<&String> = entries.keys().collect();
+            keys.sort();
+            Value::Object(
+                keys.into_iter()
+                    .map(|key| (key.clone(), sorted(&entries[key])))
+                    .collect(),
+            )
+        }
+        other => other.clone(),
     }
 }
 
@@ -330,7 +391,7 @@ pub fn running_board(deadline: f64) -> BoardState {
             id: "run-1".to_owned(),
             record: RunRecord {
                 status: RunState::RUNNING,
-                coordinator: "parent".to_owned(),
+                coordinator: Some("parent".to_owned()),
                 deadline,
                 member_limit: 2,
                 outcome: None,
@@ -353,8 +414,8 @@ pub fn member_row(id: &str, status: &str) -> MemberRow {
     MemberRow {
         id: id.to_owned(),
         reservation: Some(format!("{id}-reservation")),
-        status: status.to_owned(),
-        pid: None,
+        status: Some(status.to_owned()),
+        pid: Value::Null,
         started: None,
         socket: None,
         launcher: None,

@@ -205,7 +205,7 @@ fn integer_beyond_u64_is_a_float() {
     };
     assert_eq!(
         serde_json::to_string(&snapshot["members"][0]["pid"]).unwrap(),
-        "1.8446744073709552e19"
+        "1.8446744073709552e+19"
     );
 }
 

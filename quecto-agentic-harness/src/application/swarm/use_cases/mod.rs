@@ -11,6 +11,3 @@ pub use bootstrap_run::BootstrapRun;
 pub use create_run::CreateRun;
 pub use read_run_snapshot::ReadRunSnapshot;
 pub use read_run_status::ReadRunStatus;
-
-#[cfg(test)]
-pub(crate) mod fakes;

@@ -10,23 +10,28 @@
 //!
 //! The dispatcher holds composed handles only ([`SwarmBoardHandles`], built
 //! by `composition::swarm`): it never constructs a use case or an adapter,
-//! and never sequences two use cases. This slice serves `_status`,
-//! `_snapshot` and the test-only `create_run` and `bootstrap_run` (the
-//! transactional halves of `create` and `_bootstrap`); later slices add
-//! methods, and S13 wires it into `SwarmContext`.
+//! and never sequences two use cases. This slice serves `_status` and
+//! `_snapshot`; later slices add methods, and S13 wires it into
+//! `SwarmContext`. `create_run` and `bootstrap_run` (the transactional
+//! halves of `create` and `_bootstrap`, which the differential harness
+//! drives) exist only in `test` and `test-support` builds: a production
+//! build parses neither name and refuses both as unknown methods.
 //!
 //! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] with the
-//! method, the (redacted) member id, the outcome, the decision taken and
-//! the duration: ids, kinds and durations only, never argument text.
+//! method, the member id, the outcome, the decision taken and the
+//! duration: ids, kinds and durations only, never argument text. The
+//! member id is the board identity the harness assigned the caller (the
+//! `members.id` every board row names), not a secret; it is still passed
+//! through [`Redacted`] so an id shaped like a credential is masked in the
+//! log, as every telemetry field that carries caller-chosen text is.
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 
-use crate::application::swarm::dto::{
-    BootstrapRunRequest, CreateBranch, CreateRunRequest, MemberRow, RunSnapshotView, RunStatusView,
-    StatusDeadline,
-};
+#[cfg(any(test, feature = "test-support"))]
+use crate::application::swarm::dto::{BootstrapRunRequest, CreateBranch, CreateRunRequest};
+use crate::application::swarm::dto::{MemberRow, RunSnapshotView, RunStatusView};
 use crate::application::swarm::use_cases::{
     BootstrapRun, CreateRun, ReadRunSnapshot, ReadRunStatus,
 };
@@ -36,7 +41,9 @@ use crate::domain::swarm::BoardError;
 /// The `tracing` target of every board call record.
 pub const TELEMETRY_TARGET: &str = "quecto::swarm_board";
 
-/// One handle per board use case, composed once per board file.
+/// One handle per board use case, composed once per board file. The
+/// `create_run` and `bootstrap_run` handles are served only in test builds
+/// (see the module docs); later slices' methods reach them otherwise.
 #[derive(Clone)]
 pub struct SwarmBoardHandles {
     pub create_run: Arc<CreateRun>,
@@ -58,7 +65,9 @@ impl std::fmt::Debug for SwarmBoardHandles {
 enum Method {
     Status,
     Snapshot,
+    #[cfg(any(test, feature = "test-support"))]
     CreateRun,
+    #[cfg(any(test, feature = "test-support"))]
     BootstrapRun,
 }
 
@@ -69,6 +78,7 @@ struct Parameter {
     default: Option<fn() -> Value>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 const fn required(name: &'static str) -> Parameter {
     Parameter {
         name,
@@ -81,7 +91,9 @@ impl Method {
         match name {
             "_status" => Some(Self::Status),
             "_snapshot" => Some(Self::Snapshot),
+            #[cfg(any(test, feature = "test-support"))]
             "create_run" => Some(Self::CreateRun),
+            #[cfg(any(test, feature = "test-support"))]
             "bootstrap_run" => Some(Self::BootstrapRun),
             _ => None,
         }
@@ -91,26 +103,21 @@ impl Method {
         match self {
             Self::Status => "_status",
             Self::Snapshot => "_snapshot",
+            #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => "create_run",
+            #[cfg(any(test, feature = "test-support"))]
             Self::BootstrapRun => "bootstrap_run",
         }
     }
 
     /// The Python signature, `self` left out.
     fn parameters(self) -> &'static [Parameter] {
-        const CREATE: [Parameter; 5] = [
-            required("goal"),
-            required("constraints"),
-            required("criteria"),
-            required("member_limit"),
-            required("deadline"),
-        ];
-        const BOOTSTRAP: [Parameter; 3] =
-            [required("pid"), required("started"), required("socket")];
         match self {
             Self::Status | Self::Snapshot => &[],
-            Self::CreateRun => &CREATE,
-            Self::BootstrapRun => &BOOTSTRAP,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::CreateRun => &test_only::CREATE,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::BootstrapRun => &test_only::BOOTSTRAP,
         }
     }
 }
@@ -235,108 +242,121 @@ fn serve(
     );
     match method {
         Method::Status => Ok(Served {
-            value: status(handles.read_run_status.execute()?)?,
+            value: status(handles.read_run_status.execute()?),
             decision: "read",
         }),
         Method::Snapshot => Ok(Served {
             value: snapshot(handles.read_run_snapshot.execute(member)?)?,
             decision: "read",
         }),
-        Method::CreateRun => {
-            let [goal, constraints, criteria, member_limit, deadline] = take(arguments)?;
-            let created = handles.create_run.execute(CreateRunRequest {
-                member: member.to_owned(),
-                goal,
-                constraints,
-                criteria,
-                member_limit,
-                deadline,
-            })?;
-            Ok(Served {
-                value: Value::Null,
-                decision: match created.branch {
-                    CreateBranch::Fresh => "fresh",
-                    CreateBranch::OverSetup => "over_setup",
-                },
-            })
-        }
-        Method::BootstrapRun => {
-            let [pid, started, socket] = take(arguments)?;
-            let bootstrapped = handles.bootstrap_run.execute(BootstrapRunRequest {
-                member: member.to_owned(),
-                pid: optional_integer(method, "pid", pid)?,
-                started: optional_text(method, "started", started)?,
-                socket: optional_text(method, "socket", socket)?,
-            })?;
-            Ok(Served {
-                value: Value::Null,
-                decision: if bootstrapped.created {
-                    "created"
-                } else {
-                    "existing"
-                },
-            })
-        }
+        #[cfg(any(test, feature = "test-support"))]
+        Method::CreateRun => test_only::create_run(handles, member, arguments),
+        #[cfg(any(test, feature = "test-support"))]
+        Method::BootstrapRun => test_only::bootstrap_run(handles, member, arguments),
     }
 }
 
-/// The bound arguments as an array of the signature's length.
-fn take<const N: usize>(arguments: Vec<Value>) -> Result<[Value; N], BoardError> {
-    arguments
-        .try_into()
-        .map_err(|_| BoardError::new("swarm board bound the wrong number of arguments"))
-}
+/// The test-only methods: their signatures and their serving.
+#[cfg(any(test, feature = "test-support"))]
+mod test_only {
+    use serde_json::Value;
 
-fn optional_integer(method: Method, name: &str, value: Value) -> Result<Option<i64>, BoardError> {
-    match value {
-        Value::Null => Ok(None),
-        Value::Number(number) if number.is_i64() => Ok(number.as_i64()),
-        _ => Err(BoardError::new(format!(
-            "{}: {name} must be an integer or null",
-            method.name()
-        ))),
-    }
-}
-
-fn optional_text(method: Method, name: &str, value: Value) -> Result<Option<String>, BoardError> {
-    match value {
-        Value::Null => Ok(None),
-        Value::String(text) => Ok(Some(text)),
-        _ => Err(BoardError::new(format!(
-            "{}: {name} must be a string or null",
-            method.name()
-        ))),
-    }
-}
-
-/// `_status`'s dict: the counts, then the run's fields.
-fn status(view: RunStatusView) -> Result<Value, BoardError> {
-    let deadline = match view.deadline {
-        StatusDeadline::NoRun => Value::from(0),
-        StatusDeadline::Stored(deadline) => float(deadline)?,
+    use super::{
+        BootstrapRunRequest, CreateBranch, CreateRunRequest, Parameter, Served, SwarmBoardHandles,
+        required,
     };
-    Ok(object([
+    use crate::domain::swarm::BoardError;
+
+    pub(super) const CREATE: [Parameter; 5] = [
+        required("goal"),
+        required("constraints"),
+        required("criteria"),
+        required("member_limit"),
+        required("deadline"),
+    ];
+    pub(super) const BOOTSTRAP: [Parameter; 3] =
+        [required("pid"), required("started"), required("socket")];
+
+    pub(super) fn create_run(
+        handles: &SwarmBoardHandles,
+        member: &str,
+        arguments: Vec<Value>,
+    ) -> Result<Served, BoardError> {
+        let [goal, constraints, criteria, member_limit, deadline] = take(arguments)?;
+        let created = handles.create_run.execute(CreateRunRequest {
+            member: member.to_owned(),
+            goal,
+            constraints,
+            criteria,
+            member_limit,
+            deadline,
+        })?;
+        Ok(Served {
+            value: Value::Null,
+            decision: match created.branch {
+                CreateBranch::Fresh => "fresh",
+                CreateBranch::OverSetup => "over_setup",
+            },
+        })
+    }
+
+    /// The three values reach the store as the member passed them: Python
+    /// binds them untyped (epic P3), so a type is never refused here.
+    pub(super) fn bootstrap_run(
+        handles: &SwarmBoardHandles,
+        member: &str,
+        arguments: Vec<Value>,
+    ) -> Result<Served, BoardError> {
+        let [pid, started, socket] = take(arguments)?;
+        let bootstrapped = handles.bootstrap_run.execute(BootstrapRunRequest {
+            member: member.to_owned(),
+            pid,
+            started,
+            socket,
+        })?;
+        Ok(Served {
+            value: Value::Null,
+            decision: if bootstrapped.created {
+                "created"
+            } else {
+                "existing"
+            },
+        })
+    }
+
+    /// The bound arguments as an array of the signature's length.
+    fn take<const N: usize>(arguments: Vec<Value>) -> Result<[Value; N], BoardError> {
+        arguments
+            .try_into()
+            .map_err(|_| BoardError::new("swarm board bound the wrong number of arguments"))
+    }
+}
+
+/// `_status`'s dict: the counts, then the run's fields as stored.
+fn status(view: RunStatusView) -> Value {
+    let text = |value: Option<String>| value.map_or(Value::Null, Value::String);
+    object([
         (
             "members_without_claim",
             Value::from(view.counts.members_without_claim),
         ),
         ("members_dead", Value::from(view.counts.members_dead)),
-        ("id", view.id.map_or(Value::Null, Value::String)),
-        ("status", Value::String(view.status)),
-        ("deadline", deadline),
-        (
-            "coordinator",
-            view.coordinator.map_or(Value::Null, Value::String),
-        ),
-        ("outcome", view.outcome.map_or(Value::Null, Value::String)),
-    ]))
+        ("id", text(view.id)),
+        ("status", text(view.status)),
+        ("deadline", view.deadline),
+        ("coordinator", text(view.coordinator)),
+        ("outcome", text(view.outcome)),
+    ])
 }
 
 /// `_snapshot`'s dict, with each member row as `dict(row)`.
 fn snapshot(view: RunSnapshotView) -> Result<Value, BoardError> {
     Ok(object([
         ("status", Value::String(view.status)),
-        ("coordinator", Value::String(view.coordinator)),
+        (
+            "coordinator",
+            view.coordinator.map_or(Value::Null, Value::String),
+        ),
         ("outcome", view.outcome.map_or(Value::Null, Value::String)),
         ("control_generation", Value::from(view.control_generation)),
         ("deadline", float(view.deadline)?),
@@ -352,8 +372,8 @@ fn member_row(row: MemberRow) -> Value {
     object([
         ("id", Value::String(row.id)),
         ("reservation", text(row.reservation)),
-        ("status", Value::String(row.status)),
-        ("pid", row.pid.map_or(Value::Null, Value::from)),
+        ("status", text(row.status)),
+        ("pid", row.pid),
         ("started", text(row.started)),
         ("socket", text(row.socket)),
         ("launcher", text(row.launcher)),

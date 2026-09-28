@@ -9,7 +9,7 @@ use std::pin::Pin;
 
 use serde_json::Value;
 
-use super::dto::{MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract};
+use super::dto::{MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunStatusRow};
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
     BoardError, Member, MemberExit, MemberRecord, ProcessIdentity, RunControlAction,
@@ -138,8 +138,9 @@ pub trait SwarmRunControl: Send + Sync {
 pub trait BoardRuns {
     /// The run, when the store holds one.
     fn run(&self) -> Result<Option<RunRecord>, BoardError>;
-    /// The run's id, when the store holds a run.
-    fn run_id(&self) -> Result<Option<String>, BoardError>;
+    /// The columns `_status` reads, as stored, when the store holds a run:
+    /// only those, so a column it does not read is never decoded.
+    fn run_status(&self) -> Result<Option<RunStatusRow>, BoardError>;
     fn insert_run(&self, run: &NewRun) -> Result<(), BoardError>;
     /// `create` over the setup placeholder: the new contract, and the run
     /// is running.

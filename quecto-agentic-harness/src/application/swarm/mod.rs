@@ -6,6 +6,8 @@ use crate::domain::error::DomainError;
 use crate::domain::swarm::{Member, MemberExit, MemberStatus, Snapshot};
 
 mod board_operation;
+#[cfg(test)]
+pub(crate) mod board_test_support;
 pub mod dto;
 pub mod ports;
 pub mod use_cases;

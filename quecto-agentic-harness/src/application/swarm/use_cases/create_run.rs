@@ -162,9 +162,9 @@ impl CreateRun {
             id: member.to_owned(),
             reservation: self.ids.hex32(),
             status: MemberState::LIVE,
-            pid: None,
-            started: None,
-            socket: None,
+            pid: Value::Null,
+            started: Value::Null,
+            socket: Value::Null,
             launcher: None,
         })
     }
@@ -178,8 +178,8 @@ fn take_over_setup(
     existing: &RunRecord,
     contract: &RunContract,
 ) -> Result<(), BoardError> {
-    let placeholder =
-        existing.status.as_str() == RunState::SETUP.as_str() && existing.coordinator == member;
+    let placeholder = existing.status.as_str() == RunState::SETUP.as_str()
+        && existing.coordinator.as_deref() == Some(member);
     if !placeholder {
         return Err(BoardError::new(
             "only the setup coordinator can create this run; existing runs cannot be reset",

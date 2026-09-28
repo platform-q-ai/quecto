@@ -1,5 +1,5 @@
 use super::ReadRunSnapshot;
-use crate::application::swarm::use_cases::fakes::{
+use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board,
 };
 use crate::domain::swarm::BoardError;
@@ -14,7 +14,7 @@ fn snapshot_reads_the_run_and_every_member_through_the_gate() {
         .execute("worker")
         .unwrap();
     assert_eq!(snapshot.status, "running");
-    assert_eq!(snapshot.coordinator, "parent");
+    assert_eq!(snapshot.coordinator.as_deref(), Some("parent"));
     assert_eq!(snapshot.outcome, None);
     assert_eq!(snapshot.control_generation, 0);
     assert_eq!(snapshot.deadline, 100.0);

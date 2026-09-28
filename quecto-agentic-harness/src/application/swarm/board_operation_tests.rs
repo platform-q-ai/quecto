@@ -1,10 +1,10 @@
 use serde_json::json;
 
 use super::{atomic, end, operation};
-use crate::application::swarm::ports::BoardRepository;
-use crate::application::swarm::use_cases::fakes::{
+use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, running_board,
 };
+use crate::application::swarm::ports::BoardRepository;
 use crate::domain::swarm::{Access, BoardError, RunState};
 
 const PAUSED_BY_DEADLINE: &str =

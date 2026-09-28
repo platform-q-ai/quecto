@@ -1455,7 +1455,7 @@ fn application_path_allowed(path: &str) -> bool {
             | "RunContract"
             | "RunSnapshotView"
             | "RunStatusView"
-            | "StatusDeadline",
+            | "RunStatusRow",
         ] => true,
         ["crate", "application", ..] => false,
         // Every other crate path must start at a layer infrastructure

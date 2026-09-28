@@ -37,12 +37,15 @@ pub struct CreatedRun {
 
 /// The first half of `Workbench._bootstrap(pid, started, socket)` as
 /// `member`: the container's placeholder run and the member's live row.
+/// The three values stay the JSON the member passed: Python binds them to
+/// the row as they are (`True` as 1, and the column's affinity decides the
+/// rest, epic P3), so the store binds them the same way.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BootstrapRunRequest {
     pub member: String,
-    pub pid: Option<i64>,
-    pub started: Option<String>,
-    pub socket: Option<String>,
+    pub pid: Value,
+    pub started: Value,
+    pub socket: Value,
 }
 
 /// Whether the bootstrap wrote the placeholder (`false`: a run existed).
@@ -61,12 +64,18 @@ pub struct MemberClaimCounts {
     pub members_dead: i64,
 }
 
-/// `_status`'s deadline: the run's, or the placeholder Python reports as
-/// the integer `0` when the store holds no run.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum StatusDeadline {
-    NoRun,
-    Stored(f64),
+/// The `run` columns `Workbench._status` selects (`id, status, deadline,
+/// coordinator, outcome`), each as stored: a column the board never leaves
+/// empty may still be NULL in a file edited outside it, and Python reads
+/// that as `None`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunStatusRow {
+    pub id: Option<String>,
+    pub status: Option<String>,
+    /// A REAL as the board writes it; any other storage class as stored.
+    pub deadline: Value,
+    pub coordinator: Option<String>,
+    pub outcome: Option<String>,
 }
 
 /// `Workbench._status()`: membership-free, whether a run was created.
@@ -75,8 +84,9 @@ pub struct RunStatusView {
     pub counts: MemberClaimCounts,
     pub id: Option<String>,
     /// `setup` when the store holds no run.
-    pub status: String,
-    pub deadline: StatusDeadline,
+    pub status: Option<String>,
+    /// The integer `0` when the store holds no run.
+    pub deadline: Value,
     pub coordinator: Option<String>,
     pub outcome: Option<String>,
 }
@@ -86,8 +96,11 @@ pub struct RunStatusView {
 pub struct MemberRow {
     pub id: String,
     pub reservation: Option<String>,
-    pub status: String,
-    pub pid: Option<i64>,
+    /// `None` only in a file edited outside the board.
+    pub status: Option<String>,
+    /// As stored: `_bootstrap` binds the pid the member passed, so an
+    /// INTEGER, a REAL or TEXT (epic P3), or NULL.
+    pub pid: Value,
     pub started: Option<String>,
     pub socket: Option<String>,
     pub launcher: Option<String>,
@@ -97,7 +110,7 @@ pub struct MemberRow {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunSnapshotView {
     pub status: String,
-    pub coordinator: String,
+    pub coordinator: Option<String>,
     pub outcome: Option<String>,
     /// The id of the latest `paused` or `resumed` event, `0` for none.
     pub control_generation: i64,
@@ -134,9 +147,11 @@ pub struct NewMember {
     pub id: String,
     pub reservation: String,
     pub status: MemberState,
-    pub pid: Option<i64>,
-    pub started: Option<String>,
-    pub socket: Option<String>,
+    /// The JSON values bound as Python's `sqlite3` binds them (NULL for
+    /// `create`'s row; `_bootstrap`'s as the member passed them).
+    pub pid: Value,
+    pub started: Value,
+    pub socket: Value,
     /// The harness that reserved the member (#1961); `None` for a member
     /// that joined by creating or bootstrapping the run.
     pub launcher: Option<String>,

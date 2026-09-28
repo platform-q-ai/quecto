@@ -3,11 +3,11 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use super::CreateRun;
-use crate::application::swarm::dto::{CreateBranch, CreateRunRequest};
-use crate::application::swarm::ports::BoardEncoding;
-use crate::application::swarm::use_cases::fakes::{
+use crate::application::swarm::board_test_support::{
     BoardState, CompactEncoding, CounterIds, MemoryBoard, SteppingClock, member_row, running_board,
 };
+use crate::application::swarm::dto::{CreateBranch, CreateRunRequest};
+use crate::application::swarm::ports::BoardEncoding;
 use crate::domain::swarm::{BoardError, RunState};
 
 const NOW: f64 = 1_000.0;
@@ -215,10 +215,10 @@ fn create_draws_run_id_before_reservation() {
     let run = state.run.unwrap();
     assert_eq!(run.id, first);
     assert_eq!(run.record.status, RunState::RUNNING);
-    assert_eq!(run.record.coordinator, "parent");
+    assert_eq!(run.record.coordinator.as_deref(), Some("parent"));
     assert_eq!(run.record.member_limit, 3);
     assert_eq!(state.members.len(), 1);
-    assert_eq!(state.members[0].status, "live");
+    assert_eq!(state.members[0].status.as_deref(), Some("live"));
     assert_eq!(
         state.members[0].reservation.as_deref(),
         Some(second.as_str())
@@ -348,5 +348,5 @@ fn constraints_are_bounded_on_their_ascii_escaped_encoding() {
     let encoded = CompactEncoding
         .encode(&json!({"b": ["é😀"], "a": 1}))
         .unwrap();
-    assert_eq!(encoded, r#"{"a":1,"b":["é😀"]}"#);
+    assert_eq!(encoded, r#"{"a":1,"b":["\u00e9\ud83d\ude00"]}"#);
 }

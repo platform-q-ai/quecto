@@ -5,7 +5,9 @@
 use serde_json::Value;
 
 use super::BoardError;
-use super::records::{Criterion, EvidenceRow, MemberRecord, RunRecord, RunState, TaskRecord};
+use super::records::{
+    Criterion, EvidenceRow, MemberRecord, MemberState, RunRecord, RunState, TaskRecord,
+};
 use super::validation::has_content;
 
 /// Outcomes a coordinator may propose. Each ends the run as a resumable
@@ -56,7 +58,8 @@ pub fn authorize(
     let Some(run) = run else {
         return Err(BoardError::new("coordination run missing"));
     };
-    if access.coordinator && run.coordinator != actor {
+    let designated = run.coordinator.as_deref() == Some(actor);
+    if access.coordinator && !designated {
         return Err(BoardError::new(
             "only the designated coordinator may do this",
         ));
@@ -77,7 +80,10 @@ pub fn authorize(
 
 /// A member whose death is not confirmed: admitted or launched.
 fn alive(member: &MemberRecord) -> bool {
-    matches!(member.status.as_str(), "live" | "reserved")
+    matches!(
+        member.status.as_ref().map(MemberState::as_str),
+        Some("live" | "reserved")
+    )
 }
 
 /// A running run whose deadline has come (a deadline equal to `now` has).

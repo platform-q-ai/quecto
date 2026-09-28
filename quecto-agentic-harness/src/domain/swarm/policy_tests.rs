@@ -7,7 +7,7 @@ use crate::domain::swarm::records::{CriterionKind, MemberState, RunState, TaskSt
 fn run(status: RunState) -> RunRecord {
     RunRecord {
         status,
-        coordinator: "parent".into(),
+        coordinator: Some("parent".into()),
         deadline: 100.0,
         member_limit: 2,
         outcome: None,
@@ -22,7 +22,7 @@ fn running() -> RunRecord {
 fn member(id: &str, status: MemberState, reservation: &str) -> MemberRecord {
     MemberRecord {
         id: id.into(),
-        status,
+        status: Some(status),
         reservation: Some(reservation.into()),
     }
 }
@@ -653,7 +653,7 @@ fn admission_retries_a_null_reservation_idempotently() {
     // Python compares `None == None`: a retry without a reservation is idempotent.
     let unreserved = MemberRecord {
         id: "worker".into(),
-        status: MemberState::LIVE,
+        status: Some(MemberState::LIVE),
         reservation: None,
     };
     assert_eq!(
@@ -676,4 +676,46 @@ fn admission_retries_a_null_reservation_idempotently() {
         "member identity already used; choose a stable new identity"
     );
     assert_eq!(admission(&running(), None, None, 1, 50.0), Ok(true));
+}
+
+/// Rows edited outside the board (#2270 review L5): a run with no
+/// coordinator is nobody's to coordinate, as Python's `None != actor`, and
+/// a member with no status still reads, as Python's `None == 'dead'` is
+/// false.
+#[test]
+fn a_missing_coordinator_or_member_status_authorises_as_python_does() {
+    let orphan = RunRecord {
+        coordinator: None,
+        ..running()
+    };
+    let coordinating = Access {
+        coordinator: true,
+        ..Access::default()
+    };
+    let parent = member("parent", MemberState::LIVE, "r");
+    assert_eq!(
+        message(authorize(
+            Some(&orphan),
+            "parent",
+            Some(&parent),
+            coordinating
+        )),
+        "only the designated coordinator may do this"
+    );
+    assert_eq!(
+        authorize(Some(&orphan), "parent", Some(&parent), Access::default()),
+        Ok(())
+    );
+    let unknown = MemberRecord {
+        status: None,
+        ..parent
+    };
+    let reading = Access {
+        read_only: true,
+        ..Access::default()
+    };
+    assert_eq!(
+        authorize(Some(&running()), "parent", Some(&unknown), reading),
+        Ok(())
+    );
 }

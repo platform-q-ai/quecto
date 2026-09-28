@@ -1,7 +1,7 @@
 //! `BoardRuns` on the SQLite adapter (#2270): the `run` row as Python's
 //! board writes it — the contract's JSON through the board's `encode()`,
 //! the deadline a REAL, the status text.
-use quecto::application::swarm::dto::{BoardLocation, NewRun, RunContract};
+use quecto::application::swarm::dto::{BoardLocation, NewRun, RunContract, RunStatusRow};
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
 use quecto::domain::swarm::{BoardError, RunState};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
@@ -41,7 +41,7 @@ fn a_run_is_inserted_read_updated_and_paused() {
     let (dir, repository) = board();
     within(&repository, true, |transaction| {
         assert!(transaction.run()?.is_none());
-        assert!(transaction.run_id()?.is_none());
+        assert!(transaction.run_status()?.is_none());
         transaction.insert_run(&NewRun {
             id: "abc".into(),
             contract: contract("first", 0.0),
@@ -53,10 +53,19 @@ fn a_run_is_inserted_read_updated_and_paused() {
     within(&repository, false, |transaction| {
         let run = transaction.run()?.unwrap();
         assert_eq!(run.status, RunState::SETUP);
-        assert_eq!(run.coordinator, "parent");
+        assert_eq!(run.coordinator.as_deref(), Some("parent"));
         assert_eq!((run.deadline, run.member_limit), (0.0, 4));
         assert_eq!((run.outcome, run.outcome_reason), (None, None));
-        assert_eq!(transaction.run_id()?.as_deref(), Some("abc"));
+        assert_eq!(
+            transaction.run_status()?,
+            Some(RunStatusRow {
+                id: Some("abc".into()),
+                status: Some("setup".into()),
+                deadline: json!(0.0),
+                coordinator: Some("parent".into()),
+                outcome: None,
+            })
+        );
         transaction.update_run_contract(&contract("second", 99.5))
     });
     within(&repository, false, |transaction| {
@@ -64,7 +73,7 @@ fn a_run_is_inserted_read_updated_and_paused() {
         assert_eq!(run.status, RunState::RUNNING, "the contract starts the run");
         assert_eq!(run.deadline, 99.5);
         assert_eq!(
-            transaction.run_id()?.as_deref(),
+            transaction.run_status()?.and_then(|row| row.id).as_deref(),
             Some("abc"),
             "the id is kept"
         );
@@ -104,4 +113,65 @@ fn a_run_is_inserted_read_updated_and_paused() {
             "parent".to_owned(),
         )
     );
+}
+
+/// Rows edited outside the board (#2270 review L5): `run()` reads a NULL
+/// coordinator as `None`; `run_status()` reads only `_status`'s columns,
+/// each as stored, so a column it does not select never refuses it; a
+/// column `run()` needs holding a type the board never writes is a store
+/// refusal (the `outside_edited_columns` divergence).
+#[test]
+fn loosely_typed_run_columns_read_as_stored() {
+    let (dir, repository) = board();
+    within(&repository, true, |transaction| {
+        transaction.insert_run(&NewRun {
+            id: "abc".into(),
+            contract: contract("first", 0.0),
+            coordinator: "parent".into(),
+            integrator: "parent".into(),
+            status: RunState::SETUP,
+        })
+    });
+    let edit = |sql: &str| {
+        rusqlite::Connection::open(dir.path().join("swarm.sqlite"))
+            .unwrap()
+            .execute_batch(sql)
+            .unwrap();
+    };
+    edit("UPDATE run SET coordinator=NULL, member_limit=4");
+    within(&repository, false, |transaction| {
+        assert_eq!(transaction.run()?.unwrap().coordinator, None);
+        Ok(())
+    });
+    edit("UPDATE run SET member_limit='many', status=NULL, deadline='soon', outcome=4");
+    within(&repository, false, |transaction| {
+        assert_eq!(
+            transaction.run_status()?,
+            Some(RunStatusRow {
+                id: Some("abc".into()),
+                status: None,
+                deadline: json!("soon"),
+                coordinator: None,
+                outcome: Some("4".into()),
+            })
+        );
+        let refused = transaction.run().unwrap_err();
+        assert!(
+            refused
+                .0
+                .starts_with("coordination store unavailable or contended: "),
+            "{refused}"
+        );
+        Ok(())
+    });
+    for (deadline, expected) in [("7", json!(7.0)), ("x'00'", json!(null))] {
+        edit(&format!("UPDATE run SET deadline={deadline}"));
+        let read = repository.atomic(false, &mut |transaction| {
+            let row = transaction.run_status()?.unwrap();
+            assert_eq!(row.deadline, expected, "{deadline}");
+            Ok(())
+        });
+        // A BLOB is no JSON value: refused.
+        assert_eq!(read.is_ok(), deadline == "7", "{deadline}: {read:?}");
+    }
 }

@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::SqliteBoardRepository;
 use crate::application::swarm::dto::{BoardLocation, MemberClaimCounts, NewMember};
@@ -27,9 +27,9 @@ fn member(id: &str, status: MemberState) -> NewMember {
         id: id.to_owned(),
         reservation: format!("{id}-r"),
         status,
-        pid: None,
-        started: None,
-        socket: None,
+        pid: Value::Null,
+        started: Value::Null,
+        socket: Value::Null,
         launcher: None,
     }
 }

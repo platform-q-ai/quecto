@@ -9,6 +9,6 @@ pub mod run;
 pub use location::BoardLocation;
 pub use run::{
     BootstrapRunRequest, Bootstrapped, CreateBranch, CreateRunRequest, CreatedRun,
-    MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunSnapshotView, RunStatusView,
-    StatusDeadline,
+    MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunSnapshotView, RunStatusRow,
+    RunStatusView,
 };
