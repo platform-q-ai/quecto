@@ -20,6 +20,7 @@ mod environment_retention_owner_end_tests;
 mod environment_retention_tests;
 pub mod error;
 pub mod extension_tool;
+pub mod external_agent;
 pub mod harness_lifetime;
 pub mod html_text;
 pub mod ids;
