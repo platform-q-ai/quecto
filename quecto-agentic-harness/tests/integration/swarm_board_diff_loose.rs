@@ -42,11 +42,20 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
 ///   (and so Python there) write with fewer.
-pub const PERMITTED_DIVERGENCES: [&str; 4] = [
+/// - `unknown_member_status_is_not_alive` (owner decision in #2295, pinned
+///   by `domain::swarm::policy_tests`): Python's `authorize` and
+///   `admission` refuse only a member whose status is `'dead'`, so an
+///   unknown or NULL status counts as alive there; Rust accepts only
+///   `live` or `reserved` (an affirmative guard), so such a member may
+///   read but not mutate, and is not an idempotent admission retry. No
+///   method this slice serves reaches it: `_snapshot` reads, and the
+///   `bootstrap_run` driver alias skips `_join`.
+pub const PERMITTED_DIVERGENCES: [&str; 5] = [
     "integer_beyond_i64_is_refused",
     "integer_beyond_u64_is_a_float",
     "outside_edited_columns",
     "real_to_text_digits",
+    "unknown_member_status_is_not_alive",
 ];
 
 /// `bootstrap_run` with `args` on a fresh board, then the snapshot that
