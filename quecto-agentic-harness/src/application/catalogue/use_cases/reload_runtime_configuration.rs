@@ -118,7 +118,7 @@ impl ReloadRuntimeConfiguration {
             crate::application::tools::unmatched_policy::split_unmatched_policy_entries(unmatched)
                 .unknown;
         for stable_id in &unknown_policy_tools {
-            tracing::warn!(target: "reload", stable_id = %stable_id, "tools.policy.entries names no tool; the entry never applies");
+            tracing::warn!(target: "reload", stable_id = %crate::domain::tool_policy_catalogue::shown_entry_id(stable_id), "tools.policy.entries names no tool; the entry never applies");
         }
         ReloadOutcome::Reloaded {
             unknown_policy_tools,

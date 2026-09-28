@@ -92,3 +92,17 @@ fn an_unset_removes_an_entry_whatever_its_key() {
         json!({"tools":{"policy":{"entries":{}}}})
     );
 }
+
+/// #2247 review: the refusal echoes the key bounded and escaped.
+#[test]
+fn a_refused_entry_key_is_echoed_bounded_and_escaped() {
+    let entry_id = format!("x\n\x1b[2J{}", "y".repeat(100 * 1024));
+    let message = ConfigPatchError::InvalidPolicyEntryId { entry_id }.to_string();
+    assert!(
+        !message.contains('\n') && !message.contains('\x1b'),
+        "{message}"
+    );
+    assert!(message.len() < 1024, "{}", message.len());
+    assert!(message.starts_with("`x\\n\\u{1b}[2Jyyy"), "{message}");
+    assert!(message.contains("…`"), "{message}");
+}

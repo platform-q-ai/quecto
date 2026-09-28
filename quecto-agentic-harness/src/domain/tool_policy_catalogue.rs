@@ -69,11 +69,38 @@ pub fn classify_unmatched_policy_entry(stable_id: &str) -> UnmatchedPolicyEntry 
 }
 
 /// The warning for one unknown entry (a typo), without a severity prefix:
-/// every entrypoint and a reload's reply word it the same.
+/// every entrypoint and a reload's reply word it the same. The key is shown
+/// bounded and escaped ([`shown_entry_id`]).
 pub fn unknown_policy_entry_warning(stable_id: &str) -> String {
     format!(
-        "tools.policy: no tool has stable id '{stable_id}', so its entry never applies; fix or remove it under tools.policy.entries"
+        "tools.policy: no tool has stable id '{}', so its entry never applies; fix or remove it under tools.policy.entries",
+        shown_entry_id(stable_id)
     )
+}
+
+/// The most bytes of an entry key [`shown_entry_id`] echoes.
+pub const SHOWN_ENTRY_ID_MAX_BYTES: usize = 128;
+
+/// A policy entry key as a message or a log may echo it (#2247 review): the
+/// key is whatever a file or a key path supplied. Printable ASCII is shown
+/// as is; every other character is escaped (`\n`, `\u{1b}`), so nothing
+/// reaches a terminal raw; the result is cut at
+/// [`SHOWN_ENTRY_ID_MAX_BYTES`] on a character boundary, marked `…`.
+pub fn shown_entry_id(raw: &str) -> String {
+    let mut shown = String::new();
+    for ch in raw.chars() {
+        let piece = match ch {
+            ' '..='~' => ch.to_string(),
+            other => other.escape_default().to_string(),
+        };
+        if shown.len() + piece.len() > SHOWN_ENTRY_ID_MAX_BYTES {
+            shown.push('…');
+            return shown;
+        }
+        shown.push_str(&piece);
+    }
+    debug_assert!(shown.len() <= SHOWN_ENTRY_ID_MAX_BYTES);
+    shown
 }
 
 /// A bundled-native id: current, retired, or neither (a typo).

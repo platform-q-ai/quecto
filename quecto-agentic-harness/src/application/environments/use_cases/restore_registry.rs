@@ -542,6 +542,7 @@ fn report_overtaken(
     report: &mut RestoredRegistry,
 ) {
     if current.status == judged.status {
+        log_agreeing_account(current, judged);
         return;
     }
     let line = format!(
@@ -550,6 +551,36 @@ fn report_overtaken(
         current.status_label()
     );
     tell(report, line, speaks_for(current, (session, audience)));
+}
+
+/// The other process's verdict is this restore's own (#2190: nothing on
+/// stderr). When its account differs — the retained reason or the last
+/// error — that is kept in the debug log (#2247 review), so an overtaken
+/// correction is never swallowed without a trace. Debug-formatted: the
+/// text comes from the store.
+fn log_agreeing_account(current: &EnvironmentRecord, judged: &EnvironmentRecord) {
+    let retained = |record: &EnvironmentRecord| {
+        record
+            .metadata
+            .get("retained")
+            .and_then(|reason| reason.as_str())
+            .map(str::to_owned)
+    };
+    let same_account =
+        retained(current) == retained(judged) && current.last_error == judged.last_error;
+    match same_account {
+        true => {}
+        false => tracing::debug!(
+            target: "environments",
+            environment_ref = %current.environment_ref,
+            status = current.status_label(),
+            current_retained = ?retained(current),
+            current_last_error = ?current.last_error,
+            judged_retained = ?retained(judged),
+            judged_last_error = ?judged.last_error,
+            "another quecto process's correction agrees with this restore's verdict but not its account; its state stands"
+        ),
+    }
 }
 
 /// Whether a restore reporting to `audience` as `session` speaks for

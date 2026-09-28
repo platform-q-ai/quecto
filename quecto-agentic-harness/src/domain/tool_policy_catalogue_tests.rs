@@ -111,3 +111,34 @@ fn the_warning_names_the_id_and_where_to_fix_it() {
         "tools.policy: no tool has stable id 'tool.v1:bundled-native:3:web:serch', so its entry never applies; fix or remove it under tools.policy.entries"
     );
 }
+
+/// #2247 review: an entry key is echoed bounded and escaped — a key-path
+/// tail is whatever the user or a file supplied.
+#[test]
+fn an_entry_key_is_shown_bounded_on_a_char_boundary() {
+    let huge = "a".repeat(100 * 1024);
+    let shown = shown_entry_id(&huge);
+    assert_eq!(shown, format!("{}…", "a".repeat(SHOWN_ENTRY_ID_MAX_BYTES)));
+    // A multi-byte character straddling the bound is left out whole.
+    let straddling = format!("{}é", "a".repeat(SHOWN_ENTRY_ID_MAX_BYTES - 1));
+    let shown = shown_entry_id(&format!("{straddling}tail"));
+    assert_eq!(
+        shown,
+        format!("{}…", "a".repeat(SHOWN_ENTRY_ID_MAX_BYTES - 1))
+    );
+    // A key that fits is shown whole, without the ellipsis.
+    let id = "tool.v1:bundled-native:21:quecto:official-tools:bash";
+    assert_eq!(shown_entry_id(id), id);
+}
+
+#[test]
+fn an_entry_key_is_shown_with_controls_escaped() {
+    assert_eq!(
+        shown_entry_id("ba\nsh\x1b[31mred\u{202e}"),
+        "ba\\nsh\\u{1b}[31mred\\u{202e}"
+    );
+    let warning = unknown_policy_entry_warning(&format!("x\n{}", "y".repeat(100 * 1024)));
+    assert!(!warning.contains('\n'), "{warning}");
+    assert!(warning.len() < 512, "{}", warning.len());
+    assert!(warning.contains("'x\\nyyy"), "{warning}");
+}

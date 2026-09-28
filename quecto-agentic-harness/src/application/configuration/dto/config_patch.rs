@@ -130,7 +130,8 @@ impl std::fmt::Display for ConfigPatchError {
             }
             Self::InvalidPolicyEntryId { entry_id } => write!(
                 f,
-                "`{entry_id}` is not a stable tool id (tool.v1:<source>:<length>:<provider>:<name>, as the tool catalogue lists it), so its policy entry would never apply; set an entry whole under its id: quecto config set tools.policy.entries.<stable-id> '{{\"scope\":\"parent\"}}'"
+                "`{}` is not a stable tool id (tool.v1:<source>:<length>:<provider>:<name>, as the tool catalogue lists it), so its policy entry would never apply; set an entry whole under its id: quecto config set tools.policy.entries.<stable-id> '{{\"scope\":\"parent\"}}'",
+                crate::domain::tool_policy_catalogue::shown_entry_id(entry_id)
             ),
             Self::NoOverlayLocation => write!(
                 f,

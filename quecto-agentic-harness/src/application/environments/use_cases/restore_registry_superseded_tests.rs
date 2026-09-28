@@ -130,3 +130,67 @@ fn a_fleet_wide_command_reports_every_overtaken_correction() {
         assert_eq!(diagnostics, [OVERTAKEN], "{session}");
     }
 }
+
+/// Everything `run` logs at debug and above, as text.
+fn captured_debug_log(run: impl FnOnce()) -> String {
+    #[derive(Clone, Default)]
+    struct Captured(Arc<std::sync::Mutex<String>>);
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap()
+                .push_str(&String::from_utf8_lossy(buf));
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Captured;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+    let captured = Captured::default();
+    let sink = captured.0.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(captured)
+        .with_ansi(false)
+        .with_max_level(tracing::Level::DEBUG)
+        .finish();
+    tracing::subscriber::with_default(subscriber, run);
+    sink.lock().unwrap().clone()
+}
+
+/// #2247 review: another process stopped C1 as this restore would, but for
+/// its own reason. The verdicts agree, so stderr stays silent (#2190); the
+/// differing account is kept in the debug log, naming what differs.
+#[test]
+fn an_agreeing_correction_with_a_different_account_is_logged_at_debug() {
+    let mut written = record("C1", EnvironmentStatus::Stopped);
+    written.last_error = Some("killed by its owner".into());
+    let mut diagnostics = Vec::new();
+    let log = captured_debug_log(|| {
+        diagnostics = restore_racing(written, "cli:one", OvertakenAudience::OwnEnvironments);
+    });
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let line = log
+        .lines()
+        .find(|line| line.contains("C1") && line.contains("agrees"))
+        .unwrap_or_else(|| panic!("no debug line: {log}"));
+    assert!(line.contains("DEBUG"), "{line}");
+    assert!(line.contains("killed by its owner"), "{line}");
+}
+
+/// An agreeing correction whose account is this restore's own says nothing.
+#[test]
+fn an_agreeing_correction_with_the_same_account_is_not_logged() {
+    let mut written = record("C1", EnvironmentStatus::Stopped);
+    written.last_error = Some(crate::domain::environment_registry::GONE_AT_RESTORE.into());
+    let log = captured_debug_log(|| {
+        restore_racing(written, "cli:one", OvertakenAudience::OwnEnvironments);
+    });
+    assert!(!log.contains("agrees"), "{log}");
+}
