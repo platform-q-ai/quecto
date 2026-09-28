@@ -314,6 +314,7 @@ impl OpenAiProvider {
         trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
     ) -> Result<LlmResponse, DomainError> {
         // Observed beside the request, never altering it (#2151).
+        let handler = openai_sse::OpenAiSseHandler::with_model(model).with_trace(trace.clone());
         let attempt = super::attempt_transport::PassiveAttempt::begin(
             trace,
             Profile::new(Vendor::OpenAi, Surface::Assembled, self.stream_idle),
@@ -359,7 +360,7 @@ impl OpenAiProvider {
         let pump = AbortOnDrop::new(tokio::spawn(openai_sse::pump_sse_response_for_model(
             response,
             tx,
-            model.to_string(),
+            handler,
             attempt,
             self.stream_idle,
         )));
@@ -401,6 +402,7 @@ impl OpenAiProvider {
         trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
     ) {
         // Observed beside the request, never altering it (#2151).
+        let handler = openai_sse::OpenAiSseHandler::with_model(model).with_trace(trace.clone());
         let attempt = super::attempt_transport::PassiveAttempt::begin(
             trace,
             Profile::new(Vendor::OpenAi, Surface::Incremental, self.stream_idle),
@@ -446,7 +448,7 @@ impl OpenAiProvider {
             return;
         }
         let idle = self.stream_idle;
-        openai_sse::pump_sse_bytes_for_model(&mut response, &tx, model, attempt, idle).await;
+        openai_sse::pump_sse_bytes_for_model(&mut response, &tx, handler, attempt, idle).await;
     }
 
     fn apply_delta(
@@ -589,7 +591,7 @@ impl LlmProvider for OpenAiProvider {
                     builder,
                     Profile::new(Vendor::OpenAi, Surface::Assembled, self.stream_idle),
                     tx,
-                    openai_sse::OpenAiSseHandler::with_model(&model),
+                    openai_sse::OpenAiSseHandler::with_model(&model).with_trace(trace.clone()),
                 );
                 let (_, result) = tokio::join!(pump, super::attempt_transport::collect(rx));
                 return result;
@@ -623,7 +625,7 @@ impl LlmProvider for OpenAiProvider {
                         builder,
                         Profile::new(Vendor::OpenAi, Surface::Incremental, provider.stream_idle),
                         tx,
-                        openai_sse::OpenAiSseHandler::with_model(&model),
+                        openai_sse::OpenAiSseHandler::with_model(&model).with_trace(trace.clone()),
                     )
                     .await;
                 } else {

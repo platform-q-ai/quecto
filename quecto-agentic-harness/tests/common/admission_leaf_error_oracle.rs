@@ -28,11 +28,10 @@ pub fn checks(
             "text-once",
             output.text == if post { vec!["visible once"] } else { vec![] },
         ),
-        (
-            "exact-error",
-            output.errors == if enabled { vec![error] } else { vec![] },
-        ),
-        ("terminal-kind", output.done == usize::from(!enabled)),
+        // An error chunk ends the stream as that one error, with admission
+        // or without (#2236): never a completed reply.
+        ("exact-error", output.errors == vec![error]),
+        ("terminal-kind", output.done == 0),
         ("grant-once", state.grants == usize::from(enabled)),
         (
             "receipt-count",
@@ -82,12 +81,8 @@ fn every_leaf_error_predicate_rejects_its_observed_counterexample() {
             } else {
                 vec![]
             },
-            errors: if enabled {
-                vec!["original".into()]
-            } else {
-                vec![]
-            },
-            done: usize::from(!enabled),
+            errors: vec!["original".into()],
+            done: 0,
         };
         let state = || {
             let mut state = Snapshot::default();

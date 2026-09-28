@@ -245,11 +245,13 @@ fn free_text_is_redacted_before_it_is_clipped() {
 fn a_plain_container_name_passes_whole_and_anything_else_is_dropped() {
     for (name, kept) in [
         ("myproj-worker01", true),
-        // Secret-shaped: dropped, even where the shape is a false positive
-        // (`task-runner01` holds `sk-runner01`).
+        // Secret-shaped: dropped, a key after a `-` included.
         ("sk-abcdefghijkl", false),
+        ("myproj-sk-abcdefghijkl", false),
         ("AKIAIOSFODNN7EXAMPLE", false),
-        ("myproj-task-runner01", false),
+        // A key prefix inside a word is no key (#2241): `task-runner01`
+        // holds `sk-runner01` but is kept whole.
+        ("myproj-task-runner01", true),
         ("quecto-env-AbCdEfGhIj", true),
         ("a", true),
         ("a.b_c-d", true),

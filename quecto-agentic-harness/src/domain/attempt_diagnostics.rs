@@ -83,6 +83,9 @@ pub enum Termination {
     #[default]
     Dropped,
     Completed,
+    /// The body ended with no terminal event and nothing said how. No
+    /// longer recorded (#2249 review: such a body is `CutShort`); kept so
+    /// older records still read.
     Eof,
     HttpError,
     ReadError,
@@ -107,6 +110,12 @@ pub enum Termination {
     /// while this attempt was still in flight; recorded from what it had
     /// streamed by then (#2210).
     Interrupted,
+    /// The body ended before the protocol's terminal event (`[DONE]`,
+    /// `response.completed`, `message_stop`, or an OpenAI `finish_reason`),
+    /// or with no event at all: a reply cut short in transport, never taken
+    /// as a whole one, streamed or read whole, with admission or without
+    /// (#2249 review).
+    CutShort,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

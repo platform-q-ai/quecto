@@ -120,13 +120,19 @@ pub const REPLY_TIMEOUT: &str = "reply timeout: ";
 /// How the error of a reply stopped at its output cap begins (#2210).
 pub const OUTPUT_CAP_EXCEEDED: &str = "output cap exceeded: ";
 
+/// The error of a reply that ended with no output at all: an empty stream,
+/// retried as [`ProviderErrorClass::EmptyStream`]. The agent loop sends it
+/// for a completed reply with nothing in it, and a provider for a body that
+/// ended before any event (#2249 review).
+pub const EMPTY_STREAM: &str = "stream completed without assistant output: synthetic=empty_stream";
+
 pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
     let msg = match err {
         DomainError::Provider(msg) => msg.as_str(),
         _ => return ProviderErrorClass::Unknown,
     };
 
-    if msg.starts_with("stream completed without assistant output: synthetic=empty_stream") {
+    if msg.starts_with(EMPTY_STREAM) {
         return ProviderErrorClass::EmptyStream;
     }
 

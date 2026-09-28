@@ -20,6 +20,7 @@ concurrency:
 #   workspace    - cargo test/clippy of the workspace shape (target/)
 #   coverage-lib - instrumented workspace lib build (target/llvm-cov-lib)
 #   coverage-bdd - instrumented bdd builds (target/llvm-cov-<suite>)
+#   macos-types  - aarch64/x86_64-apple-darwin cross type-checks (target/<triple>)
 
 jobs:
   # Complements branch-protection `required_conversation_resolution` with a
@@ -64,6 +65,23 @@ jobs:
       # builds each package alone with default features; check that shape too.
       - run: cargo clippy -p quecto-tui --lib --bins -- -D warnings
       - run: cargo clippy -p quecto-agentic-harness --lib --bins -- -D warnings
+
+  # The release binaries include macOS, built only for a `release-binaries`
+  # PR, so a macOS-only compile error would first show at release (#2237).
+  # A cross type-check from Linux catches it on every merge.
+  macos-types:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'merge-requested'
+    name: macOS Type Check
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-types
+      - run: bash scripts/check-macos-types.sh
 
   workspace-tests:
     needs: [static-quality, dependency-policy]

@@ -284,6 +284,28 @@ assembled; Codex, OpenAI-compatible and Anthropic; gated or not); a whole
 non-streaming JSON reply is bounded by the 20 minute reply limit instead. The
 cap is not configurable.
 
+## Replies cut short
+
+A streamed reply is whole only when its protocol says it ended: an
+`anthropic-messages` reply at its `message_stop` event, an OpenAI Responses
+reply at `response.completed` (or `data: [DONE]`), and an
+`openai-completions` reply at `data: [DONE]` or a chunk naming its
+`finish_reason`. A body that ends before that — output or not — is a reply cut
+short: the attempt fails with `… ended without completion: connection closed
+before …` (class `network`, retried before any output reached the caller) and
+is recorded as `CutShort`, on every path (streamed or read whole, gated or
+not); it is never taken as a whole answer. A 200 body with no event at all is
+an empty stream (class `empty_stream`, retried). Tokens a cut-short reply
+already reported (Anthropic's `message_start` usage, an OpenAI usage chunk, a
+Responses event's `usage`) are still counted, on a failed request and on one a
+retry completed.
+
+So an **Anthropic-compatible endpoint** (an `anthropic-messages` provider with
+a custom `baseUrl`) must send `message_stop` at the end of every reply, as the
+Anthropic Messages API specifies; one that closes the stream without it fails
+every request. An OpenAI-compatible endpoint must send `data: [DONE]` or a
+`finish_reason`.
+
 ## Progress and interrupted requests
 
 While a request is in flight, `get_state` reports it as `modelTurn`: how long

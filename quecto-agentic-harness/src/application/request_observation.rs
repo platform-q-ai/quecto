@@ -3,6 +3,7 @@
 //! reports; dropped mid-attempt, it records that attempt as `Interrupted`
 //! and queues itself for its audit record (#2210).
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::message::UsageInfo;
 use crate::domain::{
     error::DomainError,
     message::{LlmResponse, Role},
@@ -110,18 +111,14 @@ impl<'a> ObservationGuard<'a> {
 
     pub fn finish(&mut self, result: &Result<LlmResponse, DomainError>) -> RequestObservation {
         let record = self.record.as_mut().expect("one completion per request");
+        // What the request spent: every attempt cut short after reporting
+        // usage (#2249 review), then the reply's own, each counted once —
+        // as the billed totals count them.
+        let mut spent = self.trace.unfinished_usage();
         match result {
             Ok(response) => {
                 record.outcome = "succeeded".into();
-                if let Some(usage) = &response.usage {
-                    record.input_tokens = Some(usage.prompt_tokens as u64);
-                    record.context_input_tokens = Some(usage.context_input_tokens() as u64);
-                    record.output_tokens = Some(usage.completion_tokens as u64);
-                    record.cache_read_tokens = usage.cache_read_tokens.map(u64::from);
-                    record.cache_write_tokens = usage.cache_write_tokens.map(u64::from);
-                    record.estimated_cost_micro_usd =
-                        usage.cost.as_ref().map(|cost| cost.total_cost_micro_usd);
-                }
+                spent.extend(response.usage.clone());
             }
             Err(error) => {
                 record.outcome = if self.trace.attempts() == 0 {
@@ -133,6 +130,7 @@ impl<'a> ObservationGuard<'a> {
                 record.error_class = Some(classify_provider_error(error));
             }
         }
+        observe_spend(record, &spent);
         self.publish(Ending::Finished)
             .expect("completed observation exists")
     }
@@ -264,6 +262,34 @@ fn unix_ms() -> Option<u64> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .and_then(|value| value.as_millis().try_into().ok())
+}
+
+/// Fold `spent` (each attempt's reported usage, the last the reply's own)
+/// into `record`: token counts summed, a cache count only when an attempt
+/// reported one, the cost only when every attempt was priced, and the
+/// context occupancy the last attempt's. Nothing spent leaves the record's
+/// usage unknown.
+fn observe_spend(record: &mut RequestObservation, spent: &[UsageInfo]) {
+    let Some(last) = spent.last() else {
+        return;
+    };
+    let sum = |field: fn(&UsageInfo) -> u32| spent.iter().map(|u| u64::from(field(u))).sum();
+    let optional = |field: fn(&UsageInfo) -> Option<u32>| {
+        spent
+            .iter()
+            .filter_map(field)
+            .map(u64::from)
+            .reduce(|a, b| a.saturating_add(b))
+    };
+    record.input_tokens = Some(sum(|u| u.prompt_tokens));
+    record.output_tokens = Some(sum(|u| u.completion_tokens));
+    record.cache_read_tokens = optional(|u| u.cache_read_tokens);
+    record.cache_write_tokens = optional(|u| u.cache_write_tokens);
+    record.context_input_tokens = Some(u64::from(last.context_input_tokens()));
+    record.estimated_cost_micro_usd = spent
+        .iter()
+        .map(|u| u.cost.as_ref().map(|cost| cost.total_cost_micro_usd))
+        .sum();
 }
 
 #[cfg(test)]

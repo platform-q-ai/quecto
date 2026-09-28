@@ -98,6 +98,8 @@ async fn handler_ignores_non_data_and_malformed_then_eof_error() {
     assert!(rx.try_recv().is_err());
 
     handler.on_eof(&tx).await;
+    // Closed, so a missing event fails the test instead of hanging it.
+    drop(tx);
     match rx.recv().await.unwrap() {
         StreamEvent::Error(e) => assert!(e.contains("ended without completion"), "{e}"),
         other => panic!("unexpected: {other:?}"),
@@ -121,7 +123,10 @@ async fn handler_accumulates_tool_call_arguments() {
             &tx,
         )
         .await;
-    handler.on_eof(&tx).await;
+    let out = handler
+        .process_line(r#"data: {"type":"response.completed","response":{}}"#, &tx)
+        .await;
+    assert!(matches!(out, SseLineOutcome::Done));
 
     match rx.recv().await.unwrap() {
         StreamEvent::Done(resp) => {
@@ -497,6 +502,8 @@ async fn handler_output_text_delta_missing_field_emits_no_text() {
     assert!(matches!(out, SseLineOutcome::Continue));
     assert!(rx.try_recv().is_err(), "no TextDelta should be emitted");
     handler.on_eof(&tx).await;
+    // Closed, so a missing event fails the test instead of hanging it.
+    drop(tx);
     match rx.recv().await.unwrap() {
         StreamEvent::Error(e) => assert!(e.contains("ended without completion"), "{e}"),
         other => panic!("unexpected: {other:?}"),
@@ -722,4 +729,15 @@ async fn codex_stream_rejects_over_limit_reasoning_with_error() {
         rx.try_recv().is_err(),
         "oversized reasoning must stop the stream"
     );
+}
+
+/// #2236: an error event whose `error` is a bare string still ends the
+/// stream as an error, and its text is kept.
+#[test]
+fn parse_sse_response_string_error_event_keeps_its_text() {
+    let err =
+        CodexProvider::parse_sse_response(r#"data: {"type":"error","error":"model crashed"}"#)
+            .unwrap_err();
+    assert!(err.to_string().contains("Responses stream error"), "{err}");
+    assert!(err.to_string().contains("model crashed"), "{err}");
 }

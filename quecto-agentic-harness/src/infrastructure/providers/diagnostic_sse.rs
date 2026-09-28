@@ -5,17 +5,15 @@ use crate::infrastructure::providers::sse_common::line_within_limit;
 use crate::infrastructure::providers::stream_idle::StreamIdle;
 
 impl Receipt {
-    /// A whole reply was read: it ended as `read` when accepted, rejected
-    /// when it could not be (#2156 review).
-    pub(super) fn accepted<T>(
-        &self,
-        parsed: Result<T, DomainError>,
-        read: Termination,
-    ) -> Result<T, DomainError> {
-        self.termination(match parsed {
-            Ok(_) => read,
-            Err(_) => Termination::Rejected,
-        });
+    /// A whole reply was read: accepted, it completed; refused because its
+    /// body ended before its terminal event, it was cut short (#2249
+    /// review); refused otherwise, it was rejected (#2156 review).
+    pub(super) fn accepted<T>(&self, parsed: Result<T, DomainError>) -> Result<T, DomainError> {
+        let termination = whole_read_termination(&parsed);
+        if termination == Termination::CutShort {
+            self.fail();
+        }
+        self.termination(termination);
         parsed
     }
 
@@ -54,6 +52,21 @@ impl Receipt {
         }
     }
 }
+/// How a whole reply read and parsed as `parsed` ended: completed when
+/// accepted, cut short when its body ended before its terminal event, and
+/// rejected when refused for anything else.
+pub(super) fn whole_read_termination<T>(parsed: &Result<T, DomainError>) -> Termination {
+    match parsed {
+        Ok(_) => Termination::Completed,
+        Err(DomainError::Provider(message))
+            if crate::infrastructure::providers::sse_end::is_cut_short(message) =>
+        {
+            Termination::CutShort
+        }
+        Err(_) => Termination::Rejected,
+    }
+}
+
 pub(super) async fn pump_sse<H: SseHandler>(
     receipt: &Receipt,
     response: &mut reqwest::Response,
@@ -118,9 +131,27 @@ pub(super) async fn pump_sse<H: SseHandler>(
         }
     }
 
-    // Clean EOF — let the handler finalize. A last line with no newline
-    // is never handed to the handler, observed or not, so no output past
-    // the cap is delivered from it (#2210 review).
+    // The body may end without a final newline (#2249 review): its last
+    // line is a line all the same, observed, handled and held to the output
+    // cap like any other (#2210), so a terminal event there ends the reply
+    // and a delta there past the cap ends the attempt as output-capped.
+    match super::super::sse_end::last_line(&carry) {
+        Some(Ok(line)) => {
+            if matches!(handler.process_line(line, tx).await, SseLineOutcome::Done) {
+                return;
+            }
+            if let Some(capped) = receipt.capped() {
+                let error = receipt.output_capped(capped);
+                let _ = tx.send(StreamEvent::Error(error)).await;
+                return;
+            }
+        }
+        Some(Err(_)) => {
+            let mut state = receipt.0.lock().unwrap();
+            state.diagnostics.parse_errors = state.diagnostics.parse_errors.saturating_add(1);
+        }
+        None => {}
+    }
     handler.on_eof(tx).await;
 }
 

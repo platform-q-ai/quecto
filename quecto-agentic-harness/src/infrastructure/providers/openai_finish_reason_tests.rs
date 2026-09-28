@@ -73,10 +73,20 @@ async fn the_streaming_handler_carries_finish_reason_to_done_and_eof() {
             }
             drop(tx);
             let mut done = None;
+            let mut error = None;
             while let Some(event) = rx.recv().await {
-                if let StreamEvent::Done(response) = event {
-                    done = Some(response);
+                match event {
+                    StreamEvent::Done(response) => done = Some(response),
+                    StreamEvent::Error(message) => error = Some(message),
+                    _ => {}
                 }
+            }
+            // Without `[DONE]` only a finish reason ends the reply whole;
+            // with neither, the body was cut short (#2236).
+            if reason.is_none() && !ends_with_done {
+                assert_eq!(error.as_deref(), Some(OPENAI_CUT_SHORT));
+                assert!(done.is_none());
+                continue;
             }
             let response = done.expect("a Done response");
             assert_eq!(

@@ -455,13 +455,15 @@ async fn handler_message_stop_returns_done() {
 }
 
 #[tokio::test]
-async fn handler_on_empty_eof_emits_error() {
+async fn handler_on_empty_eof_emits_the_empty_stream_error() {
     let (tx, mut rx) = channel();
     let mut handler = AnthropicSseHandler::new(None);
     handler.on_eof(&tx).await;
     let events = drain(&mut rx);
     match events.first() {
-        Some(StreamEvent::Error(e)) => assert!(e.contains("ended without completion"), "{e}"),
+        Some(StreamEvent::Error(e)) => {
+            assert_eq!(e, crate::domain::provider_error::EMPTY_STREAM, "{e}")
+        }
         other => panic!("unexpected: {other:?}"),
     }
 }
@@ -678,4 +680,16 @@ async fn anthropic_live_thinking_persists_once() {
         }
         other => panic!("expected single persisted thinking block, got {other:?}"),
     }
+}
+
+/// #2236: an error event whose `error` is a bare string still ends the
+/// stream as an error, and its text is kept.
+#[test]
+fn parse_sse_response_string_error_event_keeps_its_text() {
+    let err = AnthropicProvider::parse_sse_response(
+        "event: error\ndata: {\"error\":\"model crashed\"}\n",
+        None,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("model crashed"), "{err}");
 }

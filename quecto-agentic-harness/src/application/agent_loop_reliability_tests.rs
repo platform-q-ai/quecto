@@ -281,3 +281,119 @@ async fn mock_streaming_provider_trait_surface_chat_and_incremental() {
     let response = provider.chat(request).await.unwrap();
     assert_eq!(response.content.as_deref(), Some("chat done"));
 }
+
+/// A provider whose reply is cut short after reporting its usage (#2249
+/// review): the tokens are on the request's trace, and the reply fails.
+#[derive(Debug)]
+struct CutShortAfterUsage;
+impl crate::application::providers::ports::LlmProvider for CutShortAfterUsage {
+    fn name(&self) -> &str {
+        "cut-short"
+    }
+    fn chat<'a>(
+        &'a self,
+        request: crate::application::providers::ports::ChatRequest<'a>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let trace = request.trace.expect("the agent loop traces every request");
+            trace.record_unfinished_usage(crate::domain::message::UsageInfo {
+                prompt_tokens: 1234,
+                completion_tokens: 5,
+                cache_read_tokens: Some(6),
+                cache_write_tokens: None,
+                context_tokens: Some(1240),
+                cost: None,
+            });
+            Err(DomainError::Provider(
+                "Anthropic stream ended without completion: connection closed before message_stop"
+                    .into(),
+            ))
+        })
+    }
+}
+
+/// #2249 review: the input tokens a cut-short reply reported were spent,
+/// so they are accounted and observed though the request failed.
+#[tokio::test]
+async fn usage_a_cut_short_reply_reported_is_accounted() {
+    let (mut agent, _) = make_agent(vec![], vec![]);
+    agent.provider = Arc::new(CutShortAfterUsage);
+    assert!(
+        agent
+            .run_loop(&mut vec![Message::user("hi")])
+            .await
+            .is_err()
+    );
+    let usage = agent.take_unreported_usage();
+    assert_eq!(usage.billed_input_tokens, 1234);
+    assert_eq!(usage.billed_output_tokens, 5);
+    assert_eq!(usage.cache_read_tokens, 6);
+    let records = agent.take_request_observations();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, "failed");
+    assert_eq!(records[0].input_tokens, Some(1234));
+    assert_eq!(records[0].output_tokens, Some(5));
+}
+
+/// A provider whose first attempt was cut short after reporting usage and
+/// whose retry succeeded, within one request (#2249 review round 3).
+#[derive(Debug)]
+struct CutShortThenWhole;
+impl crate::application::providers::ports::LlmProvider for CutShortThenWhole {
+    fn name(&self) -> &str {
+        "cut-short-then-whole"
+    }
+    fn chat<'a>(
+        &'a self,
+        request: crate::application::providers::ports::ChatRequest<'a>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let trace = request.trace.expect("the agent loop traces every request");
+            trace.record_unfinished_usage(crate::domain::message::UsageInfo {
+                prompt_tokens: 1000,
+                completion_tokens: 3,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                context_tokens: Some(1000),
+                cost: None,
+            });
+            let mut reply = text_response("done");
+            reply.usage = Some(crate::domain::message::UsageInfo {
+                prompt_tokens: 200,
+                completion_tokens: 7,
+                cache_read_tokens: Some(4),
+                cache_write_tokens: None,
+                context_tokens: Some(1204),
+                cost: None,
+            });
+            Ok(reply)
+        })
+    }
+}
+
+/// #2249 review round 3: a request that succeeded on a retry after a
+/// cut-short attempt spent both; its durable observation says so, as the
+/// billed totals do, each attempt counted once.
+#[tokio::test]
+async fn a_retry_success_observes_the_cut_attempts_spend_too() {
+    let (mut agent, _) = make_agent(vec![], vec![]);
+    agent.provider = Arc::new(CutShortThenWhole);
+    agent
+        .run_loop(&mut vec![Message::user("hi")])
+        .await
+        .expect("the retry completed the turn");
+    let usage = agent.take_unreported_usage();
+    assert_eq!(usage.billed_input_tokens, 1200);
+    assert_eq!(usage.billed_output_tokens, 10);
+    let records = agent.take_request_observations();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, "succeeded");
+    assert_eq!(records[0].input_tokens, Some(1200));
+    assert_eq!(records[0].output_tokens, Some(10));
+    assert_eq!(records[0].cache_read_tokens, Some(4));
+    assert_eq!(records[0].context_input_tokens, Some(1204));
+}

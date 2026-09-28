@@ -141,6 +141,7 @@ pub trait SseHandler: Send {
 /// - Stream read errors (emitted as `StreamEvent::Error`)
 /// - A stream silent for the whole `idle` bound (emitted as the idle error,
 ///   #2210): each read waits at most that long for the next bytes
+/// - A last line with no newline (handed to the handler as a line)
 /// - Clean EOF (delegates to `handler.on_eof()`)
 ///
 /// Lines are right-trimmed only (`\n`, `\r`), not fully trimmed, per the
@@ -199,7 +200,14 @@ pub async fn pump_sse<H: SseHandler>(
         }
     }
 
-    // Clean EOF — let the handler finalize.
+    // The body may end without a final newline (#2249 review): its last
+    // line is a line all the same, a terminal event included, as a
+    // whole-body read parses it. Only then does the handler finalize.
+    if let Some(Ok(line)) = super::sse_end::last_line(&carry) {
+        if matches!(handler.process_line(line, tx).await, SseLineOutcome::Done) {
+            return;
+        }
+    }
     handler.on_eof(tx).await;
 }
 

@@ -625,7 +625,8 @@ impl LlmProvider for AnthropicProvider {
                     builder,
                     Profile::new(Vendor::Anthropic, Surface::Assembled, self.stream_idle),
                     |raw| {
-                        let mut parsed = Self::parse_sse_response(raw, tools_snapshot)?;
+                        let mut parsed = Self::parse_sse_reply(raw, tools_snapshot)
+                            .map_err(|cut| cut.account(trace.as_deref(), &model))?;
                         crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
                         Ok(parsed)
                     },
@@ -691,7 +692,8 @@ impl LlmProvider for AnthropicProvider {
                             provider.stream_idle,
                         ),
                         tx,
-                        anthropic_sse::AnthropicSseHandler::with_model(tools_snapshot, &model),
+                        anthropic_sse::AnthropicSseHandler::with_model(tools_snapshot, &model)
+                            .with_trace(trace.clone()),
                     )
                     .await;
                     return;

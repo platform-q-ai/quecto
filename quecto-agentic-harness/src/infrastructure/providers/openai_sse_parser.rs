@@ -38,6 +38,16 @@ pub(crate) fn choice_stop_reason(
         .map(crate::domain::message::StopReason::from_openai_finish_reason)
 }
 
+/// Whether a Chat Completions `choice` ends its reply (#2236): only a
+/// non-empty string `finish_reason` does. `null` (every chunk before the
+/// last), `""` and any other value say the reply goes on.
+pub(crate) fn is_finishing_choice(choice: &serde_json::Value) -> bool {
+    choice
+        .get("finish_reason")
+        .and_then(|v| v.as_str())
+        .is_some_and(|reason| !reason.is_empty())
+}
+
 /// Parse an SSE text stream into an assembled `LlmResponse`.
 ///
 /// Captures content deltas, tool-call deltas, and the final `usage` chunk
@@ -54,7 +64,7 @@ pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> 
         let Some(data) = line.strip_prefix("data: ") else {
             continue;
         };
-        if data == "[DONE]" {
+        if crate::infrastructure::providers::sse_end::is_done_marker(data) {
             break;
         }
         let chunk: serde_json::Value = serde_json::from_str(data).unwrap_or_default();

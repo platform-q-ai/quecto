@@ -1,5 +1,6 @@
-//! Enabled OpenAI SSE errors are terminal structured failures; disabled behavior
-//! remains characterized separately. Provider message text is displayed, not classified.
+//! OpenAI SSE errors are terminal structured failures, with admission or
+//! without (#2236); admission adds only its grant, receipt and finish.
+//! Provider message text is displayed, not classified.
 // One copy per crate (clippy::duplicate_mod): the fixture is loaded by
 // `inference_admission_feedback_transport`; the leaf-error oracle (which reads
 // `super::fixture`) is owned here and imported by `inference_admission_responses_root_error`.
@@ -80,7 +81,7 @@ async fn check_error(
     ));
 }
 #[tokio::test]
-async fn disabled_error_payload_keeps_legacy_done_behavior() {
+async fn disabled_error_payload_ends_as_the_same_error() {
     check(true, "rate_limit_error", None, true, false).await;
 }
 #[tokio::test]

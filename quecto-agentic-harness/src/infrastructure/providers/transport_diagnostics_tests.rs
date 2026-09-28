@@ -131,7 +131,8 @@ mod transport_tests {
             let expected = match (parse_ok, whole) {
                 (false, _) => Termination::Rejected,
                 (true, true) => Termination::Completed,
-                (true, false) => Termination::Eof,
+                // An accepted whole SSE body completed (#2249 review).
+                (true, false) => Termination::Completed,
             };
             assert_eq!(
                 trace.attempt_diagnostics()[0].termination,
@@ -450,7 +451,7 @@ mod transport_tests {
             assert_eq!(
                 d.termination,
                 if status == 200 {
-                    Termination::Eof
+                    Termination::Completed
                 } else {
                     Termination::HttpError
                 }

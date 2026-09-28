@@ -60,9 +60,6 @@ impl Profile {
             Vendor::Anthropic => "Anthropic",
         }
     }
-    pub fn openai(self) -> bool {
-        matches!(self.vendor, Vendor::OpenAi)
-    }
     pub fn send_error(self, error: &reqwest::Error) -> DomainError {
         let message = match self.vendor {
             Vendor::Anthropic => format!("HTTP error: {error}"),
@@ -155,6 +152,31 @@ pub(super) fn is_throttle_chunk(value: &serde_json::Value) -> bool {
     matches!(stream_error_status(value), 429 | 529)
 }
 
+/// Whether an OpenAI-compatible SSE chunk is a mid-stream error chunk
+/// (#2236): its `error` is an object of any shape (`{"error":{...}}`,
+/// OpenAI's; `{}` names no cause, so it is the unknown, retryable 502,
+/// #2249 review) or a non-empty string (`{"error":"..."}`, Ollama's native
+/// API and some OpenAI-compatible servers). Only these shapes are allowed;
+/// an `error` of any other shape (null, a number, a list, `""`) says
+/// nothing failed and is not one. Both the stream handler and the attempt
+/// observer ask this one question, so a reply cut short is an error on
+/// every path, with admission or without.
+pub(super) fn is_stream_error_chunk(value: &serde_json::Value) -> bool {
+    match value.get("error") {
+        Some(serde_json::Value::Object(_)) => true,
+        Some(serde_json::Value::String(text)) => !text.is_empty(),
+        _ => false,
+    }
+}
+
+/// Whether a Responses (Codex) SSE chunk is an untyped error chunk
+/// (#2249 review): it has no string `type` (none, or `null`) and is an
+/// error chunk by [`is_stream_error_chunk`] — a gateway's or a compatible
+/// server's shape. A typed event keeps the meaning its type gives it.
+pub(super) fn is_untyped_error_chunk(value: &serde_json::Value) -> bool {
+    value["type"].as_str().is_none() && is_stream_error_chunk(value)
+}
+
 /// An OpenAI-compatible mid-stream `data: {"error":{...}}` chunk as the
 /// stream's terminal error (#2155), rendered with the HTTP status its typed
 /// fields stand for, so the retry classifier reads it as the provider meant
@@ -168,7 +190,8 @@ pub(super) fn is_throttle_chunk(value: &serde_json::Value) -> bool {
 ///    retry classifier knows it; a 408 is a gateway timeout (504) and any
 ///    other 5xx (Cloudflare's 520-524) a bad gateway (502), both retried;
 ///    another 4xx stands as itself (never retried);
-/// 6. anything else is 502: retryable.
+/// 6. anything else is 502: retryable. A bare string `error` (#2236)
+///    carries no typed fields, so it is always this unknown 502.
 ///
 /// Typed fields always win over a numeric code: a named failure says more
 /// than a status a gateway may have wrapped it in (a client type in a 5xx,
@@ -179,6 +202,10 @@ pub(super) fn is_throttle_chunk(value: &serde_json::Value) -> bool {
 /// and no completed reply follows the error, so a reply cut short by a
 /// provider failure is never taken as a whole answer.
 pub(super) fn openai_stream_error(value: &serde_json::Value) -> String {
+    assert!(
+        is_stream_error_chunk(value),
+        "only an error chunk renders as a stream error"
+    );
     let status = stream_error_status(value);
     assert!(
         (400..=599).contains(&status),

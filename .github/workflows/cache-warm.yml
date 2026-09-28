@@ -65,3 +65,16 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: bash scripts/run-bdd-shards.sh --suite non-real-bdd --coverage --build-only
       - run: bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --test-target tui_bdd --coverage --build-only
+
+  macos-types:
+    name: Warm macos-types
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-types
+      - run: bash scripts/check-macos-types.sh

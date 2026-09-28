@@ -56,8 +56,16 @@ async fn terminal_then_truncated(leaf: Leaf, surface: Surface) {
     characterize_terminal(&disabled, leaf);
     assert_parity(&disabled, &enabled);
 }
+/// A whole-body read parses a final line with no newline: here the
+/// terminal event, so the reply ends whole (a body without its terminal
+/// event is a reply cut short, #2249 review).
 async fn unterminated(leaf: Leaf, surface: Surface) {
-    let body = format!("{}\n\n{}", leaf.delta("first"), leaf.delta("last"));
+    let body = format!(
+        "{}\n\n{}\n\n{}",
+        leaf.delta("first"),
+        leaf.delta("last"),
+        leaf.terminal().trim_end_matches('\n')
+    );
     let (disabled, enabled) = compare(
         leaf,
         surface,

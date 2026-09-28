@@ -201,15 +201,6 @@ impl SseAccumulator {
         }
     }
 
-    pub(super) fn has_observable_output(&self) -> bool {
-        !self.content.is_empty()
-            || !self.tool_calls.is_empty()
-            || !self.thinking_blocks.is_empty()
-            || self.in_tool_input
-            || self.in_thinking
-            || self.in_redacted_thinking
-    }
-
     /// Consume `self` and return the assembled [`LlmResponse`].
     pub(super) fn into_response(self) -> LlmResponse {
         let content = if self.content.is_empty() {
@@ -345,6 +336,7 @@ impl AnthropicProvider {
         let idle = self.stream_idle;
         // Observed beside the request, never altering it (#2151, #2210).
         let profile = Profile::new(Vendor::Anthropic, Surface::Assembled, idle);
+        let trace = params.trace.clone();
         let attempt = crate::infrastructure::providers::attempt_transport::PassiveAttempt::begin(
             params.trace,
             profile,
@@ -386,7 +378,8 @@ impl AnthropicProvider {
                 }
             })?,
         };
-        let parsed = Self::parse_sse_response(&full, params.tool_defs);
+        let parsed = Self::parse_sse_reply(&full, params.tool_defs)
+            .map_err(|cut| cut.account(trace.as_deref(), params.model));
         attempt.iter().for_each(|a| a.parsed(&parsed));
         parsed
     }
@@ -423,27 +416,39 @@ impl AnthropicProvider {
     ///
     /// When `tool_defs` is `Some`, PascalCase tool names from the API are
     /// reverse-mapped to registry names (OAuth mode, #438).
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn parse_sse_response(
         raw: &str,
         tool_defs: Option<Vec<ToolDefinition>>,
     ) -> Result<LlmResponse, DomainError> {
+        Self::parse_sse_reply(raw, tool_defs).map_err(UnfinishedReply::into_error)
+    }
+
+    /// [`Self::parse_sse_response`], keeping the usage a reply cut short
+    /// before `message_stop` reported, to be accounted (#2249 review).
+    pub(super) fn parse_sse_reply(
+        raw: &str,
+        tool_defs: Option<Vec<ToolDefinition>>,
+    ) -> Result<LlmResponse, UnfinishedReply> {
         let mut acc = match tool_defs {
             Some(defs) => SseAccumulator::with_tool_defs(defs),
             None => SseAccumulator::default(),
         };
         let mut current_event = String::new();
         let mut saw_terminal = false;
+        let mut saw_event = false;
 
         for line in raw.lines() {
             let line = line.trim();
             if let Some(event) = line.strip_prefix("event: ") {
+                saw_event = true;
                 current_event = event.to_string();
                 continue;
             }
-            if !line.starts_with("data: ") {
+            let Some(data) = line.strip_prefix("data: ") else {
                 continue;
-            }
-            let data = &line[6..];
+            };
+            saw_event = true;
             let chunk: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
 
             match current_event.as_str() {
@@ -457,16 +462,20 @@ impl AnthropicProvider {
                     break;
                 }
                 "error" => {
-                    return Err(DomainError::Provider(format_anthropic_stream_error(&chunk)));
+                    return Err(DomainError::Provider(format_anthropic_stream_error(&chunk)).into());
                 }
                 _ => {}
             }
         }
 
-        if !saw_terminal && !acc.has_observable_output() {
-            return Err(DomainError::Provider(
-                "Anthropic stream ended without completion".to_string(),
-            ));
+        // Only `message_stop` ends a reply whole: output without it is a
+        // reply cut short, and no event at all an empty stream (#2249
+        // review), never taken as a whole answer; what it reported is kept.
+        if !saw_terminal {
+            return Err(UnfinishedReply {
+                error: DomainError::Provider(sse_end::ended_early(saw_event, ANTHROPIC_CUT_SHORT)),
+                usage: acc.into_response().usage,
+            });
         }
 
         Ok(acc.into_response())
@@ -485,6 +494,7 @@ impl AnthropicProvider {
 
         let idle = self.stream_idle;
         // Observed beside the request, never altering it (#2151, #2210).
+        let trace = params.base.trace.clone();
         let attempt = crate::infrastructure::providers::attempt_transport::PassiveAttempt::begin(
             params.base.trace,
             Profile::new(Vendor::Anthropic, Surface::Incremental, idle),
@@ -526,7 +536,8 @@ impl AnthropicProvider {
             return;
         }
 
-        let handler = AnthropicSseHandler::with_model(params.base.tool_defs, params.base.model);
+        let handler = AnthropicSseHandler::with_model(params.base.tool_defs, params.base.model)
+            .with_trace(trace);
         crate::infrastructure::providers::attempt_transport::pump_observed(
             &mut response,
             &tx,
@@ -539,100 +550,20 @@ impl AnthropicProvider {
 }
 
 use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
-use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
+use crate::infrastructure::providers::sse_end::{self, UnfinishedReply};
 use crate::infrastructure::providers::stream_idle::{BodyError, error_text};
 
-/// SSE line handler for the Anthropic Messages API.
-pub(crate) struct AnthropicSseHandler {
-    current_event: String,
-    acc: SseAccumulator,
-    saw_terminal: bool,
-    model: Option<String>,
-}
-
-impl AnthropicSseHandler {
-    fn new(tool_defs: Option<Vec<ToolDefinition>>) -> Self {
-        Self {
-            current_event: String::new(),
-            acc: match tool_defs {
-                Some(defs) => SseAccumulator::with_tool_defs(defs),
-                None => SseAccumulator::default(),
-            },
-            saw_terminal: false,
-            model: None,
-        }
-    }
-
-    pub(crate) fn with_model(tool_defs: Option<Vec<ToolDefinition>>, model: &str) -> Self {
-        let mut handler = Self::new(tool_defs);
-        handler.model = Some(model.to_string());
-        handler
-    }
-
-    fn take_response(&mut self) -> LlmResponse {
-        let mut response = std::mem::take(&mut self.acc).into_response();
-        if let Some(model) = &self.model {
-            crate::domain::usage_accounting::attach_cost(&mut response, model);
-        }
-        response
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn new_for_test(tool_defs: Option<Vec<ToolDefinition>>) -> Self {
-        Self::new(tool_defs)
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(super) fn into_response(self) -> LlmResponse {
-        self.acc.into_response()
-    }
-}
-
-impl SseHandler for AnthropicSseHandler {
-    async fn process_line(
-        &mut self,
-        line: &str,
-        tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-    ) -> SseLineOutcome {
-        if let Some(event_type) = line.strip_prefix("event: ") {
-            self.current_event = event_type.to_string();
-        } else if let Some(data) = line.strip_prefix("data: ") {
-            let chunk_val: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
-            if dispatch_sse_event(
-                &self.current_event,
-                &chunk_val,
-                &mut self.acc,
-                self.model.as_deref(),
-                tx,
-            )
-            .await
-            {
-                self.saw_terminal = true;
-                return SseLineOutcome::Done;
-            }
-        }
-        SseLineOutcome::Continue
-    }
-
-    async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
-        if !self.saw_terminal && !self.acc.has_observable_output() {
-            let _ = tx
-                .send(StreamEvent::Error(
-                    "Anthropic stream ended without completion".to_string(),
-                ))
-                .await;
-            return;
-        }
-        let response = self.take_response();
-        let _ = tx.send(StreamEvent::Done(response)).await;
-    }
-}
+#[path = "anthropic_sse_handler.rs"]
+mod handler;
+pub(crate) use handler::{ANTHROPIC_CUT_SHORT, AnthropicSseHandler};
 
 fn format_anthropic_stream_error(chunk: &serde_json::Value) -> String {
     let error = &chunk["error"];
     let kind = error["type"].as_str().unwrap_or("error");
-    let message = error["message"]
+    // A bare string `error` (#2236) is the message itself.
+    let message = error
         .as_str()
+        .or_else(|| error["message"].as_str())
         .unwrap_or("Anthropic stream error");
     format!("Anthropic stream error: type={kind}: {message}")
 }
@@ -726,3 +657,6 @@ async fn emit_tool_call_end(acc: &SseAccumulator, tx: &tokio::sync::mpsc::Sender
 #[cfg(test)]
 #[path = "anthropic_sse_cov_tests.rs"]
 mod cov_tests;
+#[cfg(test)]
+#[path = "anthropic_sse_end_tests.rs"]
+mod end_tests;
