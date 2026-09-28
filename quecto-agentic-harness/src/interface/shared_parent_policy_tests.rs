@@ -190,3 +190,36 @@ fn selected_playbook_replaces_default_only_for_parent() {
     assert!(!child.contains(marker));
     assert!(!child.contains("### Optional pre-planning spike"));
 }
+
+#[test]
+fn new_red_first_and_bounded_verification_rules_are_parent_only() {
+    let parent_markers = [
+        "red-test swarm",
+        "SIGKILL",
+        "MISSED",
+        "TIMEOUT",
+        "diff-scoped",
+    ];
+    for parent in [
+        build_system_prompt(&None, false),
+        build_agent_system_prompt(None, None, false, ""),
+    ] {
+        for marker in parent_markers {
+            assert!(
+                parent.contains(marker),
+                "missing bundled parent policy marker: {marker}"
+            );
+        }
+    }
+    for child in [
+        build_system_prompt(&None, true),
+        build_agent_system_prompt(None, None, true, ""),
+    ] {
+        for marker in parent_markers {
+            assert!(
+                !child.contains(marker),
+                "parent-only rule leaked to child: {marker}"
+            );
+        }
+    }
+}
