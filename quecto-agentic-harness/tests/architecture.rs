@@ -5836,6 +5836,22 @@ fn external_agent_application_dependency_allowed(path: &str) -> bool {
     }
 }
 
+/// The paths `source` (at `path`) names that the external-agent
+/// application may not.
+fn external_agent_application_refusals(path: &str, source: &str) -> Vec<String> {
+    let mut refused: Vec<String> = dependency_paths_at(path, source)
+        .unwrap_or_else(|| panic!("parse {path}"))
+        .into_iter()
+        .filter(|dep| !external_agent_application_dependency_allowed(dep))
+        .collect();
+    // Paths inside a macro (`tokio::select!`) escape the parse above:
+    // the session's time is its clock port's, never tokio's (#2287).
+    if source.contains("tokio::time") {
+        refused.push("tokio::time".into());
+    }
+    refused
+}
+
 #[test]
 fn external_agent_application_depends_only_inward() {
     let mut files = Vec::new();
@@ -5843,17 +5859,33 @@ fn external_agent_application_depends_only_inward() {
     assert!(!files.is_empty(), "the external_agent context has sources");
     for file in &files {
         let (path, source) = file.split_once(":\n").expect("a file entry");
-        let refused: Vec<_> = dependency_paths_at(path, source)
-            .unwrap_or_else(|| panic!("parse {path}"))
-            .into_iter()
-            .filter(|dep| !external_agent_application_dependency_allowed(dep))
-            .collect();
+        let refused = external_agent_application_refusals(path, source);
         assert!(refused.is_empty(), "{path} depends outward: {refused:?}");
-        // Paths inside a macro (`tokio::select!`) escape the parse above:
-        // the session's time is its clock port's, never tokio's (#2287).
+    }
+    // #2287 review round 2: tokio's time is refused however it is spelt,
+    // in an import tree or inside a macro's tokens (`tokio::select!`).
+    let file = "src/application/external_agent/use_cases/drive_external_agent_session.rs";
+    for source in [
+        "use tokio::{time};",
+        "use tokio::{time::sleep, sync::Mutex};",
+        "use ::tokio::time::Instant;",
+        "async fn f() { tokio::select! { () = tokio :: time :: sleep(d) => {} } }",
+        "async fn f() { tokio::select! { () = ::tokio::time::sleep(d) => {} } }",
+        "fn f() { let _ = format!(\"{:?}\", std::time::Instant::now()); }",
+    ] {
         assert!(
-            !source.contains("tokio::time"),
-            "{path} reads tokio's time; use the ExternalAgentClock port"
+            !external_agent_application_refusals(file, source).is_empty(),
+            "the guard must refuse: {source}"
+        );
+    }
+    for source in [
+        "async fn f() { tokio::select! { biased; () = self.until_ended() => {} } }",
+        "fn f() { assert_eq!(self.phase, SessionPhase::Idle, \"tokio::time\"); }",
+    ] {
+        assert_eq!(
+            external_agent_application_refusals(file, source),
+            Vec::<String>::new(),
+            "the guard must accept: {source}"
         );
     }
     for dep in [

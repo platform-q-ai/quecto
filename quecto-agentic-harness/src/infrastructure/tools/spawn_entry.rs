@@ -17,6 +17,27 @@ pub(super) fn effective_config_path(
     explicit_config_path.cloned().or(inherited_config_path)
 }
 
+/// The `--config` a child is launched with (PR #1401 review, #2024 S4a):
+/// a container child's is the spawn call's `config`, else the parent's own
+/// config file, else the inherited runtime path (the GLOBAL file only: the
+/// container was created from the parent's effective configuration, and
+/// the child, inside it, has no checkout overlay to bind). A local child
+/// keeps the explicit, then inherited, chain.
+pub(super) fn forwarded_config_path(
+    container: &crate::domain::subagent::ContainerSelection,
+    explicit_config_path: Option<&PathBuf>,
+    parent_config_path: Option<&PathBuf>,
+) -> Option<PathBuf> {
+    match container {
+        crate::domain::subagent::ContainerSelection::Local => {
+            effective_config_path(explicit_config_path, inherited_runtime_config_path())
+        }
+        _ => explicit_config_path
+            .cloned()
+            .or_else(|| effective_config_path(parent_config_path, inherited_runtime_config_path())),
+    }
+}
+
 /// Durable child session key used for `-s` / `Session::build_key` (#1378).
 /// Always the minted AgentUuid — never the user-facing display label; the
 /// domain names it so the parent reads back the session the child opens.

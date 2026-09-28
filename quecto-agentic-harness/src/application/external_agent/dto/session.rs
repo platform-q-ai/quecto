@@ -40,6 +40,13 @@ pub struct SessionTotals {
 /// bound (`UdsSession::MAX_PENDING`).
 pub const FOLLOW_UP_QUEUE_CAPACITY: usize = 64;
 
+/// The most user turns one session turn may write into claude: its prompt
+/// and every steer. claude's `result` names at most 64 of the user turns a
+/// turn consumed (`user_message_uuids`; the CLI's collector keeps 64 and
+/// overwrites the last slot past that), so a 65th could never be named and
+/// the session would stay busy for good. One below the CLI's bound.
+pub const USER_TURNS_PER_TURN_CAPACITY: usize = 63;
+
 /// How long the stream may stay quiet after a skipped line of a running
 /// turn before the turn is given up as lost: the skipped line may have been
 /// its `result`, which would never come again.
@@ -90,8 +97,14 @@ pub enum SessionRefusal {
     AlreadyStarted,
     /// A turn runs and the prompt named no [`StreamingBehavior`].
     Busy,
-    /// [`FOLLOW_UP_QUEUE_CAPACITY`] follow-ups already wait.
+    /// [`FOLLOW_UP_QUEUE_CAPACITY`] follow-ups already wait, or
+    /// [`USER_TURNS_PER_TURN_CAPACITY`] user turns were already written
+    /// into the running turn.
     QueueFull,
+    /// A steer, before claude has named the user turns a result answers:
+    /// on an older CLI a steer's own result could not be told from the
+    /// running turn's.
+    SteerUnavailable,
     /// The running turn is being interrupted: nothing is written into it.
     Interrupting,
     /// The member has ended: aborted, or its agent exited.
@@ -110,6 +123,7 @@ impl SessionRefusal {
             Self::AlreadyStarted => "already_started",
             Self::Busy => "busy",
             Self::QueueFull => "queue_full",
+            Self::SteerUnavailable => "steer_unavailable",
             Self::Interrupting => "interrupting",
             Self::Ended => "ended",
             Self::Launch(_) => "launch",
@@ -129,6 +143,11 @@ impl std::fmt::Display for SessionRefusal {
             Self::QueueFull => write!(
                 f,
                 "pending prompt queue is full; instruction was not retained"
+            ),
+            Self::SteerUnavailable => write!(
+                f,
+                "the claude-code member cannot steer until its agent names the turns its results \
+                 answer; send a follow-up"
             ),
             Self::Interrupting => write!(
                 f,

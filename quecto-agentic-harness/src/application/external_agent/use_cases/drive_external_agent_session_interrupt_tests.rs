@@ -105,11 +105,10 @@ async fn an_interrupted_turn_that_never_answers_ends_the_member() {
     assert!(rig.wire.dropped(), "the agent process is ended");
     assert_eq!(rig.wire.sent(), ["one"]);
     assert_eq!(rig.session.next_step().await, None);
-    assert!(
-        rig.records
-            .all()
-            .contains(&SessionRecord::Abandoned { turn: 1 })
-    );
+    assert!(rig.records.all().contains(&SessionRecord::Abandoned {
+        turn: 1,
+        dropped_follow_ups: 0
+    }));
 }
 
 // M1: quecto's idle abort discards pending work, answers Ok and keeps the
@@ -195,18 +194,18 @@ async fn a_busy_abort_interrupts_the_turn_and_the_member_survives() {
 // in its answer: no result is owed for it.
 #[tokio::test]
 async fn an_interrupt_that_withdraws_a_queued_steer_owes_no_result_for_it() {
-    let rig = started().await;
+    let rig = named_started().await;
     rig.session.prompt("one", None).await.unwrap();
     rig.session.steer("two").await.unwrap();
     rig.session.abort().await.unwrap();
-    rig.feed(answered(&["u1"], "aborted_tools", "stopped"))
+    rig.feed(answered(&["u2"], "aborted_tools", "stopped"))
         .await;
     assert_eq!(
         rig.phase(),
-        SessionPhase::Interrupting { turn: 1 },
+        SessionPhase::Interrupting { turn: 2 },
         "the steer is still owed"
     );
-    let SessionStep::Folded(step) = rig.feed(interrupt_answered(&["u2"])).await else {
+    let SessionStep::Folded(step) = rig.feed(interrupt_answered(&["u3"])).await else {
         panic!("the answer is folded")
     };
     let end = step
@@ -215,7 +214,7 @@ async fn an_interrupt_that_withdraws_a_queued_steer_owes_no_result_for_it() {
     assert!(!end.end.is_completed());
     assert_eq!(rig.phase(), SessionPhase::Idle);
     assert!(rig.records.all().contains(&SessionRecord::TurnEnded {
-        turn: 1,
+        turn: 2,
         outcome: "aborted",
         duration_ms: Some(1200),
         cost_micro_usd: 0,
@@ -265,18 +264,18 @@ async fn an_abort_whose_interrupt_cannot_be_written_ends_the_member() {
 // its own. The session stays busy until that turn's result.
 #[tokio::test]
 async fn a_steer_racing_the_result_keeps_the_session_busy_until_its_own_result() {
-    let rig = started().await;
+    let rig = named_started().await;
     rig.session.prompt("one", None).await.unwrap();
-    rig.wire.emit(answered(&["u1"], "completed", "first"));
+    rig.wire.emit(answered(&["u2"], "completed", "first"));
     assert_eq!(
         rig.session.steer("two").await,
-        Ok(PromptAccepted::Steered { turn: 1 })
+        Ok(PromptAccepted::Steered { turn: 2 })
     );
     let SessionStep::Folded(step) = rig.step().await.unwrap() else {
         panic!("the first result is folded")
     };
     assert_eq!(step.turn_end, None, "the turn goes on: the steer is owed");
-    assert_eq!(rig.phase(), SessionPhase::Busy { turn: 1 });
+    assert_eq!(rig.phase(), SessionPhase::Busy { turn: 2 });
     assert_eq!(
         rig.session.prompt("three", None).await,
         Err(SessionRefusal::Busy),
@@ -285,14 +284,18 @@ async fn a_steer_racing_the_result_keeps_the_session_busy_until_its_own_result()
     assert!(
         rig.records
             .all()
-            .contains(&SessionRecord::TurnContinued { turn: 1, owed: 1 })
+            .contains(&SessionRecord::TurnContinued { turn: 2, owed: 1 })
     );
-    let SessionStep::Folded(step) = rig.feed(answered(&["u2"], "completed", "second")).await else {
+    let SessionStep::Folded(step) = rig.feed(answered(&["u3"], "completed", "second")).await else {
         panic!("the steer's result is folded")
     };
     assert!(step.turn_end.is_some());
     assert_eq!(rig.phase(), SessionPhase::Idle);
-    assert_eq!(rig.session.state().totals.turns, 2, "claude ran two turns");
+    assert_eq!(
+        rig.session.state().totals.turns,
+        3,
+        "claude ran two turns after the first"
+    );
 }
 
 // Once claude names the turns it consumed, a result naming none of ours
@@ -306,6 +309,16 @@ async fn a_result_naming_no_turn_of_ours_ends_no_turn() {
     rig.feed(answered(&[], "completed", "a task notification's turn"))
         .await;
     assert_eq!(rig.phase(), SessionPhase::Busy { turn: 2 });
+    // Recorded (#2287 review 2, L5): a success naming no user turn is a
+    // turn of claude's own, which consumed none of the member's.
+    assert!(
+        rig.records
+            .all()
+            .contains(&SessionRecord::ResultWithoutIds {
+                turn: 2,
+                ended: false
+            })
+    );
     rig.feed(answered(&["u2"], "completed", "second")).await;
     assert_eq!(rig.phase(), SessionPhase::Idle);
 }

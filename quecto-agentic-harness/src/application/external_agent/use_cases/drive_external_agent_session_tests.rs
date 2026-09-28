@@ -45,22 +45,23 @@ async fn a_prompt_while_busy_is_refused_without_steer_or_follow_up() {
 // `result` ends both.
 #[tokio::test]
 async fn steer_writes_immediately_and_folds_into_the_running_turn() {
-    let rig = started().await;
+    let rig = named_started().await;
     rig.session.prompt("one", None).await.unwrap();
     rig.feed(text_block("m1", "working")).await;
     assert_eq!(
         rig.session.steer("two").await,
-        Ok(PromptAccepted::Steered { turn: 1 })
+        Ok(PromptAccepted::Steered { turn: 2 })
     );
-    assert_eq!(rig.wire.sent(), ["one", "two"], "written at once");
-    assert_eq!(rig.phase(), SessionPhase::Busy { turn: 1 });
-    let SessionStep::Folded(step) = rig.feed(completed("done")).await else {
+    assert_eq!(rig.wire.sent(), ["zero", "one", "two"], "written at once");
+    assert_eq!(rig.phase(), SessionPhase::Busy { turn: 2 });
+    let SessionStep::Folded(step) = rig.feed(answered(&["u2", "u3"], "completed", "done")).await
+    else {
         panic!("the result is folded")
     };
     assert!(step.turn_end.is_some(), "one result ends the steered turn");
     assert_eq!(rig.phase(), SessionPhase::Idle);
-    assert_eq!(rig.session.state().totals.turns, 1);
-    assert_eq!(user_messages(&rig.session), ["one", "two"]);
+    assert_eq!(rig.session.state().totals.turns, 2);
+    assert_eq!(user_messages(&rig.session), ["zero", "one", "two"]);
     assert_eq!(rig.session.report().unwrap().content, "done");
 }
 
@@ -99,7 +100,7 @@ async fn follow_up_waits_for_turn_end() {
 
 #[tokio::test]
 async fn queue_overflow_is_refused() {
-    let rig = started().await;
+    let rig = named_started().await;
     rig.session.prompt("one", None).await.unwrap();
     for position in 1..=FOLLOW_UP_QUEUE_CAPACITY {
         assert_eq!(
@@ -122,7 +123,7 @@ async fn queue_overflow_is_refused() {
     // A steer is written at once, so a full queue does not refuse it.
     assert_eq!(
         rig.session.steer("steer").await,
-        Ok(PromptAccepted::Steered { turn: 1 })
+        Ok(PromptAccepted::Steered { turn: 2 })
     );
 }
 
@@ -384,10 +385,10 @@ async fn a_recorded_tool_name_is_bounded_and_allowlisted() {
 // one result.
 #[tokio::test]
 async fn a_result_naming_the_steer_ends_the_steered_turn() {
-    let rig = started().await;
+    let rig = named_started().await;
     rig.session.prompt("one", None).await.unwrap();
     rig.session.steer("two").await.unwrap();
-    let SessionStep::Folded(step) = rig.feed(answered(&["u1", "u2"], "completed", "done")).await
+    let SessionStep::Folded(step) = rig.feed(answered(&["u2", "u3"], "completed", "done")).await
     else {
         panic!("the result is folded")
     };

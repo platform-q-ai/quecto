@@ -43,12 +43,22 @@ pub enum SessionRecord {
     /// A result came for turn `turn` while `owed` user turns written into
     /// it are still unanswered: the turn goes on.
     TurnContinued { turn: u64, owed: usize },
+    /// A result naming no user turn came while turn `turn` ran, after
+    /// claude had named them before: `ended` when it was taken for the
+    /// turn's end (an error result: a session-scoped failure, a zeroed or
+    /// delivery-failure result), not when it was a turn of claude's own (a
+    /// success that consumed no user turn of the member's).
+    ResultWithoutIds { turn: u64, ended: bool },
     /// Turn `turn` was interrupted: `abort`, or `lost` (a skipped line,
     /// then silence).
     Interrupted { turn: u64, cause: &'static str },
     /// Interrupted turn `turn` did not answer in time, or the interrupt
-    /// could not be written: the member was ended.
-    Abandoned { turn: u64 },
+    /// could not be written: the member was ended, dropping
+    /// `dropped_follow_ups` queued follow-ups.
+    Abandoned {
+        turn: u64,
+        dropped_follow_ups: usize,
+    },
     /// A queued follow-up started turn `turn`.
     FollowUpStarted { turn: u64, bytes: usize },
     /// The follow-up of `bytes` bytes that was to start turn `turn` could
@@ -84,6 +94,7 @@ impl SessionRecord {
             Self::LineSkipped { .. } => "line_skipped",
             Self::TurnEnded { .. } => "turn_ended",
             Self::TurnContinued { .. } => "turn_continued",
+            Self::ResultWithoutIds { .. } => "result_without_ids",
             Self::Interrupted { .. } => "interrupted",
             Self::Abandoned { .. } => "abandoned",
             Self::FollowUpStarted { .. } => "follow_up_started",

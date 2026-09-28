@@ -117,3 +117,124 @@ fn printf_writes_raw_bytes_and_record_marks_progress_in_its_turn() {
     );
     assert_eq!(mock.recorded("record"), vec!["reached".to_string()]);
 }
+
+/// One stream-json user line under `uuid`, as the adapter writes it.
+fn user(uuid: &str) -> String {
+    format!(
+        "{{\"type\":\"user\",\"uuid\":\"{uuid}\",\"message\":{{\"role\":\"user\",\"content\":[]}}}}\n"
+    )
+}
+
+/// An interrupt control request, with or without `cancel_queued`.
+fn interrupt(request_id: &str, cancel_queued: bool) -> String {
+    format!(
+        "{{\"type\":\"control_request\",\"request_id\":\"{request_id}\",\"request\":{{\"subtype\":\"interrupt\"{}}}}}\n",
+        match cancel_queued {
+            true => ",\"cancel_queued\":true",
+            false => "",
+        }
+    )
+}
+
+fn control_response(request_id: &str, still_queued: &str, cancelled: &str) -> String {
+    format!(
+        "{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"{request_id}\",\"response\":{{\"still_queued\":[{still_queued}],\"cancelled\":[{cancelled}]}}}}}}\n"
+    )
+}
+
+/// #2287 review round 2 (L9): user messages written while a turn runs are
+/// folded into it, as claude folds a queued message between tool rounds:
+/// its one result lists every uuid it consumed (`@UUIDS@`), the turn's
+/// own first.
+#[test]
+fn messages_written_mid_turn_fold_into_the_running_turn() {
+    let scenario = concat!(
+        "{\"type\":\"system\",\"subtype\":\"init\"}\n",
+        "@await-steers 2\n",
+        "{\"type\":\"result\",\"user_message_uuid\":\"@UUID@\",\"user_message_uuids\":[@UUIDS@]}\n",
+        "{\"type\":\"result\",\"n\":2,\"user_message_uuids\":[@UUIDS@]}\n",
+    );
+    let input = [user("a"), user("b"), user("c"), user("d")].concat();
+    let (stdout, _) = run(scenario, &input);
+    assert_eq!(
+        stdout,
+        concat!(
+            "{\"type\":\"system\",\"subtype\":\"init\"}\n",
+            "{\"type\":\"result\",\"user_message_uuid\":\"a\",\"user_message_uuids\":[\"a\",\"b\",\"c\"]}\n",
+            "{\"type\":\"result\",\"n\":2,\"user_message_uuids\":[\"d\"]}\n",
+        )
+    );
+}
+
+/// The CLI names at most 64 user turns in one result.
+#[test]
+fn a_result_names_at_most_64_user_turns() {
+    let scenario = "@await-steers 70\n{\"type\":\"result\",\"user_message_uuids\":[@UUIDS@]}\n";
+    let input: String = (0..71).map(|n| user(&format!("m{n}"))).collect();
+    let (stdout, _) = run(scenario, &input);
+    let result: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let named = result["user_message_uuids"].as_array().unwrap();
+    assert_eq!(named.len(), 64);
+    assert_eq!(named[0], "m0");
+    assert_eq!(named[63], "m63");
+}
+
+/// An interrupt with `cancel_queued` withdraws the user messages queued
+/// behind the running turn, lists them as cancelled and runs none of them;
+/// under `@await-interrupt` only a control request is answered as one.
+#[test]
+fn an_interrupt_withdraws_the_queued_messages_it_cancels() {
+    let scenario = concat!(
+        "@await-interrupt\n",
+        "{\"type\":\"result\",\"terminal_reason\":\"aborted_streaming\",\"user_message_uuids\":[@UUIDS@]}\n",
+        "{\"type\":\"result\",\"n\":2,\"user_message_uuids\":[@UUIDS@]}\n",
+    );
+    let input = [user("a"), user("b"), user("c"), interrupt("r1", true)].concat();
+    let (stdout, _) = run(scenario, &input);
+    assert_eq!(
+        stdout,
+        [
+            control_response("r1", "", "\"b\",\"c\""),
+            "{\"type\":\"result\",\"terminal_reason\":\"aborted_streaming\",\"user_message_uuids\":[\"a\"]}\n".to_string(),
+        ]
+        .concat()
+    );
+}
+
+/// Without `cancel_queued` the queued messages survive the interrupt
+/// (`still_queued`) and run, together, as the next turn.
+#[test]
+fn an_interrupt_without_cancel_queued_leaves_the_queue_to_run() {
+    let scenario = concat!(
+        "@await-interrupt\n",
+        "{\"type\":\"result\",\"terminal_reason\":\"aborted_streaming\",\"user_message_uuids\":[@UUIDS@]}\n",
+        "{\"type\":\"result\",\"n\":2,\"user_message_uuids\":[@UUIDS@]}\n",
+    );
+    let input = [user("a"), user("b"), interrupt("r1", false)].concat();
+    let (stdout, _) = run(scenario, &input);
+    assert_eq!(
+        stdout,
+        [
+            control_response("r1", "\"b\"", ""),
+            "{\"type\":\"result\",\"terminal_reason\":\"aborted_streaming\",\"user_message_uuids\":[\"a\"]}\n".to_string(),
+            "{\"type\":\"result\",\"n\":2,\"user_message_uuids\":[\"b\"]}\n".to_string(),
+        ]
+        .concat()
+    );
+}
+
+/// An interrupt while idle stops nothing and withdraws nothing.
+#[test]
+fn an_idle_interrupt_is_answered_with_nothing_withdrawn() {
+    let scenario = "{\"type\":\"result\",\"user_message_uuids\":[@UUIDS@]}\n";
+    let input = [interrupt("r0", true), user("a")].concat();
+    let (stdout, _) = run(scenario, &input);
+    assert_eq!(
+        stdout,
+        [
+            control_response("r0", "", ""),
+            "{\"type\":\"result\",\"user_message_uuids\":[\"a\"]}\n".to_string(),
+        ]
+        .concat()
+    );
+}

@@ -346,7 +346,10 @@ impl DriveExternalAgentSession {
     fn abandon(&self, turn: u64) -> SessionStep {
         self.core().end();
         self.release_process();
-        self.record(SessionRecord::Abandoned { turn });
+        self.record(SessionRecord::Abandoned {
+            turn,
+            dropped_follow_ups: 0,
+        });
         SessionStep::Abandoned { turn }
     }
 
@@ -459,3 +462,7 @@ mod tests;
 #[cfg(test)]
 #[path = "drive_external_agent_session_interrupt_tests.rs"]
 mod interrupt_tests;
+
+#[cfg(test)]
+#[path = "drive_external_agent_session_binding_tests.rs"]
+mod binding_tests;

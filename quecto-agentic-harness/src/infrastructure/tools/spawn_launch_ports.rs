@@ -1,7 +1,7 @@
 use super::spawn::{SpawnTool, send_initial_prompt_to_socket};
 use super::spawn_entry::{
     InitialRegistryEntrySpec, child_session_key, child_sidecar_filename, child_socket_path,
-    effective_config_path, inherited_runtime_config_path, initial_registry_entry,
+    forwarded_config_path, initial_registry_entry,
 };
 use super::spawn_launch_args::write_private_new;
 use super::spawn_registry::register_and_broadcast;
@@ -167,25 +167,14 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         } else {
             None
         };
-        // The `--config` a container child is started with (PR #1401
-        // review, #2024 S4a): the spawn call's `config`, else the parent's
-        // own config file, else the inherited runtime path — the GLOBAL
-        // file only. The environment itself was created from the parent's
-        // effective configuration (global plus its checkout's trusted
-        // overlay); the child, running inside the container, has no
-        // checkout overlay to bind and never inherits one. Local spawns
-        // keep the pre-existing explicit→inherited chain unchanged.
-        let effective_config = match config.container {
-            crate::domain::subagent::ContainerSelection::Local => {
-                effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path())
-            }
-            _ => config.config_path.clone().or_else(|| {
-                effective_config_path(
-                    self.tool.parent_config_path.as_ref(),
-                    inherited_runtime_config_path(),
-                )
-            }),
-        };
+        // The `--config` the child is started with (see
+        // `forwarded_config_path`); the backend rule refuses a claude_code
+        // member one (#2287).
+        let effective_config = forwarded_config_path(
+            &config.container,
+            config.config_path.as_ref(),
+            self.tool.parent_config_path.as_ref(),
+        );
         Ok(super::spawn_launch_args::build_child_cli_args(
             &super::spawn_launch_args::ChildLaunchSpec {
                 session_name: child_session_key(agent_uuid),

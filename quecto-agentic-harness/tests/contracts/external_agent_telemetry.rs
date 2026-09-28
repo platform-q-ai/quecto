@@ -62,7 +62,14 @@ fn every_kind() -> Vec<SessionRecord> {
             turn: 1,
             cause: "abort",
         },
-        SessionRecord::Abandoned { turn: 1 },
+        SessionRecord::ResultWithoutIds {
+            turn: 1,
+            ended: true,
+        },
+        SessionRecord::Abandoned {
+            turn: 1,
+            dropped_follow_ups: 1,
+        },
         SessionRecord::FollowUpStarted { turn: 2, bytes: 3 },
         SessionRecord::FollowUpFailed {
             turn: 2,
@@ -88,7 +95,7 @@ fn every_kind_is_listed_once() {
     let kinds: std::collections::BTreeSet<&str> =
         every_kind().iter().map(SessionRecord::kind).collect();
     assert_eq!(kinds.len(), every_kind().len());
-    assert_eq!(kinds.len(), 15, "{kinds:?}");
+    assert_eq!(kinds.len(), 16, "{kinds:?}");
 }
 
 #[test]
