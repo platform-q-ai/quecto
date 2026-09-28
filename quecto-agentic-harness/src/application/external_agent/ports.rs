@@ -54,6 +54,9 @@ pub trait ExternalAgentProcess: Send + Sync {
     /// the process, and this wait, forever: read the events you need first.
     fn exited(&self) -> PortFuture<'_, ExternalAgentExit>;
 
+    /// Wait for the process to end, discarding its unread output.
+    fn exited_discarding_output(&self) -> PortFuture<'_, ExternalAgentExit>;
+
     /// The last [`super::dto::EXTERNAL_AGENT_STDERR_TAIL_BYTES`] of its
     /// stderr, for diagnostics.
     fn stderr_tail(&self) -> String;

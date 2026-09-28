@@ -102,18 +102,12 @@ async fn stderr_is_bounded() {
     process.send_user_turn("go").await.unwrap();
     events_to_turn_end(process.as_ref()).await;
     assert!(exit_of(process.as_ref()).await.is_clean());
-    // The tail is drained concurrently: give the pump its last read.
-    let tail = tokio::time::timeout(BOUND, async {
-        loop {
-            let tail = process.stderr_tail();
-            if tail.ends_with("last-words") {
-                return tail;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("the stderr tail reaches the last words");
+    // No polling: the exit is returned once stderr is read to its end.
+    let tail = process.stderr_tail();
+    assert!(
+        tail.ends_with("last-words"),
+        "the last words are in: {tail:?}"
+    );
     assert!(
         tail.len() <= EXTERNAL_AGENT_STDERR_TAIL_BYTES,
         "{} bytes kept",
@@ -166,4 +160,47 @@ async fn a_restarted_process_is_a_new_process() {
         "{:?}",
         projector.last_turn()
     );
+}
+
+/// `exited()` consumes no output: a session that reads events until the
+/// process exits, then reads what is left, receives every event, the
+/// turn's `result` included (#2286 review round 3).
+#[tokio::test]
+async fn waiting_for_the_exit_consumes_no_event() {
+    let root = tempfile::tempdir().unwrap();
+    let scenario = root.path().join("flood.jsonl");
+    let thinking =
+        "{\"type\": \"system\", \"subtype\": \"thinking_tokens\", \"estimated_tokens\": 5}\n";
+    std::fs::write(
+        &scenario,
+        format!(
+            "{}{{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false}}\n",
+            thinking.repeat(200)
+        ),
+    )
+    .unwrap();
+    let rig = MockClaudeRig::replaying(&scenario);
+    let process = rig.start("m1").await;
+    process.send_user_turn("go").await.unwrap();
+    process.close_input().await;
+    let mut events = Vec::new();
+    let exit = tokio::time::timeout(BOUND, async {
+        let exit = loop {
+            tokio::select! {
+                event = process.next_event() => match event {
+                    Some(event) => events.push(event),
+                    None => break process.exited().await,
+                },
+                exit = process.exited() => break exit,
+            }
+        };
+        while let Some(event) = process.next_event().await {
+            events.push(event);
+        }
+        exit
+    })
+    .await
+    .expect("the loop ends within the bound");
+    assert_eq!(exit, ExternalAgentExit::Code(0));
+    assert_eq!(events.len(), 201, "every event reached the session");
 }
