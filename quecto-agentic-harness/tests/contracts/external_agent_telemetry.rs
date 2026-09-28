@@ -57,13 +57,38 @@ fn every_kind() -> Vec<SessionRecord> {
             duration_ms: Some(5),
             cost_micro_usd: 7,
         },
+        SessionRecord::TurnContinued { turn: 1, owed: 1 },
+        SessionRecord::Interrupted {
+            turn: 1,
+            cause: "abort",
+        },
+        SessionRecord::Abandoned { turn: 1 },
         SessionRecord::FollowUpStarted { turn: 2, bytes: 3 },
+        SessionRecord::FollowUpFailed {
+            turn: 2,
+            bytes: 3,
+            refusal: "input",
+        },
         SessionRecord::Aborted {
             turn: Some(2),
             dropped_follow_ups: 1,
         },
+        SessionRecord::Closed {
+            turn: None,
+            dropped_follow_ups: 0,
+        },
         SessionRecord::Ended { clean: true },
     ]
+}
+
+/// Every record kind, once each (a kind added to [`SessionRecord`] is
+/// added here).
+#[test]
+fn every_kind_is_listed_once() {
+    let kinds: std::collections::BTreeSet<&str> =
+        every_kind().iter().map(SessionRecord::kind).collect();
+    assert_eq!(kinds.len(), every_kind().len());
+    assert_eq!(kinds.len(), 15, "{kinds:?}");
 }
 
 #[test]

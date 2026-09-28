@@ -38,7 +38,7 @@ pub struct SessionTotals {
 
 /// The most follow-ups a busy member holds: quecto's own pending-prompt
 /// bound (`UdsSession::MAX_PENDING`).
-pub const FOLLOW_UP_QUEUE_CAPACITY: usize = 16;
+pub const FOLLOW_UP_QUEUE_CAPACITY: usize = 64;
 
 /// How long the stream may stay quiet after a skipped line of a running
 /// turn before the turn is given up as lost: the skipped line may have been
@@ -125,9 +125,10 @@ impl std::fmt::Display for SessionRefusal {
             Self::AlreadyStarted => write!(f, "the claude-code member has already started"),
             // quecto's own busy refusal, word for word.
             Self::Busy => write!(f, "agent is running; provide streamingBehavior"),
+            // quecto's own queue-full refusal, word for word.
             Self::QueueFull => write!(
                 f,
-                "the follow-up queue is full ({FOLLOW_UP_QUEUE_CAPACITY}); wait for the running turn to end"
+                "pending prompt queue is full; instruction was not retained"
             ),
             Self::Interrupting => write!(
                 f,

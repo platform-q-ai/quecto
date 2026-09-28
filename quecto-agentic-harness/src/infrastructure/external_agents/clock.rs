@@ -28,8 +28,7 @@ impl Default for TokioExternalAgentClock {
 
 impl ExternalAgentClock for TokioExternalAgentClock {
     fn now(&self) -> AgentClockInstant {
-        let _ = self.epoch;
-        AgentClockInstant(0)
+        AgentClockInstant(u64::try_from(self.epoch.elapsed().as_millis()).unwrap_or(u64::MAX))
     }
 
     fn sleep(&self, duration: Duration) -> PortFuture<'_, ()> {

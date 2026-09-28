@@ -1,37 +1,60 @@
 //! Drive one claude-code member's session (#2287): start its agent, admit
-//! prompts with quecto's busy semantics, fold the agent's stream, and end
-//! the member.
+//! prompts with quecto's busy semantics, fold the agent's stream, interrupt
+//! its turns and end the member.
 //!
 //! - `prompt` starts a turn when idle; while a turn runs it needs a
-//!   [`StreamingBehavior`]: `Steer` is written at once and folds into the
-//!   running turn, `FollowUp` waits (at most [`FOLLOW_UP_QUEUE_CAPACITY`])
-//!   for the turn's end, which starts the next one.
+//!   [`StreamingBehavior`]: `Steer` is written at once, `FollowUp` waits
+//!   (at most [`FOLLOW_UP_QUEUE_CAPACITY`]) for the turn's end, which
+//!   starts the next one. A session turn ends once claude's results have
+//!   named every user turn written into it (a steer claude ran as a turn
+//!   of its own included): until then nothing new starts.
 //! - [`DriveExternalAgentSession::next_step`] reads and folds the stream;
-//!   its caller loops on it. A turn that skipped a line (it may have been
-//!   its `result`) is given up once the stream stays quiet for
-//!   [`ExternalAgentSessionSettings::skipped_line_grace`].
-//! - `abort` ends the member: the agent has no abort message on its input
-//!   (owner decision, #2287), so its process is ended, its turn and its
-//!   follow-ups with it. A reader or a writer waiting on it is released.
+//!   its caller loops on it. A turn whose last event was a skipped line (it
+//!   may have been its `result`) is given up once the stream stays quiet
+//!   for [`ExternalAgentSessionSettings::skipped_line_grace`]: it is
+//!   interrupted, like an aborted one.
+//! - `abort` is quecto's (`handle_abort`): it drops the follow-ups and
+//!   answers at once; a running turn is interrupted. The member lives on.
+//! - An interrupted turn keeps the session busy, writing nothing, until
+//!   every result it owes has come or been withdrawn; if that takes longer
+//!   than [`ExternalAgentSessionSettings::interrupt_grace`], or the
+//!   interrupt cannot be written, claude's state is unknown and the member
+//!   is ended.
+//! - `close` ends the member: its turn, its follow-ups and its process. A
+//!   reader or a writer waiting on it is released.
 //!
 //! Writes are serialised (a follow-up's turn cannot be overtaken by a
-//! steer), and every decision and effect is a [`SessionRecord`].
+//! steer), and every decision and effect is a [`SessionRecord`]. Time is
+//! the [`ExternalAgentClock`] port's.
 //!
 //! [`FOLLOW_UP_QUEUE_CAPACITY`]: crate::application::external_agent::dto::FOLLOW_UP_QUEUE_CAPACITY
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::application::external_agent::dto::{
-    AbortOutcome, ExecutionState, ExternalAgentSessionSettings, FinalReport, ProjectedMessage,
-    PromptAccepted, SessionPhase, SessionRecord, SessionRefusal, SessionStep, SessionView,
-    StreamingBehavior,
+    AbortOutcome, AgentClockInstant, ExecutionState, ExternalAgentSessionSettings, FinalReport,
+    ProjectedMessage, PromptAccepted, SessionPhase, SessionRecord, SessionRefusal, SessionStep,
+    SessionView, StreamingBehavior,
 };
 use crate::application::external_agent::ports::{
     ExternalAgentClock, ExternalAgentLauncher, ExternalAgentProcess, ExternalAgentTelemetry,
 };
-use crate::application::external_agent::session_core::{Admission, Folded, SessionCore};
+use crate::application::external_agent::session_core::{
+    AbortDecision, Admission, SessionCore, Wait,
+};
 
 type Process = Arc<dyn ExternalAgentProcess>;
+
+/// What interrupting a turn came to.
+enum Interrupt {
+    /// It was written: the session waits for what the turn owes.
+    Written,
+    /// It could not be: the member was ended.
+    Abandoned,
+    /// The member ended meanwhile.
+    MemberEnded,
+}
 
 /// One claude-code member's session.
 pub struct DriveExternalAgentSession {
@@ -41,7 +64,9 @@ pub struct DriveExternalAgentSession {
     settings: ExternalAgentSessionSettings,
     core: Mutex<SessionCore>,
     process: Mutex<Option<Process>>,
-    /// Held from a decision to write until the write is done.
+    /// Held from a decision to write until the write is done (and across
+    /// every fold, so a result is never folded before the user turn it
+    /// names is recorded as owed).
     writes: tokio::sync::Mutex<()>,
     /// Set once the member has ended; releases every waiter.
     ended: tokio::sync::watch::Sender<bool>,
@@ -131,8 +156,36 @@ impl DriveExternalAgentSession {
         self.prompt(text, Some(StreamingBehavior::FollowUp)).await
     }
 
-    /// End the member: its turn, its follow-ups and its agent's process.
+    /// quecto's abort: drop the follow-ups and interrupt the running turn,
+    /// if one runs. The member lives on, unless the interrupt cannot be
+    /// written.
     pub async fn abort(&self) -> Result<AbortOutcome, SessionRefusal> {
+        let _writes = self.writes.lock().await;
+        let decision = self.core().abort()?;
+        let (turn, dropped_follow_ups, member_ended) = match decision {
+            AbortDecision::Idle { dropped } => (None, dropped, false),
+            AbortDecision::Interrupting { turn, dropped } => (Some(turn), dropped, false),
+            AbortDecision::Interrupt { turn, dropped } => {
+                let ended = match self.interrupt(turn, "abort").await {
+                    Interrupt::Written => false,
+                    Interrupt::Abandoned | Interrupt::MemberEnded => true,
+                };
+                (Some(turn), dropped, ended)
+            }
+        };
+        self.record(SessionRecord::Aborted {
+            turn,
+            dropped_follow_ups,
+        });
+        Ok(AbortOutcome {
+            turn,
+            dropped_follow_ups,
+            member_ended,
+        })
+    }
+
+    /// End the member: its turn, its follow-ups and its agent's process.
+    pub async fn close(&self) -> Result<AbortOutcome, SessionRefusal> {
         let (turn, dropped_follow_ups) = {
             let mut core = self.core();
             match core.phase {
@@ -143,62 +196,61 @@ impl DriveExternalAgentSession {
                 SessionPhase::Ended => return Err(SessionRefusal::Ended),
             }
         };
-        // Waiters drop their handles on the signal; the last one to go
-        // ends the process.
-        let process = self.slot().take();
-        self.ended.send_replace(true);
-        drop(process);
-        let outcome = AbortOutcome {
-            turn,
-            dropped_follow_ups,
-            member_ended: true,
-        };
-        self.record(SessionRecord::Aborted {
+        self.release_process();
+        self.record(SessionRecord::Closed {
             turn,
             dropped_follow_ups,
         });
-        Ok(outcome)
-    }
-
-    /// End the member: its turn, its follow-ups and its agent's process.
-    pub async fn close(&self) -> Result<AbortOutcome, SessionRefusal> {
-        self.abort().await
+        Ok(AbortOutcome {
+            turn,
+            dropped_follow_ups,
+            member_ended: true,
+        })
     }
 
     /// Read and fold the agent's next event: `None` once the member has
     /// not started or has ended.
     pub async fn next_step(&self) -> Option<SessionStep> {
         loop {
+            if let Some(step) = self.core().take_surfaced() {
+                return Some(step);
+            }
             let process = self.slot().clone()?;
-            let armed = self.core().grace_armed();
-            // `None`: the grace ran out; `Some(None)`: the output ended.
+            let wait = self.core().wait();
+            let timer = self.timer(wait);
+            // `None`: the timer ran out; `Some(None)`: the output ended.
             let read = tokio::select! {
                 biased;
                 () = self.until_ended() => return None,
                 event = process.next_event() => Some(event),
-                () = tokio::time::sleep(self.settings.skipped_line_grace), if armed => None,
+                () = self.clock.sleep(timer.unwrap_or_default()), if timer.is_some() => None,
             };
-            match read {
-                Some(Some(event)) => {
+            match (read, wait) {
+                (Some(Some(event)), _) => {
                     let _writes = self.writes.lock().await;
                     let folded = self.core().fold(&event);
                     self.settle(folded.records, folded.follow_up).await;
                     return Some(SessionStep::Folded(folded.step));
                 }
-                Some(None) => return self.output_ended(process).await,
-                // A turn that ended meanwhile is not lost: read on.
-                None => match self.lose_turn().await {
-                    Some(step) => return Some(step),
-                    None => continue,
-                },
+                (Some(None), _) => return self.output_ended(process).await,
+                (None, Wait::Grace) => {
+                    if let Some(step) = self.lose_turn().await {
+                        return Some(step);
+                    }
+                }
+                (None, Wait::Until(_)) => {
+                    if let Some(step) = self.abandon_if_overdue().await {
+                        return Some(step);
+                    }
+                }
+                // No timer runs without a wait: read on.
+                (None, Wait::Event) => {}
             }
+            // A turn that ended or answered meanwhile is not lost: read on.
         }
     }
 
     pub fn state(&self) -> SessionView {
-        debug_assert!(
-            self.clock.now() >= crate::application::external_agent::dto::AgentClockInstant(0)
-        );
         let core = self.core();
         SessionView {
             phase: core.phase,
@@ -227,15 +279,75 @@ impl DriveExternalAgentSession {
         messages[start..end].to_vec()
     }
 
+    /// How long the reader may wait for an event before `wait` is due.
+    fn timer(&self, wait: Wait) -> Option<Duration> {
+        match wait {
+            Wait::Event => None,
+            Wait::Grace => Some(self.settings.skipped_line_grace),
+            Wait::Until(deadline) => Some(Duration::from_millis(
+                deadline.0.saturating_sub(self.clock.now().0),
+            )),
+        }
+    }
+
+    /// Give up the running turn, if its last event is still a skipped line:
+    /// it is interrupted.
     async fn lose_turn(&self) -> Option<SessionStep> {
         let _writes = self.writes.lock().await;
-        let lost = self.core().lose_turn();
-        let (turn, folded) = lost?;
-        let Folded {
-            records, follow_up, ..
-        } = folded;
-        self.settle(records, follow_up).await;
-        Some(SessionStep::TurnLost { turn })
+        let turn = self.core().lost_turn()?;
+        match self.interrupt(turn, "lost").await {
+            Interrupt::Written => Some(SessionStep::TurnLost { turn }),
+            Interrupt::Abandoned => Some(SessionStep::Abandoned { turn }),
+            Interrupt::MemberEnded => None,
+        }
+    }
+
+    /// Interrupt running turn `turn`; the caller holds the write gate.
+    /// Written, the session waits for what the turn owes.
+    async fn interrupt(&self, turn: u64, cause: &'static str) -> Interrupt {
+        let Some(process) = self.slot().clone() else {
+            return Interrupt::MemberEnded;
+        };
+        let written = tokio::select! {
+            biased;
+            () = self.until_ended() => return Interrupt::MemberEnded,
+            written = process.interrupt() => written,
+        };
+        drop(process);
+        match written {
+            Ok(()) => {
+                let deadline = self.deadline_after(self.settings.interrupt_grace);
+                self.core().interrupting(turn, deadline);
+                self.record(SessionRecord::Interrupted { turn, cause });
+                Interrupt::Written
+            }
+            Err(_) => {
+                self.abandon(turn);
+                Interrupt::Abandoned
+            }
+        }
+    }
+
+    fn deadline_after(&self, grace: Duration) -> AgentClockInstant {
+        // Saturating: a grace past u64 milliseconds never runs out.
+        let grace_ms: u64 = grace.as_millis().try_into().unwrap_or(!0);
+        AgentClockInstant(self.clock.now().0.saturating_add(grace_ms))
+    }
+
+    /// End the member if the interrupted turn is past its deadline.
+    async fn abandon_if_overdue(&self) -> Option<SessionStep> {
+        let _writes = self.writes.lock().await;
+        let turn = self.core().interrupt_overdue(self.clock.now())?;
+        Some(self.abandon(turn))
+    }
+
+    /// Interrupted turn `turn` never answered, or could not be
+    /// interrupted: claude's state is unknown, so the member is ended.
+    fn abandon(&self, turn: u64) -> SessionStep {
+        self.core().end();
+        self.release_process();
+        self.record(SessionRecord::Abandoned { turn });
+        SessionStep::Abandoned { turn }
     }
 
     async fn output_ended(&self, process: Process) -> Option<SessionStep> {
@@ -246,9 +358,7 @@ impl DriveExternalAgentSession {
         };
         drop(process);
         let (turn, _) = self.core().end();
-        let lost = self.slot().take();
-        self.ended.send_replace(true);
-        drop(lost);
+        self.release_process();
         if let Some(turn) = turn {
             self.record(SessionRecord::TurnEnded {
                 turn,
@@ -263,34 +373,55 @@ impl DriveExternalAgentSession {
         Some(SessionStep::Ended { turn, exit })
     }
 
-    /// Record what a fold decided and start the follow-up it dequeued.
+    /// Drop the process and release every waiter: the last handle to go
+    /// ends it.
+    fn release_process(&self) {
+        let process = self.slot().take();
+        self.ended.send_replace(true);
+        drop(process);
+    }
+
+    /// Record what a fold decided and start the follow-up it dequeued. A
+    /// follow-up that cannot be written is recorded and surfaced to the
+    /// reader; the member is idle.
     async fn settle(&self, records: Vec<SessionRecord>, follow_up: Option<(u64, String)>) {
         for record in &records {
             self.telemetry.record(record);
         }
-        if let Some((turn, text)) = follow_up {
-            // A failed write is the member's end, which the stream reports.
-            let _ = self.write(PromptAccepted::Started { turn }, &text).await;
+        let Some((turn, text)) = follow_up else {
+            return;
+        };
+        if let Err(refusal) = self.write(PromptAccepted::Started { turn }, &text).await {
+            self.record(SessionRecord::FollowUpFailed {
+                turn,
+                bytes: text.len(),
+                refusal: refusal.kind(),
+            });
+            self.core()
+                .surface(SessionStep::FollowUpFailed { turn, refusal });
         }
     }
 
     /// Write `accepted`'s text to the agent, unless the member ends first;
-    /// once written it is part of the conversation.
+    /// once written it is part of the conversation, and owed a result.
     async fn write(&self, accepted: PromptAccepted, text: &str) -> Result<(), SessionRefusal> {
         let process = self.slot().clone().ok_or(SessionRefusal::Ended)?;
         let written = tokio::select! {
             biased;
             () = self.until_ended() => Err(SessionRefusal::Ended),
-            sent = process.send_user_turn(text) => sent.map(|_| ()).map_err(SessionRefusal::Input),
+            sent = process.send_user_turn(text) => sent.map_err(SessionRefusal::Input),
         };
         let mut core = self.core();
-        match &written {
-            Ok(_) => {
-                core.projector.record_user_turn(text);
+        match written {
+            Ok(id) => {
+                core.written(id, text);
+                Ok(())
             }
-            Err(_) => core.write_failed(accepted),
+            Err(refusal) => {
+                core.write_failed(accepted);
+                Err(refusal)
+            }
         }
-        written
     }
 
     /// Resolves once the member has ended.

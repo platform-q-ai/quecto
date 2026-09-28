@@ -8,7 +8,9 @@
 //! never signals it.
 //!
 //! [`ClaudeCodeProcess`] writes each user turn as one stream-json user
-//! message and decodes stdout through [`super::stream_json`]. Both pipes
+//! message, and an interrupt as one control request
+//! ([`super::input_json`]), and decodes stdout through
+//! [`super::stream_json`]. Both pipes
 //! are pumped by the supervisor's line pumps
 //! ([`crate::infrastructure::processes::child_line_pipes`]) on its own
 //! runtime, never the caller's: a runtime the caller drops cannot end the
@@ -55,12 +57,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use serde_json::json;
 use tokio::sync::Mutex;
 
 pub use super::arguments::claude_arguments;
 use super::arguments::flags_of;
 use super::environment::{MemberEnvironmentError, check_credential, member_environment};
+use super::input_json::{interrupt_line, user_message_line};
 use super::stream_json::StreamJsonDecoder;
 use crate::application::external_agent::dto::{
     EXTERNAL_AGENT_STDERR_TAIL_BYTES, ExternalAgentExit, ExternalAgentInputError,
@@ -438,19 +440,18 @@ pub struct ClaudeCodeProcess {
     termination: TerminationBudget,
 }
 
-/// One user turn as the stream-json user message, one line.
-fn user_message_line(text: &str) -> String {
-    let message = json!({
-        "type": "user",
-        "message": {"role": "user", "content": [{"type": "text", "text": text}]},
-    });
-    let mut line = message.to_string();
-    debug_assert!(!line.contains('\n'), "a turn is exactly one line");
-    line.push('\n');
-    line
-}
-
 impl ClaudeCodeProcess {
+    /// Write one whole input line.
+    async fn write(&self, line: String) -> Result<(), ExternalAgentInputError> {
+        self.input
+            .write_line(line)
+            .await
+            .map_err(|error| match error {
+                LineWriteError::Closed => ExternalAgentInputError::Closed,
+                LineWriteError::Failed(detail) => ExternalAgentInputError::Write(detail),
+            })
+    }
+
     /// Close the input, logging the first close and what caused it.
     fn close(&self, cause: &'static str) {
         if self.input.close() {
@@ -523,19 +524,22 @@ impl ExternalAgentProcess for ClaudeCodeProcess {
         text: &'a str,
     ) -> PortFuture<'a, Result<UserTurnId, ExternalAgentInputError>> {
         Box::pin(async move {
-            self.input
-                .write_line(user_message_line(text))
-                .await
-                .map(|()| UserTurnId(String::new()))
-                .map_err(|error| match error {
-                    LineWriteError::Closed => ExternalAgentInputError::Closed,
-                    LineWriteError::Failed(detail) => ExternalAgentInputError::Write(detail),
-                })
+            let (id, line) = user_message_line(text);
+            self.write(line).await.map(|()| id)
         })
     }
 
     fn interrupt(&self) -> PortFuture<'_, Result<(), ExternalAgentInputError>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            let written = self.write(interrupt_line()).await;
+            tracing::info!(
+                target: TELEMETRY_TARGET,
+                member = %self.member,
+                written = written.is_ok(),
+                "claude member interrupt"
+            );
+            written
+        })
     }
 
     fn next_event(&self) -> PortFuture<'_, Option<ExternalAgentEvent>> {

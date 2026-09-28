@@ -88,8 +88,10 @@ pub const CLAUDE_CODE_ANTHROPIC_MODELS_ONLY: &str =
 /// may. `ClaudeCode` may only when every one of these holds (O1): the
 /// launcher is a swarm participant; the launch goes into its own container
 /// (`container` omitted); no workflow is requested
-/// ([`crate::domain::swarm::validate_workflow`]); no `effort` is set. Each
-/// unmet condition has its own refusal, checked in that order.
+/// ([`crate::domain::swarm::validate_workflow`]); no `effort` is set; and
+/// it sets no field the member would ignore (#2287 review): `read_only`,
+/// `disable_tools`, `system`, `config`, or a model of another provider.
+/// Each unmet condition has its own refusal, checked in that order.
 pub fn validate_backend(
     config: &SubagentConfig,
     context: BackendLaunchContext,
@@ -100,24 +102,66 @@ pub fn validate_backend(
     }
 }
 
-/// `ClaudeCode` is allowed iff every O1 condition holds.
+/// `ClaudeCode` is allowed iff every O1 condition holds and every field is
+/// one it honours. The destructuring is the allowlist: a field added to
+/// [`SubagentConfig`] does not compile here until it is decided.
 fn claude_code_launch_allowed(
     config: &SubagentConfig,
     context: BackendLaunchContext,
 ) -> Result<(), DomainError> {
+    let SubagentConfig {
+        // Honoured: the first turn, the label and the brain itself.
+        task: _,
+        agent_id: _,
+        backend: _,
+        container,
+        workflow,
+        workflow_guards,
+        workflow_spec,
+        effort,
+        read_only,
+        disable_tools,
+        system,
+        config_path,
+        model,
+    } = config;
     let refuse = |reason: &str| Err(DomainError::Tool(reason.to_string()));
-    match (context.launcher_is_swarm_participant, &config.container) {
+    match (context.launcher_is_swarm_participant, container) {
         (true, ContainerSelection::Local) => {}
         (true, _) => return refuse(CLAUDE_CODE_OWN_CONTAINER_ONLY),
         (false, _) => return refuse(CLAUDE_CODE_WORKERS_ONLY),
     }
     crate::domain::swarm::validate_workflow(
         true,
-        config.workflow || config.workflow_guards || config.workflow_spec.is_some(),
+        *workflow || *workflow_guards || workflow_spec.is_some(),
     )?;
-    match config.effort {
+    let unhonoured = [
+        (effort.is_some(), CLAUDE_CODE_TAKES_NO_EFFORT),
+        (*read_only, CLAUDE_CODE_TAKES_NO_READ_ONLY),
+        (
+            !disable_tools.is_empty(),
+            CLAUDE_CODE_TAKES_NO_DISABLE_TOOLS,
+        ),
+        (system.is_some(), CLAUDE_CODE_TAKES_NO_SYSTEM),
+        (config_path.is_some(), CLAUDE_CODE_TAKES_NO_CONFIG),
+        (
+            !anthropic_or_default(model.as_deref()),
+            CLAUDE_CODE_ANTHROPIC_MODELS_ONLY,
+        ),
+    ];
+    match unhonoured.iter().find(|(set, _)| *set) {
+        Some((_, reason)) => refuse(reason),
         None => Ok(()),
-        Some(_) => refuse(CLAUDE_CODE_TAKES_NO_EFFORT),
+    }
+}
+
+/// A model the Claude Code CLI runs: none (its default), or one named
+/// `anthropic/<model>`.
+fn anthropic_or_default(model: Option<&str>) -> bool {
+    match model.map(|model| model.split_once('/')) {
+        None => true,
+        Some(Some(("anthropic", name))) => !name.is_empty(),
+        Some(_) => false,
     }
 }
 

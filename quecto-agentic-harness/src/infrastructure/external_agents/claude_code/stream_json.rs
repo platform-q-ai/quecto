@@ -18,9 +18,9 @@ use serde_json::Value;
 use super::json_fields::{Object, count, flag, list, number, object, seconds, text, texts};
 use super::result_json::result;
 use crate::domain::external_agent::stream::{
-    AssistantContent, BackgroundTask, ExternalAgentEvent, InitEvent, McpServerStatus,
-    RateLimitInfo, RateLimitStatus, RateLimitWindow, TaskNotification, TaskStarted,
-    ToolResultEvent,
+    AssistantContent, BackgroundTask, ExternalAgentEvent, InitEvent, InterruptReceipt,
+    McpServerStatus, RateLimitInfo, RateLimitStatus, RateLimitWindow, TaskNotification,
+    TaskStarted, ToolResultEvent,
 };
 
 /// The `non_execution_kind` of a tool call a permission rule refused.
@@ -77,6 +77,9 @@ impl StreamJsonDecoder {
             ("user", _) => self.user(&line),
             ("rate_limit_event", _) => vec![rate_limit(&line)],
             ("result", _) => vec![ExternalAgentEvent::Result(result(&line))],
+            ("control_response", _) => vec![ExternalAgentEvent::InterruptAnswered(
+                interrupt_receipt(&line),
+            )],
             _ => vec![self.unknown(&kind, &subtype)],
         };
         Ok(events)
@@ -189,6 +192,31 @@ fn tool_error(value: Option<&Value>) -> bool {
         None | Some(Value::Null) => false,
         Some(Value::Bool(is_error)) => *is_error,
         Some(_) => true,
+    }
+}
+
+/// A `control_response`: the answer to the interrupt, the only control
+/// request a member sends (#2287). Accepted only as `subtype: success`;
+/// what it withdrew is `response.cancelled` (absent from an older CLI's
+/// empty answer).
+fn interrupt_receipt(line: &Object) -> InterruptReceipt {
+    let empty = Object::new();
+    let response = object(line, "response").unwrap_or(&empty);
+    match text(response, "subtype").as_deref() {
+        Some("success") => InterruptReceipt {
+            accepted: true,
+            cancelled: object(response, "response")
+                .map(|answer| {
+                    list(answer, "cancelled")
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .filter(|id| !id.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        },
+        _ => InterruptReceipt::default(),
     }
 }
 

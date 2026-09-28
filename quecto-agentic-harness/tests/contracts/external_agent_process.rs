@@ -269,7 +269,7 @@ async fn a_result_names_its_turn_and_an_interrupt_is_answered() {
     let first = process.send_user_turn("one").await.unwrap();
     assert_eq!(
         ids_of_last(events_to_turn_end(process.as_ref()).await),
-        [first.0.clone()]
+        std::slice::from_ref(&first.0)
     );
 
     let second = process.send_user_turn("two").await.unwrap();
@@ -295,7 +295,7 @@ async fn a_result_names_its_turn_and_an_interrupt_is_answered() {
     let stopped = events_to_turn_end(process.as_ref()).await;
     match stopped.last() {
         Some(ExternalAgentEvent::Result(result)) => {
-            assert_eq!(result.user_turn_ids, [second.0.clone()]);
+            assert_eq!(result.user_turn_ids, std::slice::from_ref(&second.0));
             assert_eq!(result.terminal_reason.as_deref(), Some("aborted_streaming"));
         }
         other => panic!("the stopped turn ends with its result: {other:?}"),
