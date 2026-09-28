@@ -466,6 +466,7 @@ impl SpawnTool {
             effort,
             disable_tools,
             read_only,
+            backend: Default::default(),
         })
     }
 

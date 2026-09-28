@@ -47,6 +47,7 @@ pub(super) fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> Age
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     }
 }
 

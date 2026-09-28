@@ -45,6 +45,7 @@ fn flags(model: &str, spawned: bool) -> AgentFlags {
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     }
 }
 

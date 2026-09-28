@@ -19,6 +19,7 @@ fn base_config() -> SubagentConfig {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        backend: Default::default(),
     }
 }
 
@@ -281,4 +282,28 @@ fn the_launched_session_is_the_one_the_domain_names_for_the_child() {
         opened.runtime_key(),
         "cli:65268567-be4a-471f-a805-1238dcf08b68"
     );
+}
+
+/// #2287: a claude-code member is still a quecto harness process; the
+/// child is told its brain with `--backend claude-code`, right after the
+/// mode it requires.
+#[test]
+fn claude_code_backend_adds_the_backend_flag() {
+    let mut cfg = base_config();
+    cfg.backend = crate::domain::external_agent::backend::MemberBackend::ClaudeCode;
+    let strs = as_strings(&build_child_cli_args(&spec(&cfg)));
+    assert_eq!(
+        &strs[..5],
+        ["agent", "--mode", "uds", "--backend", "claude-code"],
+        "{strs:?}"
+    );
+    assert_eq!(strs.iter().filter(|a| *a == "--backend").count(), 1);
+}
+
+/// #2287: a quecto-backend launch is byte-identical to before: no
+/// `--backend` at all.
+#[test]
+fn the_quecto_backend_adds_no_backend_flag() {
+    let strs = as_strings(&build_child_cli_args(&spec(&base_config())));
+    assert!(!strs.iter().any(|a| a == "--backend"), "{strs:?}");
 }

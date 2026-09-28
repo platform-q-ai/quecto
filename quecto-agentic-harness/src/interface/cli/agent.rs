@@ -1,6 +1,7 @@
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::configuration::dto::ConfigSelection;
+use crate::domain::external_agent::backend::MemberBackend;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
@@ -166,18 +167,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
             }
         }
     }
-    if (workflow || no_workflow_requested || workflow_guards || workflow_spec_path.is_some())
-        && !uds_mode
-    {
-        stderr.push_str(
-            "agent: --workflow, --no-workflow, --workflow-guards, and --workflow-spec require --mode uds\n",
-        );
-        return None;
-    }
-    if workflow_spec_path.is_some() && no_workflow_requested {
-        stderr.push_str("agent: --workflow-spec cannot be combined with --no-workflow\n");
-        return None;
-    }
     let mut flags = AgentFlags {
         session_name,
         no_session,
@@ -215,6 +204,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         stdin_is_tty: false,
         admission_context,
         parent_control,
+        backend: None,
     };
     flags = flag_parse::validate_agent_flags(flags, stderr)?;
     if let Some(path) = inherited_tool_policy_path {
@@ -242,7 +232,10 @@ pub(crate) fn cmd_agent(
     }
 
     if flags.uds_mode {
-        return cmd_agent_uds(ctx, flags, stderr);
+        return match flags.backend.unwrap_or_default() {
+            MemberBackend::Quecto => cmd_agent_uds(ctx, flags, stderr),
+            MemberBackend::ClaudeCode => super::claude_member::run(ctx, &flags, stderr),
+        };
     }
 
     // ── One-shot mode (default) ───────────────────────────────────────────────

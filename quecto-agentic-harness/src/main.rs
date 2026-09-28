@@ -29,6 +29,7 @@ fn main() {
             container_status: quecto::composition::standard_container::build_container_status,
             run_end_fleet: quecto::composition::subagent_teardown::build_run_end_fleet,
             swarm_board: quecto::composition::swarm::build_swarm_board_handles,
+            claude_member: quecto::composition::claude_member::build_claude_member_handles,
         },
     ));
 }

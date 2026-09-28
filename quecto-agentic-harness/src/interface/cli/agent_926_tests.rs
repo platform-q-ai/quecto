@@ -59,6 +59,7 @@ fn spawn_capable_flags() -> AgentFlags {
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     }
 }
 

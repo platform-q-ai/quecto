@@ -10,6 +10,7 @@ pub mod process;
 pub mod report;
 pub mod session;
 pub mod step;
+pub mod telemetry;
 pub mod turn;
 
 pub use self::audit::{
@@ -27,6 +28,11 @@ pub use self::process::{
     ExternalAgentLaunchError,
 };
 pub use self::report::{FINAL_REPORT_PAGE_BYTES, FinalReport};
-pub use self::session::SessionTotals;
+pub use self::session::{
+    AbortOutcome, ExternalAgentSessionSettings, FOLLOW_UP_QUEUE_CAPACITY, PromptAccepted,
+    SKIPPED_LINE_GRACE, SessionPhase, SessionRefusal, SessionStep, SessionTotals, SessionView,
+    StreamingBehavior,
+};
 pub use self::step::ProjectionStep;
+pub use self::telemetry::SessionRecord;
 pub use self::turn::{TurnOutcome, TurnWarning};

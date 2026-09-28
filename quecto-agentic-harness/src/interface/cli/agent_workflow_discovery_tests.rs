@@ -54,6 +54,7 @@ fn workflow_flags() -> AgentFlags {
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     }
 }
 

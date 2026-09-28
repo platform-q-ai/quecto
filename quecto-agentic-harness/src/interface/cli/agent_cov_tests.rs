@@ -100,6 +100,50 @@ fn mode_invalid_returns_none() {
     assert!(e.contains("not valid"));
 }
 
+/// #2287: `--backend <quecto|claude-code>` picks the member's brain; it is
+/// valid only with `--mode uds` (a claude-code member is a UDS member
+/// harness), and omitted it is quecto's own loop.
+#[test]
+fn backend_flag_requires_uds_mode() {
+    use crate::domain::external_agent::backend::MemberBackend;
+    let parse = |parts: &[&str]| {
+        let mut e = String::new();
+        let flags = parse_agent_flags(&argv(parts), &mut e);
+        (flags.map(|f| f.backend), e)
+    };
+    for value in ["claude-code", "quecto"] {
+        assert_eq!(
+            parse(&["--backend", value, "-m", "hi"]),
+            (None, "agent: --backend requires --mode uds\n".to_string()),
+            "{value}"
+        );
+    }
+    assert_eq!(
+        parse(&["--mode", "uds", "--backend", "claude-code"]),
+        (Some(Some(MemberBackend::ClaudeCode)), String::new())
+    );
+    assert_eq!(
+        parse(&["--backend", "quecto", "--mode", "uds"]),
+        (Some(Some(MemberBackend::Quecto)), String::new())
+    );
+    assert_eq!(parse(&["--mode", "uds"]), (Some(None), String::new()));
+    assert_eq!(
+        parse(&["--mode", "uds", "--backend", "claude_code"]),
+        (
+            None,
+            "agent: --backend 'claude_code' is not valid; supported: quecto, claude-code\n"
+                .to_string()
+        )
+    );
+    assert_eq!(
+        parse(&["--mode", "uds", "--backend"]),
+        (
+            None,
+            "agent: --backend requires a value (quecto or claude-code)\n".to_string()
+        )
+    );
+}
+
 #[test]
 fn mode_missing_value_returns_none() {
     let mut e = String::new();
@@ -449,6 +493,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     };
     let ctx = CliContext::default();
     let mut stderr = String::new();
@@ -499,6 +544,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     };
     flags.persist = true;
     stderr.clear();

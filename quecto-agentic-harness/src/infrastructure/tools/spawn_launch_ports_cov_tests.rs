@@ -25,6 +25,7 @@ fn config() -> SubagentConfig {
         disable_tools: vec![],
         read_only: false,
         container: crate::domain::subagent::ContainerSelection::Local,
+        backend: Default::default(),
     }
 }
 
