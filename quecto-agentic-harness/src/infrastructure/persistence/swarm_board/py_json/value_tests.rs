@@ -176,3 +176,52 @@ fn from_code_points_refuses_a_high_surrogate_followed_by_a_low_one() {
     assert!(PyStr::from_code_points(vec![0xD800, 0xD800]).is_ok());
     assert!(PyStr::from_code_points(vec![0xDC00, 0xDC00]).is_ok());
 }
+
+#[test]
+fn text_strings_order_by_code_point_as_python_orders_str() {
+    // python3: sorted(['é', 'z', 'ab', 'a', '\U0001f600', '￿', 'Z'])
+    let mut keys: Vec<PyStr> = ["é", "z", "ab", "a", "\u{1f600}", "\u{ffff}", "Z"]
+        .into_iter()
+        .map(PyStr::from)
+        .collect();
+    keys.sort();
+
+    let sorted: Vec<Option<&str>> = keys.iter().map(PyStr::as_str).collect();
+    assert_eq!(
+        sorted,
+        [
+            Some("Z"),
+            Some("a"),
+            Some("ab"),
+            Some("z"),
+            Some("é"),
+            Some("\u{ffff}"),
+            Some("\u{1f600}")
+        ]
+    );
+    assert_eq!(PyStr::from("a").cmp(&PyStr::from("a")), Ordering::Equal);
+}
+
+#[test]
+fn an_object_is_empty_only_without_entries() {
+    let mut object = PyObject::new();
+    assert!(object.is_empty());
+
+    object.insert(PyStr::from("k"), PyJson::Null);
+    assert!(!object.is_empty());
+}
+
+#[test]
+fn a_float_equals_another_only_by_bits_or_when_both_are_nan() {
+    assert!(loads("NaN") != loads("1.0"), "NaN is not a number");
+    assert!(loads("1.0") != loads("NaN"), "a number is not NaN");
+    assert!(loads("1.5") == loads("1.5"));
+}
+
+#[test]
+fn debug_prints_the_dumps_text() {
+    // python3: json.dumps({'a': [1, {}], 'b': 'x'})
+    let value = loads(r#"{"a":[1,{}],"b":"x"}"#);
+
+    assert_eq!(format!("{value:?}"), r#"{"a": [1, {}], "b": "x"}"#);
+}

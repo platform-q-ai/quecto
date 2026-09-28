@@ -59,7 +59,9 @@ impl<'a> Parser<'a> {
 
     fn skip_whitespace(&mut self) {
         while matches!(self.peek(), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+            let before = self.pos;
             self.pos += 1;
+            assert!(self.pos > before, "whitespace skipping advances");
         }
     }
 
@@ -171,6 +173,7 @@ impl<'a> Parser<'a> {
             Some(b',') => {
                 let comma = self.pos;
                 self.pos += 1;
+                assert!(self.pos > comma, "reading a comma advances");
                 self.skip_whitespace();
                 if self.peek() == Some(close) {
                     let message = format!("Illegal trailing comma before end of {kind}");
@@ -272,7 +275,9 @@ impl<'a> Parser<'a> {
 
     fn digits(&mut self) {
         while self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
+            let before = self.pos;
             self.pos += 1;
+            assert!(self.pos > before, "reading a digit advances");
         }
     }
 
@@ -326,6 +331,7 @@ impl<'a> Parser<'a> {
         }
         let unit = self.hex4(backslash + 2)?;
         self.pos = backslash + 6;
+        assert!(self.pos > backslash, "reading a \\u escape advances");
         if (0xD800..=0xDBFF).contains(&unit) && self.rest().starts_with("\\u") {
             let low = self.hex4(self.pos + 2)?;
             if (0xDC00..=0xDFFF).contains(&low) {

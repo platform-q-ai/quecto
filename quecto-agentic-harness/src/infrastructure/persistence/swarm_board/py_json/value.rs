@@ -185,11 +185,10 @@ impl From<String> for PyStr {
 
 impl Ord for PyStr {
     fn cmp(&self, other: &Self) -> Ordering {
-        match (&self.0, &other.0) {
-            // UTF-8 byte order is code point order.
-            (Repr::Text(left), Repr::Text(right)) => left.cmp(right),
-            _ => self.code_points().cmp(other.code_points()),
-        }
+        // One path for both representations: a `Text`-only fast path
+        // (UTF-8 byte order is code point order) would give the same answer,
+        // so no test could tell it from this one.
+        self.code_points().cmp(other.code_points())
     }
 }
 
