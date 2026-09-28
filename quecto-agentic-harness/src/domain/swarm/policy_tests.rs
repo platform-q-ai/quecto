@@ -2,9 +2,7 @@
 use serde_json::{Value, json};
 
 use super::*;
-use crate::domain::swarm_board::records::{
-    CriterionKind, EvidenceRef, MemberState, RunState, TaskState,
-};
+use crate::domain::swarm::records::{CriterionKind, EvidenceRef, MemberState, RunState, TaskState};
 
 fn run(status: RunState) -> RunRecord {
     RunRecord {
@@ -306,6 +304,15 @@ fn accepted(revision: &str) -> Vec<EvidenceRow> {
     }]
 }
 
+/// (criteria, evidence, has_reservations, tasks, expected refusal)
+type CompletionRow = (
+    Vec<Criterion>,
+    Vec<EvidenceRow>,
+    bool,
+    Vec<TaskRecord>,
+    &'static str,
+);
+
 #[test]
 fn completion_rejects_each_unsatisfied_requirement() {
     let r2 = json!("R2");
@@ -326,13 +333,7 @@ fn completion_rejects_each_unsatisfied_requirement() {
             "completion revision required"
         );
     }
-    let rows: [(
-        Vec<Criterion>,
-        Vec<EvidenceRow>,
-        bool,
-        Vec<TaskRecord>,
-        &str,
-    ); 5] = [
+    let rows: [CompletionRow; 5] = [
         (vec![], accepted("R2"), false, done.clone(), EVIDENCE),
         (criteria(), vec![], false, done.clone(), EVIDENCE),
         (criteria(), accepted("R2"), true, done.clone(), SETTLE),

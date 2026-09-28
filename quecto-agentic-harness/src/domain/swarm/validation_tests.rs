@@ -2,7 +2,7 @@
 use serde_json::{Value, json};
 
 use super::*;
-use crate::domain::swarm_board::records::CriterionKind;
+use crate::domain::swarm::records::CriterionKind;
 
 fn refusal<T: std::fmt::Debug>(result: Result<T, BoardError>) -> String {
     result.expect_err("validation refuses").to_string()
