@@ -11,20 +11,24 @@
 //! - User turns are recorded by the session ([`Projector::record_user_turn`]):
 //!   without `--replay-user-messages` the stream never echoes them.
 //! - A `result` ends a turn: it is classified ([`TurnEnd::classify`]), its
-//!   usage recorded ([`UsageLedger`]), its text becomes the final report,
-//!   and its permission denials the guardrail audit.
+//!   usage recorded ([`UsageLedger`]), and it becomes the final report: its
+//!   text, or for a failed turn without text, the failure.
 //! - `system/init` repeats every turn and never resets what was folded.
+//! - Nothing but the conversation grows with the stream: each step's
+//!   transition and turn end are returned, not kept; the audit, the
+//!   admission warnings and the jobs are bounded, with counters.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{HashMap, VecDeque};
 
 use super::dto::audit::input_preview;
 use super::dto::{
-    BackgroundJob, ExecutionState, FinalReport, GuardrailDenial, MessageRole, ProjectedMessage,
-    ProjectedToolCall, ProjectionStep, SessionTotals, TurnOutcome,
+    ADMISSION_WARNING_CAPACITY, BACKGROUND_JOB_CAPACITY, BackgroundJob, ExecutionState,
+    FinalReport, GUARDRAIL_AUDIT_CAPACITY, GuardrailDenial, MessageRole, ProjectedMessage,
+    ProjectedToolCall, ProjectionStep, SessionTotals, TurnOutcome, TurnWarning,
 };
 use crate::domain::external_agent::stream::{
-    AssistantContent, ExternalAgentEvent, InitEvent, PermissionDenial, RateLimitInfo, ResultEvent,
-    TaskNotification, TaskStarted, ToolResultEvent,
+    AssistantContent, BackgroundTask, ExternalAgentEvent, InitEvent, PermissionDenial,
+    RateLimitInfo, ResultEvent, TaskNotification, TaskStarted, ToolResultEvent,
 };
 use crate::domain::external_agent::turn::TurnEnd;
 use crate::domain::external_agent::usage::UsageLedger;
@@ -35,16 +39,22 @@ use crate::domain::message::StopReason;
 pub struct Projector {
     state: ExecutionState,
     messages: Vec<ProjectedMessage>,
-    by_api_message: HashMap<String, usize>,
+    /// This turn's API messages by id (message ids do not span turns).
+    turn_messages: HashMap<String, usize>,
+    /// This turn's tool calls without a result yet, oldest first.
+    open_tool_calls: VecDeque<String>,
     init: Option<InitEvent>,
     ledger: UsageLedger,
-    turns: Vec<TurnOutcome>,
+    turns: usize,
+    last_turn: Option<TurnOutcome>,
     report: Option<FinalReport>,
     turn_assistant_error: Option<String>,
     rate_limit: Option<RateLimitInfo>,
-    admission_warnings: Vec<RateLimitInfo>,
-    guardrail_audit: Vec<GuardrailDenial>,
-    background_jobs: BTreeMap<String, BackgroundJob>,
+    admission_warnings: VecDeque<RateLimitInfo>,
+    admission_warning_count: usize,
+    guardrail_audit: VecDeque<GuardrailDenial>,
+    guardrail_denial_count: usize,
+    background_jobs: VecDeque<BackgroundJob>,
     unknown_events: usize,
 }
 
@@ -75,9 +85,9 @@ impl Projector {
         match event {
             ExternalAgentEvent::Init(init) => {
                 self.init = Some(init.clone());
-                self.enter(ExecutionState::Thinking);
+                self.state = ExecutionState::Thinking;
             }
-            ExternalAgentEvent::ThinkingTokens { .. } => self.enter(ExecutionState::Thinking),
+            ExternalAgentEvent::ThinkingTokens { .. } => self.state = ExecutionState::Thinking,
             ExternalAgentEvent::AssistantBlock { message_id, block } => {
                 self.assistant_block(message_id, block)
             }
@@ -90,11 +100,7 @@ impl Projector {
             }
             ExternalAgentEvent::TaskStarted(task) => self.task_started(task),
             ExternalAgentEvent::TaskNotification(note) => self.task_notification(note),
-            ExternalAgentEvent::BackgroundTasksChanged { tasks } => {
-                for task in tasks {
-                    self.job(&task.task_id).description = task.description.clone();
-                }
-            }
+            ExternalAgentEvent::BackgroundTasksChanged { tasks } => self.background_set(tasks),
             ExternalAgentEvent::RateLimit(info) => self.record_rate_limit(info),
             ExternalAgentEvent::Result(result) => return Some(self.result(result)),
             ExternalAgentEvent::Unknown { .. } => self.unknown_events += 1,
@@ -108,28 +114,22 @@ impl Projector {
         self.messages.len() - 1
     }
 
-    fn enter(&mut self, state: ExecutionState) {
-        if self.state != state {
-            self.state = state;
-        }
-    }
-
     fn assistant_block(&mut self, message_id: &str, block: &AssistantContent) {
-        let index = match self.by_api_message.get(message_id) {
+        let index = match self.turn_messages.get(message_id) {
             Some(index) => *index,
             None => {
                 let index = self.push(MessageRole::Assistant);
                 self.messages[index].api_message_id = Some(message_id.to_string());
-                self.by_api_message.insert(message_id.to_string(), index);
+                self.turn_messages.insert(message_id.to_string(), index);
                 index
             }
         };
         let message = &mut self.messages[index];
         assert_eq!(message.role, MessageRole::Assistant);
-        match block {
+        self.state = match block {
             AssistantContent::Text(text) => {
                 message.content.push_str(text);
-                self.enter(ExecutionState::Streaming);
+                ExecutionState::Streaming
             }
             AssistantContent::ToolUse { id, name, input } => {
                 message.tool_calls.push(ProjectedToolCall {
@@ -137,7 +137,8 @@ impl Projector {
                     name: name.clone(),
                     arguments: input.clone(),
                 });
-                self.enter(ExecutionState::RunningTool);
+                self.open_tool_calls.push_back(id.clone());
+                ExecutionState::RunningTool
             }
             AssistantContent::Thinking { text } => {
                 if let Some(text) = text {
@@ -146,39 +147,65 @@ impl Projector {
                         .get_or_insert_with(String::new)
                         .push_str(text);
                 }
-                self.enter(ExecutionState::Thinking);
+                ExecutionState::Thinking
             }
-        }
+        };
     }
 
     fn tool_result(&mut self, result: &ToolResultEvent) {
+        // A result names its call; one that does not closes the oldest
+        // call still open, so the call is never left running.
+        let call = match &result.tool_use_id {
+            Some(id) => {
+                if let Some(position) = self.open_tool_calls.iter().position(|open| open == id) {
+                    self.open_tool_calls.remove(position);
+                }
+                Some(id.clone())
+            }
+            None => self.open_tool_calls.pop_front(),
+        };
         let index = self.push(MessageRole::Tool);
         let message = &mut self.messages[index];
         message.content = result.content_text();
-        message.tool_call_id = result.tool_use_id.clone();
+        message.tool_call_id = call;
         message.permission_denied = result.permission_denied;
         // A refused call never ran: it is an error however it is marked.
         message.is_error = result.is_error || result.permission_denied;
-        self.enter(ExecutionState::Thinking);
+        self.state = ExecutionState::Thinking;
     }
 
+    /// The job `task_id`, tracked from now on: the oldest is dropped past
+    /// [`BACKGROUND_JOB_CAPACITY`].
     fn job(&mut self, task_id: &str) -> &mut BackgroundJob {
-        self.background_jobs
-            .entry(task_id.to_string())
-            .or_insert_with(|| BackgroundJob {
-                task_id: task_id.to_string(),
-                tool_use_id: None,
-                description: None,
-                is_backgrounded: false,
-                status: None,
-            })
+        let position = match self
+            .background_jobs
+            .iter()
+            .position(|j| j.task_id == task_id)
+        {
+            Some(position) => position,
+            None => {
+                if self.background_jobs.len() == BACKGROUND_JOB_CAPACITY {
+                    self.background_jobs.pop_front();
+                }
+                self.background_jobs.push_back(BackgroundJob {
+                    task_id: task_id.to_string(),
+                    tool_use_id: None,
+                    description: None,
+                    is_backgrounded: false,
+                    status: None,
+                });
+                self.background_jobs.len() - 1
+            }
+        };
+        assert!(self.background_jobs.len() <= BACKGROUND_JOB_CAPACITY);
+        &mut self.background_jobs[position]
     }
 
     fn task_started(&mut self, task: &TaskStarted) {
         let job = self.job(&task.task_id);
         job.tool_use_id = task.tool_use_id.clone();
-        job.description = task.description.clone();
-        job.is_backgrounded = task.is_backgrounded;
+        job.description = task.description.clone().or(job.description.take());
+        job.is_backgrounded = job.is_backgrounded || task.is_backgrounded;
     }
 
     fn task_notification(&mut self, note: &TaskNotification) {
@@ -187,40 +214,91 @@ impl Projector {
         job.tool_use_id = job.tool_use_id.take().or_else(|| note.tool_use_id.clone());
     }
 
+    /// `background_tasks_changed` is the full current background list: a
+    /// background job not on it has ended. Foreground tasks are untouched.
+    fn background_set(&mut self, tasks: &[BackgroundTask]) {
+        let listed = |id: &str| tasks.iter().any(|task| task.task_id == id);
+        self.background_jobs
+            .retain(|job| match job.is_backgrounded {
+                true => listed(&job.task_id),
+                false => true,
+            });
+        for task in tasks {
+            let job = self.job(&task.task_id);
+            job.is_backgrounded = true;
+            job.description = task.description.clone().or(job.description.take());
+        }
+    }
+
     fn record_rate_limit(&mut self, info: &RateLimitInfo) {
         if info.status.warrants_warning() {
-            self.admission_warnings.push(info.clone());
+            self.admission_warning_count += 1;
+            push_bounded(
+                &mut self.admission_warnings,
+                info.clone(),
+                ADMISSION_WARNING_CAPACITY,
+            );
         }
         self.rate_limit = Some(info.clone());
     }
 
     fn result(&mut self, result: &ResultEvent) -> TurnOutcome {
-        let turn = self.turns.len();
+        let turn = self.turns;
         let assistant_error = self.turn_assistant_error.take();
-        let outcome = TurnOutcome {
-            end: TurnEnd::classify(result, assistant_error.as_deref()),
-            stop_reason: result.stop_reason.as_deref().map(StopReason::parse),
-            usage: self.ledger.record(result),
-            num_turns: result.num_turns,
-            duration_ms: result.duration_ms,
-            warnings: Vec::new(),
-        };
-        self.guardrail_audit.extend(
-            result
-                .permission_denials
-                .iter()
-                .map(|denial| audit(denial, turn)),
-        );
-        if let Some(text) = &result.result_text {
-            self.report = Some(FinalReport {
-                content: text.clone(),
-                message_ordinal: self.last_assistant_text_ordinal(),
-                failure: None,
+        let end = TurnEnd::classify(result, assistant_error.as_deref());
+        let usage = self.ledger.record(result);
+        let mut warnings = Vec::new();
+        if let (TurnEnd::Completed, Some(kind)) = (&end, &assistant_error) {
+            warnings.push(TurnWarning::AssistantError(kind.clone()));
+        }
+        if let Some(previous) = usage.cumulative_reset_from {
+            warnings.push(TurnWarning::CumulativeCostReset {
+                previous_micro_usd: previous,
+                total_micro_usd: usage.total_cost_micro_usd,
             });
         }
-        self.turns.push(outcome.clone());
-        self.enter(ExecutionState::Idle);
+        for denial in &result.permission_denials {
+            self.guardrail_denial_count += 1;
+            push_bounded(
+                &mut self.guardrail_audit,
+                audit(denial, turn),
+                GUARDRAIL_AUDIT_CAPACITY,
+            );
+        }
+        self.report = Some(self.report_of(result, &end));
+        let outcome = TurnOutcome {
+            end,
+            stop_reason: result.stop_reason.as_deref().map(StopReason::parse),
+            usage,
+            num_turns: result.num_turns,
+            duration_ms: result.duration_ms,
+            warnings,
+        };
+        self.turns += 1;
+        self.last_turn = Some(outcome.clone());
+        self.turn_messages.clear();
+        self.open_tool_calls.clear();
+        self.state = ExecutionState::Idle;
         outcome
+    }
+
+    /// The turn's report: its `result` text, or for a failed turn without
+    /// one, the failure; never an earlier turn's answer.
+    fn report_of(&self, result: &ResultEvent, end: &TurnEnd) -> FinalReport {
+        let failure = match end {
+            TurnEnd::Failed(failure) => Some(failure.clone()),
+            TurnEnd::Completed => None,
+        };
+        let content = match (&result.result_text, &failure) {
+            (Some(text), _) => text.clone(),
+            (None, Some(failure)) => failure.describe(),
+            (None, None) => String::new(),
+        };
+        FinalReport {
+            content,
+            message_ordinal: self.last_assistant_text_ordinal(),
+            failure,
+        }
     }
 
     fn last_assistant_text_ordinal(&self) -> Option<u64> {
@@ -246,7 +324,7 @@ impl Projector {
 
     /// The latest turn's outcome.
     pub fn last_turn(&self) -> Option<&TurnOutcome> {
-        self.turns.last()
+        self.last_turn.as_ref()
     }
 
     pub fn report(&self) -> Option<&FinalReport> {
@@ -259,22 +337,20 @@ impl Projector {
     }
 
     /// The latest rate-limit events whose status warranted a warning,
-    /// oldest first.
+    /// oldest first (at most [`ADMISSION_WARNING_CAPACITY`]).
     pub fn admission_warnings(&self) -> impl Iterator<Item = &RateLimitInfo> {
         self.admission_warnings.iter()
     }
 
-    /// The latest permission denials, oldest first.
+    /// The latest permission denials, oldest first (at most
+    /// [`GUARDRAIL_AUDIT_CAPACITY`]).
     pub fn guardrail_audit(&self) -> impl Iterator<Item = &GuardrailDenial> {
         self.guardrail_audit.iter()
     }
 
+    /// The tracked jobs, oldest first (at most [`BACKGROUND_JOB_CAPACITY`]).
     pub fn background_jobs(&self) -> impl Iterator<Item = &BackgroundJob> {
-        self.background_jobs.values()
-    }
-
-    pub fn unknown_events(&self) -> usize {
-        self.unknown_events
+        self.background_jobs.iter()
     }
 
     pub fn session_totals(&self) -> SessionTotals {
@@ -288,12 +364,22 @@ impl Projector {
             tool_results: count(MessageRole::Tool),
             tokens: self.ledger.cumulative_tokens(),
             cost_micro_usd: self.ledger.total_cost_micro_usd(),
-            turns: self.turns.len(),
-            guardrail_denials: self.guardrail_audit.len(),
-            admission_warnings: self.admission_warnings.len(),
+            turns: self.turns,
+            guardrail_denials: self.guardrail_denial_count,
+            admission_warnings: self.admission_warning_count,
             unknown_events: self.unknown_events,
         }
     }
+}
+
+/// Append `item`, dropping the oldest past `capacity`.
+fn push_bounded<T>(items: &mut VecDeque<T>, item: T, capacity: usize) {
+    assert!(capacity > 0, "a bounded history keeps at least one item");
+    if items.len() == capacity {
+        items.pop_front();
+    }
+    items.push_back(item);
+    assert!(items.len() <= capacity);
 }
 
 fn audit(denial: &PermissionDenial, turn: usize) -> GuardrailDenial {

@@ -26,7 +26,14 @@ pub struct GuardrailDenial {
     pub turn: usize,
 }
 
-/// `input` as a bounded JSON preview.
+/// `input` as JSON, cut to at most [`AUDIT_INPUT_PREVIEW_BYTES`] on a
+/// character boundary.
 pub fn input_preview(input: &Value) -> String {
-    input.to_string()
+    let mut json = input.to_string();
+    let mut end = json.len().min(AUDIT_INPUT_PREVIEW_BYTES);
+    while !json.is_char_boundary(end) {
+        end -= 1;
+    }
+    json.truncate(end);
+    json
 }

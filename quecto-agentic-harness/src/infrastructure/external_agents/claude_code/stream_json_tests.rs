@@ -4,6 +4,9 @@
 use serde_json::json;
 
 use super::*;
+use crate::domain::external_agent::stream::{
+    ModelUsage, PermissionDenial, ResultEvent, TokenCounts,
+};
 
 /// Decode one line with a fresh decoder.
 pub(super) fn decode(line: &str) -> Result<Vec<ExternalAgentEvent>, StreamJsonError> {
