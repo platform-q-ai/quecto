@@ -498,6 +498,14 @@ impl OwnedChildSupervisor {
         self.lock().get(&id).map(|slot| slot.exit.subscribe())
     }
 
+    /// The exit the supervisor recorded for `id` once it reaped it — from
+    /// the live slot, or from the retired record — without waiting (#2260).
+    /// `None` while the child is unreaped, or for a handle never adopted
+    /// here or whose record has left the ring. Red-phase stub.
+    pub fn reaped_exit(&self, _id: ChildHandleId) -> Option<ChildExit> {
+        None
+    }
+
     /// Wait for the child's exit; `None` for an unknown handle.
     pub async fn wait_exit(&self, id: ChildHandleId) -> Option<ChildExit> {
         let mut receiver = self.exit_receiver(id)?;

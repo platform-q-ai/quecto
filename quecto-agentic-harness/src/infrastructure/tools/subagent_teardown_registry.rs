@@ -676,5 +676,8 @@ impl TeardownCompensation for RegistryDelegatedAgents {
 #[path = "subagent_teardown_registry_2192_tests.rs"]
 mod end_detail_tests;
 #[cfg(test)]
+#[path = "subagent_teardown_registry_2260_tests.rs"]
+mod exit_status_tests;
+#[cfg(test)]
 #[path = "subagent_teardown_registry_tests.rs"]
 mod tests;
