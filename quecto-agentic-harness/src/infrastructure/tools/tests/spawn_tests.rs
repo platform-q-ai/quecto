@@ -354,6 +354,7 @@ fn sample_config(task: Option<&str>) -> crate::domain::subagent::SubagentConfig 
         effort: None,
         disable_tools: vec![],
         read_only: false,
+        backend: Default::default(),
     }
 }
 

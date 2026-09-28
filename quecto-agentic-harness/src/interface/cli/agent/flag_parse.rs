@@ -85,6 +85,9 @@ pub(crate) struct AgentFlags {
     /// the socket is announced; only the launcher's own control connection
     /// can then present it.
     pub(crate) parent_control: Option<std::path::PathBuf>,
+    /// `--backend <quecto|claude-code>` (#2287): the member's brain; `None`
+    /// when not given (quecto's own loop). Valid only with `--mode uds`.
+    pub(crate) backend: Option<crate::domain::external_agent::backend::MemberBackend>,
 }
 
 impl AgentFlags {
@@ -108,6 +111,20 @@ impl AgentFlags {
 
 /// Post-parse validation of mutually exclusive / dependent flags.
 pub(super) fn validate_agent_flags(flags: AgentFlags, stderr: &mut String) -> Option<AgentFlags> {
+    let workflow_requested = flags.workflow
+        || flags.workflow_disabled
+        || flags.workflow_guards
+        || flags.workflow_spec_path.is_some();
+    if workflow_requested && !flags.uds_mode {
+        stderr.push_str(
+            "agent: --workflow, --no-workflow, --workflow-guards, and --workflow-spec require --mode uds\n",
+        );
+        return None;
+    }
+    if flags.workflow_spec_path.is_some() && flags.workflow_disabled {
+        stderr.push_str("agent: --workflow-spec cannot be combined with --no-workflow\n");
+        return None;
+    }
     if flags.no_session && flags.session_name.is_some() {
         stderr.push_str("agent: --no-session and -s are mutually exclusive\n");
         return None;

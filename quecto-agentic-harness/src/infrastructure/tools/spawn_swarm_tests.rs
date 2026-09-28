@@ -83,3 +83,44 @@ async fn swarm_worker_launch_revalidates_workflow_before_effects() {
         "{error}"
     );
 }
+
+/// #2287 (O1): `backend` picks the child's brain; `claude_code` is
+/// accepted only under the domain's backend rule, with its exact refusal.
+#[test]
+fn the_backend_parameter_selects_the_brain_under_the_backend_rule() {
+    use crate::application::tools::ports::Tool;
+    use crate::domain::external_agent::backend::{CLAUDE_CODE_WORKERS_ONLY, MemberBackend};
+    let worker = swarm_tool(true)
+        .parse_args(r#"{"agent_id":"w1","backend":"claude_code"}"#)
+        .unwrap();
+    assert_eq!(worker.backend, MemberBackend::ClaudeCode);
+    for input in [r#"{}"#, r#"{"backend":"quecto"}"#, r#"{"backend":null}"#] {
+        for participating in [false, true] {
+            let config = swarm_tool(participating).parse_args(input).unwrap();
+            assert_eq!(config.backend, MemberBackend::Quecto, "{input}");
+        }
+    }
+    assert_eq!(
+        SpawnTool::new(vec![])
+            .parse_args(r#"{"backend":"claude_code"}"#)
+            .unwrap_err(),
+        CLAUDE_CODE_WORKERS_ONLY
+    );
+    for input in [
+        r#"{"backend":"codex"}"#,
+        r#"{"backend":"claude-code"}"#,
+        r#"{"backend":1}"#,
+    ] {
+        assert_eq!(
+            swarm_tool(true).parse_args(input).unwrap_err(),
+            "backend must be one of: quecto, claude_code",
+            "{input}"
+        );
+    }
+    let schema: serde_json::Value =
+        serde_json::from_str(&SpawnTool::new(vec![]).definition().parameters_schema).unwrap();
+    assert_eq!(
+        schema["properties"]["backend"]["enum"],
+        serde_json::json!(["quecto", "claude_code"])
+    );
+}

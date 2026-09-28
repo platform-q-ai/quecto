@@ -151,6 +151,7 @@ fn config(task: Option<&str>) -> SubagentConfig {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        backend: Default::default(),
     }
 }
 
@@ -222,6 +223,7 @@ PY
             effort: None,
             disable_tools: Vec::new(),
             read_only: false,
+            backend: Default::default(),
         }
     }
 

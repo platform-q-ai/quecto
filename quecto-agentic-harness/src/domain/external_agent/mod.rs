@@ -2,6 +2,7 @@
 //! vocabulary of its event stream and the pure rules for reading it
 //! (#2285). There is no I/O here.
 
+pub mod backend;
 pub mod stream;
 pub mod turn;
 pub mod usage;

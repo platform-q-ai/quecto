@@ -178,6 +178,7 @@ fn config_with_task(task: Option<&str>) -> SubagentConfig {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        backend: Default::default(),
     }
 }
 

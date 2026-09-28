@@ -28,6 +28,7 @@ fn main() {
             container_init: quecto::composition::standard_container::build_standard_container_init,
             container_status: quecto::composition::standard_container::build_container_status,
             run_end_fleet: quecto::composition::subagent_teardown::build_run_end_fleet,
+            claude_member: quecto::composition::claude_member::build_claude_member_handles,
         },
     ));
 }

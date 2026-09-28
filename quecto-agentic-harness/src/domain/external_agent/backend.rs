@@ -1,0 +1,89 @@
+//! Which "brain" a member harness runs (#2287, owner decisions O1 and O2).
+//!
+//! A `claude_code` member is still a quecto harness process (`quecto agent
+//! --mode uds --backend claude-code`), so identity, admission, its endpoint
+//! and teardown are unchanged; only its brain is the Claude Code CLI. O1
+//! keeps that brain to swarm **workers**: the coordinator launches them into
+//! its own container, and they run no workflow and take no effort.
+
+use crate::domain::error::DomainError;
+use crate::domain::subagent::{ContainerSelection, SubagentConfig};
+
+/// The brain a member harness runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MemberBackend {
+    /// quecto's own agent loop: every launch before #2287.
+    #[default]
+    Quecto,
+    /// The Claude Code CLI, driven over stream-json.
+    ClaudeCode,
+}
+
+impl MemberBackend {
+    /// The spawn tool's `backend` values.
+    pub const SPAWN_VALUES: &'static str = "quecto, claude_code";
+    /// The agent CLI's `--backend` values.
+    pub const FLAG_VALUES: &'static str = "quecto, claude-code";
+
+    /// The backend a spawn tool `backend` value names.
+    pub fn from_spawn_value(value: &str) -> Option<Self> {
+        match value {
+            "quecto" => Some(Self::Quecto),
+            "claude_code" => Some(Self::ClaudeCode),
+            _ => None,
+        }
+    }
+
+    /// The backend a `--backend` flag value names.
+    pub fn from_flag_value(value: &str) -> Option<Self> {
+        match value {
+            "quecto" => Some(Self::Quecto),
+            "claude-code" => Some(Self::ClaudeCode),
+            _ => None,
+        }
+    }
+
+    /// This backend's `--backend` flag value.
+    pub fn flag_value(self) -> &'static str {
+        match self {
+            Self::Quecto => "quecto",
+            Self::ClaudeCode => "claude-code",
+        }
+    }
+}
+
+/// Who is launching, as far as the backend rule asks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackendLaunchContext {
+    /// The launcher takes part in a swarm: it runs in the swarm's
+    /// container, so a launch with `container` omitted lands there.
+    pub launcher_is_swarm_participant: bool,
+}
+
+/// The refusal for a launcher that is not a swarm participant.
+pub const CLAUDE_CODE_WORKERS_ONLY: &str =
+    "backend claude_code is only for swarm workers launched by the coordinator into its container";
+/// The refusal for a launch into another container.
+pub const CLAUDE_CODE_OWN_CONTAINER_ONLY: &str =
+    "backend claude_code launches only into the coordinator's own container; omit container";
+/// The refusal for a launch that sets `effort`.
+pub const CLAUDE_CODE_TAKES_NO_EFFORT: &str = "backend claude_code takes no effort; omit effort";
+
+/// Whether `config`'s backend may be launched in `context`. `Quecto` always
+/// may. `ClaudeCode` may only when every one of these holds (O1): the
+/// launcher is a swarm participant; the launch goes into its own container
+/// (`container` omitted); no workflow is requested
+/// ([`crate::domain::swarm::validate_workflow`]); no `effort` is set. Each
+/// unmet condition has its own refusal, checked in that order.
+pub fn validate_backend(
+    config: &SubagentConfig,
+    context: BackendLaunchContext,
+) -> Result<(), DomainError> {
+    // #2287 red: every launch accepted until the rule is written.
+    let _ = (config, context, ContainerSelection::Local);
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "backend_tests.rs"]
+mod tests;

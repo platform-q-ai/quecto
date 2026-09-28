@@ -38,6 +38,18 @@ pub enum ExternalAgentLaunchError {
     Spawn(String),
 }
 
+impl ExternalAgentLaunchError {
+    /// The error's kind, for telemetry: no detail.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::NotFound { .. } => "not_found",
+            Self::InvalidSpec(_) => "invalid_spec",
+            Self::MemberDirectory(_) => "member_directory",
+            Self::Spawn(_) => "spawn",
+        }
+    }
+}
+
 impl std::fmt::Display for ExternalAgentLaunchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

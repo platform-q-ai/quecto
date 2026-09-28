@@ -13,6 +13,7 @@ use std::pin::Pin;
 
 use super::dto::{
     ExternalAgentExit, ExternalAgentInputError, ExternalAgentLaunchError, ExternalAgentLaunchSpec,
+    SessionRecord,
 };
 use crate::domain::external_agent::stream::ExternalAgentEvent;
 
@@ -67,4 +68,11 @@ pub trait ExternalAgentProcess: Send + Sync {
     /// The last [`super::dto::EXTERNAL_AGENT_STDERR_TAIL_BYTES`] of its
     /// stderr, for diagnostics.
     fn stderr_tail(&self) -> String;
+}
+
+/// Where a member session records each of its decisions and effects
+/// (#2287): a [`SessionRecord`] carries ids, kinds, sizes and durations
+/// only. Recording never fails the session and never blocks it.
+pub trait ExternalAgentTelemetry: Send + Sync {
+    fn record(&self, record: &SessionRecord);
 }

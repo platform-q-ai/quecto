@@ -49,6 +49,7 @@ fn flags_for_wiring_test() -> AgentFlags {
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     }
 }
 

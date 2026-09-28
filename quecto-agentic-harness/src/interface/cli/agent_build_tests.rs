@@ -67,6 +67,7 @@ fn test_build_agent_from_config_no_config_file() {
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -123,6 +124,7 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     };
     let mut stderr = String::new();
     // An explicit --config (config_explicit = true) pointing at a missing file
@@ -182,6 +184,7 @@ fn test_build_agent_from_config_invalid_json() {
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -243,6 +246,7 @@ fn test_build_agent_from_config_no_providers() {
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -304,6 +308,7 @@ fn test_build_agent_from_config_with_model_override() {
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -396,6 +401,7 @@ fn admission_flags() -> AgentFlags {
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     }
 }
 

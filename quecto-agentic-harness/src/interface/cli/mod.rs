@@ -3,6 +3,7 @@ pub mod admission_handles;
 mod agent;
 mod auth;
 pub mod catalogue_handles;
+pub mod claude_member;
 mod commands;
 mod config_cmd;
 mod config_flag;
@@ -339,6 +340,9 @@ pub struct CliContext {
     /// the children it launched when it ends in an orderly way. Without it
     /// the run returns and its children run their parent-loss shutdown.
     pub run_end_fleet: Option<run_end_fleet::RunEndFleetBuilder>,
+    /// Composition's claude-code member builder (#2287); an agent run with
+    /// `--backend claude-code` refuses to start without it.
+    pub claude_member: Option<claude_member::ClaudeMemberHandlesBuilder>,
     /// Output reaches the real terminal (`run`, not `run_with_output`): a
     /// one-shot run writes its answer out before it settles its children.
     pub live_output: bool,
@@ -423,6 +427,7 @@ pub struct CliComposition {
     pub container_init: ContainerInitBuilder,
     pub container_status: ContainerStatusBuilder,
     pub run_end_fleet: run_end_fleet::RunEndFleetBuilder,
+    pub claude_member: claude_member::ClaudeMemberHandlesBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -458,6 +463,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         container_init: Some(composition.container_init),
         container_status: Some(composition.container_status),
         run_end_fleet: Some(composition.run_end_fleet),
+        claude_member: Some(composition.claude_member),
         live_output: true,
         ..Default::default()
     };

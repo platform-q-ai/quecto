@@ -97,6 +97,10 @@ pub struct SubagentConfig {
     /// `disable_tools` set). Surfaced to the TUI so the left panel can mark the
     /// agent as an observer (#966). Purely a display flag; enforcement is #957.
     pub read_only: bool,
+    /// The brain the child harness runs (#2287); `Quecto` unless the spawn
+    /// asks for another. Checked by
+    /// [`super::external_agent::backend::validate_backend`].
+    pub backend: super::external_agent::backend::MemberBackend,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
