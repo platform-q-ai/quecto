@@ -162,3 +162,17 @@ fn a_very_deep_value_drops_and_compares_without_overflowing_the_stack() {
 
     assert!(build() == build());
 }
+
+#[test]
+fn from_code_points_refuses_a_high_surrogate_followed_by_a_low_one() {
+    // Written out, D83D DE00 reads back as U+1F600, so a PyStr holding the
+    // pair as two lone surrogates would not survive the board, and two keys
+    // [D83D, DE00] and "\u{1f600}" would collide. `decode` never makes one.
+    assert_eq!(
+        PyStr::from_code_points(vec![0x61, 0xD83D, 0xDE00]),
+        Err(PyJsonError::JoinableSurrogates { index: 1 })
+    );
+    assert!(PyStr::from_code_points(vec![0xDE00, 0xD83D]).is_ok());
+    assert!(PyStr::from_code_points(vec![0xD800, 0xD800]).is_ok());
+    assert!(PyStr::from_code_points(vec![0xDC00, 0xDC00]).is_ok());
+}

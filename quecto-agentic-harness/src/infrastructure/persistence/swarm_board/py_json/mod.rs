@@ -66,6 +66,11 @@ pub enum PyJsonError {
     /// A code point above U+10FFFF given to [`PyStr::from_code_points`].
     #[error("not a Unicode code point: {0:#x}")]
     InvalidCodePoint(u32),
+    /// A high surrogate followed by a low one given to
+    /// [`PyStr::from_code_points`] at `index`: written out, the pair reads
+    /// back as one supplementary code point.
+    #[error("a high surrogate followed by a low one at index {index}")]
+    JoinableSurrogates { index: usize },
     /// Nesting beyond [`DECODE_MAX_DEPTH`] or [`ENCODE_MAX_DEPTH`]
     /// (Python raises `RecursionError`).
     #[error("maximum nesting depth ({limit}) exceeded while {action}")]

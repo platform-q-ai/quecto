@@ -1,7 +1,8 @@
 //! Differential test of the Python-compatible JSON codec (#2268): every
 //! corpus value, and the value of every corpus text, is written by
 //! `python3` and by the Rust codec in both styles, and the texts must be
-//! byte-identical; every invalid text must be refused by both.
+//! byte-identical; every invalid text must be refused by both with the same
+//! message (for a syntax error: Python's text, line, column and char).
 
 use quecto::infrastructure::persistence::swarm_board::py_json::{self, PyJson, PyStr};
 
@@ -12,7 +13,8 @@ const CORPUS: &str = concat!(
 
 /// Prints, per corpus value and then per text's value, its `encode` text
 /// and its plain `dumps` text, one per line (`ensure_ascii` keeps every
-/// text on one line), then `refused` or `accepted` per invalid text.
+/// text on one line), then per invalid text `refused: ` and Python's
+/// message, or `accepted`.
 const PYTHON_WRITER: &str = "import json, sys
 corpus = json.load(open(sys.argv[1], encoding='utf-8'))
 values = corpus['values'] + [json.loads(text) for text in corpus['texts']]
@@ -23,8 +25,8 @@ for text in corpus['invalid']:
     try:
         json.loads(text)
         print('accepted')
-    except (ValueError, RecursionError):
-        print('refused')
+    except (ValueError, RecursionError) as error:
+        print('refused: ' + str(error))
 ";
 
 /// The corpus, read by the codec under test.
@@ -116,12 +118,11 @@ fn encode_and_dumps_are_byte_identical_to_python_for_a_corpus() {
     }
     for (text, verdict) in invalid.iter().zip(&lines[written * 2..]) {
         let text = text_of(text);
-        let rust = if py_json::decode(text).is_ok() {
-            "accepted"
-        } else {
-            "refused"
+        let rust = match py_json::decode(text) {
+            Ok(_) => "accepted".to_owned(),
+            Err(error) => format!("refused: {error}"),
         };
-        if rust != verdict || verdict != "refused" {
+        if rust != *verdict || !verdict.starts_with("refused: ") {
             mismatches.push(format!("invalid {text:?}: rust {rust}, python {verdict}"));
         }
     }

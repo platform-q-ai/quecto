@@ -136,3 +136,21 @@ fn nesting_counts_objects_and_arrays_alike() {
     assert!(parse(&mixed).is_ok());
     assert!(matches!(parse(&too_deep), Err(PyJsonError::TooDeep { .. })));
 }
+
+#[test]
+fn a_backslash_ending_the_text_reports_the_string_start() {
+    let cases: [(&str, usize, usize); 2] = [(r#""abc\"#, 1, 0), ("\r\"y\\", 2, 1)];
+
+    for (text, column, offset) in cases {
+        assert_eq!(
+            syntax(text),
+            (
+                "Unterminated string starting at".to_owned(),
+                1,
+                column,
+                offset
+            ),
+            "{text:?}"
+        );
+    }
+}
