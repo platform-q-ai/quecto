@@ -5000,6 +5000,9 @@ fn processes_dependency_allowed(file: &str, path: &str) -> bool {
         | ["crate", "application", "environments", "ports" | "dto", ..]
         | ["crate", "infrastructure", "processes", ..]
         | ["crate", "infrastructure", "tools", "subagent_registry", ..] => true,
+        // A lone `crate` is a `pub(crate)` visibility, not a dependency: the
+        // supervisor's termination observation is crate-private (#2286).
+        ["crate"] => true,
         ["crate", "application", "admission", "ports", ..]
         | ["crate", "infrastructure", "atomic_write", ..]
         | ["crate", "infrastructure", "tools", "path_utils", ..] => {
@@ -5034,6 +5037,7 @@ fn process_adapters_depend_only_inward() {
         "crate::application::subagents::ports::DirectChildRouting",
         "super::owned_child_supervisor::ProtocolOutcome",
         "tokio::sync::watch",
+        "crate",
     ] {
         assert!(
             processes_dependency_allowed("owned_child_supervisor.rs", dep),

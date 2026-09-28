@@ -1,11 +1,12 @@
 //! Whole-line pumps of an owned child's stdout and stdin (#2286).
 //!
 //! Both pumps run on the [`super::owned_child_supervisor::OwnedChildSupervisor`]'s
-//! own runtime (see [`super::owned_child_supervisor_tasks`]), so a runtime
-//! the caller drops can end neither the stream nor the input of a child
-//! that lives on. They move bytes only: what a line means is the caller's
-//! business, decoded on the caller's side, never on the supervisor's one
-//! worker thread.
+//! own runtime, so a runtime the caller drops can end neither the stream
+//! nor the input of a child that lives on. The supervisor runs each as a
+//! [`PipeTask`], which only this module builds, from a pipe and its own
+//! bookkeeping: no caller code rides along. They move bytes only: what a
+//! line means is the caller's business, decoded on the caller's side,
+//! never on the supervisor's one worker thread.
 //!
 //! - **Stdout** ([`StdoutLines`]): each line is read whole up to
 //!   [`LineLimits::line_cap`]; a longer one is consumed and reported by its
@@ -24,9 +25,12 @@
 //!   pipe once the queue is empty. The one line the writer had already
 //!   taken before the close — possibly stuck on a full pipe — is written
 //!   whole (never cut), and its sender learns how that write went. The
-//!   close itself never waits on a write.
+//!   close itself never waits on a write. A failed write ends the input:
+//!   the failure is recorded before anyone is answered, so every sender
+//!   whose line it lost is answered [`LineWriteError::Failed`], even one
+//!   that looks only after a later close.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use quecto_line_io::read_bounded_line_into;
 use tokio::io::{AsyncWriteExt, BufReader};
@@ -84,27 +88,70 @@ struct Buffered {
     _budget: OwnedSemaphorePermit,
 }
 
+/// One pump, ready to run on the supervisor's runtime: a pipe and this
+/// module's own bookkeeping, built only here. Data, not a caller's code.
+pub(super) struct PipeTask(Pump);
+
+enum Pump {
+    Stdout {
+        stdout: ChildStdout,
+        limits: LineLimits,
+        budget: Arc<Semaphore>,
+        sink: mpsc::UnboundedSender<Buffered>,
+    },
+    Stdin {
+        stdin: ChildStdin,
+        lines: mpsc::Receiver<QueuedLine>,
+        closed: watch::Receiver<bool>,
+        failure: Arc<OnceLock<String>>,
+    },
+}
+
+impl PipeTask {
+    /// Pump until the pipe or its reader or writer ends.
+    pub(super) async fn run(self) {
+        match self.0 {
+            Pump::Stdout {
+                stdout,
+                limits,
+                budget,
+                sink,
+            } => read_lines(stdout, limits, budget, sink).await,
+            Pump::Stdin {
+                stdin,
+                lines,
+                closed,
+                failure,
+            } => write_lines(stdin, lines, closed, failure).await,
+        }
+    }
+}
+
 /// The lines of one child's stdout; dropping it stops the pump.
 pub struct StdoutLines {
     lines: mpsc::UnboundedReceiver<Buffered>,
-    pump: tokio::task::JoinHandle<()>,
+    pump: Option<tokio::task::AbortHandle>,
 }
 
 impl StdoutLines {
-    pub(super) fn pump(
-        runtime: &tokio::runtime::Handle,
-        stdout: ChildStdout,
-        limits: LineLimits,
-    ) -> Self {
+    /// The reader and the pump task that feeds it, not yet running.
+    pub(super) fn new(stdout: ChildStdout, limits: LineLimits) -> (Self, PipeTask) {
         assert!(limits.valid(), "invalid stdout line limits: {limits:?}");
         let budget = Arc::new(Semaphore::new(limits.buffer_bytes));
         let (sink, lines) = mpsc::unbounded_channel();
-        let pump = runtime.spawn(
-            tracing::instrument::WithSubscriber::with_current_subscriber(read_lines(
-                stdout, limits, budget, sink,
-            )),
-        );
-        Self { lines, pump }
+        let task = PipeTask(Pump::Stdout {
+            stdout,
+            limits,
+            budget,
+            sink,
+        });
+        (Self { lines, pump: None }, task)
+    }
+
+    /// This reader, stopping `pump` when it is dropped.
+    pub(super) fn running(mut self, pump: tokio::task::AbortHandle) -> Self {
+        self.pump = Some(pump);
+        self
     }
 
     /// The next line; `None` once stdout has ended (or failed, logged).
@@ -116,7 +163,9 @@ impl StdoutLines {
 
 impl Drop for StdoutLines {
     fn drop(&mut self) {
-        self.pump.abort();
+        if let Some(pump) = &self.pump {
+            pump.abort();
+        }
     }
 }
 
@@ -180,24 +229,30 @@ pub struct StdinLines {
     /// it, never across an await.
     queue: Mutex<Option<mpsc::Sender<QueuedLine>>>,
     closed: watch::Sender<bool>,
+    /// The failed write that ended the writer, recorded before any sender
+    /// is answered.
+    failure: Arc<OnceLock<String>>,
 }
 
 impl StdinLines {
-    pub(super) fn pump(runtime: &tokio::runtime::Handle, stdin: ChildStdin, queue: usize) -> Self {
+    /// The writer and the pump task that writes for it, not yet running.
+    pub(super) fn new(stdin: ChildStdin, queue: usize) -> (Self, PipeTask) {
         assert!(queue > 0, "the stdin queue holds at least one line");
         let (sender, lines) = mpsc::channel(queue);
         let (closed, closed_flag) = watch::channel(false);
-        runtime.spawn(
-            tracing::instrument::WithSubscriber::with_current_subscriber(write_lines(
-                stdin,
-                lines,
-                closed_flag,
-            )),
-        );
-        Self {
+        let failure = Arc::new(OnceLock::new());
+        let task = PipeTask(Pump::Stdin {
+            stdin,
+            lines,
+            closed: closed_flag,
+            failure: Arc::clone(&failure),
+        });
+        let writer = Self {
             queue: Mutex::new(Some(sender)),
             closed,
-        }
+            failure,
+        };
+        (writer, task)
     }
 
     fn queue(&self) -> std::sync::MutexGuard<'_, Option<mpsc::Sender<QueuedLine>>> {
@@ -241,14 +296,17 @@ impl StdinLines {
         }
     }
 
-    /// The writer ended without answering: after a close, the line was
-    /// never written because of it; otherwise a write before it failed.
+    /// The writer ended without answering. A failed write, recorded
+    /// before the writer answered anyone, is what lost the line, whatever
+    /// close came after it; failing none, the close did.
     fn writer_gone(&self) -> LineWriteError {
-        if self.is_closed() {
-            LineWriteError::Closed
-        } else {
-            LineWriteError::Failed("the input ended after a failed write".into())
+        if let Some(failure) = self.failure.get() {
+            return LineWriteError::Failed(format!("a write before this line failed: {failure}"));
         }
+        if self.is_closed() {
+            return LineWriteError::Closed;
+        }
+        LineWriteError::Failed("the input's writer ended".into())
     }
 
     /// Close the input (see the module docs); whether this call closed it.
@@ -270,11 +328,13 @@ impl Drop for StdinLines {
 /// Write each queued line whole, in order, until the queue closes or a
 /// write fails; then close stdin, the child's end-of-input. A line taken
 /// after the close is answered `Closed`, never written. A failed write
-/// ends the writer: nothing is written after a partial line.
+/// ends the writer (nothing is written after a partial line), recorded in
+/// `failure` before its sender, or any other, is answered.
 async fn write_lines(
     mut stdin: ChildStdin,
     mut lines: mpsc::Receiver<QueuedLine>,
     closed: watch::Receiver<bool>,
+    failure: Arc<OnceLock<String>>,
 ) {
     while let Some(QueuedLine { line, written }) = lines.recv().await {
         if *closed.borrow() {
@@ -293,6 +353,8 @@ async fn write_lines(
             }
             Err(error) => {
                 tracing::warn!(%error, "child stdin: write failed; the input ends");
+                let recorded = failure.set(error.to_string()).is_ok();
+                assert!(recorded, "the writer ends at its first failure");
                 let _ = written.send(Err(LineWriteError::Failed(error.to_string())));
                 break;
             }
