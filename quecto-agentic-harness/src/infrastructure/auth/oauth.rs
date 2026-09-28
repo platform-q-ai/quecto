@@ -492,7 +492,8 @@ pub async fn wait_for_oauth_callback_at(
     expected_state: &str,
     timeout_secs: u64,
 ) -> Result<String, DomainError> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use super::oauth_callback_request::{RequestHead, read_request_head, reject};
+    use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
 
     let listener = TcpListener::bind(addr)
@@ -519,19 +520,19 @@ pub async fn wait_for_oauth_callback_at(
             }
         };
 
-        // Apply the overall deadline to the request read as well: a client
-        // that connects and sends no bytes must not block login forever
-        // (PR #1087 review).
-        let mut buf = vec![0u8; 4096];
-        let n = match tokio::time::timeout_at(deadline, stream.read(&mut buf)).await {
-            Ok(read) => read.unwrap_or(0),
-            Err(_) => {
+        // Parse only a whole request head: one may arrive over several reads.
+        let request = match read_request_head(&mut stream, deadline).await {
+            RequestHead::Complete(head) => head,
+            RequestHead::Rejected(response) => {
+                reject(&mut stream, response, deadline).await;
+                continue;
+            }
+            RequestHead::TimedOut => {
                 return Err(DomainError::Provider(
                     "OAuth callback timed out".to_string(),
                 ));
             }
         };
-        let request = String::from_utf8_lossy(&buf[..n]);
 
         // Parse the GET <callback_path>?code=...&state=... line
         let first_line = request.lines().next().unwrap_or("");
