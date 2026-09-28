@@ -3,7 +3,10 @@ use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 
-use super::{BoardStore, StoreRefusal, TransactionError, event, file_uri, retry};
+use super::{
+    BoardStore, StoreRefusal, TransactionError, event, file_uri, opening_message, retry,
+    sqlite_message,
+};
 use crate::infrastructure::persistence::swarm_board::py_json::{self, PyJson};
 use crate::infrastructure::persistence::swarm_board::schema::SCHEMA;
 
@@ -523,4 +526,38 @@ fn event_records_the_actor_the_clock_and_the_encoded_detail() {
             "real".into()
         )
     );
+}
+
+#[test]
+fn sqlite_errors_read_as_python_str_of_the_sqlite3_error() {
+    let failure = |code| rusqlite::ffi::Error::new(code);
+    let busy = rusqlite::Error::SqliteFailure(failure(rusqlite::ffi::SQLITE_BUSY), None);
+    assert_eq!(
+        sqlite_message(&busy),
+        "database is locked",
+        "no recorded message: the code's text"
+    );
+    let recorded = rusqlite::Error::SqliteFailure(
+        failure(rusqlite::ffi::SQLITE_ERROR),
+        Some("no such table: tasks".into()),
+    );
+    assert_eq!(sqlite_message(&recorded), "no such table: tasks");
+
+    let uri = "file:///board.sqlite?mode=rw";
+    let cannot_open = rusqlite::Error::SqliteFailure(
+        failure(rusqlite::ffi::SQLITE_CANTOPEN),
+        Some(format!("unable to open database file: {uri}")),
+    );
+    assert_eq!(
+        opening_message(&cannot_open, uri),
+        "unable to open database file"
+    );
+    let no_handle =
+        rusqlite::Error::SqliteFailure(failure(rusqlite::ffi::SQLITE_NOMEM), Some(uri.into()));
+    assert_eq!(opening_message(&no_handle, uri), "out of memory");
+    let other = rusqlite::Error::SqliteFailure(
+        failure(rusqlite::ffi::SQLITE_ERROR),
+        Some("no such access mode: rx".into()),
+    );
+    assert_eq!(opening_message(&other, uri), "no such access mode: rx");
 }

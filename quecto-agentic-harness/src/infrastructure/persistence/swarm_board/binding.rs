@@ -34,8 +34,22 @@ pub enum BindingError {
 /// # Errors
 /// [`BindingError`] for a list, an object, an integer beyond i64 or a
 /// string holding a lone surrogate.
-pub fn bind(_value: &PyJson) -> Result<Value, BindingError> {
-    Err(BindingError::Unsupported("unimplemented"))
+pub fn bind(value: &PyJson) -> Result<Value, BindingError> {
+    match value {
+        PyJson::Null => Ok(Value::Null),
+        PyJson::Bool(flag) => Ok(Value::Integer(i64::from(*flag))),
+        PyJson::Int(integer) => integer
+            .as_i64()
+            .map(Value::Integer)
+            .ok_or(BindingError::IntegerTooLarge),
+        PyJson::Float(float) => Ok(Value::Real(*float)),
+        PyJson::Str(text) => text
+            .as_str()
+            .map(|text| Value::Text(text.to_owned()))
+            .ok_or(BindingError::LoneSurrogate),
+        PyJson::List(_) => Err(BindingError::Unsupported("list")),
+        PyJson::Object(_) => Err(BindingError::Unsupported("dict")),
+    }
 }
 
 /// [`bind`] for each parameter, in order.
