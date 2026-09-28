@@ -128,13 +128,18 @@ fn unsafe_probes_have_hard_deadlines_non_core_termination_and_cleanup() {
         .expect("unsafe-probe rule has a sentence")
         .0;
     policy_has_all(
-        "bounded probe safety clauses",
+        "bounded probe deadline",
         termination_rule,
-        &[
-            "hard timeout",
-            "terminate via SIGKILL or `_exit`",
-            "never a core-dumping signal",
-        ],
+        &["hard timeout"],
+    );
+    assert_eq!(
+        termination_rule
+            .split_once(';')
+            .expect("unsafe-probe rule has a termination clause")
+            .1
+            .trim(),
+        "terminate via SIGKILL or `_exit`, never a core-dumping signal",
+        "unsafe probes must end safely, not by a core-dumping signal"
     );
     policy_has_all(
         "unsafe probes",
