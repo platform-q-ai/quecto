@@ -241,6 +241,11 @@ async fn register_and_broadcast_sends_state_changed_event() {
         environment_ref: None,
         process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
+    // #2192 review: a registered launch is the one row vouched for as ours.
+    assert_eq!(
+        entry.origin,
+        crate::domain::child_end::ChildOrigin::Launched
+    );
 
     register_and_broadcast(
         &registry,

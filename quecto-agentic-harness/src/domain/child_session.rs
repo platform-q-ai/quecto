@@ -25,6 +25,18 @@ pub fn child_runtime_key(child: &AgentUuid) -> String {
         .unwrap_or_default()
 }
 
+/// The session key a saved roster records for a row of `origin` (#2192
+/// review): a launched child's own session; none for any other row, whose
+/// uuid is another agent's word.
+pub fn roster_session_key(child: &AgentUuid, origin: super::child_end::ChildOrigin) -> String {
+    match origin {
+        super::child_end::ChildOrigin::Launched => child_runtime_key(child),
+        super::child_end::ChildOrigin::Reported | super::child_end::ChildOrigin::Unverified => {
+            String::new()
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "child_session_tests.rs"]
 mod tests;

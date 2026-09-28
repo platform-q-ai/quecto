@@ -1,3 +1,4 @@
+use crate::domain::child_end::ChildOrigin;
 use std::collections::hash_map::Entry;
 
 use super::harness_lifecycle::{SharedHarnessLifecycle, admit_spawn};
@@ -45,6 +46,19 @@ pub fn register_and_broadcast(
             Entry::Vacant(slot) => {
                 slot.insert(entry);
             }
+            // A row a child reported under this launch's uuid (a guessed
+            // one) gives way (#2192 review): this harness's own launch is
+            // authoritative, and a report can never take a launched key.
+            Entry::Occupied(mut existing)
+                if existing.get().origin.yields_to_a_launch()
+                    && entry.origin == ChildOrigin::Launched =>
+            {
+                tracing::warn!(
+                    key = %existing.key(),
+                    "a launch replaces a row a child reported under its uuid"
+                );
+                existing.insert(entry);
+            }
             Entry::Occupied(existing) => {
                 return Err(crate::domain::error::DomainError::Tool(format!(
                     "duplicate subagent registry key {} while registering {session_name}",
@@ -63,3 +77,7 @@ pub fn register_and_broadcast(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "spawn_registry_tests.rs"]
+mod tests;

@@ -63,3 +63,23 @@ fn agent_uuid_mint_is_unique_uuid_string() {
     uuid::Uuid::parse_str(first.as_str()).expect("first minted UUID parses");
     uuid::Uuid::parse_str(second.as_str()).expect("second minted UUID parses");
 }
+
+/// #2192 review M2: only the form this harness mints names a child's
+/// session when another agent reports it — a lowercase hyphenated uuid —
+/// never an arbitrary name such as another session's.
+#[test]
+fn only_a_minted_form_uuid_is_canonical() {
+    assert!(AgentUuid::mint().is_canonical());
+    assert!(AgentUuid::new("0f8fad5b-d9cb-469f-a165-70867728950e").is_canonical());
+    for other in [
+        "secret-plan",
+        "",
+        "0F8FAD5B-D9CB-469F-A165-70867728950E",
+        "0f8fad5bd9cb469fa16570867728950e",
+        "{0f8fad5b-d9cb-469f-a165-70867728950e}",
+        "urn:uuid:0f8fad5b-d9cb-469f-a165-70867728950e",
+        "0f8fad5b-d9cb-469f-a165-70867728950e ",
+    ] {
+        assert!(!AgentUuid::new(other).is_canonical(), "{other:?}");
+    }
+}

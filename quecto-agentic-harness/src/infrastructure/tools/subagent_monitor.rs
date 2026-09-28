@@ -23,7 +23,7 @@ use super::subagent_registry::{
 
 const MAX_EVENT_PAYLOAD_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 
-const MAX_STORED_STRING: usize = 256;
+pub(super) const MAX_STORED_STRING: usize = 256;
 
 const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"type\":\"agent_start\"",

@@ -57,7 +57,7 @@ pub fn notification_display_label(registry: &SubagentRegistry, agent_id: &str) -
     let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     entries
         .get(agent_id)
-        .map(|entry| entry.effective_display_name(agent_id).to_string())
+        .map(|entry| entry.parent_facing_label(agent_id))
         .unwrap_or_else(|| agent_id.to_string())
 }
 

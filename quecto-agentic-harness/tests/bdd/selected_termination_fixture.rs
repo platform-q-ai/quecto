@@ -230,11 +230,13 @@ pub(crate) fn state(world: &mut QuectoWorld) -> &mut SelectedTerminationState {
                 environment_registry:
                     quecto::domain::environment_registry::EnvironmentRegistry::new(),
                 slots: Default::default(),
+                base_dir: std::env::temp_dir(),
             },
         ));
         s.lifecycle = Some(build_lifecycle_use_cases(
             registry.clone(),
             Some(broadcast_tx.clone()),
+            None,
             None,
         ));
         s.registry = Some(registry);

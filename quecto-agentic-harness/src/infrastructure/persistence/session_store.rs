@@ -30,7 +30,7 @@ pub(in crate::infrastructure::persistence) mod session_store_list;
 #[path = "session_store_ordinals.rs"]
 mod session_store_ordinals;
 #[path = "session_store_records.rs"]
-mod session_store_records;
+pub(super) mod session_store_records;
 #[path = "session_store_write.rs"]
 mod session_store_write;
 use session_store_ordinals::{assign_missing_ordinals, messages_with_assigned_ordinals};

@@ -1,6 +1,7 @@
 pub mod agent_cmd;
 mod agent_cmd_container_listing;
 pub mod agent_cmd_containers;
+pub mod agent_cmd_ended;
 mod agent_cmd_parse;
 mod agent_cmd_report;
 pub mod bash;

@@ -23,7 +23,7 @@ Feature: Auto-notify a parent when a sub-agent ends a turn
   Scenario: Exited notification includes agent_id
     Given an Exited notification for agent "formatter"
     Then the notification [message] should contain "formatter"
-    And the notification [message] should contain "exited"
+    And the notification [message] should contain "ended"
 
   # --- Notification formatting ---
 
@@ -37,7 +37,7 @@ Feature: Auto-notify a parent when a sub-agent ends a turn
 
   Scenario: Exited notification format names the agent
     Given an Exited notification for agent "worker-1"
-    Then the notification message should start with "Agent 'worker-1'"
+    Then the notification message should start with "Sub-agent 'worker-1'"
 
   # --- Channel behavior ---
 

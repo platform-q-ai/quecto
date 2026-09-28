@@ -66,6 +66,7 @@ async fn launch_a_merge_b_and_let_a_die(
         registry.clone(),
         None,
         None,
+        None,
     )
     .observe_exit;
     spawn_reaper_task(

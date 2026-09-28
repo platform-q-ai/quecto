@@ -22,6 +22,7 @@ fn ended_child() -> SubagentRegistry {
         "/tmp/dead.sock".into(),
         0,
     );
+    entry.origin = crate::domain::child_end::ChildOrigin::Launched;
     entry.status = SubagentStatus::Exited;
     entry.persisted_liveness = SubagentLiveness::Dead;
     registry.lock().unwrap().insert("dead-child".into(), entry);
@@ -145,6 +146,7 @@ async fn a_uuid_that_names_no_session_is_refused_for_what_it_is() {
         "/tmp/odd.sock".into(),
         0,
     );
+    entry.origin = crate::domain::child_end::ChildOrigin::Launched;
     entry.persisted_liveness = SubagentLiveness::Dead;
     registry.lock().unwrap().insert("has space".into(), entry);
     let mut ctx = fx.ctx();
@@ -164,5 +166,48 @@ async fn a_uuid_that_names_no_session_is_refused_for_what_it_is() {
     assert!(
         error.starts_with("subagent 'odd' names no session a child runs as:"),
         "{error}"
+    );
+}
+
+/// #2192 review round 5 (M2): a "descendant" a child reported and then
+/// let be pruned, keyed `secret-plan`, does not make the history fallback
+/// read the session `cli:secret-plan`: only a launched child's transcript
+/// is read. A launched child named like it is still read.
+#[tokio::test]
+async fn a_reported_row_does_not_open_another_sessions_transcript() {
+    let mut fx = Fx::new();
+    let secret = SessionIdentity::named_cli("secret-plan").unwrap();
+    persist(&fx, secret, vec![Message::user("THE SECRET PLAN")]).await;
+    let registry = ended_child();
+    let mut reported = SubagentEntry::with_identity(
+        crate::domain::ids::AgentUuid::from("secret-plan"),
+        "secret-plan".into(),
+        "/tmp/s.sock".into(),
+        0,
+    );
+    reported.origin = crate::domain::child_end::ChildOrigin::Reported;
+    reported.status = SubagentStatus::Exited;
+    reported.persisted_liveness = SubagentLiveness::Dead;
+    registry
+        .lock()
+        .unwrap()
+        .insert("secret-plan".into(), reported);
+    let mut ctx = fx.ctx();
+    ctx.subagent_registry = Some(registry);
+    let event = forward_subagent_get_messages(
+        &ctx,
+        Some(crate::domain::ids::CommandId::from("hist")),
+        "get_messages",
+        crate::domain::ids::AgentId::from("secret-plan"),
+        Some(10),
+        None,
+    )
+    .await;
+    let json = serde_json::to_value(event).unwrap();
+    assert_eq!(json["success"], false, "{json}");
+    assert!(!json.to_string().contains("THE SECRET PLAN"), "{json}");
+    assert!(
+        json.to_string().contains("not launched by this harness"),
+        "{json}"
     );
 }

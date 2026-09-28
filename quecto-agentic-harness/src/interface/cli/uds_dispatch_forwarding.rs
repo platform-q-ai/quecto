@@ -192,6 +192,49 @@ pub(super) async fn forward_subagent_snapshot(
     }
 }
 
+/// The uuid of the ended child `reference` names (its key, else its one
+/// label), for reading its transcript from the store (#2192 review): only
+/// a child this harness launched — a launched row is looked for first, and
+/// a row a child reported (whose uuid is its reporter's word, and could
+/// name any session) is never read under.
+fn historical_launched_child(
+    registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+    reference: &str,
+) -> Result<Option<crate::domain::ids::AgentUuid>, String> {
+    use crate::domain::child_end::ChildOrigin;
+    type Entry = crate::infrastructure::tools::subagent_registry::SubagentEntry;
+    let entries = registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let find = |accept: &dyn Fn(&Entry) -> bool| -> Result<Option<&Entry>, String> {
+        if let Some(entry) = entries.get(reference).filter(|entry| accept(entry)) {
+            return Ok(Some(entry));
+        }
+        let mut matches = entries
+            .iter()
+            .filter(|(key, entry)| entry.effective_display_name(key) == reference && accept(entry))
+            .map(|(_, entry)| entry);
+        match (matches.next(), matches.next()) {
+            (Some(first), None) => Ok(Some(first)),
+            (Some(_), Some(_)) => Err(format!(
+                "duplicate historical subagent display label '{reference}'"
+            )),
+            (None, _) => Ok(None),
+        }
+    };
+    let launched = |entry: &Entry| entry.origin == ChildOrigin::Launched;
+    match find(&launched)? {
+        Some(entry) => Ok(Some(entry.agent_uuid.clone())),
+        None => match find(&|_| true)? {
+            Some(_) => Err(format!(
+                "subagent '{reference}' was not launched by this harness (another agent \
+                 reported it), so no transcript is read under its name"
+            )),
+            None => Ok(None),
+        },
+    }
+}
+
 /// Forward a `get_messages` request to a spawned sub-agent and wrap its
 /// response as this command's reply (#795/#837/#843). With `count: Some(n)` the
 /// child returns its last-N tail; with `None` it returns its full history.
@@ -219,29 +262,7 @@ pub(super) async fn forward_subagent_get_messages(
     let route = match resolve_inspection_route(registry, agent_id.as_str()) {
         Ok(route) => route,
         Err(e) => {
-            let historical_agent_uuid = {
-                let entries = registry
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                if let Some(entry) = entries.get(agent_id.as_str()) {
-                    Ok(Some(entry.agent_uuid.clone()))
-                } else {
-                    let mut matches = entries
-                        .iter()
-                        .filter(|(key, entry)| {
-                            entry.effective_display_name(key) == agent_id.as_str()
-                        })
-                        .map(|(_, entry)| entry.agent_uuid.clone());
-                    match (matches.next(), matches.next()) {
-                        (Some(first), None) => Ok(Some(first)),
-                        (Some(_), Some(_)) => Err(format!(
-                            "duplicate historical subagent display label '{}'",
-                            agent_id.as_str()
-                        )),
-                        (None, _) => Ok(None),
-                    }
-                }
-            };
+            let historical_agent_uuid = historical_launched_child(registry, agent_id.as_str());
             match historical_agent_uuid {
                 Ok(Some(child)) => {
                     // A launched child runs as `cli:<uuid>` (#2192).

@@ -39,6 +39,7 @@ async fn notify_child_exited_cascades_descendants_and_reports_reason() {
         registry.clone(),
         Some(broadcast_tx),
         Some(notify_tx),
+        None,
     )
     .observe_exit;
     notify_child_exited(
@@ -66,7 +67,7 @@ async fn notify_child_exited_cascades_descendants_and_reports_reason() {
     let note = notify_rx.try_recv().unwrap();
     assert_eq!(
         note.to_message(),
-        "Agent 'parent' exited unexpectedly (connection_closed)"
+        "Sub-agent 'parent' ended; no exit status or crash record was observed (connection_closed)."
     );
     // The child that ended carries the observation; descendants fell with
     // its subtree and carry no observation (or signal number) of their own.

@@ -198,6 +198,8 @@ mod composition_exit_readiness;
 mod delegated_agent_registry;
 #[path = "contracts/direct_child_routing.rs"]
 mod direct_child_routing;
+#[path = "contracts/ended_child_records.rs"]
+mod ended_child_records;
 #[path = "contracts/fetch_web_content.rs"]
 mod fetch_web_content;
 #[path = "contracts/model_default_persistence.rs"]

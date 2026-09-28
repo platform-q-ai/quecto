@@ -160,6 +160,9 @@ pub struct KillToolWiring {
     pub environment_registry: crate::domain::environment_registry::EnvironmentRegistry,
     /// Where the built agent-control tools read their composed use cases.
     pub slots: crate::infrastructure::tools::environment_member_shutdown::TerminationSlots,
+    /// The base directory this harness's children share (#2192): where an
+    /// ended child's crash record and transcript are read.
+    pub base_dir: std::path::PathBuf,
 }
 
 /// Composition's installer of the agent-control use cases — the `agent_cmd

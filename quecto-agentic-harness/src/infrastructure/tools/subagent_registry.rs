@@ -44,6 +44,11 @@ pub struct SubagentEntry {
     /// itself (#1935). `None` for merged descendants, restored rows and
     /// fixtures: they are never direct children of this harness.
     pub launch_generation: Option<crate::domain::subagent_teardown::LaunchGeneration>,
+    /// Where the row came from, as far as this harness vouches for it
+    /// (#2192 review): `Launched` only for a child this harness launched
+    /// itself — the one kind of row a child's report never overwrites, and
+    /// the only one whose transcript its parent reads.
+    pub origin: crate::domain::child_end::ChildOrigin,
     /// Launch generation a descendant was reported with by the harness that
     /// launched it (#1936). Together with `parent_id` it makes a merged row
     /// addressable for selected termination — routed one edge at a time
@@ -149,6 +154,20 @@ impl SubagentEntry {
         }
     }
 
+    /// The label a parent is told this row by (#2192 review): a row a
+    /// child reported is named by its key as reported (`reported:<key>`),
+    /// never by the display name the child chose, so it can never read as
+    /// a child this harness launched.
+    pub fn parent_facing_label(&self, registry_key: &str) -> String {
+        match self.origin {
+            crate::domain::child_end::ChildOrigin::Reported => format!("reported:{registry_key}"),
+            crate::domain::child_end::ChildOrigin::Launched
+            | crate::domain::child_end::ChildOrigin::Unverified => {
+                self.effective_display_name(registry_key).to_string()
+            }
+        }
+    }
+
     /// Create a new entry with `Starting` status.
     pub fn new(socket_path: PathBuf, pid: u32) -> Self {
         let display_name = socket_path
@@ -221,6 +240,7 @@ impl SubagentEntry {
             pid,
             process_owner: ProcessOwner::DirectPid,
             launch_generation: None,
+            origin: crate::domain::child_end::ChildOrigin::Unverified,
             reported_generation: None,
             teardown: new_teardown_phase(),
             owned_child: None,
@@ -590,6 +610,9 @@ pub enum SubagentNotification {
     Exited {
         agent_id: String,
         reason: Option<String>,
+        /// How it ended, when its parent could tell (#2192): the words of
+        /// `ChildEnd::reason` — its exit status and the panic it recorded.
+        detail: Option<String>,
     },
 }
 
@@ -642,32 +665,8 @@ impl SequencedSubagentNotification {
     }
 }
 
-impl SubagentNotification {
-    /// Format this notification as a human-readable parent message.
-    pub fn to_message(&self) -> String {
-        // One line; soft, not imperative (#894); #926-AC2 actionability deferred.
-        match self {
-            Self::Completed { agent_id, .. } => format!(
-                "Sub-agent '{agent_id}' ended a turn (status: idle). Inspect agent_cmd get_messages before treating its work as complete."
-            ),
-            Self::Stalled {
-                agent_id,
-                workflow_mode,
-                steps_completed,
-                steps_total,
-            } => format!(
-                "Agent '{agent_id}' stalled: idle with workflow still {workflow_mode} at {steps_completed}/{steps_total}. Inspect output/state, then prompt, steer, abort, or kill it."
-            ),
-            Self::Errored { agent_id, error } => format!("Agent '{agent_id}' failed: {error}"),
-            Self::Exited { agent_id, reason } => match reason {
-                Some(reason) if !reason.is_empty() => {
-                    format!("Agent '{agent_id}' exited unexpectedly ({reason})")
-                }
-                _ => format!("Agent '{agent_id}' exited unexpectedly"),
-            },
-        }
-    }
-}
+#[path = "subagent_notification_text.rs"]
+mod notification_text;
 
 /// Sender half of the notification channel.
 pub type NotificationTx = tokio::sync::mpsc::Sender<SequencedSubagentNotification>;

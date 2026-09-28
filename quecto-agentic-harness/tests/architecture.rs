@@ -1255,7 +1255,12 @@ fn application_path_allowed(path: &str) -> bool {
             // container-config selection and invokes it for every
             // new container; the config adapter implements its port
             // in the capability's launch vocabulary.
-            | "SelectContainerConfig",
+            | "SelectContainerConfig"
+            // `agent_cmd` on an ended child (#2192) invokes the composed
+            // inspection, and the exit note reads the child's end from it.
+            | "InspectEndedChild"
+            | "EndedTranscriptError"
+            | "EndedTranscriptPage",
             ..,
         ]
         | [
@@ -4289,6 +4294,10 @@ const TEARDOWN_PORTS: &[&str] = &[
     "ContainerScriptIntegrity",
 ];
 
+/// The subagents capability's other ports: not teardown, but the parent's
+/// reading of what an ended child left (#2192).
+const SUBAGENT_INSPECTION_PORTS: &[&str] = &["EndedChildRecords"];
+
 /// Application teardown code may name the domain, its own capability and
 /// pure `std` only: no other application capability, no adapters, no
 /// runtime, serialization, socket, process or persistence vocabulary.
@@ -4505,13 +4514,18 @@ fn subagent_teardown_ports_are_capability_local() {
     // The capability declares exactly this port set: an unlisted addition
     // fails here so every new port is a deliberate contract change.
     let declared = declared_pub_traits("src/application/subagents/ports.rs");
-    let mut expected: Vec<String> = TEARDOWN_PORTS.iter().map(|p| p.to_string()).collect();
+    let mut expected: Vec<String> = TEARDOWN_PORTS
+        .iter()
+        .chain(SUBAGENT_INSPECTION_PORTS)
+        .map(|p| p.to_string())
+        .collect();
     let mut actual = declared.clone();
     expected.sort();
     actual.sort();
     assert_eq!(
         actual, expected,
-        "application/subagents/ports.rs must declare exactly TEARDOWN_PORTS"
+        "application/subagents/ports.rs must declare exactly TEARDOWN_PORTS and \
+         SUBAGENT_INSPECTION_PORTS"
     );
     // Ports belong to the capability whose use case requires them; the
     // shared application facade must not grow a port.
@@ -4532,10 +4546,10 @@ fn subagent_teardown_ports_are_capability_local() {
         if path == "src/application/subagents/ports.rs" {
             continue;
         }
-        for port in TEARDOWN_PORTS {
+        for port in TEARDOWN_PORTS.iter().chain(SUBAGENT_INSPECTION_PORTS) {
             assert!(
                 !source.contains(&format!("trait {port}")),
-                "{path} redeclares teardown port {port}"
+                "{path} redeclares subagents port {port}"
             );
         }
     }

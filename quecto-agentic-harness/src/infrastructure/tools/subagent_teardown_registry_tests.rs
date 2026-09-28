@@ -264,6 +264,7 @@ async fn compensation_removes_the_subtree_broadcasts_once_and_notifies_for_exits
         SubagentNotification::Exited {
             agent_id: "alpha".into(),
             reason: Some("connection_closed".into()),
+            detail: None,
         }
     );
     assert!(notify_rx.try_recv().is_err());

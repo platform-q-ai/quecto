@@ -231,6 +231,10 @@ const SESSION_STORE_HOLDERS: &[&str] = &[
     "src/infrastructure/persistence/session_store.rs",
     // #2218 the file store's write paths and intactness record.
     "src/infrastructure/persistence/session_store_write.rs",
+    // #2192 a parent reads an ended child's transcript through the store.
+    "src/infrastructure/persistence/ended_child_records.rs",
+    // #2192 the bounded read of a session its owner no longer holds.
+    "src/infrastructure/persistence/session_store_bounded.rs",
     "src/interface/cli/uds_session_handles.rs",
 ];
 

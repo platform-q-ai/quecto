@@ -198,6 +198,7 @@ fn test_observer(
         registry.clone(),
         None,
         notify_tx,
+        None,
     )
     .observe_exit
 }

@@ -181,6 +181,67 @@ pub(crate) fn plan_default_report(response: &str, delivered: u64) -> DefaultRepo
     }
 }
 
+/// The default report of `response` for the row `agent_id` names: planned
+/// against its delivered watermark, and its unread report left pending on
+/// the row until the read is delivered (then acknowledged by receipt).
+/// Answers the content and the receipt. The one place the watermark is
+/// consulted for a default read — a live child's and an ended one's alike
+/// (#2192 review).
+pub(crate) fn shape_default_report(
+    registry: &super::subagent_registry::SubagentRegistry,
+    agent_id: &str,
+    response: &str,
+) -> (String, Option<String>) {
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(key) = super::subagent_registry::resolve_registry_key(&entries, agent_id) else {
+        return (response.to_string(), None);
+    };
+    shape_default_report_of(&mut entries, &key, response)
+}
+
+/// [`shape_default_report`] for the row keyed `key` (an ended child's,
+/// found by the rule that finds ended children).
+pub(crate) fn shape_default_report_of(
+    entries: &mut std::collections::HashMap<String, super::subagent_registry::SubagentEntry>,
+    key: &str,
+    response: &str,
+) -> (String, Option<String>) {
+    let Some(entry) = entries.get_mut(key) else {
+        return (response.to_string(), None);
+    };
+    let plan = plan_default_report(response, entry.delivered_message_ordinal.unwrap_or(0));
+    let receipt = plan.pending.as_ref().map(|pending| pending.receipt.clone());
+    if let Some(pending) = plan.pending {
+        entry.pending_message_ordinal = Some(pending.ordinal);
+        entry.pending_message_reports.push_back(pending);
+    }
+    (plan.content, receipt)
+}
+
+/// The row a delivered default read acknowledges: the one `agent_id`
+/// names, else — an ended child named by its label, which resolves no live
+/// row — the one holding the read's `receipt` pending (#2192 review).
+pub(crate) fn report_row_key(
+    entries: &std::collections::HashMap<String, super::subagent_registry::SubagentEntry>,
+    agent_id: &str,
+    receipt: Option<&str>,
+) -> Option<String> {
+    super::subagent_registry::resolve_registry_key(entries, agent_id)
+        .ok()
+        .or_else(|| {
+            let receipt = receipt.filter(|receipt| !receipt.is_empty())?;
+            entries
+                .iter()
+                .find(|(_, entry)| {
+                    entry
+                        .pending_message_reports
+                        .iter()
+                        .any(|pending| pending.receipt == receipt)
+                })
+                .map(|(key, _)| key.clone())
+        })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DeliveryDecision {
     Ignore,

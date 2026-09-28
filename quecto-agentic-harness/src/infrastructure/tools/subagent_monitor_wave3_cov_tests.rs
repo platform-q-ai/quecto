@@ -89,7 +89,7 @@ async fn wave3_agent_error_notification_and_exit_sequence_paths() {
         crate::application::subagents::ports::ExitObservation::ConnectionClosed,
     )
     .await;
-    assert!(rx.try_recv().unwrap().to_message().contains("exited"));
+    assert!(rx.try_recv().unwrap().to_message().contains(" ended"));
     assert_eq!(
         registry.lock().unwrap()["bot"].status,
         SubagentStatus::Exited
@@ -295,6 +295,7 @@ fn test_observer(
         registry.clone(),
         None,
         notify_tx,
+        None,
     )
     .observe_exit
 }

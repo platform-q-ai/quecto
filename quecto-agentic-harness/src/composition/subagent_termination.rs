@@ -55,10 +55,12 @@ pub fn build_kill_tool(inputs: KillToolWiring) -> Arc<dyn Tool> {
 /// `KillToolBuilder` the CLI context carries.
 pub fn install_termination_owners(inputs: KillToolWiring) -> bool {
     let slots = inputs.slots.clone();
+    let ended = super::subagent_lifecycle::build_ended_child_inspection(&inputs.base_dir);
     let lifecycle = super::subagent_lifecycle::build_lifecycle_use_cases(
         inputs.registry.clone(),
         inputs.broadcast_tx.clone(),
         inputs.notify_tx.clone(),
+        Some(ended.clone()),
     );
     let environments = inputs.environment_registry.clone();
     let owners = build_termination_owners(inputs);
@@ -67,10 +69,11 @@ pub fn install_termination_owners(inputs: KillToolWiring) -> bool {
     let kill_installed = slots.kill.install(owners.kill_tool);
     let lifecycle_installed = slots.lifecycle.install(lifecycle);
     let environments_installed = slots.environments.install(environment_control);
+    let ended_installed = slots.ended.install(ended);
     crate::infrastructure::tools::swarm_lifecycle::bind_member_termination(
         owners.swarm_member_termination,
     );
-    kill_installed && lifecycle_installed && environments_installed
+    kill_installed && lifecycle_installed && environments_installed && ended_installed
 }
 
 /// Every parent-hand termination owner of one harness over one shared

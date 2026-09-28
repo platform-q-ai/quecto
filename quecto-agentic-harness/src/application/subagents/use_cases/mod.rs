@@ -3,6 +3,7 @@
 mod bounded_settlement;
 pub mod compensate_failed_launch;
 pub mod harness_shutdown;
+pub mod inspect_ended_child;
 pub mod kill_delegated_agent;
 pub mod observe_owned_child_exit;
 pub mod select_container_config;
@@ -15,6 +16,7 @@ pub use harness_shutdown::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
     PrepareHarnessShutdown,
 };
+pub use inspect_ended_child::{EndedTranscriptError, EndedTranscriptPage, InspectEndedChild};
 pub use kill_delegated_agent::{KillDelegatedAgent, KillDelegatedAgentPorts};
 pub use observe_owned_child_exit::ObserveOwnedChildExit;
 pub use select_container_config::SelectContainerConfig;

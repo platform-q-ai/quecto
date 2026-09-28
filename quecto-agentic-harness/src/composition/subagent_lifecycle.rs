@@ -13,7 +13,7 @@ use crate::application::configuration::dto::{
 };
 use crate::application::configuration::use_cases::SelectConfig;
 use crate::application::subagents::use_cases::{
-    CompensateFailedLaunch, CompensateFailedLaunchPorts, ObserveOwnedChildExit,
+    CompensateFailedLaunch, CompensateFailedLaunchPorts, InspectEndedChild, ObserveOwnedChildExit,
 };
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use crate::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
@@ -29,13 +29,17 @@ pub fn build_lifecycle_use_cases(
     registry: SubagentRegistry,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     notify_tx: Option<NotificationTx>,
+    ended: Option<Arc<InspectEndedChild>>,
 ) -> SubagentLifecycleUseCases {
-    let agents = Arc::new(RegistryDelegatedAgents::new(
-        registry.clone(),
-        broadcast_tx,
-        notify_tx,
-        super::environments::build_member_finalizer,
-    ));
+    let agents = Arc::new(
+        RegistryDelegatedAgents::new(
+            registry.clone(),
+            broadcast_tx,
+            notify_tx,
+            super::environments::build_member_finalizer,
+        )
+        .with_ended_child(ended),
+    );
     let termination = Arc::new(SupervisedChildTermination::new(registry.clone()));
     let routing = Arc::new(UdsDirectChildRouting::new(registry));
     SubagentLifecycleUseCases {
@@ -47,6 +51,23 @@ pub fn build_lifecycle_use_cases(
             compensation: agents,
         })),
     }
+}
+
+/// The inspection of this harness's ended children (#2192): their crash
+/// records and persisted transcripts, in the base directory their launcher
+/// hands them (a local child's own; a container child's when its store is
+/// shared with this harness).
+pub fn build_ended_child_inspection(base_dir: &Path) -> Arc<InspectEndedChild> {
+    let transcripts = Arc::new(super::sessions::build_file_session_store(base_dir));
+    Arc::new(InspectEndedChild::new(
+        Arc::new(
+            crate::infrastructure::persistence::ended_child_records::FileEndedChildRecords::new(
+                base_dir,
+                transcripts,
+            ),
+        ),
+        format!("this harness's session store under {}", base_dir.display()),
+    ))
 }
 
 /// Install the lifecycle use cases in a launcher over its own registry,
@@ -90,6 +111,7 @@ fn compose_launcher_with_selection(
         tool.registry().clone(),
         tool.broadcast_tx().cloned(),
         tool.notify_tx().cloned(),
+        Some(build_ended_child_inspection(tool.base_dir())),
     );
     let container_configs =
         super::container_configs::build_container_config_handles(tool.base_dir(), selection);

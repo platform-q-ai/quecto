@@ -313,10 +313,7 @@ async fn test_send_notification_exited() {
         Some(&tx),
         super::super::subagent_registry::SequencedSubagentNotification::new(
             1,
-            SubagentNotification::Exited {
-                agent_id: "bot".to_string(),
-                reason: None,
-            },
+            SubagentNotification::exited("bot", None),
         ),
     );
     let notif = rx.try_recv().unwrap();
@@ -324,10 +321,7 @@ async fn test_send_notification_exited() {
         notif,
         super::super::subagent_registry::SequencedSubagentNotification::new(
             1,
-            SubagentNotification::Exited {
-                agent_id: "bot".to_string(),
-                reason: None,
-            },
+            SubagentNotification::exited("bot", None),
         )
     );
 }
@@ -734,6 +728,7 @@ fn spawn_root_child_monitor(
     let observer = crate::composition::subagent_lifecycle::build_lifecycle_use_cases(
         registry.clone(),
         Some(btx.clone()),
+        None,
         None,
     )
     .observe_exit;

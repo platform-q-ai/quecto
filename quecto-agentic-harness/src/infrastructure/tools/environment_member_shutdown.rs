@@ -113,6 +113,8 @@ pub struct TerminationSlots {
     pub kill: super::agent_cmd::KillToolSlot,
     pub lifecycle: super::subagent_teardown_wiring::SubagentLifecycleSlot,
     pub environments: super::agent_cmd_containers::EnvironmentControlSlot,
+    /// The inspection of ended children `agent_cmd` serves (#2192).
+    pub ended: super::agent_cmd_ended::EndedChildSlot,
 }
 
 #[cfg(test)]

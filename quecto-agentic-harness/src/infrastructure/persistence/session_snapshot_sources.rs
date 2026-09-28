@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::sessions::ports::{HistoricalRosterSource, WorkflowRunSource};
 use crate::domain::workflow::{WorkflowEngine, WorkflowRunPersisted};
-use crate::domain::{child_session::child_runtime_key, session::PersistedSubagentRosterEntry};
+use crate::domain::{child_session::roster_session_key, session::PersistedSubagentRosterEntry};
 use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
 
 /// The workflow run of a bound workflow engine.
@@ -43,7 +43,7 @@ impl HistoricalRosterSource for RegistryRosterSource {
             .map(|(key, entry)| PersistedSubagentRosterEntry {
                 agent_uuid: entry.agent_uuid.as_str().to_string(),
                 display_name: entry.effective_display_name(key).to_string(),
-                session_key: child_runtime_key(&entry.agent_uuid),
+                session_key: roster_session_key(&entry.agent_uuid, entry.origin),
                 liveness: entry.persisted_liveness,
                 restore_reason: Default::default(),
                 parent_id: entry.parent_id.clone(),
