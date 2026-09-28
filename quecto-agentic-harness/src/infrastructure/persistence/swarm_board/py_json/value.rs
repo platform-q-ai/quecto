@@ -124,13 +124,28 @@ enum Repr {
 }
 
 impl PyStr {
-    /// A string from code points, surrogates included.
+    /// A string from code points, lone surrogates included.
+    ///
+    /// A high surrogate directly followed by a low one is refused: written
+    /// out, the two read back as one supplementary code point, so such a
+    /// string would not survive the board and would collide, as a key,
+    /// with the joined string. `decode` never produces one.
     ///
     /// # Errors
-    /// [`PyJsonError::InvalidCodePoint`] for a value above U+10FFFF.
+    /// [`PyJsonError::InvalidCodePoint`] for a value above U+10FFFF, and
+    /// [`PyJsonError::JoinableSurrogates`] for a high-low surrogate pair.
     pub fn from_code_points(points: Vec<u32>) -> Result<Self, PyJsonError> {
-        if let Some(&invalid) = points.iter().find(|&&point| point > 0x10_FFFF) {
+        let in_range = |point: &u32| *point <= 0x10_FFFF;
+        if let Some(&invalid) = points.iter().find(|point| !in_range(point)) {
             return Err(PyJsonError::InvalidCodePoint(invalid));
+        }
+        let stays_apart = |pair: &[u32]| {
+            let joins =
+                (0xD800..=0xDBFF).contains(&pair[0]) && (0xDC00..=0xDFFF).contains(&pair[1]);
+            !joins
+        };
+        if let Some(index) = points.windows(2).position(|pair| !stays_apart(pair)) {
+            return Err(PyJsonError::JoinableSurrogates { index });
         }
         let text: Option<String> = points.iter().map(|&point| char::from_u32(point)).collect();
         Ok(match text {
@@ -206,7 +221,8 @@ impl PyObject {
     }
 
     /// Sets `key`, keeping its position when present; returns the value it
-    /// replaced.
+    /// replaced. A linear search per call: build a large object with the
+    /// parser (which indexes keys in a `HashMap`) or `TryFrom<&Value>`.
     pub fn insert(&mut self, key: PyStr, value: PyJson) -> Option<PyJson> {
         match self.entries.iter_mut().find(|(present, _)| *present == key) {
             Some((_, slot)) => Some(std::mem::replace(slot, value)),
@@ -217,7 +233,7 @@ impl PyObject {
         }
     }
 
-    /// The value under `key`.
+    /// The value under `key`, by a linear search (O(n) per call).
     pub fn get(&self, key: &PyStr) -> Option<&PyJson> {
         self.entries
             .iter()

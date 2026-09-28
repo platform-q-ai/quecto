@@ -23,12 +23,14 @@
 //! `Value` is lossless; conversion to one refuses what it cannot hold.
 //!
 //! **Nesting.** CPython bounds `json` nesting by the C stack it has left, so
-//! the limit depends on the Python version and the thread (3.14 on an 8 MiB
-//! main thread: `loads` reads 52127 nested arrays or objects, `dumps` writes
-//! 52126 nested lists; earlier versions stop near the 1000-frame recursion
-//! limit). The codec reads up to [`DECODE_MAX_DEPTH`], at least anything a
-//! Python writer can produce, and writes up to [`ENCODE_MAX_DEPTH`], so all
-//! it writes it can read. Both parser and writer use explicit stacks.
+//! its limit varies with the Python version, the thread and the call depth
+//! (3.14.7 on an 8 MiB main thread, called from the top level: `loads` reads
+//! 52127 nested arrays or objects, `dumps` writes 52126 nested lists but
+//! only 28959 nested dicts; with frames above the call, 52126 arrays already
+//! overflow; earlier versions stop near the 1000-frame recursion limit). The
+//! codec reads at least what Python reads, up to [`DECODE_MAX_DEPTH`], and
+//! writes up to [`ENCODE_MAX_DEPTH`] for lists and dicts alike, so all it
+//! writes it can read. Parser and writer use explicit stacks.
 
 mod parse;
 mod value;
@@ -36,11 +38,14 @@ mod write;
 
 pub use value::{INT_MAX_STR_DIGITS, PyInt, PyJson, PyObject, PyStr, SERDE_MAX_DEPTH};
 
-/// The deepest nesting [`decode`] reads: CPython 3.14's `json.loads` limit.
+/// The deepest nesting [`decode`] reads: at least what Python reads. Python's
+/// own limit is at most this (CPython 3.14.7's `json.loads` from the top of
+/// an 8 MiB main thread) and lower with frames above the call.
 pub const DECODE_MAX_DEPTH: usize = 52_127;
 
-/// The deepest nesting [`encode`] and [`dumps`] write: CPython 3.14's
-/// `json.dumps` limit for nested lists.
+/// The deepest nesting [`encode`] and [`dumps`] write, for lists and dicts
+/// alike: CPython 3.14.7's `json.dumps` limit for nested lists (its limit for
+/// nested dicts is lower, 28959).
 pub const ENCODE_MAX_DEPTH: usize = 52_126;
 
 /// Why a text could not be decoded or a value could not be written.

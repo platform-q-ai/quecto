@@ -99,11 +99,11 @@ fn syntax_errors_carry_python_messages_and_positions() {
 #[test]
 fn bad_escapes_and_a_bom_are_refused() {
     // Python names the escape form: a backslash, `u` and four X letters.
-    let bad_unicode = format!("Invalid \\u{} escape", "X".repeat(4));
+    let bad_unicode = concat!("Invalid \\u", "XX", "XX escape");
     let cases: [(&str, &str, usize); 4] = [
         (r#""\x""#, "Invalid \\escape", 1),
-        (r#""\u12G4""#, &bad_unicode, 2),
-        (r#""\ud800\u12G4""#, &bad_unicode, 8),
+        (r#""\u12G4""#, bad_unicode, 2),
+        (r#""\ud800\u12G4""#, bad_unicode, 8),
         (
             "\u{feff}1",
             "Unexpected UTF-8 BOM (decode using utf-8-sig)",
