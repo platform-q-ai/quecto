@@ -46,18 +46,18 @@ fn each_line_costs_its_bytes_at_least_the_minimum_at_most_the_budget() {
     assert_eq!(cost(StdoutLine::Line(Vec::with_capacity(9000))), 4096);
 }
 
-/// A child running `script` under `sh` (with `$0` set to `arg`) whose stdin
-/// is pumped `queue` lines ahead.
+/// A child running `script` under `sh` (with `$0`, `$1`, … set to `args`)
+/// whose stdin is pumped `queue` lines ahead.
 async fn stdin_of(
     supervisor: &Arc<OwnedChildSupervisor>,
     script: &str,
-    arg: &Path,
+    args: &[&Path],
     queue: usize,
 ) -> (ChildHandleId, StdinLines) {
     let mut sh = tokio::process::Command::new("sh");
     sh.arg("-c")
         .arg(script)
-        .arg(arg)
+        .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -74,6 +74,15 @@ async fn still_pending<F: std::future::Future + Unpin>(future: &mut F) -> bool {
         .is_err()
 }
 
+/// Shell that holds the child, reading nothing, until the test creates
+/// the marker file `$0`.
+const HELD_UNTIL_MARKER: &str = "while [ ! -e \"$0\" ]; do sleep 0.01; done";
+
+/// Let a child held by [`HELD_UNTIL_MARKER`] go on.
+fn release(marker: &Path) {
+    std::fs::write(marker, b"").expect("the marker is written");
+}
+
 /// A line far larger than a pipe holds: its write blocks until the child
 /// reads.
 fn big_line() -> String {
@@ -86,11 +95,14 @@ fn big_line() -> String {
 #[tokio::test]
 async fn a_line_lost_to_a_failed_write_is_failed_even_after_a_close() {
     let supervisor = Arc::new(OwnedChildSupervisor::new());
-    // The child closes its stdin without reading: the stuck write fails.
+    let root = tempfile::tempdir().unwrap();
+    let marker = root.path().join("release");
+    // Held until released, the child then closes its stdin without
+    // reading: the stuck write fails.
     let (handle, stdin) = stdin_of(
         &supervisor,
-        "sleep 0.5; exec 0<&-; exec sleep 30",
-        Path::new("child"),
+        &format!("{HELD_UNTIL_MARKER}; exec 0<&-; exec sleep 30"),
+        &[&marker],
         2,
     )
     .await;
@@ -98,6 +110,7 @@ async fn a_line_lost_to_a_failed_write_is_failed_even_after_a_close() {
     let mut queued = Box::pin(stdin.write_line("queued\n".into()));
     assert!(still_pending(&mut taken).await, "the big line is stuck");
     assert!(still_pending(&mut queued).await, "the small line is queued");
+    release(&marker);
     let failed = tokio::time::timeout(BOUND, taken).await.expect("bounded");
     assert!(
         matches!(failed, Err(LineWriteError::Failed(_))),
@@ -127,8 +140,16 @@ async fn a_line_lost_to_a_failed_write_is_failed_even_after_a_close() {
 async fn a_close_answers_waiting_and_queued_senders_and_writes_the_taken_line_whole() {
     let supervisor = Arc::new(OwnedChildSupervisor::new());
     let root = tempfile::tempdir().unwrap();
+    let marker = root.path().join("release");
     let out = root.path().join("read");
-    let (handle, stdin) = stdin_of(&supervisor, "sleep 1; exec cat > \"$0\"", &out, 1).await;
+    // Held, reading nothing, until released after the close is answered.
+    let (handle, stdin) = stdin_of(
+        &supervisor,
+        &format!("{HELD_UNTIL_MARKER}; exec cat > \"$1\""),
+        &[&marker, &out],
+        1,
+    )
+    .await;
     let big = big_line();
     let mut taken = Box::pin(stdin.write_line(big.clone()));
     let mut queued = Box::pin(stdin.write_line("queued\n".into()));
@@ -144,6 +165,11 @@ async fn a_close_answers_waiting_and_queued_senders_and_writes_the_taken_line_wh
         .await
         .expect("a sender waiting for space is answered at once");
     assert_eq!(answered, Err(LineWriteError::Closed));
+    assert!(
+        still_pending(&mut taken).await,
+        "the taken line is still stuck behind the held child"
+    );
+    release(&marker);
     let written = tokio::time::timeout(BOUND, taken).await.expect("bounded");
     assert_eq!(written, Ok(()), "the taken line is written whole");
     let dropped = tokio::time::timeout(BOUND, queued).await.expect("bounded");
@@ -163,7 +189,7 @@ async fn senders_racing_a_close_are_each_answered_and_only_their_ok_lines_are_re
     let supervisor = Arc::new(OwnedChildSupervisor::new());
     let root = tempfile::tempdir().unwrap();
     let out = root.path().join("read");
-    let (handle, stdin) = stdin_of(&supervisor, "exec cat > \"$0\"", &out, 4).await;
+    let (handle, stdin) = stdin_of(&supervisor, "exec cat > \"$0\"", &[&out], 4).await;
     let stdin = Arc::new(stdin);
     let senders: Vec<_> = (0..64)
         .map(|n| {

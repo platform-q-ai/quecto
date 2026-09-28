@@ -1,21 +1,21 @@
 //! The supervisor's one-thread runtime reaps every child and runs every
-//! termination; it must not become a place to run a caller's work (#2286
-//! review rounds 2 and 3). Proven by syn over every file of
-//! `src/infrastructure/processes/`:
+//! termination: no caller code runs on it except the termination
+//! protocol (#1935; #2286 review rounds 2 to 4). Proven by syn over the
+//! files that can see the supervisor's private fields and the files whose
+//! code runs on its runtime:
 //!
-//! - the runtime handle is a private field of `OwnedChildSupervisor`, and
-//!   only the allowlisted functions of `owned_child_supervisor.rs` touch
-//!   it — each at its pinned visibility, the pipe and termination spawn
-//!   helpers private;
-//! - no function of any `impl OwnedChildSupervisor` (whatever its
-//!   visibility) takes a closure, and only the allowlisted termination
-//!   functions take a future: exactly the termination protocol, by name,
-//!   type and bound — mentioning `ProtocolOutcome` elsewhere passes
-//!   nothing;
-//! - in the files whose code runs on that runtime, no type alias, field or
-//!   other function's signature names a closure or a future, so no data
-//!   shape a caller passes in (a termination observation, a pipe task) can
-//!   carry code.
+//! - its runtime fields are private, and only the allowlisted helpers
+//!   reach them or spawn on any runtime, in any function anywhere
+//!   ([`access`], which states the rules in full);
+//! - no shape in those files carries code — no `dyn` object, type
+//!   parameter, `impl Trait` parameter or fn pointer — but the pinned
+//!   termination protocol's;
+//! - no function of an impl on a type naming `OwnedChildSupervisor`
+//!   (`Arc<OwnedChildSupervisor>` too, whatever its visibility) takes a
+//!   closure, and only the allowlisted termination functions take a
+//!   future: exactly the protocol, by name, type and bound;
+//! - no type alias, field or other function's signature in those files
+//!   names a closure or a future.
 use std::path::Path;
 
 use quote::ToTokens;
@@ -29,50 +29,6 @@ mod access;
 mod access_tests;
 
 const SUPERVISOR: &str = "src/infrastructure/processes/owned_child_supervisor.rs";
-
-/// The files whose code runs on the supervisor's runtime.
-const RUNTIME_FILES: &[&str] = &[
-    "src/infrastructure/processes/owned_child_supervisor.rs",
-    "src/infrastructure/processes/owned_child_supervisor/tasks.rs",
-    "src/infrastructure/processes/child_line_pipes.rs",
-    "src/infrastructure/processes/child_stderr_tail.rs",
-];
-
-/// The functions of `owned_child_supervisor.rs` that touch the runtime
-/// handle, each with the visibility it must keep, and why.
-const RUNTIME_SPAWNERS: &[(&str, &str, &str)] = &[
-    (
-        "spawn",
-        "pub",
-        "spawns a Command on the runtime and adopts it",
-    ),
-    ("adopt", "", "the reap task of an adopted child"),
-    (
-        "retain_stderr_tail",
-        "pub",
-        "the stderr tail's drain: a pipe type in, bytes out",
-    ),
-    (
-        "retain_stderr_tail_within",
-        "pub",
-        "the stderr tail's drain: a pipe type in, bytes out",
-    ),
-    (
-        "retire_when_reaped",
-        "pub",
-        "waits for the reap, then retires",
-    ),
-    (
-        "spawn_pipe_task",
-        "",
-        "the private spawn helper of the line pumps: a PipeTask, built only by child_line_pipes",
-    ),
-    (
-        "spawn_termination",
-        "",
-        "the private spawn helper of every requested termination",
-    ),
-];
 
 /// The only functions that may take a future: each with its file, the
 /// visibility it must keep, and its protocol parameter's exact type and
@@ -130,30 +86,12 @@ struct SupervisorFn {
     parameters: Vec<(String, String)>,
     /// Each generic parameter and where-clause predicate.
     bounds: Vec<String>,
-    touches_handle: bool,
 }
 
-#[derive(Default)]
-struct HandleAccess(bool);
-
-impl<'ast> Visit<'ast> for HandleAccess {
-    fn visit_expr_field(&mut self, field: &'ast syn::ExprField) {
-        if matches!(&field.member, syn::Member::Named(name) if name == "handle") {
-            self.0 = true;
-        }
-        syn::visit::visit_expr_field(self, field);
-    }
-}
-
+/// Whether `ty` names the supervisor anywhere: `OwnedChildSupervisor`
+/// itself, `Arc<OwnedChildSupervisor>`, a reference to either.
 fn is_supervisor(ty: &syn::Type) -> bool {
-    match ty {
-        syn::Type::Path(path) => path
-            .path
-            .segments
-            .last()
-            .is_some_and(|segment| segment.ident == "OwnedChildSupervisor"),
-        _ => false,
-    }
+    names_any(&tokens(ty), &["OwnedChildSupervisor"])
 }
 
 fn supervisor_fn(file: &str, method: &syn::ImplItemFn) -> SupervisorFn {
@@ -170,15 +108,12 @@ fn supervisor_fn(file: &str, method: &syn::ImplItemFn) -> SupervisorFn {
     if let Some(clause) = &signature.generics.where_clause {
         bounds.extend(clause.predicates.iter().map(tokens));
     }
-    let mut access = HandleAccess::default();
-    access.visit_block(&method.block);
     SupervisorFn {
         file: file.to_string(),
         name: signature.ident.to_string(),
         visibility: tokens(&method.vis),
         parameters,
         bounds,
-        touches_handle: access.0,
     }
 }
 
@@ -245,7 +180,7 @@ fn supervisor_fns(files: &[(String, syn::File)]) -> Vec<SupervisorFn> {
 }
 
 #[test]
-fn the_supervisor_runtime_handle_is_private_and_spawned_on_only_by_allowlisted_helpers() {
+fn the_supervisor_runtime_fields_are_private_and_reached_only_by_allowlisted_helpers() {
     let files = process_files();
     let (_, supervisor) = files
         .iter()
@@ -259,15 +194,27 @@ fn the_supervisor_runtime_handle_is_private_and_spawned_on_only_by_allowlisted_h
             _ => None,
         })
         .expect("the supervisor struct");
-    let handle = fields
+    let runtime_fields: Vec<&syn::Field> = fields
         .iter()
-        .find(|field| field.ident.as_ref().is_some_and(|name| name == "handle"))
-        .expect("the runtime handle field");
-    assert!(
-        matches!(handle.vis, syn::Visibility::Inherited),
-        "the runtime handle is private to {SUPERVISOR}, not `{}`",
-        tokens(&handle.vis)
+        .filter(|field| names_any(&tokens(&field.ty), &["runtime"]))
+        .collect();
+    let names: Vec<String> = runtime_fields
+        .iter()
+        .filter_map(|field| field.ident.as_ref().map(ToString::to_string))
+        .collect();
+    assert_eq!(
+        names,
+        access::RUNTIME_FIELDS,
+        "the supervisor's runtime fields are exactly the checked ones"
     );
+    for field in runtime_fields {
+        assert!(
+            matches!(field.vis, syn::Visibility::Inherited),
+            "the runtime field `{}` is private to {SUPERVISOR}'s module tree, not `{}`",
+            tokens(&field.ident),
+            tokens(&field.vis)
+        );
+    }
     let violations = access::violations(&files);
     assert!(
         violations.is_empty(),
@@ -286,7 +233,7 @@ fn no_supervisor_function_takes_a_closure_or_a_future_but_the_protocol() {
             assert!(
                 !names_any(ty, CLOSURE_WORDS),
                 "{at} takes a closure ({pattern}: {ty}): no caller code runs on the \
-                 supervisor's runtime"
+                 supervisor's runtime except the termination protocol (#1935)"
             );
         }
         for bound in &function.bounds {
@@ -381,11 +328,10 @@ fn no_runtime_file_declares_a_shape_that_carries_caller_code() {
             }
         }
     }
-    for path in RUNTIME_FILES {
-        let source = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
-        let parsed = syn::parse_file(&source).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let files = process_files();
+    for (path, parsed) in access::checked(&files) {
         let mut shapes = Shapes { found: Vec::new() };
-        shapes.visit_file(&parsed);
+        shapes.visit_file(parsed);
         assert!(!shapes.found.is_empty(), "{path} declares shapes");
         for shape in shapes.found {
             let carries_code = names_any(&shape, CLOSURE_WORDS) || names_any(&shape, FUTURE_WORDS);

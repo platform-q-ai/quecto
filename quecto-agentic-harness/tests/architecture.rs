@@ -45,7 +45,8 @@ mod sessions_epic_close;
 mod sessions_epic_close_retirement;
 /// Epic #1929 close (#1940): process-effect allowlist, no-pid teardown,
 /// retired-name sweep, single owners and whole-crate layer baselines.
-/// The supervisor's runtime runs no caller code (#2286).
+/// No caller code on the supervisor's runtime except the termination
+/// protocol (#1935; #2286).
 #[path = "architecture/supervisor_runtime.rs"]
 mod supervisor_runtime;
 #[path = "architecture/teardown_authority.rs"]

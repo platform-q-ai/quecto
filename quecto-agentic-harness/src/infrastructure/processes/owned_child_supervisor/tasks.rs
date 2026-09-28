@@ -8,9 +8,10 @@
 //! input. On the supervisor's runtime a pump lives as long as the pipe it
 //! serves.
 //!
-//! Never a caller's own code runs there: the supervisor's runtime has one
-//! worker thread, which reaps every child and runs every termination. A
-//! pump is a [`super::super::child_line_pipes::PipeTask`] (a pipe and its
+//! No caller code runs on the supervisor's runtime except the termination
+//! protocol (#1935): it has one worker thread, which reaps every child and
+//! runs every termination. A pump is a
+//! [`super::super::child_line_pipes::PipeTask`] (a pipe and its
 //! bookkeeping), and what a line means is decoded on the caller's side.
 //! An observed termination is logged by the supervisor itself, from the
 //! data-only [`TerminationObservation`] its requester hands over. This is

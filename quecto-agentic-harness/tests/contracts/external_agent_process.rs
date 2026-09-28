@@ -1,8 +1,9 @@
 //! Contract for [`ExternalAgentProcess`] (#2286), proven on the production
 //! `ClaudeCodeProcess` against the mock `claude`: several turns over one
 //! process, an API-error turn that leaves the process running, a clean
-//! exit at input EOF, a bounded stderr, and no turn after the input is
-//! closed. The events fold through the capability's `Projector`, which the
+//! exit at input EOF, a bounded stderr, no turn after the input is
+//! closed, and a discarding wait that never hangs on unread output. The
+//! events fold through the capability's `Projector`, which the
 //! session tells of every spawn (`process_started`).
 use quecto::application::external_agent::dto::{
     EXTERNAL_AGENT_STDERR_TAIL_BYTES, ExternalAgentExit, ExternalAgentInputError,
@@ -203,4 +204,34 @@ async fn waiting_for_the_exit_consumes_no_event() {
     .expect("the loop ends within the bound");
     assert_eq!(exit, ExternalAgentExit::Code(0));
     assert_eq!(events.len(), 201, "every event reached the session");
+}
+
+/// `exited_discarding_output()` never hangs on output no one reads: the
+/// child floods far more than the buffer and the pipe hold, nothing reads
+/// it, and the wait still returns the clean exit within the bound.
+#[tokio::test]
+async fn waiting_for_the_exit_while_discarding_does_not_hang_on_unread_output() {
+    let root = tempfile::tempdir().unwrap();
+    let scenario = root.path().join("flood.jsonl");
+    let thinking = format!(
+        "{{\"type\": \"system\", \"subtype\": \"thinking_tokens\", \"estimated_tokens\": 5, \"pad\": \"{}\"}}\n",
+        "x".repeat(1024)
+    );
+    // About 1 MiB against an 8 KiB buffer and a pipe of a few pages.
+    std::fs::write(
+        &scenario,
+        format!(
+            "{}{{\"type\": \"result\", \"subtype\": \"success\", \"is_error\": false}}\n",
+            thinking.repeat(1000)
+        ),
+    )
+    .unwrap();
+    let rig = MockClaudeRig::replaying(&scenario).with_stream_limits(2048, 8 * 1024);
+    let process = rig.start("m1").await;
+    process.send_user_turn("go").await.unwrap();
+    process.close_input().await;
+    let exit = tokio::time::timeout(BOUND, process.exited_discarding_output())
+        .await
+        .expect("exited_discarding_output() does not hang on output no one reads");
+    assert_eq!(exit, ExternalAgentExit::Code(0));
 }
