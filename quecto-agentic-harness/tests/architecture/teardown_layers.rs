@@ -182,14 +182,22 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
         "trait SubagentLaunchPorts",
         "src/application/subagent_launch.rs",
     ),
-    ("src/domain/swarm.rs", "trait ProcessControl", SWARM_PORTS),
     (
-        "src/domain/swarm.rs",
+        "src/domain/swarm/mod.rs",
+        "trait ProcessControl",
+        SWARM_PORTS,
+    ),
+    (
+        "src/domain/swarm/mod.rs",
         "trait ProcessObservation",
         SWARM_PORTS,
     ),
-    ("src/domain/swarm.rs", "trait Clock", SWARM_PORTS),
-    ("src/domain/swarm.rs", "trait SwarmLifecycle", SWARM_PORTS),
+    ("src/domain/swarm/mod.rs", "trait Clock", SWARM_PORTS),
+    (
+        "src/domain/swarm/mod.rs",
+        "trait SwarmLifecycle",
+        SWARM_PORTS,
+    ),
     // #1960
     (
         "src/domain/agent.rs",
@@ -248,14 +256,66 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
         "trait RequestAccounting",
         "src/application/providers/ports.rs",
     ),
-    ("src/domain/swarm.rs", "trait CoordinationPort", SWARM_PORTS),
-    ("src/domain/swarm.rs", "trait SwarmRunControl", SWARM_PORTS),
+    (
+        "src/domain/swarm/mod.rs",
+        "trait CoordinationPort",
+        SWARM_PORTS,
+    ),
+    (
+        "src/domain/swarm/mod.rs",
+        "trait SwarmRunControl",
+        SWARM_PORTS,
+    ),
     (
         "src/domain/subagent_launch.rs",
         "type LaunchFuture",
         "src/application/subagent_launch.rs",
     ),
 ];
+
+/// Domain files deleted outright because their only content was a port that
+/// moved to the application (#1960). Every other `RETIRED_DOMAIN_PORTS` file
+/// must exist, so a moved file's stale path fails instead of scanning nothing.
+const DELETED_DOMAIN_FILES: &[&str] = &["src/domain/extension.rs"];
+
+/// Why a `RETIRED_DOMAIN_PORTS` row fails for its domain file, if it does.
+fn retired_domain_file_violation(file: &str, retired_port: &str) -> Option<String> {
+    let exists = Path::new(file).is_file();
+    match (exists, DELETED_DOMAIN_FILES.contains(&file)) {
+        (true, _) => production_code(file)
+            .iter()
+            .any(|(_, l)| declares(l, retired_port))
+            .then(|| {
+                format!("{file} re-declares `{retired_port}`, which was moved to the application")
+            }),
+        (false, true) => None,
+        (false, false) => Some(format!(
+            "{file} (the RETIRED_DOMAIN_PORTS row for `{retired_port}`) does not exist; name the file's current path"
+        )),
+    }
+}
+
+/// A row naming a path that does not exist (a moved file) fails loudly
+/// instead of passing without scanning anything.
+#[test]
+fn a_retired_port_row_naming_a_missing_file_fails() {
+    let violation = retired_domain_file_violation("src/domain/swarm.rs", "trait Clock");
+    assert!(
+        violation
+            .as_deref()
+            .is_some_and(|text| text.contains("src/domain/swarm.rs")),
+        "a stale path must be reported, got {violation:?}"
+    );
+    assert_eq!(
+        retired_domain_file_violation("src/domain/swarm/mod.rs", "trait Clock"),
+        None
+    );
+    // A file deleted outright with its port is allowed to stay deleted.
+    assert_eq!(
+        retired_domain_file_violation("src/domain/extension.rs", "trait Extension"),
+        None
+    );
+}
 
 const TOOLS_PORTS: &str = "src/application/tools/ports.rs";
 const SWARM_PORTS: &str = "src/application/swarm/ports.rs";
@@ -290,14 +350,9 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
     // The ports #1940 and #1960 moved out must not come back, and each one
     // is declared in its capability-local ports file and nowhere else.
     for (file, retired_port, new_home) in RETIRED_DOMAIN_PORTS {
-        // A domain file whose only content was the port is deleted outright.
-        assert!(
-            !Path::new(file).exists()
-                || !production_code(file)
-                    .iter()
-                    .any(|(_, l)| declares(l, retired_port)),
-            "{file} re-declares `{retired_port}`, which was moved to the application"
-        );
+        if let Some(violation) = retired_domain_file_violation(file, retired_port) {
+            panic!("{violation}");
+        }
         let declared_in: Vec<String> = production_files()
             .into_iter()
             .filter(|path| {
