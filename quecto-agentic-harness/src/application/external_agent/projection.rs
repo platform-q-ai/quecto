@@ -78,6 +78,10 @@ impl Projector {
     /// one): its cumulative totals start from zero.
     pub fn process_started(&mut self) {
         self.ledger.process_started();
+        // The old process's tasks ended with it (a killed process's
+        // background job never reports), and a new process may reuse
+        // their ids.
+        self.background_jobs.clear();
         self.end_turn_state();
         self.state = ExecutionState::Idle;
     }
@@ -230,11 +234,20 @@ impl Projector {
         &mut self.background_jobs[position]
     }
 
+    /// A started task is a new running task, even under a reused id: a
+    /// finished record is replaced, not updated. A record that is not
+    /// finished (listed by `background_tasks_changed` just before) keeps
+    /// its description and background flag when the event has none.
     fn task_started(&mut self, task: &TaskStarted) {
         let job = self.job(&task.task_id);
+        let listed = match job.is_finished() {
+            true => (None, false),
+            false => (job.description.take(), job.is_backgrounded),
+        };
+        job.status = None;
         job.tool_use_id = task.tool_use_id.clone();
-        job.description = task.description.clone().or(job.description.take());
-        job.is_backgrounded = job.is_backgrounded || task.is_backgrounded;
+        job.description = task.description.clone().or(listed.0);
+        job.is_backgrounded = task.is_backgrounded || listed.1;
     }
 
     fn task_notification(&mut self, note: &TaskNotification) {
