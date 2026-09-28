@@ -287,3 +287,7 @@ fn sort_error(named: bool, strays: &[&'static str]) -> Option<String> {
 #[cfg(test)]
 #[path = "notification_tests.rs"]
 mod notification_tests;
+
+#[cfg(test)]
+#[path = "notification_python_types_tests.rs"]
+mod notification_python_types_tests;

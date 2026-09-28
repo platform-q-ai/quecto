@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use super::*;
 use crate::domain::swarm::records::{MemberState, RunState};
 
-fn run() -> RunRecord {
+pub(super) fn run() -> RunRecord {
     RunRecord {
         status: RunState::RUNNING,
         coordinator: "parent".into(),
@@ -16,7 +16,7 @@ fn run() -> RunRecord {
     }
 }
 
-fn member(id: &str, status: MemberState) -> MemberRecord {
+pub(super) fn member(id: &str, status: MemberState) -> MemberRecord {
     MemberRecord {
         id: id.into(),
         status,
@@ -24,11 +24,16 @@ fn member(id: &str, status: MemberState) -> MemberRecord {
     }
 }
 
-fn live(ids: &[&str]) -> Vec<MemberRecord> {
+pub(super) fn live(ids: &[&str]) -> Vec<MemberRecord> {
     ids.iter().map(|id| member(id, MemberState::LIVE)).collect()
 }
 
-fn task(id: i64, status: TaskState, dependencies: &[i64], owner: Option<&str>) -> TaskSummary {
+pub(super) fn task(
+    id: i64,
+    status: TaskState,
+    dependencies: &[i64],
+    owner: Option<&str>,
+) -> TaskSummary {
     TaskSummary {
         id,
         status,
@@ -37,14 +42,14 @@ fn task(id: i64, status: TaskState, dependencies: &[i64], owner: Option<&str>) -
     }
 }
 
-fn state(tasks: Vec<TaskSummary>, unread: &[i64]) -> NotificationState {
+pub(super) fn state(tasks: Vec<TaskSummary>, unread: &[i64]) -> NotificationState {
     NotificationState {
         tasks,
         unread: unread.iter().copied().collect(),
     }
 }
 
-fn event(action: &str, detail: Value) -> NotificationEvent {
+pub(super) fn event(action: &str, detail: Value) -> NotificationEvent {
     NotificationEvent {
         action: action.into(),
         detail,
@@ -59,7 +64,7 @@ fn by(action: &str, detail: Value, actor: &str) -> NotificationEvent {
     }
 }
 
-fn woken(
+pub(super) fn woken(
     run: &RunRecord,
     actor: &str,
     members: &[MemberRecord],
@@ -73,7 +78,7 @@ fn woken(
         .collect()
 }
 
-const NOBODY: [&str; 0] = [];
+pub(super) const NOBODY: [&str; 0] = [];
 
 #[test]
 fn notification_policy_ignores_bookkeeping_and_terminal_work() {
@@ -556,152 +561,5 @@ fn a_keyed_action_without_its_key_is_a_debug_assertion() {
         &live(&["parent", "worker"]),
         &events,
         &state(Vec::new(), &[]),
-    );
-}
-
-#[test]
-fn a_float_or_boolean_detail_id_finds_the_task_as_python_hashes_it() {
-    // `submit`/`block` bind the agent's task id unchecked, SQLite matches
-    // 1.0 and true to row 1, and the event keeps the value as sent. Python's
-    // `tasks.get(1.0)` and `tasks.get(True)` find task 1.
-    let run = run();
-    let members = live(&["parent", "worker"]);
-    let board = state(
-        vec![
-            task(0, TaskState::SUBMITTED, &[], Some("worker")),
-            task(1, TaskState::SUBMITTED, &[], Some("worker")),
-        ],
-        &[],
-    );
-    for id in [
-        json!(1.0),
-        json!(true),
-        json!(false),
-        json!(0.0),
-        json!(-0.0),
-        json!(1),
-    ] {
-        let events = [event("submitted", json!({ "task": id }))];
-        assert_eq!(
-            woken(&run, "worker", &members, &events, &board),
-            ["parent"],
-            "{id}"
-        );
-    }
-    for id in [
-        json!(1.5),
-        json!(1e300),
-        json!(-1e300),
-        json!("1"),
-        json!(null),
-        json!(9.0),
-    ] {
-        let events = [event("submitted", json!({ "task": id }))];
-        assert_eq!(
-            woken(&run, "worker", &members, &events, &board),
-            NOBODY,
-            "{id}"
-        );
-    }
-}
-
-#[test]
-fn a_float_or_boolean_message_id_is_unread_as_python_hashes_it() {
-    let run = run();
-    let members = live(&["parent", "worker", "other"]);
-    let unread = state(Vec::new(), &[1]);
-    for id in [json!(1.0), json!(true), json!(1)] {
-        let events = [event(
-            "message_accepted",
-            json!({"message": id, "recipient": "other"}),
-        )];
-        assert_eq!(
-            woken(&run, "worker", &members, &events, &unread),
-            ["other"],
-            "{id}"
-        );
-    }
-    for id in [json!(1.5), json!(false), json!("1")] {
-        let events = [event(
-            "message_accepted",
-            json!({"message": id, "recipient": "other"}),
-        )];
-        assert_eq!(
-            woken(&run, "worker", &members, &events, &unread),
-            NOBODY,
-            "{id}"
-        );
-    }
-}
-
-#[test]
-fn the_recipient_is_read_only_for_an_unread_message() {
-    // Python never evaluates `detail['recipient']` once the message is read.
-    let run = run();
-    let members = live(&["parent", "worker"]);
-    let events = [event("message_accepted", json!({"message": 1}))];
-    let read = state(Vec::new(), &[]);
-    assert_eq!(woken(&run, "worker", &members, &events, &read), NOBODY);
-}
-
-#[test]
-fn a_non_string_recipient_alone_wakes_nobody() {
-    // `send` binds the recipient unchecked: SQLite matches 5 to member '5'
-    // and the event keeps the integer. No live id equals it.
-    let run = run();
-    let members = live(&["parent", "worker", "5"]);
-    let unread = state(Vec::new(), &[1]);
-    for recipient in [json!(5), json!(true), json!(5.0)] {
-        let events = [event(
-            "message_accepted",
-            json!({"message": 1, "recipient": recipient}),
-        )];
-        assert_eq!(
-            woken(&run, "worker", &members, &events, &unread),
-            NOBODY,
-            "{recipient}"
-        );
-    }
-    let events = [
-        event("message_accepted", json!({"message": 1, "recipient": 5})),
-        event("message_accepted", json!({"message": 1, "recipient": 7.5})),
-    ];
-    assert_eq!(woken(&run, "worker", &members, &events, &unread), NOBODY);
-}
-
-#[test]
-fn a_non_string_recipient_beside_a_named_target_fails_as_python_sorted_does() {
-    // Python's `sorted(targets)` raises TypeError on a set mixing numbers
-    // and strings, so `notifications()` fails for the whole batch.
-    let run = run();
-    let members = live(&["parent", "worker", "5"]);
-    let unread = state(Vec::new(), &[1]);
-    for (recipient, kind) in [
-        (json!(5), "int"),
-        (json!(true), "bool"),
-        (json!(5.0), "float"),
-    ] {
-        let events = [
-            event(
-                "message_accepted",
-                json!({"message": 1, "recipient": recipient}),
-            ),
-            event("evidence", json!({})),
-        ];
-        let error = notification_targets(&run, "worker", &members, &events, &unread)
-            .expect_err("Python's sort raises");
-        assert_eq!(
-            error.to_string(),
-            format!("'<' not supported between instances of '{kind}' and 'str'")
-        );
-    }
-    // A string recipient beside another named target sorts as usual.
-    let events = [
-        event("message_accepted", json!({"message": 1, "recipient": "5"})),
-        event("evidence", json!({})),
-    ];
-    assert_eq!(
-        woken(&run, "worker", &members, &events, &unread),
-        ["5", "parent"]
     );
 }
