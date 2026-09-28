@@ -36,9 +36,18 @@ impl TurnEnd {
     /// missing field, or an assistant error, is a failure. `subtype` is
     /// never consulted.
     pub fn classify(result: &ResultEvent, assistant_error: Option<&str>) -> Self {
-        // RED (#2285): not implemented yet.
-        let _ = (result, assistant_error);
-        Self::Completed
+        let completed = match (result.terminal_reason.as_deref(), result.is_error) {
+            (Some(TERMINAL_REASON_COMPLETED), Some(false)) => assistant_error.is_none(),
+            _ => false,
+        };
+        match completed {
+            true => Self::Completed,
+            false => Self::Failed(TurnFailure {
+                terminal_reason: result.terminal_reason.clone(),
+                api_error_status: result.api_error_status,
+                assistant_error: assistant_error.map(str::to_string),
+            }),
+        }
     }
 
     pub fn is_completed(&self) -> bool {
@@ -69,13 +78,29 @@ impl UsageLedger {
     /// total (rounded once, to micro-USD) less the previous one; a result
     /// without a usable total leaves the total as it was.
     pub fn record(&mut self, result: &ResultEvent) -> TurnUsage {
-        // RED (#2285): not implemented yet.
-        let total = result.total_cost_usd.and_then(micro_usd).unwrap_or(0);
-        self.total_cost_micro_usd = total;
+        let previous = self.total_cost_micro_usd;
+        let total = result
+            .total_cost_usd
+            .and_then(micro_usd)
+            .unwrap_or(previous);
+        debug_assert!(
+            total >= previous,
+            "a cumulative cost never shrinks: {previous} then {total} micro-USD"
+        );
+        let cost = total.saturating_sub(previous);
+        self.total_cost_micro_usd = total.max(previous);
+        let cumulative = result
+            .model_usage
+            .iter()
+            .fold(TokenCounts::default(), |sum, model| sum.plus(model.tokens));
+        self.cumulative_tokens = match result.model_usage.is_empty() {
+            true => self.cumulative_tokens.plus(result.usage),
+            false => cumulative,
+        };
         TurnUsage {
             tokens: result.usage,
-            cost_micro_usd: total,
-            total_cost_micro_usd: total,
+            cost_micro_usd: cost,
+            total_cost_micro_usd: self.total_cost_micro_usd,
         }
     }
 
@@ -93,8 +118,12 @@ impl UsageLedger {
 /// `usd` in whole micro-USD, rounded once; `None` unless it is a finite,
 /// non-negative amount that fits.
 pub fn micro_usd(usd: f64) -> Option<u64> {
-    // RED (#2285): not implemented yet.
-    Some(usd as u64)
+    let micro = (usd * 1_000_000.0).round();
+    match micro.is_finite() && micro >= 0.0 && micro <= u64::MAX as f64 {
+        // The range is checked just above, so the cast cannot saturate.
+        true => Some(micro as u64),
+        false => None,
+    }
 }
 
 #[cfg(test)]
