@@ -393,3 +393,56 @@ async fn a_row_without_an_owned_child_is_not_waited_for() {
     );
     assert_eq!(exited_detail(&mut rig), None);
 }
+
+/// #2260 (CI Non-Real BDD, run 36484658159): the monitor's EOF runs the
+/// compensation inside the monitor task itself, and the compensation
+/// aborts the target's monitor. The note must still be sent and the row
+/// released: an abort of the running task only lands at its next yield,
+/// so nothing after it may await before the note and the release — or the
+/// compensation is cancelled mid-way, the note is never sent and every
+/// joiner waits out its bound.
+#[tokio::test]
+async fn a_compensation_run_by_the_targets_own_monitor_still_sends_the_note() {
+    let base = tempfile::tempdir().unwrap();
+    crash(base.path());
+    let (handle, supervisor) = reaped_child().await;
+    let mut rig = rig(base.path(), Owned::Reaped(handle, supervisor), None);
+    let (go_tx, go_rx) = tokio::sync::oneshot::channel::<()>();
+    let observe = ObserveOwnedChildExit::new(rig.port.clone(), rig.port.clone());
+    let target = rig.target.clone();
+    let monitor = Arc::new(tokio::spawn(async move {
+        go_rx.await.expect("the monitor is registered first");
+        let observed = observe
+            .execute(ObserveOwnedChildExitRequest {
+                child: target,
+                observation: ExitObservation::ConnectionClosed,
+            })
+            .await;
+        assert!(
+            matches!(observed, ObservedExit::Compensated { .. }),
+            "{observed:?}"
+        );
+    }));
+    rig.port
+        .lock()
+        .get_mut(UUID)
+        .expect("the row")
+        .monitor_handle = Some(Arc::clone(&monitor));
+    go_tx.send(()).unwrap();
+    let finished = tokio::time::timeout(Duration::from_secs(10), async {
+        while !monitor.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(finished.is_ok(), "the monitor task never finished");
+    assert_eq!(
+        *rig.phases.borrow(),
+        TeardownPhase::Compensated,
+        "the compensation was cancelled before the row's release"
+    );
+    assert!(
+        exited_detail(&mut rig).is_some(),
+        "the note names how the child ended"
+    );
+}
