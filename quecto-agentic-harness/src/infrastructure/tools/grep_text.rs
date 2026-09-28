@@ -114,9 +114,19 @@ pub(super) fn reported_lines(block: Option<&[u8]>) -> Option<Vec<Decoded>> {
     Some(
         block
             .split(|byte| *byte == b'\n')
-            .map(|line| Decoded::new(line.strip_suffix(b"\r").unwrap_or(line)))
+            .map(|line| Decoded::new(without_trailing_crs(line)))
             .collect(),
     )
+}
+
+/// A line without every carriage return at its end, as the search output
+/// has always shown it (`abc\r\r\n` reads `abc`).
+fn without_trailing_crs(line: &[u8]) -> &[u8] {
+    let kept = line
+        .iter()
+        .rposition(|byte| *byte != b'\r')
+        .map_or(0, |last| last + 1);
+    &line[..kept]
 }
 
 /// How many lines a match spans (one when rg reported none).

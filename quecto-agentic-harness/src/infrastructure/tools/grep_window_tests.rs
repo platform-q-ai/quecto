@@ -136,6 +136,10 @@ fn matches_past_the_window_limit_are_counted_as_not_shown() {
     let hits: Vec<_> = (0..10)
         .map(|i| i * spacing + 1000..i * spacing + 1001)
         .collect();
+    assert_eq!(
+        MAX_WINDOWS, 4,
+        "#2201: a long line shows up to four windows"
+    );
     let (shown, _) = show(&line, &hits, BUDGET);
     assert_eq!(
         shown.matches("…[").count(),

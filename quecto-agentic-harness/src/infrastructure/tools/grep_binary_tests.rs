@@ -511,3 +511,12 @@ fn the_description_says_how_long_lines_and_binary_files_are_handled() {
         "{description}"
     );
 }
+
+#[test]
+fn the_binary_check_is_given_two_seconds() {
+    assert_eq!(
+        super::grep_binary::CHECK_TIMEOUT,
+        std::time::Duration::from_secs(2),
+        "#2202: the check is abandoned 2 s past the search"
+    );
+}

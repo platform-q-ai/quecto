@@ -88,3 +88,10 @@ fn cached_lines_split_as_before_and_keep_raw_offsets() {
     assert_eq!(split_lines(b"x\n").len(), 1);
     assert_eq!(split_lines(b"\n").len(), 1);
 }
+
+#[test]
+fn every_trailing_carriage_return_is_dropped_from_a_reported_line() {
+    let lines = reported_lines(Some(b"abc\r\r\nx\r\n\r\n")).expect("lines");
+    let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(texts, ["abc", "x", ""]);
+}
