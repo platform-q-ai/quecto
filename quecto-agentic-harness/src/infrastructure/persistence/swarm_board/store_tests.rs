@@ -4,8 +4,10 @@ use std::time::{Duration, Instant};
 use rusqlite::Connection;
 
 use super::{
-    BoardStore, StoreRefusal, TransactionError, file_uri, opening_message, sqlite_message,
+    BoardStore, StoreRefusal, TransactionError, absolutised, file_uri, opening_message,
+    sqlite_message, variable_limit_checked,
 };
+use crate::infrastructure::persistence::swarm_board::binding::bound_statement;
 use crate::infrastructure::persistence::swarm_board::ledger::event;
 use crate::infrastructure::persistence::swarm_board::py_json::{self, PyJson};
 use crate::infrastructure::persistence::swarm_board::schema::SCHEMA;
@@ -392,10 +394,16 @@ fn sqlite_errors_read_as_python_str_of_the_sqlite3_error() {
     assert_eq!(opening_message(&other, uri), "no such access mode: rx");
 }
 
-/// The body's SQL error as the transaction reports it.
+/// The body's SQL error as the transaction reports it, for a statement
+/// prepared and bound the way board SQL is.
 fn failing(store: &BoardStore, sql: &str, parameters: &[i64]) -> Result<(), StoreRefusal> {
+    let values: Vec<rusqlite::types::Value> = parameters
+        .iter()
+        .map(|&parameter| rusqlite::types::Value::Integer(parameter))
+        .collect();
     store.transaction(false, |tx| {
-        tx.execute(sql, rusqlite::params_from_iter(parameters))?;
+        let mut statement = bound_statement(tx, sql, &values)?;
+        statement.raw_query().next()?;
         Ok(())
     })
 }
@@ -405,7 +413,7 @@ fn sql_input_and_binding_errors_read_as_python_str_of_the_sqlite3_error() {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = created(&dir);
     // Each text is Python's str() of the sqlite3.Error the same call raises.
-    let cases: [(&str, &[i64], &str); 6] = [
+    let cases: [(&str, &[i64], &str); 8] = [
         ("SELEC 1", &[], "near \"SELEC\": syntax error"),
         ("SELECT 1,", &[], "incomplete input"),
         ("SELECT * FROM nope", &[], "no such table: nope"),
@@ -413,6 +421,18 @@ fn sql_input_and_binding_errors_read_as_python_str_of_the_sqlite3_error() {
             "SELECT ?",
             &[1, 2],
             "Incorrect number of bindings supplied. The current statement uses 1, and there are 2 supplied.",
+        ),
+        // Python counts every surplus parameter; rusqlite's own check stops
+        // at the first.
+        (
+            "SELECT ?",
+            &[1, 2, 3],
+            "Incorrect number of bindings supplied. The current statement uses 1, and there are 3 supplied.",
+        ),
+        (
+            "SELECT 1",
+            &[1, 2, 3],
+            "Incorrect number of bindings supplied. The current statement uses 0, and there are 3 supplied.",
         ),
         (
             "SELECT ?, ?",
@@ -498,4 +518,76 @@ fn the_bundled_sqlite_binds_as_many_parameters_as_the_system_library() {
             "coordination store unavailable or contended: too many SQL variables".into()
         ))
     );
+}
+
+#[test]
+fn a_relative_path_under_a_deleted_working_directory_is_refused_as_unavailable() {
+    // Permitted divergence (L4): pathlib's absolute() raises FileNotFoundError
+    // from os.getcwd(), which escapes Python's store as a non-SwarmError; the
+    // Rust store returns it as the unavailable refusal. The working directory
+    // is process-wide, so the test supplies getcwd's failure instead.
+    let deleted = || Err(std::io::Error::from_raw_os_error(2));
+    assert_eq!(
+        absolutised(Path::new("swarm.sqlite"), deleted),
+        Err(StoreRefusal(
+            "coordination store unavailable or contended: No such file or directory (os error 2)"
+                .into()
+        ))
+    );
+    let unused = || -> std::io::Result<PathBuf> { panic!("an absolute path needs no cwd") };
+    assert_eq!(
+        absolutised(Path::new("/b/./swarm.sqlite"), unused),
+        Ok(PathBuf::from("/b/swarm.sqlite"))
+    );
+    assert_eq!(
+        absolutised(Path::new("b/../swarm.sqlite"), || Ok(PathBuf::from("/w"))),
+        Ok(PathBuf::from("/w/b/../swarm.sqlite")),
+        "`..` is kept, as pathlib keeps it"
+    );
+}
+
+#[test]
+fn a_leading_double_slash_is_one_root() {
+    // Permitted divergence (N3): pathlib keeps POSIX's implementation-defined
+    // leading `//`, so Python opens `file:////h/x`; Rust's path components
+    // fold it to one root and open `file:///h/x`. Both name /h/x on Linux
+    // and macOS.
+    let path = absolutised(Path::new("//h/x"), || Ok(PathBuf::from("/w"))).expect("absolute");
+    assert_eq!(path, PathBuf::from("/h/x"));
+    assert_eq!(file_uri(&path), "file:///h/x");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_missing_path_is_named_with_replacement_characters() {
+    // Permitted divergence (N1): Python formats the path with
+    // surrogateescape ('\udcff'); a Rust message is UTF-8, so the byte
+    // reads as U+FFFD.
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let missing = dir
+        .path()
+        .join(std::ffi::OsStr::from_bytes(b"board\xff.sqlite"));
+    assert_eq!(
+        BoardStore::new(&missing).transaction(false, |_| Ok(())),
+        Err(StoreRefusal(format!(
+            "coordination store missing at {}/board\u{fffd}.sqlite: it was deleted while the run was live, so this run's board is lost",
+            dir.path().display()
+        )))
+    );
+}
+
+#[test]
+fn a_store_refuses_a_sqlite_built_without_the_system_variable_limit() {
+    // LIBSQLITE3_FLAGS in .cargo/config.toml raises the bundled limit to the
+    // system library's; a build that lost it refuses rather than diverges.
+    assert_eq!(
+        variable_limit_checked(32_766),
+        Err(StoreRefusal(
+            "coordination store refused: this build's SQLite binds at most 32766 SQL variables, not the system library's 250000 (build it with LIBSQLITE3_FLAGS from .cargo/config.toml)"
+                .into()
+        ))
+    );
+    assert_eq!(variable_limit_checked(250_000), Ok(()));
+    assert_eq!(variable_limit_checked(500_000), Ok(()));
 }

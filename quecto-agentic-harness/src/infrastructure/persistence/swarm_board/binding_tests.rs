@@ -166,3 +166,33 @@ fn bind_all_binds_in_order_and_stops_at_the_first_refusal() {
         Err(BindingError::Unsupported("list"))
     );
 }
+
+#[test]
+fn a_float_reaching_text_affinity_reads_as_the_bundled_sqlite_writes_it() {
+    // Deliberate divergence (M1): a REAL becomes TEXT by the linked SQLite's
+    // own conversion, and this version's (3.53, as Arch's system library)
+    // writes 17 significant digits where Debian's 3.46.1 and Ubuntu 24.04's
+    // 3.45.1 write 15 ("0.333333333333333"). Board SQL reaches it when a
+    // loosely typed float meets a TEXT column, e.g. a float `recipient`.
+    let connection = table();
+    let third = bind(&json("0.3333333333333333")).expect("a float binds");
+    assert_eq!(third, Value::Real(1.0 / 3.0));
+    let (cast, concatenated): (String, String) = connection
+        .query_row("SELECT CAST(?1 AS TEXT), ?1 || ''", [&third], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .expect("the conversions run");
+    assert_eq!(cast, "0.33333333333333332");
+    assert_eq!(concatenated, "0.33333333333333332");
+    connection
+        .execute("UPDATE tasks SET title=? WHERE id=3", [&third])
+        .expect("the float is stored");
+    let stored: (String, String) = connection
+        .query_row(
+            "SELECT typeof(title), title FROM tasks WHERE id=3",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("the title reads");
+    assert_eq!(stored, ("text".into(), "0.33333333333333332".into()));
+}

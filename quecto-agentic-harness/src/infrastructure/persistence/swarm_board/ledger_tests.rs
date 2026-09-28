@@ -282,3 +282,55 @@ fn an_undecodable_stored_text_is_python_s_decode_error() {
         );
     }
 }
+
+#[test]
+fn an_undecodable_stored_text_replaces_each_invalid_byte_as_cpython_does() {
+    use rusqlite::types::Value;
+    // CPython's error text holds one U+FFFD per byte of each invalid
+    // sequence (2 + 10 here), not one per maximal subpart.
+    let bytes = b"ok\xe2\x82x\xff\xfe\xf0\x9f\x98\xed\xa0\x80\xc0\xafend".to_vec();
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = created(&dir);
+    store
+        .transaction(false, |tx| {
+            tx.execute(
+                "INSERT INTO requests VALUES('worker', 'r', '{}', CAST(? AS TEXT))",
+                [Value::Blob(bytes)],
+            )?;
+            Ok(())
+        })
+        .expect("the request is recorded");
+    let replaced = format!("ok{}x{}end", "\u{fffd}".repeat(2), "\u{fffd}".repeat(10));
+    assert_eq!(
+        replay(&store),
+        Err(StoreRefusal(format!(
+            "coordination store unavailable or contended: Could not decode to UTF-8 column 'result' with text '{replaced}'"
+        )))
+    );
+}
+
+#[test]
+fn a_stored_blob_result_python_cannot_read_is_refused_with_this_module_s_text() {
+    use rusqlite::types::Value;
+    // Permitted divergence (N2): Python's json.loads raises JSONDecodeError
+    // "Expecting value: line 1 column 1 (char 0)" for a double BOM (only one
+    // is dropped with the encoding) and UnicodeDecodeError for invalid UTF-8,
+    // neither a SwarmError.
+    let cases = [
+        (
+            b"\xef\xbb\xbf\xef\xbb\xbf[2]".to_vec(),
+            "Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)",
+        ),
+        (b"\xff[2]".to_vec(), "the stored result is not UTF-8 JSON"),
+    ];
+    for (blob, message) in cases {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = created(&dir);
+        stored_request(&store, Value::Text("{}".into()), Value::Blob(blob.clone()));
+        assert_eq!(
+            replay(&store),
+            Err(StoreRefusal(message.into())),
+            "{blob:?}"
+        );
+    }
+}
