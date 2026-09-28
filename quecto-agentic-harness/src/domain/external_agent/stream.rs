@@ -72,15 +72,18 @@ impl InitEvent {
     /// Whether every MCP server reports [`MCP_SERVER_CONNECTED`]: the
     /// launch check a member must pass before its first turn.
     pub fn mcp_servers_connected(&self) -> bool {
-        // RED (#2285): not implemented yet.
-        true
+        self.mcp_servers
+            .iter()
+            .all(|server| server.status == MCP_SERVER_CONNECTED)
     }
 
     /// Whether the session's tools are exactly `expected`, in any order.
     pub fn tools_are_exactly(&self, expected: &[&str]) -> bool {
-        // RED (#2285): not implemented yet.
-        let _ = expected;
-        true
+        let mut have: Vec<&str> = self.tools.iter().map(String::as_str).collect();
+        let mut want = expected.to_vec();
+        have.sort_unstable();
+        want.sort_unstable();
+        have == want
     }
 }
 
@@ -116,8 +119,14 @@ impl ToolResultEvent {
     /// The result's text: the string itself, or the `text` of every text
     /// block joined. Other block kinds (images) carry no text.
     pub fn content_text(&self) -> String {
-        // RED (#2285): not implemented yet.
-        String::new()
+        match &self.content {
+            Value::String(text) => text.clone(),
+            Value::Array(blocks) => blocks
+                .iter()
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect(),
+            _ => String::new(),
+        }
     }
 }
 
@@ -170,15 +179,18 @@ pub enum RateLimitStatus {
 
 impl RateLimitStatus {
     pub fn parse(status: &str) -> Self {
-        // RED (#2285): not implemented yet.
-        Self::Other(status.to_string())
+        match status {
+            "allowed" => Self::Allowed,
+            "allowed_warning" => Self::AllowedWarning,
+            "rejected" => Self::Rejected,
+            other => Self::Other(other.to_string()),
+        }
     }
 
     /// Whether the status is worth an admission warning: a warning, a
     /// rejection, or a status this vocabulary does not know.
     pub fn warrants_warning(&self) -> bool {
-        // RED (#2285): not implemented yet.
-        false
+        matches!(self, Self::AllowedWarning | Self::Rejected | Self::Other(_))
     }
 }
 
