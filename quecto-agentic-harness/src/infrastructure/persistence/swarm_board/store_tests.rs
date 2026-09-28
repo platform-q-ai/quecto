@@ -5,7 +5,7 @@ use rusqlite::Connection;
 
 use super::{
     BoardStore, StoreRefusal, TransactionError, absolutised, file_uri, opening_message,
-    sqlite_message, variable_limit_checked,
+    secure_delete_checked, sqlite_message, variable_limit_checked,
 };
 use crate::infrastructure::persistence::swarm_board::binding::bound_statement;
 use crate::infrastructure::persistence::swarm_board::ledger::event;
@@ -590,4 +590,19 @@ fn a_store_refuses_a_sqlite_built_without_the_system_variable_limit() {
     );
     assert_eq!(variable_limit_checked(250_000), Ok(()));
     assert_eq!(variable_limit_checked(500_000), Ok(()));
+}
+
+#[test]
+fn a_store_refuses_a_sqlite_built_without_secure_delete() {
+    // An exported LIBSQLITE3_FLAGS can keep the variable limit and drop
+    // -DSQLITE_SECURE_DELETE; the board then refuses rather than leave
+    // deleted content in freed pages.
+    let refusal = |value: i64| {
+        Err(StoreRefusal(format!(
+            "coordination store refused: this build's SQLite has secure_delete={value}, not the system library's 1 (build it with LIBSQLITE3_FLAGS from .cargo/config.toml)"
+        )))
+    };
+    assert_eq!(secure_delete_checked(0), refusal(0));
+    assert_eq!(secure_delete_checked(2), refusal(2));
+    assert_eq!(secure_delete_checked(1), Ok(()));
 }

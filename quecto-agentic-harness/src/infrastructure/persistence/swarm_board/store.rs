@@ -180,6 +180,17 @@ fn variable_limit_checked(limit: i32) -> Result<(), StoreRefusal> {
     }
 }
 
+/// Refuses a SQLite that does not zero freed pages as the system library does.
+///
+/// `-DSQLITE_SECURE_DELETE` comes from the same `LIBSQLITE3_FLAGS` as the
+/// variable limit, and an exported override can keep one and drop the other,
+/// so each is checked on its own. Only the system library's `1` is accepted:
+/// `0` leaves deleted board content in freed pages, and `2` (FAST) zeroes
+/// only some of them.
+fn secure_delete_checked(secure_delete: i64) -> Result<(), StoreRefusal> {
+    Ok(())
+}
+
 /// `sqlite3.connect(path.as_uri() + '?mode=rw[c]', uri=True, timeout=0.5)`.
 fn open(path: &Path, create: bool) -> Result<Connection, StoreRefusal> {
     let (mode, flags) = if create {
