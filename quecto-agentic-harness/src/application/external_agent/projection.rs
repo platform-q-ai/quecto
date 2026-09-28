@@ -17,159 +17,17 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use serde_json::Value;
-
+use super::dto::{
+    BackgroundJob, ExecutionState, FinalReport, GuardrailDenial, MessageRole, ProjectedMessage,
+    ProjectedToolCall, SessionTotals, TurnOutcome,
+};
 use crate::domain::external_agent::stream::{
     AssistantContent, ExternalAgentEvent, InitEvent, PermissionDenial, RateLimitInfo, ResultEvent,
-    TaskNotification, TaskStarted, TokenCounts, ToolResultEvent,
+    TaskNotification, TaskStarted, ToolResultEvent,
 };
-use crate::domain::external_agent::turn::{TurnEnd, TurnUsage, UsageLedger};
+use crate::domain::external_agent::turn::TurnEnd;
+use crate::domain::external_agent::usage::UsageLedger;
 use crate::domain::message::StopReason;
-
-/// A final report is delivered in pages of this many bytes, the same
-/// budget as a quecto child's final report (#2114).
-pub const FINAL_REPORT_PAGE_BYTES: usize = 64 * 1024;
-
-/// What the member is doing, as `get_state` reports it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ExecutionState {
-    #[default]
-    Idle,
-    Thinking,
-    Streaming,
-    RunningTool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MessageRole {
-    User,
-    Assistant,
-    Tool,
-}
-
-/// One tool call of an assistant message.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProjectedToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: Value,
-}
-
-/// One message of the member's conversation.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProjectedMessage {
-    pub ordinal: u64,
-    pub role: MessageRole,
-    pub content: String,
-    pub tool_calls: Vec<ProjectedToolCall>,
-    /// Thinking text; `None` while the CLI redacts it.
-    pub thinking: Option<String>,
-    /// The API message id an assistant message was grouped by.
-    pub api_message_id: Option<String>,
-    /// The tool call a tool message answers.
-    pub tool_call_id: Option<String>,
-    pub is_error: bool,
-    /// A tool message whose call a permission rule (a hook) refused.
-    pub permission_denied: bool,
-}
-
-impl ProjectedMessage {
-    fn new(ordinal: u64, role: MessageRole) -> Self {
-        Self {
-            ordinal,
-            role,
-            content: String::new(),
-            tool_calls: Vec::new(),
-            thinking: None,
-            api_message_id: None,
-            tool_call_id: None,
-            is_error: false,
-            permission_denied: false,
-        }
-    }
-}
-
-/// The member's final report: the last turn's `result` text.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FinalReport {
-    pub content: String,
-    /// The last assistant message with text when the report arrived.
-    pub message_ordinal: Option<u64>,
-}
-
-impl FinalReport {
-    pub fn full_length_bytes(&self) -> usize {
-        self.content.len()
-    }
-
-    /// The report split into pages of at most [`FINAL_REPORT_PAGE_BYTES`],
-    /// each cut on a character boundary. An empty report is one empty page.
-    pub fn pages(&self) -> Vec<&str> {
-        let mut pages = Vec::new();
-        let mut rest = self.content.as_str();
-        loop {
-            let mut end = rest.len().min(FINAL_REPORT_PAGE_BYTES);
-            while !rest.is_char_boundary(end) {
-                end -= 1;
-            }
-            // A page always advances unless the rest is empty.
-            debug_assert!(end > 0 || rest.is_empty());
-            let (page, tail) = rest.split_at(end);
-            pages.push(page);
-            rest = tail;
-            if rest.is_empty() {
-                return pages;
-            }
-        }
-    }
-}
-
-/// How one turn ended and what it used.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TurnOutcome {
-    pub end: TurnEnd,
-    pub stop_reason: Option<StopReason>,
-    pub usage: TurnUsage,
-    pub num_turns: Option<u32>,
-    pub duration_ms: Option<u64>,
-}
-
-/// A tool call a permission rule refused, from `result.permission_denials`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct GuardrailDenial {
-    pub tool_name: String,
-    pub tool_use_id: String,
-    pub tool_input: Value,
-    /// The turn (0-based) whose result reported it.
-    pub turn: usize,
-}
-
-/// A Bash command the CLI tracks as a task.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BackgroundJob {
-    pub task_id: String,
-    pub tool_use_id: Option<String>,
-    pub description: Option<String>,
-    pub is_backgrounded: bool,
-    /// The last status a notification gave; `None` while it runs.
-    pub status: Option<String>,
-}
-
-/// The member's session statistics.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct SessionTotals {
-    pub session_key: Option<String>,
-    pub model: Option<String>,
-    pub user_messages: usize,
-    pub assistant_messages: usize,
-    pub tool_calls: usize,
-    pub tool_results: usize,
-    /// Cumulative tokens (`modelUsage`).
-    pub tokens: TokenCounts,
-    /// Cumulative cost at list price, micro-USD.
-    pub cost_micro_usd: u64,
-    pub turns: usize,
-}
 
 /// Folds [`ExternalAgentEvent`]s into the member's protocol values.
 #[derive(Debug, Default)]
