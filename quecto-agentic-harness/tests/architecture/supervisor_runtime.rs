@@ -21,6 +21,13 @@ use std::path::Path;
 use quote::ToTokens;
 use syn::visit::Visit;
 
+/// Who may reach the supervisor's runtime, proven over every function.
+#[path = "supervisor_runtime_access.rs"]
+mod access;
+/// The checker rejects the bypasses review found (#2286 round 4).
+#[path = "supervisor_runtime_access_tests.rs"]
+mod access_tests;
+
 const SUPERVISOR: &str = "src/infrastructure/processes/owned_child_supervisor.rs";
 
 /// The files whose code runs on the supervisor's runtime.
@@ -90,6 +97,8 @@ const PROTOCOL_TAKERS: &[(&str, &str, &str, &str, &str)] = &[
 ];
 
 const TASKS: &str = "src/infrastructure/processes/owned_child_supervisor/tasks.rs";
+
+const PIPES: &str = "src/infrastructure/processes/child_line_pipes.rs";
 
 const BOXED_PROTOCOL: &str =
     "std :: pin :: Pin < Box < dyn Future < Output = ProtocolOutcome > + Send > >";
@@ -173,8 +182,9 @@ fn supervisor_fn(file: &str, method: &syn::ImplItemFn) -> SupervisorFn {
     }
 }
 
-/// Every production file under `src/infrastructure/processes/`, parsed.
-fn process_files() -> Vec<(String, syn::File)> {
+/// Every production file under `src/infrastructure/processes/`: its path
+/// and its source.
+fn process_sources() -> Vec<(String, String)> {
     let mut files = Vec::new();
     super::collect_rs_files(Path::new("src/infrastructure/processes"), &mut files);
     assert!(!files.is_empty(), "the processes module has files");
@@ -182,10 +192,25 @@ fn process_files() -> Vec<(String, syn::File)> {
         .iter()
         .map(|file| {
             let (path, source) = file.split_once(":\n").expect("a file entry");
-            let parsed = syn::parse_file(source).unwrap_or_else(|e| panic!("{path}: {e}"));
-            (path.to_string(), parsed)
+            (path.to_string(), source.to_string())
         })
         .collect()
+}
+
+/// `sources`, parsed.
+fn parse_sources(sources: &[(String, String)]) -> Vec<(String, syn::File)> {
+    sources
+        .iter()
+        .map(|(path, source)| {
+            let parsed = syn::parse_file(source).unwrap_or_else(|e| panic!("{path}: {e}"));
+            (path.clone(), parsed)
+        })
+        .collect()
+}
+
+/// Every production file under `src/infrastructure/processes/`, parsed.
+fn process_files() -> Vec<(String, syn::File)> {
+    parse_sources(&process_sources())
 }
 
 /// Every function of every `impl OwnedChildSupervisor` (inherent or trait,
@@ -243,33 +268,12 @@ fn the_supervisor_runtime_handle_is_private_and_spawned_on_only_by_allowlisted_h
         "the runtime handle is private to {SUPERVISOR}, not `{}`",
         tokens(&handle.vis)
     );
-    let fns = supervisor_fns(&files);
-    assert!(!fns.is_empty(), "the supervisor's functions are found");
-    let mut used = Vec::new();
-    for function in fns.iter().filter(|function| function.touches_handle) {
-        let allowed = RUNTIME_SPAWNERS
-            .iter()
-            .find(|(name, _, _)| *name == function.name)
-            .filter(|_| function.file == SUPERVISOR);
-        let Some((name, visibility, _)) = allowed else {
-            panic!(
-                "{}: `{}` touches the supervisor's runtime handle; only the \
-                 RUNTIME_SPAWNERS of {SUPERVISOR} may",
-                function.file, function.name
-            );
-        };
-        assert_eq!(
-            function.visibility, *visibility,
-            "{SUPERVISOR}: `{name}` keeps its pinned visibility"
-        );
-        used.push(*name);
-    }
-    for (name, _, _) in RUNTIME_SPAWNERS {
-        assert!(
-            used.contains(name),
-            "RUNTIME_SPAWNERS lists `{name}`, which touches no runtime handle: remove it"
-        );
-    }
+    let violations = access::violations(&files);
+    assert!(
+        violations.is_empty(),
+        "the supervisor's runtime is reached outside its allowlisted helpers:\n{}",
+        violations.join("\n")
+    );
 }
 
 #[test]
