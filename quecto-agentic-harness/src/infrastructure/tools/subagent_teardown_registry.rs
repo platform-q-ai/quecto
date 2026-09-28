@@ -51,12 +51,15 @@ pub const DEFAULT_COMPENSATION_WAIT: Duration =
     OWNED_HANDLE_LADDER.saturating_add(COMPENSATION_WAIT_SLACK);
 
 /// How long a natural exit's note waits for the reaper to publish the exit
-/// status of a child this harness held (#2260). The monitor's EOF can win
-/// the terminal claim once the supervisor has reaped the process but before
-/// the reaper task has published what it reaped; the publish is then a task
-/// wake-up away, so the bound only matters on a badly loaded host. It is
-/// far inside [`DEFAULT_COMPENSATION_WAIT`], so a joiner never gives up on
-/// a compensation that is only waiting here.
+/// status of a child this harness held, when the supervisor has no record
+/// of it to read (#2260). The monitor's EOF can win the terminal claim once
+/// the supervisor has reaped the process but before the reaper task has
+/// published what it reaped; the supervisor recorded the exit in the same
+/// critical section as the reap, so the note reads it there. Only a row
+/// whose supervisor is not on it, or whose record has left the retired
+/// ring, falls back to this wait. The note precedes the row's release to
+/// its joiners, so the bound is kept inside [`DEFAULT_COMPENSATION_WAIT`]:
+/// a joiner never gives up on a compensation that is only waiting here.
 pub const DEFAULT_EXIT_STATUS_WAIT: Duration = Duration::from_secs(5);
 const _: () = assert!(
     DEFAULT_EXIT_STATUS_WAIT.as_nanos() < DEFAULT_COMPENSATION_WAIT.as_nanos(),
@@ -112,16 +115,18 @@ impl RegistryDelegatedAgents {
     }
 
     /// How the target ended, for its natural-exit note, in the words every
-    /// other view of its end uses: its exit status (what the reaper
-    /// published, for a child this harness held) and the crash record it
-    /// left. `None` when nothing beyond the end is known.
+    /// other view of its end uses: its exit status (what the supervisor
+    /// reaped, for a child this harness held; `standing`, the status the
+    /// row stood with before its compensation, for any other) and the
+    /// crash record it left. `None` when nothing beyond the end is known.
     async fn end_detail(
         &self,
         target: Option<&SubagentEntry>,
+        standing: Option<ExitSignal>,
         observation: &str,
     ) -> Option<String> {
         let (ended, target) = (self.ended.as_ref()?, target?);
-        let exit = self.published_exit(target).await;
+        let exit = self.exit_status(target, standing).await;
         let crash = ended
             .crash(
                 &target.agent_uuid,
@@ -152,12 +157,42 @@ impl RegistryDelegatedAgents {
         }
     }
 
-    /// The exit status published for `target`. For a child this harness
-    /// held, the reaper publishes what it reaped, and the end may have been
-    /// observed first (the monitor's EOF after the reap, before the
-    /// publish): the note waits for it, up to `exit_status_wait` (#2260).
-    /// Any other row's status is set by the compensation itself, after the
-    /// note, so it is read as it stands.
+    /// The exit status of `target` (#2260). A child this harness held was
+    /// reaped before its end could be claimed — the monitor's EOF defers
+    /// while the supervisor retains it — and the supervisor recorded the
+    /// exit in the same critical section as the reap, so it is read there,
+    /// deterministically, whether or not the reaper has published it yet.
+    /// Only without a record (no supervisor on the row, or its record gone
+    /// from the retired ring) does the note wait for the reaper's publish,
+    /// up to `exit_status_wait`. Any other row's status is `standing`: the
+    /// compensation replaces its signal, so it was read beforehand.
+    async fn exit_status(
+        &self,
+        target: &SubagentEntry,
+        standing: Option<ExitSignal>,
+    ) -> Option<ExitSignal> {
+        let Some(handle) = target.owned_child else {
+            return standing;
+        };
+        let recorded = target
+            .owned_child_supervisor
+            .as_ref()
+            .and_then(|supervisor| supervisor.reaped_exit(handle));
+        if let Some(exit) = recorded {
+            // Exactly what the reaper publishes for it.
+            return Some(super::spawn_reaper::exit_signal_from_exit(Some(exit)));
+        }
+        // A row whose child is still held never reaches a natural exit's
+        // note: its connection-level end defers to the reaper.
+        debug_assert!(
+            !target.holds_owned_child(),
+            "an exit note for a child the supervisor still holds"
+        );
+        self.published_exit(target).await
+    }
+
+    /// What the reaper publishes for `target`, waited for up to
+    /// `exit_status_wait`: the fallback when the supervisor has no record.
     async fn published_exit(&self, target: &SubagentEntry) -> Option<ExitSignal> {
         let tx = target.exit_signal_tx.as_ref()?;
         match target.owned_child {
@@ -185,12 +220,23 @@ impl RegistryDelegatedAgents {
     }
 
     /// How long a natural exit's note waits for the reaper to publish an
-    /// owned child's exit status (#2260).
+    /// owned child's exit status when the supervisor has no record of it
+    /// (#2260). The compile-time check covers only the defaults; an
+    /// override pairing is the caller's to keep: set this below
+    /// [`Self::with_compensation_wait`], or a joiner of an exit whose status
+    /// the supervisor never recorded may stop waiting (`TimedOut`) before
+    /// the note and the row's release. A row whose child the supervisor
+    /// reaped is read at once and never waits, whatever the two are.
     pub fn with_exit_status_wait(mut self, wait: Duration) -> Self {
         self.exit_status_wait = wait;
         self
     }
 
+    /// How long a joiner waits for a row's compensation. A natural exit's
+    /// note precedes the row's release, so keep this above
+    /// [`Self::with_exit_status_wait`] when overriding either (the
+    /// compile-time check covers only the defaults): otherwise a joiner of
+    /// an exit the supervisor never recorded may time out on the fallback.
     pub fn with_compensation_wait(mut self, wait: Duration) -> Self {
         self.compensation_wait = wait;
         self
@@ -574,20 +620,15 @@ impl TeardownCompensation for RegistryDelegatedAgents {
             )
             .await;
             let kind = exit_kind(cause);
-            // Why a child ended on its own, read before the target's exit
-            // signal is replaced below: what the reaper published for a
-            // child this harness held, and the crash record it left (#2192).
-            let detail = match cause {
-                TerminationCause::Exit(_) => {
-                    let target = removed
-                        .iter()
-                        .chain(&already_ended)
-                        .find(|(id, _)| id == key)
-                        .map(|(_, entry)| entry);
-                    self.end_detail(target, kind.to_wire_str()).await
-                }
-                _ => None,
-            };
+            // The status the target stood with, read before its exit signal
+            // is replaced below: a row this harness did not hold has no
+            // other (#2192).
+            let standing = removed
+                .iter()
+                .chain(&already_ended)
+                .find(|(id, _)| id == key)
+                .and_then(|(_, entry)| entry.exit_signal_tx.as_ref())
+                .and_then(|tx| tx.borrow().clone());
             for (id, entry) in &removed {
                 if let Some(ref handle) = entry.monitor_handle {
                     handle.abort();
@@ -612,7 +653,24 @@ impl TeardownCompensation for RegistryDelegatedAgents {
                     }
                 }
             }
-            if matches!(cause, TerminationCause::Exit(_)) {
+            debug_assert!(
+                removed.first().is_none_or(|(id, _)| id == key),
+                "the cascade lists the target first"
+            );
+            // The natural exit's note is built only now (#2260 review), after
+            // the monitors were aborted and the exit signals fired, so
+            // reading why the child ended — its crash record and, only when
+            // the supervisor has no record, a bounded wait for the reaper's
+            // publish — holds none of them back. It still precedes the
+            // release below: a joiner woken on `Compensated` finds every
+            // terminal effect done, the note included (#1953).
+            if let TerminationCause::Exit(_) = cause {
+                let target = removed
+                    .iter()
+                    .chain(&already_ended)
+                    .find(|(id, _)| id == key)
+                    .map(|(_, entry)| entry);
+                let detail = self.end_detail(target, standing, kind.to_wire_str()).await;
                 if let Some(tx) = self.notify_tx.as_ref() {
                     let _ = tx.try_send(SequencedSubagentNotification::new_for_agent(
                         sequence,
@@ -625,10 +683,6 @@ impl TeardownCompensation for RegistryDelegatedAgents {
                     ));
                 }
             }
-            debug_assert!(
-                removed.first().is_none_or(|(id, _)| id == key),
-                "the cascade lists the target first"
-            );
             // Every terminal effect has run: only now is the row (and each
             // row that fell with it) compensated for whoever waits on it —
             // the already-ended rows too, since nothing further will ever

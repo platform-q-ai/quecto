@@ -22,10 +22,10 @@ use crate::infrastructure::tools::subagent_registry::{
 /// loaded CI host, far below any wait the note could have made.
 const NO_WAIT: Duration = Duration::from_secs(1);
 
-/// What the process a test's reaped child is killed with names in the note.
-fn reason_killed() -> String {
-    REASON.replace("(signal 6)", "(signal 9)")
-}
+/// How a test's reaped child's note reads: it was killed by SIGKILL (so
+/// nothing dumps core), and a panic record would not fit that end, so none
+/// is left.
+const KILLED: &str = "ended unexpectedly (signal 9) (connection_closed)";
 
 /// The owned child a row names: the probe handle of a row whose supervisor
 /// is not on the row (so no record can be read and only the reaper's
@@ -142,7 +142,6 @@ async fn reaped_child() -> (ChildHandleId, Arc<OwnedChildSupervisor>) {
 #[tokio::test]
 async fn a_reaped_childs_status_is_read_from_the_supervisor_without_waiting() {
     let base = tempfile::tempdir().unwrap();
-    crash(base.path());
     let (handle, supervisor) = reaped_child().await;
     let mut rig = rig(base.path(), Owned::Reaped(handle, supervisor), None);
     let started = Instant::now();
@@ -152,10 +151,7 @@ async fn a_reaped_childs_status_is_read_from_the_supervisor_without_waiting() {
         "the note waited: {:?}",
         started.elapsed()
     );
-    assert_eq!(
-        exited_detail(&mut rig).as_deref(),
-        Some(format!("{} (connection_closed)", reason_killed()).as_str())
-    );
+    assert_eq!(exited_detail(&mut rig).as_deref(), Some(KILLED));
     assert_eq!(*rig.exit_tx.borrow(), None, "nothing was published");
 }
 
@@ -170,10 +166,7 @@ async fn a_retired_childs_status_is_read_from_its_record_without_waiting() {
     let started = Instant::now();
     compensate_closed(&rig).await;
     assert!(started.elapsed() < NO_WAIT, "{:?}", started.elapsed());
-    assert_eq!(
-        exited_detail(&mut rig).as_deref(),
-        Some("ended unexpectedly (signal 9) (connection_closed)")
-    );
+    assert_eq!(exited_detail(&mut rig).as_deref(), Some(KILLED));
 }
 
 /// #2260 (review round 1, F4): the real race at the use case. The
@@ -183,7 +176,6 @@ async fn a_retired_childs_status_is_read_from_its_record_without_waiting() {
 #[tokio::test]
 async fn the_monitor_claiming_before_the_reaper_publishes_still_names_the_crash() {
     let base = tempfile::tempdir().unwrap();
-    crash(base.path());
     let (handle, supervisor) = reaped_child().await;
     let mut rig = rig(base.path(), Owned::Reaped(handle, supervisor), None);
     assert!(!rig.port.holds_process(&rig.target));
@@ -202,10 +194,7 @@ async fn the_monitor_claiming_before_the_reaper_publishes_still_names_the_crash(
             removed: vec![AgentUuid::new(UUID)]
         }
     );
-    assert_eq!(
-        exited_detail(&mut rig).as_deref(),
-        Some(format!("{} (connection_closed)", reason_killed()).as_str())
-    );
+    assert_eq!(exited_detail(&mut rig).as_deref(), Some(KILLED));
 }
 
 /// #2260: with no supervisor record to read, a crashed owned child's note
@@ -259,44 +248,71 @@ async fn a_reaper_that_never_publishes_is_waited_for_only_up_to_the_bound() {
 }
 
 /// #2260 (review round 1, F2): a note waiting for a late reaper holds back
-/// no other terminal effect — the row's monitor is aborted and the row is
-/// compensated for whoever waits on it before the note is built.
+/// neither the monitors nor the exit signals — the target's and a fallen
+/// descendant's monitors are aborted, and the descendant's exit signal
+/// fired, while the note still waits. The row's release stays after the
+/// note, so a joiner woken on `Compensated` finds the note posted (#1953).
 #[tokio::test]
-async fn a_waiting_note_holds_back_no_other_terminal_effect() {
+async fn a_waiting_note_holds_back_neither_the_monitors_nor_the_exit_signals() {
     let base = tempfile::tempdir().unwrap();
     let bound = Duration::from_secs(3);
     let mut rig = rig(base.path(), Owned::Unrecorded, Some(bound));
+    let (child_exit_tx, child_exit_rx) = new_exit_signal_channel();
+    let child_monitor = Arc::new(tokio::spawn(std::future::pending::<()>()));
+    {
+        let mut child = SubagentEntry::with_identity(
+            AgentUuid::new("child"),
+            "bravo".into(),
+            PathBuf::new(),
+            4242,
+        );
+        child.reported_generation = Some(LaunchGeneration::new(1));
+        child.parent_id = Some(UUID.into());
+        child.exit_signal_tx = Some(child_exit_tx);
+        child.monitor_handle = Some(Arc::clone(&child_monitor));
+        rig.port.lock().insert("child".into(), child);
+    }
     let (port, target) = (rig.port.clone(), rig.target.clone());
     assert_eq!(port.claim_terminal(&target), TerminalClaim::Claimed);
+    let started = Instant::now();
     let compensation = tokio::spawn(async move {
         port.compensate(
             &target,
             TerminationCause::Exit(ExitObservation::ConnectionClosed),
         )
-        .await;
+        .await
     });
-    let started = Instant::now();
-    tokio::time::timeout(
-        NO_WAIT,
-        rig.phases
-            .wait_for(|phase| *phase == TeardownPhase::Compensated),
-    )
-    .await
-    .expect("the row was compensated while the note waited")
-    .expect("the row's phase is observable");
+    let aborted = tokio::time::timeout(NO_WAIT, async {
+        while !(rig.monitor.is_finished() && child_monitor.is_finished()) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(
+        aborted.is_ok(),
+        "the monitors were aborted while the note waited"
+    );
+    assert_eq!(
+        child_exit_rx.borrow().as_ref().map(|exit| exit.kind),
+        Some(ExitSignalKind::Terminated),
+        "the descendant's exit signal fired while the note waited"
+    );
     assert!(started.elapsed() < bound, "{:?}", started.elapsed());
     assert!(
         rig.notify_rx.try_recv().is_err(),
         "the note is still waiting for the reaper"
     );
-    let aborted = tokio::time::timeout(NO_WAIT, async {
-        while !rig.monitor.is_finished() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
-    assert!(aborted.is_ok(), "the monitor was aborted");
-    compensation.await.unwrap();
+    assert_eq!(
+        *rig.phases.borrow(),
+        TeardownPhase::Compensating(TeardownIntent::Exit),
+        "the release follows the note"
+    );
+    let compensated = compensation.await.unwrap();
+    assert_eq!(
+        compensated.removed,
+        [AgentUuid::new(UUID), AgentUuid::new("child")]
+    );
+    assert_eq!(*rig.phases.borrow(), TeardownPhase::Compensated);
     assert_eq!(exited_detail(&mut rig), None);
 }
 
