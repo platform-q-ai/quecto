@@ -13,6 +13,8 @@ use crate::domain::subagent::SubagentConfig;
 /// Parse the spawn tool's `backend` argument (#2287): absent or null is
 /// quecto; otherwise one of [`MemberBackend::SPAWN_VALUES`]. Whether the
 /// launch may use it is the domain's rule, checked on the whole config.
+/// Parsed but not yet in the tool's schema: #2288 (S4), which serves the
+/// member, advertises it.
 pub(super) fn parse_backend_arg(arg: Option<&serde_json::Value>) -> Result<MemberBackend, String> {
     match arg {
         None | Some(serde_json::Value::Null) => Ok(MemberBackend::Quecto),

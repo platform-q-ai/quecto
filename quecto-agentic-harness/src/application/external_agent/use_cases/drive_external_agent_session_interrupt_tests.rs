@@ -206,8 +206,20 @@ async fn an_interrupt_that_withdraws_a_queued_steer_owes_no_result_for_it() {
         SessionPhase::Interrupting { turn: 1 },
         "the steer is still owed"
     );
-    rig.feed(interrupt_answered(&["u2"])).await;
+    let SessionStep::Folded(step) = rig.feed(interrupt_answered(&["u2"])).await else {
+        panic!("the answer is folded")
+    };
+    let end = step
+        .turn_end
+        .expect("the turn ends with its stopped result's outcome");
+    assert!(!end.end.is_completed());
     assert_eq!(rig.phase(), SessionPhase::Idle);
+    assert!(rig.records.all().contains(&SessionRecord::TurnEnded {
+        turn: 1,
+        outcome: "aborted",
+        duration_ms: Some(1200),
+        cost_micro_usd: 0,
+    }));
 }
 
 // M1: a busy abort whose turn never answers ends the member.

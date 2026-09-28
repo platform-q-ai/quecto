@@ -94,10 +94,11 @@ fn launch_spec(
     }
 }
 
-/// The first credential variable the environment holds a value for, in
-/// [`CREDENTIAL_VARIABLES`]' order. Interim until #2293 selects the mode
-/// by config: with none, the first is named without a value, which the
-/// launcher refuses before anything runs.
+/// The one credential variable the environment holds a value for. Interim
+/// until #2293 selects the mode by config: with both set, which one the
+/// member runs under would be a guess, so it is refused, naming both
+/// variables and neither value; with none, the first is named without a
+/// value, which the launcher refuses before anything runs.
 fn credential_from(parent_environment: &[(OsString, OsString)]) -> Result<CredentialEnv, String> {
     let value_of = |name: &str| {
         parent_environment
@@ -107,14 +108,25 @@ fn credential_from(parent_environment: &[(OsString, OsString)]) -> Result<Creden
             .map(|(_, value)| value.to_string_lossy().into_owned())
             .filter(|value| !value.is_empty())
     };
-    let (name, value) = CREDENTIAL_VARIABLES
+    let set: Vec<(&str, String)> = CREDENTIAL_VARIABLES
         .iter()
-        .find_map(|name| value_of(name).map(|value| (*name, value)))
-        .unwrap_or((CREDENTIAL_VARIABLES[0], String::new()));
-    Ok(CredentialEnv {
-        name: name.to_string(),
-        value,
-    })
+        .filter_map(|name| value_of(name).map(|value| (*name, value)))
+        .collect();
+    match set.as_slice() {
+        [] => Ok(CredentialEnv {
+            name: CREDENTIAL_VARIABLES[0].to_string(),
+            value: String::new(),
+        }),
+        [(name, value)] => Ok(CredentialEnv {
+            name: name.to_string(),
+            value: value.clone(),
+        }),
+        [_, _, ..] => Err(format!(
+            "both {} are set; a claude-code member takes exactly one until #2293 selects it by \
+             config: unset one",
+            CREDENTIAL_VARIABLES.join(" and ")
+        )),
+    }
 }
 
 #[cfg(test)]

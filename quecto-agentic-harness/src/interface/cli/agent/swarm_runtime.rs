@@ -66,8 +66,16 @@ pub(super) fn admit_backend(flags: &AgentFlags, stderr: &mut String) -> bool {
 /// A claude-code member must be a swarm worker (O1): a participant of a
 /// created run, and not the run's creator.
 pub(super) fn admit_backend_with(flags: &AgentFlags, creator: bool, stderr: &mut String) -> bool {
-    let _ = (flags, creator, stderr, CLAUDE_CODE_NOT_A_SWARM_WORKER);
-    true
+    use crate::domain::external_agent::backend::MemberBackend;
+    let participating = flags.swarm_participation.participating();
+    let admitted = match (flags.backend.unwrap_or_default(), participating, creator) {
+        (MemberBackend::Quecto, _, _) | (MemberBackend::ClaudeCode, true, false) => true,
+        (MemberBackend::ClaudeCode, false, _) | (MemberBackend::ClaudeCode, true, true) => false,
+    };
+    if !admitted {
+        stderr.push_str(CLAUDE_CODE_NOT_A_SWARM_WORKER);
+    }
+    admitted
 }
 
 pub(super) fn bind_socket(socket: &std::path::Path, stderr: &mut String) -> bool {
