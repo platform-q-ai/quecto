@@ -453,7 +453,7 @@ impl SpawnTool {
             has("write") && has("edit")
         };
 
-        Ok(SubagentConfig {
+        let config = SubagentConfig {
             task,
             container,
             agent_id,
@@ -466,8 +466,19 @@ impl SpawnTool {
             effort,
             disable_tools,
             read_only,
-            backend: Default::default(),
-        })
+            backend: super::spawn_launch_args::parse_backend_arg(args.get("backend"))?,
+        };
+        crate::domain::external_agent::backend::validate_backend(
+            &config,
+            crate::domain::external_agent::backend::BackendLaunchContext {
+                launcher_is_swarm_participant: self.launches_swarm_worker(),
+            },
+        )
+        .map_err(|e| match e {
+            DomainError::Tool(reason) => reason,
+            other => other.to_string(),
+        })?;
+        Ok(config)
     }
 
     async fn launch_uds_agent(&self, config: &SubagentConfig) -> Result<ToolResult, DomainError> {
@@ -587,7 +598,7 @@ impl Tool for SpawnTool {
         ToolDefinition {
             name: "spawn".into(),
             description: format!("Spawn a background subagent. Always set agent_id to a concise, user-friendly label restricted to [a-zA-Z0-9_-] that describes the agent's purpose; use hyphens instead of spaces. Returns when its socket is ready, not when its task is done.\n\nAfter spawning, do not poll, sleep, or wait-loop. End this turn or do unrelated parent work. On a later turn, after the passive completion note, call agent_cmd get_messages using the spawn-returned UUID as agent_id with no count/before for the default unread report. The note is not the report. Before spawning a replacement for the same work after an apparent failure, disconnect, or provider-error recovery case, call agent_cmd get_state on the existing agent to confirm whether it is still running or recovered.\n\nContainers: omit container or set false for local. true starts a new container with this repo's `standard` config when the roster shows `standard (default, repo-bound)` (no global default overrides it — a repo without one uses the labelled default; `quecto container init` binds one), else the labelled default. Use {{\"mode\":\"new\",\"container_config\":\"name\",\"name\":\"env\"}} to select/name a new container, or {{\"mode\":\"existing\",\"ref\":\"C1\"}} / {{\"mode\":\"existing\",\"name\":\"env\"}} to join one; existing refs come from agent_cmd get_containers. Do not pass repo. A new container is a fresh clone of the config's --repo at its default branch (no --repo: empty sandbox): the parent's working tree, branch and uncommitted changes are NOT inside; to work on a branch, push it and tell the child to fetch/checkout. Per-config detail (layer, repository): agent_cmd get_container_configs with agent_id \"*\". The result's container_config= names the config used; a failed create quotes the script's stderr tail — run `quecto container doctor` in this directory, fix what it names, retry.{roster}\n\nOrdinary container launches (new or joined) support workflow, workflow_guards and workflow_spec exactly like host-local agents. Swarm launches reject them: workers spawned by a swarm participant, and joins into a container whose swarm run exists, fail before inference; an agent running a workflow (guards, bound spec or selected template) cannot create a swarm, and the workflow tool refuses inside one.\n\nWhen spawning a host-local agent with a bound workflow or instructing it to select a workflow, avoid extra instructions that conflict with workflow steps; such as DO NOT PUSH or DO NOT COMMIT etc.").into(),
-            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"Required label for every spawn: choose a concise, user-friendly agent_id restricted to [a-zA-Z0-9_-] that describes the agent's purpose; use hyphens instead of spaces. Use the spawn-returned UUID as agent_cmd.agent_id."},"task":{"type":"string","description":"Initial task; omit to start idle."},"system":{"type":"string","description":"Child system prompt."},"container":{"description":"Launch location: omit/false=local, true=new container from this repo's standard config (else the default), {\"mode\":\"new\",\"container_config\":\"name\",\"name\":\"env\"}=new selected container, {\"mode\":\"existing\",\"ref\":\"C1\"} or {\"mode\":\"existing\",\"name\":\"env\"}=join existing. No repo field."},"config":{"type":"string","description":"Optional child --config; for new containers, omit normally or use a trusted absolute path."},"model":{"type":"string","description":"Child model as provider/model; alternative to provider+model_id."},"provider":{"type":"string","description":"Child model provider; use with model_id."},"model_id":{"type":"string","description":"Child model id; use with provider."},"effort":{"type":"string","enum":["none","low","medium","high","xhigh","max"],"description":"Child reasoning effort."},"workflow":{"type":"boolean","description":"Start workflow mode."},"workflow_guards":{"type":"boolean","description":"Enable workflow guards; requires workflow."},"workflow_spec":{"type":"object","description":"Inline workflow template for the child.","properties":{"template":{"type":"object"}}},"disable_tools":{"type":"array","items":{"type":"string"},"description":"Tool names to disable in the child."},"read_only":{"type":"boolean","description":"Hide and disable write/edit; combines with disable_tools. Bash remains mutating-capable; not a sandbox."}}}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"Required label for every spawn: choose a concise, user-friendly agent_id restricted to [a-zA-Z0-9_-] that describes the agent's purpose; use hyphens instead of spaces. Use the spawn-returned UUID as agent_cmd.agent_id."},"task":{"type":"string","description":"Initial task; omit to start idle."},"system":{"type":"string","description":"Child system prompt."},"container":{"description":"Launch location: omit/false=local, true=new container from this repo's standard config (else the default), {\"mode\":\"new\",\"container_config\":\"name\",\"name\":\"env\"}=new selected container, {\"mode\":\"existing\",\"ref\":\"C1\"} or {\"mode\":\"existing\",\"name\":\"env\"}=join existing. No repo field."},"config":{"type":"string","description":"Optional child --config; for new containers, omit normally or use a trusted absolute path."},"model":{"type":"string","description":"Child model as provider/model; alternative to provider+model_id."},"provider":{"type":"string","description":"Child model provider; use with model_id."},"model_id":{"type":"string","description":"Child model id; use with provider."},"effort":{"type":"string","enum":["none","low","medium","high","xhigh","max"],"description":"Child reasoning effort."},"workflow":{"type":"boolean","description":"Start workflow mode."},"workflow_guards":{"type":"boolean","description":"Enable workflow guards; requires workflow."},"workflow_spec":{"type":"object","description":"Inline workflow template for the child.","properties":{"template":{"type":"object"}}},"disable_tools":{"type":"array","items":{"type":"string"},"description":"Tool names to disable in the child."},"read_only":{"type":"boolean","description":"Hide and disable write/edit; combines with disable_tools. Bash remains mutating-capable; not a sandbox."},"backend":{"type":"string","enum":["quecto","claude_code"],"description":"Child brain; default quecto. claude_code: swarm workers in your own container only; no workflow or effort."}}}"#.into(),
         }
     }
 

@@ -3,4 +3,4 @@
 
 mod drive_external_agent_session;
 
-pub use drive_external_agent_session::DriveExternalAgentSession;
+pub use self::drive_external_agent_session::DriveExternalAgentSession;

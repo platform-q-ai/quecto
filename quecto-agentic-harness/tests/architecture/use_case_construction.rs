@@ -45,6 +45,7 @@ const USE_CASES: &[&str] = &[
     "CreateRun",
     "DepartingChildren",
     "DiagnoseContainerRuntime",
+    "DriveExternalAgentSession",
     "EndedTranscriptPage",
     "ExecuteHarnessShutdown",
     "ExecuteHarnessShutdownPorts",
