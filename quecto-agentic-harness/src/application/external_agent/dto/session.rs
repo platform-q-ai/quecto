@@ -11,9 +11,10 @@ pub struct SessionTotals {
     pub assistant_messages: usize,
     pub tool_calls: usize,
     pub tool_results: usize,
-    /// Cumulative tokens (`modelUsage`).
+    /// Every process's cumulative tokens (`modelUsage`), summed.
     pub tokens: TokenCounts,
-    /// Cumulative cost at list price, micro-USD.
+    /// The session's cost at list price: the sum of every turn's charge,
+    /// micro-USD.
     pub cost_micro_usd: u64,
     pub turns: usize,
     /// Every permission denial reported, including those the bounded
