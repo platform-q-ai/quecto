@@ -26,18 +26,91 @@ impl Style {
     };
 }
 
+/// A container being written: its remaining children, and whether one has
+/// been written yet (separators go between children).
+enum Frame<'a> {
+    List(std::slice::Iter<'a, PyJson>, bool),
+    Object(std::vec::IntoIter<(&'a PyStr, &'a PyJson)>, bool),
+}
+
+/// `value` in `style`, with an explicit stack in place of recursion.
 pub(super) fn write(value: &PyJson, style: Style) -> Result<String, PyJsonError> {
-    let _ = (
-        value,
-        style.item,
-        style.key,
-        style.sort_keys,
-        ENCODE_MAX_DEPTH,
-    );
-    Err(PyJsonError::TooDeep {
-        limit: 0,
-        action: "unimplemented",
-    })
+    let mut out = String::new();
+    let mut stack: Vec<Frame<'_>> = Vec::new();
+    let mut next = Some(value);
+    loop {
+        if let Some(value) = next.take() {
+            match value {
+                PyJson::Null => out.push_str("null"),
+                PyJson::Bool(true) => out.push_str("true"),
+                PyJson::Bool(false) => out.push_str("false"),
+                PyJson::Int(integer) => out.push_str(integer.as_str()),
+                PyJson::Float(float) => out.push_str(&float_repr(*float)),
+                PyJson::Str(text) => write_str(&mut out, text),
+                PyJson::List(items) => {
+                    open(&stack)?;
+                    out.push('[');
+                    stack.push(Frame::List(items.iter(), false));
+                }
+                PyJson::Object(object) => {
+                    open(&stack)?;
+                    let mut entries: Vec<(&PyStr, &PyJson)> = object.iter().collect();
+                    if style.sort_keys {
+                        // Python sorts `str` keys by code point.
+                        entries.sort_unstable_by(|left, right| left.0.cmp(right.0));
+                    }
+                    out.push('{');
+                    stack.push(Frame::Object(entries.into_iter(), false));
+                }
+            }
+        }
+        let Some(frame) = stack.last_mut() else {
+            return Ok(out);
+        };
+        match frame {
+            Frame::List(items, started) => match items.next() {
+                Some(item) => {
+                    separate(&mut out, started, style);
+                    next = Some(item);
+                }
+                None => {
+                    out.push(']');
+                    stack.pop();
+                }
+            },
+            Frame::Object(entries, started) => match entries.next() {
+                Some((key, item)) => {
+                    separate(&mut out, started, style);
+                    write_str(&mut out, key);
+                    out.push_str(style.key);
+                    next = Some(item);
+                }
+                None => {
+                    out.push('}');
+                    stack.pop();
+                }
+            },
+        }
+    }
+}
+
+/// Refuses a container that would nest beyond [`ENCODE_MAX_DEPTH`].
+fn open(stack: &[Frame<'_>]) -> Result<(), PyJsonError> {
+    if stack.len() < ENCODE_MAX_DEPTH {
+        Ok(())
+    } else {
+        Err(PyJsonError::TooDeep {
+            limit: ENCODE_MAX_DEPTH,
+            action: "encoding a JSON object",
+        })
+    }
+}
+
+fn separate(out: &mut String, started: &mut bool, style: Style) {
+    if *started {
+        out.push_str(style.item);
+    }
+    *started = true;
 }
 
 /// A string as `ensure_ascii=True` writes it: printable ASCII as is, the

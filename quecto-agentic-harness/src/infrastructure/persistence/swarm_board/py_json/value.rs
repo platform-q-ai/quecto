@@ -344,8 +344,7 @@ impl PyJson {
     /// outside `i64`/`u64`, a string with a lone surrogate, or nesting
     /// deeper than [`SERDE_MAX_DEPTH`].
     pub fn to_value(&self) -> Result<Value, PyJsonError> {
-        let _ = self;
-        Err(PyJsonError::NotRepresentable("unimplemented".to_owned()))
+        to_value(self, 0)
     }
 }
 
@@ -354,8 +353,105 @@ impl TryFrom<&Value> for PyJson {
 
     /// Lossless for every `Value` nested at most [`SERDE_MAX_DEPTH`] deep.
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
-        let _ = (value, Map::<String, Value>::new(), Number::from(0));
-        Err(PyJsonError::NotRepresentable("unimplemented".to_owned()))
+        from_value(value, 0)
+    }
+}
+
+/// The depth inside one more container, within [`SERDE_MAX_DEPTH`].
+fn deeper(depth: usize) -> Result<usize, PyJsonError> {
+    if depth < SERDE_MAX_DEPTH {
+        Ok(depth + 1)
+    } else {
+        Err(PyJsonError::NotRepresentable(format!(
+            "nesting deeper than {SERDE_MAX_DEPTH} levels"
+        )))
+    }
+}
+
+fn from_value(value: &Value, depth: usize) -> Result<PyJson, PyJsonError> {
+    Ok(match value {
+        Value::Null => PyJson::Null,
+        Value::Bool(flag) => PyJson::Bool(*flag),
+        Value::Number(number) => from_number(number)?,
+        Value::String(text) => PyJson::Str(PyStr::from(text.as_str())),
+        Value::Array(items) => {
+            let depth = deeper(depth)?;
+            PyJson::List(
+                items
+                    .iter()
+                    .map(|item| from_value(item, depth))
+                    .collect::<Result<_, _>>()?,
+            )
+        }
+        Value::Object(map) => {
+            let depth = deeper(depth)?;
+            let entries = map
+                .iter()
+                .map(|(key, item)| Ok((PyStr::from(key.as_str()), from_value(item, depth)?)))
+                .collect::<Result<_, PyJsonError>>()?;
+            PyJson::Object(PyObject::from_unique(entries))
+        }
+    })
+}
+
+/// A serde number: a float stays a float (`1.0` is not `1`), an integer
+/// stays exact (through its text when `arbitrary_precision` is on).
+fn from_number(number: &Number) -> Result<PyJson, PyJsonError> {
+    if number.is_f64() {
+        let float = number.as_f64().expect("an f64 number has an f64 value");
+        Ok(PyJson::Float(float))
+    } else if let Some(signed) = number.as_i64() {
+        Ok(PyJson::Int(PyInt::from(signed)))
+    } else if let Some(unsigned) = number.as_u64() {
+        Ok(PyJson::Int(PyInt::from(unsigned)))
+    } else {
+        PyInt::parse(&number.to_string()).map(PyJson::Int)
+    }
+}
+
+fn to_value(value: &PyJson, depth: usize) -> Result<Value, PyJsonError> {
+    let refuse = |what: String| Err(PyJsonError::NotRepresentable(what));
+    match value {
+        PyJson::Null => Ok(Value::Null),
+        PyJson::Bool(flag) => Ok(Value::Bool(*flag)),
+        PyJson::Int(integer) => match (integer.as_i64(), integer.as_u64()) {
+            (Some(signed), _) => Ok(Value::from(signed)),
+            (None, Some(unsigned)) => Ok(Value::from(unsigned)),
+            (None, None) => refuse(format!(
+                "integer {} is outside i64 and u64",
+                integer.as_str()
+            )),
+        },
+        PyJson::Float(float) => match Number::from_f64(*float) {
+            Some(number) => Ok(Value::Number(number)),
+            None => refuse(format!(
+                "{} has no JSON number form",
+                super::float_repr(*float)
+            )),
+        },
+        PyJson::Str(text) => match text.as_str() {
+            Some(text) => Ok(Value::String(text.to_owned())),
+            None => refuse(format!("{text:?} holds a lone surrogate")),
+        },
+        PyJson::List(items) => {
+            let depth = deeper(depth)?;
+            items
+                .iter()
+                .map(|item| to_value(item, depth))
+                .collect::<Result<_, _>>()
+                .map(Value::Array)
+        }
+        PyJson::Object(object) => {
+            let depth = deeper(depth)?;
+            let mut map = Map::new();
+            for (key, item) in object.iter() {
+                let Some(key) = key.as_str() else {
+                    return refuse(format!("key {key:?} holds a lone surrogate"));
+                };
+                map.insert(key.to_owned(), to_value(item, depth)?);
+            }
+            Ok(Value::Object(map))
+        }
     }
 }
 
