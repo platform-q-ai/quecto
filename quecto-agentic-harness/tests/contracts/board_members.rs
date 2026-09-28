@@ -64,20 +64,25 @@ fn members_are_written_read_and_counted() {
         assert_eq!(
             members
                 .iter()
-                .map(|row| row.id.as_str())
+                .map(|row| row.text("id").unwrap())
                 .collect::<Vec<_>>(),
             ["parent", "worker", "gone", "odd"]
         );
+        // `dict(row)`: every column, in table order, as stored.
         assert_eq!(
             members[0],
             MemberRow {
-                id: "parent".into(),
-                reservation: Some("parent-r".into()),
-                status: Some("live".into()),
-                pid: json!(7),
-                started: Some("t".into()),
-                socket: None,
-                launcher: Some("parent".into()),
+                columns: [
+                    ("id", json!("parent")),
+                    ("reservation", json!("parent-r")),
+                    ("status", json!("live")),
+                    ("pid", json!(7)),
+                    ("started", json!("t")),
+                    ("socket", json!(null)),
+                    ("launcher", json!("parent")),
+                ]
+                .map(|(name, value)| (name.to_owned(), value))
+                .to_vec(),
             }
         );
         Ok(())
@@ -100,8 +105,40 @@ fn members_are_written_read_and_counted() {
             }
         );
         let blank = transaction.members()?.pop().unwrap();
-        assert_eq!((blank.id.as_str(), blank.status), ("blank", None));
+        assert_eq!(
+            (blank.text("id"), blank.get("status")),
+            (Some("blank"), Some(&json!(null)))
+        );
         assert_eq!(transaction.member("blank")?.unwrap().status, None);
+        Ok(())
+    })
+    .unwrap();
+    // Columns added outside the board are listed after the board's, and a
+    // NULL id is listed as it is (#2270 round-3 review N5).
+    raw("ALTER TABLE members ADD COLUMN extra REAL");
+    raw("INSERT INTO members(id,status,extra) VALUES(NULL,'live',2.5)");
+    within(&repository, false, |transaction| {
+        let added = transaction.members()?.pop().unwrap();
+        let names: Vec<&str> = added
+            .columns
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "id",
+                "reservation",
+                "status",
+                "pid",
+                "started",
+                "socket",
+                "launcher",
+                "extra"
+            ]
+        );
+        assert_eq!(added.get("id"), Some(&json!(null)));
+        assert_eq!(added.get("extra"), Some(&json!(2.5)));
         Ok(())
     })
     .unwrap();
@@ -194,11 +231,11 @@ fn loose_values_bind_as_python_binds_them_and_read_as_stored() {
             let row = transaction
                 .members()?
                 .into_iter()
-                .find(|row| row.id == id)
+                .find(|row| row.text("id") == Some(id.as_str()))
                 .unwrap();
-            assert_eq!(row.pid, read_pid, "{pid}");
-            assert_eq!(row.started.as_deref(), read_started, "{started}");
-            assert_eq!(row.socket.as_deref(), read_socket, "{socket}");
+            assert_eq!(row.get("pid"), Some(&read_pid), "{pid}");
+            assert_eq!(row.text("started"), read_started, "{started}");
+            assert_eq!(row.text("socket"), read_socket, "{socket}");
             Ok(())
         })
         .unwrap();

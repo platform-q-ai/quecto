@@ -7,15 +7,13 @@ use serde_json::Value;
 
 use crate::application::swarm::board_operation::{atomic, detail, text};
 use crate::application::swarm::dto::{
-    CreateBranch, CreateRunRequest, CreatedRun, NewMember, NewRun, RunContract,
+    CreateBranch, CreateRunRequest, CreatedRun, NewMember, NewRun, RunContract, RunOwnerRow,
 };
 use crate::application::swarm::ports::{
     BoardEncoding, BoardMembers, BoardRepository, BoardRuns, Clock, IdSource,
 };
 use crate::domain::swarm::validation::TEXT_MAX_BYTES;
-use crate::domain::swarm::{
-    BoardError, MemberState, RunRecord, RunState, bounded, bounded_text, criteria,
-};
+use crate::domain::swarm::{BoardError, MemberState, RunState, bounded, bounded_text, criteria};
 
 /// The most members a run may hold, the coordinator included.
 const MEMBER_LIMIT_MAX: i64 = 25;
@@ -57,7 +55,7 @@ impl CreateRun {
         let contract = self.validated(&request)?;
         let member = request.member.as_str();
         atomic(&*self.repository, true, |transaction| {
-            let branch = match transaction.run()? {
+            let branch = match transaction.run_owner()? {
                 Some(existing) => {
                     take_over_setup(transaction, member, &existing, &contract)?;
                     CreateBranch::OverSetup
@@ -175,11 +173,10 @@ impl CreateRun {
 fn take_over_setup(
     transaction: &(impl BoardRuns + BoardMembers + ?Sized),
     member: &str,
-    existing: &RunRecord,
+    existing: &RunOwnerRow,
     contract: &RunContract,
 ) -> Result<(), BoardError> {
-    let placeholder = existing.status.as_ref().map(RunState::as_str)
-        == Some(RunState::SETUP.as_str())
+    let placeholder = existing.status.as_deref() == Some(RunState::SETUP.as_str())
         && existing.coordinator.as_deref() == Some(member);
     if !placeholder {
         return Err(BoardError::new(

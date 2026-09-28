@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::application::swarm::dto::{
-    MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunStatusRow,
+    MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow, RunStatusRow,
 };
 use crate::application::swarm::ports::{
     BoardEncoding, BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
@@ -109,6 +109,21 @@ impl BoardRuns for MemoryTransaction<'_> {
             .map(|run| run.record.clone()))
     }
 
+    fn run_exists(&self) -> Result<bool, BoardError> {
+        Ok(self.state.borrow().run.is_some())
+    }
+
+    fn run_owner(&self) -> Result<Option<RunOwnerRow>, BoardError> {
+        Ok(self.state.borrow().run.as_ref().map(|run| RunOwnerRow {
+            status: run
+                .record
+                .status
+                .as_ref()
+                .map(|status| status.as_str().to_owned()),
+            coordinator: run.record.coordinator.clone(),
+        }))
+    }
+
     fn run_status(&self) -> Result<Option<RunStatusRow>, BoardError> {
         Ok(self.state.borrow().run.as_ref().map(|run| RunStatusRow {
             id: Some(run.id.clone()),
@@ -171,11 +186,11 @@ impl BoardMembers for MemoryTransaction<'_> {
             .borrow()
             .members
             .iter()
-            .find(|row| row.id == id)
+            .find(|row| row.text("id") == Some(id))
             .map(|row| MemberRecord {
-                id: row.id.clone(),
-                status: row.status.clone().map(MemberState::new),
-                reservation: row.reservation.clone(),
+                id: id.to_owned(),
+                status: row.text("status").map(MemberState::new),
+                reservation: row.text("reservation").map(str::to_owned),
             }))
     }
 
@@ -201,8 +216,8 @@ impl BoardMembers for MemoryTransaction<'_> {
         let members_without_claim = state
             .members
             .iter()
-            .filter(|row| matches!(row.status.as_deref(), Some("live" | "reserved")))
-            .filter(|row| Some(row.id.as_str()) != coordinator)
+            .filter(|row| matches!(row.text("status"), Some("live" | "reserved")))
+            .filter(|row| row.text("id") != coordinator)
             .count();
         Ok(MemberClaimCounts {
             members_without_claim: i64::try_from(members_without_claim).unwrap(),
@@ -213,20 +228,26 @@ impl BoardMembers for MemoryTransaction<'_> {
     fn insert_member(&self, member: &NewMember) -> Result<(), BoardError> {
         self.note(format!("insert_member {}", member.reservation));
         let mut state = self.state.borrow_mut();
-        if state.members.iter().any(|row| row.id == member.id) {
+        if state
+            .members
+            .iter()
+            .any(|row| row.text("id") == Some(member.id.as_str()))
+        {
             return Err(BoardError::new(
                 "coordination store unavailable or contended: UNIQUE constraint failed: members.id",
             ));
         }
-        state.members.push(MemberRow {
-            id: member.id.clone(),
-            reservation: Some(member.reservation.clone()),
-            status: Some(member.status.as_str().to_owned()),
-            pid: integer_affinity(&member.pid),
-            started: text_affinity(&member.started),
-            socket: text_affinity(&member.socket),
-            launcher: member.launcher.clone(),
-        });
+        state.members.push(stored_member(
+            &member.id,
+            Value::String(member.reservation.clone()),
+            member.status.as_str(),
+            [
+                integer_affinity(&member.pid),
+                text_affinity(&member.started),
+                text_affinity(&member.socket),
+                member.launcher.clone().map_or(Value::Null, Value::String),
+            ],
+        ));
         Ok(())
     }
 }
@@ -270,12 +291,29 @@ fn integer_affinity(value: &Value) -> Value {
 }
 
 /// Roughly what a TEXT column keeps of a bound value: NULL, or its text.
-fn text_affinity(value: &Value) -> Option<String> {
+fn text_affinity(value: &Value) -> Value {
     match value {
-        Value::Null => None,
-        Value::String(text) => Some(text.clone()),
-        Value::Bool(flag) => Some(u8::from(*flag).to_string()),
-        other => Some(other.to_string()),
+        Value::Null => Value::Null,
+        Value::String(text) => Value::String(text.clone()),
+        Value::Bool(flag) => Value::String(u8::from(*flag).to_string()),
+        other => Value::String(other.to_string()),
+    }
+}
+
+/// A `members` row in the board's column order: `id, reservation, status`,
+/// then `pid, started, socket, launcher` as `rest` gives them.
+pub fn stored_member(id: &str, reservation: Value, status: &str, rest: [Value; 4]) -> MemberRow {
+    let [pid, started, socket, launcher] = rest;
+    MemberRow {
+        columns: vec![
+            ("id".to_owned(), Value::String(id.to_owned())),
+            ("reservation".to_owned(), reservation),
+            ("status".to_owned(), Value::String(status.to_owned())),
+            ("pid".to_owned(), pid),
+            ("started".to_owned(), started),
+            ("socket".to_owned(), socket),
+            ("launcher".to_owned(), launcher),
+        ],
     }
 }
 
@@ -283,7 +321,7 @@ fn count(members: &[MemberRow], wanted: impl Fn(&str) -> bool) -> i64 {
     i64::try_from(
         members
             .iter()
-            .filter(|row| row.status.as_deref().is_some_and(&wanted))
+            .filter(|row| row.text("status").is_some_and(&wanted))
             .count(),
     )
     .unwrap()
@@ -415,13 +453,10 @@ pub fn running_board(deadline: f64) -> BoardState {
 }
 
 pub fn member_row(id: &str, status: &str) -> MemberRow {
-    MemberRow {
-        id: id.to_owned(),
-        reservation: Some(format!("{id}-reservation")),
-        status: Some(status.to_owned()),
-        pid: Value::Null,
-        started: None,
-        socket: None,
-        launcher: None,
-    }
+    stored_member(
+        id,
+        Value::String(format!("{id}-reservation")),
+        status,
+        [Value::Null, Value::Null, Value::Null, Value::Null],
+    )
 }

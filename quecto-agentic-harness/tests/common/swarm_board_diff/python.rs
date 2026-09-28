@@ -18,6 +18,12 @@
 //! the Rust dispatcher's test names (`create_run` is `create` without its
 //! closing summary, `bootstrap_run` is `_bootstrap` without its join); they
 //! live here, never in the `.py` sources.
+//!
+//! `create_run` stops where Python's real `create` commits: `create`'s
+//! transaction commits and only then does it call `summary()`, which can
+//! still raise, so a real `create` can answer a refusal for a run it has
+//! created. S12, which adds the summary, must keep that order and that
+//! outcome: committed, then refused.
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -119,7 +125,11 @@ for _line in sys.stdin:
         _out = {'error': str(error)}
     except Exception as error:
         _out = {'exception': type(error).__name__ + ': ' + str(error)}
-    sys.stdout.write(json.dumps(_out) + '\n')
+    try:
+        _line = json.dumps(_out)
+    except Exception as error:
+        _line = json.dumps({'exception': 'unwritable result: ' + type(error).__name__ + ': ' + str(error)})
+    sys.stdout.write(_line + '\n')
     sys.stdout.flush()
 "#;
 

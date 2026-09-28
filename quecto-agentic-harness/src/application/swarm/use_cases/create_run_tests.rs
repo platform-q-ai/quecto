@@ -218,11 +218,8 @@ fn create_draws_run_id_before_reservation() {
     assert_eq!(run.record.coordinator.as_deref(), Some("parent"));
     assert_eq!(run.record.member_limit, 3);
     assert_eq!(state.members.len(), 1);
-    assert_eq!(state.members[0].status.as_deref(), Some("live"));
-    assert_eq!(
-        state.members[0].reservation.as_deref(),
-        Some(second.as_str())
-    );
+    assert_eq!(state.members[0].text("status"), Some("live"));
+    assert_eq!(state.members[0].text("reservation"), Some(second.as_str()));
 }
 
 /// The `created` event records the contract as the member gave it: an

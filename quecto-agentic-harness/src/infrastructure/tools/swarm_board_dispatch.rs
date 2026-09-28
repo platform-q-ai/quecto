@@ -15,9 +15,12 @@
 //! `SwarmContext`. `create_run` and `bootstrap_run` (the transactional
 //! halves of `create` and `_bootstrap`, which the differential harness
 //! drives) exist only in `test` and `test-support` builds: a production
-//! build parses neither name and refuses both as unknown methods.
+//! build parses neither name and refuses both as unknown methods. Python's
+//! real `create` commits and then calls `summary()`, which can still raise:
+//! S12 must keep that order, a created run answered with a refusal.
 //!
-//! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] with the
+//! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] (DEBUG for
+//! a read-only method, INFO otherwise) with the
 //! method, the member id, the outcome, the decision taken and the
 //! duration: ids, kinds and durations only, never argument text. The
 //! member id is the board identity the harness assigned the caller (the
@@ -71,6 +74,15 @@ enum Method {
     BootstrapRun,
 }
 
+/// The telemetry level of a call (#2270 round-3 review N3): a method that
+/// only reads the board records at DEBUG; anything else (a mutation, or a
+/// name that is no method) at INFO.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Level {
+    Read,
+    Mutation,
+}
+
 /// One parameter of a Python signature: required, or with a default.
 #[derive(Clone, Copy)]
 struct Parameter {
@@ -110,6 +122,15 @@ impl Method {
         }
     }
 
+    /// [`Level::Read`] only for the methods listed as read-only.
+    fn level(self) -> Level {
+        match self {
+            Self::Status | Self::Snapshot => Level::Read,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::CreateRun | Self::BootstrapRun => Level::Mutation,
+        }
+    }
+
     /// The Python signature, `self` left out.
     fn parameters(self) -> &'static [Parameter] {
         match self {
@@ -142,7 +163,14 @@ pub fn call(
 ) -> Result<Value, BoardError> {
     let started = Instant::now();
     let Some(known) = Method::parse(method) else {
-        record("unknown", member, "refused", "none", started.elapsed());
+        record(
+            "unknown",
+            Level::Mutation,
+            member,
+            "refused",
+            "none",
+            started.elapsed(),
+        );
         return Err(BoardError::new(format!(
             "swarm board has no method {method}"
         )));
@@ -153,6 +181,7 @@ pub fn call(
         Ok(served) => {
             record(
                 known.name(),
+                known.level(),
                 member,
                 "ok",
                 served.decision,
@@ -161,24 +190,43 @@ pub fn call(
             Ok(served.value)
         }
         Err(refusal) => {
-            record(known.name(), member, "refused", "none", started.elapsed());
+            record(
+                known.name(),
+                known.level(),
+                member,
+                "refused",
+                "none",
+                started.elapsed(),
+            );
             Err(refusal)
         }
     }
 }
 
-fn record(op: &str, member: &str, outcome: &str, decision: &str, elapsed: Duration) {
+fn record(op: &str, level: Level, member: &str, outcome: &str, decision: &str, elapsed: Duration) {
     let duration_us = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
     let member = Redacted::from(member);
-    tracing::info!(
-        target: TELEMETRY_TARGET,
-        op,
-        member = member.as_str(),
-        outcome,
-        decision,
-        duration_us,
-        "swarm board call"
-    );
+    let member = member.as_str();
+    match level {
+        Level::Read => tracing::debug!(
+            target: TELEMETRY_TARGET,
+            op,
+            member,
+            outcome,
+            decision,
+            duration_us,
+            "swarm board call"
+        ),
+        Level::Mutation => tracing::info!(
+            target: TELEMETRY_TARGET,
+            op,
+            member,
+            outcome,
+            decision,
+            duration_us,
+            "swarm board call"
+        ),
+    }
 }
 
 /// Binds `args` to `parameters` as Python binds a call: positionally from
@@ -367,17 +415,9 @@ fn snapshot(view: RunSnapshotView) -> Result<Value, BoardError> {
     ]))
 }
 
+/// `dict(row)`: every column, in table order.
 fn member_row(row: MemberRow) -> Value {
-    let text = |value: Option<String>| value.map_or(Value::Null, Value::String);
-    object([
-        ("id", Value::String(row.id)),
-        ("reservation", text(row.reservation)),
-        ("status", text(row.status)),
-        ("pid", row.pid),
-        ("started", text(row.started)),
-        ("socket", text(row.socket)),
-        ("launcher", text(row.launcher)),
-    ])
+    Value::Object(row.columns.into_iter().collect())
 }
 
 fn object<const N: usize>(entries: [(&str, Value); N]) -> Value {

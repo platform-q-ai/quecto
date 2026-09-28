@@ -18,26 +18,6 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 /// Every way the Rust board may differ from the Python board on the
 /// methods this slice serves. Each name is a test below.
 ///
-/// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
-///   within u64 (a `pid`, `started` or `socket`) makes Python's `sqlite3`
-///   raise `OverflowError`, which is not an `sqlite3.Error`, so the store
-///   does not turn it into a refusal and the call raises. The Rust board
-///   refuses it as a store failure naming Python's parameter position.
-/// - `integer_beyond_u64_is_a_float`: the tool's JSON arguments are parsed
-///   without arbitrary precision, so an integer beyond u64 reaches the
-///   board as the nearest float. As a `bootstrap_run` argument it binds as
-///   REAL, where Python raises `OverflowError`; inside `create_run`'s
-///   criteria (an extra key of a criterion) it is stored, and recorded in
-///   the `created` event's detail, as the float's text
-///   (`1.8446744073709552e+19`), where Python keeps the integer's digits.
-///   The fix belongs where arguments are parsed (S13/S14).
-/// - `outside_edited_columns`: a `run` column a membership operation reads
-///   as a number (`deadline`, `member_limit`) holding anything but the
-///   number the board writes (NULL, text, a REAL `member_limit`), or a BLOB
-///   in any column read, is refused as a store failure; Python answers with
-///   the value (or, for a BLOB, fails to write its JSON). A NULL run or
-///   member status, a NULL coordinator and loosely typed pids are read as
-///   Python reads them.
 /// - `arguments_beyond_a_serde_value` (#2270 round-3 review L1): the
 ///   dispatcher takes a `serde_json::Value`, so argument text is parsed
 ///   with `py_json::decode` (`json.loads`) and converted, and a value no
@@ -48,6 +28,23 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   them (or, for an integer beyond i64, raises `OverflowError`). S13/S14
 ///   must parse member input with `py_json`, as the harness does; a
 ///   `PyJson` dispatcher would end this divergence.
+/// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
+///   within u64 (a `pid`, `started` or `socket`) makes Python's `sqlite3`
+///   raise `OverflowError`, which is not an `sqlite3.Error`, so the store
+///   does not turn it into a refusal and the call raises. The Rust board
+///   refuses it as a store failure naming Python's parameter position.
+/// - `outside_edited_columns`: a `run` column `_snapshot` reads as a
+///   number (`deadline`, `member_limit`) holding anything but the number
+///   the board writes (NULL, text, a REAL `member_limit`), or a BLOB in
+///   any column read, is refused as a store failure; Python answers with
+///   the value (or, for a BLOB, fails to write its JSON). Conversely,
+///   Python's `create` fetches the whole run row (`SELECT *`) and so fails
+///   on text that is not UTF-8 in any run column, where the Rust `create`
+///   reads only the two columns Python's code reads (status and
+///   coordinator) and succeeds. `_bootstrap` reads no column on either
+///   side; a NULL run or member status, a NULL coordinator, a NULL member
+///   id, added member columns and loosely typed pids are read as Python
+///   reads them.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
@@ -60,10 +57,9 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   read but not mutate, and is not an idempotent admission retry. No
 ///   method this slice serves reaches it: `_snapshot` reads, and the
 ///   `bootstrap_run` driver alias skips `_join`.
-pub const PERMITTED_DIVERGENCES: [&str; 6] = [
+pub const PERMITTED_DIVERGENCES: [&str; 5] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
-    "integer_beyond_u64_is_a_float",
     "outside_edited_columns",
     "real_to_text_digits",
     "unknown_member_status_is_not_alive",
@@ -237,6 +233,8 @@ fn argument_text_parses_as_python_parses_it() {
     ]);
 }
 
+/// Python stores each of these in the run's criteria; the Rust side
+/// refuses the text before any board call, naming what no `Value` holds.
 #[test]
 fn arguments_beyond_a_serde_value() {
     let deep = format!("{}{}", "[".repeat(200), "]".repeat(200));
@@ -244,7 +242,7 @@ fn arguments_beyond_a_serde_value() {
         ("1e400", "Infinity has no JSON number form"),
         ("-Infinity", "-Infinity has no JSON number form"),
         ("NaN", "NaN has no JSON number form"),
-        (r#""\ud800""#, "'\\ud800' holds a lone surrogate"),
+        (r#""\ud800""#, r#""\ud800" holds a lone surrogate"#),
         (
             "18446744073709551616",
             "integer 18446744073709551616 is outside i64 and u64",
@@ -262,7 +260,8 @@ fn arguments_beyond_a_serde_value() {
             format!(
                 "step 0: create_run as parent with {text} at {NOW}: results differ\n  \
                  python Ok(Null)\n  \
-                 rust   Refused(\"{UNREPRESENTABLE}{reason}\")"
+                 rust   {:?}",
+                Outcome::Refused(format!("{UNREPRESENTABLE}{reason}"))
             ),
             "{extra}"
         );
@@ -276,7 +275,7 @@ fn arguments_beyond_a_serde_value() {
 fn bootstrap_and_create_read_only_the_run_columns_python_reads() {
     for edit in [
         "UPDATE run SET deadline='soon', member_limit='many'",
-        "UPDATE run SET deadline=NULL, member_limit=2.5, outcome=x'00'",
+        "UPDATE run SET deadline=NULL, member_limit=2.5, integrator=x'00'",
     ] {
         run_both(&[
             step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
@@ -364,61 +363,6 @@ fn integer_beyond_i64_is_refused() {
 }
 
 #[test]
-fn integer_beyond_u64_is_a_float() {
-    // serde_json, without arbitrary precision, parses 2**64 as a float.
-    let args: Value = serde_json::from_str(r#"[18446744073709551616, "s", null]"#).unwrap();
-    assert!(args[0].is_f64(), "{args}");
-    let outcomes = rust_alone(&[
-        ("parent", "bootstrap_run", args),
-        ("parent", "_snapshot", json!([])),
-    ]);
-    assert_eq!(outcomes[0], Outcome::Ok(Value::Null));
-    let Outcome::Ok(snapshot) = &outcomes[1] else {
-        panic!("{:?}", outcomes[1]);
-    };
-    assert_eq!(
-        serde_json::to_string(&snapshot["members"][0]["pid"]).unwrap(),
-        "1.8446744073709552e+19"
-    );
-    // Inside `create_run`'s criteria, and so in the `created` event's
-    // detail, the float's text is stored; Python stores
-    // `"x":18446744073709551616`.
-    let args: Value = serde_json::from_str(&format!(
-        r#"["g", [], [{{"id": "c", "kind": "review", "description": "d", "x": 18446744073709551616}}], 5, {}]"#,
-        NOW + 3_600.0
-    ))
-    .unwrap();
-    assert!(args[2][0]["x"].is_f64(), "{args}");
-    let dir = tempfile::tempdir().unwrap();
-    let database = dir.path().join("swarm.sqlite");
-    let board = RustBoard::open(&database, dir.path());
-    assert_eq!(
-        board.call("parent", "create_run", &args, NOW),
-        Outcome::Ok(Value::Null)
-    );
-    drop(board);
-    let connection = rusqlite::Connection::open(&database).unwrap();
-    let criteria: String = connection
-        .query_row("SELECT criteria FROM run", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(
-        criteria,
-        r#"[{"description":"d","id":"c","kind":"review","x":1.8446744073709552e+19}]"#
-    );
-    let detail: String = connection
-        .query_row(
-            "SELECT detail FROM events WHERE action='created'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert!(
-        detail.contains(r#""criteria":[{"description":"d","id":"c","kind":"review","x":1.8446744073709552e+19}]"#),
-        "{detail}"
-    );
-}
-
-#[test]
 fn outside_edited_columns() {
     for edit in [
         "UPDATE run SET deadline=NULL",
@@ -458,6 +402,27 @@ fn outside_edited_columns() {
         .unwrap();
     let outcome = board.call("parent", "_snapshot", &json!([]), NOW);
     assert!(refused_with(&outcome, CONTENDED), "{outcome:?}");
+    // Text that is not UTF-8 in a run column `create` does not read:
+    // Python's `SELECT *` fails on it, the Rust board creates.
+    let difference = try_run_both(
+        &[
+            step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+            sql("UPDATE run SET goal=CAST(x'ff' AS TEXT)"),
+            step_text("parent", "create_run", &create_text("1"), NOW + 1.0),
+        ],
+        |_, _, _| {},
+    )
+    .unwrap_err();
+    assert!(
+        difference.starts_with("step 2: create_run") && difference.contains("results differ"),
+        "{difference}"
+    );
+    assert!(
+        difference.contains(&format!(
+            "python Refused(\"{CONTENDED}Could not decode to UTF-8"
+        )) && difference.contains("rust   Ok(Null)"),
+        "{difference}"
+    );
 }
 
 /// Each named divergence has its test in this file, and each test here

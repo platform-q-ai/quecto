@@ -1459,6 +1459,7 @@ fn application_path_allowed(path: &str) -> bool {
             | "NewMember"
             | "NewRun"
             | "RunContract"
+            | "RunOwnerRow"
             | "RunSnapshotView"
             | "RunStatusView"
             | "RunStatusRow",

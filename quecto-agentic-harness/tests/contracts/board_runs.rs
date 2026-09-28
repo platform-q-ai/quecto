@@ -1,7 +1,9 @@
 //! `BoardRuns` on the SQLite adapter (#2270): the `run` row as Python's
 //! board writes it — the contract's JSON through the board's `encode()`,
 //! the deadline a REAL, the status text.
-use quecto::application::swarm::dto::{BoardLocation, NewRun, RunContract, RunStatusRow};
+use quecto::application::swarm::dto::{
+    BoardLocation, NewRun, RunContract, RunOwnerRow, RunStatusRow,
+};
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
 use quecto::domain::swarm::{BoardError, RunState};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
@@ -41,6 +43,8 @@ fn a_run_is_inserted_read_updated_and_paused() {
     let (dir, repository) = board();
     within(&repository, true, |transaction| {
         assert!(transaction.run()?.is_none());
+        assert!(!transaction.run_exists()?);
+        assert!(transaction.run_owner()?.is_none());
         assert!(transaction.run_status()?.is_none());
         transaction.insert_run(&NewRun {
             id: "abc".into(),
@@ -51,6 +55,14 @@ fn a_run_is_inserted_read_updated_and_paused() {
         })
     });
     within(&repository, false, |transaction| {
+        assert!(transaction.run_exists()?);
+        assert_eq!(
+            transaction.run_owner()?,
+            Some(RunOwnerRow {
+                status: Some("setup".into()),
+                coordinator: Some("parent".into()),
+            })
+        );
         let run = transaction.run()?.unwrap();
         assert_eq!(run.status, Some(RunState::SETUP));
         assert_eq!(run.coordinator.as_deref(), Some("parent"));
@@ -120,10 +132,12 @@ fn a_run_is_inserted_read_updated_and_paused() {
 }
 
 /// Rows edited outside the board (#2270 review L5, round-2 L2): `run()`
-/// reads a NULL coordinator or status as `None`; `run_status()` reads only `_status`'s columns,
-/// each as stored, so a column it does not select never refuses it; a
-/// column `run()` needs holding a type the board never writes is a store
-/// refusal (the `outside_edited_columns` divergence).
+/// reads a NULL coordinator or status as `None`; `run_status()` reads only
+/// `_status`'s columns, `run_owner()` only `create`'s (status and
+/// coordinator) and `run_exists()` none, each as stored, so a column one
+/// does not select never refuses it; a column `run()` needs (for
+/// `_snapshot`) holding a type the board never writes is a store refusal
+/// (the `outside_edited_columns` divergence).
 #[test]
 fn loosely_typed_run_columns_read_as_stored() {
     let (dir, repository) = board();
@@ -159,6 +173,15 @@ fn loosely_typed_run_columns_read_as_stored() {
                 deadline: json!("soon"),
                 coordinator: None,
                 outcome: Some("4".into()),
+            })
+        );
+        // `_bootstrap` and `create` read no column `run()` refuses.
+        assert!(transaction.run_exists()?);
+        assert_eq!(
+            transaction.run_owner()?,
+            Some(RunOwnerRow {
+                status: None,
+                coordinator: None,
             })
         );
         let refused = transaction.run().unwrap_err();

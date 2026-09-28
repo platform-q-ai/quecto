@@ -2,9 +2,9 @@ use serde_json::json;
 
 use super::BootstrapRun;
 use crate::application::swarm::board_test_support::{
-    BoardState, CounterIds, MemoryBoard, SteppingClock, running_board,
+    BoardState, CounterIds, MemoryBoard, SteppingClock, running_board, stored_member,
 };
-use crate::application::swarm::dto::{BootstrapRunRequest, MemberRow};
+use crate::application::swarm::dto::BootstrapRunRequest;
 use crate::domain::swarm::RunState;
 
 fn request() -> BootstrapRunRequest {
@@ -49,15 +49,17 @@ fn bootstrap_writes_the_setup_placeholder_once() {
     assert_eq!(run.contract.criteria, json!([]));
     assert_eq!(
         state.members,
-        [MemberRow {
-            id: "parent".to_owned(),
-            reservation: Some(second),
-            status: Some("live".to_owned()),
-            pid: json!(42),
-            started: Some("Mon 1".to_owned()),
-            socket: Some("/run/parent.sock".to_owned()),
-            launcher: None,
-        }]
+        [stored_member(
+            "parent",
+            json!(second),
+            "live",
+            [
+                json!(42),
+                json!("Mon 1"),
+                json!("/run/parent.sock"),
+                json!(null)
+            ],
+        )]
     );
     let event = &state.events[0];
     assert_eq!(

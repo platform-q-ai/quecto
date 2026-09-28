@@ -43,7 +43,7 @@ impl BootstrapRun {
     pub fn execute(&self, request: BootstrapRunRequest) -> Result<Bootstrapped, BoardError> {
         let member = request.member.as_str();
         atomic(&*self.repository, true, |transaction| {
-            if transaction.run()?.is_some() {
+            if transaction.run_exists()? {
                 return Ok(Bootstrapped { created: false });
             }
             transaction.insert_run(&NewRun {

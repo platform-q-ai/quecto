@@ -4,7 +4,7 @@
 //! compared: byte-identical files are impossible even Python-vs-Python.
 use std::path::Path;
 
-use rusqlite::types::Value as SqlValue;
+use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{Connection, OpenFlags};
 
 /// One column: its `typeof` and its value.
@@ -78,12 +78,28 @@ fn rows(connection: &Connection, sql: &str) -> Vec<Vec<Cell>> {
     statement
         .query_map([], |row| {
             (0..width)
-                .map(|index| Ok((row.get(2 * index)?, row.get(2 * index + 1)?)))
+                .map(|index| Ok((row.get(2 * index)?, stored(row.get_ref(2 * index + 1)?))))
                 .collect::<rusqlite::Result<Vec<Cell>>>()
         })
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap()
+}
+
+/// A stored value as it is: text that is not UTF-8 (which only a file
+/// edited outside the board holds) keeps its bytes, carried as a BLOB
+/// value beside its `text` storage class.
+fn stored(value: ValueRef<'_>) -> SqlValue {
+    match value {
+        ValueRef::Text(bytes) => std::str::from_utf8(bytes).map_or_else(
+            |_| SqlValue::Blob(bytes.to_vec()),
+            |text| SqlValue::Text(text.to_owned()),
+        ),
+        ValueRef::Null => SqlValue::Null,
+        ValueRef::Integer(integer) => SqlValue::Integer(integer),
+        ValueRef::Real(real) => SqlValue::Real(real),
+        ValueRef::Blob(bytes) => SqlValue::Blob(bytes.to_vec()),
+    }
 }
 
 /// The first difference between two dumps, readably, or `None`.

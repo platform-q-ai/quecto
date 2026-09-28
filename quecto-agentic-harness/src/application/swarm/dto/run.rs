@@ -78,6 +78,15 @@ pub struct RunStatusRow {
     pub outcome: Option<String>,
 }
 
+/// The `run` columns `Workbench.create` reads of an existing run: its
+/// status and coordinator, each as stored (`None` for NULL, which only a
+/// file edited outside the board holds).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunOwnerRow {
+    pub status: Option<String>,
+    pub coordinator: Option<String>,
+}
+
 /// `Workbench._status()`: membership-free, whether a run was created.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunStatusView {
@@ -91,19 +100,33 @@ pub struct RunStatusView {
     pub outcome: Option<String>,
 }
 
-/// A whole `members` row, in column order.
+/// A whole `members` row as Python's `dict(row)` reads it (#2270 round-3
+/// review N5): every column the table has, in table order, each as stored
+/// (NULL, an INTEGER, a finite REAL or TEXT). The board's own rows hold
+/// `id, reservation, status, pid, started, socket, launcher`; a file
+/// edited outside the board may hold NULL where the board never writes it
+/// (an id, a status) and columns the board never added, and those are
+/// listed as they are. `_bootstrap` binds the pid the member passed, so it
+/// may be an INTEGER, a REAL or TEXT (epic P3).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemberRow {
-    pub id: String,
-    pub reservation: Option<String>,
-    /// `None` only in a file edited outside the board.
-    pub status: Option<String>,
-    /// As stored: `_bootstrap` binds the pid the member passed, so an
-    /// INTEGER, a REAL or TEXT (epic P3), or NULL.
-    pub pid: Value,
-    pub started: Option<String>,
-    pub socket: Option<String>,
-    pub launcher: Option<String>,
+    pub columns: Vec<(String, Value)>,
+}
+
+impl MemberRow {
+    /// The value stored in `column`, when the row has that column.
+    pub fn get(&self, column: &str) -> Option<&Value> {
+        self.columns
+            .iter()
+            .find(|(name, _)| name == column)
+            .map(|(_, value)| value)
+    }
+
+    /// The text stored in `column`: `None` for a missing column, NULL, or
+    /// a value that is not text.
+    pub fn text(&self, column: &str) -> Option<&str> {
+        self.get(column).and_then(Value::as_str)
+    }
 }
 
 /// `Workbench._snapshot()`.

@@ -6,10 +6,11 @@
 //! {sqlite3_errmsg}`, as Python's `Store.transaction` reports it.
 //!
 //! Rows are read as Python reads them where the board's own writes or a
-//! file edited outside it leave loose values (#2270 review L5, round-2 L2):
-//! a NULL run status, member status or coordinator is `None`, a member's
-//! `pid` any storage
-//! class `_bootstrap` bound, and `_status` decodes only the columns it
+//! file edited outside it leave loose values (#2270 review L5, round-2 L2,
+//! round-3 N1/N5): a NULL run status or coordinator is `None`, a member row
+//! is every column the table has, in table order, as stored (`dict(row)`),
+//! `_bootstrap` asks only whether a run exists, `create` reads only the
+//! run's status and coordinator, and `_status` decodes only the columns it
 //! selects. Any other column holding a type the board never writes, or a
 //! BLOB, is refused the same way as a store failure, with the driver's
 //! conversion error where Python would answer the value (the differential
@@ -23,7 +24,8 @@ use super::ledger;
 use super::py_json::{self, PyJson};
 use super::store::{BoardStore, CONTENDED, TransactionError, contended};
 use crate::application::swarm::dto::{
-    BoardLocation, MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunStatusRow,
+    BoardLocation, MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow,
+    RunStatusRow,
 };
 use crate::application::swarm::ports::{
     BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork,
@@ -41,6 +43,12 @@ const ACTIVE_CLAIM: &str = "('claimed','blocked','submitted')";
 /// names that position in its refusal; the Rust statement binds the status
 /// and the launcher too, so its own positions would name another.
 /// `repository_tests.rs` derives them from `swarm.py`'s statement.
+///
+/// The positions and the refusal texts built on them
+/// (`Error binding parameter N: type 'list' is not supported`) are Python
+/// 3.12 and later wording, which counts from 1; CI pins Python 3.13.
+/// Earlier versions count from 0 and write `Error binding parameter N -
+/// probably unsupported type.`
 const PYTHON_PID_PARAMETER: usize = 3;
 const PYTHON_STARTED_PARAMETER: usize = 4;
 const PYTHON_SOCKET_PARAMETER: usize = 5;
@@ -81,6 +89,26 @@ impl BoardRuns for SqliteBoard<'_> {
     fn run(&self) -> Result<Option<RunRecord>, BoardError> {
         self.connection
             .query_row("SELECT * FROM run", [], run_record)
+            .optional()
+            .map_err(failed)
+    }
+
+    fn run_exists(&self) -> Result<bool, BoardError> {
+        self.connection
+            .query_row("SELECT 1 FROM run", [], |_| Ok(()))
+            .optional()
+            .map(|found| found.is_some())
+            .map_err(failed)
+    }
+
+    fn run_owner(&self) -> Result<Option<RunOwnerRow>, BoardError> {
+        self.connection
+            .query_row("SELECT status, coordinator FROM run", [], |row| {
+                Ok(RunOwnerRow {
+                    status: row.get("status")?,
+                    coordinator: row.get("coordinator")?,
+                })
+            })
             .optional()
             .map_err(failed)
     }
@@ -277,8 +305,13 @@ fn loose(position: usize, value: &Value) -> Result<SqlValue, BoardError> {
 /// finite REAL or TEXT. A BLOB, or a REAL JSON cannot write, is a
 /// conversion error.
 fn cell(row: &Row<'_>, name: &str) -> rusqlite::Result<Value> {
+    cell_at(row, row.as_ref().column_index(name)?)
+}
+
+/// The column at `index` as [`cell`] reads it.
+fn cell_at(row: &Row<'_>, index: usize) -> rusqlite::Result<Value> {
     use rusqlite::types::{FromSqlError, ValueRef};
-    let index = row.as_ref().column_index(name)?;
+    let name = row.as_ref().column_name(index)?;
     let invalid = |kind: rusqlite::types::Type| {
         rusqlite::Error::InvalidColumnType(index, name.to_owned(), kind)
     };
@@ -312,16 +345,16 @@ fn run_record(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
     })
 }
 
+/// `dict(row)` of a `SELECT * FROM members` row: every column, in table
+/// order, as stored.
 fn member_row(row: &Row<'_>) -> rusqlite::Result<MemberRow> {
-    Ok(MemberRow {
-        id: row.get("id")?,
-        reservation: row.get("reservation")?,
-        status: row.get("status")?,
-        pid: cell(row, "pid")?,
-        started: row.get("started")?,
-        socket: row.get("socket")?,
-        launcher: row.get("launcher")?,
-    })
+    let columns = (0..row.as_ref().column_count())
+        .map(|index| {
+            let name = row.as_ref().column_name(index)?.to_owned();
+            Ok((name, cell_at(row, index)?))
+        })
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(MemberRow { columns })
 }
 
 /// The board's `encode(value)` of a JSON argument.

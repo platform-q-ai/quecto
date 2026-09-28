@@ -1,30 +1,83 @@
-//! The differential harness's tamper hook (#2270 round-2 review L3):
-//! `try_run_both(steps, after)` lets `after` rewrite the Rust side's file
-//! or answer before the comparison, which only a harness self-test may do
-//! and still pass. So every `try_run_both(` call under `tests/` either
-//! passes the no-op hook (a closure whose body is an empty block), or sits
-//! in a `harness_self_test_*` function, or is followed by `.unwrap_err()`
-//! (a scenario that expects the two boards to differ). A call the syntax
-//! walk cannot see (inside a macro's tokens) is itself refused.
+//! The differential harness's tamper hook (#2270 round-2 review L3,
+//! round-3 L3/L4): `try_run_both(steps, after)` lets `after` rewrite the
+//! Rust side's file or answer before the comparison, which only a harness
+//! self-test may do and still pass, and its `Err` is a difference between
+//! the boards, which only a pinned divergence may expect. So every
+//! `try_run_both` under `tests/`:
+//!
+//! - sits in a `harness_self_test_*` function (any hook); or
+//! - passes the no-op hook (a closure whose body is an empty block) and
+//!   sits in a test named in the pin table (`PERMITTED_DIVERGENCES` and
+//!   the tests `EXTERNAL_PINS` names, in `swarm_board_diff_loose.rs`), or
+//!   in the harness's own `run_both` without `.unwrap_err()`.
+//!
+//! The harness is reached by its own name and called directly: an import
+//! renaming it (`use …::try_run_both as t;`) is refused, and so is any
+//! `try_run_both` token the syntax walk does not see as a direct call or a
+//! plain import (a use as a value, or a call inside a macro's tokens).
 use std::path::{Path, PathBuf};
 
-use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use proc_macro2::{TokenStream, TokenTree};
 use syn::visit::Visit;
 
 /// The harness entry point whose hook is checked.
 const HARNESS: &str = "try_run_both";
+/// The harness's own caller, which compares without expecting a difference.
+const HARNESS_RUNNER: &str = "run_both";
 /// Functions that test the harness itself, and so may tamper and pass.
 const SELF_TEST_PREFIX: &str = "harness_self_test_";
+/// The file holding the pin table.
+const PIN_TABLE: &str = "tests/integration/swarm_board_diff_loose.rs";
+/// The pin table's constants: every string literal in them names a
+/// divergence or the test pinning it.
+const PIN_CONSTANTS: [&str; 2] = ["PERMITTED_DIVERGENCES", "EXTERNAL_PINS"];
 
-/// One `try_run_both` call the rule refuses.
+/// One harness use the rule refuses.
 #[derive(Debug, PartialEq, Eq)]
 struct Violation {
     function: Option<String>,
     line: usize,
+    problem: &'static str,
 }
 
+/// The string literals of one constant's value.
 #[derive(Default)]
+struct Literals(Vec<String>);
+
+impl<'ast> Visit<'ast> for Literals {
+    fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
+        self.0.push(literal.value());
+    }
+}
+
+/// The test names the pin table allows to expect a difference.
+fn pinned_tests() -> Vec<String> {
+    let source = std::fs::read_to_string(PIN_TABLE)
+        .unwrap_or_else(|error| panic!("read {PIN_TABLE}: {error}"));
+    let file = syn::parse_file(&source).expect("the pin table parses");
+    let mut found = Vec::new();
+    let mut constants = 0;
+    for item in &file.items {
+        if let syn::Item::Const(constant) = item
+            && PIN_CONSTANTS.contains(&constant.ident.to_string().as_str())
+        {
+            constants += 1;
+            let mut literals = Literals::default();
+            literals.visit_expr(&constant.expr);
+            found.extend(literals.0);
+        }
+    }
+    assert_eq!(
+        constants,
+        PIN_CONSTANTS.len(),
+        "{PIN_TABLE} defines {PIN_CONSTANTS:?}"
+    );
+    assert!(!found.is_empty(), "the pin table names its tests");
+    found
+}
+
 struct Calls {
+    pinned: Vec<String>,
     function: Option<String>,
     seen: usize,
     violations: Vec<Violation>,
@@ -59,27 +112,50 @@ fn no_op(hook: &syn::Expr) -> bool {
 }
 
 impl Calls {
+    fn new(pinned: Vec<String>) -> Self {
+        Self {
+            pinned,
+            function: None,
+            seen: 0,
+            violations: Vec::new(),
+        }
+    }
+
     fn in_function(&mut self, name: String, walk: impl FnOnce(&mut Self)) {
         let outer = self.function.replace(name);
         walk(self);
         self.function = outer;
     }
 
-    /// One harness call; `expecting_difference` when `.unwrap_err()`
-    /// follows it.
+    fn refuse(&mut self, span: proc_macro2::Span, problem: &'static str) {
+        self.violations.push(Violation {
+            function: self.function.clone(),
+            line: span.start().line,
+            problem,
+        });
+    }
+
+    /// The problem with one harness call, if any; `expecting_difference`
+    /// when `.unwrap_err()` follows it.
+    fn problem(&self, call: &syn::ExprCall, expecting_difference: bool) -> Option<&'static str> {
+        let function = self.function.as_deref();
+        let self_test = function.is_some_and(|name| name.starts_with(SELF_TEST_PREFIX));
+        let pinned = function.is_some_and(|name| self.pinned.iter().any(|test| test == name));
+        let runner = function == Some(HARNESS_RUNNER) && !expecting_difference;
+        let quiet = call.args.iter().nth(1).is_some_and(no_op);
+        match (self_test, quiet, pinned || runner) {
+            (true, _, _) | (false, true, true) => None,
+            (false, false, _) => Some("a tampering hook outside a harness self-test"),
+            (false, true, false) => Some(
+                "a harness call outside a pinned divergence test (only run_both compares without expecting a difference)",
+            ),
+        }
+    }
+
     fn check(&mut self, call: &syn::ExprCall, expecting_difference: bool) {
         self.seen += 1;
-        let permitted = call.args.iter().nth(1).is_some_and(no_op)
-            || expecting_difference
-            || self
-                .function
-                .as_deref()
-                .is_some_and(|name| name.starts_with(SELF_TEST_PREFIX));
-        if !permitted {
-            self.violations.push(Violation {
-                function: self.function.clone(),
-                line: syn::spanned::Spanned::span(&call.func).start().line,
-            });
+        if let Some(problem) = self.problem(call, expecting_difference) {
+            self.refuse(syn::spanned::Spanned::span(&call.func), problem);
         }
         for argument in &call.args {
             self.visit_expr(argument);
@@ -119,11 +195,26 @@ impl<'ast> Visit<'ast> for Calls {
             syn::visit::visit_expr_call(self, call);
         }
     }
+
+    /// A plain import of the harness is a use the walk has seen.
+    fn visit_use_name(&mut self, name: &'ast syn::UseName) {
+        if name.ident == HARNESS {
+            self.seen += 1;
+        }
+    }
+
+    /// An import renaming the harness hides its calls from the walk.
+    fn visit_use_rename(&mut self, rename: &'ast syn::UseRename) {
+        if rename.ident == HARNESS {
+            self.seen += 1 + usize::from(rename.rename == HARNESS);
+            self.refuse(rename.ident.span(), "an import renames try_run_both");
+        }
+    }
 }
 
-/// Every `try_run_both(` in `tokens`, macro bodies included and the
-/// function's own definition (`fn try_run_both(`) excluded.
-fn token_calls(tokens: TokenStream) -> usize {
+/// Every `try_run_both` token in `tokens`, macro bodies included and a
+/// function's own definition (`fn try_run_both`) excluded.
+fn harness_tokens(tokens: TokenStream) -> usize {
     let trees: Vec<TokenTree> = tokens.into_iter().collect();
     let mut count = 0;
     for (index, tree) in trees.iter().enumerate() {
@@ -133,41 +224,39 @@ fn token_calls(tokens: TokenStream) -> usize {
                     .checked_sub(1)
                     .and_then(|before| trees.get(before))
                     .is_some_and(|before| matches!(before, TokenTree::Ident(word) if word == "fn"));
-                let called = matches!(
-                    trees.get(index + 1),
-                    Some(TokenTree::Group(group)) if group.delimiter() == Delimiter::Parenthesis
-                );
-                count += usize::from(called && !defined);
+                count += usize::from(!defined);
             }
-            TokenTree::Group(group) => count += token_calls(group.stream()),
+            TokenTree::Group(group) => count += harness_tokens(group.stream()),
             _ => {}
         }
     }
     count
 }
 
-/// The violations in one file's `source`; a call only the token scan
-/// finds (inside a macro) is a violation of its own.
+/// The violations in one file's `source`; a harness token the syntax walk
+/// did not see as a direct call or a plain import is a violation of its
+/// own.
 fn violations(source: &str) -> Vec<String> {
     let file = syn::parse_file(source).expect("the test file parses");
-    let mut calls = Calls::default();
+    let mut calls = Calls::new(pinned_tests());
     calls.visit_file(&file);
     let mut found: Vec<String> = calls
         .violations
         .iter()
         .map(|violation| {
             format!(
-                "line {} in {}: a tampering hook outside a harness self-test, with no .unwrap_err()",
+                "line {} in {}: {}",
                 violation.line,
-                violation.function.as_deref().unwrap_or("<no function>")
+                violation.function.as_deref().unwrap_or("<no function>"),
+                violation.problem
             )
         })
         .collect();
     let tokens: TokenStream = source.parse().expect("the test file tokenizes");
-    let all = token_calls(tokens);
+    let all = harness_tokens(tokens);
     if all != calls.seen {
         found.push(format!(
-            "{} {HARNESS} call(s) the syntax walk cannot check (inside a macro)",
+            "{} {HARNESS} use(s) the syntax walk cannot check (not called directly, or inside a macro)",
             all.abs_diff(calls.seen)
         ));
     }
