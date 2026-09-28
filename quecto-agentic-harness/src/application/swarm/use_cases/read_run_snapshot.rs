@@ -36,7 +36,7 @@ impl ReadRunSnapshot {
                 let control_generation = transaction.control_generation()?;
                 let members = transaction.members()?;
                 Ok(RunSnapshotView {
-                    status: run.status.as_str().to_owned(),
+                    status: run.status.as_ref().map(|status| status.as_str().to_owned()),
                     coordinator: run.coordinator.clone(),
                     outcome: run.outcome.clone(),
                     control_generation,

@@ -36,7 +36,7 @@ fn deadline_transition_commits_before_rejected_mutation() {
     assert!(!ran.get(), "a refused operation never runs its work");
     let state = board.snapshot();
     let run = state.run.unwrap().record;
-    assert_eq!(run.status, RunState::PAUSED);
+    assert_eq!(run.status, Some(RunState::PAUSED));
     assert_eq!(run.outcome.as_deref(), Some("budget-exhausted"));
     assert_eq!(run.outcome_reason.as_deref(), Some("deadline"));
     let events: Vec<_> = state
@@ -75,7 +75,7 @@ fn operation_authorises_twice_and_requires_budget_only_when_active() {
     .unwrap_err();
     assert_eq!(refused, BoardError::new(PAUSED_BY_DEADLINE));
     let state = active.snapshot();
-    assert_eq!(state.run.unwrap().record.status, RunState::RUNNING);
+    assert_eq!(state.run.unwrap().record.status, Some(RunState::RUNNING));
     assert!(state.events.is_empty(), "require_budget writes nothing");
 
     let inactive = MemoryBoard::with(running_board(100.0));
@@ -93,7 +93,7 @@ fn operation_authorises_twice_and_requires_budget_only_when_active() {
     .unwrap();
     assert_eq!(
         run.status,
-        RunState::RUNNING,
+        Some(RunState::RUNNING),
         "no budget check when inactive"
     );
     assert_eq!(inactive.transactions(), [false, false]);
@@ -116,7 +116,7 @@ fn operation_authorises_twice_and_requires_budget_only_when_active() {
         BoardError::new("invoking member is unknown or death confirmed")
     );
     let state = dead.snapshot();
-    assert_eq!(state.run.unwrap().record.status, RunState::PAUSED);
+    assert_eq!(state.run.unwrap().record.status, Some(RunState::PAUSED));
     assert_eq!(state.events.len(), 2);
     assert_eq!(dead.transactions(), [false, false]);
 }
@@ -147,7 +147,7 @@ fn an_unexpired_run_is_left_running_and_the_work_sees_it() {
         |_, run| Ok(run.status.clone()),
     )
     .unwrap();
-    assert_eq!(status, RunState::RUNNING);
+    assert_eq!(status, Some(RunState::RUNNING));
     assert!(board.snapshot().events.is_empty());
 }
 
@@ -201,7 +201,7 @@ fn a_refused_transaction_leaves_nothing_behind() {
     });
     assert_eq!(refused.unwrap_err(), BoardError::new("refused"));
     let state = board.snapshot();
-    assert_eq!(state.run.unwrap().record.status, RunState::RUNNING);
+    assert_eq!(state.run.unwrap().record.status, Some(RunState::RUNNING));
     assert!(state.events.is_empty());
 }
 

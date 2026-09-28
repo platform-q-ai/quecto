@@ -32,17 +32,29 @@ pub struct Access {
 /// The longest deadline extension: seven days.
 pub const MAX_EXTENSION_SECONDS: i64 = 7 * 24 * 3600;
 
+/// `run.status` as Python's f-strings write it: the text, or `None` for a
+/// NULL status.
+fn status_text(run: &RunRecord) -> &str {
+    run.status.as_ref().map_or("None", RunState::as_str)
+}
+
+/// The status a decision matches on: `None` for a NULL status, which no
+/// affirmative arm names.
+fn status(run: &RunRecord) -> Option<&str> {
+    run.status.as_ref().map(RunState::as_str)
+}
+
 /// Status text for errors: a paused run names the outcome it is holding.
 pub fn describe(run: &RunRecord) -> String {
-    match (run.status.as_str(), run.outcome.as_deref()) {
-        ("paused", Some(outcome)) if !outcome.is_empty() => {
+    match (status(run), run.outcome.as_deref()) {
+        (Some("paused"), Some(outcome)) if !outcome.is_empty() => {
             let reason = run
                 .outcome_reason
                 .as_deref()
                 .filter(|reason| !reason.is_empty());
             format!("paused ({outcome}: {})", reason.unwrap_or("no reason"))
         }
-        (status, _) => status.to_owned(),
+        _ => status_text(run).to_owned(),
     }
 }
 
@@ -69,8 +81,8 @@ pub fn authorize(
             "invoking member is unknown or death confirmed",
         ));
     }
-    match (access.active, run.status.as_str()) {
-        (false, _) | (true, "running") => Ok(()),
+    match (access.active, status(run)) {
+        (false, _) | (true, Some("running")) => Ok(()),
         (true, _) => Err(BoardError::new(format!(
             "run is {}; no new work permitted",
             describe(run)
@@ -88,7 +100,7 @@ fn alive(member: &MemberRecord) -> bool {
 
 /// A running run whose deadline has come (a deadline equal to `now` has).
 pub fn expired(run: &RunRecord, now: f64) -> bool {
-    run.status.as_str() == "running" && run.deadline <= now
+    matches!(status(run), Some("running")) && run.deadline <= now
 }
 
 pub fn require_budget(run: &RunRecord, now: f64) -> Result<(), BoardError> {
@@ -151,11 +163,11 @@ pub fn admission(
     usage: i64,
     now: f64,
 ) -> Result<bool, BoardError> {
-    let admitting = matches!(run.status.as_str(), "setup" | "running") && !expired(run, now);
+    let admitting = matches!(status(run), Some("setup" | "running")) && !expired(run, now);
     if !admitting {
         return Err(BoardError::new(format!(
             "run is {}; no new admission",
-            run.status.as_str()
+            status_text(run)
         )));
     }
     if prior.is_some_and(|prior| prior.reservation.as_deref() == reservation && alive(prior)) {
@@ -284,3 +296,7 @@ pub fn require_unsubmitted(task: &TaskRecord) -> Result<(), BoardError> {
 #[cfg(test)]
 #[path = "policy_tests.rs"]
 mod policy_tests;
+
+#[cfg(test)]
+#[path = "policy_null_status_tests.rs"]
+mod policy_null_status_tests;

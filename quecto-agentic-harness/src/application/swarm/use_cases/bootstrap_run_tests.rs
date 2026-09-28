@@ -40,7 +40,7 @@ fn bootstrap_writes_the_setup_placeholder_once() {
     assert_eq!(board.transactions(), [true], "bootstrap creates the store");
     let state = board.snapshot();
     let run = state.run.unwrap();
-    assert_eq!(run.record.status, RunState::SETUP);
+    assert_eq!(run.record.status, Some(RunState::SETUP));
     assert_eq!(run.record.deadline, 0.0);
     assert_eq!(run.record.member_limit, 10);
     assert_eq!(run.record.coordinator.as_deref(), Some("parent"));

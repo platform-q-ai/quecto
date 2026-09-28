@@ -214,7 +214,7 @@ fn create_draws_run_id_before_reservation() {
     let state = board.snapshot();
     let run = state.run.unwrap();
     assert_eq!(run.id, first);
-    assert_eq!(run.record.status, RunState::RUNNING);
+    assert_eq!(run.record.status, Some(RunState::RUNNING));
     assert_eq!(run.record.coordinator.as_deref(), Some("parent"));
     assert_eq!(run.record.member_limit, 3);
     assert_eq!(state.members.len(), 1);
@@ -261,7 +261,7 @@ fn the_created_event_records_the_contract_as_given() {
 fn only_the_setup_coordinator_can_create_over_an_existing_run() {
     let refusal = "only the setup coordinator can create this run; existing runs cannot be reset";
     let mut setup = running_board(0.0);
-    setup.run.as_mut().unwrap().record.status = RunState::SETUP;
+    setup.run.as_mut().unwrap().record.status = Some(RunState::SETUP);
 
     // Another member may not take the placeholder over.
     let board = MemoryBoard::with(setup.clone());
@@ -292,7 +292,7 @@ fn only_the_setup_coordinator_can_create_over_an_existing_run() {
     let state = board.snapshot();
     let run = state.run.unwrap();
     assert_eq!(run.id, "run-1");
-    assert_eq!(run.record.status, RunState::RUNNING);
+    assert_eq!(run.record.status, Some(RunState::RUNNING));
     assert_eq!(run.record.deadline, NOW + 3_600.0);
     assert_eq!(run.record.member_limit, 3);
     assert_eq!(run.contract.goal, "ship the slice");
@@ -302,7 +302,7 @@ fn only_the_setup_coordinator_can_create_over_an_existing_run() {
 #[test]
 fn members_not_confirmed_dead_must_fit_the_new_limit() {
     let mut setup = running_board(0.0);
-    setup.run.as_mut().unwrap().record.status = RunState::SETUP;
+    setup.run.as_mut().unwrap().record.status = Some(RunState::SETUP);
     setup.members.push(member_row("worker", "reserved"));
     setup.members.push(member_row("gone", "dead"));
     setup.members.push(member_row("odd", "unknown-status"));
@@ -317,7 +317,10 @@ fn members_not_confirmed_dead_must_fit_the_new_limit() {
             "existing live/reserved members exceed requested limit; terminate and reconcile first"
         )
     );
-    assert_eq!(board.snapshot().run.unwrap().record.status, RunState::SETUP);
+    assert_eq!(
+        board.snapshot().run.unwrap().record.status,
+        Some(RunState::SETUP)
+    );
 
     // Three members are not dead; a limit of three fits them exactly.
     let board = MemoryBoard::with(setup);
@@ -326,7 +329,7 @@ fn members_not_confirmed_dead_must_fit_the_new_limit() {
         .unwrap();
     assert_eq!(
         board.snapshot().run.unwrap().record.status,
-        RunState::RUNNING
+        Some(RunState::RUNNING)
     );
 }
 

@@ -6,7 +6,7 @@ use crate::domain::swarm::records::{CriterionKind, MemberState, RunState, TaskSt
 
 fn run(status: RunState) -> RunRecord {
     RunRecord {
-        status,
+        status: Some(status),
         coordinator: Some("parent".into()),
         deadline: 100.0,
         member_limit: 2,

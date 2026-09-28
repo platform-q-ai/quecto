@@ -3,7 +3,7 @@
 //! role's writes, when it fails; the work's refusal comes back unchanged.
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
-use quecto::domain::swarm::BoardError;
+use quecto::domain::swarm::{BoardError, RunState};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 
@@ -97,7 +97,7 @@ fn the_expiry_commit_survives_a_rejected_mutation() {
     assert!(refused.is_err());
     atomic(&repository, false, |transaction| {
         let run = transaction.run()?.unwrap();
-        assert_eq!(run.status.as_str(), "paused");
+        assert_eq!(run.status.as_ref().map(RunState::as_str), Some("paused"));
         assert_eq!(run.outcome.as_deref(), Some("budget-exhausted"));
         assert_eq!(transaction.control_generation()?, 2);
         Ok(())

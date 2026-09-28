@@ -352,7 +352,7 @@ fn status(view: RunStatusView) -> Value {
 /// `_snapshot`'s dict, with each member row as `dict(row)`.
 fn snapshot(view: RunSnapshotView) -> Result<Value, BoardError> {
     Ok(object([
-        ("status", Value::String(view.status)),
+        ("status", view.status.map_or(Value::Null, Value::String)),
         (
             "coordinator",
             view.coordinator.map_or(Value::Null, Value::String),

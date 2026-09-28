@@ -112,7 +112,11 @@ impl BoardRuns for MemoryTransaction<'_> {
     fn run_status(&self) -> Result<Option<RunStatusRow>, BoardError> {
         Ok(self.state.borrow().run.as_ref().map(|run| RunStatusRow {
             id: Some(run.id.clone()),
-            status: Some(run.record.status.as_str().to_owned()),
+            status: run
+                .record
+                .status
+                .as_ref()
+                .map(|status| status.as_str().to_owned()),
             deadline: Value::from(run.record.deadline),
             coordinator: run.record.coordinator.clone(),
             outcome: run.record.outcome.clone(),
@@ -126,7 +130,7 @@ impl BoardRuns for MemoryTransaction<'_> {
         state.run = Some(StoredRun {
             id: run.id.clone(),
             record: RunRecord {
-                status: run.status.clone(),
+                status: Some(run.status.clone()),
                 coordinator: Some(run.coordinator.clone()),
                 deadline: run.contract.deadline,
                 member_limit: run.contract.member_limit,
@@ -144,7 +148,7 @@ impl BoardRuns for MemoryTransaction<'_> {
         let run = state.run.as_mut().expect("a run to update");
         run.record.deadline = contract.deadline;
         run.record.member_limit = contract.member_limit;
-        run.record.status = RunState::RUNNING;
+        run.record.status = Some(RunState::RUNNING);
         run.contract = contract.clone();
         Ok(())
     }
@@ -153,7 +157,7 @@ impl BoardRuns for MemoryTransaction<'_> {
         self.note(format!("propose_outcome {outcome}"));
         let mut state = self.state.borrow_mut();
         let run = state.run.as_mut().expect("a run to pause");
-        run.record.status = RunState::PAUSED;
+        run.record.status = Some(RunState::PAUSED);
         run.record.outcome = Some(outcome.to_owned());
         run.record.outcome_reason = Some(reason.to_owned());
         Ok(())
@@ -390,7 +394,7 @@ pub fn running_board(deadline: f64) -> BoardState {
         run: Some(StoredRun {
             id: "run-1".to_owned(),
             record: RunRecord {
-                status: RunState::RUNNING,
+                status: Some(RunState::RUNNING),
                 coordinator: Some("parent".to_owned()),
                 deadline,
                 member_limit: 2,

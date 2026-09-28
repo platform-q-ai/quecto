@@ -6,8 +6,9 @@
 //! {sqlite3_errmsg}`, as Python's `Store.transaction` reports it.
 //!
 //! Rows are read as Python reads them where the board's own writes or a
-//! file edited outside it leave loose values (#2270 review L5): a NULL
-//! member status or coordinator is `None`, a member's `pid` any storage
+//! file edited outside it leave loose values (#2270 review L5, round-2 L2):
+//! a NULL run status, member status or coordinator is `None`, a member's
+//! `pid` any storage
 //! class `_bootstrap` bound, and `_status` decodes only the columns it
 //! selects. Any other column holding a type the board never writes, or a
 //! BLOB, is refused the same way as a store failure, with the driver's
@@ -31,6 +32,18 @@ use crate::domain::swarm::{BoardError, MemberRecord, MemberState, RunRecord, Run
 
 /// `swarm_repository.ACTIVE_CLAIM`.
 const ACTIVE_CLAIM: &str = "('claimed','blocked','submitted')";
+
+/// The parameters a refused member value is numbered by (#2270 review M1):
+/// its position in Python's `_bootstrap` statement,
+/// `INSERT INTO members(id,reservation,status,pid,started,socket)
+/// VALUES(?,?,'live',?,?,?)`, where the status is a literal, so `pid`,
+/// `started` and `socket` are parameters 3, 4 and 5. Python's `sqlite3`
+/// names that position in its refusal; the Rust statement binds the status
+/// and the launcher too, so its own positions would name another.
+/// `repository_tests.rs` derives them from `swarm.py`'s statement.
+const PYTHON_PID_PARAMETER: usize = 3;
+const PYTHON_STARTED_PARAMETER: usize = 4;
+const PYTHON_SOCKET_PARAMETER: usize = 5;
 
 /// The board file of one run.
 #[derive(Clone, Debug)]
@@ -197,9 +210,9 @@ impl BoardMembers for SqliteBoard<'_> {
             SqlValue::Text(member.id.clone()),
             SqlValue::Text(member.reservation.clone()),
             SqlValue::Text(member.status.as_str().to_owned()),
-            loose(4, &member.pid)?,
-            loose(5, &member.started)?,
-            loose(6, &member.socket)?,
+            loose(PYTHON_PID_PARAMETER, &member.pid)?,
+            loose(PYTHON_STARTED_PARAMETER, &member.started)?,
+            loose(PYTHON_SOCKET_PARAMETER, &member.socket)?,
             member
                 .launcher
                 .clone()
@@ -244,9 +257,11 @@ impl SqliteBoard<'_> {
 
 /// A member's JSON value bound as Python's `sqlite3` binds it (epic P3):
 /// `True` as 1, a float as REAL, text as TEXT, and the column's affinity
-/// decides what is stored. A value Python cannot bind (a list, an object,
-/// an integer beyond i64) is refused with the store's text and the
-/// parameter's position (the `binding_error_text` divergence).
+/// decides what is stored. A value Python cannot bind is refused naming
+/// Python's parameter `position`: a list or an object with Python's
+/// `ProgrammingError` text, and an integer beyond i64, which Python raises
+/// as `OverflowError` rather than refuses, with its text (the
+/// `integer_beyond_i64_is_refused` divergence).
 fn loose(position: usize, value: &Value) -> Result<SqlValue, BoardError> {
     PyJson::try_from(value)
         .map_err(|error| error.to_string())
@@ -288,7 +303,7 @@ fn cell(row: &Row<'_>, name: &str) -> rusqlite::Result<Value> {
 
 fn run_record(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
     Ok(RunRecord {
-        status: RunState::new(row.get::<_, String>("status")?),
+        status: row.get::<_, Option<String>>("status")?.map(RunState::new),
         coordinator: row.get("coordinator")?,
         deadline: row.get("deadline")?,
         member_limit: row.get("member_limit")?,

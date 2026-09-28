@@ -109,7 +109,8 @@ pub struct MemberRow {
 /// `Workbench._snapshot()`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunSnapshotView {
-    pub status: String,
+    /// `None` for a NULL `run.status`, which Python answers as `null`.
+    pub status: Option<String>,
     pub coordinator: Option<String>,
     pub outcome: Option<String>,
     /// The id of the latest `paused` or `resumed` event, `0` for none.

@@ -80,8 +80,9 @@ fn claim_counts_follow_active_task_ownership() {
     .unwrap();
 }
 
-/// A row the board never writes (a NULL status) is refused as a store
-/// failure, not mistaken for a status.
+/// A run row the board never writes is refused as a store failure where
+/// its type is not one the board reads (a NULL `member_limit`), not
+/// mistaken for a number.
 #[test]
 fn a_run_row_of_the_wrong_shape_is_a_store_refusal() {
     let (dir, repository) = repository();
@@ -89,7 +90,7 @@ fn a_run_row_of_the_wrong_shape_is_a_store_refusal() {
     let connection = rusqlite::Connection::open(dir.path().join("swarm.sqlite")).unwrap();
     connection
         .execute(
-            "INSERT INTO run(id,coordinator,deadline) VALUES('r','p',1.0)",
+            "INSERT INTO run(id,coordinator,deadline,status) VALUES('r','p',1.0,'running')",
             [],
         )
         .unwrap();
@@ -104,6 +105,29 @@ fn a_run_row_of_the_wrong_shape_is_a_store_refusal() {
             .starts_with("coordination store unavailable or contended: "),
         "{refused}"
     );
+}
+
+/// A NULL `run.status` reads as `None`, as Python reads it (#2270 review
+/// L2), not as a store failure.
+#[test]
+fn a_null_run_status_reads_as_none() {
+    let (dir, repository) = repository();
+    within(&repository, true, |_| Ok(())).unwrap();
+    let connection = rusqlite::Connection::open(dir.path().join("swarm.sqlite")).unwrap();
+    connection
+        .execute(
+            "INSERT INTO run(id,coordinator,deadline,member_limit) VALUES('r','p',1.0,3)",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+    within(&repository, false, |transaction| {
+        let run = transaction.run()?.expect("the run row");
+        assert_eq!(run.status, None);
+        assert_eq!(run.member_limit, 3);
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[test]
@@ -215,5 +239,13 @@ fn an_unbindable_member_value_names_pythons_parameter() {
             "{column}"
         );
     }
-    assert_eq!(parameter_of(PYTHON_BOOTSTRAP_MEMBER_INSERT, "pid"), 3);
+    assert_eq!(
+        [
+            super::PYTHON_PID_PARAMETER,
+            super::PYTHON_STARTED_PARAMETER,
+            super::PYTHON_SOCKET_PARAMETER
+        ],
+        ["pid", "started", "socket"]
+            .map(|column| parameter_of(PYTHON_BOOTSTRAP_MEMBER_INSERT, column))
+    );
 }

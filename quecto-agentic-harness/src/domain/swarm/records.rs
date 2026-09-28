@@ -62,7 +62,10 @@ status_text! {
 /// The `run` row, as far as policy reads it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunRecord {
-    pub status: RunState,
+    /// `None` only for a row edited outside the board, which Python reads
+    /// as `None` too: it is no known status, so every decision that needs
+    /// one refuses, and refusals name it `None` as Python's f-strings do.
+    pub status: Option<RunState>,
     /// `None` only for a row edited outside the board, which Python reads
     /// as `None` too: it is nobody's to coordinate.
     pub coordinator: Option<String>,

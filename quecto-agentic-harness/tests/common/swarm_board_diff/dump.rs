@@ -109,7 +109,7 @@ pub fn first_difference(python: &Dump, rust: &Dump) -> Option<String> {
             ));
         }
         for (index, (python_row, rust_row)) in python_rows.iter().zip(rust_rows).enumerate() {
-            if python_row != rust_row {
+            if !same_row(python_row, rust_row) {
                 return Some(format!(
                     "{table} row {index}:\n  python {python_row:?}\n  rust   {rust_row:?}"
                 ));
@@ -117,4 +117,28 @@ pub fn first_difference(python: &Dump, rust: &Dump) -> Option<String> {
         }
     }
     None
+}
+
+/// Two rows hold the same cells: each the same storage class and value,
+/// a REAL by its bits, so `-0.0` is not `0.0` (Python's `sqlite3` keeps
+/// the sign, and `Value`'s own equality would not).
+fn same_row(python: &[Cell], rust: &[Cell]) -> bool {
+    python.len() == rust.len()
+        && python
+            .iter()
+            .zip(rust)
+            .all(|((python_type, python), (rust_type, rust))| {
+                python_type == rust_type && same_value(python, rust)
+            })
+}
+
+fn same_value(python: &SqlValue, rust: &SqlValue) -> bool {
+    match (python, rust) {
+        (SqlValue::Real(python), SqlValue::Real(rust)) => python.to_bits() == rust.to_bits(),
+        (SqlValue::Null, SqlValue::Null) => true,
+        (SqlValue::Integer(python), SqlValue::Integer(rust)) => python == rust,
+        (SqlValue::Text(python), SqlValue::Text(rust)) => python == rust,
+        (SqlValue::Blob(python), SqlValue::Blob(rust)) => python == rust,
+        _ => false,
+    }
 }

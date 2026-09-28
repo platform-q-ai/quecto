@@ -52,7 +52,7 @@ fn a_run_is_inserted_read_updated_and_paused() {
     });
     within(&repository, false, |transaction| {
         let run = transaction.run()?.unwrap();
-        assert_eq!(run.status, RunState::SETUP);
+        assert_eq!(run.status, Some(RunState::SETUP));
         assert_eq!(run.coordinator.as_deref(), Some("parent"));
         assert_eq!((run.deadline, run.member_limit), (0.0, 4));
         assert_eq!((run.outcome, run.outcome_reason), (None, None));
@@ -70,7 +70,11 @@ fn a_run_is_inserted_read_updated_and_paused() {
     });
     within(&repository, false, |transaction| {
         let run = transaction.run()?.unwrap();
-        assert_eq!(run.status, RunState::RUNNING, "the contract starts the run");
+        assert_eq!(
+            run.status,
+            Some(RunState::RUNNING),
+            "the contract starts the run"
+        );
         assert_eq!(run.deadline, 99.5);
         assert_eq!(
             transaction.run_status()?.and_then(|row| row.id).as_deref(),
@@ -81,7 +85,7 @@ fn a_run_is_inserted_read_updated_and_paused() {
     });
     within(&repository, false, |transaction| {
         let run = transaction.run()?.unwrap();
-        assert_eq!(run.status, RunState::PAUSED);
+        assert_eq!(run.status, Some(RunState::PAUSED));
         assert_eq!(run.outcome.as_deref(), Some("failed"));
         assert_eq!(run.outcome_reason.as_deref(), Some("lost"));
         Ok(())
@@ -115,8 +119,8 @@ fn a_run_is_inserted_read_updated_and_paused() {
     );
 }
 
-/// Rows edited outside the board (#2270 review L5): `run()` reads a NULL
-/// coordinator as `None`; `run_status()` reads only `_status`'s columns,
+/// Rows edited outside the board (#2270 review L5, round-2 L2): `run()`
+/// reads a NULL coordinator or status as `None`; `run_status()` reads only `_status`'s columns,
 /// each as stored, so a column it does not select never refuses it; a
 /// column `run()` needs holding a type the board never writes is a store
 /// refusal (the `outside_edited_columns` divergence).
@@ -138,9 +142,11 @@ fn loosely_typed_run_columns_read_as_stored() {
             .execute_batch(sql)
             .unwrap();
     };
-    edit("UPDATE run SET coordinator=NULL, member_limit=4");
+    edit("UPDATE run SET coordinator=NULL, member_limit=4, status=NULL");
     within(&repository, false, |transaction| {
-        assert_eq!(transaction.run()?.unwrap().coordinator, None);
+        let run = transaction.run()?.unwrap();
+        assert_eq!(run.coordinator, None);
+        assert_eq!(run.status, None, "a NULL status reads as Python's None");
         Ok(())
     });
     edit("UPDATE run SET member_limit='many', status=NULL, deadline='soon', outcome=4");

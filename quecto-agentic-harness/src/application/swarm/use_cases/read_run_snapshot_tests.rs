@@ -13,7 +13,7 @@ fn snapshot_reads_the_run_and_every_member_through_the_gate() {
     let snapshot = ReadRunSnapshot::new(board.clone(), SteppingClock::fixed(50.0))
         .execute("worker")
         .unwrap();
-    assert_eq!(snapshot.status, "running");
+    assert_eq!(snapshot.status.as_deref(), Some("running"));
     assert_eq!(snapshot.coordinator.as_deref(), Some("parent"));
     assert_eq!(snapshot.outcome, None);
     assert_eq!(snapshot.control_generation, 0);
@@ -31,7 +31,7 @@ fn snapshot_after_the_deadline_sees_the_committed_pause() {
     let snapshot = ReadRunSnapshot::new(board.clone(), SteppingClock::fixed(100.0))
         .execute("parent")
         .unwrap();
-    assert_eq!(snapshot.status, "paused");
+    assert_eq!(snapshot.status.as_deref(), Some("paused"));
     assert_eq!(snapshot.outcome.as_deref(), Some("budget-exhausted"));
     // `stop` is event 1, `paused` event 2: the control generation.
     assert_eq!(snapshot.control_generation, 2);

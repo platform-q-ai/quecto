@@ -178,7 +178,8 @@ fn take_over_setup(
     existing: &RunRecord,
     contract: &RunContract,
 ) -> Result<(), BoardError> {
-    let placeholder = existing.status.as_str() == RunState::SETUP.as_str()
+    let placeholder = existing.status.as_ref().map(RunState::as_str)
+        == Some(RunState::SETUP.as_str())
         && existing.coordinator.as_deref() == Some(member);
     if !placeholder {
         return Err(BoardError::new(

@@ -203,18 +203,20 @@ fn loose_values_bind_as_python_binds_them_and_read_as_stored() {
         })
         .unwrap();
     }
+    // Refusals name the pid's position in Python's `_bootstrap` statement
+    // (`VALUES(?,?,'live',?,?,?)`: parameter 3), as Python's do.
     for (pid, message) in [
         (
             json!([1]),
-            "Error binding parameter 4: type 'list' is not supported",
+            "Error binding parameter 3: type 'list' is not supported",
         ),
         (
             json!({"a": 1}),
-            "Error binding parameter 4: type 'dict' is not supported",
+            "Error binding parameter 3: type 'dict' is not supported",
         ),
         (
             json!(u64::MAX),
-            "Error binding parameter 4: Python int too large to convert to SQLite INTEGER",
+            "Error binding parameter 3: Python int too large to convert to SQLite INTEGER",
         ),
     ] {
         let refused = within(&repository, false, |transaction| {
