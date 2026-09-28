@@ -1,6 +1,7 @@
 //! CLI composition of container identity and the shared lifecycle adapter.
 use super::AgentFlags;
 use crate::application::swarm::ports::CoordinationPort;
+use crate::domain::external_agent::backend::MemberBackend;
 use crate::infrastructure::tools::swarm_bridge::SwarmContext;
 use crate::infrastructure::tools::{swarm_bridge, swarm_lifecycle};
 
@@ -18,7 +19,8 @@ pub(super) fn admit(flags: &mut AgentFlags, stderr: &mut String) -> bool {
 /// read BEFORE joining, so a refused process never leaves a member row behind
 /// (a live row with a dead pid would fail the whole run at the next
 /// reconcile). The join then records participation; a swarm member has its
-/// workflow disabled, an ordinary container keeps it.
+/// workflow disabled, an ordinary container keeps it. The `--backend` is
+/// decided the same way, before the join (#2287).
 pub(super) fn admit_with(
     context: Option<SwarmContext>,
     creator: bool,
@@ -26,7 +28,7 @@ pub(super) fn admit_with(
     stderr: &mut String,
 ) -> bool {
     let Some(context) = context else {
-        return true;
+        return admit_backend(flags.backend.unwrap_or_default(), false, creator, stderr);
     };
     let created = match context.run_created() {
         Ok(created) => created,
@@ -35,6 +37,9 @@ pub(super) fn admit_with(
             return false;
         }
     };
+    if !admit_backend(flags.backend.unwrap_or_default(), created, creator, stderr) {
+        return false;
+    }
     if created && let Err(error) = disable_workflow(flags) {
         stderr.push_str(&format!("swarm admission rejected: {error}\n"));
         return false;
@@ -50,25 +55,35 @@ pub(super) fn admit_with(
         stderr.push_str(&format!("swarm admission rejected: {error}\n"));
         return false;
     }
-    true
+    // A created run implies participation; a claude-code member that did
+    // not come to participate (the run ended meanwhile) is still refused.
+    match (
+        flags.backend.unwrap_or_default(),
+        flags.swarm_participation.participating(),
+    ) {
+        (MemberBackend::Quecto, _) | (MemberBackend::ClaudeCode, true) => true,
+        (MemberBackend::ClaudeCode, false) => {
+            stderr.push_str(CLAUDE_CODE_NOT_A_SWARM_WORKER);
+            false
+        }
+    }
 }
 
-/// The refusal for a claude-code member that is not an admitted swarm
-/// worker (#2287, O1).
+/// The refusal for a claude-code member that is not a swarm worker
+/// (#2287, O1).
 pub(super) const CLAUDE_CODE_NOT_A_SWARM_WORKER: &str =
     "agent: --backend claude-code runs only as a swarm worker admitted to a created swarm run\n";
 
-/// After [`admit`]: whether this process may run its `--backend`.
-pub(super) fn admit_backend(flags: &AgentFlags, stderr: &mut String) -> bool {
-    admit_backend_with(flags, swarm_lifecycle::is_creator(), stderr)
-}
-
-/// A claude-code member must be a swarm worker (O1): a participant of a
-/// created run, and not the run's creator.
-pub(super) fn admit_backend_with(flags: &AgentFlags, creator: bool, stderr: &mut String) -> bool {
-    use crate::domain::external_agent::backend::MemberBackend;
-    let participating = flags.swarm_participation.participating();
-    let admitted = match (flags.backend.unwrap_or_default(), participating, creator) {
+/// Whether this process may run `backend`, decided before it joins: a
+/// claude-code member must be a swarm worker (O1), a process joining a
+/// `created` run that is not the run's creator (its coordinator).
+fn admit_backend(
+    backend: MemberBackend,
+    created: bool,
+    creator: bool,
+    stderr: &mut String,
+) -> bool {
+    let admitted = match (backend, created, creator) {
         (MemberBackend::Quecto, _, _) | (MemberBackend::ClaudeCode, true, false) => true,
         (MemberBackend::ClaudeCode, false, _) | (MemberBackend::ClaudeCode, true, true) => false,
     };

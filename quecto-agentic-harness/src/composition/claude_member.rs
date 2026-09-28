@@ -98,20 +98,31 @@ fn launch_spec(
 /// until #2293 selects the mode by config: with both set, which one the
 /// member runs under would be a guess, so it is refused, naming both
 /// variables and neither value; with none, the first is named without a
-/// value, which the launcher refuses before anything runs.
+/// value, which the launcher refuses before anything runs. A value that is
+/// not UTF-8 is refused, naming its variable and never its value: a lossy
+/// conversion would hand claude a credential nobody set.
 fn credential_from(parent_environment: &[(OsString, OsString)]) -> Result<CredentialEnv, String> {
-    let value_of = |name: &str| {
-        parent_environment
+    let value_of = |name: &str| -> Result<Option<String>, String> {
+        let value = parent_environment
             .iter()
             .rev()
             .find(|(candidate, _)| candidate == name)
-            .map(|(_, value)| value.to_string_lossy().into_owned())
-            .filter(|value| !value.is_empty())
+            .map(|(_, value)| value.to_str());
+        match value {
+            None => Ok(None),
+            Some(Some(value)) if !value.is_empty() => Ok(Some(value.to_string())),
+            Some(Some(_)) => Ok(None),
+            Some(None) => Err(format!(
+                "{name} is not valid UTF-8; a claude-code member takes a UTF-8 credential"
+            )),
+        }
     };
-    let set: Vec<(&str, String)> = CREDENTIAL_VARIABLES
-        .iter()
-        .filter_map(|name| value_of(name).map(|value| (*name, value)))
-        .collect();
+    let mut set: Vec<(&str, String)> = Vec::new();
+    for &name in CREDENTIAL_VARIABLES {
+        if let Some(value) = value_of(name)? {
+            set.push((name, value));
+        }
+    }
     match set.as_slice() {
         [] => Ok(CredentialEnv {
             name: CREDENTIAL_VARIABLES[0].to_string(),

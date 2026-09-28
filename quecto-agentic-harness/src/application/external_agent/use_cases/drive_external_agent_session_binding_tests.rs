@@ -26,7 +26,7 @@ use crate::application::external_agent::dto::{
 // every accepted one ends the turn.
 #[tokio::test]
 async fn in_flight_user_turns_are_capped_below_the_clis_uuid_list() {
-    assert!(USER_TURNS_PER_TURN_CAPACITY < 64, "below the CLI's 64");
+    assert_eq!(USER_TURNS_PER_TURN_CAPACITY, 63, "one below the CLI's 64");
     let rig = named_started().await;
     rig.session.prompt("prompt", None).await.unwrap();
     let mut accepted = vec!["u2".to_string()];

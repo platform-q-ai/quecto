@@ -11,17 +11,29 @@
 //! named by a result, or withdrawn by an interrupt: until then claude is
 //! still working and nothing new is started.
 //!
+//! A result names at most 64 user turns, so a turn holds at most
+//! [`USER_TURNS_PER_TURN_CAPACITY`]. A result naming none, once claude has
+//! named them, is a turn of claude's own when it succeeded (it consumed
+//! nothing of the member's) and the running turn's end when it failed (a
+//! session-scoped failure, a zeroed or a delivery-failure result: none is
+//! followed by another result for it). Until claude has named them (an
+//! older CLI) a result answers everything written, so no steer is taken:
+//! its own result could not be told from the running turn's.
+//!
 //! Invariants, asserted: at most one turn is in flight (a turn begins only
 //! from `Idle`), turn ordinals strictly increase, a turn ends only when
-//! nothing is owed, only a running turn is interrupted, and the queue never
-//! holds more than [`FOLLOW_UP_QUEUE_CAPACITY`] follow-ups.
+//! nothing is owed, only a running turn is interrupted, a turn never holds
+//! more than [`USER_TURNS_PER_TURN_CAPACITY`] user turns and the queue
+//! never more than [`FOLLOW_UP_QUEUE_CAPACITY`] follow-ups. The member
+//! may end (`close`) at any await of the session's: every transition
+//! taken after one allows for `Ended`.
 
 use std::collections::{BTreeSet, VecDeque};
 
 use super::dto::{
     AgentClockInstant, FOLLOW_UP_QUEUE_CAPACITY, ProjectionStep, PromptAccepted, SessionPhase,
     SessionRecord, SessionRefusal, SessionStep, StreamingBehavior, TOOL_NAME_RECORD_BYTES,
-    TurnOutcome, UserTurnId,
+    TurnOutcome, USER_TURNS_PER_TURN_CAPACITY, UserTurnId,
 };
 use super::projection::Projector;
 use crate::domain::external_agent::stream::{AssistantContent, ExternalAgentEvent};
@@ -38,6 +50,8 @@ pub(crate) struct SessionCore {
     skipped_last: bool,
     /// User turns written and not yet named by a result or withdrawn.
     owed: BTreeSet<UserTurnId>,
+    /// User turns written into the running turn: its prompt and steers.
+    in_turn: usize,
     /// Whether the agent names the turns its results consumed: learnt from
     /// the first result that does. Until then (an older CLI) a result is
     /// taken to answer everything written.
@@ -132,7 +146,14 @@ impl SessionCore {
                 Err(SessionRefusal::Busy)
             }
             (SessionPhase::Busy { turn }, Some(StreamingBehavior::Steer)) => {
-                Ok(Admission::Write(PromptAccepted::Steered { turn }))
+                match (
+                    self.names_turns,
+                    self.in_turn < USER_TURNS_PER_TURN_CAPACITY,
+                ) {
+                    (true, true) => Ok(Admission::Write(PromptAccepted::Steered { turn })),
+                    (true, false) => Err(SessionRefusal::QueueFull),
+                    (false, _) => Err(SessionRefusal::SteerUnavailable),
+                }
             }
             (SessionPhase::Interrupting { .. }, Some(StreamingBehavior::Steer)) => {
                 Err(SessionRefusal::Interrupting)
@@ -163,6 +184,11 @@ impl SessionCore {
         // Ended: the member was closed while the turn was being written.
         if let SessionPhase::Busy { .. } = self.phase {
             self.owed.insert(id);
+            self.in_turn += 1;
+            assert!(
+                self.in_turn <= USER_TURNS_PER_TURN_CAPACITY,
+                "a turn holds at most {USER_TURNS_PER_TURN_CAPACITY} user turns"
+            );
             self.projector.record_user_turn(text);
         }
     }
@@ -191,6 +217,7 @@ impl SessionCore {
         assert!(turn > self.last_turn, "turn ordinals strictly increase");
         self.last_turn = turn;
         self.skipped_last = false;
+        self.in_turn = 0;
         self.phase = SessionPhase::Busy { turn };
         turn
     }
@@ -238,7 +265,7 @@ impl SessionCore {
             }
             ExternalAgentEvent::Result(result) => {
                 match (result.user_turn_ids.as_slice(), self.names_turns) {
-                    ([], true) => {}
+                    ([], true) => self.id_less_result(turn, result.is_error, &mut folded),
                     ([], false) => self.owed.clear(),
                     (ids, _) => {
                         self.names_turns = true;
@@ -263,6 +290,26 @@ impl SessionCore {
         }
         folded.step = step;
         folded
+    }
+
+    /// A result naming no user turn, from a CLI that names them. Only a
+    /// success is a turn of claude's own (it consumed nothing of the
+    /// member's): any other ends the running turn, as nothing more will
+    /// answer what it owes.
+    fn id_less_result(&mut self, turn: Option<u64>, is_error: Option<bool>, folded: &mut Folded) {
+        let Some(turn) = turn else {
+            return;
+        };
+        let ended = match is_error {
+            Some(false) => false,
+            Some(true) | None => true,
+        };
+        if ended {
+            self.owed.clear();
+        }
+        folded
+            .records
+            .push(SessionRecord::ResultWithoutIds { turn, ended });
     }
 
     /// After a result or an interrupt's answer: the running turn ends once
@@ -319,16 +366,25 @@ impl SessionCore {
     }
 
     /// Turn `turn` was interrupted: nothing new is written until every
-    /// result it owes has come, or `deadline` passes.
-    pub(crate) fn interrupting(&mut self, turn: u64, deadline: AgentClockInstant) {
-        assert_eq!(
-            self.phase,
-            SessionPhase::Busy { turn },
-            "only the running turn is interrupted"
-        );
-        self.phase = SessionPhase::Interrupting { turn };
-        self.skipped_last = false;
-        self.deadline = Some(deadline);
+    /// result it owes has come, or `deadline` passes. `false` when the
+    /// member ended (`close`) while the interrupt was being written: there
+    /// is nothing left to wait for.
+    pub(crate) fn interrupting(&mut self, turn: u64, deadline: AgentClockInstant) -> bool {
+        match self.phase {
+            SessionPhase::Busy { turn: running } if running == turn => {
+                self.phase = SessionPhase::Interrupting { turn };
+                self.skipped_last = false;
+                self.deadline = Some(deadline);
+                true
+            }
+            SessionPhase::Ended => false,
+            phase => panic!("only the running turn {turn} is interrupted: {phase:?}"),
+        }
+    }
+
+    /// Whether the member has ended.
+    pub(crate) fn ended(&self) -> bool {
+        self.phase == SessionPhase::Ended
     }
 
     /// Whether the interrupted turn is past its deadline at `now`.

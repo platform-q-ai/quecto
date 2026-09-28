@@ -178,45 +178,6 @@ fn the_creator_creates_the_store_in_the_git_directory() {
     assert!(creator.database().is_file());
 }
 
-/// #2287 review (L3): `--backend claude-code` runs only as a swarm worker:
-/// after admission, a participant of a created run that is not its
-/// creator. quecto needs no such identity.
-#[test]
-fn a_claude_code_member_must_be_an_admitted_swarm_worker() {
-    let flags = flags_with(&["--backend", "claude-code"]);
-    let mut stderr = String::new();
-    assert!(!admit_backend_with(&flags, false, &mut stderr));
-    assert_eq!(stderr, CLAUDE_CODE_NOT_A_SWARM_WORKER);
-    assert_eq!(
-        stderr,
-        "agent: --backend claude-code runs only as a swarm worker admitted to a created swarm run\n"
-    );
-
-    flags.swarm_participation.set(true);
-    let mut stderr = String::new();
-    assert!(admit_backend_with(&flags, false, &mut stderr), "{stderr}");
-    assert!(stderr.is_empty());
-
-    let mut stderr = String::new();
-    assert!(
-        !admit_backend_with(&flags, true, &mut stderr),
-        "the run's creator is its coordinator, not a worker"
-    );
-    assert_eq!(stderr, CLAUDE_CODE_NOT_A_SWARM_WORKER);
-
-    for args in [&[][..], &["--backend", "quecto"][..]] {
-        let flags = flags_with(args);
-        assert!(
-            admit_backend_with(&flags, false, &mut String::new()),
-            "{args:?}"
-        );
-        assert!(
-            admit_backend_with(&flags, true, &mut String::new()),
-            "{args:?}"
-        );
-    }
-}
-
 /// Whether `name` holds a member row in the container at `checkout`, as
 /// its coordinator reads the board.
 fn has_member_row(checkout: &std::path::Path, name: &str) -> bool {
