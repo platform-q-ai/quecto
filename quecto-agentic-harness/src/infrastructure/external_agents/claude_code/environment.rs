@@ -274,7 +274,7 @@ fn private_dir(
     member_dir: &Path,
     leaf: &str,
 ) -> Result<PathBuf, MemberEnvironmentError> {
-    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     use std::os::unix::fs::MetadataExt;
     assert!(
         plain_leaf(leaf),
@@ -314,9 +314,10 @@ fn private_dir(
     let opened = fd >= 0;
     let directory = if opened {
         // `fd` was just returned by `openat`, is open, and nothing else
-        // owns it: the `File` takes sole ownership and closes it.
+        // owns it: the `OwnedFd` takes sole ownership and closes it.
         // SAFETY: a fresh, open, unowned descriptor.
-        unsafe { std::fs::File::from_raw_fd(fd) }
+        let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+        std::fs::File::from(owned)
     } else {
         let error = std::io::Error::last_os_error();
         return Err(refuse(format!(

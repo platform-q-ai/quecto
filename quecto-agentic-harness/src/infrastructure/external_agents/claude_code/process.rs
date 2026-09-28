@@ -27,11 +27,21 @@
 //!   [`ExternalAgentInputError::Closed`] and writes none of them; the one
 //!   line already being written at the close is written whole. The close
 //!   never waits behind a write stuck on a full pipe.
+//! - **Exit.** [`ExternalAgentProcess::exited`] consumes no output: what
+//!   is unread when the child ends stays readable, so a session may select
+//!   over the next event and the exit. A caller that awaits it alone while
+//!   nobody reads can wait forever on a child held by its full stdout;
+//!   [`ExternalAgentProcess::exited_discarding_output`] reads and discards
+//!   the rest instead. Either returns once stderr has ended too, or within
+//!   [`STDERR_EOF_GRACE`] (a descendant may hold it open), so the tail
+//!   carries the child's last words.
 //! - Stderr keeps its last [`EXTERNAL_AGENT_STDERR_TAIL_BYTES`].
 //! - **Telemetry.** Structured `tracing` events under
 //!   [`TELEMETRY_TARGET`]: launch, process start, input close, skipped
-//!   line, termination and exit — names, lengths and counts only, never a
-//!   credential, a proxy value, an inline JSON argument or stderr itself.
+//!   line and exit — names, lengths and counts only, never a credential, a
+//!   proxy value, an inline JSON argument or stderr itself. The
+//!   termination is logged by the supervisor, under its own target, from
+//!   a data-only observation naming the member.
 //!
 //! Closing the input makes `claude` finish and exit 0. Dropping the process
 //! closes its input and asks the supervisor to end the child — first by
@@ -45,9 +55,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
+use serde_json::json;
 use tokio::sync::Mutex;
 
+pub use super::arguments::claude_arguments;
+use super::arguments::flags_of;
 use super::environment::{MemberEnvironmentError, check_credential, member_environment};
 use super::stream_json::StreamJsonDecoder;
 use crate::application::external_agent::dto::{
@@ -65,7 +77,7 @@ use crate::infrastructure::processes::child_line_pipes::{
 use crate::infrastructure::processes::child_stderr_tail::StderrTail;
 use crate::infrastructure::processes::owned_child_supervisor::{
     ChildExit, ChildHandleId, OwnedChildSupervisor, ProcessGroup, ProtocolOutcome,
-    TerminationBudget, TerminationOutcome,
+    TerminationBudget, TerminationObservation,
 };
 
 /// The program looked up on `PATH`.
@@ -99,25 +111,6 @@ pub const STDERR_EOF_GRACE: Duration = Duration::from_millis(500);
 /// Whole turns queued ahead of the stdin writer; a full queue holds the
 /// sender (cancel-safely: an unqueued turn is simply not sent).
 const INPUT_QUEUE: usize = 16;
-
-/// Every flag `claude` is given: the only arguments telemetry names (a
-/// flag's value may be inline JSON).
-const CLAUDE_FLAGS: &[&str] = &[
-    "-p",
-    "--input-format",
-    "--output-format",
-    "--verbose",
-    "--model",
-    "--tools",
-    "--mcp-config",
-    "--strict-mcp-config",
-    "--settings",
-    "--setting-sources",
-    "--permission-mode",
-    "--allow-dangerously-skip-permissions",
-    "--no-session-persistence",
-    "--max-budget-usd",
-];
 
 /// Starts `claude` member processes.
 pub struct ClaudeCodeLauncher {
@@ -262,8 +255,10 @@ impl ClaudeCodeLauncher {
                 pending: VecDeque::new(),
             }),
             discarded_lines: AtomicUsize::new(0),
+            discarded_events: AtomicUsize::new(0),
             exit_logged: AtomicBool::new(false),
             stderr,
+            stderr_eof_grace: self.stderr_eof_grace,
             termination: self.termination,
         }))
     }
@@ -296,15 +291,6 @@ fn member_name(member_dir: &Path) -> String {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default()
-}
-
-/// The flags of `arguments`, without their values.
-fn flags_of(arguments: &[String]) -> Vec<&str> {
-    arguments
-        .iter()
-        .map(String::as_str)
-        .filter(|argument| CLAUDE_FLAGS.contains(argument))
-        .collect()
 }
 
 /// A refused credential is an invalid spec; only a directory the member's
@@ -363,110 +349,6 @@ fn checked_checkout(checkout: &Path) -> Result<PathBuf, ExternalAgentLaunchError
 
 fn invalid(detail: String) -> ExternalAgentLaunchError {
     ExternalAgentLaunchError::InvalidSpec(detail)
-}
-
-/// A model name: letters, digits and `-._[]`, not starting with `-`.
-fn valid_model(model: &str) -> bool {
-    model
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_alphanumeric())
-        && model
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "-._[]".contains(c))
-}
-
-/// A tool name: letters, digits and `_`, starting with a letter.
-fn valid_tool(tool: &str) -> bool {
-    tool.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-        && tool.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-fn json_object(flag: &str, value: &Value) -> Result<String, ExternalAgentLaunchError> {
-    match value {
-        Value::Object(_) => Ok(value.to_string()),
-        _ => Err(invalid(format!("{flag} must be a JSON object"))),
-    }
-}
-
-/// The argv after the program: the stream-json flags and the spec's values,
-/// each value checked first.
-///
-/// `--mcp-config` and `--settings` are inline JSON, and argv is readable
-/// by every local user through procfs. Nothing secret may be inlined: the
-/// credential reaches `claude` only through its environment, and S5 must
-/// hand bridge tokens over by a file in the member's private directory,
-/// never in this JSON. An argv that would carry the credential's value is
-/// refused.
-pub fn claude_arguments(
-    spec: &ExternalAgentLaunchSpec,
-) -> Result<Vec<String>, ExternalAgentLaunchError> {
-    if !valid_model(&spec.model) {
-        return Err(invalid(format!(
-            "model {:?} is not a model name",
-            spec.model
-        )));
-    }
-    if let Some(tool) = spec.tools.iter().find(|tool| !valid_tool(tool)) {
-        return Err(invalid(format!("tool {tool:?} is not a tool name")));
-    }
-    if !(spec.max_budget_usd.is_finite() && spec.max_budget_usd > 0.0) {
-        return Err(invalid(format!(
-            "the budget {} is not a positive amount",
-            spec.max_budget_usd
-        )));
-    }
-    let mcp_config = json_object("--mcp-config", &spec.mcp_config)?;
-    let settings = json_object("--settings", &spec.settings)?;
-    let arguments: Vec<String> = [
-        "-p",
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--model",
-        &spec.model,
-        "--tools",
-        &spec.tools.join(","),
-        "--mcp-config",
-        &mcp_config,
-        "--strict-mcp-config",
-        "--settings",
-        &settings,
-        "--setting-sources",
-        "project",
-        "--permission-mode",
-        "bypassPermissions",
-        // Spike #2264's shim passed this whenever the mode was
-        // bypassPermissions. Claude 2.1.280 honoured the mode without it
-        // (round-1 live check), but a version that requires the opt-in
-        // would silently fall back to prompting: match the spike.
-        "--allow-dangerously-skip-permissions",
-        "--no-session-persistence",
-        "--max-budget-usd",
-        &spec.max_budget_usd.to_string(),
-    ]
-    .iter()
-    .map(|argument| argument.to_string())
-    .collect();
-    debug_assert!(
-        arguments
-            .iter()
-            .filter(|argument| argument.starts_with('-'))
-            .all(|flag| CLAUDE_FLAGS.contains(&flag.as_str())),
-        "every flag is one telemetry may name"
-    );
-    let secret = spec.credential.value.as_str();
-    let argv_clean =
-        secret.is_empty() || arguments.iter().all(|argument| !argument.contains(secret));
-    if argv_clean {
-        return Ok(arguments);
-    }
-    Err(invalid(format!(
-        "the argv would carry the value of {}: argv is readable by every local user",
-        spec.credential.name
-    )))
 }
 
 /// Stdout's lines and what they decoded to, read under one lock.
@@ -545,10 +427,14 @@ pub struct ClaudeCodeProcess {
     started: Instant,
     input: StdinLines,
     events: Mutex<EventStream>,
-    /// Lines [`ExternalAgentProcess::exited`] discarded unread.
+    /// Stdout lines [`ExternalAgentProcess::exited_discarding_output`]
+    /// discarded undecoded.
     discarded_lines: AtomicUsize,
+    /// Decoded events it discarded unreturned.
+    discarded_events: AtomicUsize,
     exit_logged: AtomicBool,
     stderr: StderrTail,
+    stderr_eof_grace: Duration,
     termination: TerminationBudget,
 }
 
@@ -577,15 +463,34 @@ impl ClaudeCodeProcess {
         }
     }
 
-    /// Read and discard stdout until it ends, so a child whose output no
-    /// one reads can still finish writing and exit; then wait forever.
-    async fn drain_unread(&self) -> std::convert::Infallible {
+    /// Discard the decoded events not yet returned, then read and discard
+    /// stdout until it ends, so a child whose output no one reads can
+    /// still finish writing and exit; then wait forever. Each is counted.
+    async fn discard_unread(&self) -> std::convert::Infallible {
         let mut events = self.events.lock().await;
-        events.pending.clear();
+        let pending = std::mem::take(&mut events.pending);
+        self.discarded_events
+            .fetch_add(pending.len(), Ordering::Relaxed);
         while events.lines.next().await.is_some() {
             self.discarded_lines.fetch_add(1, Ordering::Relaxed);
         }
         std::future::pending().await
+    }
+
+    /// The child's exit, once stderr has ended too or the grace passed,
+    /// logged once.
+    async fn exit(&self) -> ExternalAgentExit {
+        let exit = match self.supervisor.wait_exit(self.handle).await {
+            Some(ChildExit::Code(code)) => ExternalAgentExit::Code(code),
+            Some(ChildExit::Signal(signal)) => ExternalAgentExit::Signal(signal),
+            Some(ChildExit::Unobservable(detail)) => ExternalAgentExit::Unobservable(detail),
+            None => {
+                ExternalAgentExit::Unobservable("the supervisor no longer knows this child".into())
+            }
+        };
+        self.stderr.wait_eof(self.stderr_eof_grace).await;
+        self.log_exit(&exit);
+        exit
     }
 
     fn log_exit(&self, exit: &ExternalAgentExit) {
@@ -606,6 +511,7 @@ impl ClaudeCodeProcess {
             wall_ms = self.started.elapsed().as_millis() as u64,
             stderr_tail_bytes = self.stderr.snapshot().len(),
             discarded_lines = self.discarded_lines.load(Ordering::Relaxed),
+            discarded_events = self.discarded_events.load(Ordering::Relaxed),
             "claude member exit"
         );
     }
@@ -637,31 +543,21 @@ impl ExternalAgentProcess for ClaudeCodeProcess {
         Box::pin(async move { self.close("close_input") })
     }
 
-    /// Waits for the exit while draining stdout: events not read by now
-    /// are discarded (counted in the exit's telemetry), so a caller that
-    /// stopped reading cannot hold the child, and this wait, forever.
+    /// Consumes no output (see the module docs).
     fn exited(&self) -> PortFuture<'_, ExternalAgentExit> {
-        Box::pin(async move {
-            let exit = tokio::select! {
-                biased;
-                exit = self.supervisor.wait_exit(self.handle) => exit,
-                never = self.drain_unread() => match never {},
-            };
-            let exit = match exit {
-                Some(ChildExit::Code(code)) => ExternalAgentExit::Code(code),
-                Some(ChildExit::Signal(signal)) => ExternalAgentExit::Signal(signal),
-                Some(ChildExit::Unobservable(detail)) => ExternalAgentExit::Unobservable(detail),
-                None => ExternalAgentExit::Unobservable(
-                    "the supervisor no longer knows this child".into(),
-                ),
-            };
-            self.log_exit(&exit);
-            exit
-        })
+        Box::pin(self.exit())
     }
 
+    /// Discards the unread output meanwhile, counted in the exit's
+    /// telemetry.
     fn exited_discarding_output(&self) -> PortFuture<'_, ExternalAgentExit> {
-        self.exited()
+        Box::pin(async move {
+            tokio::select! {
+                biased;
+                exit = self.exit() => exit,
+                never = self.discard_unread() => match never {},
+            }
+        })
     }
 
     fn stderr_tail(&self) -> String {
@@ -683,19 +579,6 @@ impl Drop for ClaudeCodeProcess {
     }
 }
 
-/// The last signal a termination needed.
-fn signal_of(outcome: &TerminationOutcome) -> &'static str {
-    match outcome {
-        TerminationOutcome::ExitedAfterKill { .. } | TerminationOutcome::StillRunning { .. } => {
-            "KILL"
-        }
-        TerminationOutcome::ExitedAfterTerm { .. } => "TERM",
-        TerminationOutcome::NoRetainedHandle
-        | TerminationOutcome::AlreadyExited(_)
-        | TerminationOutcome::ExitedAfterProtocol(_) => "none",
-    }
-}
-
 /// Have the supervisor end `handle`'s child once its input is closed: it
 /// exits by itself, or the supervisor's TERM → KILL fallback ends its
 /// group. Its slot is retired once it is reaped. Members of its group left
@@ -711,16 +594,10 @@ fn end_child(
         handle,
         Box::pin(async { ProtocolOutcome::Acknowledged }),
         budget,
-        Box::new(move |outcome, elapsed| {
-            tracing::info!(
-                target: TELEMETRY_TARGET,
-                member = %member,
-                signal = %signal_of(outcome),
-                still_running = matches!(outcome, TerminationOutcome::StillRunning { .. }),
-                elapsed_ms = elapsed.as_millis() as u64,
-                "claude member termination"
-            );
-        }),
+        TerminationObservation {
+            owner: "claude member",
+            label: member,
+        },
     );
     supervisor.retire_when_reaped(handle);
 }

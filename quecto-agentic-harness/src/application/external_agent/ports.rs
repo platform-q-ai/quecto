@@ -49,12 +49,19 @@ pub trait ExternalAgentProcess: Send + Sync {
     /// [`ExternalAgentInputError::Closed`].
     fn close_input(&self) -> PortFuture<'_, ()>;
 
-    /// Wait for the process to end. Events not read yet are drained and
-    /// discarded meanwhile, so a caller that stopped reading can never hold
-    /// the process, and this wait, forever: read the events you need first.
+    /// Wait for the process to end. Consumes no output: events unread
+    /// when it ends stay readable through [`Self::next_event`], so a
+    /// session may wait on both at once and lose none. An agent writes
+    /// only as fast as its output is read, so a caller awaiting this alone
+    /// while nobody reads can wait forever: one that has stopped reading
+    /// waits with [`Self::exited_discarding_output`]. Returns once the
+    /// agent's diagnostics are whole too, or within a short bound, so
+    /// [`Self::stderr_tail`] carries its last words.
     fn exited(&self) -> PortFuture<'_, ExternalAgentExit>;
 
-    /// Wait for the process to end, discarding its unread output.
+    /// [`Self::exited`], reading and discarding the output no one has read
+    /// meanwhile, so an agent whose output no caller reads still finishes
+    /// and exits. The events it discards are lost.
     fn exited_discarding_output(&self) -> PortFuture<'_, ExternalAgentExit>;
 
     /// The last [`super::dto::EXTERNAL_AGENT_STDERR_TAIL_BYTES`] of its

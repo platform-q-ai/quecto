@@ -26,7 +26,7 @@ const SUPERVISOR: &str = "src/infrastructure/processes/owned_child_supervisor.rs
 /// The files whose code runs on the supervisor's runtime.
 const RUNTIME_FILES: &[&str] = &[
     "src/infrastructure/processes/owned_child_supervisor.rs",
-    "src/infrastructure/processes/owned_child_supervisor_tasks.rs",
+    "src/infrastructure/processes/owned_child_supervisor/tasks.rs",
     "src/infrastructure/processes/child_line_pipes.rs",
     "src/infrastructure/processes/child_stderr_tail.rs",
 ];
@@ -89,7 +89,7 @@ const PROTOCOL_TAKERS: &[(&str, &str, &str, &str, &str)] = &[
     (SUPERVISOR, "spawn_termination", "", BOXED_PROTOCOL, ""),
 ];
 
-const TASKS: &str = "src/infrastructure/processes/owned_child_supervisor_tasks.rs";
+const TASKS: &str = "src/infrastructure/processes/owned_child_supervisor/tasks.rs";
 
 const BOXED_PROTOCOL: &str =
     "std :: pin :: Pin < Box < dyn Future < Output = ProtocolOutcome > + Send > >";

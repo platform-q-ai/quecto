@@ -92,56 +92,9 @@ impl ChildExit {
     }
 }
 
-/// Result of the caller's protocol attempt, in the supervisor's words.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProtocolOutcome {
-    /// The child acknowledged the shutdown; it is expected to exit by itself.
-    Acknowledged,
-    /// The child could not be reached, refused, or the attempt timed out.
-    Negative(String),
-}
-
-/// Bounded waits of one termination.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TerminationBudget {
-    /// How long an acknowledged child gets to exit before the fallback.
-    pub exit_after_ack: Duration,
-    /// How long after TERM before KILL.
-    pub term_grace: Duration,
-    /// How long after KILL before giving up on observing the exit.
-    pub kill_grace: Duration,
-}
-
-impl TerminationBudget {
-    pub const DEFAULT: Self = Self {
-        exit_after_ack: Duration::from_secs(10),
-        term_grace: Duration::from_secs(2),
-        kill_grace: Duration::from_secs(2),
-    };
-}
-
-impl Default for TerminationBudget {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TerminationOutcome {
-    /// No unreaped handle is retained for this id: nothing was signalled.
-    NoRetainedHandle,
-    /// The child had already exited before any step was needed.
-    AlreadyExited(ChildExit),
-    /// The child exited on its own after acknowledging the protocol.
-    ExitedAfterProtocol(ChildExit),
-    /// The protocol outcome was negative (or the exit deadline passed) and
-    /// TERM produced the exit.
-    ExitedAfterTerm { negative: String, exit: ChildExit },
-    /// TERM did not suffice within its grace; KILL produced the exit.
-    ExitedAfterKill { negative: String, exit: ChildExit },
-    /// Even KILL did not yield an observed exit within the budget.
-    StillRunning { negative: String },
-}
+/// The protocol's outcome, the termination's bounds and its outcome.
+mod outcomes;
+pub use outcomes::{ProtocolOutcome, TerminationBudget, TerminationOutcome};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SentSignal {
@@ -193,7 +146,9 @@ pub struct OwnedChildSupervisor {
     next: AtomicU64,
     /// The supervisor's own runtime: every spawn and reap runs here.
     runtime: Mutex<Option<tokio::runtime::Runtime>>,
-    pub(super) handle: tokio::runtime::Handle,
+    /// Private to this file: only its allowlisted spawners run anything on
+    /// the runtime (the `supervisor_runtime` architecture test).
+    handle: tokio::runtime::Handle,
     /// Test seam: record instead of dispatching real signals.
     #[cfg(any(test, feature = "test-support"))]
     dry_run: std::sync::atomic::AtomicBool,
@@ -671,7 +626,49 @@ impl OwnedChildSupervisor {
         protocol: std::pin::Pin<Box<dyn Future<Output = ProtocolOutcome> + Send>>,
         budget: TerminationBudget,
     ) {
-        self.request_termination_observed(id, protocol, budget, Box::new(|_, _| {}));
+        if self.retains(id) {
+            self.spawn_termination(id, protocol, budget, None);
+        }
+    }
+
+    /// The one place a requested termination is spawned. Unobserved, it
+    /// runs under the supervisor's own `tracing` dispatch; observed, under
+    /// its requester's, where the supervisor itself logs the observation.
+    fn spawn_termination(
+        self: &Arc<Self>,
+        id: ChildHandleId,
+        protocol: std::pin::Pin<Box<dyn Future<Output = ProtocolOutcome> + Send>>,
+        budget: TerminationBudget,
+        observation: Option<tasks::TerminationObservation>,
+    ) {
+        use tracing::instrument::WithSubscriber;
+        let started = std::time::Instant::now();
+        let observed = observation.is_some();
+        let supervisor = Arc::clone(self);
+        let termination = async move {
+            let outcome = supervisor.terminate(id, protocol, budget).await;
+            tracing::info!(handle = ?id, ?outcome, "owned child termination finished");
+            if let Some(observation) = observation {
+                observation.log(&outcome, started.elapsed());
+            }
+        };
+        if observed {
+            self.handle.spawn(termination.with_current_subscriber());
+        } else {
+            self.handle.spawn(termination);
+        }
+    }
+
+    /// The private spawn helper of the line pumps: runs a [`PipeTask`],
+    /// which only `child_line_pipes` builds, under the caller's `tracing`
+    /// dispatch.
+    ///
+    /// [`PipeTask`]: super::child_line_pipes::PipeTask
+    fn spawn_pipe_task(&self, task: super::child_line_pipes::PipeTask) -> tokio::task::AbortHandle {
+        use tracing::instrument::WithSubscriber;
+        self.handle
+            .spawn(task.run().with_current_subscriber())
+            .abort_handle()
     }
 
     /// Send one signal kind at most once, only while the handle is unreaped,
@@ -736,6 +733,11 @@ fn send_signal(pid: u32, group: ProcessGroup, signal: SentSignal) {
         let _ = (pid, group, signal);
     }
 }
+
+/// The pumps and the observed termination: a child module, so they reach
+/// the runtime only through this file's private spawn helpers.
+mod tasks;
+pub(crate) use tasks::TerminationObservation;
 
 #[cfg(test)]
 #[path = "owned_child_supervisor_tests.rs"]

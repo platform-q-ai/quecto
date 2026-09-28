@@ -2,6 +2,7 @@
 //! its stream-json codec (#2285), and its process adapter with the
 //! member's isolated environment (#2286).
 
+mod arguments;
 pub mod environment;
 mod json_fields;
 pub mod process;

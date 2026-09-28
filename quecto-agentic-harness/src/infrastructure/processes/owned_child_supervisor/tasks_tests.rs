@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::OwnedChildSupervisor;
+use super::{OwnedChildSupervisor, TerminationObservation};
 use crate::infrastructure::processes::child_line_pipes::{LineLimits, StdoutLine};
 use crate::infrastructure::processes::owned_child_supervisor::{
     ChildExit, ProcessGroup, ProtocolOutcome, TerminationBudget,
@@ -141,4 +141,61 @@ fn a_plain_termination_request_keeps_the_supervisors_own_subscriber() {
         "a plain termination is not logged under its requester's subscriber: {text}"
     );
     supervisor.retire(handle);
+}
+
+/// An observed termination runs under its requester's subscriber, where
+/// the supervisor itself logs the requester's data-only observation.
+#[test]
+fn an_observed_termination_is_logged_by_the_supervisor_under_its_requesters_subscriber() {
+    let supervisor = Arc::new(OwnedChildSupervisor::new());
+    let logs = CapturedLog::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(logs.clone())
+        .with_ansi(false)
+        .with_max_level(tracing::Level::DEBUG)
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    runtime().block_on(async {
+        let mut sleep = tokio::process::Command::new("sleep");
+        sleep
+            .arg("30")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let spawned = supervisor.spawn(sleep, ProcessGroup::Own).await.unwrap();
+        supervisor.request_termination_observed(
+            spawned.handle,
+            Box::pin(async { ProtocolOutcome::Acknowledged }),
+            QUICK,
+            TerminationObservation {
+                owner: "test child",
+                label: "t1".into(),
+            },
+        );
+        let line = tokio::time::timeout(BOUND, async {
+            loop {
+                let text = logs.text();
+                if let Some(line) = text
+                    .lines()
+                    .find(|line| line.contains("owned child termination observed"))
+                {
+                    return line.to_string();
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the observation is logged under the requester's subscriber");
+        for expected in [
+            super::TELEMETRY_TARGET,
+            "owner=test child",
+            "label=t1",
+            "signal=TERM",
+            "still_running=false",
+            "elapsed_ms=",
+        ] {
+            assert!(line.contains(expected), "{expected}: {line}");
+        }
+        supervisor.retire_when_reaped(spawned.handle);
+    });
 }

@@ -8,7 +8,6 @@ pub mod containers;
 pub mod direct_child_routing;
 pub mod local;
 pub mod owned_child_supervisor;
-pub mod owned_child_supervisor_tasks;
 pub mod owned_child_termination;
 pub mod parent_control;
 pub mod parent_death_signal;
