@@ -396,9 +396,10 @@ async fn test_callback_bind_failure_on_occupied_port() {
 
 // --- Callback listener request framing (PR #2309) ---
 //
-// The listener must read the whole request head (up to the blank line that
-// ends the headers) before answering. A request that arrives in pieces, or
-// whose head is larger than one socket read, is still one request.
+// The listener frames the request line, which may arrive in pieces or be
+// larger than one socket read, and reads the rest of the head before it ends
+// a login. More connection handling is covered in
+// oauth_callback_listener_tests.rs.
 
 /// Connect, send each piece as its own write with a pause between them, then
 /// half-close only when `half_close` is set, and return whatever the listener
@@ -492,7 +493,7 @@ async fn test_callback_request_head_larger_than_one_read_is_accepted() {
 }
 
 #[tokio::test]
-async fn test_callback_request_head_over_the_cap_gets_431_without_hanging() {
+async fn test_callback_request_line_over_the_cap_gets_414_without_hanging() {
     let (addr, handle) = spawn_listener("s", 30);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let start = std::time::Instant::now();
@@ -502,8 +503,8 @@ async fn test_callback_request_head_over_the_cap_gets_431_without_hanging() {
     );
     let resp = send_pieces(&addr, &[request.as_bytes()], false).await;
     assert!(
-        resp.starts_with("HTTP/1.1 431 "),
-        "an oversized head must get 431, got: {resp:?}"
+        resp.starts_with("HTTP/1.1 414 "),
+        "an over-long request line must get 414, got: {resp:?}"
     );
     assert!(start.elapsed() < std::time::Duration::from_secs(5));
     // The listener keeps serving after the rejection.

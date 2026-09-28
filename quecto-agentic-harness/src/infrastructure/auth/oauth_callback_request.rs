@@ -18,11 +18,32 @@ const HEAD_TERMINATOR: &[u8] = b"\r\n\r\n";
 /// Size of each socket read while collecting the head.
 const READ_CHUNK_BYTES: usize = 4096;
 
-/// After a rejection, how long and how much the listener keeps reading so
-/// that closing the socket with unread bytes does not reset the connection
-/// before the client has read the answer.
-const LINGER: std::time::Duration = std::time::Duration::from_secs(1);
-const LINGER_BYTES: usize = 64 * 1024;
+/// The listener's per-connection limits, injectable so tests stay fast.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct CallbackLimits {
+    /// Largest request line, its line ending included.
+    pub(super) request_line_bytes: usize,
+    /// Largest request head (line plus headers) read before a login ends.
+    pub(super) head_bytes: usize,
+    /// How long one connection may take to deliver what the listener needs.
+    pub(super) connection_budget: std::time::Duration,
+    /// After answering, how long the listener keeps reading so closing the
+    /// socket with unread bytes does not reset the connection before the
+    /// client has read the answer.
+    pub(super) linger: std::time::Duration,
+    /// After answering, how many bytes the listener reads at most.
+    pub(super) linger_bytes: usize,
+}
+
+impl CallbackLimits {
+    pub(super) const PRODUCTION: Self = Self {
+        request_line_bytes: 8 * 1024,
+        head_bytes: 256 * 1024,
+        connection_budget: std::time::Duration::from_secs(5),
+        linger: std::time::Duration::from_secs(1),
+        linger_bytes: 64 * 1024,
+    };
+}
 
 pub(super) const HEAD_TOO_LARGE_RESPONSE: &str =
     "HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Length: 17\r\n\r\nHeaders too large";
@@ -86,8 +107,12 @@ where
 /// what the client is still sending (bounded by [`LINGER`], [`LINGER_BYTES`]
 /// and `deadline`), so the kernel does not reset the connection over unread
 /// bytes before the client has read `response`.
-pub(super) async fn reject<S>(stream: &mut S, response: &str, deadline: Instant)
-where
+pub(super) async fn reject<S>(
+    stream: &mut S,
+    response: &str,
+    deadline: Instant,
+    limits: &CallbackLimits,
+) where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     if stream.write_all(response.as_bytes()).await.is_err() {
@@ -96,10 +121,10 @@ where
     if stream.shutdown().await.is_err() {
         return;
     }
-    let linger_until = std::cmp::min(deadline, Instant::now() + LINGER);
+    let linger_until = std::cmp::min(deadline, Instant::now() + limits.linger);
     let mut chunk = [0u8; READ_CHUNK_BYTES];
     let mut drained = 0usize;
-    while drained < LINGER_BYTES {
+    while drained < limits.linger_bytes {
         match tokio::time::timeout_at(linger_until, stream.read(&mut chunk)).await {
             Ok(Ok(n)) if n > 0 => drained += n,
             _ => return,

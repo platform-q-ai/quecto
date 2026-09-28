@@ -115,7 +115,13 @@ async fn silent_client_times_out_at_the_deadline() {
 async fn reject_writes_the_response_and_half_closes() {
     let (mut client, mut server) = tokio::io::duplex(1024);
     let rejecting = tokio::spawn(async move {
-        reject(&mut server, INCOMPLETE_REQUEST_RESPONSE, later(5)).await;
+        reject(
+            &mut server,
+            INCOMPLETE_REQUEST_RESPONSE,
+            later(5),
+            &CallbackLimits::PRODUCTION,
+        )
+        .await;
     });
     let mut answer = String::new();
     {
