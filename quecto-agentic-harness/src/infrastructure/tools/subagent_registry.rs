@@ -684,16 +684,7 @@ pub fn new_notification_channel() -> (NotificationTx, NotificationRx) {
 }
 
 /// Validate an agent_id string for format (shared between spawn and agent_cmd).
-pub fn validate_agent_id_format(agent_id: &str) -> Result<(), String> {
-    if agent_id.is_empty() || agent_id.len() > 64 {
-        return Err("agent_id must be 1-64 characters".to_string());
-    }
-    agent_id
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-        .then_some(())
-        .ok_or_else(|| "agent_id must use only [a-zA-Z0-9_-]".to_string())
-}
+pub use crate::domain::subagent::validate_agent_id_format;
 
 /// Snapshot of workflow state reported by a subagent.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]

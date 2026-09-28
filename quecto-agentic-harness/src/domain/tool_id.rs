@@ -71,6 +71,57 @@ pub fn stable_tool_id(source: ToolSource, provider_id: &str, name: &str) -> Stri
     )
 }
 
+/// A stable tool id taken apart (#2247 round 2): the namespace it was
+/// minted in, the provider that registers it and the tool's name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StableToolId<'a> {
+    pub source: ToolSource,
+    pub provider_id: &'a str,
+    pub name: &'a str,
+}
+
+/// Parse `id` by the grammar [`stable_tool_id`] mints:
+/// `tool.v1:<source>:<len>:<provider id of len bytes>:<name>`. An allowlist:
+/// the source is one [`ToolSource`] label, the length plain decimal digits
+/// matching a non-empty provider id, the name one or more of
+/// `[A-Za-z0-9_-]` (the characters a model-facing tool name may use).
+/// Anything else is not a stable id.
+pub fn parse_stable_tool_id(id: &str) -> Option<StableToolId<'_>> {
+    let rest = id.strip_prefix(TOOL_ID_SCHEME_V1)?.strip_prefix(':')?;
+    let (label, rest) = rest.split_once(':')?;
+    let source = ToolSource::parse(label)?;
+    let (length, rest) = rest.split_once(':')?;
+    let length = canonical_length(length)?;
+    let provider_id = rest.get(..length).filter(|provider| !provider.is_empty())?;
+    let name = rest.get(length..)?.strip_prefix(':')?;
+    let name_allowed = !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-');
+    let parsed = name_allowed.then_some(StableToolId {
+        source,
+        provider_id,
+        name,
+    })?;
+    debug_assert_eq!(
+        stable_tool_id(parsed.source, parsed.provider_id, parsed.name),
+        id,
+        "a parsed stable id is exactly the id its parts mint"
+    );
+    Some(parsed)
+}
+
+/// A provider-id length as [`stable_tool_id`] writes it, and only so
+/// (#2247 review F1): `[1-9][0-9]*` — no leading zero, sign or blank, and
+/// never `0` (a provider id is not empty). A padded `021` would name the
+/// same parts as `21` under a different id.
+fn canonical_length(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let canonical = matches!(bytes.first(), Some(b'1'..=b'9'))
+        && bytes.iter().all(|byte| byte.is_ascii_digit());
+    canonical.then(|| text.parse().ok()).flatten()
+}
+
 pub fn legacy_name_tool_id(name: &str) -> String {
     format!("{LEGACY_NAME_PREFIX_V0}{name}")
 }

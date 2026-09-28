@@ -92,9 +92,8 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         | Err(DisplayNameResolveError::NoLiveMatch { display_name }) =
             assert_display_name_available_for_spawn(&resolution_entries, &session_name)
         {
-            return Err(DomainError::Tool(format!(
-                "duplicate live subagent display label '{}'",
-                display_name
+            return Err(DomainError::Tool(super::spawn::duplicate_label_refusal(
+                &display_name,
             )));
         }
         drop(entries);
@@ -253,6 +252,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 config,
                 &super::spawn_container::ChildCommand {
                     swarm_context: self.tool.swarm_context.as_ref(),
+                    swarm_member: self.tool.launches_swarm_worker(),
                     supervisor: &self.tool.supervisor,
                     binary,
                     cli_args: &launch_args,
@@ -627,3 +627,6 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
 #[cfg(test)]
 #[path = "spawn_launch_ports_cov_tests.rs"]
 mod cov_tests;
+#[cfg(test)]
+#[path = "spawn_launch_ports_nested_tests.rs"]
+mod nested_tests;

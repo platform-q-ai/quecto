@@ -86,6 +86,16 @@ pub enum AuditEvent {
         /// alone exceeds the budget even after full demotion (#1044).
         #[serde(default)]
         budget_unmet: bool,
+        /// Conversation messages the count-based collapse
+        /// (`context_collapse_after_messages`) turned into recall stubs this
+        /// prune (#2214); absent from logs written before it, read as 0.
+        #[serde(default)]
+        messages_collapsed: usize,
+        /// Messages the context-ceiling ladder's first rung collapsed to
+        /// recall stubs this prune (#2214); absent from logs written before
+        /// it, read as 0.
+        #[serde(default)]
+        ladder_stubbed: usize,
     },
     #[cfg(any(test, feature = "test-support"))]
     SubagentSpawned {

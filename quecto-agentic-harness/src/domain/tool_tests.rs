@@ -133,3 +133,16 @@ fn tool_policy_mutation_result_wire_uses_camel_case_fields_and_status() {
     assert_eq!(recon_wire["results"][0]["requestedScope"], "none");
     assert_eq!(recon_wire["results"][0]["status"], "applied");
 }
+
+/// #2247 round 2 N4: the one rendering of a tool call's refusal or failure
+/// the model sees — `Error: <reason>`, an error result, nothing else.
+#[test]
+fn a_tool_error_reaches_the_model_as_an_error_result() {
+    let result = ToolResult::from_error(&crate::domain::error::DomainError::Tool(
+        "harness is frozen".into(),
+    ));
+    assert_eq!(result.content, "Error: tool error: harness is frozen");
+    assert!(result.is_error);
+    assert!(result.image_blocks.is_empty());
+    assert_eq!(result.delivery_metadata, None);
+}

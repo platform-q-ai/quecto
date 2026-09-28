@@ -189,6 +189,20 @@ pub(crate) struct ToolRuntimeBuild {
     pub catalogue_entries: Vec<crate::domain::tool_descriptor::ToolCatalogueEntry>,
 }
 
+/// Report persisted `tools.policy` entries that matched no registered tool
+/// (#2217): the application's one triage; only a typo — a restriction that
+/// never applies — is a start-up warning.
+fn report_unmatched_policy_entries(stable_ids: Vec<String>, stderr: &mut String) {
+    use crate::application::tools::unmatched_policy::split_unmatched_policy_entries;
+    use crate::domain::tool_policy_catalogue::unknown_policy_entry_warning;
+    for stable_id in split_unmatched_policy_entries(stable_ids).unknown {
+        stderr.push_str(&format!(
+            "WARNING: {}\n",
+            unknown_policy_entry_warning(&stable_id)
+        ));
+    }
+}
+
 /// Build the complete shared tool runtime/catalogue for CLI, UDS and REPL.
 ///
 /// All production entrypoints use this pipeline to register bundled-native
@@ -443,12 +457,7 @@ pub(crate) fn build_tool_runtime(
     }
 
     let persisted_unknown = registry.apply_persisted_tool_policy(&config.tools.policy);
-    for stable_id in &persisted_unknown {
-        stderr.push_str(&format!(
-            "WARNING: tools.policy: no registered tool with stable id '{}'\n",
-            stable_id
-        ));
-    }
+    report_unmatched_policy_entries(persisted_unknown, stderr);
 
     // Apply explicit startup restrictions after every startup provider has had a
     // chance to register, so descriptors remain available while model-visible

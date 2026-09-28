@@ -203,7 +203,7 @@ impl SwarmContext {
             "create",
             json!([
                 input["goal"],
-                input["constraints"],
+                run_constraints(input),
                 input["criteria"],
                 input["member_limit"],
                 absolute_deadline(input)?
@@ -257,6 +257,17 @@ impl crate::application::providers::ports::RequestAccounting for SwarmContext {
             .await
             .map_err(invalid)?
         })
+    }
+}
+
+/// The run's `constraints` (#2205): optional, so an omitted list — or an
+/// explicit `null`, which JSON callers send for "none" — is empty. Any
+/// other value goes to the store as given, which refuses anything but a
+/// list of strings — so a wrong type is still named as one.
+fn run_constraints(input: &Value) -> Value {
+    match input.get("constraints") {
+        None | Some(Value::Null) => json!([]),
+        Some(given) => given.clone(),
     }
 }
 

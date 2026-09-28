@@ -60,23 +60,37 @@ async fn test_execute_stub_mode_with_agent_id() {
 #[tokio::test]
 async fn test_execute_disallowed_agent_returns_error() {
     let tool = SpawnTool::new(vec!["allowed-bot".to_string()]);
-    let result = tool
+    let error = tool
         .execute(r#"{"task":"evil","agent_id":"not-allowed"}"#)
         .await
-        .unwrap();
-    assert!(result.is_error);
-    assert!(result.content.contains("not allowed"));
+        .unwrap_err()
+        .to_string();
+    assert!(error.starts_with("tool error: "), "{error}");
+    assert!(error.contains("not allowed"), "{error}");
 }
 
 #[tokio::test]
 async fn test_execute_invalid_agent_id_format_returns_error() {
     let tool = SpawnTool::new(vec![]);
-    let result = tool
+    // #2221: one prefix for spawn's refusals, the tool-error convention
+    // every other tool error follows.
+    let error = tool
         .execute(r#"{"task":"test","agent_id":"bad id!"}"#)
         .await
-        .unwrap();
-    assert!(result.is_error);
-    assert!(result.content.contains("[a-zA-Z0-9_-]"));
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "tool error: agent_id must use only [a-zA-Z0-9_-]"
+    );
+    let long = "a".repeat(200);
+    let error = tool
+        .execute(&format!(r#"{{"task":"test","agent_id":"{long}"}}"#))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "tool error: agent_id is 200 characters; it must be 1-64"
+    );
 }
 #[test]
 fn test_parse_args_task_not_string() {
@@ -258,12 +272,15 @@ async fn execute_in_stub_mode_returns_running_message() {
 #[tokio::test]
 async fn execute_with_invalid_args_is_error() {
     let tool = SpawnTool::new(vec![]);
-    let result = tool
+    let error = tool
         .execute(r#"{"workflow_spec":{"no":"template"}}"#)
         .await
-        .unwrap();
-    assert!(result.is_error);
-    assert!(result.content.contains("invalid workflow_spec"));
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.starts_with("tool error: invalid workflow_spec"),
+        "{error}"
+    );
 }
 
 // --- model passthrough (#881) ---
@@ -287,12 +304,12 @@ fn test_parse_model_absent_is_none() {
 #[tokio::test]
 async fn execute_with_invalid_model_is_error() {
     let tool = SpawnTool::new(vec![]);
-    let result = tool
+    let error = tool
         .execute(r#"{"task":"work","provider":"openai"}"#)
         .await
-        .unwrap();
-    assert!(result.is_error);
-    assert!(result.content.contains("invalid model"));
+        .unwrap_err()
+        .to_string();
+    assert!(error.starts_with("tool error: invalid model"), "{error}");
 }
 
 #[test]

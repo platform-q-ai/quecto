@@ -290,3 +290,73 @@ fn an_empty_overlay_telemetry_section_leaves_the_switch_on() {
         );
     }
 }
+
+const BASH_ID: &str = "tool.v1:bundled-native:21:quecto:official-tools:bash";
+
+/// #2247 round 2 L1: a stable tool id carries `.` (`tool.v1:`), so under
+/// `tools.policy.entries.` everything after the prefix is one segment —
+/// the entry's key — whatever it contains.
+#[test]
+fn everything_after_the_policy_entries_prefix_is_one_segment() {
+    let key_path = format!("tools.policy.entries.{BASH_ID}");
+    assert_eq!(
+        key_segments(&key_path),
+        Some(vec!["tools", "policy", "entries", BASH_ID])
+    );
+    assert_eq!(
+        key_segments("tools.policy.entries.a.b"),
+        Some(vec!["tools", "policy", "entries", "a.b"])
+    );
+    // The map itself, and its ancestors, split as usual.
+    assert_eq!(
+        key_segments("tools.policy.entries"),
+        Some(vec!["tools", "policy", "entries"])
+    );
+    assert_eq!(key_segments("tools.policy"), Some(vec!["tools", "policy"]));
+    // An empty entry key is no key; a lookalike prefix is not the map.
+    assert_eq!(key_segments("tools.policy.entries."), None);
+    assert_eq!(
+        key_segments("tools.policy.entriesx.a"),
+        Some(vec!["tools", "policy", "entriesx", "a"])
+    );
+    assert_eq!(
+        key_segments("x.tools.policy.entries.a.b"),
+        Some(vec!["x", "tools", "policy", "entries", "a", "b"])
+    );
+    assert_eq!(key_segments("tools..policy.entries.a"), None);
+}
+
+#[test]
+fn a_policy_entry_is_set_read_and_removed_under_its_whole_id() {
+    let key_path = format!("tools.policy.entries.{BASH_ID}");
+    let mut doc = json!({});
+    set_path(&mut doc, &key_path, json!({"scope":"parent"})).unwrap();
+    assert_eq!(
+        doc,
+        json!({"tools":{"policy":{"entries":{BASH_ID:{"scope":"parent"}}}}})
+    );
+    assert_eq!(get_path(&doc, &key_path), Some(&json!({"scope":"parent"})));
+    assert_eq!(
+        remove_path(&mut doc, &key_path),
+        Ok(Some(json!({"scope":"parent"})))
+    );
+    assert_eq!(doc, json!({"tools":{"policy":{"entries":{}}}}));
+}
+
+/// The entry key a policy-entry path names, only for that one map.
+#[test]
+fn the_policy_entry_id_is_named_only_for_the_entries_map() {
+    assert_eq!(
+        policy_entry_id(&["tools", "policy", "entries", BASH_ID]),
+        Some(BASH_ID)
+    );
+    for segments in [
+        &["tools", "policy", "entries"][..],
+        &["tools", "policy"],
+        &["tools", "policy", "other", BASH_ID],
+        &["x", "policy", "entries", BASH_ID],
+        &["tools", "x", "entries", BASH_ID],
+    ] {
+        assert_eq!(policy_entry_id(segments), None, "{segments:?}");
+    }
+}

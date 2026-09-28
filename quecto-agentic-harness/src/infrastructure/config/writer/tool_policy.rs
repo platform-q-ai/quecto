@@ -74,10 +74,12 @@ pub fn persist_tool_policy_results(
         return Ok(());
     }
     if let Some(overlay) = overlay_path
-        && let Some(shadowed) = shadowed_by_overlay(overlay, &applied)
+        && let Some((shadowed, entry)) = shadowed_by_overlay(overlay, &applied)
     {
+        // The command `quecto config set` really takes (#2247 round 2 L1):
+        // the whole stable id as the last key, the entry as JSON.
         return Err(format!(
-            "tool policy for `{shadowed}` is defined by the repo-local overlay {} and would be shadowed there; change it with `quecto config set tools.policy.entries.{shadowed} …` instead",
+            "tool policy for `{shadowed}` is defined by the repo-local overlay {} and would be shadowed there; change it with `quecto config set tools.policy.entries.{shadowed} '{entry}'` instead",
             overlay.display()
         ));
     }
@@ -122,17 +124,16 @@ pub fn persist_tool_policy_results(
         .map_err(|e| format!("failed to write config {}: {e}", config_path.display()))
 }
 
-/// The first applied stable id the overlay's `tools.policy.entries`
-/// already defines, if any. An absent or unparseable overlay shadows
-/// nothing (it is not applied either).
-fn shadowed_by_overlay(overlay: &Path, applied: &[(String, serde_json::Value)]) -> Option<String> {
+/// The first applied entry (stable id, value) the overlay's
+/// `tools.policy.entries` already defines, if any. An absent or
+/// unparseable overlay shadows nothing (it is not applied either).
+fn shadowed_by_overlay<'a>(
+    overlay: &Path,
+    applied: &'a [(String, serde_json::Value)],
+) -> Option<&'a (String, serde_json::Value)> {
     let document: serde_json::Value = serde_json::from_slice(&std::fs::read(overlay).ok()?).ok()?;
     let entries = document.pointer(ENTRIES_POINTER)?.as_object()?;
-    applied
-        .iter()
-        .map(|(id, _)| id)
-        .find(|id| entries.contains_key(*id))
-        .cloned()
+    applied.iter().find(|(id, _)| entries.contains_key(id))
 }
 
 /// `tools.policy.entries` as a mutable object, created when absent; `None`

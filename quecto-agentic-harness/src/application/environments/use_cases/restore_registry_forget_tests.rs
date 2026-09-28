@@ -167,7 +167,7 @@ fn an_observing_restore_writes_nothing_and_says_what_it_would_forget() {
     let store = store_with(vec![laid_out("C4", EnvironmentStatus::Stopped)]);
     let process = process_with_disk(gone, disk(&[], Arc::default()));
     let (registry, report) =
-        RestoreRegistry::new(store.clone(), process, no_hosted()).observe("cli:two");
+        RestoreRegistry::new(store.clone(), process, no_hosted()).observe("cli:one");
     assert!(report.forgotten.is_empty());
     assert_eq!(refs(&store.load().unwrap()), ["C4"]);
     assert!(
@@ -187,7 +187,7 @@ fn a_record_that_cannot_be_forgotten_is_kept_and_said_so() {
     let store = failing_store_with(vec![laid_out("C4", EnvironmentStatus::Stopped)]);
     let process = process_with_disk(gone, disk(&[], Arc::default()));
     let (registry, report) =
-        RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:two");
+        RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:one");
     assert!(report.forgotten.is_empty());
     assert_eq!(refs(&registry.entries()), ["C4"]);
     assert_eq!(

@@ -100,6 +100,113 @@ fn test_parse_invalid_agent_id_format() {
     assert!(result.unwrap_err().contains("[a-zA-Z0-9_-]"));
 }
 
+/// #2221: `*` names no sub-agent. A per-agent command given it says which
+/// target it needs and which inventory commands take `*`, instead of
+/// blaming the character set.
+#[test]
+fn a_per_agent_command_given_the_wildcard_asks_for_one_sub_agents_uuid() {
+    let tool = empty_tool();
+    let per_agent = SUPPORTED_COMMANDS
+        .iter()
+        .copied()
+        .filter(|command| !super::super::agent_cmd_parse::WILDCARD_COMMANDS.contains(command))
+        .chain(["get_messages_tail", "get_tool_catalogue", "list_tools"]);
+    for command in per_agent {
+        let error = tool
+            .parse_and_build(&format!(r#"{{"agent_id":"*","command":"{command}"}}"#))
+            .unwrap_err();
+        assert_eq!(
+            error,
+            format!(
+                "{command} needs one sub-agent's UUID, as returned by spawn; \"*\" works only \
+                 with the inventory commands get_subagents_all, get_containers, \
+                 get_container_configs, kill_container (use get_subagents_all to list \
+                 sub-agents)"
+            ),
+            "{command}"
+        );
+    }
+}
+
+#[test]
+fn every_inventory_command_admits_the_wildcard_and_every_id_is_left_to_the_syntax_check() {
+    use super::super::agent_cmd_parse::{Target, WILDCARD_COMMANDS, admit_target};
+    for command in WILDCARD_COMMANDS {
+        assert_eq!(
+            admit_target(command, "*"),
+            Ok(Target::Inventory),
+            "{command}"
+        );
+    }
+    for command in ["get_state", "get_subagents_all", "kill"] {
+        assert_eq!(admit_target(command, "w1"), Ok(Target::Agent), "{command}");
+    }
+    assert!(admit_target("get_state", "*").is_err());
+}
+
+/// #2221: `build_command` admits `*` for every inventory command exactly as
+/// `admit_target` does — past the syntax check, to the command's own
+/// answer (each is handled locally, never sent over UDS).
+#[test]
+fn build_command_admits_the_wildcard_for_every_inventory_command() {
+    for command in super::super::agent_cmd_parse::WILDCARD_COMMANDS {
+        let error = super::super::agent_cmd_parse::build_command(
+            &serde_json::json!({"agent_id": "*", "command": command}),
+        )
+        .unwrap_err();
+        assert!(
+            error.ends_with("is handled locally, not via UDS"),
+            "{command}: {error}"
+        );
+    }
+}
+
+#[test]
+fn an_unknown_command_given_the_wildcard_is_still_reported_as_unsupported() {
+    let error = empty_tool()
+        .parse_and_build(r#"{"agent_id":"*","command":"delete_all"}"#)
+        .unwrap_err();
+    assert!(
+        error.starts_with("unsupported command 'delete_all'"),
+        "{error}"
+    );
+}
+
+#[test]
+fn the_wildcard_commands_are_exactly_the_inventory_commands() {
+    assert_eq!(
+        super::super::agent_cmd_parse::WILDCARD_COMMANDS,
+        [
+            "get_subagents_all",
+            "get_containers",
+            "get_container_configs",
+            "kill_container"
+        ]
+    );
+    for command in super::super::agent_cmd_parse::WILDCARD_COMMANDS {
+        assert!(SUPPORTED_COMMANDS.contains(command), "{command}");
+    }
+}
+
+#[tokio::test]
+async fn get_state_and_kill_given_the_wildcard_answer_with_the_uuid_hint() {
+    let tool = empty_tool();
+    for command in ["get_state", "kill"] {
+        let result = tool
+            .execute(&format!(r#"{{"agent_id":"*","command":"{command}"}}"#))
+            .await
+            .unwrap();
+        assert!(result.is_error, "{command}");
+        assert!(
+            result.content.starts_with(&format!(
+                "agent_cmd error: {command} needs one sub-agent's UUID"
+            )) && result.content.contains("use get_subagents_all"),
+            "{command}: {}",
+            result.content
+        );
+    }
+}
+
 #[test]
 fn test_parse_get_state_builds_json() {
     let tool = empty_tool();

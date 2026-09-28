@@ -163,6 +163,8 @@ fn given_context_pruned(
         tokens_before,
         tokens_after,
         budget_unmet: false,
+        messages_collapsed: 0,
+        ladder_stubbed: 0,
     };
     world.audit_event = Some(event);
 }

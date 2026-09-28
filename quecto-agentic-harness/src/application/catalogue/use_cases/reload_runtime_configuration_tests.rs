@@ -231,6 +231,31 @@ fn a_successful_reload_applies_the_tool_policy_from_the_same_rebuild_and_reports
     );
 }
 
+/// #2217: of the persisted entries that matched no registered tool, only
+/// an id no bundled tool ever had is reported unknown; a bundled tool this
+/// runtime does not build and a retired one are kept quietly.
+#[test]
+fn a_reload_reports_only_ids_no_bundled_tool_ever_had() {
+    let workflow = "tool.v1:bundled-native:15:quecto:workflow:workflow";
+    let python_lab = "tool.v1:bundled-native:21:quecto:official-tools:python_lab";
+    let source = FakeSource::default().will_rebuild(
+        "v2",
+        vec![
+            ("ghost", ProfileAvailabilityScope::None),
+            (workflow, ProfileAvailabilityScope::None),
+            (python_lab, ProfileAvailabilityScope::None),
+        ],
+    );
+    let mut runtime = FakeRuntime::default();
+    assert_eq!(
+        forced(&source, &mut runtime),
+        ReloadOutcome::Reloaded {
+            unknown_policy_tools: vec!["ghost".into()]
+        }
+    );
+    assert_eq!(runtime.policies[0].len(), 3, "every entry is still applied");
+}
+
 /// The two phases compose: a rebuild step needs no runtime, and applying
 /// it later swaps exactly what the step carried — so an interface can run
 /// the rebuild off its scheduler and apply on the dispatch task.

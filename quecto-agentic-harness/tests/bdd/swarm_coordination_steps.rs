@@ -152,10 +152,12 @@ async fn reject_workflow(world: &mut QuectoWorld) {
         .with_swarm_participation(
             quecto::infrastructure::tools::swarm_bridge::Participation::Fixed(true),
         );
+    // A spawn refusal is a tool error (#2221), shown to the model as the
+    // agent loop renders it.
     world.swarm_result = Some(
         tool.execute(r#"{"agent_id":"worker","workflow":true}"#)
             .await
-            .unwrap(),
+            .unwrap_or_else(|error| quecto::domain::tool::ToolResult::from_error(&error)),
     );
 }
 

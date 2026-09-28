@@ -29,7 +29,7 @@ pub fn register_and_broadcast(
     let event = {
         let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
         admit_spawn(lifecycle).map_err(|refused| {
-            crate::domain::error::DomainError::Other(format!(
+            crate::domain::error::DomainError::Tool(format!(
                 "{refused} while registering {session_name}"
             ))
         })?;
@@ -46,7 +46,7 @@ pub fn register_and_broadcast(
                 slot.insert(entry);
             }
             Entry::Occupied(existing) => {
-                return Err(crate::domain::error::DomainError::Other(format!(
+                return Err(crate::domain::error::DomainError::Tool(format!(
                     "duplicate subagent registry key {} while registering {session_name}",
                     existing.key()
                 )));

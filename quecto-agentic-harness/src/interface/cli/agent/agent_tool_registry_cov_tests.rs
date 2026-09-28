@@ -1,7 +1,7 @@
 use super::*;
 use crate::interface::cli::agent::flag_parse::AgentFlags;
 
-fn flags() -> AgentFlags {
+pub(super) fn flags() -> AgentFlags {
     AgentFlags {
         session_name: Some("dev".to_string()),
         no_session: false,

@@ -196,9 +196,12 @@ fn parse_args_rejects_specific_invalid_fields() {
 #[tokio::test]
 async fn execute_parse_error_returns_llm_addressable_tool_error() {
     let tool = SpawnTool::new(vec![]);
-    let result = tool.execute(r#"{"read_only":"yes"}"#).await.unwrap();
-    assert!(result.is_error);
-    assert!(result.content.contains("read_only must be a boolean"));
+    let error = tool
+        .execute(r#"{"read_only":"yes"}"#)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert_eq!(error, "tool error: read_only must be a boolean");
 }
 
 #[tokio::test]
@@ -208,14 +211,12 @@ async fn stub_spawn_duplicate_id_rejects_live_duplicate_without_panic() {
     let duplicate = tool
         .execute(r#"{"agent_id":"dup","task":"now busy"}"#)
         .await
-        .unwrap();
+        .expect_err("a live duplicate is refused");
     let registry = tool.registry.lock().unwrap();
     assert_eq!(registry.len(), 1);
-    assert!(duplicate.is_error);
-    assert!(
-        duplicate
-            .content
-            .contains("duplicate live subagent display label 'dup'")
+    assert_eq!(
+        duplicate.to_string(),
+        "tool error: duplicate live subagent display label 'dup'"
     );
 }
 
@@ -275,7 +276,12 @@ fn a_frozen_harness_refuses_registration_under_the_registry_lock() {
         &lifecycle,
     )
     .expect_err("a frozen harness admits no child");
-    assert!(refused.to_string().contains("spawn refused"), "{refused}");
+    // A tool error, so the model sees the one spawn-refusal prefix (#2221).
+    assert!(
+        matches!(&refused, crate::domain::error::DomainError::Tool(reason)
+            if reason.starts_with("spawn refused")),
+        "{refused:?}"
+    );
     assert!(registry.lock().unwrap().is_empty());
 }
 
@@ -291,12 +297,10 @@ async fn launch_uds_agent_duplicate_id_fails_before_spawning() {
         .with_socket_dir(dir.path().to_path_buf())
         .with_registry(registry);
     let cfg = tool.parse_args(r#"{"agent_id":"taken"}"#).unwrap();
-    let result = tool.launch_uds_agent(&cfg).await.unwrap();
-    assert!(result.is_error);
-    assert!(
-        result
-            .content
-            .contains("duplicate live subagent display label")
+    let refused = tool.launch_uds_agent(&cfg).await.expect_err("refused");
+    assert_eq!(
+        refused.to_string(),
+        "tool error: duplicate live subagent display label 'taken'"
     );
 }
 
@@ -592,15 +596,11 @@ async fn launch_uds_agent_duplicate_with_poisoned_registry_recovers() {
         .with_registry(registry);
     let cfg = tool.parse_args(r#"{"agent_id":"taken"}"#).unwrap();
 
-    let result = tool.launch_uds_agent(&cfg).await.unwrap();
+    let refused = tool.launch_uds_agent(&cfg).await.expect_err("refused");
 
-    assert!(result.is_error);
-    assert!(
-        result
-            .content
-            .contains("duplicate live subagent display label"),
-        "{}",
-        result.content
+    assert_eq!(
+        refused.to_string(),
+        "tool error: duplicate live subagent display label 'taken'"
     );
 }
 

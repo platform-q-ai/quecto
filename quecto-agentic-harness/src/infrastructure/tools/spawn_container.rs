@@ -31,7 +31,14 @@ pub(super) use prepared::{PreparedChild, run_cleanup_once};
 /// The child command a launch adapter must run (or hand to a create script):
 /// binary, final CLI args, and the parent's base directory.
 pub(super) struct ChildCommand<'a> {
+    /// The container's swarm bridge: every agent launched inside an
+    /// isolated-PID (swarm-capable) container carries it (the runtime's
+    /// `isolated-pid-v1` launch contract, #2204), a swarm run or not; an
+    /// agent in any other container, or on the host, has none.
     pub swarm_context: Option<&'a super::swarm_bridge::SwarmContext>,
+    /// Whether the launching agent takes part in a created swarm run
+    /// (#1715): only ever true with a `swarm_context`.
+    pub swarm_member: bool,
     /// The one owner of every locally spawned process (#1935).
     pub supervisor: &'a Arc<OwnedChildSupervisor>,
     pub binary: &'a Path,
@@ -72,8 +79,13 @@ pub(super) async fn spawn_prepared_child(
     environments: &EnvironmentRegistry,
     selection: Option<&SelectContainerConfig>,
 ) -> Result<PreparedChild, DomainError> {
-    if child.swarm_context.is_some() && !matches!(config.container, ContainerSelection::Local) {
-        return Err(DomainError::Tool("swarm members must reuse their shared container and fixed pool; nested containers cannot reset admission".into()));
+    debug_assert!(
+        child.swarm_context.is_some() || !child.swarm_member,
+        "swarm participation is only recorded inside a container"
+    );
+    match (&config.container, child.swarm_context) {
+        (ContainerSelection::Local, _) | (_, None) => {}
+        (_, Some(_)) => return Err(nested_container_refusal(child.swarm_member)),
     }
     match &config.container {
         ContainerSelection::Local => spawn_local_child(child).await,
@@ -88,6 +100,22 @@ pub(super) async fn spawn_prepared_child(
         }
     }
 }
+
+/// An agent inside an isolated-PID (swarm-capable) container may start only
+/// local sub-agents (#2204): worded by why — a swarm member's shared
+/// container and fixed pool, or just the swarm-capable container it is in.
+fn nested_container_refusal(swarm_member: bool) -> DomainError {
+    DomainError::Tool(
+        match swarm_member {
+            true => NESTED_CONTAINER_SWARM_MEMBER,
+            false => NESTED_CONTAINER_INSIDE_CONTAINER,
+        }
+        .into(),
+    )
+}
+
+pub(super) const NESTED_CONTAINER_INSIDE_CONTAINER: &str = "agents inside an isolated-PID (swarm-capable) container cannot start another container; spawn a local sub-agent (omit container) instead";
+pub(super) const NESTED_CONTAINER_SWARM_MEMBER: &str = "swarm members must reuse their shared container and fixed pool; nested containers cannot reset admission";
 
 pub(super) const NO_CONTAINER_CONFIG_SELECTION_COMPOSED: &str =
     "container spawn requires a composed container-config selection; this launcher has none";

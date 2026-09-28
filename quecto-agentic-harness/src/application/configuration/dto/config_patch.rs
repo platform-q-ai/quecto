@@ -48,6 +48,11 @@ pub struct ConfigPatchReceipt {
 pub enum ConfigPatchError {
     /// The key path is empty or has an empty segment.
     InvalidKeyPath(String),
+    /// A `set` of `tools.policy.entries.<id>` whose `<id>` is not a stable
+    /// tool id (#2247 round 2 L1): such an entry never matches a tool.
+    InvalidPolicyEntryId {
+        entry_id: String,
+    },
     /// The selection has no overlay location (unknown working directory or
     /// an explicit `--config`), so there is no overlay to patch.
     NoOverlayLocation,
@@ -123,6 +128,11 @@ impl std::fmt::Display for ConfigPatchError {
                     "invalid config path `{key_path}`: expected dotted keys such as agents.defaults.model"
                 )
             }
+            Self::InvalidPolicyEntryId { entry_id } => write!(
+                f,
+                "`{}` is not a stable tool id (tool.v1:<source>:<length>:<provider>:<name>, as the tool catalogue lists it), so its policy entry would never apply; set an entry whole under its id: quecto config set tools.policy.entries.<stable-id> '{{\"scope\":\"parent\"}}'",
+                crate::domain::tool_policy_catalogue::shown_entry_id(entry_id)
+            ),
             Self::NoOverlayLocation => write!(
                 f,
                 "no repo-local overlay applies to this run (an explicit --config replaces both layers, and an unknown working directory has none)"

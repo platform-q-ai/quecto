@@ -52,8 +52,12 @@ mod list_container_configs_tests;
 #[cfg(test)]
 mod list_environments_tests;
 #[cfg(test)]
+mod restore_registry_audience_tests;
+#[cfg(test)]
 mod restore_registry_forget_tests;
 #[cfg(test)]
 mod restore_registry_hosted_tests;
+#[cfg(test)]
+mod restore_registry_superseded_tests;
 #[cfg(test)]
 mod restore_registry_tests;

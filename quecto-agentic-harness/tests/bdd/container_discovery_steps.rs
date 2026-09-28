@@ -545,7 +545,7 @@ fn then_provider_results_ordered(_world: &mut QuectoWorld) {
     assert!(
         !results
             .iter()
-            .any(|content| content.contains("Failed to spawn subagent")),
+            .any(|content| content.starts_with("Error: tool error")),
         "the first spawn must succeed: {results:?}"
     );
 }

@@ -49,7 +49,9 @@ use crate::domain::environment_registry::{
 
 use crate::domain::environment_retention::{HostedSwarmRun, SwarmRunObservation};
 
-use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, RestoreMode, RestoredRegistry};
+use super::super::dto::{
+    CorrectionOutcome, EnvironmentLiveness, OvertakenAudience, RestoreMode, RestoredRegistry,
+};
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore, HostedSwarmRunInspection};
 use super::box_residue::{Residue, ResidueProbe};
 
@@ -114,12 +116,18 @@ impl RestoreRegistry {
     /// panic — the session keeps its in-memory registry. A write made with
     /// an expected status is the store's conditional `correct` (review F5):
     /// applied only while the record on file still has that status.
-    fn journal(&self, mode: RestoreMode) -> EnvironmentJournal {
+    fn journal(
+        &self,
+        mode: RestoreMode,
+        session: &str,
+        audience: OvertakenAudience,
+    ) -> EnvironmentJournal {
         let allocate = Arc::clone(&self.store);
         let record = Arc::clone(&self.store);
         let forget = Arc::clone(&self.store);
         let release = Arc::clone(&self.store);
         let reload = self.clone();
+        let reload_session = session.to_owned();
         EnvironmentJournal {
             reload: Arc::new(move || {
                 let records = reload
@@ -131,7 +139,7 @@ impl RestoreRegistry {
                 // been then; the account goes to the log, there being
                 // no report to carry it.
                 let mut report = RestoredRegistry::default();
-                let seeded = reload.seed(records, mode, &mut report);
+                let seeded = reload.seed(records, mode, (&reload_session, audience), &mut report);
                 for line in &report.diagnostics {
                     tracing::info!(%line, "durable environment registry read late");
                 }
@@ -164,7 +172,7 @@ impl RestoreRegistry {
                             record.correct(entry, expected).map(|outcome| match outcome {
                                 CorrectionOutcome::Applied => JournalWrite::Written,
                                 CorrectionOutcome::Superseded(current) => {
-                                    tracing::info!(environment_ref = %entry.environment_ref, expected = ?expected, current = current.status_label(), "another session moved the environment on; its state stands");
+                                    tracing::info!(environment_ref = %entry.environment_ref, expected = ?expected, current = current.status_label(), "another quecto process changed the environment; its state stands");
                                     JournalWrite::Superseded {
                                         current: current.status,
                                         metadata: current.metadata,
@@ -198,7 +206,14 @@ impl RestoreRegistry {
     /// inherits nothing (a spawned child's registry — the fleet is its
     /// parent's to show).
     pub fn unseeded(&self, session: &str) -> EnvironmentRegistry {
-        EnvironmentRegistry::with_journal(self.journal(RestoreMode::Correct), session)
+        EnvironmentRegistry::with_journal(
+            self.journal(
+                RestoreMode::Correct,
+                session,
+                OvertakenAudience::OwnEnvironments,
+            ),
+            session,
+        )
     }
 
     /// Build the durable registry for `session`: seeded with the store's
@@ -209,7 +224,11 @@ impl RestoreRegistry {
     /// nothing this session creates can collide with what it could not
     /// read — creates are refused instead (review F9, #2033).
     pub fn execute(&self, session: &str) -> (EnvironmentRegistry, RestoredRegistry) {
-        self.execute_as(session, RestoreMode::Correct)
+        self.restore(
+            session,
+            RestoreMode::Correct,
+            OvertakenAudience::OwnEnvironments,
+        )
     }
 
     /// [`Self::execute`] without an effect on the store (round 3 H1,
@@ -218,13 +237,21 @@ impl RestoreRegistry {
     /// — a `container gc --dry-run` — so the preview matches the real run
     /// and the document is left byte for byte as it was.
     pub fn observe(&self, session: &str) -> (EnvironmentRegistry, RestoredRegistry) {
-        self.execute_as(session, RestoreMode::Observe)
+        self.restore(
+            session,
+            RestoreMode::Observe,
+            OvertakenAudience::OwnEnvironments,
+        )
     }
 
-    fn execute_as(
+    /// Restore as `mode` says, reporting overtaken corrections to
+    /// `audience` (#2190): a fleet-wide inventory command, which creates
+    /// nothing, reports every environment's.
+    pub fn restore(
         &self,
         session: &str,
         mode: RestoreMode,
+        audience: OvertakenAudience,
     ) -> (EnvironmentRegistry, RestoredRegistry) {
         let mut report = RestoredRegistry::default();
         let records = match self.store.load() {
@@ -234,14 +261,18 @@ impl RestoreRegistry {
                 // The registry carries the error itself (round 2 F-B,
                 // #2033): the model's listing shows it and a lookup of
                 // anything this session did not create answers with it.
-                let registry =
-                    EnvironmentRegistry::unreadable(self.journal(mode), session, &read_error);
+                let registry = EnvironmentRegistry::unreadable(
+                    self.journal(mode, session, audience),
+                    session,
+                    &read_error,
+                );
                 report.read_error = Some(read_error);
                 return (registry, report);
             }
         };
-        let registry = EnvironmentRegistry::with_journal(self.journal(mode), session);
-        registry.restore(self.seed(records, mode, &mut report));
+        let registry =
+            EnvironmentRegistry::with_journal(self.journal(mode, session, audience), session);
+        registry.restore(self.seed(records, mode, (session, audience), &mut report));
         (registry, report)
     }
 
@@ -251,18 +282,26 @@ impl RestoreRegistry {
         &self,
         records: Vec<EnvironmentRecord>,
         mode: RestoreMode,
+        reporting: (&str, OvertakenAudience),
         report: &mut RestoredRegistry,
     ) -> Vec<EnvironmentRecord> {
         let mut restored = Vec::with_capacity(records.len());
         let mut probe = ResidueProbe::new(self.process.as_ref());
         for record in records {
+            // Whether this restore speaks for the record (#2247 round 2
+            // L4): what it says of it goes to the report, or to the debug
+            // log when it is another session's to report.
+            let spoken = speaks_for(&record, reporting);
             if Self::left_nothing(&record, &mut probe, report) {
-                self.forget(record, mode, report, &mut restored);
+                self.forget(record, mode, spoken, report, &mut restored);
                 continue;
             }
             let loaded_status = record.status.clone();
+            let loaded_label = record.status_label();
             let mut judged = record;
+            let noted_before = (report.retained.len(), report.unverified.len());
             let corrected = self.judge(&mut judged, report);
+            withhold_unspoken_notes(report, noted_before, spoken);
             if !corrected {
                 restored.push(judged);
                 continue;
@@ -273,11 +312,15 @@ impl RestoreRegistry {
                     .as_deref()
                     .or_else(|| judged.metadata.get("retained").and_then(|v| v.as_str()))
                     .unwrap_or("corrected");
-                report.diagnostics.push(format!(
-                    "{} would be recorded {} ({why}); not written: this restore only observes",
-                    judged.environment_ref,
-                    judged.status_label(),
-                ));
+                tell(
+                    report,
+                    format!(
+                        "{} would be recorded {} ({why}); not written: this restore only observes",
+                        judged.environment_ref,
+                        judged.status_label(),
+                    ),
+                    spoken,
+                );
                 restored.push(judged);
                 continue;
             }
@@ -286,20 +329,19 @@ impl RestoreRegistry {
             match self.store.correct(&judged, &loaded_status) {
                 Ok(CorrectionOutcome::Applied) => restored.push(judged),
                 Ok(CorrectionOutcome::Superseded(current)) => {
-                    report.diagnostics.push(format!(
-                        "{} changed while it was being checked ({} → {}); the other session's state stands",
-                        judged.environment_ref,
-                        judged.status_label(),
-                        current.status_label()
-                    ));
+                    report_overtaken(&current, &judged, loaded_label, reporting, report);
                     restored.push(*current);
                 }
                 Ok(CorrectionOutcome::Forgotten) => {}
                 Err(error) => {
-                    report.diagnostics.push(format!(
-                        "{} could not be corrected in the durable registry: {error}",
-                        judged.environment_ref
-                    ));
+                    tell(
+                        report,
+                        format!(
+                            "{} could not be corrected in the durable registry: {error}",
+                            judged.environment_ref
+                        ),
+                        spoken,
+                    );
                     restored.push(judged);
                 }
             }
@@ -337,23 +379,32 @@ impl RestoreRegistry {
         &self,
         record: EnvironmentRecord,
         mode: RestoreMode,
+        spoken: bool,
         report: &mut RestoredRegistry,
         restored: &mut Vec<EnvironmentRecord>,
     ) {
         if mode == RestoreMode::Observe {
-            report.diagnostics.push(format!(
-                "{} would be forgotten (stopped; nothing left on disk or in the runtime); not written: this restore only observes",
-                record.environment_ref
-            ));
+            tell(
+                report,
+                format!(
+                    "{} would be forgotten (stopped; nothing left on disk or in the runtime); not written: this restore only observes",
+                    record.environment_ref
+                ),
+                spoken,
+            );
             return;
         }
         match self.store.forget(&record) {
             Ok(()) => report.forgotten.push(record.environment_ref),
             Err(error) => {
-                report.diagnostics.push(format!(
-                    "{} could not be forgotten in the durable registry: {error}",
-                    record.environment_ref
-                ));
+                tell(
+                    report,
+                    format!(
+                        "{} could not be forgotten in the durable registry: {error}",
+                        record.environment_ref
+                    ),
+                    spoken,
+                );
                 restored.push(record);
             }
         }
@@ -476,3 +527,104 @@ impl RestoreRegistry {
 
 /// How a store that could not be read is reported.
 const READ_FAILED: &str = "durable environment registry could not be read";
+
+/// Another quecto process wrote `current` between this restore's load and
+/// its correction of `judged` (#2190). What stands is theirs. When their
+/// status is this restore's own verdict the two agree and nothing is said;
+/// otherwise the race is reported as the status read, then the status on
+/// file — to `audience`: a session speaks for the environments it created
+/// (anyone else's goes to the debug log), a fleet-wide command for all.
+fn report_overtaken(
+    current: &EnvironmentRecord,
+    judged: &EnvironmentRecord,
+    loaded_label: &'static str,
+    (session, audience): (&str, OvertakenAudience),
+    report: &mut RestoredRegistry,
+) {
+    if current.status == judged.status {
+        log_agreeing_account(current, judged);
+        return;
+    }
+    let line = format!(
+        "{} changed while it was being checked ({loaded_label} → {}): another quecto process changed it; its state stands",
+        current.environment_ref,
+        current.status_label()
+    );
+    tell(report, line, speaks_for(current, (session, audience)));
+}
+
+/// The other process's verdict is this restore's own (#2190: nothing on
+/// stderr). When its account differs — the retained reason or the last
+/// error — that is kept in the debug log (#2247 review), so an overtaken
+/// correction is never swallowed without a trace. Debug-formatted: the
+/// text comes from the store.
+fn log_agreeing_account(current: &EnvironmentRecord, judged: &EnvironmentRecord) {
+    let retained = |record: &EnvironmentRecord| {
+        record
+            .metadata
+            .get("retained")
+            .and_then(|reason| reason.as_str())
+            .map(str::to_owned)
+    };
+    let same_account =
+        retained(current) == retained(judged) && current.last_error == judged.last_error;
+    match same_account {
+        true => {}
+        false => tracing::debug!(
+            target: "environments",
+            environment_ref = %current.environment_ref,
+            status = current.status_label(),
+            current_retained = ?retained(current),
+            current_last_error = ?current.last_error,
+            judged_retained = ?retained(judged),
+            judged_last_error = ?judged.last_error,
+            "another quecto process's correction agrees with this restore's verdict but not its account; its state stands"
+        ),
+    }
+}
+
+/// Whether a restore reporting to `audience` as `session` speaks for
+/// `record` (#2190, #2247 round 2 L4): a fleet-wide command for every
+/// environment, a session for the ones it created.
+fn speaks_for(record: &EnvironmentRecord, (session, audience): (&str, OvertakenAudience)) -> bool {
+    match audience {
+        OvertakenAudience::Fleet => true,
+        OvertakenAudience::OwnEnvironments => {
+            crate::domain::environment_listing::created_by_session(record, session)
+        }
+    }
+}
+
+/// A line about one record: the report's when the restore speaks for it,
+/// else the debug log's (it is another session's to report).
+fn tell(report: &mut RestoredRegistry, line: String, spoken: bool) {
+    match spoken {
+        true => report.diagnostics.push(line),
+        false => tracing::debug!(target: "environments", "{line}"),
+    }
+}
+
+/// The `retained` and `unverified` notes judging one record added from
+/// `from` on: kept when the restore speaks for it, else moved to the debug
+/// log (#2247 review F2) — another session's to report.
+fn withhold_unspoken_notes(
+    report: &mut RestoredRegistry,
+    (retained_from, unverified_from): (usize, usize),
+    spoken: bool,
+) {
+    debug_assert!(
+        retained_from <= report.retained.len() && unverified_from <= report.unverified.len(),
+        "notes are only appended"
+    );
+    match spoken {
+        true => {}
+        false => {
+            for (environment_ref, reason) in report.retained.drain(retained_from..) {
+                tracing::debug!(target: "environments", environment_ref, %reason, "retained at restore");
+            }
+            for (environment_ref, reason) in report.unverified.drain(unverified_from..) {
+                tracing::debug!(target: "environments", environment_ref, %reason, "restored environment could not be verified against the runtime");
+            }
+        }
+    }
+}

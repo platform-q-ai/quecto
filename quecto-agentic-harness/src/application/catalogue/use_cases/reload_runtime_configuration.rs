@@ -111,9 +111,14 @@ impl ReloadRuntimeConfiguration {
             ReloadStep::Ready(configuration) => configuration,
         };
         runtime.swap_provider(configuration.provider);
-        let unknown_policy_tools = runtime.apply_persisted_tool_policy(&configuration.tool_policy);
+        let unmatched = runtime.apply_persisted_tool_policy(&configuration.tool_policy);
+        // #2217: only a typo is worth a warning; the application's one
+        // triage logs the rest at debug.
+        let unknown_policy_tools =
+            crate::application::tools::unmatched_policy::split_unmatched_policy_entries(unmatched)
+                .unknown;
         for stable_id in &unknown_policy_tools {
-            tracing::warn!(target: "reload", stable_id = %stable_id, "tools.policy reload entry did not match a registered tool");
+            tracing::warn!(target: "reload", stable_id = %crate::domain::tool_policy_catalogue::shown_entry_id(stable_id), "tools.policy.entries names no tool; the entry never applies");
         }
         ReloadOutcome::Reloaded {
             unknown_policy_tools,

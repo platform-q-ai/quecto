@@ -208,3 +208,11 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
 #[cfg(test)]
 #[path = "agent_tool_registry_cov_tests.rs"]
 mod cov_tests;
+
+#[cfg(test)]
+#[path = "agent_tool_registry_policy_tests.rs"]
+mod policy_tests;
+
+#[cfg(test)]
+#[path = "agent_tool_registry_policy_config_tests.rs"]
+mod policy_config_tests;

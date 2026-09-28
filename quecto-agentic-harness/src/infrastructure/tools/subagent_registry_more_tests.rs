@@ -147,11 +147,22 @@ fn validate_agent_id_format_covers_valid_length_and_character_errors() {
     assert!(validate_agent_id_format("agent_1-ok").is_ok());
     assert_eq!(
         validate_agent_id_format("").unwrap_err(),
-        "agent_id must be 1-64 characters"
+        "agent_id is 0 characters; it must be 1-64"
     );
     assert_eq!(
         validate_agent_id_format(&"a".repeat(65)).unwrap_err(),
-        "agent_id must be 1-64 characters"
+        "agent_id is 65 characters; it must be 1-64"
+    );
+    // #2221: the error says how long the rejected id was.
+    assert_eq!(
+        validate_agent_id_format(&"a".repeat(200)).unwrap_err(),
+        "agent_id is 200 characters; it must be 1-64"
+    );
+    // Length counts characters: 40 two-byte characters are within 1-64 and
+    // fail on the character set, not on a byte count the message never names.
+    assert_eq!(
+        validate_agent_id_format(&"é".repeat(40)).unwrap_err(),
+        "agent_id must use only [a-zA-Z0-9_-]"
     );
     assert_eq!(
         validate_agent_id_format("bad.name").unwrap_err(),

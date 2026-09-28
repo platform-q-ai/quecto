@@ -4,10 +4,10 @@ use crate::application::configuration::use_cases::fakes::{FakeTrust, FakeValidat
 use serde_json::json;
 use std::path::PathBuf;
 
-const GLOBAL: &str = "/home/u/.quecto/config.json";
-const OVERLAY: &str = "/work/.quecto/config.json";
+pub(super) const GLOBAL: &str = "/home/u/.quecto/config.json";
+pub(super) const OVERLAY: &str = "/work/.quecto/config.json";
 
-fn layered() -> ConfigSelection {
+pub(super) fn layered() -> ConfigSelection {
     ConfigSelection::Layered(ConfigLayers {
         global: PathBuf::from(GLOBAL),
         overlay: Some(PathBuf::from(OVERLAY)),
@@ -17,7 +17,7 @@ fn layered() -> ConfigSelection {
 
 /// A patch of `layer` in the layered selection; `path` documents which
 /// file the layer addresses and is asserted against the selection.
-fn patch(layer: ConfigLayer, path: &str, key_path: &str, value: Value) -> ConfigPatch {
+pub(super) fn patch(layer: ConfigLayer, path: &str, key_path: &str, value: Value) -> ConfigPatch {
     let selection = layered();
     let expected = match layer {
         ConfigLayer::Global => selection.path(),
@@ -32,7 +32,7 @@ fn patch(layer: ConfigLayer, path: &str, key_path: &str, value: Value) -> Config
     }
 }
 
-fn use_case(store: Arc<MemoryStore>, trust: Arc<FakeTrust>) -> PatchConfiguration {
+pub(super) fn use_case(store: Arc<MemoryStore>, trust: Arc<FakeTrust>) -> PatchConfiguration {
     let validator = Arc::new(FakeValidator::default());
     let resolve = Arc::new(ResolveEffectiveConfig::new(
         store.clone(),
@@ -42,7 +42,7 @@ fn use_case(store: Arc<MemoryStore>, trust: Arc<FakeTrust>) -> PatchConfiguratio
     PatchConfiguration::new(store.clone(), store, validator, trust, resolve)
 }
 
-fn document(store: &MemoryStore, path: &str) -> Value {
+pub(super) fn document(store: &MemoryStore, path: &str) -> Value {
     serde_json::from_str(&store.content(path).unwrap()).unwrap()
 }
 
@@ -549,7 +549,7 @@ fn an_overlay_patch_may_add_a_non_default_container_config() {
 
 // ── unset (#2024 S2) ────────────────────────────────────────────────────────
 
-fn unset(layer: ConfigLayer, key_path: &str) -> ConfigUnset {
+pub(super) fn unset(layer: ConfigLayer, key_path: &str) -> ConfigUnset {
     ConfigUnset {
         selection: layered(),
         layer,

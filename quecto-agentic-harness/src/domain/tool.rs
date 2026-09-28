@@ -44,6 +44,19 @@ pub struct ToolResult {
     pub delivery_metadata: Option<String>,
 }
 
+impl ToolResult {
+    /// A tool call that returned an error, as the model sees it (#2247
+    /// round 2 N4): `Error: <error>`, an error result with nothing else.
+    pub fn from_error(error: &impl std::fmt::Display) -> Self {
+        Self {
+            content: format!("Error: {error}"),
+            is_error: true,
+            image_blocks: Vec::new(),
+            delivery_metadata: None,
+        }
+    }
+}
+
 /// Which profile a tool catalogue is being read for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolProfileContext {

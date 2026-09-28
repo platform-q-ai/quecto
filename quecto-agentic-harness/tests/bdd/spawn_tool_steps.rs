@@ -92,7 +92,11 @@ fn when_parse_spawn_args(world: &mut QuectoWorld, arguments: String) {
     let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
     world.subagent_config = tool.parse_args_for_test(&arguments).ok();
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let result = rt.block_on(tool.execute(&arguments)).unwrap();
+    // A refusal is a tool error (#2221), shown to the model as the agent
+    // loop renders it.
+    let result = rt
+        .block_on(tool.execute(&arguments))
+        .unwrap_or_else(|error| ToolResult::from_error(&error));
     world.spawn_result = Some(result);
 }
 
@@ -734,15 +738,11 @@ fn when_live_spawn_subagent_with_task(world: &mut QuectoWorld, agent_id: String,
     });
     let tool = world.spawn_tool.as_ref().expect("spawn tool");
     let rt = tokio::runtime::Runtime::new().unwrap();
-    world.spawn_result = Some(match rt.block_on(tool.execute(&args.to_string())) {
-        Ok(r) => r,
-        Err(e) => ToolResult {
-            content: e.to_string(),
-            is_error: true,
-            image_blocks: vec![],
-            delivery_metadata: None,
-        },
-    });
+    // An error reaches the model as the agent loop renders it.
+    world.spawn_result = Some(
+        rt.block_on(tool.execute(&args.to_string()))
+            .unwrap_or_else(|error| ToolResult::from_error(&error)),
+    );
     // The monitor task (the launch-bound parent control connection, #1935)
     // lives on this runtime: it must outlive the step, not the scenario.
     world.spawn_runtimes.push(rt);
@@ -1040,15 +1040,11 @@ fn execute_spawn_json(world: &mut QuectoWorld, mut args: serde_json::Value) {
 pub(crate) fn execute_spawn_json_without_config(world: &mut QuectoWorld, args: serde_json::Value) {
     let tool = world.spawn_tool.as_ref().expect("spawn tool");
     let rt = tokio::runtime::Runtime::new().unwrap();
-    world.spawn_result = Some(match rt.block_on(tool.execute(&args.to_string())) {
-        Ok(r) => r,
-        Err(e) => ToolResult {
-            content: e.to_string(),
-            is_error: true,
-            image_blocks: vec![],
-            delivery_metadata: None,
-        },
-    });
+    // An error reaches the model as the agent loop renders it.
+    world.spawn_result = Some(
+        rt.block_on(tool.execute(&args.to_string()))
+            .unwrap_or_else(|error| ToolResult::from_error(&error)),
+    );
     // The monitor task (the launch-bound parent control connection, #1935)
     // lives on this runtime: it must outlive the step, not the scenario.
     world.spawn_runtimes.push(rt);

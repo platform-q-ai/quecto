@@ -42,6 +42,7 @@ async fn launch(dir: &Path, registry: &EnvironmentRegistry) -> Result<PreparedCh
         &config,
         &ChildCommand {
             swarm_context: None,
+            swarm_member: false,
             supervisor: &test_supervisor(),
             binary: Path::new("true"),
             cli_args: &[],

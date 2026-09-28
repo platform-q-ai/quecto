@@ -28,6 +28,17 @@ impl ToolSource {
             Self::Runtime => "runtime",
         }
     }
+
+    /// The source a stable id's namespace label names: exactly one of the
+    /// labels [`Self::as_str`] produces, nothing else.
+    pub fn parse(label: &str) -> Option<Self> {
+        match label {
+            "bundled-native" => Some(Self::BundledNative),
+            "uds" => Some(Self::Uds),
+            "runtime" => Some(Self::Runtime),
+            _ => None,
+        }
+    }
 }
 
 /// Runtime policy for a registered tool.

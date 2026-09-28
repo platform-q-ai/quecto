@@ -35,14 +35,17 @@ fn parsing_accepts_only_the_delivery_shape() {
     );
     assert_eq!(
         parse_kill_arguments(r#"{"agent_id":"","command":"kill"}"#).unwrap_err(),
-        "agent_id must be 1-64 characters"
+        "agent_id is 0 characters; it must be 1-64"
     );
     assert_eq!(
         parse_kill_arguments(r#"{"agent_id":"a b","command":"kill"}"#).unwrap_err(),
         "agent_id must use only [a-zA-Z0-9_-]"
     );
     let long = "x".repeat(65);
-    assert!(parse_kill_arguments(&format!(r#"{{"agent_id":"{long}"}}"#)).is_err());
+    assert_eq!(
+        parse_kill_arguments(&format!(r#"{{"agent_id":"{long}"}}"#)).unwrap_err(),
+        "agent_id is 65 characters; it must be 1-64"
+    );
 }
 
 #[test]
