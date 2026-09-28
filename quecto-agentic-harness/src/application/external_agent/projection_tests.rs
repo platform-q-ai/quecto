@@ -10,7 +10,7 @@ use super::*;
 use crate::domain::external_agent::stream::{
     BackgroundTask, McpServerStatus, ModelUsage, RateLimitStatus, RateLimitWindow, TokenCounts,
 };
-use crate::domain::external_agent::turn::TurnFailure;
+use crate::domain::external_agent::turn::{FailureKind, TurnFailure};
 
 const HAIKU: &str = "claude-haiku-4-5-20251001";
 
@@ -638,6 +638,7 @@ fn a_not_logged_in_turn_ends_failed_with_every_signal() {
             api_error_status: None,
             assistant_error: Some("authentication_failed".into()),
             errors: Vec::new(),
+            kind: FailureKind::Error,
         })
     );
     assert_eq!(ends[0].stop_reason, Some(StopReason::EndTurn));

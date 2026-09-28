@@ -58,7 +58,7 @@ fn tool_result_text_reads_a_string_or_text_blocks() {
             {"type": "text", "text": "true}"}
         ]))
         .content_text(),
-        "{\"sent\": true}"
+        "{\"sent\": \ntrue}"
     );
     assert_eq!(tool_result(json!(null)).content_text(), "");
 }

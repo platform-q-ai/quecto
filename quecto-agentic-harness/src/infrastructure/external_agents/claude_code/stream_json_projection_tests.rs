@@ -10,7 +10,16 @@ use crate::domain::external_agent::turn::TurnEnd;
 
 /// Project a sample; `user_turns` are recorded before the given line
 /// indexes (the session records what it writes to stdin).
+/// Each turn end comes with its report's message ordinal.
 fn project(name: &str, user_turns: &[(usize, &str)]) -> (Projector, Vec<TurnOutcome>) {
+    let (projector, ends) = project_reports(name, user_turns);
+    (projector, ends.into_iter().map(|(end, _)| end).collect())
+}
+
+fn project_reports(
+    name: &str,
+    user_turns: &[(usize, &str)],
+) -> (Projector, Vec<(TurnOutcome, Option<u64>)>) {
     let (_, text) = SAMPLES
         .iter()
         .find(|(sample, _)| *sample == name)
@@ -23,7 +32,12 @@ fn project(name: &str, user_turns: &[(usize, &str)]) -> (Projector, Vec<TurnOutc
             projector.record_user_turn(turn);
         }
         for event in decoder.decode_line(line).expect("decodes") {
-            ends.extend(projector.apply(&event).turn_end);
+            let turn_end = projector.apply(&event).turn_end;
+            if let Some(end) = turn_end {
+                let report = projector.report().expect("a turn end sets the report");
+                assert_eq!(report.failure.is_some(), !end.end.is_completed());
+                ends.push((end, report.message_ordinal));
+            }
         }
     }
     (projector, ends)
@@ -115,9 +129,17 @@ fn kill_projects_the_background_sleep() {
     assert_eq!(jobs[0].description.as_deref(), Some("sleep 300"));
 }
 
+/// `errors.stream.jsonl` is synthesized (see the fixtures README), not a
+/// capture.
 #[test]
-fn error_results_project_failed_turns_that_report_their_errors() {
-    let (projector, ends) = project("errors", &[(0, "loop"), (3, "spend"), (5, "crash")]);
+fn synthesized_error_results_project_failed_turns_that_report_their_errors() {
+    let (projector, reported) =
+        project_reports("errors", &[(0, "loop"), (3, "spend"), (5, "crash")]);
+    let ordinals: Vec<Option<u64>> = reported.iter().map(|(_, ordinal)| *ordinal).collect();
+    // Turn 1 wrote text (ordinal 1, after the user turn); turns 2 and 3
+    // wrote none, so their reports point at no message, not at turn 1's.
+    assert_eq!(ordinals, [Some(1), None, None]);
+    let ends: Vec<TurnOutcome> = reported.into_iter().map(|(end, _)| end).collect();
     assert_eq!(costs(&ends), [12_000, 498_000, 5_000]);
     let failures: Vec<_> = ends
         .iter()

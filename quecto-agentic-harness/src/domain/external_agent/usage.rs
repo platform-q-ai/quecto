@@ -12,11 +12,19 @@ pub struct TurnUsage {
     pub tokens: TokenCounts,
     /// This turn's cost: the cumulative total's delta, micro-USD.
     pub cost_micro_usd: u64,
-    /// The process's cumulative cost after this turn, micro-USD.
+    /// The session's cost after this turn: the sum of every turn's
+    /// charge, micro-USD.
     pub total_cost_micro_usd: u64,
-    /// The previous cumulative total, when this result's total was lower:
-    /// a new process, charged its whole total.
-    pub cumulative_reset_from: Option<u64>,
+    /// The process's cumulative total went down (to zero, or lower) without
+    /// a new process: nothing was charged for it.
+    pub cost_drop: Option<CostDrop>,
+}
+
+/// A cumulative total lower than the one before, inside one process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CostDrop {
+    pub previous_micro_usd: u64,
+    pub reported_micro_usd: u64,
 }
 
 /// Turns a stream of cumulative totals into per-turn usage.
@@ -31,6 +39,9 @@ impl UsageLedger {
     /// total (rounded once, to micro-USD) less the previous one; a result
     /// without a usable total leaves the total as it was, and a lower total
     /// is a new process charged its whole total.
+    /// A new process started: its cumulative totals start from zero.
+    pub fn process_started(&mut self) {}
+
     pub fn record(&mut self, result: &ResultEvent) -> TurnUsage {
         let previous = self.total_cost_micro_usd;
         let reported = result.total_cost_usd.and_then(micro_usd);
@@ -54,7 +65,10 @@ impl UsageLedger {
             tokens: result.usage,
             cost_micro_usd: cost,
             total_cost_micro_usd: total,
-            cumulative_reset_from: reset_from,
+            cost_drop: reset_from.map(|previous| CostDrop {
+                previous_micro_usd: previous,
+                reported_micro_usd: total,
+            }),
         }
     }
 
