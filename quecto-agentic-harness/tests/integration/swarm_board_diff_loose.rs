@@ -98,8 +98,10 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 /// - #2276's `outside_edited_messages`, `outside_edited_wake_records` and
 ///   `wake_target_sort_error_order`: see `swarm_board_diff_loose_messages.rs`.
 /// - #2277's `outside_edited_loss_records` (a loss observation's time or
-///   detail, or a member's launcher, only an edit holds): see
-///   `swarm_board_diff_loose_loss.rs`.
+///   detail, or a member's launcher, only an edit holds; a detail that is
+///   not JSON text, or NULL, met by `_quarantine`, is refused as a store
+///   failure where Python raises a `JSONDecodeError` or a `TypeError`):
+///   see `swarm_board_diff_loose_loss.rs`.
 /// - `outside_edited_contract` (#2273, listed case by case and pinned in
 ///   `swarm_board_diff_loose_completion.rs`): a run contract, a criterion
 ///   or a task's evidence only a file edited outside the board holds
@@ -118,7 +120,9 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   records a float deadline where Python records the integer; and a loss
 ///   event whose detail is not an object, or whose `member` is a list or an
 ///   object (unhashable to Python), names no member, where Python raises (a
-///   numeric `member` is compared by Python's `==`, as Python compares it).
+///   numeric `member` is compared by Python's `==`, as Python compares it),
+///   whether a resume's blockers or `_quarantine`'s loss scan (#2277) meets
+///   it.
 ///   So is (#2274) a stored request record that is not an object, met
 ///   by its redelivery, a budget without `warned`, met by the budget's
 ///   warning, and a budget without `token_limit` or `strict_unknown`, met by

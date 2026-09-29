@@ -17,10 +17,12 @@
 //!   passes over an observation of another member. An observation whose
 //!   detail is not an object (#2277 review L2) names no member, so the
 //!   caller observes afresh, where Python's `.get` raises an
-//!   `AttributeError`. A launcher that is not
-//!   text (a BLOB) is no launcher, so the member's loss is recorded at
-//!   once, where Python compares the bytes with the caller and asks
-//!   whether that launcher is lost.
+//!   `AttributeError`; one whose detail is not JSON text, or NULL (#2277
+//!   final review L1), is refused as a store failure naming the column,
+//!   where Python's `json.loads` raises a `JSONDecodeError` or a
+//!   `TypeError`. A launcher that is not text (a BLOB) is no launcher, so
+//!   the member's loss is recorded at once, where Python compares the
+//!   bytes with the caller and asks whether that launcher is lost.
 //! - `integer_beyond_i64_is_refused` (#2277 review L3), as the pin table
 //!   describes it, for `_quarantine`'s and `_confirmed_dead`'s member.
 use serde_json::json;
