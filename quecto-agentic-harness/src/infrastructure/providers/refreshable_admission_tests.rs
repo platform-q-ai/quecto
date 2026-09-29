@@ -1,9 +1,16 @@
 use super::*;
 
 #[derive(Debug)]
-struct PauseAfterUnauthorized(Arc<AtomicU32>);
+struct PauseAfterUnauthorized(
+    Arc<AtomicU32>,
+    std::sync::Mutex<Vec<crate::domain::provider::RequestAttempt>>,
+);
 impl crate::application::providers::ports::RequestAdmission for PauseAfterUnauthorized {
-    fn check(&self) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+    fn check(
+        &self,
+        attempt: crate::domain::provider::RequestAttempt,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+        self.1.lock().unwrap().push(attempt);
         Box::pin(async move {
             if self.0.load(Ordering::SeqCst) == 0 {
                 Ok(())
@@ -41,11 +48,21 @@ async fn pause_after_unauthorized_response_prevents_refreshed_inference() {
         factory,
     });
 
+    let admission = Arc::new(PauseAfterUnauthorized(
+        call_count.clone(),
+        Default::default(),
+    ));
     let mut request = test_request();
-    request.admission = Some(Arc::new(PauseAfterUnauthorized(call_count.clone())));
+    request.admission = Some(admission.clone());
     let result = refreshable.chat(request).await;
     assert!(result.is_err(), "paused OAuth retry must be rejected");
     assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    // #2339: the resend after the refresh is checked as a reattempt; the
+    // loop, not this decorator, admitted the first send.
+    assert_eq!(
+        *admission.1.lock().unwrap(),
+        [crate::domain::provider::RequestAttempt::Reattempt]
+    );
 }
 
 #[tokio::test]
@@ -108,7 +125,10 @@ async fn denied_resend_keeps_the_refreshed_provider() {
         factory,
     });
     let mut request = test_request();
-    request.admission = Some(Arc::new(PauseAfterUnauthorized(call_count.clone())));
+    request.admission = Some(Arc::new(PauseAfterUnauthorized(
+        call_count.clone(),
+        Default::default(),
+    )));
     assert!(
         refreshable.chat(request).await.is_err(),
         "paused resend refused"

@@ -146,3 +146,17 @@ pub struct RequestMetadata {
 #[cfg(test)]
 #[path = "provider_tests.rs"]
 mod tests;
+
+/// Which send of one logical model request an admission check gates
+/// (#2339): the agent loop admits the request's [`First`](Self::First)
+/// send once, and every later send (a transient-failure retry, a stream
+/// re-initiation, a resend after an OAuth refresh) is a
+/// [`Reattempt`](Self::Reattempt), re-checked because the run may have
+/// been paused, stopped or run out of budget while the failed send and
+/// its backoff took their time. The admission records the two apart, so
+/// the event log counts one first check per request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestAttempt {
+    First,
+    Reattempt,
+}

@@ -165,7 +165,7 @@ impl AgentLoopImpl {
     ) -> Result<LlmResponse, StreamProviderError> {
         if let Some(admission) = &self.request_admission {
             admission
-                .check()
+                .check(crate::domain::provider::RequestAttempt::First)
                 .await
                 .map_err(StreamProviderError::before_output)?;
         }
@@ -190,7 +190,8 @@ impl AgentLoopImpl {
             if attempt > 1 {
                 if let Some(admission) = &self.request_admission {
                     admission
-                        .check()
+                        // RED stub (#2339): the reattempt is not yet told apart.
+                        .check(crate::domain::provider::RequestAttempt::First)
                         .await
                         .map_err(StreamProviderError::before_output)?;
                 }

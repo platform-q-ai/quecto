@@ -415,7 +415,10 @@ fn wave3_debug_and_jitter_zero_path() {
 #[derive(Debug)]
 struct PauseAfterFirstAttempt(Arc<AtomicU32>);
 impl crate::application::providers::ports::RequestAdmission for PauseAfterFirstAttempt {
-    fn check(&self) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+    fn check(
+        &self,
+        _attempt: crate::domain::provider::RequestAttempt,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         Box::pin(async move {
             if self.0.load(Ordering::SeqCst) == 0 {
                 Ok(())
@@ -449,19 +452,20 @@ async fn pause_during_backoff_prevents_the_next_provider_attempt() {
 #[tokio::test]
 async fn admission_is_rechecked_only_on_retry_attempts() {
     use crate::application::providers::ports::RequestAdmission;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use crate::domain::provider::RequestAttempt;
     #[derive(Debug)]
-    struct Counting(Arc<AtomicUsize>);
+    struct Counting(Arc<std::sync::Mutex<Vec<RequestAttempt>>>);
     impl RequestAdmission for Counting {
         fn check(
             &self,
+            attempt: RequestAttempt,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>
         {
-            self.0.fetch_add(1, Ordering::SeqCst);
+            self.0.lock().unwrap().push(attempt);
             Box::pin(async { Ok(()) })
         }
     }
-    let checks = Arc::new(AtomicUsize::new(0));
+    let checks = Arc::new(std::sync::Mutex::new(Vec::new()));
     let count = Arc::new(AtomicU32::new(0));
     let inner = Arc::new(CountingMockProvider::new(
         count.clone(),
@@ -472,9 +476,11 @@ async fn admission_is_rechecked_only_on_retry_attempts() {
     let mut request = test_request();
     request.admission = Some(Arc::new(Counting(checks.clone())));
     provider.chat(request).await.unwrap();
+    // #2339: the retry's check is recorded as a reattempt, never as a
+    // second first check of the same request.
     assert_eq!(
-        checks.load(Ordering::SeqCst),
-        1,
+        *checks.lock().unwrap(),
+        [RequestAttempt::Reattempt],
         "the loop admitted the first attempt; only the retry re-checks"
     );
 }

@@ -450,7 +450,11 @@ impl crate::application::swarm::ports::Clock for SystemClock {
 }
 
 impl crate::application::providers::ports::RequestAdmission for SwarmContext {
-    fn check(&self) -> PortFuture<'_, Result<(), DomainError>> {
+    // RED stub (#2339): the attempt is not yet recorded.
+    fn check(
+        &self,
+        _attempt: crate::domain::provider::RequestAttempt,
+    ) -> PortFuture<'_, Result<(), DomainError>> {
         let context = self.clone();
         let actor = self.member.clone();
         Box::pin(async move {

@@ -172,7 +172,10 @@ impl LlmProvider for RetryingProvider {
                 // round trip.
                 if attempt > 1 {
                     if let Some(admission) = &request.admission {
-                        admission.check().await?;
+                        // RED stub (#2339): the reattempt is not yet told apart.
+                        admission
+                            .check(crate::domain::provider::RequestAttempt::First)
+                            .await?;
                     }
                     if let Some(trace) = &request.trace {
                         trace.retry();

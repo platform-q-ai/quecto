@@ -256,6 +256,145 @@ async fn a_non_finite_argument_is_answered_by_the_loop_before_the_tool() {
     assert_eq!(provider.request_count(), 2);
 }
 
+/// A running swarm with `coordinator` as its only member, over a fresh
+/// board that records every call in the returned log.
+fn recorded_run(directory: &tempfile::TempDir) -> (SwarmContext, Arc<BoardCalls>) {
+    std::fs::create_dir_all(directory.path().join(".quecto")).unwrap();
+    let context = SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
+        checkout: directory.path().to_path_buf(),
+        member: "coordinator".into(),
+    };
+    let log = Arc::new(BoardCalls::default());
+    assert!(context.board.record_in(log.clone()));
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 60;
+    let process = quecto::domain::swarm::ProcessIdentity {
+        pid: std::process::id(),
+        started: quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id())
+            .unwrap(),
+    };
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.create_run(
+            &serde_json::json!({"goal":"ship","constraints":[],
+                "criteria":[{"id":"tests","kind":"command","description":"pass"}],
+                "member_limit":1,"deadline":deadline}),
+            &process,
+            None,
+        )
+    })
+    .unwrap();
+    (context, log)
+}
+
+/// The admission reads and request records the board logged, in order, as
+/// `(op, decision)`.
+fn admission_trail(log: &BoardCalls) -> Vec<(String, Option<String>)> {
+    log.0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|record| matches!(record.op.as_str(), "_request_admission" | "_record_request"))
+        .map(|record| (record.op.clone(), record.decision.clone()))
+        .collect()
+}
+
+/// #2339: through the real agent loop, wired as `swarm_composition`
+/// wires a member, each model request reads the board's admission once
+/// before it is sent (`model_gate`) and records its usage once after, so
+/// `_record_request` and the model gate are 1:1. The other reads are the
+/// tool gate, one before each tool call, needed because the reply that
+/// asked for the tool took its own time (and its usage may just have spent
+/// the budget); each is recorded as `tool_gate`, so the log tells them
+/// apart. The real runs' ~2 reads per request were this 1 + ~1 tool call.
+#[tokio::test]
+async fn each_model_request_is_admitted_once_and_each_tool_call_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let (context, log) = recorded_run(&directory);
+    let tool = SwarmTool::new().with_context(Some(context.clone()));
+    let call = |id: &str, op: &str| ToolCall {
+        id: id.into(),
+        name: "swarm".into(),
+        arguments: serde_json::json!({ "op": op }).to_string(),
+    };
+    let mut two_calls = text_response("");
+    two_calls.content = None;
+    two_calls.tool_calls = vec![call("a", "summary"), call("b", "inbox")];
+    let mut one_call = text_response("");
+    one_call.content = None;
+    one_call.tool_calls = vec![call("c", "tasks")];
+    let provider = Arc::new(MockProvider::queued(vec![
+        two_calls,
+        one_call,
+        text_response("done"),
+    ]));
+    let mut registry = ToolRegistryImpl::new();
+    registry.register(Arc::new(tool));
+    let context = Arc::new(context);
+    let mut agent = AgentLoopImpl::new(test_config(provider.clone(), Box::new(registry)))
+        .with_tool_admission(Some(context.clone()))
+        .with_request_accounting(Some(context.clone()))
+        .with_request_admission(Some(context));
+    let result = agent
+        .process(&mut vec![Message::user("read the run")])
+        .await
+        .unwrap();
+    assert_eq!(result.response, "done");
+    assert_eq!(provider.request_count(), 3);
+    let admission = |decision: &str| ("_request_admission".to_owned(), Some(decision.to_owned()));
+    let recorded = ("_record_request".to_owned(), Some("recorded".to_owned()));
+    assert_eq!(
+        admission_trail(&log),
+        [
+            admission("model_gate"),
+            recorded.clone(),
+            admission("tool_gate"),
+            admission("tool_gate"),
+            admission("model_gate"),
+            recorded.clone(),
+            admission("tool_gate"),
+            admission("model_gate"),
+            recorded,
+        ]
+    );
+}
+
+/// #2339: a member's admission records which gate read it: the first send
+/// of a model request, a reattempt of it, or a tool call.
+#[tokio::test]
+async fn each_admission_gate_is_recorded_as_its_own_decision() {
+    use quecto::application::providers::ports::RequestAdmission;
+    use quecto::application::tools::ports::ToolExecutionAdmission;
+    use quecto::domain::provider::RequestAttempt;
+    let directory = tempfile::tempdir().unwrap();
+    let (context, log) = recorded_run(&directory);
+    RequestAdmission::check(&context, RequestAttempt::First)
+        .await
+        .unwrap();
+    RequestAdmission::check(&context, RequestAttempt::Reattempt)
+        .await
+        .unwrap();
+    ToolExecutionAdmission::check(&context, "swarm", r#"{"op":"summary"}"#)
+        .await
+        .unwrap();
+    let decisions: Vec<Option<String>> = admission_trail(&log)
+        .into_iter()
+        .map(|(_, decision)| decision)
+        .collect();
+    assert_eq!(
+        decisions,
+        [
+            Some("model_gate".to_owned()),
+            Some("retry_gate".to_owned()),
+            Some("tool_gate".to_owned()),
+        ]
+    );
+}
+
 /// The board calls recorded, in memory.
 #[derive(Default)]
 struct BoardCalls(std::sync::Mutex<Vec<quecto::domain::swarm::BoardOpObservation>>);
