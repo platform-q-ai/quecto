@@ -252,15 +252,18 @@ impl BoardRuns for SqliteBoard<'_> {
     }
 
     fn clear_outcome(&self) -> Result<(), BoardError> {
-        Err(BoardError::new("pending #2273"))
+        self.update_run(
+            "UPDATE run SET outcome=NULL, outcome_reason=NULL",
+            params![],
+        )
     }
 
-    fn set_outcome(&self, _status: &RunState) -> Result<(), BoardError> {
-        Err(BoardError::new("pending #2273"))
+    fn set_outcome(&self, status: &RunState) -> Result<(), BoardError> {
+        self.update_run("UPDATE run SET status=?", [status.as_str()])
     }
 
-    fn set_deadline(&self, _deadline: f64) -> Result<(), BoardError> {
-        Err(BoardError::new("pending #2273"))
+    fn set_deadline(&self, deadline: f64) -> Result<(), BoardError> {
+        self.update_run("UPDATE run SET deadline=?", [deadline])
     }
 
     fn pause_started(&self) -> Result<Option<Value>, BoardError> {
@@ -306,6 +309,16 @@ impl SqliteBoard<'_> {
                     run_noted(tally, row);
                     Ok(())
                 });
+    }
+
+    /// An `UPDATE` of the run row, which the operation gate has read in
+    /// this transaction, so it changes that row (and any other a file
+    /// edited outside the board holds, as Python's does).
+    fn update_run(&self, sql: &str, parameters: impl rusqlite::Params) -> Result<(), BoardError> {
+        debug_assert!(sql.starts_with("UPDATE run SET "), "a run update: {sql}");
+        let changed = self.connection.execute(sql, parameters).map_err(failed)?;
+        debug_assert!(changed >= 1, "{sql} changes the run row the gate read");
+        Ok(())
     }
 
     pub(super) fn count(&self, sql: &str) -> Result<i64, BoardError> {

@@ -1,10 +1,28 @@
-//! STUB (#2273 red phase).
+//! `Workbench.stop(status, reason)` (#2273): the coordinator ends the run.
+//! Every status but `cancelled` is a resumable pause holding that outcome
+//! for the supervisor outside the swarm (#1729); cancellation is terminal
+//! at once.
 use std::sync::Arc;
 
-use crate::application::swarm::dto::{ControlAnswer, StopRunRequest};
-use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::BoardError;
+use crate::application::swarm::board_control::receipt;
+use crate::application::swarm::board_operation::{detail, end, operation, text};
+use crate::application::swarm::dto::{ControlAnswer, RunTransition, StopRunRequest};
+use crate::application::swarm::ports::{BoardRepository, BoardTransaction, Clock};
+use crate::domain::swarm::validation::TEXT_MAX_BYTES;
+use crate::domain::swarm::{
+    Access, BoardError, RunRecord, RunState, STOP_STATUSES, bounded, describe,
+};
 
+/// The reason is bounded and the status must be one of `STOP_STATUSES`
+/// before the operation gate, which admits only the coordinator.
+///
+/// - `cancelled`: a cancelled run answers as it stands; a running or
+///   paused run drops any held outcome, is cancelled and records
+///   `stop{status,reason}`; a setup placeholder and any other run are
+///   refused.
+/// - any other status: a paused run already holding it answers as it
+///   stands; a running run pauses holding it (`stop`, then `paused`, as
+///   the gate's own end); any other run is refused.
 pub struct StopRun {
     repository: Arc<dyn BoardRepository>,
     clock: Arc<dyn Clock + Send + Sync>,
@@ -16,10 +34,86 @@ impl StopRun {
     }
 
     /// # Errors
-    /// Pending #2273.
-    pub fn execute(&self, _request: StopRunRequest) -> Result<ControlAnswer, BoardError> {
-        let _ = (&self.repository, &self.clock);
-        Err(BoardError::new("pending #2273"))
+    /// The reason's bound, `invalid non-success outcome`, an authorisation
+    /// refusal, `run not created yet; …`, `run already …`, or the store's.
+    pub fn execute(&self, request: StopRunRequest) -> Result<ControlAnswer, BoardError> {
+        let reason = bounded(&request.reason, "stop reason", TEXT_MAX_BYTES)?;
+        let status = match request.status.as_str() {
+            Some(status) if STOP_STATUSES.contains(&status) => status,
+            _ => return Err(BoardError::new("invalid non-success outcome")),
+        };
+        let actor = request.actor.as_str();
+        let coordinating = Access {
+            coordinator: true,
+            ..Access::default()
+        };
+        operation(
+            &*self.repository,
+            &*self.clock,
+            actor,
+            coordinating,
+            |transaction, run| {
+                let transition = match status {
+                    "cancelled" => self.cancel(transaction, run, actor, reason)?,
+                    _ => self.end(transaction, run, actor, status, reason)?,
+                };
+                Ok(ControlAnswer {
+                    transition,
+                    receipt: receipt(transaction, &*self.clock)?,
+                })
+            },
+        )
+    }
+
+    fn cancel(
+        &self,
+        transaction: &dyn BoardTransaction,
+        run: &RunRecord,
+        actor: &str,
+        reason: &str,
+    ) -> Result<RunTransition, BoardError> {
+        match run.status.as_ref().map(RunState::as_str) {
+            Some("cancelled") => Ok(RunTransition::Unchanged),
+            Some("setup") => Err(BoardError::new(
+                "run not created yet; nothing to cancel. To start one: swarm op=create",
+            )),
+            Some("running" | "paused") => {
+                transaction.clear_outcome()?;
+                transaction.set_outcome(&RunState::CANCELLED)?;
+                transaction.event(
+                    actor,
+                    self.clock.now_seconds(),
+                    "stop",
+                    &detail([("status", text("cancelled")), ("reason", text(reason))]),
+                )?;
+                Ok(RunTransition::Applied)
+            }
+            _ => Err(BoardError::new(format!("run already {}", describe(run)))),
+        }
+    }
+
+    fn end(
+        &self,
+        transaction: &dyn BoardTransaction,
+        run: &RunRecord,
+        actor: &str,
+        status: &str,
+        reason: &str,
+    ) -> Result<RunTransition, BoardError> {
+        match (
+            run.status.as_ref().map(RunState::as_str),
+            run.outcome.as_deref(),
+        ) {
+            (Some("paused"), Some(held)) if held == status => Ok(RunTransition::Unchanged),
+            (Some("running"), _) => {
+                end(transaction, &*self.clock, actor, status, reason)?;
+                Ok(RunTransition::Applied)
+            }
+            _ => Err(BoardError::new(format!(
+                "run already {}; only the supervisor can resume or close it, and op=cancel_run cancels it",
+                describe(run)
+            ))),
+        }
     }
 }
 

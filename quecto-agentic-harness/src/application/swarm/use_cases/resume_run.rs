@@ -1,11 +1,15 @@
-//! STUB (#2273 red phase).
+//! `Workbench.resume()` (#2273): a member's own resume, which the board
+//! always refuses (#1729).
 use crate::application::swarm::dto::ControlAnswer;
 use crate::domain::swarm::BoardError;
 
-/// Why a member cannot resume.
-#[cfg_attr(not(test), allow(dead_code))]
-pub const MEMBERS_CANNOT_RESUME: &str = "pending #2273";
+/// Why a member cannot resume: only the supervisor outside the swarm does.
+pub const MEMBERS_CANNOT_RESUME: &str = "a paused run is resumed only by the supervisor outside \
+     the swarm (agent_cmd swarm_control resume); members cannot resume it";
 
+/// Every member, the coordinator included, is refused before any
+/// transaction opens: the supervisor resumes through
+/// `ResumeRunExternally`.
 #[derive(Default)]
 pub struct ResumeRun;
 
@@ -15,9 +19,9 @@ impl ResumeRun {
     }
 
     /// # Errors
-    /// Pending #2273.
+    /// Always [`MEMBERS_CANNOT_RESUME`].
     pub fn execute(&self, _actor: &str) -> Result<ControlAnswer, BoardError> {
-        Err(BoardError::new("pending #2273"))
+        Err(BoardError::new(MEMBERS_CANNOT_RESUME))
     }
 }
 
