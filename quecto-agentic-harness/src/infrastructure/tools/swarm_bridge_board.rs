@@ -151,6 +151,11 @@ impl SwarmBoard {
     /// the same file and the same log, else newly built by composition's
     /// builder (a context calls one board file; a hosted store may call
     /// another each time).
+    ///
+    /// The builder runs under the lock: a caller wanting another file waits
+    /// while the handles are built, so two callers never build them twice.
+    /// Building composes the graph and opens no connection (the repository
+    /// opens one per call), so the wait is short.
     fn handles(&self, location: BoardLocation) -> Arc<SwarmBoardHandles> {
         let event_log = self.shared.event_log.get().cloned();
         let logged = event_log.is_some();

@@ -102,17 +102,39 @@ through `SwarmBoard`: composition's handles builder
 (`composition::swarm::build_swarm_board_handles`), carried from `main`
 through `CliComposition` and `CliContext`, bound once per process by the
 agent's admission and given to the host's `HostedStoreObservation` by
-`composition::environments`. The handles are built once per board file,
-and each call is recorded in the session's event log (`swarm_op`, #2303)
-once the log is open and switched on. Board refusals keep their wrapper,
+`composition::environments` (the process's board when admission bound
+one, so the host's reads are recorded too). The handles are built once
+per board file, and each call is recorded in the session's event log
+(`swarm_op`, #2303) once the log is open and switched on. Every board
+call runs off the async workers (a debug build asserts it in
+`SwarmBoard::call`): on the blocking pool, or on a thread outside any
+runtime. Board refusals keep their wrapper,
 `swarm: "<text>"`. The persistent interpreter (`swarm_board_worker.rs`)
 and its teardown-authority entry are deleted: no child process remains
 to leak.
 
+Two recording gaps are known and left to #2313:
+
+- **Admission's own calls are not recorded.** The admission's `_status`,
+  `_bootstrap` and `_activate` run before the session's log is attached
+  (`event_log::attach`), and a `--backend claude-code` member never
+  attaches one. Attaching earlier needs the configuration, which is read
+  after admission, to know whether the event log is on; buffering the
+  admission's observations until then would measure calls before that is
+  known, against owner decision T1 (with the event log off, nothing is
+  measured or written). These calls leave `tracing` records only.
+- **One log per process.** A board records in the first log it is given
+  (`SwarmBoard::record_in` is set once), and the process has one board.
+  In multi-session UDS mode every board call is therefore recorded in the
+  first session's log, whichever session made it, until #2313 pins the
+  log to the session.
+
 Python remains only for `op=run` member programs until #2282, and those
 programs use the Python board over the same file as the harness's Rust
 calls (`tests/integration/swarm_board_mixed.rs` proves the two writers
-interleave and contend without a difference from a single writer).
+interleave and contend without a difference from a single writer, and
+`swarm_board_mixed_harness.rs` that the harness's calls and a member's
+programs leave the pure-Python board's file).
 
 ## Consequences
 
