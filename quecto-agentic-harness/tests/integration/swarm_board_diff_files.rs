@@ -10,7 +10,7 @@
 //! exactly one reserved path: Python names whichever its hash-seeded `set`
 //! meets first, so a multi-conflict scenario would differ from Python
 //! itself (the `multi_conflict_names_the_smallest_path` divergence, pinned
-//! in `reserve_files_tests.rs`).
+//! in `swarm_board_diff_loose_files.rs`).
 //!
 //! Death is set up by a direct `UPDATE members SET status='dead'`
 //! ([`sql`]), not `_confirmed_dead`, which S12 ports: `recover` reads only
@@ -24,7 +24,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 };
 
 /// The `n`th id the harness draws, as the counter writes it.
-fn token(n: u64) -> String {
+pub(crate) fn token(n: u64) -> String {
     format!("{n:032x}")
 }
 
@@ -44,7 +44,7 @@ fn joined(offset: f64, member: &str) -> [Step; 2] {
 
 /// A running run of five coordinated by `parent`, with `worker` live and
 /// holding the claim of task 1 under [`token`]`(3)`.
-fn claimed(more: impl IntoIterator<Item = Step>) -> Vec<Step> {
+pub(crate) fn claimed(more: impl IntoIterator<Item = Step>) -> Vec<Step> {
     let mut steps = vec![create(5)];
     steps.extend(joined(1.0, "worker"));
     steps.extend([

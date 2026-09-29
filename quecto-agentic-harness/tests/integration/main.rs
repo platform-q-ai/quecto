@@ -49,6 +49,7 @@ mod swarm_board_diff_control;
 mod swarm_board_diff_files;
 mod swarm_board_diff_loose;
 mod swarm_board_diff_loose_completion;
+mod swarm_board_diff_loose_files;
 mod swarm_board_diff_loose_runs;
 mod swarm_board_diff_membership;
 mod swarm_board_diff_membership_loose;

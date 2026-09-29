@@ -51,6 +51,9 @@ impl CheckoutPaths for ResolvedCheckout {
         };
         let resolved = realpath(&joined).map_err(|_| escape())?;
         let relative = relative_to(&resolved, &root).ok_or_else(escape)?;
+        // A name that is not UTF-8 (a worker's symlink can make one) is
+        // refused as an escape, where Python's surrogate-escaped text makes
+        // its `sqlite3` raise: `non_utf8_resolved_path_is_refused`.
         String::from_utf8(relative).map_err(|_| escape())
     }
 }

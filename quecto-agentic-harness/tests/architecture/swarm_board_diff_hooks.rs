@@ -11,7 +11,9 @@
 //!   (the receiver of `.unwrap_err()` or `.expect_err(..)`), or in the
 //!   harness's own `run_both`, without either (round-4 L2). A pin table's
 //!   own test is a top-level `#[test]` function of
-//!   `swarm_board_diff_loose.rs` named in `PERMITTED_DIVERGENCES` and not
+//!   `swarm_board_diff_loose.rs`, or of a sibling
+//!   `swarm_board_diff_loose_*.rs` holding a slice's pins (#2275), named
+//!   in `PERMITTED_DIVERGENCES` and not
 //!   pinned elsewhere (`EXTERNAL_PINS` names neither it nor its test), or
 //!   the explicit `outside_edited_evidence` supplemental pin in
 //!   `swarm_board_diff_submissions.rs`, and
@@ -35,6 +37,8 @@ const HARNESS_RUNNER: &str = "run_both";
 const SELF_TEST_PREFIX: &str = "harness_self_test_";
 /// The file holding the pin table.
 const PIN_TABLE: &str = "tests/integration/swarm_board_diff_loose.rs";
+/// The start of a sibling's path, which may hold its own pins (#2275).
+const PIN_SIBLING_PREFIX: &str = "tests/integration/swarm_board_diff_loose_";
 /// The file defining the harness and its `run_both`.
 const HARNESS_FILE: &str = "tests/common/swarm_board_diff/scenario.rs";
 /// One additional pin for `outside_edited_evidence`, kept in its focused
@@ -122,10 +126,14 @@ enum Role {
 
 impl Role {
     fn of(path: &str) -> Self {
+        let sibling = path
+            .strip_prefix(PIN_SIBLING_PREFIX)
+            .is_some_and(|rest| rest.ends_with(".rs") && !rest.contains('/'));
         match path {
             PIN_TABLE => Self::PinTable,
             EVIDENCE_PIN_FILE => Self::EvidencePin,
             HARNESS_FILE => Self::Harness,
+            _ if sibling => Self::PinTable,
             _ => Self::Other,
         }
     }
@@ -475,6 +483,17 @@ fn the_hook_checker_requires_expected_differences_to_be_pinned() {
         }
     "#;
     assert_eq!(violations(PIN_TABLE, pinned), Vec::<String>::new());
+    // A sibling of the pin table may hold a slice's pins (#2275); a file
+    // merely named like one, or below a folder so named, may not.
+    let sibling = "tests/integration/swarm_board_diff_loose_files.rs";
+    assert_eq!(violations(sibling, pinned), Vec::<String>::new());
+    for elsewhere in [
+        "tests/integration/swarm_board_diff_loose_files.txt",
+        "tests/integration/swarm_board_diff_loose_x/files.rs",
+        "tests/integration/swarm_board_diff_loosely.rs",
+    ] {
+        assert_eq!(violations(elsewhere, pinned).len(), 2, "{elsewhere}");
+    }
 
     for unpinned in [
         "fn a_scenario() { let d = try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",

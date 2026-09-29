@@ -92,3 +92,24 @@ fn a_linked_checkout_is_resolved_first() {
         Ok("src/a.rs".to_owned())
     );
 }
+
+/// `non_utf8_resolved_path_is_refused` (#2275, PR #2321 review): a path
+/// resolving, through a symlink a worker made, to a name that is not
+/// UTF-8 is refused as an escape, where Python's `resolve()` answers a
+/// surrogate escape its `sqlite3` then cannot encode.
+#[test]
+fn a_path_resolving_to_a_name_that_is_not_utf8_is_refused() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let (_dir, _base, root) = checkout();
+    symlink(OsStr::from_bytes(b"\xff"), root.join("l")).unwrap();
+    let normalizer = ResolvedCheckout::new(&root);
+    for path in ["l/x", "l", "src/../l/x"] {
+        assert_eq!(
+            normalizer.normalize(path),
+            Err(BoardError::new(ESCAPE)),
+            "{path}"
+        );
+    }
+    assert_eq!(normalizer.normalize("src/x"), Ok("src/x".to_owned()));
+}
