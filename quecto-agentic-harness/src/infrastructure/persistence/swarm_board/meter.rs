@@ -18,6 +18,7 @@
 //! handler's own argument, never through shared state, and the handler is
 //! unregistered ([`unwait_metered`]) before the connection closes.
 use std::ffi::{c_int, c_void};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -73,12 +74,19 @@ impl MeteredCall for SqliteMeteredCall {
         let measure = self.tally.held();
         (measure.transactions > 0).then(|| measure.clone())
     }
+
+    fn role_fixed(&self) {
+        self.tally.roles_wanted.store(false, Ordering::Release);
+    }
 }
 
 /// What one metered call has measured so far.
 #[derive(Debug)]
 pub(super) struct Tally {
     measure: Mutex<CallMeasure>,
+    /// Whether the call's record names its caller's role, so the run's
+    /// roles are read for it: not for a call whose role is fixed.
+    roles_wanted: AtomicBool,
 }
 
 impl Tally {
@@ -86,6 +94,7 @@ impl Tally {
     pub(super) fn new() -> Self {
         Self {
             measure: Mutex::new(CallMeasure::default()),
+            roles_wanted: AtomicBool::new(true),
         }
     }
 
@@ -102,12 +111,14 @@ impl Tally {
         measure.lock_wait = measure.lock_wait.saturating_add(wait);
     }
 
-    /// Whether no run id, or no run roles, have been found yet: only then
-    /// is a run row the op read noted, and only then does a transaction
-    /// that found neither read the run row for them.
+    /// Whether no run id, or (for a call whose role is not fixed) no run
+    /// roles, have been found yet: only then is a run row the op read
+    /// noted, and only then does a transaction that found them not read
+    /// the run row for them.
     pub(super) fn wants_run(&self) -> bool {
+        let roles_wanted = self.roles_wanted.load(Ordering::Acquire);
         let measure = self.held();
-        measure.run_id.is_none() || measure.run_roles.is_none()
+        measure.run_id.is_none() || (roles_wanted && measure.run_roles.is_none())
     }
 
     /// A transaction found the run `id` (or none) and its `roles` (`None`

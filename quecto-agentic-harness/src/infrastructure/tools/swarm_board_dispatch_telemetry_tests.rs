@@ -110,6 +110,8 @@ impl MeteredCall for NothingMeasured {
     fn measure(&self) -> Option<CallMeasure> {
         None
     }
+
+    fn role_fixed(&self) {}
 }
 
 /// Telemetry recording in `log`, measured by `meter`.

@@ -298,12 +298,17 @@ pub fn call_as(
 ) -> Result<Value, BoardError> {
     let started = Instant::now();
     let known = Method::parse(method);
+    let role = records::recorded_role(origin, known);
     // While the event log is on: this call's own measure, which is the
     // repository it is served over, so nothing is shared with another call.
-    let metered = handles
-        .telemetry
-        .as_ref()
-        .map(|telemetry| telemetry.meter.open());
+    // A fixed role reads no run roles (#2313 review nit).
+    let metered = handles.telemetry.as_ref().map(|telemetry| {
+        let metered = telemetry.meter.open();
+        if role.is_some() {
+            metered.role_fixed();
+        }
+        metered
+    });
     let answer = match known {
         Some(known) => bind(known, known.parameters(), args).and_then(|arguments| {
             let over = metered
@@ -332,7 +337,7 @@ pub fn call_as(
             (Some(known), Err(_)) => known.level(),
             (None, _) => Level::Mutation,
         },
-        role: records::recorded_role(origin, known),
+        role,
         member,
         outcome: answer
             .as_ref()

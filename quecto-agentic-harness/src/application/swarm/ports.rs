@@ -634,6 +634,10 @@ pub trait MeteredCall: BoardRepository {
     /// What was measured so far; `None` while no transaction has begun,
     /// so nothing was measured.
     fn measure(&self) -> Option<CallMeasure>;
+
+    /// The call's record has a fixed role (the harness's own op, #2313
+    /// review nit): the run's roles are not read for it, only its id.
+    fn role_fixed(&self);
 }
 
 /// Port: where each board op's `swarm_op` record goes (#2303): the event
