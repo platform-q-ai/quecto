@@ -431,7 +431,7 @@ async fn serve(
     let ctx = context.clone();
     let status = match blocking(move || ctx.call("_status", json!([]))).await? {
         Ok(status) => status,
-        Err(error) => return tool_err(error.to_string()),
+        Err(error) => return unreadable(context, op, record, started, &error).await,
     };
     if let Some((kind, gate, text)) = gated(op, &status) {
         record.gate = gate;
@@ -441,7 +441,7 @@ async fn serve(
         true => None,
         false => match cursor(context).await? {
             Ok(cursor) => Some(cursor),
-            Err(error) => return tool_err(error.to_string()),
+            Err(error) => return unreadable(context, op, record, started, &error).await,
         },
     };
     let ctx = context.clone();
@@ -454,6 +454,20 @@ async fn serve(
         Ok(value) => answered(&request.wire, value, notes),
         Err(refusal) => tool_err(refusal.to_string()),
     }
+}
+
+/// The gate's `_status` read or the first `_event_cursor` read failed
+/// (#2279 review M2): the op is refused before the board with the store's
+/// text, recorded as its own store refusal, its gate `unreadable`.
+async fn unreadable(
+    context: &SwarmContext,
+    op: &'static str,
+    record: &mut OpRecord,
+    started: Instant,
+    error: &DomainError,
+) -> Result<ToolResult, DomainError> {
+    record.gate = "unreadable";
+    refuse(context, op, RefusalKind::Store, started, error.to_string()).await
 }
 
 /// `op=run`'s running gate: the refusal's kind, the gate's name and the
