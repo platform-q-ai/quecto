@@ -2,11 +2,12 @@
 //! gives its admission back.
 use std::sync::Arc;
 
+use super::OverRepository;
 use crate::application::swarm::board_membership::unlaunched;
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::dto::ReleaseUnlaunchedMemberRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError};
+use crate::domain::swarm::{Access, BoardError, RefusalKind};
 
 /// Through the operation gate (`active=False`): only a `reserved` member
 /// with no process recorded is released. It is marked dead (so its place
@@ -36,6 +37,7 @@ impl ReleaseUnlaunchedMember {
                 let row = transaction.member_row(member, None)?;
                 if !row.as_ref().is_some_and(unlaunched) {
                     return Err(BoardError::new(
+                        RefusalKind::WrongState,
                         "only an unlaunched reservation may be released",
                     ));
                 }
@@ -48,6 +50,15 @@ impl ReleaseUnlaunchedMember {
                 )
             },
         )
+    }
+}
+
+impl OverRepository for ReleaseUnlaunchedMember {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

@@ -5,7 +5,8 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, StoredFile, member_row, running_board, stored_task,
 };
 use crate::application::swarm::dto::ReleaseTaskRequest;
-use crate::domain::swarm::BoardError;
+use crate::application::swarm::use_cases::OverRepository;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 fn file(path: &str, task: i64, claim: &str) -> StoredFile {
     StoredFile {
@@ -61,13 +62,13 @@ fn only_the_current_claim_releases_and_its_files_go() {
             service
                 .execute(release(task_id.clone(), token))
                 .unwrap_err(),
-            BoardError::new("stale or unowned claim"),
+            BoardError::new(RefusalKind::StaleToken, "stale or unowned claim"),
             "{task_id}"
         );
     }
     assert_eq!(
         service.execute(release(json!(9), json!("x"))).unwrap_err(),
-        BoardError::new("unknown task")
+        BoardError::new(RefusalKind::NotFound, "unknown task")
     );
     service
         .execute(release(json!(true), json!("stored-token")))
@@ -85,4 +86,20 @@ fn only_the_current_claim_releases_and_its_files_go() {
         (state.events[0].action.as_str(), &state.events[0].detail),
         ("released", &json!({"task": true}))
     );
+}
+
+/// Served over another repository (#2303 reconcile), the release is made
+/// on that board alone, and answers the id the task's row holds, not the
+/// one the caller gave (`true` binds to task 1).
+#[test]
+fn over_releases_on_the_given_board_and_answers_the_stored_id() {
+    let composed_over = MemoryBoard::with(board());
+    let other = MemoryBoard::with(board());
+    let task = ReleaseTask::new(composed_over.clone(), SteppingClock::fixed(50.0))
+        .over(other.clone())
+        .execute(release(json!(true), json!("stored-token")))
+        .unwrap();
+    assert_eq!(task, json!(1));
+    assert_eq!(other.snapshot().tasks[0].text("status"), Some("ready"));
+    assert!(composed_over.transactions().is_empty());
 }

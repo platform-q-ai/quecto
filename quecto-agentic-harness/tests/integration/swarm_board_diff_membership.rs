@@ -149,7 +149,9 @@ fn join_admits_as_the_coordinator_identically() {
     let dir = tempfile::tempdir().unwrap();
     let board = RustBoard::open(&dir.path().join("swarm.sqlite"), dir.path());
     for step in &steps[..2] {
-        let outcome = board.call_text(&step.member, &step.method, &step.args, step.now);
+        let outcome = board
+            .call_text(&step.member, &step.method, &step.args, step.now)
+            .0;
         assert_eq!(outcome, Outcome::Ok(Value::Null), "{step:?}");
     }
     let Outcome::Ok(view) = board.call("parent", "_snapshot", &json!([]), NOW + 3.0) else {
@@ -185,7 +187,11 @@ fn member_limit_accepts_upper_boundary_identically() {
     let board = RustBoard::open(&dir.path().join("swarm.sqlite"), dir.path());
     let outcomes: Vec<Outcome> = steps
         .iter()
-        .map(|step| board.call_text(&step.member, &step.method, &step.args, step.now))
+        .map(|step| {
+            board
+                .call_text(&step.member, &step.method, &step.args, step.now)
+                .0
+        })
         .collect();
     assert!(
         outcomes[1..25]

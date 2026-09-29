@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::dto::TaskRow;
 use super::ports::BoardTasks;
-use crate::domain::swarm::{BoardError, python_equal};
+use crate::domain::swarm::{BoardError, RefusalKind, python_equal};
 
 /// The statuses of a held claim (`swarm_repository.ACTIVE_CLAIM`).
 pub(crate) const HELD_CLAIM: [&str; 3] = ["claimed", "blocked", "submitted"];
@@ -24,7 +24,7 @@ pub(crate) fn read_task(
     task_id: &Value,
 ) -> Result<TaskRow, BoardError> {
     let Some(mut task) = transaction.task(task_id)? else {
-        return Err(BoardError::new("unknown task"));
+        return Err(BoardError::new(RefusalKind::NotFound, "unknown task"));
     };
     if task.text("status") == Some("ready") && unmet(transaction, task.dependencies())? {
         task.set("status", Value::from("blocked"));
@@ -72,8 +72,19 @@ pub(crate) fn owned(
     if equals("token", token) && equals("owner", &Value::from(member)) && held {
         Ok(task)
     } else {
-        Err(BoardError::new("stale or unowned claim"))
+        Err(BoardError::new(
+            RefusalKind::StaleToken,
+            "stale or unowned claim",
+        ))
     }
+}
+
+/// The task's id as its row holds it (#2303): the task an op acted on,
+/// which a caller's id (`"2"`, `true`) only binds to.
+pub(crate) fn stored_id(task: &TaskRow) -> Value {
+    let id = task.get("id").cloned();
+    debug_assert!(id.is_some(), "a task row holds its id column");
+    id.unwrap_or(Value::Null)
 }
 
 #[cfg(test)]

@@ -3,11 +3,12 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{ClaimTaskRequest, TaskRow};
 use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
-use crate::domain::swarm::{Access, BoardError};
+use crate::domain::swarm::{Access, BoardError, RefusalKind};
 
 /// Through the operation gate (a running run), in one transaction: a task
 /// whose dependencies are not all `completed` is refused, then any task
@@ -59,11 +60,19 @@ impl ClaimTask {
                     if completed {
                         continue;
                     }
-                    return Err(BoardError::new("unmet dependencies"));
+                    return Err(BoardError::new(
+                        RefusalKind::WrongState,
+                        "unmet dependencies",
+                    ));
                 }
                 match task.text("status") {
                     Some("ready") => {}
-                    _ => return Err(BoardError::new("task is not ready to claim")),
+                    _ => {
+                        return Err(BoardError::new(
+                            RefusalKind::WrongState,
+                            "task is not ready to claim",
+                        ));
+                    }
                 }
                 let token = self.ids.hex32();
                 debug_assert!(
@@ -93,6 +102,16 @@ impl ClaimTask {
                 Ok(claimed)
             },
         )
+    }
+}
+
+impl OverRepository for ClaimTask {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+            ids: self.ids.clone(),
+        }
     }
 }
 

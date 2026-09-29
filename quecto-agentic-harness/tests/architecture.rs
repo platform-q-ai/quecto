@@ -53,10 +53,23 @@ mod supervisor_runtime;
 /// harness self-test or expects the difference (#2270 round-2 review L3).
 #[path = "architecture/swarm_board_diff_hooks.rs"]
 mod swarm_board_diff_hooks;
+/// The board dispatcher names only application and domain paths (#2303).
+#[path = "architecture/swarm_board_ports.rs"]
+mod swarm_board_ports;
+/// Every Python board refusal text has a kind (#2303 round-3 review L4).
+#[path = "architecture/swarm_board_python_refusals.rs"]
+mod swarm_board_python_refusals;
+/// Every board refusal is built with its kind (#2303).
+#[path = "architecture/swarm_board_refusal_kinds.rs"]
+mod swarm_board_refusal_kinds;
 /// The board dispatcher serves its test-only methods in test builds only
 /// (#2270 review M2).
 #[path = "architecture/swarm_board_test_methods.rs"]
 mod swarm_board_test_methods;
+/// Each board use case holds one repository and nests no use case, so
+/// `over` meters it whole (#2303 round-4 review L4).
+#[path = "architecture/swarm_board_use_cases.rs"]
+mod swarm_board_use_cases;
 /// Epic #1929 close (#1940): process-effect allowlist, no-pid teardown,
 /// retired-name sweep, single owners and whole-crate layer baselines.
 #[path = "architecture/teardown_authority.rs"]
@@ -1444,7 +1457,9 @@ fn application_path_allowed(path: &str) -> bool {
         // invokes the board use cases through the handles composition
         // builds, and builds their requests and renders their views; the
         // SQLite repository implements the board ports over the rows they
-        // carry. Each later slice adds its own names.
+        // carry. Each later slice adds its own names. While the event log
+        // is on, the dispatcher serves a composed use case over the call's
+        // metered repository (`OverRepository`, #2303), constructing none.
         [
             "crate",
             "application",
@@ -1455,6 +1470,7 @@ fn application_path_allowed(path: &str) -> bool {
             | "BootstrapRun"
             | "CreateRun"
             | "JoinRun"
+            | "OverRepository"
             | "ReadRunSnapshot"
             | "ReadRunStatus"
             | "RecordMemberLaunch"
@@ -1504,7 +1520,11 @@ fn application_path_allowed(path: &str) -> bool {
             | "ReleaseTaskRequest"
             | "SetTaskDependenciesRequest"
             | "TaskRow"
-            | "TaskUpdate",
+            | "TaskUpdate"
+            // The measure the store's meter hands back (#2303), and the
+            // run roles it keeps for a member-facing op's caller role.
+            | "CallMeasure"
+            | "RunRoles",
         ] => true,
         ["crate", "application", ..] => false,
         // Every other crate path must start at a layer infrastructure
@@ -6260,6 +6280,12 @@ const SWARM_BOARD_PORTS: &[&str] = &[
     "BoardTasks",
     "BoardRequests",
     "BoardFiles",
+    // Board op telemetry (#2303): the store measures a call's lock waits
+    // on the call's own metered repository, and the event log takes its
+    // record; the dispatcher names neither adapter.
+    "BoardCallMeter",
+    "MeteredCall",
+    "BoardOpLog",
 ];
 
 /// Where the swarm capability declares ports: `ports.rs` (and a
@@ -6307,6 +6333,76 @@ fn swarm_board_ports_are_capability_local_and_contracted() {
             "{port} has no contract suite proven on the production adapter"
         );
     }
+}
+
+/// The only process-wide state the board store may hold: none (#2303
+/// round-2 review M1). A call's measure travels only in the metered
+/// repository built for that call, so the lock measure never flows through
+/// a global. A `static` or a `thread_local!` must be named here to exist.
+const BOARD_STORE_AMBIENT_ALLOWED: &[&str] = &[];
+
+/// Every `static` item and `thread_local!` in a source, as `static NAME`
+/// or `thread_local!`.
+#[derive(Default)]
+struct AmbientState(Vec<String>);
+
+impl<'ast> syn::visit::Visit<'ast> for AmbientState {
+    fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
+        self.0.push(format!("static {}", item.ident));
+        syn::visit::visit_item_static(self, item);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "thread_local")
+        {
+            self.0.push("thread_local!".to_owned());
+        }
+        syn::visit::visit_macro(self, mac);
+    }
+}
+
+fn ambient_state(source: &str) -> Vec<String> {
+    use syn::visit::Visit;
+    let file = syn::parse_file(source).expect("a crate source parses");
+    let mut found = AmbientState::default();
+    found.visit_file(&file);
+    found.0
+}
+
+#[test]
+fn the_board_store_keeps_no_ambient_state() {
+    let mut files = Vec::new();
+    collect_rs_files(
+        Path::new("src/infrastructure/persistence/swarm_board"),
+        &mut files,
+    );
+    assert!(files.len() > 5, "the scan reads the board store");
+    for file in &files {
+        let (path, source) = file.split_once(":\n").unwrap();
+        for found in ambient_state(source) {
+            assert!(
+                BOARD_STORE_AMBIENT_ALLOWED.contains(&found.as_str()),
+                "{path} holds ambient state not allowlisted: {found}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_ambient_state_scan_finds_statics_and_thread_locals() {
+    let found = ambient_state(
+        r#"
+        static A: u8 = 0;
+        fn f() { static B: u8 = 0; }
+        std::thread_local! { static C: u8 = 0; }
+        const D: u8 = 0;
+        "#,
+    );
+    assert_eq!(found, ["static A", "static B", "thread_local!"]);
 }
 
 /// Primitive types whose associated functions (`i64::try_from`) are pure.

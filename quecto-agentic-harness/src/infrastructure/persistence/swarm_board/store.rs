@@ -33,12 +33,15 @@
 use std::ffi::CStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use rusqlite::limits::Limit;
-use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior, ffi};
+use rusqlite::{Connection, ErrorCode, OpenFlags, Transaction, TransactionBehavior, ffi};
 
+use super::meter::{self, Tally};
 use super::schema::{ADDED_COLUMNS, schema_statements};
+use crate::domain::swarm::BoardError;
 
 /// Python's `sqlite3.connect(..., timeout=0.5)`.
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
@@ -57,39 +60,40 @@ pub struct StoreRefusal(pub String);
 
 /// How a transaction's body fails: with a board refusal, returned
 /// unchanged, or with a SQLite error, returned as the contended message.
+/// A board refusal carries its [`RefusalKind`](crate::domain::swarm::RefusalKind)
+/// (#2303): the store returns only its text, and a repository that
+/// raised it (or the ledger, which raises its own) keeps the kind.
 #[derive(Debug, thiserror::Error)]
 pub enum TransactionError {
     /// A board refusal (`SwarmError`), returned unchanged.
     #[error("{0}")]
-    Board(String),
+    Board(BoardError),
     /// A SQLite error (`sqlite3.Error`).
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
 }
 
 impl TransactionError {
-    /// A board refusal with `message`.
-    pub fn board(message: impl Into<String>) -> Self {
-        Self::Board(message.into())
-    }
-
     fn into_refusal(self) -> StoreRefusal {
         match self {
-            Self::Board(message) => StoreRefusal(message),
+            Self::Board(refusal) => StoreRefusal(refusal.message().to_owned()),
             Self::Sqlite(error) => contended(&error),
         }
     }
 }
 
-/// The board file one run coordinates through.
+/// The board file one run coordinates through. Its path is shared, so a
+/// metered call's copy (#2303) costs a reference count, not the path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardStore {
-    path: PathBuf,
+    path: Arc<Path>,
 }
 
 impl BoardStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: Arc::from(path.into()),
+        }
     }
 
     /// The path as given (absolutised per transaction, as Python does).
@@ -111,25 +115,94 @@ impl BoardStore {
         create: bool,
         body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
     ) -> Result<T, StoreRefusal> {
-        let path = absolutised(&self.path, std::env::current_dir)?;
+        self.attempt(create, body).map_err(|(refusal, _)| refusal)
+    }
+
+    /// [`Self::transaction`], with why a refusal came from the store
+    /// itself (#2303): `None` for `body`'s own [`TransactionError::Board`].
+    ///
+    /// # Errors
+    /// As [`Self::transaction`].
+    pub fn attempt<T>(
+        &self,
+        create: bool,
+        body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
+    ) -> Result<T, (StoreRefusal, Option<StoreFailure>)> {
+        self.measured(create, None, body)
+    }
+
+    /// [`Self::attempt`], measured on `tally` when there is one (#2303):
+    /// its lock wait, and its busy handler's firing and sleep. Without one
+    /// no timing is taken and SQLite's own busy timeout waits.
+    pub(super) fn measured<T>(
+        &self,
+        create: bool,
+        tally: Option<&Tally>,
+        body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
+    ) -> Result<T, (StoreRefusal, Option<StoreFailure>)> {
+        let failed = |refusal| (refusal, Some(StoreFailure::Failed));
+        let path = absolutised(&self.path, std::env::current_dir).map_err(failed)?;
         // Opened only to create it, or where it is; anything else is a store
         // deleted from under its run (#2145), and mode=rw never recreates it.
         if create || path.exists() {
-            let mut connection = open(&path, create)?;
-            let outcome = run(&mut connection, create, body);
+            let mut connection = open(&path, create, tally).map_err(failed)?;
+            let outcome = run(&mut connection, create, tally, body);
             debug_assert!(
                 connection.is_autocommit(),
                 "a board transaction is committed or rolled back before its connection closes"
             );
-            let closed = connection.close().map_err(|(_, error)| contended(&error));
-            let value = outcome.map_err(TransactionError::into_refusal)?;
+            // A metered connection's busy handler points at the call's
+            // tally: it is unregistered first, so SQLite never holds that
+            // pointer past this transaction (#2303 round-3 review L6). The
+            // connection closes either way. Clearing a handler on a live
+            // handle cannot fail, and its outcome is never the op's: a
+            // committed op is not refused over it (round-4 review N1).
+            if tally.is_some() {
+                let unwaited = meter::unwait_metered(&connection);
+                debug_assert!(
+                    unwaited.is_ok(),
+                    "clearing a busy handler cannot fail: {unwaited:?}"
+                );
+            }
+            let closed = connection
+                .close()
+                .map_err(|(_, error)| (contended(&error), Some(failure(&error))));
+            let value = outcome.map_err(|error| {
+                let failure = match &error {
+                    TransactionError::Board(_) => None,
+                    TransactionError::Sqlite(error) => Some(failure(error)),
+                };
+                (error.into_refusal(), failure)
+            })?;
             closed.map(|()| value)
         } else {
-            Err(StoreRefusal(format!(
-                "coordination store missing at {}: it was deleted while the run was live, so this run's board is lost",
-                path.display()
-            )))
+            Err((
+                StoreRefusal(format!(
+                    "coordination store missing at {}: it was deleted while the run was live, so this run's board is lost",
+                    path.display()
+                )),
+                Some(StoreFailure::Missing),
+            ))
         }
+    }
+}
+
+/// Why the store itself refused a transaction (#2303).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoreFailure {
+    /// The board file is gone (#2145).
+    Missing,
+    /// SQLite stayed busy or locked past the timeout.
+    Busy,
+    /// Any other failure.
+    Failed,
+}
+
+/// The [`StoreFailure`] of a SQLite error.
+pub(super) fn failure(error: &rusqlite::Error) -> StoreFailure {
+    match error.sqlite_error_code() {
+        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => StoreFailure::Busy,
+        _ => StoreFailure::Failed,
     }
 }
 
@@ -206,7 +279,7 @@ const OPEN_FLAGS: OpenFlags = OpenFlags::SQLITE_OPEN_URI.union(OpenFlags::SQLITE
 const CREATE_FLAGS: OpenFlags = OPEN_FLAGS.union(OpenFlags::SQLITE_OPEN_CREATE);
 
 /// `sqlite3.connect(path.as_uri() + '?mode=rw[c]', uri=True, timeout=0.5)`.
-fn open(path: &Path, create: bool) -> Result<Connection, StoreRefusal> {
+fn open(path: &Path, create: bool, tally: Option<&Tally>) -> Result<Connection, StoreRefusal> {
     let (mode, flags) = if create {
         ("rwc", CREATE_FLAGS)
     } else {
@@ -223,9 +296,13 @@ fn open(path: &Path, create: bool) -> Result<Connection, StoreRefusal> {
         .pragma_query_value(None, "secure_delete", |row| row.get::<_, i64>(0))
         .map_err(|error| contended(&error))?;
     secure_delete_checked(secure_delete)?;
-    connection
-        .busy_timeout(BUSY_TIMEOUT)
-        .map_err(|error| contended(&error))?;
+    // A metered call (#2303) waits on the same schedule and notes on its
+    // own tally that it waited; otherwise SQLite's own handler waits.
+    let waiting = match tally {
+        Some(tally) => meter::wait_metered(&connection, tally),
+        None => connection.busy_timeout(BUSY_TIMEOUT),
+    };
+    waiting.map_err(|error| contended(&error))?;
     Ok(connection)
 }
 
@@ -251,10 +328,17 @@ fn opening_message(error: &rusqlite::Error, uri: &str) -> String {
 fn run<T>(
     connection: &mut Connection,
     create: bool,
+    tally: Option<&Tally>,
     body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
 ) -> Result<T, TransactionError> {
     connection.execute_batch("PRAGMA foreign_keys=ON")?;
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    // The lock wait is measured only for a metered call (#2303).
+    let asked = tally.map(|tally| (tally, Instant::now()));
+    let begun = connection.transaction_with_behavior(TransactionBehavior::Immediate);
+    if let Some((tally, asked)) = asked {
+        tally.lock_waited(asked.elapsed());
+    }
+    let transaction = begun?;
     let value = match prepared(&transaction, create).and_then(|()| {
         debug_assert!(
             !transaction.is_autocommit(),

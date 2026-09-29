@@ -18,7 +18,9 @@ use crate::application::swarm::ports::{
     BoardEncoding, BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
     IdSource,
 };
-use crate::domain::swarm::{BoardError, MemberRecord, MemberState, RunRecord, RunState};
+use crate::domain::swarm::{
+    BoardError, MemberRecord, MemberState, RefusalKind, RunRecord, RunState,
+};
 
 /// One recorded `events` row.
 #[derive(Clone, Debug, PartialEq)]
@@ -248,6 +250,7 @@ impl BoardMembers for MemoryTransaction<'_> {
             .any(|row| row.text("id") == Some(member.id.as_str()))
         {
             return Err(BoardError::new(
+                RefusalKind::Store,
                 "coordination store unavailable or contended: UNIQUE constraint failed: members.id",
             ));
         }
@@ -298,6 +301,7 @@ impl BoardMembers for MemoryTransaction<'_> {
         let mut state = self.state.borrow_mut();
         if state.members.iter().any(|row| row.text("id") == Some(id)) {
             return Err(BoardError::new(
+                RefusalKind::Store,
                 "coordination store unavailable or contended: UNIQUE constraint failed: members.id",
             ));
         }

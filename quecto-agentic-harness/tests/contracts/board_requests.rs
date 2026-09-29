@@ -5,7 +5,7 @@
 //! same id is refused; a full ledger takes no new request.
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
-use quecto::domain::swarm::BoardError;
+use quecto::domain::swarm::{BoardError, RefusalKind};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::{Value, json};
 
@@ -77,7 +77,10 @@ fn ledger_replays_and_refuses_conflicts() {
     assert_eq!(
         (conflict.unwrap_err(), runs),
         (
-            BoardError::new("request id reused with different payload"),
+            BoardError::new(
+                RefusalKind::RequestIdReused,
+                "request id reused with different payload"
+            ),
             0
         )
     );
@@ -91,7 +94,10 @@ fn ledger_replays_and_refuses_conflicts() {
 fn a_refused_action_stores_nothing() {
     let (_dir, database, repository) = board();
     repository.atomic(true, &mut |_| Ok(())).unwrap();
-    let refusal = BoardError::new("task board full (1000); settle existing work");
+    let refusal = BoardError::new(
+        RefusalKind::CapacityFull,
+        "task board full (1000); settle existing work",
+    );
     let (answer, runs) = retry(
         &repository,
         "worker",
@@ -124,7 +130,10 @@ fn a_full_ledger_takes_no_new_request() {
     assert_eq!(
         (full.unwrap_err(), runs),
         (
-            BoardError::new("coordination request ledger full (10000)"),
+            BoardError::new(
+                RefusalKind::CapacityFull,
+                "coordination request ledger full (10000)"
+            ),
             0
         )
     );

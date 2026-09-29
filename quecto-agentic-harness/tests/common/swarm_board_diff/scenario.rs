@@ -1,12 +1,31 @@
 //! Steps and the per-step comparison of the two boards.
+//!
+//! Every scenario runs twice (#2303 review M1): once as the board runs by
+//! default, and once with the event log on, each Rust call measured by the
+//! store's meter and recorded in memory. Both runs must match Python step
+//! for step, by result, refusal text and dump, and the second must record
+//! exactly one `swarm_op` per call, busy for a step run with the lock held.
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, mpsc};
+use std::thread;
+use std::time::Duration;
 
 use serde_json::Value;
 
 use super::Outcome;
 use super::dump::{first_difference, logical_dump};
 use super::python::PyBoard;
-use super::rust::RustBoard;
+use super::rust::{RecordedOps, RustBoard};
+
+/// How long a step waits on a lock another connection holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hold {
+    /// Held when the call begins and let go 150 ms later: the call waits it
+    /// out.
+    WaitedOut,
+    /// Held until the call returns: the call gives up at the timeout.
+    Throughout,
+}
 
 /// One board call: `member` calls `method` with `args` (a JSON array binds
 /// positionally, an object by name) at clock `now`. `args` is JSON text,
@@ -19,6 +38,17 @@ pub struct Step {
     pub method: String,
     pub args: String,
     pub now: f64,
+    /// The lock held on each side's board while it runs this step.
+    pub hold: Option<Hold>,
+}
+
+/// `step`, run on each side while another connection holds the board's
+/// write lock (`BEGIN IMMEDIATE`) as `hold` says.
+pub fn held(hold: Hold, step: Step) -> Step {
+    Step {
+        hold: Some(hold),
+        ..step
+    }
 }
 
 /// A step whose arguments are `args` written as JSON.
@@ -35,6 +65,7 @@ pub fn step_text(member: &str, method: &str, args: &str, now: f64) -> Step {
         method: method.to_owned(),
         args: args.to_owned(),
         now,
+        hold: None,
     }
 }
 
@@ -51,6 +82,7 @@ pub fn sql(statement: &str) -> Step {
         method: SQL_STEP.to_owned(),
         args: statement.to_owned(),
         now: 0.0,
+        hold: None,
     }
 }
 
@@ -60,6 +92,55 @@ fn edit(database: &Path, statement: &str) -> Outcome {
         .and_then(|connection| connection.execute_batch(statement))
         .unwrap_or_else(|error| panic!("{statement} on {}: {error}", database.display()));
     Outcome::Ok(Value::Null)
+}
+
+/// Runs `call` while another connection holds `database`'s write lock as
+/// `hold` says (or not at all).
+fn with_lock<T>(database: &Path, hold: Option<Hold>, call: impl FnOnce() -> T) -> T {
+    let Some(hold) = hold else {
+        return call();
+    };
+    let path = database.to_path_buf();
+    let (held, taken) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let holder = thread::spawn(move || {
+        let connection = rusqlite::Connection::open(path).expect("a holder connection");
+        connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .expect("the holder takes the lock");
+        held.send(()).expect("the step waits for the lock");
+        let _told = released.recv_timeout(Duration::from_secs(60));
+        connection
+            .execute_batch("COMMIT")
+            .expect("the holder commits");
+    });
+    taken
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the lock is held");
+    let releaser = match hold {
+        Hold::WaitedOut => {
+            let release = release.clone();
+            Some(thread::spawn(move || {
+                thread::sleep(Duration::from_millis(150));
+                let _gone = release.send(());
+            }))
+        }
+        Hold::Throughout => None,
+    };
+    let value = call();
+    let _gone = release.send(());
+    if let Some(releaser) = releaser {
+        releaser.join().expect("the releaser ends");
+    }
+    holder.join().expect("the holder ends");
+    value
+}
+
+/// How the Rust board runs: as by default, or with the event log on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Telemetry {
+    Off,
+    On,
 }
 
 /// One side's board file, in its own directory.
@@ -106,7 +187,10 @@ pub fn run_rust(steps: &[Step]) -> Outcome {
         last = if step.method == SQL_STEP {
             edit(&side.database, &step.args)
         } else {
-            side.neutral(rust.call_text(&step.member, &step.method, &step.args, step.now))
+            side.neutral(
+                rust.call_text(&step.member, &step.method, &step.args, step.now)
+                    .0,
+            )
         };
     }
     last
@@ -115,16 +199,33 @@ pub fn run_rust(steps: &[Step]) -> Outcome {
 /// Runs `steps` on both boards, calling `after(index, rust_database,
 /// rust_outcome)` once each step has run on both and before they are
 /// compared (the harness's self-tests tamper with the Rust side's file or
-/// answer there); the first difference is the error.
+/// answer there); the first difference is the error. The steps run twice,
+/// with the event log off and then on (see the module docs).
 pub fn try_run_both(
     steps: &[Step],
     mut after: impl FnMut(usize, &Path, &mut Outcome),
+) -> Result<(), String> {
+    run_in(steps, Telemetry::Off, &mut after)?;
+    run_in(steps, Telemetry::On, &mut after)
+        .map_err(|difference| format!("with the event log on, {difference}"))
+}
+
+fn run_in(
+    steps: &[Step],
+    telemetry: Telemetry,
+    after: &mut impl FnMut(usize, &Path, &mut Outcome),
 ) -> Result<(), String> {
     let dir = tempfile::tempdir().expect("a directory for the two boards");
     let python_side = Side::new(dir.path(), "python");
     let rust_side = Side::new(dir.path(), "rust");
     let mut python = PyBoard::start(&python_side.database, &python_side.root, dir.path());
-    let rust = RustBoard::open(&rust_side.database, &rust_side.root);
+    let log = Arc::new(RecordedOps::default());
+    let rust = match telemetry {
+        Telemetry::Off => RustBoard::open(&rust_side.database, &rust_side.root),
+        Telemetry::On => {
+            RustBoard::open_recorded(&rust_side.database, &rust_side.root, log.clone())
+        }
+    };
     for (index, step) in steps.iter().enumerate() {
         let context = || {
             format!(
@@ -132,17 +233,29 @@ pub fn try_run_both(
                 step.method, step.member, step.args, step.now
             )
         };
-        let (python_outcome, mut rust_outcome) = if step.method == SQL_STEP {
+        let (python_outcome, mut rust_outcome, dispatched) = if step.method == SQL_STEP {
             (
                 edit(&python_side.database, &step.args),
                 edit(&rust_side.database, &step.args),
+                false,
             )
         } else {
+            let python_outcome = with_lock(&python_side.database, step.hold, || {
+                python.call(&step.member, &step.method, &step.args, step.now)
+            });
+            let (rust_outcome, dispatched) = with_lock(&rust_side.database, step.hold, || {
+                rust.call_text(&step.member, &step.method, &step.args, step.now)
+            });
             (
-                python_side.neutral(python.call(&step.member, &step.method, &step.args, step.now)),
-                rust_side.neutral(rust.call_text(&step.member, &step.method, &step.args, step.now)),
+                python_side.neutral(python_outcome),
+                rust_side.neutral(rust_outcome),
+                dispatched,
             )
         };
+        if telemetry == Telemetry::On {
+            recorded(&log, dispatched, step.hold)
+                .map_err(|problem| format!("{}: {problem}", context()))?;
+        }
         after(index, &rust_side.database, &mut rust_outcome);
         if let Outcome::Raised(raised) = &python_outcome {
             return Err(format!("{}: Python raised {raised}", context()));
@@ -173,4 +286,26 @@ pub fn try_run_both(
         }
     }
     Ok(())
+}
+
+/// The event log holds exactly one record for a dispatched call (none for
+/// a step that never reached the dispatcher), busy when the lock was held.
+fn recorded(log: &RecordedOps, dispatched: bool, hold: Option<Hold>) -> Result<(), String> {
+    let records = log.take();
+    let expected = usize::from(dispatched);
+    if records.len() != expected {
+        return Err(format!(
+            "{} swarm_op records, {expected} expected: {records:?}",
+            records.len()
+        ));
+    }
+    match (hold, records.first()) {
+        (None, _) | (Some(_), None) => Ok(()),
+        (Some(_), Some(record)) => match record.busy {
+            Some(true) => Ok(()),
+            Some(false) | None => Err(format!(
+                "the lock was held, the record is not busy: {record:?}"
+            )),
+        },
+    }
 }

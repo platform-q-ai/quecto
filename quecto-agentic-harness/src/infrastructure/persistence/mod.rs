@@ -1,4 +1,5 @@
 pub mod audit_log;
+pub mod board_op_log;
 pub mod context_spill;
 pub mod crash_record;
 pub mod ended_child_records;

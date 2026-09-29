@@ -43,6 +43,15 @@ pub(super) fn test_only_file(file: &str) -> bool {
     true
 }
 
+/// True only for a file the crate roots mount as a production module (not
+/// only under `#[cfg(test)]`): an allowlist, so a file outside the tree,
+/// whatever its name, is not production.
+pub(super) fn production_file(file: &str) -> bool {
+    crate_tree()
+        .production
+        .contains_key(&normalize(Path::new(file)))
+}
+
 /// The files the crate roots mount: production modules with their module
 /// paths, and files reached only through `#[cfg(test)]` declarations.
 #[derive(Default)]
@@ -380,7 +389,7 @@ pub(super) fn crate_paths_in_tokens(stream: proc_macro2::TokenStream) -> Vec<Str
 }
 
 /// The leaf paths of a use tree; a module alias is [`UNRESOLVABLE`].
-fn expand_use_tree(tree: &syn::UseTree, prefix: &str, paths: &mut Vec<String>) {
+pub(super) fn expand_use_tree(tree: &syn::UseTree, prefix: &str, paths: &mut Vec<String>) {
     match tree {
         syn::UseTree::Path(path) => {
             expand_use_tree(&path.tree, &format!("{prefix}{}::", path.ident), paths)

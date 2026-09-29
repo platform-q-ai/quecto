@@ -7,6 +7,7 @@ use super::{
     BoardStore, CREATE_FLAGS, OPEN_FLAGS, StoreRefusal, TransactionError, Undecodable, absolutised,
     file_uri, opening_message, secure_delete_checked, sqlite_message, variable_limit_checked,
 };
+use crate::domain::swarm::{BoardError, RefusalKind};
 use crate::infrastructure::persistence::swarm_board::binding::bound_statement;
 use crate::infrastructure::persistence::swarm_board::ledger::event;
 use crate::infrastructure::persistence::swarm_board::py_json::{self, PyJson};
@@ -270,7 +271,10 @@ fn a_board_error_rolls_back_and_is_returned_unchanged() {
     let store = created(&dir);
     let refused: Result<(), _> = store.transaction(false, |tx| {
         event(tx, "worker", 1.5, "claimed", &json("{}"))?;
-        Err(TransactionError::board("task 3 is already claimed"))
+        Err(TransactionError::Board(BoardError::new(
+            RefusalKind::WrongState,
+            "task 3 is already claimed",
+        )))
     });
     assert_eq!(
         refused,

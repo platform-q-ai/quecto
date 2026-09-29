@@ -8,6 +8,7 @@ use rusqlite::{Connection, types::ValueRef};
 
 use super::py_json::{self, PyJson};
 use super::store::{CONTENDED, TransactionError, Undecodable};
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// The most requests the idempotency ledger holds (`Store.retry`).
 pub const REQUEST_LEDGER_CAPACITY: i64 = 10_000;
@@ -53,8 +54,9 @@ pub fn retry(
                 )?;
                 Ok(result)
             } else {
-                Err(TransactionError::board(format!(
-                    "coordination request ledger full ({REQUEST_LEDGER_CAPACITY})"
+                Err(TransactionError::Board(BoardError::new(
+                    RefusalKind::CapacityFull,
+                    format!("coordination request ledger full ({REQUEST_LEDGER_CAPACITY})"),
                 )))
             }
         }
@@ -74,9 +76,10 @@ fn replayed(
     let stored_result = Stored::read("result", stored_result)?;
     match stored_payload {
         Stored::Text(stored) if stored == payload => stored_result.loads(),
-        _ => Err(TransactionError::board(
+        _ => Err(TransactionError::Board(BoardError::new(
+            RefusalKind::RequestIdReused,
             "request id reused with different payload",
-        )),
+        ))),
     }
 }
 
@@ -95,7 +98,10 @@ impl<'a> Stored<'a> {
     fn read(column: &str, value: ValueRef<'a>) -> Result<Self, TransactionError> {
         match value {
             ValueRef::Text(bytes) => std::str::from_utf8(bytes).map(Self::Text).map_err(|_| {
-                TransactionError::board(format!("{CONTENDED}: {}", Undecodable::new(column, bytes)))
+                TransactionError::Board(BoardError::new(
+                    RefusalKind::Store,
+                    format!("{CONTENDED}: {}", Undecodable::new(column, bytes)),
+                ))
             }),
             ValueRef::Blob(bytes) => Ok(Self::Blob(bytes)),
             ValueRef::Integer(_) => Ok(Self::Other("int")),
@@ -110,12 +116,15 @@ impl<'a> Stored<'a> {
             Self::Text(text) => text,
             Self::Blob(bytes) => utf8_json(bytes)?,
             Self::Other(kind) => {
-                return Err(TransactionError::board(format!(
-                    "the JSON object must be str, bytes or bytearray, not {kind}"
+                return Err(TransactionError::Board(BoardError::new(
+                    RefusalKind::Store,
+                    format!("the JSON object must be str, bytes or bytearray, not {kind}"),
                 )));
             }
         };
-        py_json::decode(text).map_err(|error| TransactionError::board(error.to_string()))
+        py_json::decode(text).map_err(|undecodable| {
+            TransactionError::Board(BoardError::new(RefusalKind::Store, undecodable.to_string()))
+        })
     }
 }
 
@@ -144,9 +153,10 @@ fn utf8_json(bytes: &[u8]) -> Result<&str, TransactionError> {
     let text = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
     match (wide, std::str::from_utf8(text)) {
         (false, Ok(text)) => Ok(text),
-        _ => Err(TransactionError::board(
+        _ => Err(TransactionError::Board(BoardError::new(
+            RefusalKind::Store,
             "the stored result is not UTF-8 JSON",
-        )),
+        ))),
     }
 }
 
@@ -170,7 +180,9 @@ pub fn event(
 
 /// The board's `encode()`.
 fn encoded(value: &PyJson) -> Result<String, TransactionError> {
-    py_json::encode(value).map_err(|error| TransactionError::board(error.to_string()))
+    py_json::encode(value).map_err(|error| {
+        TransactionError::Board(BoardError::new(RefusalKind::Invalid, error.to_string()))
+    })
 }
 
 /// `bounded(request, 'request id', 128)`: nonblank by Python's `str.strip`
@@ -179,8 +191,9 @@ fn bounded_request(request: &str) -> Result<(), TransactionError> {
     if has_content(request) && request.len() <= REQUEST_ID_MAX_BYTES {
         Ok(())
     } else {
-        Err(TransactionError::board(format!(
-            "request id must be nonempty and at most {REQUEST_ID_MAX_BYTES} bytes"
+        Err(TransactionError::Board(BoardError::new(
+            RefusalKind::Invalid,
+            format!("request id must be nonempty and at most {REQUEST_ID_MAX_BYTES} bytes"),
         )))
     }
 }

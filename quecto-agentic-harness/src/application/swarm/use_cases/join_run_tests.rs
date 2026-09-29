@@ -2,20 +2,19 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use super::{ActivateMember, AdmitMember, JoinRun};
+use super::JoinRun;
 use crate::application::swarm::board_test_support::{
     BoardState, CounterIds, MemoryBoard, SteppingClock, running_board, stored_member,
 };
 use crate::application::swarm::dto::{JoinRunRequest, Joined, LaunchIdentity};
-use crate::domain::swarm::BoardError;
+use crate::application::swarm::use_cases::OverRepository;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 fn join_run(board: &Arc<MemoryBoard>) -> JoinRun {
-    let clock = SteppingClock::fixed(50.0);
     JoinRun::new(
         board.clone(),
+        SteppingClock::fixed(50.0),
         CounterIds::journalling(&board.journal),
-        Arc::new(AdmitMember::new(board.clone(), clock.clone())),
-        Arc::new(ActivateMember::new(board.clone(), clock)),
     )
 }
 
@@ -127,7 +126,10 @@ fn join_returns_early_for_the_same_live_process() {
         join_run(&board)
             .execute(join("worker", Some("r"), 8, "Mon"))
             .unwrap_err(),
-        BoardError::new("member already active in a different process")
+        BoardError::new(
+            RefusalKind::LaunchConflict,
+            "member already active in a different process"
+        )
     );
 }
 
@@ -146,7 +148,10 @@ fn a_known_identity_under_another_reservation_is_refused() {
             join_run(&board)
                 .execute(join("worker", reservation, 7, "Mon"))
                 .unwrap_err(),
-            BoardError::new("launch reservation does not match invoking process")
+            BoardError::new(
+                RefusalKind::LaunchConflict,
+                "launch reservation does not match invoking process"
+            )
         );
     }
     assert_eq!(
@@ -167,7 +172,7 @@ fn join_without_a_run_or_coordinator_is_refused() {
         join_run(&board)
             .execute(join("worker", None, 7, "Mon"))
             .unwrap_err(),
-        BoardError::new("coordination run missing")
+        BoardError::new(RefusalKind::RunMissing, "coordination run missing")
     );
     let mut state = five_member_board();
     if let Some(run) = state.run.as_mut() {
@@ -178,7 +183,10 @@ fn join_without_a_run_or_coordinator_is_refused() {
         join_run(&board)
             .execute(join("worker", None, 7, "Mon"))
             .unwrap_err(),
-        BoardError::new("invoking member is unknown or death confirmed"),
+        BoardError::new(
+            RefusalKind::NotMember,
+            "invoking member is unknown or death confirmed"
+        ),
         "nobody coordinates: the gate finds no invoking member"
     );
     // The already-live branch writes nothing and carries the coordinator
@@ -205,7 +213,10 @@ fn join_without_a_run_or_coordinator_is_refused() {
         join_run(&board)
             .execute(join(&long, None, 7, "Mon"))
             .unwrap_err(),
-        BoardError::new("member must be nonempty and at most 128 bytes"),
+        BoardError::new(
+            RefusalKind::Invalid,
+            "member must be nonempty and at most 128 bytes"
+        ),
         "the member is bounded first"
     );
 }
@@ -247,7 +258,10 @@ fn join_takes_pythons_truthiness_and_equality_over_loose_values() {
     request.reservation = json!(5);
     assert_eq!(
         joining.execute(request).unwrap_err(),
-        BoardError::new("unknown or stale launch reservation")
+        BoardError::new(
+            RefusalKind::StaleToken,
+            "unknown or stale launch reservation"
+        )
     );
     let row = board.snapshot().members.last().cloned().unwrap();
     assert_eq!(
@@ -262,5 +276,45 @@ fn join_takes_pythons_truthiness_and_equality_over_loose_values() {
         Joined::AlreadyLive {
             coordinator: Some("parent".to_owned())
         }
+    );
+}
+
+/// Served over another repository (#2303 reconcile), the join reads, admits
+/// and activates on that board alone: all three transactions are the
+/// given repository's, so a metered call measures the whole join, and the
+/// ids are drawn from the source it was composed with.
+#[test]
+fn over_joins_on_the_given_board_with_the_composed_ports() {
+    let composed_over = MemoryBoard::with(five_member_board());
+    let other = MemoryBoard::with(five_member_board());
+    let joined = join_run(&composed_over)
+        .over(other.clone())
+        .execute(join("worker", None, 7, "Mon"))
+        .unwrap();
+    assert_eq!(joined, Joined::Admitted);
+    let plain = MemoryBoard::with(five_member_board());
+    join_run(&plain)
+        .execute(join("worker", None, 7, "Mon"))
+        .unwrap();
+    assert_eq!(
+        other.transactions(),
+        plain.transactions(),
+        "every transaction of the join (its read, the admission's and the activation's)"
+    );
+    assert!(composed_over.transactions().is_empty());
+    let actions: Vec<String> = other
+        .snapshot()
+        .events
+        .iter()
+        .map(|event| event.action.clone())
+        .collect();
+    assert_eq!(actions, ["reserved", "activated"]);
+    assert!(composed_over.snapshot().events.is_empty());
+    assert!(
+        composed_over
+            .journal()
+            .iter()
+            .any(|entry| entry.starts_with("draw ")),
+        "the composed id source drew the reservation"
     );
 }

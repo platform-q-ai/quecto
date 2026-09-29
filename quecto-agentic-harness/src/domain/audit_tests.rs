@@ -239,7 +239,7 @@ fn envelope_round_trip() {
         host: None,
         session: "cli:my-feature".into(),
         parent: Some("chat-parent".into()),
-        turn: 7,
+        turn: Some(7),
         event: AuditEvent::ToolCall {
             tool: "bash".into(),
             call_id: "call_abc".into(),

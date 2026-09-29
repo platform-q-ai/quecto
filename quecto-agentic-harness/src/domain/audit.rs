@@ -50,6 +50,13 @@ pub enum AuditEvent {
     },
     /// The log reached its size cap: nothing more is written (#2150).
     LogCapped { cap_bytes: u64 },
+    /// One swarm board op (#2303): ids, kinds, durations and sizes only.
+    SwarmOp(super::swarm::BoardOpObservation),
+    /// `dropped` swarm board ops went unrecorded since the last `swarm_op`
+    /// written: the log's write gate stayed busy past the bound a record
+    /// waits for it (#2303). Written just before the next `swarm_op`, in
+    /// the same write.
+    SwarmOpsDropped { dropped: u64 },
     LlmTurnStart {
         input_tokens_estimate: usize,
         message_count: usize,
@@ -155,7 +162,9 @@ pub struct AuditEnvelope {
     /// A sub-agent's parent session (#2150).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
-    pub turn: u32,
+    /// The agent turn the record is filed under; `null` for a record
+    /// written outside any turn's knowledge (a `swarm_op`, #2303).
+    pub turn: Option<u32>,
     #[serde(flatten)]
     pub event: AuditEvent,
 }

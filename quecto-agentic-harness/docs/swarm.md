@@ -644,3 +644,78 @@ retained without an inference attempt. Terminal completion notices do not start
 automatic report turns. Raw exports contain retained wire message records, run
 with at most two concurrent exports, and release the multi-client reader so
 supervisor controls remain available during spill reads.
+
+## Telemetry
+
+The Rust board (#2265) records one `swarm_op` in the event log for every board
+op it serves (#2303), only while the event log is on
+(`"telemetry": {"event_log": {"enabled": true}}`, off by default; swarm members
+get no default of their own). With it off nothing is measured or written: the
+store takes no timings and keeps SQLite's own busy timeout. The board file
+itself is unchanged: its `events` table stays the audit history it always was,
+and telemetry lives only in the event log. A record is appended on the board
+call's own thread, synchronously, under the log's write gate, so it never
+interleaves with another record; a record the log cannot take (a full log, a
+failed write) is dropped with one warning, and never changes the op's answer.
+The first record that does not fit, from whichever writer, is replaced by the
+log's one `log_capped` record, and nothing is written after it.
+
+Telemetry never holds up the board: a record waits for the write gate at most
+50 ms. Past that (another writer is stuck), the record is dropped and counted,
+and the next record written is preceded, in the same write, by one
+`{"event":"swarm_ops_dropped","dropped":N}` line giving how many were dropped
+since the last. Drops never followed by a written record (the log caps, or the
+session ends first) go unnoted. The write itself runs on the calling thread and
+is not bounded: a filesystem that never returns from a write holds the one
+call that is writing, while every other call gives up at the gate.
+A record carries ids, kinds, durations and sizes only, never a task title,
+body, evidence, reason, path or other board text:
+
+| Field | Meaning |
+|---|---|
+| `turn` | Always `null`: a board op is not filed under an agent turn (the board is called without one) |
+| `op` | The board method (`unknown` for a name that is none) |
+| `actor_ref` | The caller's member id: the id the caller chose for itself on the board (`members.id`), redacted if it looks like a credential, and cut to its first 128 characters (a refused call can name any id) |
+| `role` | `host` for the harness's own ops; for a member-facing op (`task_create`, `claim`, ...), the caller's role in the run as the op read it: `coordinator`, `integrator`, or `worker` for any other caller; `null` when the op read no run (refused before it, or the board holds none) |
+| `run_id` | The run the op found, when it found one and its id is one the board generates (32 lowercase hex digits); `null` otherwise, so an id edited into the board from outside is never recorded |
+| `task_id`, `message_id` | The task or message the op acted on, by the id its row holds (a task id given as `"2"` is task 2); left out when it acted on none, or its row's id is not an integer |
+| `outcome` | `ok` or `refused` |
+| `kind` | For a refusal, its stable kind: `run_missing`, `not_coordinator`, `not_member`, `not_running`, `budget_exhausted` (the deadline has passed, or the run is paused or ended as `budget-exhausted`), `member_limit`, `identity_taken`, `run_exists`, `completion_unmet`, `stale_revision`, `immutable`, `wrong_state`, `not_owner`, `stale_token`, `reserved_by_other`, `dependency_cycle`, `not_found` (a task, message or recipient the board does not hold), `capacity_full` (a bounded board table is full: tasks, file reservations, an inbox or a request ledger), `supervisor_only` (resume, close or extend, which only the supervisor takes), `launch_conflict` (a launch whose process identity conflicts with the member's), `request_id_reused` (a request id reused with different data), `invalid`, `calling` (no such method, or arguments that do not bind), `contended` (the database stayed busy or locked past 500 ms: the write lock at `BEGIN`, a reader holding off the commit, or `SQLITE_LOCKED`), `store_missing`, `store` (any other store failure) or `internal` |
+| `duration_us` | The whole op, in microseconds |
+| `lock_wait_us` | From `BEGIN IMMEDIATE` issued to acquired (or given up), summed over the op's transactions; `null` when the op began no transaction, so nothing was measured |
+| `busy_wait_us` | The time the store's busy handler slept for the op, whichever statement found the database busy (`BEGIN`, a read or the commit); `null` when nothing was measured |
+| `busy` | Whether the busy handler fired at all: another connection held a lock the op needed (the write lock, or, at commit, a reader); `null` when nothing was measured |
+| `cursor_moved` | Whether the op moved the caller's message cursor; `null` for an op that has no cursor to move, and for a refusal |
+| `result_bytes` | The size of the JSON the op answered, as its compact serialization (`serde_json`'s, which is not the size of Python's `json.dumps` text with its spaced separators); 0 for a refusal |
+
+Kinds are additive: a later release may add a kind (each refusal the Python
+board raises already has one), but never renames or reuses one. A consumer of
+the event log must accept a `kind` it does not know, rather than reject the
+record.
+
+Because a kind can never be renamed, the borderline refusals were assigned
+deliberately:
+
+- "run not created yet; nothing to cancel" is `run_missing`, as "coordination
+  run missing" is: the board holds no run row at all, which is not a run in the
+  wrong state (`not_running`).
+- "only a message to the same recipient can be {status}" is `wrong_state`:
+  the message named exists and is the caller's own, but is addressed to another
+  recipient, so it is in the wrong state for the op; the argument itself is
+  well formed (`invalid` is kept for malformed arguments).
+- "paused run has no pause record" is `internal`: the board writes a pause
+  record whenever it pauses a run, so a paused run without one is a broken
+  board invariant, not a store failure (`store` is kept for SQLite's own
+  failures).
+
+A zero is always a measure, never a stand-in for "not measured". The waits are
+summed over the op's own transactions and only those: each op is measured on a
+repository built for it alone, never through state shared with another op.
+
+Every call also leaves a `tracing` record on target `quecto::swarm_board`
+(DEBUG for a read, INFO otherwise), at WARN for a `contended` refusal or a
+busy wait over 250 ms; `RUST_LOG=quecto::swarm_board=debug` shows them live.
+Because the owner decided the event log is off by default and nothing is
+measured while it is off (decision T1), the tracing record's waits are
+measured, and the slow-lock WARN can fire, only while the event log is on;
+the `contended` WARN fires either way.

@@ -2,6 +2,7 @@
 //! S12 adds the owner liveness the member-facing `task` answers with.
 use std::sync::Arc;
 
+use super::OverRepository;
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{ReadTaskRequest, TaskRow};
@@ -35,6 +36,15 @@ impl ReadTask {
             reading,
             |transaction, _| read_task(transaction, &request.task_id),
         )
+    }
+}
+
+impl OverRepository for ReadTask {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

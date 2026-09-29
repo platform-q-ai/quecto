@@ -28,7 +28,7 @@ fn live(id: &str) -> MemberRecord {
 }
 
 fn message<T: std::fmt::Debug>(result: Result<T, BoardError>) -> String {
-    result.unwrap_err().0
+    result.unwrap_err().message().to_owned()
 }
 
 /// `describe` returns `run['status']`, `None`, whatever outcome the row

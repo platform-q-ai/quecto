@@ -8,7 +8,8 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::{CreateBranch, CreateRunRequest};
 use crate::application::swarm::ports::BoardEncoding;
-use crate::domain::swarm::{BoardError, RunState};
+use crate::application::swarm::use_cases::OverRepository;
+use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 const NOW: f64 = 1_000.0;
 const WEEK: f64 = 604_800.0;
@@ -144,7 +145,11 @@ fn create_validations_fire_in_python_order() {
         let refused = create_run(&board, SteppingClock::fixed(NOW))
             .execute(request.clone())
             .unwrap_err();
-        assert_eq!(refused, BoardError::new(expected), "{request:?}");
+        assert_eq!(
+            refused,
+            BoardError::new(RefusalKind::Invalid, expected),
+            "{request:?}"
+        );
         assert!(
             board.transactions().is_empty(),
             "a refused contract never opens the store: {request:?}"
@@ -187,7 +192,10 @@ fn the_deadline_window_reads_the_clock_as_python_does() {
         .unwrap_err();
     assert_eq!(
         refused,
-        BoardError::new("deadline must be in the next seven days")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "deadline must be in the next seven days"
+        )
     );
 }
 
@@ -265,7 +273,7 @@ fn only_the_setup_coordinator_can_create_over_an_existing_run() {
     let refused = create_run(&board, SteppingClock::fixed(NOW))
         .execute(request("worker"))
         .unwrap_err();
-    assert_eq!(refused, BoardError::new(refusal));
+    assert_eq!(refused, BoardError::new(RefusalKind::RunExists, refusal));
     assert!(board.snapshot().events.is_empty());
 
     // A created run is never reset, not even by its coordinator.
@@ -273,7 +281,7 @@ fn only_the_setup_coordinator_can_create_over_an_existing_run() {
     let refused = create_run(&board, SteppingClock::fixed(NOW))
         .execute(request("parent"))
         .unwrap_err();
-    assert_eq!(refused, BoardError::new(refusal));
+    assert_eq!(refused, BoardError::new(RefusalKind::RunExists, refusal));
 
     // The placeholder's coordinator creates over it: the run keeps its id
     // and members, takes the contract and runs; no id is drawn.
@@ -311,6 +319,7 @@ fn members_not_confirmed_dead_must_fit_the_new_limit() {
     assert_eq!(
         refused,
         BoardError::new(
+            RefusalKind::MemberLimit,
             "existing live/reserved members exceed requested limit; terminate and reconcile first"
         )
     );
@@ -343,10 +352,34 @@ fn constraints_are_bounded_on_their_ascii_escaped_encoding() {
         .unwrap_err();
     assert_eq!(
         refused,
-        BoardError::new("constraints must be nonempty and at most 8192 bytes")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "constraints must be nonempty and at most 8192 bytes"
+        )
     );
     let encoded = CompactEncoding
         .encode(&json!({"b": ["é😀"], "a": 1}))
         .unwrap();
     assert_eq!(encoded, r#"{"a":1,"b":["\u00e9\ud83d\ude00"]}"#);
+}
+
+/// Served over another repository (#2303 round-3 review M1), create writes
+/// to that board, drawing ids from the source it was composed with.
+#[test]
+fn over_creates_on_the_given_board_with_the_composed_ports() {
+    let composed_over = MemoryBoard::with(BoardState::default());
+    let other = MemoryBoard::with(BoardState::default());
+    let composed = create_run(&composed_over, SteppingClock::fixed(NOW));
+    let created = composed.over(other.clone()).execute(request("parent"));
+    assert_eq!(created.unwrap().branch, CreateBranch::Fresh);
+    assert!(other.snapshot().run.is_some());
+    assert!(composed_over.transactions().is_empty());
+    assert!(composed_over.snapshot().run.is_none());
+    assert!(
+        composed_over
+            .journal()
+            .iter()
+            .any(|entry| entry.starts_with("draw ")),
+        "the composed id source drew the run's ids"
+    );
 }

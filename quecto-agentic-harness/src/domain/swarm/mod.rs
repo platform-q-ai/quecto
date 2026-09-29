@@ -14,6 +14,7 @@ pub mod owner;
 pub mod policy;
 pub mod python_value;
 pub mod records;
+pub mod telemetry;
 pub mod usage;
 pub mod validation;
 
@@ -36,24 +37,42 @@ pub use records::{
     Criterion, CriterionKind, EvidenceRow, MemberRecord, MemberState, RunRecord, RunState,
     TaskRecord, TaskState,
 };
+pub use telemetry::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind};
 pub use usage::{
     UsageBudget, UsageDecision, UsageTotals, request_measurement, usage_budget_decision,
 };
 pub use validation::{bounded, bounded_text, criteria};
 
-/// A refusal by the board. `Display` is the exact message members see.
+/// A refusal by the board. `Display` is the exact message members see;
+/// [`RefusalKind`] is what telemetry records (#2303). The fields are
+/// private: every refusal is built through [`BoardError::new`] with its
+/// kind.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BoardError(pub String);
+pub struct BoardError {
+    kind: RefusalKind,
+    message: String,
+}
 
 impl BoardError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
+    pub fn new(kind: RefusalKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn kind(&self) -> RefusalKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 
 impl std::fmt::Display for BoardError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
+        formatter.write_str(&self.message)
     }
 }
 

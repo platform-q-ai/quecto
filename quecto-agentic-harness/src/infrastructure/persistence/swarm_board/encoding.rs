@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::py_json::{self, PyJson};
 use crate::application::swarm::ports::BoardEncoding;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PyJsonEncoding;
@@ -14,7 +14,7 @@ impl BoardEncoding for PyJsonEncoding {
     fn encode(&self, value: &Value) -> Result<String, BoardError> {
         PyJson::try_from(value)
             .and_then(|value| py_json::encode(&value))
-            .map_err(|error| BoardError::new(error.to_string()))
+            .map_err(|error| BoardError::new(RefusalKind::Invalid, error.to_string()))
     }
 }
 

@@ -3,13 +3,24 @@
 //! the JSON value passed: Python binds a task id, a token or a request id
 //! untyped and type-checks the rest at run time, so no type is refused
 //! here.
+//!
+//! Each records the task it acted on (#2303): the id of the task row the
+//! board read, never the argument as given (a `"2"` or a `true` binds to
+//! task 2 or 1 as SQLite's affinity finds it), and `None` for an id that
+//! is not an integer (a row edited from outside). None moves a message
+//! cursor or acts on a message.
 use serde_json::Value;
 
-use super::{Parameter, Served, SwarmBoardHandles, required, take};
+use super::{Parameter, Served, required, take};
 #[cfg(any(test, feature = "test-support"))]
 use crate::application::swarm::dto::ReadTaskRequest;
 use crate::application::swarm::dto::{
     ClaimTaskRequest, CreateTaskRequest, ReleaseTaskRequest, SetTaskDependenciesRequest,
+};
+#[cfg(any(test, feature = "test-support"))]
+use crate::application::swarm::use_cases::ReadTask;
+use crate::application::swarm::use_cases::{
+    ClaimTask, CreateTask, ReleaseTask, SetTaskDependencies,
 };
 use crate::domain::swarm::BoardError;
 
@@ -32,18 +43,19 @@ pub(super) const RELEASE: [Parameter; 2] = [required("task_id"), required("token
 
 /// The task's dict, or the stored result of a retried request.
 pub(super) fn task_create(
-    handles: &SwarmBoardHandles,
+    create_task: &CreateTask,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [request, title, acceptance, dependencies] = take(arguments)?;
-    let created = handles.create_task.execute(CreateTaskRequest {
+    let created = create_task.execute(CreateTaskRequest {
         actor: actor.to_owned(),
         request,
         title,
         acceptance,
         dependencies,
     })?;
+    let task_id = acted_on(created.task.get("id"));
     Ok(Served {
         value: created.task,
         decision: if created.replayed {
@@ -51,52 +63,60 @@ pub(super) fn task_create(
         } else {
             "created"
         },
+        task_id,
+        message_id: None,
+        cursor_moved: None,
     })
 }
 
 pub(super) fn dependencies(
-    handles: &SwarmBoardHandles,
+    set_task_dependencies: &SetTaskDependencies,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id, dependencies] = take(arguments)?;
-    handles
-        .set_task_dependencies
-        .execute(SetTaskDependenciesRequest {
-            actor: actor.to_owned(),
-            task_id,
-            dependencies,
-        })?;
+    let task = set_task_dependencies.execute(SetTaskDependenciesRequest {
+        actor: actor.to_owned(),
+        task_id,
+        dependencies,
+    })?;
     Ok(Served {
         value: Value::Null,
         decision: "updated",
+        task_id: acted_on(Some(&task)),
+        message_id: None,
+        cursor_moved: None,
     })
 }
 
 /// The claimed task's dict, its token included.
 pub(super) fn claim(
-    handles: &SwarmBoardHandles,
+    claim_task: &ClaimTask,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id] = take(arguments)?;
-    let task = handles.claim_task.execute(ClaimTaskRequest {
+    let task = claim_task.execute(ClaimTaskRequest {
         actor: actor.to_owned(),
         task_id,
     })?;
+    let task_id = acted_on(task.get("id"));
     Ok(Served {
         value: task.into_value(),
         decision: "claimed",
+        task_id,
+        message_id: None,
+        cursor_moved: None,
     })
 }
 
 pub(super) fn release(
-    handles: &SwarmBoardHandles,
+    release_task: &ReleaseTask,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id, token] = take(arguments)?;
-    handles.release_task.execute(ReleaseTaskRequest {
+    let task = release_task.execute(ReleaseTaskRequest {
         actor: actor.to_owned(),
         task_id,
         token,
@@ -104,6 +124,9 @@ pub(super) fn release(
     Ok(Served {
         value: Value::Null,
         decision: "released",
+        task_id: acted_on(Some(&task)),
+        message_id: None,
+        cursor_moved: None,
     })
 }
 
@@ -111,19 +134,29 @@ pub(super) fn release(
 /// dict without owner liveness.
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn task_raw(
-    handles: &SwarmBoardHandles,
+    read_task: &ReadTask,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id] = take(arguments)?;
-    let task = handles.read_task.execute(ReadTaskRequest {
+    let task = read_task.execute(ReadTaskRequest {
         actor: actor.to_owned(),
         task_id,
     })?;
+    let task_id = acted_on(task.get("id"));
     Ok(Served {
         value: task.into_value(),
         decision: "read",
+        task_id,
+        message_id: None,
+        cursor_moved: None,
     })
+}
+
+/// The task an op acted on, for its records: the row's stored id when it
+/// is an integer, as the board writes it.
+fn acted_on(id: Option<&Value>) -> Option<i64> {
+    id.and_then(Value::as_i64)
 }
 
 #[cfg(test)]

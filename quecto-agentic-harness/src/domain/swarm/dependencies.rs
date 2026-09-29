@@ -15,8 +15,8 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use super::BoardError;
 use super::python_value::python_equal;
+use super::{BoardError, RefusalKind};
 
 /// The most dependencies one task may name.
 pub const DEPENDENCIES_MAX: usize = 100;
@@ -28,7 +28,10 @@ pub const DEPENDENCIES_MAX: usize = 100;
 pub fn dependency_list(value: &Value) -> Result<&[Value], BoardError> {
     match value {
         Value::Array(entries) if entries.len() <= DEPENDENCIES_MAX => Ok(entries),
-        _ => Err(BoardError::new("dependencies must be a bounded list")),
+        _ => Err(BoardError::new(
+            RefusalKind::Invalid,
+            "dependencies must be a bounded list",
+        )),
     }
 }
 
@@ -62,7 +65,10 @@ pub fn validate_dependencies(
         edges.insert(Node::of(task_id), dependencies);
         acyclic(Node::of(task_id), &edges)
     } else {
-        Err(BoardError::new("invalid, missing or self dependencies"))
+        Err(BoardError::new(
+            RefusalKind::Invalid,
+            "invalid, missing or self dependencies",
+        ))
     }
 }
 
@@ -77,7 +83,10 @@ fn acyclic(start: Node, edges: &HashMap<Node, &[Value]>) -> Result<(), BoardErro
             active.remove(&node);
             visited.insert(node);
         } else if active.contains(&node) {
-            return Err(BoardError::new("cyclic dependencies"));
+            return Err(BoardError::new(
+                RefusalKind::DependencyCycle,
+                "cyclic dependencies",
+            ));
         } else if !visited.contains(&node) {
             active.insert(node.clone());
             let next = edges.get(&node).copied().unwrap_or(&[]);

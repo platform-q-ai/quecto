@@ -618,7 +618,7 @@ fn panic_event(message: &str) -> AuditEvent {
 async fn a_crash_line_written_counts_against_the_async_writers_cap() {
     let base = tempfile::tempdir().unwrap();
     let line_len = |message: &str| {
-        envelope_line("cli:budget", None, 0, panic_event(message))
+        envelope_line("cli:budget", None, Some(0), panic_event(message))
             .unwrap()
             .len() as u64
     };
@@ -651,7 +651,7 @@ fn a_line_reserved_but_not_yet_written_leaves_the_crash_line_no_room() {
         .with_cap(4096);
     let crash_line = log.crash_line().unwrap();
     // As the async writer does, just before its write lands.
-    assert!(reserve(&log.reserved, 4000, 4096));
+    assert!(reserve(&log.gate.reserved, 4000, 4096));
     let path = AuditLog::file_path(base.path(), "cli:reserved");
     assert_eq!(
         std::fs::metadata(&path).unwrap().len(),

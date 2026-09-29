@@ -2,11 +2,12 @@
 //! started for a member, before the member activates itself.
 use std::sync::Arc;
 
+use super::OverRepository;
 use crate::application::swarm::board_membership::{alive, launched_elsewhere};
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::RecordMemberLaunchRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError};
+use crate::domain::swarm::{Access, BoardError, RefusalKind};
 
 /// Through the operation gate (`active=False`): the member's row under the
 /// reservation must be alive (`unknown_member_status_is_not_alive`,
@@ -37,14 +38,29 @@ impl RecordMemberLaunch {
             |transaction, _run| {
                 let row = transaction.member_row(member, Some(&request.reservation))?;
                 let Some(row) = row.filter(alive) else {
-                    return Err(BoardError::new("stale launch reservation"));
+                    return Err(BoardError::new(
+                        RefusalKind::StaleToken,
+                        "stale launch reservation",
+                    ));
                 };
                 if launched_elsewhere(&row, &request.launch) {
-                    return Err(BoardError::new("conflicting launch identity"));
+                    return Err(BoardError::new(
+                        RefusalKind::LaunchConflict,
+                        "conflicting launch identity",
+                    ));
                 }
                 transaction.record_launch(member, &request.launch)
             },
         )
+    }
+}
+
+impl OverRepository for RecordMemberLaunch {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

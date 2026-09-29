@@ -1,4 +1,5 @@
 use super::ReadRunStatus;
+use crate::application::swarm::use_cases::OverRepository;
 use serde_json::Value;
 
 use crate::application::swarm::board_test_support::{
@@ -66,4 +67,19 @@ fn status_reads_a_missing_coordinator_and_status_as_none() {
     let status = ReadRunStatus::new(board).execute().unwrap();
     assert_eq!(status.coordinator, None);
     assert_eq!(status.counts.members_without_claim, 1, "parent is counted");
+}
+
+/// Served over another repository (#2303 round-3 review M1), the use case
+/// reads that board, and never the one it was composed over.
+#[test]
+fn over_reads_the_given_board() {
+    let composed_over = MemoryBoard::with(BoardState::default());
+    let other = MemoryBoard::with(running_board(250.5));
+    let status = ReadRunStatus::new(composed_over.clone())
+        .over(other.clone())
+        .execute()
+        .unwrap();
+    assert_eq!(status.status.as_deref(), Some("running"));
+    assert_eq!(other.transactions(), [false]);
+    assert!(composed_over.transactions().is_empty());
 }

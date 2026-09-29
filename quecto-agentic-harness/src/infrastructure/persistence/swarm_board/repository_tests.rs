@@ -101,7 +101,7 @@ fn a_run_row_of_the_wrong_shape_is_a_store_refusal() {
     .unwrap_err();
     assert!(
         refused
-            .0
+            .message()
             .starts_with("coordination store unavailable or contended: "),
         "{refused}"
     );
@@ -159,7 +159,9 @@ fn a_missing_board_is_refused_before_any_work() {
     let (_dir, repository) = repository();
     let refused = within(&repository, false, |_| panic!("no work on a missing board")).unwrap_err();
     assert!(
-        refused.0.starts_with("coordination store missing at "),
+        refused
+            .message()
+            .starts_with("coordination store missing at "),
         "{refused}"
     );
     assert_eq!(
@@ -218,7 +220,7 @@ fn the_run_owner_row_is_fetched_as_python_fetches_it() {
         })
         .unwrap_err();
         assert_eq!(
-            refused.0,
+            refused.message(),
             format!(
                 "coordination store unavailable or contended: Could not decode to UTF-8 column '{column}' with text '{text}'"
             ),
@@ -308,7 +310,7 @@ fn an_unbindable_member_value_names_pythons_parameter() {
         })
         .unwrap_err();
         assert_eq!(
-            refused.0,
+            refused.message(),
             format!(
                 "coordination store unavailable or contended: \
                  Error binding parameter {position}: type 'list' is not supported"
@@ -325,4 +327,60 @@ fn an_unbindable_member_value_names_pythons_parameter() {
         ["pid", "started", "socket"]
             .map(|column| parameter_of(PYTHON_BOOTSTRAP_MEMBER_INSERT, column))
     );
+}
+
+/// A request's refusal keeps its kind through the ledger (#2303 reconcile
+/// with #2272): the action's own refusal (a full task board) is returned
+/// with the kind it was raised under, and the ledger's own refusals carry
+/// theirs, never a catch-all.
+#[test]
+fn a_retried_request_keeps_its_refusal_kind() {
+    use crate::domain::swarm::RefusalKind;
+
+    let (_dir, repository) = repository();
+    within(&repository, true, |_| Ok(())).unwrap();
+    let full = within(&repository, false, |transaction| {
+        transaction
+            .retry("worker", "r1", &json!({"title": "t"}), &mut || {
+                Err(BoardError::new(
+                    RefusalKind::CapacityFull,
+                    "task board full (1000); settle existing work",
+                ))
+            })
+            .map(drop)
+    })
+    .unwrap_err();
+    assert_eq!(
+        (full.kind(), full.message()),
+        (
+            RefusalKind::CapacityFull,
+            "task board full (1000); settle existing work"
+        )
+    );
+    within(&repository, false, |transaction| {
+        transaction
+            .retry("worker", "r2", &json!({"title": "t"}), &mut || Ok(json!(1)))
+            .map(drop)
+    })
+    .unwrap();
+    let reused = within(&repository, false, |transaction| {
+        transaction
+            .retry("worker", "r2", &json!({"title": "u"}), &mut || Ok(json!(2)))
+            .map(drop)
+    })
+    .unwrap_err();
+    assert_eq!(
+        (reused.kind(), reused.message()),
+        (
+            RefusalKind::RequestIdReused,
+            "request id reused with different payload"
+        )
+    );
+    let blank = within(&repository, false, |transaction| {
+        transaction
+            .retry("worker", " ", &json!({}), &mut || Ok(json!(3)))
+            .map(drop)
+    })
+    .unwrap_err();
+    assert_eq!(blank.kind(), RefusalKind::Invalid, "{blank}");
 }

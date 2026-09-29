@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use super::MemoryTransaction;
 use crate::application::swarm::dto::{NewTask, TaskRow, TaskUpdate};
 use crate::application::swarm::ports::{BoardFiles, BoardRequests, BoardTasks, RequestAction};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// One `requests` row.
 #[derive(Clone, Debug, PartialEq)]
@@ -173,7 +173,10 @@ impl BoardRequests for MemoryTransaction<'_> {
             .cloned();
         match stored {
             Some(row) if row.payload == *payload => Ok(row.result),
-            Some(_) => Err(BoardError::new("request id reused with different payload")),
+            Some(_) => Err(BoardError::new(
+                RefusalKind::RequestIdReused,
+                "request id reused with different payload",
+            )),
             None => {
                 let result = action()?;
                 self.note(format!("store_request {request}"));

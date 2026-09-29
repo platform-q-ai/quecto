@@ -5,6 +5,7 @@ use crate::application::swarm::board_test_support::{
     BoardState, CounterIds, MemoryBoard, SteppingClock, running_board, stored_member,
 };
 use crate::application::swarm::dto::BootstrapRunRequest;
+use crate::application::swarm::use_cases::OverRepository;
 use crate::domain::swarm::RunState;
 
 fn request() -> BootstrapRunRequest {
@@ -86,5 +87,34 @@ fn bootstrap_leaves_a_created_run_untouched() {
     assert!(
         board.journal().is_empty(),
         "no id is drawn, nothing written"
+    );
+}
+
+/// Served over another repository (#2303 round-3 review M1), bootstrap
+/// writes to that board, drawing ids from the source it was composed with.
+#[test]
+fn over_writes_the_given_board_with_the_composed_ids() {
+    let composed_over = MemoryBoard::with(BoardState::default());
+    let other = MemoryBoard::with(BoardState::default());
+    let bootstrap = BootstrapRun::new(
+        composed_over.clone(),
+        SteppingClock::fixed(5.0),
+        CounterIds::journalling(&composed_over.journal),
+    );
+    assert!(
+        bootstrap
+            .over(other.clone())
+            .execute(request())
+            .unwrap()
+            .created
+    );
+    assert_eq!(other.transactions(), [true]);
+    assert!(other.snapshot().run.is_some());
+    assert!(composed_over.transactions().is_empty());
+    assert!(composed_over.snapshot().run.is_none());
+    assert_eq!(
+        composed_over.journal()[0],
+        format!("draw {:032x}", 1),
+        "the composed id source drew the run id"
     );
 }

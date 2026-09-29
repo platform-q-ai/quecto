@@ -3,8 +3,8 @@
 //! (`Workbench._criteria`).
 use serde_json::Value;
 
-use super::BoardError;
 use super::records::{Criterion, CriterionKind};
+use super::{BoardError, RefusalKind};
 
 /// The most bytes the encoded criteria list may take.
 pub const CRITERIA_MAX_BYTES: usize = 16384;
@@ -12,6 +12,9 @@ pub const CRITERIA_MAX_BYTES: usize = 16384;
 pub const CRITERION_ID_MAX_BYTES: usize = 128;
 /// `bounded`'s default maximum.
 pub const TEXT_MAX_BYTES: usize = 8192;
+/// The most bytes a member id may take (`Workbench._admit`'s
+/// `bounded(member, 'member', 128)`): no longer id is ever a member's.
+pub const MEMBER_ID_MAX_BYTES: usize = 128;
 
 /// Python `str.isspace` for one character: the characters `str.strip()`
 /// removes. Unlike Rust's `char::is_whitespace` it includes the information
@@ -48,9 +51,10 @@ pub fn bounded_text<'a>(text: &'a str, label: &str, maximum: usize) -> Result<&'
 }
 
 fn too_long(label: &str, maximum: usize) -> BoardError {
-    BoardError::new(format!(
-        "{label} must be nonempty and at most {maximum} bytes"
-    ))
+    BoardError::new(
+        RefusalKind::Invalid,
+        format!("{label} must be nonempty and at most {maximum} bytes"),
+    )
 }
 
 /// `Workbench._criteria`: a nonempty list of `{id, kind, description}` with
@@ -66,13 +70,21 @@ fn too_long(label: &str, maximum: usize) -> BoardError {
 pub fn criteria(value: &Value, encoded_len: usize) -> Result<Vec<Criterion>, BoardError> {
     let entries = match value {
         Value::Array(entries) if !entries.is_empty() => entries,
-        _ => return Err(BoardError::new("explicit evidence criteria required")),
+        _ => {
+            return Err(BoardError::new(
+                RefusalKind::Invalid,
+                "explicit evidence criteria required",
+            ));
+        }
     };
     let mut parsed: Vec<Criterion> = Vec::with_capacity(entries.len());
     for entry in entries {
         let criterion = criterion(entry)?;
         if parsed.iter().any(|seen| seen.id == criterion.id) {
-            return Err(BoardError::new("duplicate criterion id"));
+            return Err(BoardError::new(
+                RefusalKind::Invalid,
+                "duplicate criterion id",
+            ));
         }
         parsed.push(criterion);
     }
@@ -101,6 +113,7 @@ fn criterion(entry: &Value) -> Result<Criterion, BoardError> {
     };
     let Some(kind) = kind else {
         return Err(BoardError::new(
+            RefusalKind::Invalid,
             "criteria distinguish command checks from parent-reviewed requirements",
         ));
     };

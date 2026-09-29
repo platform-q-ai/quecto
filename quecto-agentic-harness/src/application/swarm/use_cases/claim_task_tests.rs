@@ -5,7 +5,8 @@ use crate::application::swarm::board_test_support::{
     BoardState, CounterIds, MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
 use crate::application::swarm::dto::ClaimTaskRequest;
-use crate::domain::swarm::BoardError;
+use crate::application::swarm::use_cases::OverRepository;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// Tasks 1 (ready), 2 (ready, on 1), 3 (claimed by the parent).
 fn board() -> BoardState {
@@ -38,14 +39,18 @@ fn claims_check_dependencies_and_readiness_before_drawing_a_token() {
         SteppingClock::fixed(50.0),
         CounterIds::journalling(&board.journal),
     );
-    for (task_id, refusal) in [
-        (json!(2), "unmet dependencies"),
-        (json!(3), "task is not ready to claim"),
-        (json!(7), "unknown task"),
+    for (task_id, kind, refusal) in [
+        (json!(2), RefusalKind::WrongState, "unmet dependencies"),
+        (
+            json!(3),
+            RefusalKind::WrongState,
+            "task is not ready to claim",
+        ),
+        (json!(7), RefusalKind::NotFound, "unknown task"),
     ] {
         assert_eq!(
             service.execute(claim(task_id.clone())).unwrap_err(),
-            BoardError::new(refusal),
+            BoardError::new(kind, refusal),
             "{task_id}"
         );
     }
@@ -75,7 +80,7 @@ fn claims_check_dependencies_and_readiness_before_drawing_a_token() {
     );
     assert_eq!(
         service.execute(claim(json!(1))).unwrap_err(),
-        BoardError::new("task is not ready to claim")
+        BoardError::new(RefusalKind::WrongState, "task is not ready to claim")
     );
 }
 
@@ -93,6 +98,35 @@ fn a_paused_run_takes_no_claim() {
     );
     assert_eq!(
         service.execute(claim(json!(1))).unwrap_err(),
-        BoardError::new("run is paused; no new work permitted")
+        BoardError::new(
+            RefusalKind::NotRunning,
+            "run is paused; no new work permitted"
+        )
+    );
+}
+
+/// Served over another repository (#2303 reconcile), the claim is made on
+/// that board alone, its token drawn from the source it was composed with.
+#[test]
+fn over_claims_on_the_given_board_with_the_composed_ports() {
+    let composed_over = MemoryBoard::with(board());
+    let other = MemoryBoard::with(board());
+    let claimed = ClaimTask::new(
+        composed_over.clone(),
+        SteppingClock::fixed(50.0),
+        CounterIds::journalling(&composed_over.journal),
+    )
+    .over(other.clone())
+    .execute(claim(json!(1)))
+    .unwrap();
+    assert_eq!(claimed.text("owner"), Some("worker"));
+    assert_eq!(other.snapshot().tasks[0].text("status"), Some("claimed"));
+    assert!(composed_over.transactions().is_empty());
+    assert!(
+        composed_over
+            .journal()
+            .iter()
+            .any(|entry| entry.starts_with("draw ")),
+        "the composed id source drew the token"
     );
 }

@@ -26,13 +26,16 @@ use serde_json::Value;
 
 use super::binding;
 use super::ledger;
+use super::meter::Tally;
 use super::py_json::{self, PyJson};
-use super::store::{BoardStore, CONTENDED, TransactionError, Undecodable, contended};
+use super::store::{
+    BoardStore, CONTENDED, StoreFailure, TransactionError, Undecodable, contended, failure,
+};
 use crate::application::swarm::dto::{
-    BoardLocation, MemberRow, NewRun, RunContract, RunOwnerRow, RunStatusRow,
+    BoardLocation, MemberRow, NewRun, RunContract, RunOwnerRow, RunRoles, RunStatusRow,
 };
 use crate::application::swarm::ports::{BoardEvents, BoardRepository, BoardRuns, BoardWork};
-use crate::domain::swarm::{BoardError, RunRecord, RunState};
+use crate::domain::swarm::{BoardError, RefusalKind, RunRecord, RunState};
 
 /// `swarm_repository.ACTIVE_CLAIM`.
 pub(super) const ACTIVE_CLAIM: &str = "('claimed','blocked','submitted')";
@@ -55,7 +58,11 @@ pub(super) const PYTHON_PID_PARAMETER: usize = 3;
 pub(super) const PYTHON_STARTED_PARAMETER: usize = 4;
 pub(super) const PYTHON_SOCKET_PARAMETER: usize = 5;
 
-/// The board file of one run.
+/// The board file of one run. It measures nothing: a metered call (#2303)
+/// runs its transactions through its own [`MeteredCall`] instead
+/// (`meter.rs`), over the same [`atomic_on`].
+///
+/// [`MeteredCall`]: crate::application::swarm::ports::MeteredCall
 #[derive(Clone, Debug)]
 pub struct SqliteBoardRepository {
     store: BoardStore,
@@ -67,30 +74,78 @@ impl SqliteBoardRepository {
             store: BoardStore::new(&location.database),
         }
     }
+
+    /// The board file this repository opens.
+    pub(super) fn into_store(self) -> BoardStore {
+        self.store
+    }
 }
 
 impl BoardRepository for SqliteBoardRepository {
     fn atomic(&self, create: bool, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
-        self.store
-            .transaction(create, |transaction| {
-                let board = SqliteBoard {
-                    connection: transaction,
-                };
-                work(&board).map_err(|refusal| TransactionError::Board(refusal.0))
-            })
-            .map_err(|refusal| BoardError(refusal.0))
+        atomic_on(&self.store, None, create, work)
     }
 }
 
-/// The role ports over one open transaction.
+/// `BoardRepository::atomic` on `store`, measured on `tally` when there is
+/// one (#2303). A refusal keeps its kind: `work`'s own refusal is returned
+/// as it was raised, and the store's is classified by why it failed.
+pub(super) fn atomic_on(
+    store: &BoardStore,
+    tally: Option<&Tally>,
+    create: bool,
+    work: &mut BoardWork<'_>,
+) -> Result<(), BoardError> {
+    let mut refused: Option<BoardError> = None;
+    store
+        .measured(create, tally, |transaction| {
+            let board = SqliteBoard {
+                connection: transaction,
+                tally,
+            };
+            let done = work(&board);
+            // Only a metered op that never read the run row's id asks for
+            // it, and the roles with it: `_status`, whose row names no
+            // integrator, costs no second statement.
+            if let Some(tally) = tally.filter(|tally| tally.wants_run_id()) {
+                board.run_read(tally);
+            }
+            done.map_err(|refusal| {
+                refused = Some(refusal.clone());
+                TransactionError::Board(refusal)
+            })
+        })
+        .map_err(|(refusal, failure)| match (failure, refused) {
+            (None, Some(refused)) => refused,
+            (failure, _) => BoardError::new(store_kind(failure), refusal.0),
+        })
+}
+
+/// The kind of a refusal the store raised itself; `None` (a body refusal
+/// that was not the work's) cannot happen, and is an internal fault.
+fn store_kind(failure: Option<StoreFailure>) -> RefusalKind {
+    match failure {
+        Some(StoreFailure::Missing) => RefusalKind::StoreMissing,
+        Some(StoreFailure::Busy) => RefusalKind::Contended,
+        Some(StoreFailure::Failed) => RefusalKind::Store,
+        None => RefusalKind::Internal,
+    }
+}
+
+/// The role ports over one open transaction, and the metered call's
+/// tally when there is one.
 pub(super) struct SqliteBoard<'c> {
     pub(super) connection: &'c Connection,
+    pub(super) tally: Option<&'c Tally>,
 }
 
 impl BoardRuns for SqliteBoard<'_> {
     fn run(&self) -> Result<Option<RunRecord>, BoardError> {
         self.connection
-            .query_row("SELECT * FROM run", [], run_record)
+            .query_row("SELECT * FROM run", [], |row| {
+                self.seen(row);
+                run_record(row)
+            })
             .optional()
             .map_err(failed)
     }
@@ -106,6 +161,7 @@ impl BoardRuns for SqliteBoard<'_> {
     fn run_owner(&self) -> Result<Option<RunOwnerRow>, BoardError> {
         self.connection
             .query_row("SELECT * FROM run", [], |row| {
+                self.seen(row);
                 fetched(row)?;
                 Ok(RunOwnerRow {
                     status: text(row, "status")?,
@@ -122,6 +178,7 @@ impl BoardRuns for SqliteBoard<'_> {
                 "SELECT id, status, deadline, coordinator, outcome FROM run",
                 [],
                 |row| {
+                    self.seen(row);
                     fetched(row)?;
                     Ok(RunStatusRow {
                         id: row.get("id")?,
@@ -203,8 +260,8 @@ impl BoardEvents for SqliteBoard<'_> {
         action: &str,
         detail: &Value,
     ) -> Result<(), BoardError> {
-        let detail =
-            PyJson::try_from(detail).map_err(|error| BoardError::new(error.to_string()))?;
+        let detail = PyJson::try_from(detail)
+            .map_err(|error| BoardError::new(RefusalKind::Invalid, error.to_string()))?;
         ledger::event(self.connection, actor, time, action, &detail).map_err(refused)
     }
 
@@ -214,6 +271,27 @@ impl BoardEvents for SqliteBoard<'_> {
 }
 
 impl SqliteBoard<'_> {
+    /// Notes the run id and roles of a run row the op read, for telemetry
+    /// only (#2303), for a metered call that has found them not yet: no
+    /// statement of its own.
+    fn seen(&self, row: &Row<'_>) {
+        if let Some(tally) = self.tally.filter(|tally| tally.wants_run()) {
+            run_noted(tally, row);
+        }
+    }
+
+    /// Reads the run's id and roles into `tally`, for telemetry only
+    /// (#2303): only while metered and no run id is found yet (an op that
+    /// never read the run row). No run, or a failed read, notes nothing.
+    fn run_read(&self, tally: &Tally) {
+        let _noted =
+            self.connection
+                .query_row("SELECT id, coordinator, integrator FROM run", [], |row| {
+                    run_noted(tally, row);
+                    Ok(())
+                });
+    }
+
     pub(super) fn count(&self, sql: &str) -> Result<i64, BoardError> {
         self.connection
             .query_row(sql, [], |row| row.get(0))
@@ -233,9 +311,10 @@ pub(super) fn loose(position: usize, value: &Value) -> Result<SqlValue, BoardErr
         .map_err(|error| error.to_string())
         .and_then(|value| binding::bind(&value).map_err(|error| error.to_string()))
         .map_err(|error| {
-            BoardError(format!(
-                "{CONTENDED}: Error binding parameter {position}: {error}"
-            ))
+            BoardError::new(
+                RefusalKind::Invalid,
+                format!("{CONTENDED}: Error binding parameter {position}: {error}"),
+            )
         })
 }
 
@@ -329,19 +408,40 @@ pub(super) fn member_row(row: &Row<'_>) -> rusqlite::Result<MemberRow> {
 
 /// The board's `encode(value)` of a JSON argument.
 pub(super) fn encoded(value: &Value) -> Result<SqlValue, BoardError> {
-    let value = PyJson::try_from(value).map_err(|error| BoardError::new(error.to_string()))?;
+    let invalid = |error: String| BoardError::new(RefusalKind::Invalid, error);
+    let value = PyJson::try_from(value).map_err(|error| invalid(error.to_string()))?;
     py_json::encode(&value)
         .map(SqlValue::Text)
-        .map_err(|error| BoardError::new(error.to_string()))
+        .map_err(|error| invalid(error.to_string()))
 }
 
+/// Notes a run `row`'s id and roles in `tally` (#2303): a value that is
+/// not text is none, and the roles only when the row holds both columns
+/// (the op's `SELECT` named them).
+fn run_noted(tally: &Tally, row: &Row<'_>) {
+    let column = |name: &str| row.get::<_, Option<String>>(name);
+    let roles = match (column("coordinator"), column("integrator")) {
+        (Ok(coordinator), Ok(integrator)) => Some(RunRoles {
+            coordinator,
+            integrator,
+        }),
+        _ => None,
+    };
+    tally.run_seen(column("id").ok().flatten().as_deref(), roles);
+}
+
+/// A SQLite failure inside a transaction, contended when SQLite was busy.
 pub(super) fn failed(error: rusqlite::Error) -> BoardError {
-    BoardError(contended(&error).0)
+    let kind = store_kind(Some(failure(&error)));
+    BoardError::new(kind, contended(&error).0)
 }
 
+/// A ledger failure (`ledger::event`, `ledger::retry`): a board refusal
+/// keeps the kind it was raised under, the ledger's own or a request
+/// action's (#2303).
 pub(super) fn refused(error: TransactionError) -> BoardError {
     match error {
-        TransactionError::Board(message) => BoardError(message),
+        TransactionError::Board(refusal) => refusal,
         TransactionError::Sqlite(error) => failed(error),
     }
 }

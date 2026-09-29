@@ -4,7 +4,7 @@
 //! `sqlite3` binds it (epic P3).
 use quecto::application::swarm::dto::{BoardLocation, NewTask, TaskUpdate};
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
-use quecto::domain::swarm::BoardError;
+use quecto::domain::swarm::{BoardError, RefusalKind};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::{Value, json};
 
@@ -161,6 +161,7 @@ fn task_ids_bind_as_python_binds_them() {
     assert_eq!(
         refused,
         BoardError::new(
+            RefusalKind::Invalid,
             "coordination store unavailable or contended: Error binding parameter 1: type 'list' is not supported"
         )
     );

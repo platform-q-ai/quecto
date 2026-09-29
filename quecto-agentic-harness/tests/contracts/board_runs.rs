@@ -188,7 +188,7 @@ fn loosely_typed_run_columns_read_as_stored() {
         let refused = transaction.run().unwrap_err();
         assert!(
             refused
-                .0
+                .message()
                 .starts_with("coordination store unavailable or contended: "),
             "{refused}"
         );

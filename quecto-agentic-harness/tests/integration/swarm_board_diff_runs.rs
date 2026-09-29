@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use serde_json::{Map, Value, json};
 use swarm_board_diff::Outcome;
 use swarm_board_diff::dump::{Dump, first_difference, logical_dump};
-use swarm_board_diff::scenario::{run_both, step, try_run_both};
+use swarm_board_diff::scenario::{Hold, held, run_both, step, try_run_both};
 
 pub(crate) const NOW: f64 = 1_700_000_000.25;
 const HOUR: f64 = 3_600.0;
@@ -160,6 +160,34 @@ fn snapshot_after_expiry_is_identical() {
         step("parent", "_snapshot", json!([]), NOW + 61.5),
         step("parent", "_snapshot", json!([]), NOW + 70.0),
         step("supervisor", "_status", json!([]), NOW + 80.0),
+    ]);
+}
+
+/// A board another connection holds (#2303 review M1): a call waits out a
+/// lock let go within the timeout, and one held past it is refused with
+/// Python's text, reads and writes alike; the event-log run records each
+/// as busy.
+#[test]
+fn a_busy_board_waits_or_refuses_as_python_does() {
+    run_both(&[
+        step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+        held(
+            Hold::WaitedOut,
+            step("supervisor", "_status", json!([]), NOW),
+        ),
+        held(
+            Hold::Throughout,
+            step("supervisor", "_status", json!([]), NOW),
+        ),
+        held(
+            Hold::Throughout,
+            step("parent", "create_run", contract(json!(NOW + HOUR)), NOW),
+        ),
+        held(
+            Hold::WaitedOut,
+            step("parent", "create_run", contract(json!(NOW + HOUR)), NOW),
+        ),
+        step("parent", "_snapshot", json!([]), NOW + 1.0),
     ]);
 }
 

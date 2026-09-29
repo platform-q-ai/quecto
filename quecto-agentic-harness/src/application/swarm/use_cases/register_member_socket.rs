@@ -2,6 +2,7 @@
 //! listens on.
 use std::sync::Arc;
 
+use super::OverRepository;
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::RegisterMemberSocketRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
@@ -30,6 +31,15 @@ impl RegisterMemberSocket {
             Access::default(),
             |transaction, _run| transaction.set_socket(actor, &request.socket),
         )
+    }
+}
+
+impl OverRepository for RegisterMemberSocket {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

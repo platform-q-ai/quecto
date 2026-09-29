@@ -6,17 +6,18 @@
 //! capability's own DTOs.
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use serde_json::Value;
 
 use super::dto::{
-    LaunchIdentity, MemberClaimCounts, MemberRow, NewMember, NewRun, NewTask, RunContract,
-    RunOwnerRow, RunStatusRow, TaskRow, TaskUpdate,
+    CallMeasure, LaunchIdentity, MemberClaimCounts, MemberRow, NewMember, NewRun, NewTask,
+    RunContract, RunOwnerRow, RunStatusRow, TaskRow, TaskUpdate,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
-    BoardError, Member, MemberExit, MemberRecord, ProcessIdentity, RunControlAction,
-    RunControlReceipt, RunRecord, RunStatus, Snapshot,
+    BoardError, BoardOpObservation, Member, MemberExit, MemberRecord, ProcessIdentity,
+    RunControlAction, RunControlReceipt, RunRecord, RunStatus, Snapshot,
 };
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -311,4 +312,35 @@ pub trait BoardEncoding: Send + Sync {
     /// # Errors
     /// A value nested too deep to encode (Python raises `RecursionError`).
     fn encode(&self, value: &Value) -> Result<String, BoardError>;
+}
+
+/// Port: measures board calls (#2303), one [`MeteredCall`] per call. The
+/// dispatcher opens one around a call only while the event log is on
+/// (owner decision T1).
+///
+/// Nothing is ambient: a call is measured only through its own
+/// [`MeteredCall`], which is the repository the call runs its transactions
+/// through, so no call's transactions, on this thread or another, are
+/// mixed into another's measure.
+pub trait BoardCallMeter: Send + Sync {
+    /// A fresh measure for one call, sharing nothing with any other.
+    fn open(&self) -> Arc<dyn MeteredCall>;
+}
+
+/// Port: one board call's measure (#2303), and the repository whose
+/// transactions it counts: each transaction begun through it is measured
+/// here, and only those.
+pub trait MeteredCall: BoardRepository {
+    /// What was measured so far; `None` while no transaction has begun,
+    /// so nothing was measured.
+    fn measure(&self) -> Option<CallMeasure>;
+}
+
+/// Port: where each board op's `swarm_op` record goes (#2303): the event
+/// log, only while it is on.
+pub trait BoardOpLog: Send + Sync {
+    /// Appends `observation` synchronously: never on an async runtime,
+    /// never blocking on one, never panicking. A failed write is the
+    /// adapter's to report and never changes the op's answer.
+    fn record(&self, observation: BoardOpObservation);
 }

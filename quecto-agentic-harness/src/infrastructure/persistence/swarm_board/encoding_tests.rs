@@ -18,5 +18,8 @@ fn a_value_too_deep_to_encode_is_refused() {
         deep = json!([deep]);
     }
     let refused = PyJsonEncoding.encode(&deep).unwrap_err();
-    assert!(refused.0.contains("nesting deeper than"), "{refused}");
+    assert!(
+        refused.message().contains("nesting deeper than"),
+        "{refused}"
+    );
 }

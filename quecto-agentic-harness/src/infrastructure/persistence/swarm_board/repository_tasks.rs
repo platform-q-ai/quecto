@@ -22,7 +22,7 @@ use super::repository::{SqliteBoard, cell_at, encoded, failed, fetched, loose, r
 use super::store::TransactionError;
 use crate::application::swarm::dto::{NewTask, TaskRow, TaskUpdate};
 use crate::application::swarm::ports::{BoardFiles, BoardRequests, BoardTasks, RequestAction};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// The task columns `_task` loads from JSON.
 const JSON_COLUMNS: [&str; 3] = ["acceptance", "dependencies", "evidence"];
@@ -135,16 +135,18 @@ impl BoardRequests for SqliteBoard<'_> {
         payload: &Value,
         action: &mut RequestAction<'_>,
     ) -> Result<Value, BoardError> {
-        let payload =
-            PyJson::try_from(payload).map_err(|error| BoardError::new(error.to_string()))?;
+        let payload = PyJson::try_from(payload)
+            .map_err(|error| BoardError::new(RefusalKind::Invalid, error.to_string()))?;
         let answer = ledger::retry(self.connection, actor, request, &payload, || {
-            let result = action().map_err(|refusal| TransactionError::Board(refusal.0))?;
-            PyJson::try_from(&result).map_err(|error| TransactionError::board(error.to_string()))
+            let result = action().map_err(TransactionError::Board)?;
+            PyJson::try_from(&result).map_err(|error| {
+                TransactionError::Board(BoardError::new(RefusalKind::Invalid, error.to_string()))
+            })
         })
         .map_err(refused)?;
         answer
             .to_value()
-            .map_err(|error| BoardError::new(error.to_string()))
+            .map_err(|stored| BoardError::new(RefusalKind::Store, stored.to_string()))
     }
 }
 

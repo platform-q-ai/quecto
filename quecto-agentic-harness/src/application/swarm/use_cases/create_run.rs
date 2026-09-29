@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
 use crate::application::swarm::board_operation::{atomic, detail, text};
 use crate::application::swarm::dto::{
     CreateBranch, CreateRunRequest, CreatedRun, NewMember, NewRun, RunContract, RunOwnerRow,
@@ -13,7 +14,9 @@ use crate::application::swarm::ports::{
     BoardEncoding, BoardMembers, BoardRepository, BoardRuns, Clock, IdSource,
 };
 use crate::domain::swarm::validation::TEXT_MAX_BYTES;
-use crate::domain::swarm::{BoardError, MemberState, RunState, bounded, bounded_text, criteria};
+use crate::domain::swarm::{
+    BoardError, MemberState, RefusalKind, RunState, bounded, bounded_text, criteria,
+};
 
 /// The most members a run may hold, the coordinator included.
 const MEMBER_LIMIT_MAX: i64 = 25;
@@ -106,12 +109,16 @@ impl CreateRun {
             _ => false,
         };
         if !strings {
-            return Err(BoardError::new("constraints must be a list of strings"));
+            return Err(BoardError::new(
+                RefusalKind::Invalid,
+                "constraints must be a list of strings",
+            ));
         }
         let member_limit = match request.member_limit.as_i64() {
             Some(limit @ 1..=MEMBER_LIMIT_MAX) => limit,
             _ => {
                 return Err(BoardError::new(
+                    RefusalKind::Invalid,
                     "member limit must be 1 through 25 including coordinator",
                 ));
             }
@@ -138,7 +145,12 @@ impl CreateRun {
             self.clock.now_seconds() < deadline
                 && deadline <= self.clock.now_seconds() + DEADLINE_HORIZON_SECONDS
         });
-        within.ok_or_else(|| BoardError::new("deadline must be in the next seven days"))
+        within.ok_or_else(|| {
+            BoardError::new(
+                RefusalKind::Invalid,
+                "deadline must be in the next seven days",
+            )
+        })
     }
 
     /// No run yet: the run under a fresh id, then the creator's live row
@@ -180,15 +192,28 @@ fn take_over_setup(
         && existing.coordinator.as_deref() == Some(member);
     if !placeholder {
         return Err(BoardError::new(
+            RefusalKind::RunExists,
             "only the setup coordinator can create this run; existing runs cannot be reset",
         ));
     }
     if transaction.not_dead()? > contract.member_limit {
         return Err(BoardError::new(
+            RefusalKind::MemberLimit,
             "existing live/reserved members exceed requested limit; terminate and reconcile first",
         ));
     }
     transaction.update_run_contract(contract)
+}
+
+impl OverRepository for CreateRun {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+            ids: self.ids.clone(),
+            encoding: self.encoding.clone(),
+        }
+    }
 }
 
 #[cfg(test)]

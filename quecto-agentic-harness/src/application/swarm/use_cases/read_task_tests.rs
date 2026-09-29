@@ -5,7 +5,8 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
 use crate::application::swarm::dto::ReadTaskRequest;
-use crate::domain::swarm::BoardError;
+use crate::application::swarm::use_cases::OverRepository;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 fn read(actor: &str, task_id: serde_json::Value) -> ReadTaskRequest {
     ReadTaskRequest {
@@ -64,7 +65,7 @@ fn a_ready_task_with_incomplete_dependencies_reads_blocked_with_unmet_dependenci
     assert_eq!(board.snapshot().tasks[2].text("status"), Some("ready"));
     assert_eq!(
         service.execute(read("parent", json!(6))).unwrap_err(),
-        BoardError::new("unknown task")
+        BoardError::new(RefusalKind::NotFound, "unknown task")
     );
 }
 
@@ -84,6 +85,26 @@ fn a_dead_member_reads_and_a_stranger_does_not() {
     );
     assert_eq!(
         service.execute(read("stranger", json!(1))).unwrap_err(),
-        BoardError::new("invoking member is unknown or death confirmed")
+        BoardError::new(
+            RefusalKind::NotMember,
+            "invoking member is unknown or death confirmed"
+        )
     );
+}
+
+/// Served over another repository (#2303 reconcile), the task is read from
+/// that board alone.
+#[test]
+fn over_reads_the_given_board() {
+    let mut state = running_board(100.0);
+    state.tasks = vec![stored_task(1, "ready", json!([]), None)];
+    let composed_over = MemoryBoard::with(running_board(100.0));
+    let other = MemoryBoard::with(state);
+    let task = ReadTask::new(composed_over.clone(), SteppingClock::fixed(50.0))
+        .over(other.clone())
+        .execute(read("parent", json!(1)))
+        .unwrap();
+    assert_eq!(task.text("status"), Some("ready"));
+    assert!(!other.transactions().is_empty());
+    assert!(composed_over.transactions().is_empty());
 }
