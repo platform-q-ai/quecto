@@ -281,3 +281,86 @@ fn the_dispatcher_serves_every_workbench_method() {
         .collect();
     assert_eq!(python, served);
 }
+
+/// `test_the_advertised_contact_is_a_send_the_board_accepts`: the contact
+/// a claimed task advertises is the `send` the board accepts, delivered to
+/// the owner.
+#[test]
+fn the_advertised_contact_is_a_send_the_board_accepts() {
+    let steps = joined([
+        task(3.0, "worker", "task"),
+        at(4.0, "worker", "claim", json!([1])),
+        at(5.0, "parent", "task", json!([1])),
+        at(
+            6.0,
+            "parent",
+            "send",
+            json!(["dependency-question-1", "worker", "which schema?"]),
+        ),
+        at(7.0, "worker", "inbox", json!([])),
+    ]);
+    run_both(&steps);
+    assert_eq!(
+        answer(&steps, 5)["contact"],
+        json!("board.send(request, 'worker', body)")
+    );
+    assert_eq!(answer(&steps, 6)["status"], json!("accepted"));
+    let inbox = answer(&steps, 7);
+    assert_eq!(
+        (&inbox[0]["sender"], &inbox[0]["body"]),
+        (&json!("parent"), &json!("which schema?"))
+    );
+}
+
+/// `test_message_columns_are_migrated_into_an_older_store`: a store from
+/// before #1837 gains the message columns on its next open, on both
+/// boards alike.
+#[test]
+fn message_columns_are_migrated_into_an_older_store() {
+    let steps = [
+        sql(
+            "CREATE TABLE run (id TEXT PRIMARY KEY, goal TEXT, constraints TEXT, criteria TEXT,
+              coordinator TEXT, integrator TEXT, member_limit INTEGER, deadline REAL, status TEXT);
+             CREATE TABLE members (id TEXT PRIMARY KEY, reservation TEXT UNIQUE, status TEXT, pid INTEGER, started TEXT, socket TEXT);
+             CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT, acceptance TEXT, dependencies TEXT, status TEXT, owner TEXT, token TEXT, evidence TEXT, blocker TEXT);
+             CREATE TABLE files (path TEXT PRIMARY KEY, task INTEGER, owner TEXT, claim TEXT, token TEXT);
+             CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, body TEXT, status TEXT);
+             CREATE TABLE evidence (criterion TEXT, artifact TEXT, revision TEXT, kind TEXT, actor TEXT, accepted INTEGER, PRIMARY KEY(criterion, actor));
+             CREATE TABLE requests (actor TEXT, request TEXT, payload TEXT, result TEXT, PRIMARY KEY(actor, request));
+             CREATE TABLE events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT);",
+        ),
+        step("parent", "create", contract(NOW + HOUR), NOW),
+        at(1.0, "parent", "send", json!(["m", "parent", "to self", "abc1"])),
+        at(2.0, "parent", "inbox", json!([])),
+        at(3.0, "parent", "withdraw", json!([1])),
+        at(4.0, "parent", "inbox", json!([true])),
+    ];
+    run_both(&steps);
+    assert_eq!(answer(&steps, 3)[0]["revision"], json!("abc1"));
+    assert_eq!(answer(&steps, 5)[0]["status"], json!("withdrawn"));
+}
+
+/// `test_the_launcher_column_is_migrated_into_an_older_store`: a store
+/// whose members have no launcher column gains it, and an admission
+/// records its launcher, on both boards alike.
+#[test]
+fn the_launcher_column_is_migrated_into_an_older_store() {
+    let steps = joined([
+        sql("ALTER TABLE members DROP COLUMN launcher"),
+        full(3.0, "parent"),
+        at(4.0, "parent", "_admit", json!(["late", "reservation-late"])),
+        full(5.0, "parent"),
+    ]);
+    run_both(&steps);
+    let members = answer(&steps, 6)["members"].clone();
+    let launcher = |id: &str| {
+        members
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|member| member["id"] == json!(id))
+            .map(|member| member["launcher"].clone())
+    };
+    assert_eq!(launcher("late"), Some(json!("parent")));
+    assert_eq!(launcher("parent"), Some(Value::Null));
+}
