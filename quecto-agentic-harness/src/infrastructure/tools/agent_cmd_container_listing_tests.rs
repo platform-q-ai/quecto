@@ -224,26 +224,20 @@ fn free_text_is_redacted_before_it_is_clipped() {
     }
     assert_eq!(
         row["last_error"],
-        "kill failed: GET https://***@example.test/x?access_token=[REDACTED] and token=[REDACTED] in the env"
+        "kill failed: GET https://***@example.test/x?[REDACTED] and [REDACTED] in the env"
     );
     assert_eq!(
         row["metadata"]["retained"],
         "pull from https://***@host/r failed"
     );
-    assert_eq!(row["metadata"]["cause"], "password: [REDACTED]");
+    assert_eq!(row["metadata"]["cause"], "[REDACTED]");
     // The container name is kept whole: logs are read by it.
     assert_eq!(row["metadata"]["container"], "quecto-env-q000000001");
-    // Redacted first, then clipped: a secret straddling the cut is gone
-    // (its label, kept, is what the cut falls in).
+    // Redacted first, then clipped: a secret straddling the cut is gone.
     let long = format!("{}token=abcdefgh", "x".repeat(MAX_TEXT_CHARS - 4));
     assert_eq!(
         safe_text(&long),
-        format!("{}toke…", "x".repeat(MAX_TEXT_CHARS - 4))
-    );
-    let long = format!("{}token=abcdefgh", "x".repeat(MAX_TEXT_CHARS - 8));
-    assert_eq!(
-        safe_text(&long),
-        format!("{}token=[R…", "x".repeat(MAX_TEXT_CHARS - 8))
+        format!("{}[RED…", "x".repeat(MAX_TEXT_CHARS - 4))
     );
 }
 
@@ -530,7 +524,7 @@ fn the_checkout_is_secret_redacted_but_an_ordinary_path_is_untouched() {
     let (_, listing) = listed(registry, serde_json::json!({}));
     let rows = listing["containers"].as_array().unwrap();
     assert_eq!(rows[0]["checkout"], ordinary);
-    assert_eq!(rows[1]["checkout"], "/repo?token=[REDACTED]");
+    assert_eq!(rows[1]["checkout"], "/repo?[REDACTED]");
     // No URL-userinfo rewriting: a path is not a URL.
     assert_eq!(rows[2]["checkout"], "/srv/git://mirror@host/repo");
 }

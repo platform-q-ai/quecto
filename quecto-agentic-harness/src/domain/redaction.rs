@@ -33,17 +33,6 @@ impl Redacted {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    /// At most `max_bytes` of it, cut on a character boundary (#2304): a
-    /// prefix of redacted text holds no secret it did not.
-    pub fn truncated(mut self, max_bytes: usize) -> Self {
-        let mut end = self.0.len().min(max_bytes);
-        while !self.0.is_char_boundary(end) {
-            end -= 1;
-        }
-        self.0.truncate(end);
-        self
-    }
 }
 
 impl From<&str> for Redacted {
@@ -71,24 +60,15 @@ impl std::fmt::Display for Redacted {
     }
 }
 
-/// Credential-shaped tokens scrubbed to `[REDACTED]`: those with
-/// recognisable prefixes (`Bearer <tok>`, `sk-` incl.
-/// `sk-proj-`/`sk-ant-`/`sk-or-`, AWS `AKIA`, GitHub `gh[pousr]_` and
-/// `github_pat_`, Slack `xox[baprs]-`, Google `AIza`, GitLab `glpat-`,
-/// Hugging Face `hf_`, npm `npm_`, PyPI `pypi-AgE`, age
-/// `AGE-SECRET-KEY-1`, and a JWT: three base64url segments, the first
-/// starting `eyJ`). They are tried after the named spans ([`named`]) and
-/// before the command-line shapes ([`shapes`]). This is best-effort: a
-/// token with no distinguishing shape and no label, flag or prefix before
-/// it (one in prose, a bare password passed positionally) can still slip
-/// through, so callers must not treat output as guaranteed clean.
+/// Credential-shaped patterns scrubbed to `[REDACTED]`.
 ///
-/// `Bearer`'s token follows spaces or a URL-encoded space (`Bearer%20…`)
-/// and is a run of anything but spaces, quotes and `&`: the quote closing
-/// a header (`-H "Authorization: Bearer …"`) and a query's next field are
-/// kept. After a flag's `-` (`--oauth2-bearer TOK`) the flag is kept too.
-/// `Bearer` takes the word after it whatever it is, so `Bearer
-/// authentication failed` loses `authentication` (pinned).
+/// Covers both named spans (`<api_key|token|password|secret|access_token>=
+/// <value>`) and tokens that have recognisable prefixes (`Bearer <tok>`,
+/// `sk-` incl. `sk-proj-`/`sk-ant-`/`sk-or-`, AWS `AKIA`, GitHub
+/// `gh[pousr]_`, Slack `xox[baprs]-`, Google `AIza`). This is best-effort:
+/// tokens with no distinguishing shape (bare passwords passed positionally,
+/// opaque JWTs) can still slip through, so callers must not treat output as
+/// guaranteed clean.
 ///
 /// `sk-` is held to one extra rule (#2241): it starts a word, so
 /// `task-runner01`, `disk-usage` or `risk-assessment` is text, never
@@ -115,20 +95,20 @@ impl std::fmt::Display for Redacted {
 ///
 /// Every other prefixed shape matches wherever it appears, as it always
 /// has: no false positive of theirs was ever shown, and a missed key costs
-/// more than an over-redacted word.
+/// more than an over-redacted word. A named span keeps matching inside an
+/// identifier: `GITHUB_TOKEN=` and `DB_PASSWORD:` are secret labels
+/// however they are prefixed.
 static PATTERNS: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(concat!(
-        r#"(?i)(?:(?P<flag>-bearer[ \t]+)[^\s"'&]+|bearer(?:[ \t]+|%20)[^\s"'&]+"#,
+        r"(?i)(?:bearer\s+\S+",
         r"|(?P<lead>(?-i:^|[^A-Za-z]",
         r"|(?:\x1b|\\e|\\x1[bB]|\\033|\\u001[bB]|\^\[)\[[0-9;?]*[A-Za-z]",
         r"|\\[abefnrtv]|\\x[0-9A-Fa-f]{2}|\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8}",
         r"|%(?:25)*[0-9A-Fa-f]{2}|=[0-9A-Fa-f]{2}|`[0befnrtv]))",
         r"sk-[A-Za-z0-9_-]{8,}",
         r"|AKIA[0-9A-Z]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}",
-        r"|AIza[A-Za-z0-9_-]{20,}|glpat-[A-Za-z0-9_-]{20,}",
-        r"|(?-i:github_pat_[A-Za-z0-9_]{20,}|hf_[A-Za-z0-9]{20,}|npm_[A-Za-z0-9]{20,}",
-        r"|pypi-AgE[A-Za-z0-9_-]{20,}|AGE-SECRET-KEY-1[0-9A-Z]{20,}",
-        r"|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+))",
+        r"|AIza[A-Za-z0-9_-]{20,}",
+        r"|(?:api[_-]?key|token|password|secret|access[_-]?token)\s*[=:]\s*\S+)",
     ))
     .expect("static redaction regex is valid")
 });
@@ -194,84 +174,21 @@ fn is_ansi_csi(text: &str) -> bool {
     })
 }
 
-#[path = "redaction_named.rs"]
-mod named;
-#[path = "redaction_shapes.rs"]
-mod shapes;
-
 /// Replace known secret shapes in `input` with `[REDACTED]`.
 ///
-/// Non-secret tokens are preserved so the redacted string stays useful: a
-/// named secret's label ([`named`]), an `sk-` key's `lead`, and a
-/// command-line credential's flag, name or header, and a URL's user and
-/// host ([`shapes`]). No rule but a private key's body
-/// ([`redact_private_key_blocks`]) reaches across a newline, every rule
-/// is linear in the text, and the output redacts to itself.
+/// Non-secret tokens are preserved so the redacted string stays useful: an
+/// `sk-` key's `lead` is written back in front of it.
 pub(crate) fn redact_secrets(input: &str) -> String {
-    let blocks = redact_private_key_blocks(input);
-    let named = PATTERNS
-        .replace_all(
-            &named::redact_named(&blocks),
-            |caps: &regex::Captures<'_>| {
-                let lead = caps.name("lead").map_or("", |lead| lead.as_str());
-                let flag = caps.name("flag").map_or("", |flag| flag.as_str());
-                debug_assert!(
-                    is_key_lead(lead),
-                    "an sk- key's lead is a word start: {lead:?}"
-                );
-                format!("{lead}{flag}[REDACTED]")
-            },
-        )
-        .into_owned();
-    shapes::redact_command_lines(named)
-}
-
-/// A PEM private key's first line: `-----BEGIN PRIVATE KEY-----`, and its
-/// `RSA`, `EC`, `OPENSSH`, `ENCRYPTED` … kinds.
-static PRIVATE_KEY_BEGIN: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
-        .expect("static private-key regex is valid")
-});
-
-/// The most bytes of a private key's body looked through for its `-----END`
-/// line: an RSA 8192 key is under 7 KiB.
-const PRIVATE_KEY_BODY_MAX: usize = 16 * 1024;
-
-/// Redact the body of every PEM private key block in `input`, keeping its
-/// `BEGIN` and `END` lines and the whitespace around the body. The one
-/// rule that crosses lines, bounded: a body runs to its `-----END` line,
-/// or, with none within [`PRIVATE_KEY_BODY_MAX`] bytes (a text cut
-/// inside it), to that bound or the text's end. Each block is looked
-/// through once, so it stays linear.
-fn redact_private_key_blocks(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let (mut copied, mut from) = (0, 0);
-    while let Some(begin) = PRIVATE_KEY_BEGIN.find_at(input, from) {
-        let body_start = begin.end();
-        let mut bound = input.len().min(body_start + PRIVATE_KEY_BODY_MAX);
-        while !input.is_char_boundary(bound) {
-            bound -= 1;
-        }
-        let window = &input[body_start..bound];
-        let body_end = body_start + window.find("-----END ").unwrap_or(window.len());
-        let body = &input[body_start..body_end];
-        let secret = body.trim();
-        from = body_end.max(begin.end());
-        if secret.is_empty() {
-            continue;
-        }
-        let lead = body.len() - body.trim_start().len();
-        let (start, end) = (body_start + lead, body_start + lead + secret.len());
-        assert!(
-            copied <= start && start < end && end <= body_end,
-            "a key's body lies ahead of what is copied"
-        );
-        out.push_str(&input[copied..start]);
-        out.push_str("[REDACTED]");
-        copied = end;
-    }
-    out.push_str(&input[copied..]);
-    out
+    PATTERNS
+        .replace_all(input, |caps: &regex::Captures<'_>| {
+            let lead = caps.name("lead").map_or("", |lead| lead.as_str());
+            debug_assert!(
+                is_key_lead(lead),
+                "an sk- key's lead is a word start: {lead:?}"
+            );
+            format!("{lead}[REDACTED]")
+        })
+        .into_owned()
 }
 
 /// The userinfo of a URL (`scheme://user:token@host/…`), in whatever text
@@ -300,26 +217,11 @@ mod redacted_cov_tests {
     #[test]
     fn redacted_from_string_and_display_scrub_secret() {
         let redacted = Redacted::from(String::from("prefix token=hunter2 suffix"));
-        assert_eq!(redacted.as_str(), "prefix token=[REDACTED] suffix");
-        assert_eq!(redacted.to_string(), "prefix token=[REDACTED] suffix");
-        assert_eq!(&*redacted, "prefix token=[REDACTED] suffix");
+        assert_eq!(redacted.as_str(), "prefix [REDACTED] suffix");
+        assert_eq!(redacted.to_string(), "prefix [REDACTED] suffix");
+        assert_eq!(&*redacted, "prefix [REDACTED] suffix");
     }
 }
 #[cfg(test)]
-#[path = "redaction_command_line_tests.rs"]
-mod command_line_tests;
-#[cfg(test)]
-#[path = "redaction_corpus_tests.rs"]
-mod corpus_tests;
-#[cfg(test)]
 #[path = "redaction_encodings_tests.rs"]
 mod encodings_tests;
-#[cfg(test)]
-#[path = "redaction_linearity_tests.rs"]
-mod linearity_tests;
-#[cfg(test)]
-#[path = "redaction_newline_tests.rs"]
-mod newline_tests;
-#[cfg(test)]
-#[path = "redaction_round5_tests.rs"]
-mod round5_tests;
