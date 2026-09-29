@@ -6,7 +6,7 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, paused, recorded, running_board, usage,
 };
 use crate::application::swarm::dto::ControlReceipt;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 fn read(state: BoardState, now: f64) -> Result<ControlReceipt, BoardError> {
     let board = MemoryBoard::with(state);
@@ -94,7 +94,7 @@ fn missing_and_edited_control_records_are_refused() {
     unrecorded.events.clear();
     assert_eq!(
         read(unrecorded, 60.0).unwrap_err(),
-        BoardError::new("paused run has no pause record")
+        BoardError::new(RefusalKind::Internal, "paused run has no pause record")
     );
     let mut text_start = paused(running_board(40.0), 50.0, None);
     text_start.events[0].detail = json!({"started": "soon"});
@@ -133,9 +133,10 @@ fn missing_and_edited_control_records_are_refused() {
     ] {
         assert_eq!(
             read(state, 60.0).unwrap_err(),
-            BoardError::new(format!(
-                "the board's {record} is not as the board writes it"
-            ))
+            BoardError::new(
+                RefusalKind::Store,
+                format!("the board's {record} is not as the board writes it")
+            )
         );
     }
 }

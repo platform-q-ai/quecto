@@ -1,6 +1,7 @@
 //! `Workbench._control_status()` (#2273): the control receipt, read-only.
 use std::sync::Arc;
 
+use super::OverRepository;
 use crate::application::swarm::board_control::receipt;
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::ControlReceipt;
@@ -33,6 +34,15 @@ impl ReadControlStatus {
             reading,
             |transaction, _| receipt(transaction, &*self.clock),
         )
+    }
+}
+
+impl OverRepository for ReadControlStatus {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

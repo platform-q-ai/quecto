@@ -7,10 +7,14 @@
 //! already as asked.
 use serde_json::Value;
 
-use super::{Parameter, Served, SwarmBoardHandles, object, required, take};
+use super::{Parameter, Served, object, required, take};
 use crate::application::swarm::dto::{
     ControlAnswer, ControlReceipt, ExtendRunDeadlineRequest, PauseRunRequest, RunTransition,
     StopRunRequest, UsageReport, UsageRow,
+};
+use crate::application::swarm::use_cases::{
+    CloseRun, ExtendRunDeadline, PauseRun, ReadControlStatus, ReadUsageReport, ResumeRun,
+    ResumeRunExternally, StopRun,
 };
 use crate::domain::swarm::BoardError;
 
@@ -30,62 +34,63 @@ fn answered(answer: ControlAnswer, applied: &'static str) -> Served {
             RunTransition::Applied => applied,
             RunTransition::Unchanged => "unchanged",
         },
+        task_id: None,
+        message_id: None,
+        cursor_moved: None,
     }
 }
 
 pub(super) fn pause(
-    handles: &SwarmBoardHandles,
+    pause_run: &PauseRun,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [reason] = take(arguments)?;
-    let answer = handles.pause_run.execute(PauseRunRequest {
+    let answer = pause_run.execute(PauseRunRequest {
         actor: actor.to_owned(),
         reason,
     })?;
     Ok(answered(answer, "paused"))
 }
 
-pub(super) fn resume(handles: &SwarmBoardHandles, actor: &str) -> Result<Served, BoardError> {
-    let answer = handles.resume_run.execute(actor)?;
+pub(super) fn resume(resume_run: &ResumeRun, actor: &str) -> Result<Served, BoardError> {
+    let answer = resume_run.execute(actor)?;
     Ok(answered(answer, "resumed"))
 }
 
 pub(super) fn resume_external(
-    handles: &SwarmBoardHandles,
+    resume_run_externally: &ResumeRunExternally,
     actor: &str,
 ) -> Result<Served, BoardError> {
-    let answer = handles.resume_run_externally.execute(actor)?;
+    let answer = resume_run_externally.execute(actor)?;
     Ok(answered(answer, "resumed"))
 }
 
-pub(super) fn close(handles: &SwarmBoardHandles, actor: &str) -> Result<Served, BoardError> {
-    let answer = handles.close_run.execute(actor)?;
+pub(super) fn close(close_run: &CloseRun, actor: &str) -> Result<Served, BoardError> {
+    let answer = close_run.execute(actor)?;
     Ok(answered(answer, "closed"))
 }
 
 pub(super) fn extend(
-    handles: &SwarmBoardHandles,
+    extend_run_deadline: &ExtendRunDeadline,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [seconds] = take(arguments)?;
-    let answer = handles
-        .extend_run_deadline
-        .execute(ExtendRunDeadlineRequest {
-            actor: actor.to_owned(),
-            seconds,
-        })?;
+    let answer = extend_run_deadline.execute(ExtendRunDeadlineRequest {
+        actor: actor.to_owned(),
+        seconds,
+    })?;
     Ok(answered(answer, "extended"))
 }
 
 pub(super) fn stop(
-    handles: &SwarmBoardHandles,
+    stop_run: &StopRun,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [status, reason] = take(arguments)?;
-    let answer = handles.stop_run.execute(StopRunRequest {
+    let answer = stop_run.execute(StopRunRequest {
         actor: actor.to_owned(),
         status,
         reason,
@@ -94,19 +99,28 @@ pub(super) fn stop(
 }
 
 pub(super) fn control_status(
-    handles: &SwarmBoardHandles,
+    read_control_status: &ReadControlStatus,
     actor: &str,
 ) -> Result<Served, BoardError> {
     Ok(Served {
-        value: receipt(handles.read_control_status.execute(actor)?),
+        value: receipt(read_control_status.execute(actor)?),
         decision: "read",
+        task_id: None,
+        message_id: None,
+        cursor_moved: None,
     })
 }
 
-pub(super) fn usage_report(handles: &SwarmBoardHandles, actor: &str) -> Result<Served, BoardError> {
+pub(super) fn usage_report(
+    read_usage_report: &ReadUsageReport,
+    actor: &str,
+) -> Result<Served, BoardError> {
     Ok(Served {
-        value: report(handles.read_usage_report.execute(actor)?),
+        value: report(read_usage_report.execute(actor)?),
         decision: "read",
+        task_id: None,
+        message_id: None,
+        cursor_moved: None,
     })
 }
 

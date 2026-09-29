@@ -220,7 +220,7 @@ fn loosely_typed_rows_read_as_python_reads_them() {
 
 /// `create_run`'s arguments as JSON text, a criterion's extra key `w`
 /// written as `extra`.
-fn create_text(extra: &str) -> String {
+pub(crate) fn create_text(extra: &str) -> String {
     format!(
         r#"["g", [], [{{"id": "c", "kind": "review", "description": "d", "w": {extra}}}], 5, {}]"#,
         NOW + 3_600.0
@@ -290,26 +290,6 @@ fn arguments_beyond_a_serde_value() {
             ),
             "{extra}"
         );
-    }
-}
-
-/// `_bootstrap` asks only whether a run exists (`SELECT 1 FROM run`) and
-/// `create` fetches the whole run row but uses only its status and
-/// coordinator (#2270 round-3 review N1): columns either leaves unused may
-/// hold anything.
-#[test]
-fn bootstrap_and_create_use_only_the_run_columns_python_uses() {
-    for edit in [
-        "UPDATE run SET deadline='soon', member_limit='many'",
-        "UPDATE run SET deadline=NULL, member_limit=2.5, integrator=x'00'",
-    ] {
-        run_both(&[
-            step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
-            sql(edit),
-            step("parent", "bootstrap_run", json!([8, "t", null]), NOW + 1.0),
-            step_text("parent", "create_run", &create_text("1"), NOW + 2.0),
-            step("supervisor", "_status", json!([]), NOW + 3.0),
-        ]);
     }
 }
 

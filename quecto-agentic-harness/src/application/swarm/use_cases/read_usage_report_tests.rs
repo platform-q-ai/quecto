@@ -4,7 +4,7 @@ use super::ReadUsageReport;
 use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, running_board, usage,
 };
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// Any member, a dead one included, reads the report the board holds.
 #[test]
@@ -18,6 +18,9 @@ fn the_report_is_read_through_the_gate() {
     assert_eq!(service.execute("gone").unwrap(), held);
     assert_eq!(
         service.execute("stranger").unwrap_err(),
-        BoardError::new("invoking member is unknown or death confirmed")
+        BoardError::new(
+            RefusalKind::NotMember,
+            "invoking member is unknown or death confirmed"
+        )
     );
 }

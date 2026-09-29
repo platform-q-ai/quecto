@@ -4,13 +4,15 @@
 //! at once.
 use std::sync::Arc;
 
+use super::OverRepository;
 use crate::application::swarm::board_control::receipt;
 use crate::application::swarm::board_operation::{detail, end, operation, text};
 use crate::application::swarm::dto::{ControlAnswer, RunTransition, StopRunRequest};
 use crate::application::swarm::ports::{BoardRepository, BoardTransaction, Clock};
 use crate::domain::swarm::validation::TEXT_MAX_BYTES;
 use crate::domain::swarm::{
-    Access, BoardError, RunRecord, RunState, STOP_STATUSES, bounded, describe,
+    Access, BoardError, RefusalKind, RunRecord, RunState, STOP_STATUSES, bounded, run_already,
+    run_already_held,
 };
 
 /// The reason is bounded and the status must be one of `STOP_STATUSES`
@@ -40,7 +42,12 @@ impl StopRun {
         let reason = bounded(&request.reason, "stop reason", TEXT_MAX_BYTES)?;
         let status = match request.status.as_str() {
             Some(status) if STOP_STATUSES.contains(&status) => status,
-            _ => return Err(BoardError::new("invalid non-success outcome")),
+            _ => {
+                return Err(BoardError::new(
+                    RefusalKind::Invalid,
+                    "invalid non-success outcome",
+                ));
+            }
         };
         let actor = request.actor.as_str();
         let coordinating = Access {
@@ -75,6 +82,7 @@ impl StopRun {
         match run.status.as_ref().map(RunState::as_str) {
             Some("cancelled") => Ok(RunTransition::Unchanged),
             Some("setup") => Err(BoardError::new(
+                RefusalKind::RunMissing,
                 "run not created yet; nothing to cancel. To start one: swarm op=create",
             )),
             Some("running" | "paused") => {
@@ -88,7 +96,7 @@ impl StopRun {
                 )?;
                 Ok(RunTransition::Applied)
             }
-            _ => Err(BoardError::new(format!("run already {}", describe(run)))),
+            _ => Err(run_already(run)),
         }
     }
 
@@ -109,10 +117,16 @@ impl StopRun {
                 end(transaction, &*self.clock, actor, status, reason)?;
                 Ok(RunTransition::Applied)
             }
-            _ => Err(BoardError::new(format!(
-                "run already {}; only the supervisor can resume or close it, and op=cancel_run cancels it",
-                describe(run)
-            ))),
+            _ => Err(run_already_held(run)),
+        }
+    }
+}
+
+impl OverRepository for StopRun {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
         }
     }
 }

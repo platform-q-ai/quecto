@@ -78,6 +78,28 @@ fn not_running(spent: bool) -> RefusalKind {
     }
 }
 
+/// `stop`'s refusal of a cancellation over a run already ended (#2273):
+/// `run already …`, as `budget_exhausted` when its budget is spent, else
+/// `not_running`.
+pub fn run_already(run: &RunRecord) -> BoardError {
+    BoardError::new(
+        not_running(budget_spent(run)),
+        format!("run already {}", describe(run)),
+    )
+}
+
+/// `stop`'s refusal of an outcome over a run that is not running and does
+/// not already hold it (#2273), kinded as [`run_already`].
+pub fn run_already_held(run: &RunRecord) -> BoardError {
+    BoardError::new(
+        not_running(budget_spent(run)),
+        format!(
+            "run already {}; only the supervisor can resume or close it, and op=cancel_run cancels it",
+            describe(run)
+        ),
+    )
+}
+
 /// Whether `actor`, whose row is `member`, may perform an operation needing
 /// `access` on `run`. Checks run in Python's order: the run, the coordinator,
 /// the member, then activity.

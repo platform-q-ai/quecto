@@ -5,7 +5,7 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, paused, running_board,
 };
 use crate::application::swarm::dto::{RunTransition, StopRunRequest};
-use crate::domain::swarm::{BoardError, RunState};
+use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 fn stop(status: Value, reason: &str) -> StopRunRequest {
     StopRunRequest {
@@ -29,7 +29,10 @@ fn the_status_and_reason_are_checked_before_the_store() {
     let service = StopRun::new(board.clone(), SteppingClock::fixed(50.0));
     assert_eq!(
         service.execute(stop(json!("blocked"), " ")).unwrap_err(),
-        BoardError::new("stop reason must be nonempty and at most 8192 bytes")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "stop reason must be nonempty and at most 8192 bytes"
+        )
     );
     for status in [
         json!("succeeded"),
@@ -39,7 +42,7 @@ fn the_status_and_reason_are_checked_before_the_store() {
     ] {
         assert_eq!(
             service.execute(stop(status, "why")).unwrap_err(),
-            BoardError::new("invalid non-success outcome")
+            BoardError::new(RefusalKind::Invalid, "invalid non-success outcome")
         );
     }
     assert!(board.transactions().is_empty(), "refused before the store");
@@ -87,6 +90,7 @@ fn a_stop_ends_a_running_run_as_a_pause_holding_the_outcome() {
     assert_eq!(
         service.execute(stop(json!("failed"), "x")).unwrap_err(),
         BoardError::new(
+            RefusalKind::NotRunning,
             "run already paused (blocked: needs input); only the supervisor can resume or \
              close it, and op=cancel_run cancels it"
         )
@@ -117,12 +121,23 @@ fn cancellation_is_terminal_and_refused_before_and_after_a_run() {
     );
     let again = service.execute(stop(json!("cancelled"), "again")).unwrap();
     assert_eq!(again.transition, RunTransition::Unchanged);
-    for (status, refusal) in [
+    for (status, refusal, kind) in [
         (
             "setup",
             "run not created yet; nothing to cancel. To start one: swarm op=create",
+            RefusalKind::RunMissing,
         ),
-        ("succeeded", "run already succeeded"),
+        (
+            "succeeded",
+            "run already succeeded",
+            RefusalKind::NotRunning,
+        ),
+        // A spent budget refuses as the budget's (#2303).
+        (
+            "budget-exhausted",
+            "run already budget-exhausted",
+            RefusalKind::BudgetExhausted,
+        ),
     ] {
         let service = StopRun::new(
             MemoryBoard::with(with_status(status)),
@@ -132,7 +147,7 @@ fn cancellation_is_terminal_and_refused_before_and_after_a_run() {
             service
                 .execute(stop(json!("cancelled"), "late"))
                 .unwrap_err(),
-            BoardError::new(refusal)
+            BoardError::new(kind, refusal)
         );
     }
 }

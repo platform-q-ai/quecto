@@ -6,8 +6,9 @@ use super::*;
 use crate::domain::audit::AuditEvent;
 use crate::domain::swarm::records::{MemberState, RunState, TaskState};
 use crate::domain::swarm::{
-    Access, BoardError, MemberRecord, RunRecord, TaskRecord, admission, authorize, bounded,
-    completion, criteria, require_budget, require_unsubmitted, revalidation, validate_extension,
+    Access, BoardError, MemberRecord, RefusalKind, RunRecord, TaskRecord, admission, authorize,
+    bounded, completion, criteria, require_budget, require_unsubmitted, revalidation, run_already,
+    run_already_held, validate_extension,
 };
 
 fn run(status: RunState) -> RunRecord {
@@ -274,6 +275,53 @@ fn a_budget_exhausted_run_refuses_as_budget_exhausted() {
     assert_eq!(expired.message(), "run is running; no new admission");
     let blocked = admission(&paused("blocked"), None, &json!("r"), 0, 0.0).unwrap_err();
     assert_eq!(blocked.kind(), RefusalKind::NotRunning);
+}
+
+/// `stop`'s `run already …` refusals (#2273) keep Python's text and
+/// refuse as `budget_exhausted` when the run's budget is spent, paused or
+/// ended as `budget-exhausted`, and as `not_running` otherwise, a NULL
+/// status included.
+#[test]
+fn a_stop_over_an_ended_run_refuses_by_its_budget() {
+    let null = RunRecord {
+        status: None,
+        ..run(RunState::RUNNING)
+    };
+    for (record, described, expected) in [
+        (
+            paused("budget-exhausted"),
+            "paused (budget-exhausted: deadline)",
+            RefusalKind::BudgetExhausted,
+        ),
+        (
+            run(RunState::BUDGET_EXHAUSTED),
+            "budget-exhausted",
+            RefusalKind::BudgetExhausted,
+        ),
+        (
+            paused("blocked"),
+            "paused (blocked: deadline)",
+            RefusalKind::NotRunning,
+        ),
+        (
+            run(RunState::CANCELLED),
+            "cancelled",
+            RefusalKind::NotRunning,
+        ),
+        (null, "None", RefusalKind::NotRunning),
+    ] {
+        let refused = run_already(&record);
+        assert_eq!(
+            (refused.kind(), refused.message()),
+            (expected, format!("run already {described}").as_str())
+        );
+        let held = run_already_held(&record);
+        let text = format!(
+            "run already {described}; only the supervisor can resume or close it, \
+             and op=cancel_run cancels it"
+        );
+        assert_eq!((held.kind(), held.message()), (expected, text.as_str()));
+    }
 }
 
 /// Every kind serializes as the text `as_str` gives, which the tracing

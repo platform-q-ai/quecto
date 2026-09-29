@@ -5,7 +5,7 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, paused, running_board, usage,
 };
 use crate::application::swarm::dto::RunTransition;
-use crate::domain::swarm::{BoardError, RunState};
+use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 /// `resume_refuses_members_and_lists_blockers_for_the_supervisor` (the
 /// supervisor half): a pause whose resume would end again at once is
@@ -24,6 +24,7 @@ fn the_supervisor_resumes_unless_a_blocker_remains() {
     assert_eq!(
         service.execute("parent").unwrap_err(),
         BoardError::new(
+            RefusalKind::BudgetExhausted,
             "resume would pause again at once: raise or disable the token budget \
              (swarm_control usage_budget) before resuming"
         )
@@ -69,7 +70,10 @@ fn only_a_paused_run_resumes_and_an_instant_pause_is_zero_seconds() {
     let service = ResumeRunExternally::new(board.clone(), SteppingClock::fixed(40.0));
     assert_eq!(
         service.execute("worker").unwrap_err(),
-        BoardError::new("only the designated coordinator may do this")
+        BoardError::new(
+            RefusalKind::NotCoordinator,
+            "only the designated coordinator may do this"
+        )
     );
     service.execute("parent").unwrap();
     assert_eq!(
@@ -81,7 +85,7 @@ fn only_a_paused_run_resumes_and_an_instant_pause_is_zero_seconds() {
     let service = ResumeRunExternally::new(MemoryBoard::with(closed), SteppingClock::fixed(40.0));
     assert_eq!(
         service.execute("parent").unwrap_err(),
-        BoardError::new("only a paused run may resume")
+        BoardError::new(RefusalKind::WrongState, "only a paused run may resume")
     );
 }
 

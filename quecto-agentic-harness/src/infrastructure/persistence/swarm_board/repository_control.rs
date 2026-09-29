@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use super::repository::{failed, fetched, text};
 use super::repository_tasks::loaded;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// `Transaction.pause_started`'s read: the latest `paused` event's
 /// `started`, NULL when its detail has none; `None` without such an event.
@@ -70,6 +70,7 @@ pub(super) fn lost_members(
             Some("activated") => seen.activated = id,
             _ => {
                 return Err(BoardError::new(
+                    RefusalKind::Internal,
                     "the loss scan read an event it did not select",
                 ));
             }

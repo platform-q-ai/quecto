@@ -4,11 +4,12 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
 use crate::application::swarm::board_control::receipt;
 use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::dto::{ControlAnswer, RunTransition};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, PROPOSED_OUTCOMES, RunState};
+use crate::domain::swarm::{Access, BoardError, PROPOSED_OUTCOMES, RefusalKind, RunState};
 
 /// Through the operation gate as the coordinator: only a paused run
 /// holding a proposed outcome (`PROPOSED_OUTCOMES`) closes. Its status
@@ -44,10 +45,13 @@ impl CloseRun {
                         outcome
                     }
                     _ => {
-                        return Err(BoardError::new(format!(
-                            "run is {} without a proposed outcome; resume it or cancel the run",
-                            status.unwrap_or("None")
-                        )));
+                        return Err(BoardError::new(
+                            RefusalKind::WrongState,
+                            format!(
+                                "run is {} without a proposed outcome; resume it or cancel the run",
+                                status.unwrap_or("None")
+                            ),
+                        ));
                     }
                 };
                 transaction.set_outcome(&RunState::new(held))?;
@@ -67,6 +71,15 @@ impl CloseRun {
                 })
             },
         )
+    }
+}
+
+impl OverRepository for CloseRun {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

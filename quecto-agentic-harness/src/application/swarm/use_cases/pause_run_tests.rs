@@ -5,7 +5,7 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, paused, running_board,
 };
 use crate::application::swarm::dto::{PauseRunRequest, RunTransition};
-use crate::domain::swarm::{BoardError, RunState};
+use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 fn pause(actor: &str, reason: Value) -> PauseRunRequest {
     PauseRunRequest {
@@ -26,7 +26,10 @@ fn the_coordinator_pauses_a_running_run_once() {
     let service = PauseRun::new(board.clone(), SteppingClock::fixed(50.0));
     assert_eq!(
         service.execute(pause("worker", json!("hold"))).unwrap_err(),
-        BoardError::new("only the designated coordinator may do this")
+        BoardError::new(
+            RefusalKind::NotCoordinator,
+            "only the designated coordinator may do this"
+        )
     );
     let answer = service.execute(pause("parent", json!("hold"))).unwrap();
     assert_eq!(answer.transition, RunTransition::Applied);
@@ -56,7 +59,10 @@ fn a_bad_reason_or_an_ended_run_is_refused() {
     for reason in [json!(""), json!(5), json!(" \n")] {
         assert_eq!(
             service.execute(pause("parent", reason)).unwrap_err(),
-            BoardError::new("pause reason must be nonempty and at most 8192 bytes")
+            BoardError::new(
+                RefusalKind::Invalid,
+                "pause reason must be nonempty and at most 8192 bytes"
+            )
         );
     }
     assert!(board.transactions().is_empty(), "refused before the store");
@@ -65,7 +71,10 @@ fn a_bad_reason_or_an_ended_run_is_refused() {
     let service = PauseRun::new(MemoryBoard::with(cancelled), SteppingClock::fixed(50.0));
     assert_eq!(
         service.execute(pause("parent", json!("hold"))).unwrap_err(),
-        BoardError::new("run is cancelled; no new work permitted")
+        BoardError::new(
+            RefusalKind::NotRunning,
+            "run is cancelled; no new work permitted"
+        )
     );
     let held = paused(running_board(100.0), 40.0, Some(("blocked", "why")));
     let service = PauseRun::new(MemoryBoard::with(held), SteppingClock::fixed(50.0));

@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
 use crate::application::swarm::board_control::{pause_started, receipt};
 use crate::application::swarm::board_operation::{detail, operation, seconds};
 use crate::application::swarm::dto::{ControlAnswer, ExtendRunDeadlineRequest, RunTransition};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::policy::MAX_EXTENSION_SECONDS;
-use crate::domain::swarm::{Access, BoardError, RunState, validate_extension};
+use crate::domain::swarm::{Access, BoardError, RefusalKind, RunState, validate_extension};
 
 /// The seconds are validated before the operation gate, which admits only
 /// the coordinator. A running or paused run's deadline moves to its base
@@ -52,10 +53,10 @@ impl ExtendRunDeadline {
                     // and `pause_started` admits only a finite start).
                     Some("paused") => run.deadline.max(pause_started(transaction)?),
                     status => {
-                        return Err(BoardError::new(format!(
-                            "run is {}; nothing to extend",
-                            status.unwrap_or("None")
-                        )));
+                        return Err(BoardError::new(
+                            RefusalKind::NotRunning,
+                            format!("run is {}; nothing to extend", status.unwrap_or("None")),
+                        ));
                     }
                 };
                 debug_assert!(
@@ -66,6 +67,7 @@ impl ExtendRunDeadline {
                 let horizon = self.clock.now_seconds() + MAX_EXTENSION_SECONDS as f64;
                 if deadline > horizon {
                     return Err(BoardError::new(
+                        RefusalKind::Invalid,
                         "deadline may be at most seven days ahead, as at creation",
                     ));
                 }
@@ -86,6 +88,15 @@ impl ExtendRunDeadline {
                 })
             },
         )
+    }
+}
+
+impl OverRepository for ExtendRunDeadline {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

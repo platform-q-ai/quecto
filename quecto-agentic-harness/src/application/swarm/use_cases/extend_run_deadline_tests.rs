@@ -5,7 +5,7 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, paused, running_board,
 };
 use crate::application::swarm::dto::{ExtendRunDeadlineRequest, RunTransition};
-use crate::domain::swarm::{BoardError, RunState};
+use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 fn extend(seconds: Value) -> ExtendRunDeadlineRequest {
     ExtendRunDeadlineRequest {
@@ -55,13 +55,19 @@ fn extensions_are_bounded_and_capped_at_seven_days_ahead() {
     ] {
         assert_eq!(
             service.execute(extend(seconds)).unwrap_err(),
-            BoardError::new("deadline extension must be 1..604800 seconds")
+            BoardError::new(
+                RefusalKind::Invalid,
+                "deadline extension must be 1..604800 seconds"
+            )
         );
     }
     assert!(board.transactions().is_empty(), "refused before the store");
     assert_eq!(
         service.execute(extend(json!(604_800))).unwrap_err(),
-        BoardError::new("deadline may be at most seven days ahead, as at creation")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "deadline may be at most seven days ahead, as at creation"
+        )
     );
     service.execute(extend(json!(604_750))).unwrap();
     assert_eq!(board.snapshot().run.unwrap().record.deadline, 604_850.0);
@@ -70,7 +76,10 @@ fn extensions_are_bounded_and_capped_at_seven_days_ahead() {
     let service = ExtendRunDeadline::new(MemoryBoard::with(cancelled), SteppingClock::fixed(50.0));
     assert_eq!(
         service.execute(extend(json!(60))).unwrap_err(),
-        BoardError::new("run is cancelled; nothing to extend")
+        BoardError::new(
+            RefusalKind::NotRunning,
+            "run is cancelled; nothing to extend"
+        )
     );
 }
 
@@ -111,6 +120,9 @@ fn a_pause_start_that_is_not_a_float_diverges() {
     let (_, answer) = started(json!(true));
     assert_eq!(
         answer.unwrap_err(),
-        BoardError::new("the board's pause record is not as the board writes it")
+        BoardError::new(
+            RefusalKind::Store,
+            "the board's pause record is not as the board writes it"
+        )
     );
 }

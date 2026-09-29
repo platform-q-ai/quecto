@@ -1,6 +1,7 @@
 //! `Workbench.pause(reason)` (#2273): the coordinator pauses a running run.
 use std::sync::Arc;
 
+use super::OverRepository;
 use crate::application::swarm::board_control::receipt;
 use crate::application::swarm::board_operation::{detail, operation, seconds, text};
 use crate::application::swarm::dto::{ControlAnswer, PauseRunRequest, RunTransition};
@@ -66,6 +67,15 @@ impl PauseRun {
                 })
             },
         )
+    }
+}
+
+impl OverRepository for PauseRun {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

@@ -2,6 +2,7 @@
 //! read-only. S9 adds the budget's writes.
 use std::sync::Arc;
 
+use super::OverRepository;
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::UsageReport;
 use crate::application::swarm::ports::{BoardRepository, Clock};
@@ -33,6 +34,15 @@ impl ReadUsageReport {
             reading,
             |transaction, _| transaction.usage_report(),
         )
+    }
+}
+
+impl OverRepository for ReadUsageReport {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

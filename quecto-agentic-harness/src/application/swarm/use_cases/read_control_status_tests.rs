@@ -2,7 +2,7 @@ use super::ReadControlStatus;
 use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, paused, running_board,
 };
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// A dead member still reads the receipt; an unknown one is refused; the
 /// read writes nothing.
@@ -19,7 +19,10 @@ fn the_receipt_is_read_by_any_member_even_a_dead_one() {
     );
     assert_eq!(
         service.execute("stranger").unwrap_err(),
-        BoardError::new("invoking member is unknown or death confirmed")
+        BoardError::new(
+            RefusalKind::NotMember,
+            "invoking member is unknown or death confirmed"
+        )
     );
     assert!(board.journal().is_empty(), "{:?}", board.journal());
 }

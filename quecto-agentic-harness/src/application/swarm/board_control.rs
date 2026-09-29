@@ -14,22 +14,23 @@ use serde_json::Value;
 use super::dto::{ControlReceipt, UsageReport};
 use super::ports::{BoardEvents, BoardMembers, BoardRuns, BoardUsage, Clock};
 use crate::domain::swarm::{
-    BoardError, RunRecord, UsageBudget, UsageDecision, UsageTotals, python_truthy, resume_blockers,
-    usage_budget_decision,
+    BoardError, RefusalKind, RunRecord, UsageBudget, UsageDecision, UsageTotals, python_truthy,
+    resume_blockers, usage_budget_decision,
 };
 
 /// The refusal of a control record the board never writes.
 fn edited(record: &str) -> BoardError {
-    BoardError::new(format!(
-        "the board's {record} is not as the board writes it"
-    ))
+    BoardError::new(
+        RefusalKind::Store,
+        format!("the board's {record} is not as the board writes it"),
+    )
 }
 
 /// The run the operation gate authorised, read again in its transaction.
 fn current(transaction: &(impl BoardRuns + ?Sized)) -> Result<RunRecord, BoardError> {
     transaction
         .run()?
-        .ok_or_else(|| BoardError::new("coordination run missing"))
+        .ok_or_else(|| BoardError::new(RefusalKind::RunMissing, "coordination run missing"))
 }
 
 fn paused(run: &RunRecord) -> bool {
@@ -105,7 +106,10 @@ pub(crate) fn blockers(
 /// `paused run has no pause record`, an edited record, or the store's.
 pub(crate) fn pause_started(transaction: &(impl BoardRuns + ?Sized)) -> Result<f64, BoardError> {
     let Some(started) = transaction.pause_started()? else {
-        return Err(BoardError::new("paused run has no pause record"));
+        return Err(BoardError::new(
+            RefusalKind::Internal,
+            "paused run has no pause record",
+        ));
     };
     started
         .as_f64()

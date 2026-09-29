@@ -2,7 +2,7 @@ use serde_json::json;
 
 use super::super::TELEMETRY_TARGET;
 use super::super::tests::{board, captured, running};
-use crate::domain::swarm::{BoardError, RunStatus};
+use crate::domain::swarm::{BoardError, RefusalKind, RunStatus};
 use crate::infrastructure::tools::swarm_board_dispatch::call;
 use crate::infrastructure::tools::swarm_bridge::SwarmContext;
 
@@ -27,7 +27,10 @@ fn control_methods_answer_the_receipt_in_pythons_shape() {
     let status = call(&handles, "worker", "_control_status", json!([])).unwrap_err();
     assert_eq!(
         status,
-        BoardError::new("invoking member is unknown or death confirmed")
+        BoardError::new(
+            RefusalKind::NotMember,
+            "invoking member is unknown or death confirmed"
+        )
     );
     assert_eq!(
         call(&handles, "parent", "_control_status", json!([])).unwrap(),
@@ -39,6 +42,7 @@ fn control_methods_answer_the_receipt_in_pythons_shape() {
     assert_eq!(
         call(&handles, "parent", "resume", json!([])).unwrap_err(),
         BoardError::new(
+            RefusalKind::SupervisorOnly,
             "a paused run is resumed only by the supervisor outside the swarm \
              (agent_cmd swarm_control resume); members cannot resume it"
         )
@@ -124,7 +128,7 @@ fn control_methods_bind_pythons_signatures() {
     ] {
         assert_eq!(
             call(&handles, "parent", method, args).unwrap_err(),
-            BoardError::new(message)
+            BoardError::new(RefusalKind::Calling, message)
         );
     }
     let extended = call(

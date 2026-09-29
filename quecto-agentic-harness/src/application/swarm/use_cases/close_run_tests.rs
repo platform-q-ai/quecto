@@ -5,7 +5,7 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, paused, running_board,
 };
 use crate::application::swarm::dto::RunTransition;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// `test_completion_holds_success_until_the_supervisor_closes_it` (the
 /// close half): a running run, or a plain pause, holds nothing to close.
@@ -22,9 +22,10 @@ fn only_a_held_proposed_outcome_closes() {
         let service = CloseRun::new(MemoryBoard::with(state), SteppingClock::fixed(50.0));
         assert_eq!(
             service.execute("parent").unwrap_err(),
-            BoardError::new(format!(
-                "run is {status} without a proposed outcome; resume it or cancel the run"
-            ))
+            BoardError::new(
+                RefusalKind::WrongState,
+                format!("run is {status} without a proposed outcome; resume it or cancel the run")
+            )
         );
     }
     let mut unknown = running_board(100.0);
@@ -32,7 +33,10 @@ fn only_a_held_proposed_outcome_closes() {
     let service = CloseRun::new(MemoryBoard::with(unknown), SteppingClock::fixed(50.0));
     assert_eq!(
         service.execute("parent").unwrap_err(),
-        BoardError::new("run is None without a proposed outcome; resume it or cancel the run")
+        BoardError::new(
+            RefusalKind::WrongState,
+            "run is None without a proposed outcome; resume it or cancel the run"
+        )
     );
 }
 
@@ -46,7 +50,10 @@ fn the_held_outcome_becomes_terminal() {
     let service = CloseRun::new(board.clone(), SteppingClock::fixed(50.0));
     assert_eq!(
         service.execute("worker").unwrap_err(),
-        BoardError::new("only the designated coordinator may do this")
+        BoardError::new(
+            RefusalKind::NotCoordinator,
+            "only the designated coordinator may do this"
+        )
     );
     let answer = service.execute("parent").unwrap();
     assert_eq!(answer.transition, RunTransition::Applied);

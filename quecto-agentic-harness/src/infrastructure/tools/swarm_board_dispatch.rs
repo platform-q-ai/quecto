@@ -83,10 +83,10 @@ use crate::application::swarm::dto::{MemberRow, RunSnapshotView, RunStatusView};
 use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardRepository};
 use crate::application::swarm::use_cases::{
     ActivateMember, AdmitMember, BlockTask, BootstrapRun, ClaimTask, CloseRun, CreateRun,
-    CreateTask, ExtendRunDeadline, JoinRun, OverRepository, PauseRun, ReadControlStatus, ReadRunSnapshot,
-    ReadRunStatus, ReadTask, ReadUsageReport, RecordMemberLaunch, RegisterMemberSocket,
-    ReleaseTask, ReleaseUnlaunchedMember, ResumeRun, ResumeRunExternally, SetTaskDependencies,
-    StopRun, SubmitTask, UnblockTask, VerifyTask,
+    CreateTask, ExtendRunDeadline, JoinRun, OverRepository, PauseRun, ReadControlStatus,
+    ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport, RecordMemberLaunch,
+    RegisterMemberSocket, ReleaseTask, ReleaseUnlaunchedMember, ResumeRun, ResumeRunExternally,
+    SetTaskDependencies, StopRun, SubmitTask, UnblockTask, VerifyTask,
 };
 use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
 
@@ -171,6 +171,14 @@ pub const BOARD_OPS: &[&str] = &[
     "unblock",
     "submit",
     "verify_task",
+    "pause",
+    "resume",
+    "_resume_external",
+    "_close",
+    "_extend_deadline",
+    "stop",
+    "_control_status",
+    "usage_report",
     #[cfg(any(test, feature = "test-support"))]
     "create_run",
     #[cfg(any(test, feature = "test-support"))]
@@ -405,7 +413,7 @@ fn serve(
             submissions::verify_task(&serving(&*handles.verify_task, over), member, arguments)
         }
         Method::Pause => control::pause(&serving(&*handles.pause_run, over), member, arguments),
-        Method::Resume => control::resume(&*handles.resume_run, member),
+        Method::Resume => control::resume(&serving(&*handles.resume_run, over), member),
         Method::ResumeExternal => {
             control::resume_external(&serving(&*handles.resume_run_externally, over), member)
         }

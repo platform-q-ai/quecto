@@ -4,11 +4,12 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
 use crate::application::swarm::board_control::{blockers, pause_started, paused_for, receipt};
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::dto::{ControlAnswer, RunTransition};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, RunState};
+use crate::domain::swarm::{Access, BoardError, RefusalKind, RunState};
 
 /// Through the operation gate as the coordinator (the supervisor acts as
 /// it). A running run answers its receipt as it stands; only a paused run
@@ -51,10 +52,13 @@ impl ResumeRunExternally {
                         let deadline = run.deadline + elapsed;
                         let blocking = blockers(transaction, &*self.clock)?;
                         if !blocking.is_empty() {
-                            return Err(BoardError::new(format!(
-                                "resume would pause again at once: {}",
-                                blocking.join("; ")
-                            )));
+                            return Err(BoardError::new(
+                                RefusalKind::BudgetExhausted,
+                                format!(
+                                    "resume would pause again at once: {}",
+                                    blocking.join("; ")
+                                ),
+                            ));
                         }
                         transaction.set_deadline(deadline)?;
                         transaction.clear_outcome()?;
@@ -69,7 +73,12 @@ impl ResumeRunExternally {
                         )?;
                         RunTransition::Applied
                     }
-                    _ => return Err(BoardError::new("only a paused run may resume")),
+                    _ => {
+                        return Err(BoardError::new(
+                            RefusalKind::WrongState,
+                            "only a paused run may resume",
+                        ));
+                    }
                 };
                 Ok(ControlAnswer {
                     transition,
@@ -77,6 +86,15 @@ impl ResumeRunExternally {
                 })
             },
         )
+    }
+}
+
+impl OverRepository for ResumeRunExternally {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

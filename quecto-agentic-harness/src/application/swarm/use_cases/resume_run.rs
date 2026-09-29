@@ -1,11 +1,11 @@
 //! `Workbench.resume()` (#2273): a member's own resume, which the board
 //! always refuses (#1729).
-use crate::application::swarm::dto::ControlAnswer;
-use crate::domain::swarm::BoardError;
+use std::sync::Arc;
 
-/// Why a member cannot resume: only the supervisor outside the swarm does.
-pub const MEMBERS_CANNOT_RESUME: &str = "a paused run is resumed only by the supervisor outside \
-     the swarm (agent_cmd swarm_control resume); members cannot resume it";
+use super::OverRepository;
+use crate::application::swarm::dto::ControlAnswer;
+use crate::application::swarm::ports::BoardRepository;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// Every member, the coordinator included, is refused before any
 /// transaction opens: the supervisor resumes through
@@ -19,9 +19,22 @@ impl ResumeRun {
     }
 
     /// # Errors
-    /// Always [`MEMBERS_CANNOT_RESUME`].
+    /// Always `supervisor_only`: only the supervisor outside the swarm
+    /// resumes a paused run.
     pub fn execute(&self, _actor: &str) -> Result<ControlAnswer, BoardError> {
-        Err(BoardError::new(MEMBERS_CANNOT_RESUME))
+        Err(BoardError::new(
+            RefusalKind::SupervisorOnly,
+            "a paused run is resumed only by the supervisor outside the swarm \
+             (agent_cmd swarm_control resume); members cannot resume it",
+        ))
+    }
+}
+
+/// A member's resume opens no transaction, so any repository serves it
+/// alike (#2303): the call's metered repository measures nothing.
+impl OverRepository for ResumeRun {
+    fn over(&self, _repository: Arc<dyn BoardRepository>) -> Self {
+        Self
     }
 }
 

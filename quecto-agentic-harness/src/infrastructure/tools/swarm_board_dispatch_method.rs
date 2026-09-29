@@ -177,6 +177,10 @@ impl Method {
             | Self::RecordLaunch
             | Self::ReleaseUnlaunched
             | Self::Socket => Some(BoardRole::Host),
+            // The supervisor's run control, outside the swarm (#2273).
+            Self::ResumeExternal | Self::Close | Self::ExtendDeadline | Self::ControlStatus => {
+                Some(BoardRole::Host)
+            }
             Self::TaskCreate
             | Self::Dependencies
             | Self::Claim
@@ -184,7 +188,11 @@ impl Method {
             | Self::Block
             | Self::Unblock
             | Self::Submit
-            | Self::VerifyTask => None,
+            | Self::VerifyTask
+            | Self::Pause
+            | Self::Resume
+            | Self::Stop
+            | Self::UsageReport => None,
             // Test-only halves the differential harness drives as the host;
             // the member-facing `create`, `_bootstrap` and `task` S12 serves
             // record the caller's own role.
@@ -217,7 +225,17 @@ impl Method {
             | Self::Block
             | Self::Unblock
             | Self::Submit
-            | Self::VerifyTask => true,
+            | Self::VerifyTask
+            | Self::Pause
+            | Self::ResumeExternal
+            | Self::Close
+            | Self::ExtendDeadline
+            | Self::Stop
+            | Self::ControlStatus
+            | Self::UsageReport => true,
+            // A member's own resume is refused before any gate (#2273), so
+            // it never answers.
+            Self::Resume => false,
             // `create_run` and `bootstrap_run` make the caller the run's
             // coordinator; `bootstrap_join` admits and activates it, or
             // finds its own live row; `task_raw` passes the gate.
