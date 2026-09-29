@@ -72,7 +72,7 @@ pub(super) fn record_request(
     let otherwise = match recorded.delivery {
         RequestDelivery::Recorded => "recorded",
         RequestDelivery::Redelivered => "redelivered",
-        RequestDelivery::DigestKnown => "digest_known",
+        RequestDelivery::Replaced => "replaced",
     };
     Ok(Served {
         value: receipt(recorded.receipt),

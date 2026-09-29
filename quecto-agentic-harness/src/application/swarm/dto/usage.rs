@@ -60,9 +60,10 @@ pub enum RequestDelivery {
     Recorded,
     /// An identical record from the same actor: nothing written.
     Redelivered,
-    /// The same record whose runtime's executable digest is now known: the
-    /// stored payload is replaced.
-    DigestKnown,
+    /// Accepted as the same record, and the stored payload rewritten
+    /// because the runtime names an executable digest (a digest the stored
+    /// record already named included).
+    Replaced,
 }
 
 /// `_record_request`'s answer: the control receipt after the budget

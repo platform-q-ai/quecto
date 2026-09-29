@@ -236,8 +236,8 @@ fn redelivery_accepts_the_same_record_and_a_digest_becoming_known() {
     let known = object(digest(false, json!("abc")));
     assert_eq!(redelivery(&pending, &pending, true), Redelivery::Same);
     assert_eq!(redelivery(&pending, &pending, false), Redelivery::Different);
-    assert_eq!(redelivery(&pending, &known, true), Redelivery::DigestKnown);
-    assert_eq!(redelivery(&known, &known, true), Redelivery::DigestKnown);
+    assert_eq!(redelivery(&pending, &known, true), Redelivery::Replaced);
+    assert_eq!(redelivery(&known, &known, true), Redelivery::Replaced);
     assert_eq!(
         redelivery(&known, &object(digest(false, json!("different"))), true),
         Redelivery::Different
@@ -248,7 +248,7 @@ fn redelivery_accepts_the_same_record_and_a_digest_becoming_known() {
     assert_eq!(redelivery(&known, &moved, true), Redelivery::Different);
     assert_eq!(
         redelivery(&object(digest(false, Value::Null)), &known, true),
-        Redelivery::DigestKnown,
+        Redelivery::Replaced,
         "a stored null digest is not yet known"
     );
 }

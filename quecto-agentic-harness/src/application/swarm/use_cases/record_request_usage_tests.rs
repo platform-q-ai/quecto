@@ -113,7 +113,7 @@ fn a_redelivery_is_accepted_only_as_the_same_record() {
         "runtime": {"process_instance_id": "same", "executable_digest_pending": false,
                     "executable_sha256": "abc"}});
     let digest = service.execute(record("worker", known.clone())).unwrap();
-    assert_eq!(digest.delivery, RequestDelivery::DigestKnown);
+    assert_eq!(digest.delivery, RequestDelivery::Replaced);
     assert_eq!(board.snapshot().request_usage[0].record, known);
     let mut other = known;
     other["runtime"]["executable_sha256"] = json!("different");

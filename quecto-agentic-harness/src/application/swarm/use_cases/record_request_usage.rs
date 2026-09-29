@@ -82,9 +82,9 @@ impl RecordRequestUsage {
                         let same_actor = python_equal(&prior.actor, &Value::from(actor.as_str()));
                         match redelivery(previous, fields, same_actor) {
                             Redelivery::Same => RequestDelivery::Redelivered,
-                            Redelivery::DigestKnown => {
+                            Redelivery::Replaced => {
                                 transaction.update_request_usage(request_id, &record)?;
-                                RequestDelivery::DigestKnown
+                                RequestDelivery::Replaced
                             }
                             Redelivery::Different => {
                                 return Err(BoardError::new(

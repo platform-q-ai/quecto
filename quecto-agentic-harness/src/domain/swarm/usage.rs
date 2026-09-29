@@ -133,11 +133,14 @@ pub const MAX_REQUEST_ROWS: i64 = 10_000;
 /// How a record meets the stored one of the same request id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Redelivery {
-    /// The same record from the same actor: nothing changes.
+    /// The same record from the same actor, whose current runtime names
+    /// no executable digest: nothing changes.
     Same,
-    /// The same record, whose runtime now names its executable digest: the
-    /// stored record is replaced.
-    DigestKnown,
+    /// Accepted as the same record, and the stored record is rewritten
+    /// because the current runtime names an `executable_sha256` (Python's
+    /// `isinstance(current_runtime.get('executable_sha256'), str)`), even
+    /// when the stored record already named the same digest.
+    Replaced,
     /// Anything else: the request id is reused with different data.
     Different,
 }
@@ -166,7 +169,7 @@ pub fn redelivery(
         return Redelivery::Different;
     }
     match current_runtime.get(SHA256) {
-        Some(Value::String(_)) => Redelivery::DigestKnown,
+        Some(Value::String(_)) => Redelivery::Replaced,
         _ => Redelivery::Same,
     }
 }
