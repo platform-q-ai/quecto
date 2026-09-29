@@ -32,7 +32,8 @@ const SECRET: &str = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 /// its refusal kind, and whether it named a removed workbench op, and,
 /// while the event log is on, one `swarm_op` record: op `unknown` (an
 /// internal board method's name included), refused as `calling` (`invalid`
-/// for arguments that are not JSON), by the caller's redacted ref. The member's text (an op
+/// for arguments that are not JSON), by the caller's redacted ref, with
+/// no role. The member's text (an op
 /// name or a code string holding a secret) is never recorded.
 #[tokio::test]
 async fn each_refused_op_records_its_kind_and_never_the_members_text() {
@@ -145,6 +146,13 @@ async fn each_refused_op_records_its_kind_and_never_the_members_text() {
         assert_eq!(record["outcome"], "refused", "{request}: {record}");
         assert_eq!(record["kind"], *kind, "{request}: {record}");
         assert_eq!(record["actor_ref"], "coordinator", "{request}: {record}");
+        // `host` is the harness's own calls' role (docs/swarm.md): an
+        // unproven caller naming no board method has none.
+        assert_eq!(
+            record["role"],
+            serde_json::Value::Null,
+            "{request}: {record}"
+        );
     }
     let written =
         std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:refusals")).unwrap();
