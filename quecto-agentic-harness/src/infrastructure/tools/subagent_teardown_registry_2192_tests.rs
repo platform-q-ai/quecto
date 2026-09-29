@@ -11,9 +11,9 @@ use crate::infrastructure::tools::subagent_registry::{
     new_exit_signal_channel, new_notification_channel, new_registry,
 };
 
-const UUID: &str = "abc-123";
+pub(super) const UUID: &str = "abc-123";
 
-const REASON: &str = "ended unexpectedly (signal 6) while tool call 'edit' was running \
+pub(super) const REASON: &str = "ended unexpectedly (signal 6) while tool call 'edit' was running \
                       (child-supplied): panicked; the child's recorded panic message: \"byte index 9 is not a \
                       char boundary\" at \"src/edit.rs:3:9\" (child-supplied, unverified)";
 
@@ -70,7 +70,7 @@ async fn exit_note_of(
     notify_rx.try_recv().ok().map(|note| note.notification)
 }
 
-fn crash(base: &std::path::Path) {
+pub(super) fn crash(base: &std::path::Path) {
     let record = CrashRecord::new(
         PanicReport::new(
             "byte index 9 is not a char boundary",
@@ -83,7 +83,7 @@ fn crash(base: &std::path::Path) {
     Armed::new(base, Some(&format!("cli:{UUID}")), None).record_fatal(&record, "panic", 0);
 }
 
-fn signal(number: i32) -> Option<ExitSignal> {
+pub(super) fn signal(number: i32) -> Option<ExitSignal> {
     Some(ExitSignal {
         exit_code: None,
         signal: Some(number),

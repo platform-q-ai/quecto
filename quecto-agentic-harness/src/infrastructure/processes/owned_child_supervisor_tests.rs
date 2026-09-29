@@ -552,3 +552,26 @@ async fn retire_when_reaped_removes_the_slot_after_the_exit() {
     supervisor.retire_when_reaped(ChildHandleId::probe(u64::MAX - 3));
     assert_eq!(supervisor.slot_count(), 0);
 }
+
+/// #2260: once the supervisor has reaped a child, what it reaped is
+/// readable at once — from the slot, then from the retired record — and
+/// never before the reap, nor for a handle it never adopted.
+#[tokio::test]
+async fn the_reaped_exit_is_readable_from_the_slot_and_the_retired_record() {
+    let supervisor = Arc::new(OwnedChildSupervisor::new());
+    assert_eq!(supervisor.reaped_exit(ChildHandleId::probe(9_999)), None);
+    let spawned = supervisor
+        .spawn(told(), ProcessGroup::Inherited)
+        .await
+        .expect("spawn");
+    let id = spawned.handle;
+    assert!(supervisor.retains(id));
+    assert_eq!(supervisor.reaped_exit(id), None, "not reaped yet");
+    drop(spawned.stdin);
+    assert_eq!(supervisor.wait_exit(id).await, Some(ChildExit::Code(0)));
+    assert!(!supervisor.retains(id));
+    assert_eq!(supervisor.reaped_exit(id), Some(ChildExit::Code(0)));
+    assert!(supervisor.retire(id));
+    assert!(!supervisor.knows(id));
+    assert_eq!(supervisor.reaped_exit(id), Some(ChildExit::Code(0)));
+}
