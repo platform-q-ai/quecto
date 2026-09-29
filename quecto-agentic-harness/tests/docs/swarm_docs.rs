@@ -196,7 +196,17 @@ fn no_operator_doc_names_the_removed_workbench() {
     pages.extend(["README.md", "docs/swarm.md", "docs/subagents.md"].map(str::to_owned));
     for page in &pages {
         let text = read_repo_file(page);
-        for removed in ["tools.swarm", "python_lab", "op=run", "ExecutionScope"] {
+        for removed in [
+            "tools.swarm",
+            "python_lab",
+            "op=run",
+            "\"op\":\"run\"",
+            "ExecutionScope",
+            "max_processes",
+            "RLIMIT_NPROC",
+            "max_output_bytes",
+            "job_id",
+        ] {
             assert!(!text.contains(removed), "{page} still names `{removed}`");
         }
     }
