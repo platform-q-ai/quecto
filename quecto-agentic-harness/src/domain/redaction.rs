@@ -33,6 +33,17 @@ impl Redacted {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// At most `max_bytes` of it, cut on a character boundary (#2304): a
+    /// prefix of redacted text holds no secret it did not.
+    pub fn truncated(mut self, max_bytes: usize) -> Self {
+        let mut end = self.0.len().min(max_bytes);
+        while !self.0.is_char_boundary(end) {
+            end -= 1;
+        }
+        self.0.truncate(end);
+        self
+    }
 }
 
 impl From<&str> for Redacted {

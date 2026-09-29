@@ -4,5 +4,6 @@
 
 pub mod backend;
 pub mod stream;
+pub mod telemetry;
 pub mod turn;
 pub mod usage;

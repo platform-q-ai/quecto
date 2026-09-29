@@ -7,6 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::external_agent::telemetry::{
+    ExternalAgentLifecycle, ExternalAgentStreamDiagnostic, ExternalAgentTool, ExternalAgentTurn,
+};
+
 /// Issue reference for workflow transition events.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuditIssue {
@@ -134,6 +138,31 @@ pub enum AuditEvent {
         class: crate::domain::provider_error::ProviderErrorClass,
         http_status: Option<u16>,
         body: crate::domain::redaction::Redacted,
+    },
+    /// A claude-code member's turn (#2304): one per turn.
+    ExternalAgentTurn {
+        member_ref: String,
+        #[serde(flatten)]
+        record: Box<ExternalAgentTurn>,
+    },
+    /// A claude-code member's tool call (#2304): one per call.
+    ExternalAgentTool {
+        member_ref: String,
+        #[serde(flatten)]
+        record: Box<ExternalAgentTool>,
+    },
+    /// A step of a claude-code member's life (#2304).
+    ExternalAgentLifecycle {
+        member_ref: String,
+        #[serde(flatten)]
+        record: ExternalAgentLifecycle,
+    },
+    /// What a claude-code member's stream said that could not be read
+    /// (#2304): counted and rate-limited.
+    ExternalAgentStreamDiagnostic {
+        member_ref: String,
+        #[serde(flatten)]
+        record: ExternalAgentStreamDiagnostic,
     },
 }
 

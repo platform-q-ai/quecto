@@ -12,6 +12,9 @@ pub struct TurnOutcome {
     pub usage: TurnUsage,
     pub num_turns: Option<u32>,
     pub duration_ms: Option<u64>,
+    /// The result's `is_error` and `duration_api_ms` (#2304).
+    pub is_error: Option<bool>,
+    pub duration_api_ms: Option<u64>,
     /// What the turn's stream said that did not change how it ended; the
     /// session logs these.
     pub warnings: Vec<TurnWarning>,

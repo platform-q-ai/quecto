@@ -316,6 +316,8 @@ pub struct ResultEvent {
     pub permission_denials: Vec<PermissionDenial>,
     pub num_turns: Option<u32>,
     pub duration_ms: Option<u64>,
+    /// The time the turn spent in API calls (#2304).
+    pub duration_api_ms: Option<u64>,
     /// The ids of the user turns this turn consumed
     /// (`user_message_uuids`, else `user_message_uuid`): a turn's own and
     /// every one folded into it mid-turn. Empty when the CLI names none.

@@ -3,6 +3,7 @@
 //! `main` hands [`build_claude_member_handles`] to the CLI through
 //! `CliComposition.claude_member`; the interface only invokes the handles
 //! it receives.
+#![allow(dead_code, unused_imports)] // red-phase stub (#2304)
 
 use std::ffi::OsString;
 use std::sync::Arc;
@@ -11,11 +12,18 @@ use crate::application::external_agent::dto::{
     CredentialEnv, ExternalAgentLaunchSpec, ExternalAgentSessionSettings, INTERRUPT_GRACE,
     SKIPPED_LINE_GRACE,
 };
+use crate::application::external_agent::event_log::MemberIdentity;
+use crate::application::external_agent::ports::ExternalAgentTelemetry;
 use crate::application::external_agent::use_cases::DriveExternalAgentSession;
+use crate::domain::session_identity::SessionIdentity;
+use crate::infrastructure::config::telemetry::{enabled_in, globally_enabled};
 use crate::infrastructure::external_agents::claude_code::environment::CREDENTIAL_VARIABLES;
 use crate::infrastructure::external_agents::claude_code::process::ClaudeCodeLauncher;
 use crate::infrastructure::external_agents::clock::TokioExternalAgentClock;
-use crate::infrastructure::external_agents::telemetry::TracingExternalAgentTelemetry;
+use crate::infrastructure::external_agents::telemetry::{
+    EventLogExternalAgentTelemetry, TracingExternalAgentTelemetry,
+};
+use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor;
 use crate::interface::cli::claude_member::{ClaudeMemberHandles, ClaudeMemberSettings};
 
@@ -50,10 +58,11 @@ pub(crate) fn build_over(
     supervisor: Arc<OwnedChildSupervisor>,
 ) -> Result<ClaudeMemberHandles, String> {
     let credential = credential_from(&parent_environment)?;
+    let telemetry = telemetry_for(settings, &parent_environment, &credential);
     let launcher = Arc::new(ClaudeCodeLauncher::new(supervisor, parent_environment));
     let session = DriveExternalAgentSession::new(
         launcher,
-        Arc::new(TracingExternalAgentTelemetry),
+        telemetry,
         Arc::new(TokioExternalAgentClock::new()),
         ExternalAgentSessionSettings {
             launch: launch_spec(settings, credential),
@@ -64,6 +73,44 @@ pub(crate) fn build_over(
     Ok(ClaudeMemberHandles {
         session: Arc::new(session),
     })
+}
+
+/// The session's telemetry: `tracing` always, and the member's event log
+/// when `telemetry.event_log` is on (#2304, owner decision T1: off unless
+/// configured), in the owner's global config or the `--config` given. A
+/// log that cannot be opened is a warning: the member runs unrecorded.
+fn telemetry_for(
+    settings: &ClaudeMemberSettings,
+    parent_environment: &[(OsString, OsString)],
+    credential: &CredentialEnv,
+) -> Arc<dyn ExternalAgentTelemetry> {
+    let _ = (settings, parent_environment, credential);
+    Arc::new(TracingExternalAgentTelemetry)
+}
+
+/// The member's ref on the board: the swarm's `QUECTO_SWARM_MEMBER`, else
+/// its session name.
+fn member_ref(parent_environment: &[(OsString, OsString)], member: &str) -> String {
+    parent_environment
+        .iter()
+        .rev()
+        .find(|(name, _)| name == SWARM_MEMBER_VARIABLE)
+        .and_then(|(_, value)| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map_or_else(|| member.to_string(), str::to_string)
+}
+
+/// The variable a swarm names its member by.
+const SWARM_MEMBER_VARIABLE: &str = "QUECTO_SWARM_MEMBER";
+
+/// The mode of the credential a member runs under: never its value.
+fn credential_mode(credential: &CredentialEnv) -> &'static str {
+    match (credential.name.as_str(), credential.value.is_empty()) {
+        (_, true) => "none",
+        ("CLAUDE_CODE_OAUTH_TOKEN", false) => "oauth_token",
+        ("ANTHROPIC_API_KEY", false) => "api_key",
+        (_, false) => "other",
+    }
 }
 
 fn launch_spec(
@@ -143,3 +190,7 @@ fn credential_from(parent_environment: &[(OsString, OsString)]) -> Result<Creden
 #[cfg(test)]
 #[path = "claude_member_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "claude_member_telemetry_tests.rs"]
+mod telemetry_tests;

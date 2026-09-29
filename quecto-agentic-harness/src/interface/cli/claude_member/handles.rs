@@ -20,6 +20,11 @@ pub struct ClaudeMemberSettings {
     pub checkout: PathBuf,
     /// quecto's base directory; the member's state lives beneath it.
     pub base_dir: PathBuf,
+    /// The coordinator's session (`--parent-id`): the event log names it
+    /// in every record (#2304).
+    pub parent: Option<String>,
+    /// `--config`, when given: it may switch the event log on (#2304).
+    pub config_path: Option<PathBuf>,
 }
 
 #[derive(Clone)]

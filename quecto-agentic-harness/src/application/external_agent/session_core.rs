@@ -45,19 +45,23 @@ use std::collections::{BTreeSet, VecDeque};
 
 use super::dto::{
     AgentClockInstant, FOLLOW_UP_QUEUE_CAPACITY, ProjectionStep, PromptAccepted, SessionPhase,
-    SessionRecord, SessionRefusal, SessionStep, StreamingBehavior, TOOL_NAME_RECORD_BYTES,
-    TurnOutcome, USER_TURNS_PER_TURN_CAPACITY, UserTurnId,
+    SessionRecord, SessionRefusal, SessionStep, StreamingBehavior, TurnOutcome,
+    USER_TURNS_PER_TURN_CAPACITY, UserTurnId,
 };
 use super::projection::Projector;
+use super::session_telemetry::SessionTelemetry;
 use crate::domain::external_agent::stream::{
     AssistantContent, ExternalAgentEvent, InterruptReceipt,
 };
+use crate::domain::external_agent::telemetry::recorded_name;
 use crate::domain::external_agent::turn::{FailureKind, TurnEnd};
 
 #[derive(Debug, Default)]
 pub(crate) struct SessionCore {
     pub(crate) phase: SessionPhase,
     pub(crate) projector: Projector,
+    /// What the event log measures (#2304).
+    pub(crate) telemetry: SessionTelemetry,
     follow_ups: VecDeque<String>,
     last_turn: u64,
     /// The last event was a skipped line of the running turn (it may have
@@ -273,16 +277,19 @@ impl SessionCore {
         }
     }
 
-    /// Fold one event of the stream; a skipped line's grace, if this is
-    /// one, runs out at `grace_end`.
+    /// Fold one event of the stream, read at `now`; a skipped line's
+    /// grace, if this is one, runs out at `grace_end`.
     pub(crate) fn fold(
         &mut self,
         event: &ExternalAgentEvent,
+        now: AgentClockInstant,
         grace_end: AgentClockInstant,
     ) -> Folded {
         let turn = self.running_turn();
         let mut folded = Folded::default();
         self.skipped_last = None;
+        self.telemetry
+            .observe(event, turn, now, &mut folded.records);
         match event {
             ExternalAgentEvent::Init(init) => {
                 self.steerable |= init.names_turns();
@@ -293,7 +300,7 @@ impl SessionCore {
                 ..
             } => folded.records.push(SessionRecord::ToolCalled {
                 turn,
-                tool: recorded_tool_name(name),
+                tool: recorded_name(name),
             }),
             ExternalAgentEvent::LineSkipped(line) => {
                 self.skipped_last = turn.map(|_| grace_end);
@@ -327,7 +334,7 @@ impl SessionCore {
         // A result while idle (one no turn of ours owes) is folded into the
         // projection but ends no turn of the session's.
         match (turn, folded.abandon) {
-            (Some(turn), None) => self.settle_turn(turn, event, &mut step, &mut folded),
+            (Some(turn), None) => self.settle_turn(turn, event, now, &mut step, &mut folded),
             // An abandoned turn is not settled: the member ends instead,
             // nothing (no follow-up) is written, and its result reports
             // no end of the turn (the member's end is reported).
@@ -398,6 +405,7 @@ impl SessionCore {
         &mut self,
         turn: u64,
         event: &ExternalAgentEvent,
+        now: AgentClockInstant,
         step: &mut ProjectionStep,
         folded: &mut Folded,
     ) {
@@ -411,7 +419,7 @@ impl SessionCore {
                 });
             }
             (ExternalAgentEvent::Result(_), true) => {
-                self.end_with(turn, step, folded);
+                self.end_with(turn, now, step, folded);
             }
             // Only an interrupt is answered: everything it owed was
             // withdrawn, so no result will come.
@@ -419,7 +427,7 @@ impl SessionCore {
                 if interrupting && receipt.accepted =>
             {
                 step.turn_end = self.held.take();
-                self.end_with(turn, step, folded);
+                self.end_with(turn, now, step, folded);
             }
             // A refused interrupt: claude will not stop a turn that still
             // owes a result, which then runs unbounded. Its state is
@@ -437,7 +445,20 @@ impl SessionCore {
         }
     }
 
-    fn end_with(&mut self, turn: u64, step: &ProjectionStep, folded: &mut Folded) {
+    fn end_with(
+        &mut self,
+        turn: u64,
+        now: AgentClockInstant,
+        step: &ProjectionStep,
+        folded: &mut Folded,
+    ) {
+        self.telemetry.turn_ended(
+            turn,
+            step.turn_end.as_ref(),
+            false,
+            now,
+            &mut folded.records,
+        );
         folded.records.push(SessionRecord::TurnEnded {
             turn,
             outcome: step
@@ -535,22 +556,6 @@ impl SessionCore {
         self.phase = SessionPhase::Ended;
         (turn, dropped)
     }
-}
-
-/// A tool's name as telemetry keeps it: at most
-/// [`TOOL_NAME_RECORD_BYTES`], ASCII letters, digits and `_ - . :` only,
-/// every other character replaced by `?`.
-fn recorded_tool_name(name: &str) -> String {
-    let recorded: String = name
-        .chars()
-        .map(|c| match c {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-' | '.' | ':' => c,
-            _ => '?',
-        })
-        .take(TOOL_NAME_RECORD_BYTES)
-        .collect();
-    assert!(recorded.len() <= TOOL_NAME_RECORD_BYTES);
-    recorded
 }
 
 /// A turn end's kind, for telemetry.

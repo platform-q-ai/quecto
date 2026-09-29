@@ -47,14 +47,15 @@
 //! the [`ExternalAgentClock`] port's.
 //!
 //! [`FOLLOW_UP_QUEUE_CAPACITY`]: crate::application::external_agent::dto::FOLLOW_UP_QUEUE_CAPACITY
+#![allow(dead_code, unused_imports)] // red-phase stub (#2304)
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::application::external_agent::dto::{
-    AbortOutcome, AgentClockInstant, ExecutionState, ExternalAgentSessionSettings, FinalReport,
-    ProjectedMessage, PromptAccepted, SessionPhase, SessionRecord, SessionRefusal, SessionStep,
-    SessionView, StreamingBehavior,
+    AbortOutcome, AgentClockInstant, ExecutionState, ExternalAgentExit,
+    ExternalAgentSessionSettings, FinalReport, ProjectedMessage, PromptAccepted, SessionPhase,
+    SessionRecord, SessionRefusal, SessionStep, SessionView, StreamingBehavior,
 };
 use crate::application::external_agent::ports::{
     ExternalAgentClock, ExternalAgentLauncher, ExternalAgentProcess, ExternalAgentTelemetry,
@@ -132,6 +133,7 @@ impl DriveExternalAgentSession {
                 *self.slot() = Some(Arc::from(process));
                 let mut core = self.core();
                 core.projector.process_started();
+                core.telemetry.process_started(self.clock.now());
                 core.phase = SessionPhase::Idle;
                 drop(core);
                 self.record(SessionRecord::Started);
@@ -267,9 +269,10 @@ impl DriveExternalAgentSession {
                 (Some(Some(event)), _) => {
                     // A skipped line's grace runs from when it was read: a
                     // write holding the gate does not stretch it.
+                    let now = self.clock.now();
                     let grace_end = self.deadline_after(self.settings.skipped_line_grace);
                     let _writes = self.writes.lock().await;
-                    let folded = self.core().fold(&event, grace_end);
+                    let folded = self.core().fold(&event, now, grace_end);
                     self.settle(folded.records, folded.follow_up).await;
                     // claude's state became unknown: the member ends, and
                     // the reader is told next.
@@ -416,8 +419,21 @@ impl DriveExternalAgentSession {
             exit = process.exited() => exit,
         };
         drop(process);
-        let (turn, _) = self.core().end();
+        let now = self.clock.now();
+        let mut reported = Vec::new();
+        let (turn, wall_ms) = {
+            let mut core = self.core();
+            if let Some(turn) = core.running_turn() {
+                core.telemetry
+                    .turn_ended(turn, None, true, now, &mut reported);
+            }
+            let wall_ms = core.telemetry.wall_ms(now);
+            (core.end().0, wall_ms)
+        };
         self.release_process();
+        for record in reported {
+            self.record(record);
+        }
         if let Some(turn) = turn {
             self.record(SessionRecord::TurnEnded {
                 turn,
@@ -426,8 +442,12 @@ impl DriveExternalAgentSession {
                 cost_micro_usd: 0,
             });
         }
+        let (exit_code, signal): (Option<i32>, Option<i32>) = (None, None);
         self.record(SessionRecord::Ended {
             clean: exit.is_clean(),
+            exit_code,
+            signal,
+            wall_ms,
         });
         Some(SessionStep::Ended { turn, exit })
     }
@@ -530,3 +550,7 @@ mod wake_tests;
 #[cfg(test)]
 #[path = "drive_external_agent_session_capability_tests.rs"]
 mod capability_tests;
+
+#[cfg(test)]
+#[path = "drive_external_agent_session_telemetry_tests.rs"]
+mod telemetry_tests;

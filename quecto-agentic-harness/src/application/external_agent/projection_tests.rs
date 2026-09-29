@@ -107,6 +107,7 @@ pub(super) fn result(
         permission_denials: Vec::new(),
         num_turns: Some(2),
         duration_ms: Some(4844),
+        duration_api_ms: None,
         user_turn_ids: Vec::new(),
     }
 }

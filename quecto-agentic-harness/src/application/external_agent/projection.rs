@@ -321,6 +321,8 @@ impl Projector {
             usage,
             num_turns: result.num_turns,
             duration_ms: result.duration_ms,
+            is_error: result.is_error,
+            duration_api_ms: result.duration_api_ms,
             warnings,
         };
         self.turns += 1;

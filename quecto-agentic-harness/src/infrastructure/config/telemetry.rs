@@ -22,7 +22,13 @@ pub struct EventLogConfig {
 /// started with its own `--config` (a container member, a sub-agent given a
 /// config) included. A missing or unreadable file switches nothing on.
 pub fn globally_enabled(base_dir: &std::path::Path) -> bool {
-    std::fs::read(base_dir.join("config.json"))
+    enabled_in(&base_dir.join("config.json"))
+}
+
+/// Whether the config file at `path` switches the event log on (#2304): a
+/// missing or unreadable file switches nothing on.
+pub fn enabled_in(path: &std::path::Path) -> bool {
+    std::fs::read(path)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
         .is_some_and(|config| {

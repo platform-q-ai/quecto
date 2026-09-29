@@ -183,6 +183,7 @@ async fn a_busy_abort_interrupts_the_turn_and_the_member_survives() {
             "interrupted",
             "aborted",
             "aborted",
+            "turn_reported",
             "turn_ended",
             "prompt_accepted"
         ]),

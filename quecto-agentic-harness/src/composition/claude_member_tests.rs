@@ -25,6 +25,8 @@ fn settings(root: &Path, model: Option<&str>) -> ClaudeMemberSettings {
         model: model.map(str::to_string),
         checkout: root.join("checkout"),
         base_dir: root.join("base"),
+        parent: None,
+        config_path: None,
     }
 }
 
