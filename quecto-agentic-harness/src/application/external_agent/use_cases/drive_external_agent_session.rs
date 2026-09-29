@@ -811,6 +811,10 @@ mod receipt_tests;
 mod telemetry_tests;
 
 #[cfg(test)]
+#[path = "drive_external_agent_session_telemetry_safety_tests.rs"]
+mod telemetry_safety_tests;
+
+#[cfg(test)]
 #[path = "drive_external_agent_session_exit_tests.rs"]
 mod exit_tests;
 

@@ -328,3 +328,70 @@ fn an_error_s_reason_kind_is_its_leading_words_up_to_a_status_bounded_and_allowl
     assert_eq!(kind(&[]), None);
     assert_eq!(kind(&[" ·· !"]), None, "no word, no reason");
 }
+
+/// #2304 swarm review: text from the stream is bounded to the allowlist
+/// and never kept when it looks like a secret, however the allowlist
+/// rewrites it.
+#[test]
+fn stream_text_is_kept_only_when_allowlisted_and_not_secret_shaped() {
+    assert_eq!(
+        recorded_text("claude-haiku-4-5").as_deref(),
+        Some("claude-haiku-4-5")
+    );
+    assert_eq!(recorded_text("a b").as_deref(), Some("a?b"));
+    for secret in [
+        "sk-ant-api03-SECRETSECRETSECRET",
+        "token=hunter2hunter2",
+        "ghp_0123456789abcdef0123456789abcdef0123",
+        // The allowlist would turn the space into `?`: the label is
+        // judged as it came.
+        "x token= hunter2hunter2",
+    ] {
+        assert_eq!(recorded_text(secret), None, "{secret}");
+    }
+    // A key past the recorded bytes is cut off, never judged whole.
+    let long = format!("{}sk-ant-api03-SECRETSECRETSECRET", "x".repeat(60));
+    let kept = recorded_text(&long);
+    assert!(
+        kept.as_deref().is_none_or(|kept| !kept.contains("SECRET")),
+        "{kept:?}"
+    );
+}
+
+/// #2304 swarm review: a fingerprint is a fixed-size digest, never the
+/// text.
+#[test]
+fn a_fingerprint_is_a_fixed_size_digest_of_the_text() {
+    let secret = "sk-ant-api03-SECRETSECRETSECRET";
+    let print = fingerprint(secret);
+    assert_eq!(print.len(), "sha256:".len() + 16, "{print}");
+    assert!(print.starts_with("sha256:"), "{print}");
+    assert!(
+        print["sha256:".len()..]
+            .chars()
+            .all(|c| matches!(c, '0'..='9' | 'a'..='f')),
+        "{print}"
+    );
+    assert!(!print.contains("SECRET"), "{print}");
+    assert_eq!(fingerprint(secret), print, "the same text, the same print");
+    assert_ne!(fingerprint("system/other"), print);
+    assert!(is_recorded_name(&print), "a print is a recorded name");
+}
+
+/// #2304 swarm review: a board tool's task id is kept only when it is a
+/// number or allowlisted text that does not look like a secret.
+#[test]
+fn a_board_task_id_that_looks_like_a_secret_is_not_kept() {
+    let claim = |task_id: serde_json::Value| {
+        board_task_id(
+            "mcp__quecto__claim",
+            &serde_json::json!({ "task_id": task_id }),
+        )
+    };
+    assert_eq!(claim(serde_json::json!(7)).as_deref(), Some("7"));
+    assert_eq!(claim(serde_json::json!("T1")).as_deref(), Some("T1"));
+    assert_eq!(
+        claim(serde_json::json!("sk-ant-api03-SECRETSECRETSECRET")),
+        None
+    );
+}

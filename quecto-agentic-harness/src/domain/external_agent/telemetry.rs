@@ -230,6 +230,18 @@ pub fn recorded_name(name: &str) -> String {
     recorded
 }
 
+/// Text from the stream as a record keeps it (#2304 review): its
+/// [`recorded_name`], unless the text looks like a secret. Red-phase stub.
+pub fn recorded_text(text: &str) -> Option<String> {
+    Some(recorded_name(text))
+}
+
+/// A fixed-size stand-in for text a record must never keep. Red-phase
+/// stub.
+pub fn fingerprint(text: &str) -> String {
+    recorded_name(text)
+}
+
 /// The most of a reason taken from a result's `errors[]` a record keeps,
 /// in bytes.
 pub const ERROR_REASON_BYTES: usize = 32;
@@ -321,8 +333,15 @@ pub fn tool_summary(tool: &str, input: &serde_json::Value) -> Option<Redacted> {
     let [_, ..] = parts.as_slice() else {
         return None;
     };
-    let summary =
-        Redacted::from(redact_url_userinfo(&parts.join(" "))).truncated(TOOL_SUMMARY_BYTES);
+    // Master's redaction, cut on a character boundary (#2322 holds the
+    // rewrite this used).
+    let mut text = redact_url_userinfo(&parts.join(" "));
+    let mut cut = TOOL_SUMMARY_BYTES.min(text.len());
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text.truncate(cut);
+    let summary = Redacted::from(text);
     assert!(summary.len() <= TOOL_SUMMARY_BYTES);
     Some(summary)
 }

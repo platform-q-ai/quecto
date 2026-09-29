@@ -224,11 +224,19 @@ impl ExternalAgentLauncher for FakeLauncher {
     }
 }
 
+/// Called with each record as it is made, before it is kept.
+pub(super) type RecordHook = Arc<dyn Fn(&SessionRecord) + Send + Sync>;
+
 #[derive(Default)]
-pub(super) struct Records(Mutex<Vec<SessionRecord>>);
+pub(super) struct Records(Mutex<Vec<SessionRecord>>, Mutex<Option<RecordHook>>);
 
 impl ExternalAgentTelemetry for Records {
     fn record(&self, record: &SessionRecord) {
+        // Called with no lock of the fake's held: the hook may read it.
+        let hook = self.1.lock().unwrap().clone();
+        if let Some(hook) = hook {
+            hook(record);
+        }
         self.0.lock().unwrap().push(record.clone());
     }
 
@@ -247,6 +255,11 @@ impl ExternalAgentSpawner for TokioTasks {
 }
 
 impl Records {
+    /// Call `hook` with each record as it is made, before it is kept.
+    pub(super) fn hook(&self, hook: RecordHook) {
+        *self.1.lock().unwrap() = Some(hook);
+    }
+
     pub(super) fn all(&self) -> Vec<SessionRecord> {
         self.0.lock().unwrap().clone()
     }
