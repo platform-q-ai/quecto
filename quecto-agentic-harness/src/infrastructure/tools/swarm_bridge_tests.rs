@@ -296,9 +296,10 @@ async fn a_failed_run_never_signals_its_coordinator_through_its_socket() {
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
     };
-    coordinator
-        .register_endpoint(socket.to_str().unwrap())
-        .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        coordinator.register_endpoint(socket.to_str().unwrap())
+    })
+    .unwrap();
     let stop = tool
         .execute(r#"{"op":"stop","status":"failed","reason":"review regression"}"#)
         .await

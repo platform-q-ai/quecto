@@ -274,8 +274,9 @@ fn counted(
 
 /// #2279 review L5: `execute` reads which op a request names with the
 /// board's constant codec, on the async worker, without resolving the
-/// board's location or building its handles: a harness op (`status`) that
-/// never calls the board builds none.
+/// board's location or building its handles. (#2282: every op now reaches
+/// the board, an unknown op's refusal included, which records its
+/// `swarm_op` there; so the reading itself is what builds none.)
 #[tokio::test]
 async fn reading_a_request_builds_no_board_handles() {
     let directory = tempfile::tempdir().unwrap();
@@ -288,11 +289,13 @@ async fn reading_a_request_builds_no_board_handles() {
         member: "worker".into(),
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),
     };
-    let result = execute(&context, r#"{"op": "status", "job_id": "none"}"#).await;
-    assert_eq!(
-        BUILDS.load(std::sync::atomic::Ordering::SeqCst),
-        0,
-        "{}",
-        result.content
-    );
+    for text in [
+        r#"{"op": "claim", "task_id": 1}"#,
+        r#"{"op": "summary"}"#,
+        r#"{"op": "status", "job_id": "none"}"#,
+    ] {
+        let read = super::super::requested(text, context.wire());
+        assert_eq!(read.is_some(), text.contains("claim"), "{text}");
+    }
+    assert_eq!(BUILDS.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
