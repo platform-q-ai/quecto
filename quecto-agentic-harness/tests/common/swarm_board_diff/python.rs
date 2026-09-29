@@ -16,8 +16,10 @@
 //! `{"ok": result}`, `{"error": text}` for a `SwarmError`, or
 //! `{"exception": text}` for anything else. Driver-only aliases stand in for
 //! the Rust dispatcher's test names (`create_run` is `create` without its
-//! closing summary, `bootstrap_run` is `_bootstrap` without its join); they
-//! live here, never in the `.py` sources.
+//! closing summary, `bootstrap_run` is `_bootstrap` without its join, and
+//! `bootstrap_join` is that join, `join_process`, bound by `_bootstrap`'s
+//! signature and without the coordinator's closing summary); they live
+//! here, never in the `.py` sources.
 //!
 //! `create_run` stops where Python's real `create` commits: `create`'s
 //! transaction commits and only then does it call `summary()`, which can
@@ -109,7 +111,17 @@ def _bootstrap_run(board, args):
     finally:
         del board._join
 
-_ALIASES = {'create_run': _create_run, 'bootstrap_run': _bootstrap_run}
+def _bootstrap_join(board, args):
+    def join(pid, started, socket, reservation=None):
+        return swarm.join_process(board, reservation, pid, started, socket)
+    saved = swarm.Workbench.summary
+    swarm.Workbench.summary = lambda self, *a, **k: None
+    try:
+        _invoke(join, args)
+    finally:
+        swarm.Workbench.summary = saved
+
+_ALIASES = {'create_run': _create_run, 'bootstrap_run': _bootstrap_run, 'bootstrap_join': _bootstrap_join}
 
 for _line in sys.stdin:
     _member, _method, _args_text, _step_now = json.loads(_line)

@@ -5,6 +5,7 @@
 use serde_json::Value;
 
 use super::BoardError;
+use super::python_value::python_equal;
 use super::records::{
     Criterion, EvidenceRow, MemberRecord, MemberState, RunRecord, RunState, TaskRecord,
 };
@@ -90,12 +91,18 @@ pub fn authorize(
     }
 }
 
-/// A member whose death is not confirmed: admitted or launched.
+/// The member-status allowlist: a member whose death is not confirmed,
+/// admitted (`reserved`) or launched (`live`). Python refuses only
+/// `'dead'`; any other status (NULL, or one the board never writes) is not
+/// alive here, the owner-decided divergence
+/// `unknown_member_status_is_not_alive` (#2295). Every board decision on a
+/// member's liveness asks this one predicate.
+pub fn status_is_alive(status: Option<&str>) -> bool {
+    matches!(status, Some("live" | "reserved"))
+}
+
 fn alive(member: &MemberRecord) -> bool {
-    matches!(
-        member.status.as_ref().map(MemberState::as_str),
-        Some("live" | "reserved")
-    )
+    status_is_alive(member.status.as_ref().map(MemberState::as_str))
 }
 
 /// A running run whose deadline has come (a deadline equal to `now` has).
@@ -153,13 +160,15 @@ pub fn validate_extension(seconds: &Value) -> Result<i64, BoardError> {
 /// Whether to admit a member under `reservation`: `Ok(false)` when `prior`
 /// already holds that reservation alive (an idempotent retry), `Ok(true)`
 /// for a new admission. `usage` is the count of members whose status is
-/// `live` or `reserved`. A `None` reservation matches a prior `None` (Python's
-/// `None == None`), so that retry is idempotent too. The retry
-/// is answered before capacity, and capacity before identity reuse.
+/// `live` or `reserved`. The reservation is the member's argument as given,
+/// compared with the stored one by Python's `==` ([`python_equal`]): a
+/// `None` reservation matches a prior `None`, so that retry is idempotent
+/// too, while `5` never matches a stored `'5'`. The retry is answered
+/// before capacity, and capacity before identity reuse.
 pub fn admission(
     run: &RunRecord,
     prior: Option<&MemberRecord>,
-    reservation: Option<&str>,
+    reservation: &Value,
     usage: i64,
     now: f64,
 ) -> Result<bool, BoardError> {
@@ -170,7 +179,14 @@ pub fn admission(
             status_text(run)
         )));
     }
-    if prior.is_some_and(|prior| prior.reservation.as_deref() == reservation && alive(prior)) {
+    let retry = prior.is_some_and(|prior| {
+        let held = prior
+            .reservation
+            .as_deref()
+            .map_or(Value::Null, Value::from);
+        python_equal(&held, reservation) && alive(prior)
+    });
+    if retry {
         return Ok(false);
     }
     debug_assert!(
@@ -300,3 +316,7 @@ mod policy_tests;
 #[cfg(test)]
 #[path = "policy_null_status_tests.rs"]
 mod policy_null_status_tests;
+
+#[cfg(test)]
+#[path = "policy_membership_tests.rs"]
+mod policy_membership_tests;

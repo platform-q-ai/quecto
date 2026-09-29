@@ -2,7 +2,9 @@
 //! order, the admitted count, the not-dead count `create` uses and the
 //! #1969 claim counts, each by Python's SQL; loosely typed values bound as
 //! Python's `sqlite3` binds them and read back as stored (epic P3).
-use quecto::application::swarm::dto::{BoardLocation, MemberClaimCounts, MemberRow, NewMember};
+use quecto::application::swarm::dto::{
+    BoardLocation, LaunchIdentity, MemberClaimCounts, MemberRow, NewMember,
+};
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
 use quecto::domain::swarm::{BoardError, MemberState};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
@@ -269,6 +271,252 @@ fn loose_values_bind_as_python_binds_them_and_read_as_stored() {
                 "coordination store unavailable or contended: {message}"
             )),
             "{pid}"
+        );
+    }
+}
+
+fn repository_in(dir: &tempfile::TempDir) -> SqliteBoardRepository {
+    SqliteBoardRepository::new(&BoardLocation {
+        database: dir.path().join("swarm.sqlite"),
+        checkout: dir.path().to_path_buf(),
+    })
+}
+
+fn row(columns: [(&str, Value); 7]) -> MemberRow {
+    MemberRow {
+        columns: columns
+            .map(|(name, value)| (name.to_owned(), value))
+            .to_vec(),
+    }
+}
+
+/// #2271: admission, activation and the launch records, each by Python's
+/// SQL. `reserve_member` writes a process-less `reserved` row launched by
+/// the given actor; `member_row` answers `dict(row)` by id, or by id and
+/// reservation; the updates touch only their columns.
+#[test]
+fn launch_records_are_written_by_pythons_sql() {
+    let dir = tempfile::tempdir().unwrap();
+    let repository = repository_in(&dir);
+    let launch = LaunchIdentity {
+        pid: json!(4242),
+        started: json!("Mon Sep 28"),
+    };
+    within(&repository, true, |transaction| {
+        transaction.insert_member(&new_member("parent", MemberState::LIVE))?;
+        transaction.reserve_member("worker", &json!("worker-r"), "parent")?;
+        assert_eq!(
+            transaction.member_row(&json!("worker"), None)?,
+            Some(row([
+                ("id", json!("worker")),
+                ("reservation", json!("worker-r")),
+                ("status", json!("reserved")),
+                ("pid", json!(null)),
+                ("started", json!(null)),
+                ("socket", json!(null)),
+                ("launcher", json!("parent")),
+            ]))
+        );
+        assert!(
+            transaction
+                .member_row(&json!("worker"), Some(&json!("other")))?
+                .is_none()
+        );
+        assert!(transaction.member_row(&json!("stranger"), None)?.is_none());
+        assert_eq!(
+            transaction
+                .member_row(&json!("worker"), Some(&json!("worker-r")))?
+                .and_then(|row| row.text("id").map(str::to_owned)),
+            Some("worker".to_owned())
+        );
+        transaction.record_launch(&json!("worker"), &launch)?;
+        let recorded = transaction.member_row(&json!("worker"), None)?.unwrap();
+        assert_eq!(
+            (
+                recorded.get("pid"),
+                recorded.text("started"),
+                recorded.text("status")
+            ),
+            (Some(&json!(4242)), Some("Mon Sep 28"), Some("reserved"))
+        );
+        transaction.activate_member(&json!("worker"), &launch, &json!("/w.sock"))?;
+        let active = transaction.member_row(&json!("worker"), None)?.unwrap();
+        assert_eq!(
+            (active.text("status"), active.text("socket")),
+            (Some("live"), Some("/w.sock"))
+        );
+        transaction.activate_member(&json!("worker"), &launch, &Value::Null)?;
+        assert_eq!(
+            transaction
+                .member_row(&json!("worker"), None)?
+                .unwrap()
+                .get("socket"),
+            Some(&json!(null))
+        );
+        transaction.set_socket("worker", &json!("/again.sock"))?;
+        assert_eq!(
+            transaction
+                .member_row(&json!("worker"), None)?
+                .unwrap()
+                .text("socket"),
+            Some("/again.sock")
+        );
+        // An unknown member is left as it is: nothing to update, no error.
+        transaction.set_socket("stranger", &json!("/s"))?;
+        assert!(transaction.member_row(&json!("stranger"), None)?.is_none());
+        transaction.reserve_member("unlaunched", &json!("u-r"), "worker")?;
+        transaction.mark_member_dead_unlaunched(&json!("unlaunched"))?;
+        let dead = transaction.member_row(&json!("unlaunched"), None)?.unwrap();
+        assert_eq!(
+            (dead.text("status"), dead.text("launcher")),
+            (Some("dead"), Some("worker"))
+        );
+        assert_eq!(transaction.usage()?, 2, "parent and worker");
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// #2271 round-1 review M1: the membership statements bind the caller's
+/// values as Python's `sqlite3` does. The column affinity stores them (an
+/// INTEGER pid takes numeric text, a TEXT column a number's text), `id=?`
+/// finds `'5'` by `5`, `reservation=?` finds nothing by NULL, and a value
+/// `sqlite3` cannot bind is refused naming its position in the statement.
+#[test]
+fn membership_values_bind_as_pythons_sqlite3_binds_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let repository = repository_in(&dir);
+    within(&repository, true, |transaction| {
+        transaction.reserve_member("5", &json!(5), "parent")?;
+        let row = transaction.member_row(&json!(5), None)?.unwrap();
+        assert_eq!(row.get("reservation"), Some(&json!("5")));
+        assert!(
+            transaction
+                .member_row(&json!("5"), Some(&json!(5)))?
+                .is_some()
+        );
+        assert!(
+            transaction
+                .member_row(&json!(5), Some(&Value::Null))?
+                .is_none()
+        );
+        assert!(transaction.member_row(&Value::Null, None)?.is_none());
+        let launch = LaunchIdentity {
+            pid: json!("7"),
+            started: json!(5.5),
+        };
+        transaction.record_launch(&json!(5), &launch)?;
+        transaction.activate_member(&json!(5.0), &launch, &json!(true))?;
+        let row = transaction.member_row(&json!("5"), None)?.unwrap();
+        assert_eq!(
+            (row.get("pid"), row.get("started"), row.get("status")),
+            (
+                Some(&json!(7)),
+                Some(&json!("5.5")),
+                Some(&json!("reserved"))
+            ),
+            "5.0 is the text '5.0' under TEXT affinity: no row was activated"
+        );
+        transaction.activate_member(&json!(5), &launch, &json!(true))?;
+        transaction.set_socket("5", &json!(false))?;
+        let row = transaction.member_row(&json!("5"), None)?.unwrap();
+        assert_eq!(
+            (row.get("status"), row.get("socket")),
+            (Some(&json!("live")), Some(&json!("0")))
+        );
+        Ok(())
+    })
+    .unwrap();
+    let list = |position: usize| {
+        BoardError::new(format!(
+            "coordination store unavailable or contended: \
+             Error binding parameter {position}: type 'list' is not supported"
+        ))
+    };
+    let launch = |pid: Value, started: Value| LaunchIdentity { pid, started };
+    for (position, refused) in [
+        (
+            1,
+            within(&repository, false, |transaction| {
+                transaction.member_row(&json!([5]), None).map(drop)
+            }),
+        ),
+        (
+            2,
+            within(&repository, false, |transaction| {
+                transaction
+                    .member_row(&json!("5"), Some(&json!(["5"])))
+                    .map(drop)
+            }),
+        ),
+        (
+            2,
+            within(&repository, false, |transaction| {
+                transaction.reserve_member("6", &json!([6]), "parent")
+            }),
+        ),
+        (
+            3,
+            within(&repository, false, |transaction| {
+                transaction.activate_member(&json!("5"), &launch(json!(1), json!("s")), &json!([]))
+            }),
+        ),
+        (
+            4,
+            within(&repository, false, |transaction| {
+                transaction.activate_member(
+                    &json!(["5"]),
+                    &launch(json!(1), json!("s")),
+                    &Value::Null,
+                )
+            }),
+        ),
+        (
+            2,
+            within(&repository, false, |transaction| {
+                transaction.record_launch(&json!("5"), &launch(json!(1), json!([])))
+            }),
+        ),
+        (
+            1,
+            within(&repository, false, |transaction| {
+                transaction.mark_member_dead_unlaunched(&json!([]))
+            }),
+        ),
+        (
+            1,
+            within(&repository, false, |transaction| {
+                transaction.set_socket("5", &json!([]))
+            }),
+        ),
+    ] {
+        assert_eq!(refused, Err(list(position)));
+    }
+}
+
+/// A reservation is unique, as the schema declares, and a second row for
+/// one member is refused: both are store refusals with SQLite's text.
+#[test]
+fn a_reused_reservation_or_identity_is_a_store_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    let repository = repository_in(&dir);
+    within(&repository, true, |transaction| {
+        transaction.reserve_member("worker", &json!("r"), "parent")
+    })
+    .unwrap();
+    for (member, reservation, column) in [
+        ("other", "r", "members.reservation"),
+        ("worker", "s", "members.id"),
+    ] {
+        let refused = within(&repository, false, |transaction| {
+            transaction.reserve_member(member, &json!(reservation), "parent")
+        })
+        .unwrap_err();
+        assert_eq!(
+            refused,
+            BoardError::new(format!(
+                "coordination store unavailable or contended: UNIQUE constraint failed: {column}"
+            ))
         );
     }
 }

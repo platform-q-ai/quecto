@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::application::swarm::dto::{
-    MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow, RunStatusRow,
+    LaunchIdentity, MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow,
+    RunStatusRow,
 };
 use crate::application::swarm::ports::{
     BoardEncoding, BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
@@ -138,6 +139,15 @@ impl BoardRuns for MemoryTransaction<'_> {
         }))
     }
 
+    fn run_coordinator(&self) -> Result<Option<Option<String>>, BoardError> {
+        Ok(self
+            .state
+            .borrow()
+            .run
+            .as_ref()
+            .map(|run| run.record.coordinator.clone()))
+    }
+
     fn insert_run(&self, run: &NewRun) -> Result<(), BoardError> {
         self.note(format!("insert_run {}", run.id));
         let mut state = self.state.borrow_mut();
@@ -250,6 +260,126 @@ impl BoardMembers for MemoryTransaction<'_> {
         ));
         Ok(())
     }
+
+    fn member_row(
+        &self,
+        id: &Value,
+        reservation: Option<&Value>,
+    ) -> Result<Option<MemberRow>, BoardError> {
+        let id = text_affinity(id);
+        let reservation = reservation.map(text_affinity);
+        Ok(self
+            .state
+            .borrow()
+            .members
+            .iter()
+            .find(|row| {
+                // SQL `=` never matches a NULL.
+                !id.is_null()
+                    && row.get("id") == Some(&id)
+                    && reservation.as_ref().is_none_or(|wanted| {
+                        !wanted.is_null() && row.get("reservation") == Some(wanted)
+                    })
+            })
+            .cloned())
+    }
+
+    fn reserve_member(
+        &self,
+        id: &str,
+        reservation: &Value,
+        launcher: &str,
+    ) -> Result<(), BoardError> {
+        self.note(format!("reserve_member {id} by {launcher}"));
+        let mut state = self.state.borrow_mut();
+        if state.members.iter().any(|row| row.text("id") == Some(id)) {
+            return Err(BoardError::new(
+                "coordination store unavailable or contended: UNIQUE constraint failed: members.id",
+            ));
+        }
+        state.members.push(stored_member(
+            id,
+            text_affinity(reservation),
+            "reserved",
+            [
+                Value::Null,
+                Value::Null,
+                Value::Null,
+                Value::String(launcher.to_owned()),
+            ],
+        ));
+        Ok(())
+    }
+
+    fn activate_member(
+        &self,
+        id: &Value,
+        launch: &LaunchIdentity,
+        socket: &Value,
+    ) -> Result<(), BoardError> {
+        self.note(format!("activate_member {}", shown(id)));
+        self.update(id, |row| {
+            set(row, "status", Value::from("live"));
+            set(row, "pid", integer_affinity(&launch.pid));
+            set(row, "started", text_affinity(&launch.started));
+            set(row, "socket", text_affinity(socket));
+        });
+        Ok(())
+    }
+
+    fn record_launch(&self, id: &Value, launch: &LaunchIdentity) -> Result<(), BoardError> {
+        self.note(format!("record_launch {}", shown(id)));
+        self.update(id, |row| {
+            set(row, "pid", integer_affinity(&launch.pid));
+            set(row, "started", text_affinity(&launch.started));
+        });
+        Ok(())
+    }
+
+    fn mark_member_dead_unlaunched(&self, id: &Value) -> Result<(), BoardError> {
+        self.note(format!("mark_member_dead_unlaunched {}", shown(id)));
+        self.update(id, |row| set(row, "status", Value::from("dead")));
+        Ok(())
+    }
+
+    fn set_socket(&self, id: &str, socket: &Value) -> Result<(), BoardError> {
+        self.note(format!("set_socket {id}"));
+        self.update(&Value::from(id), |row| {
+            set(row, "socket", text_affinity(socket));
+        });
+        Ok(())
+    }
+}
+
+/// A member id in a note: its text, or its JSON.
+fn shown(id: &Value) -> String {
+    match id {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
+}
+
+impl MemoryTransaction<'_> {
+    /// `UPDATE members SET … WHERE id=?`: every row with that id.
+    fn update(&self, id: &Value, change: impl Fn(&mut MemberRow)) {
+        let id = text_affinity(id);
+        let mut state = self.state.borrow_mut();
+        for row in &mut state.members {
+            if !id.is_null() && row.get("id") == Some(&id) {
+                change(row);
+            }
+        }
+    }
+}
+
+/// Sets `column` of `row`, which the board's rows all hold.
+fn set(row: &mut MemberRow, column: &str, value: Value) {
+    let slot = row
+        .columns
+        .iter_mut()
+        .find(|(name, _)| name == column)
+        .expect("the board's member rows hold every column");
+    slot.1 = value;
 }
 
 impl BoardEvents for MemoryTransaction<'_> {

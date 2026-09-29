@@ -10,14 +10,36 @@
 //!
 //! The dispatcher holds composed handles only ([`SwarmBoardHandles`], built
 //! by `composition::swarm`): it never constructs a use case or an adapter,
-//! and never sequences two use cases. This slice serves `_status` and
-//! `_snapshot`; later slices add methods, and S13 wires it into
-//! `SwarmContext`. `create_run` and `bootstrap_run` (the transactional
-//! halves of `create` and `_bootstrap`, which the differential harness
-//! drives) exist only in `test` and `test-support` builds: a production
-//! build parses neither name and refuses both as unknown methods. Python's
-//! real `create` commits and then calls `summary()`, which can still raise:
-//! S12 must keep that order, a created run answered with a refusal.
+//! and never sequences two use cases. It serves `_status` and `_snapshot`
+//! (#2270) and the harness's membership methods `_admit`, `_activate`,
+//! `_record_launch`, `_release_unlaunched` and `_socket` (#2271); later
+//! slices add methods, and S13 wires it into `SwarmContext`. Every
+//! membership argument (member, reservation, pid, start time, socket)
+//! reaches the use case as the JSON value passed (#2271 round-1 review
+//! M1): Python binds each untyped, so the store binds it as Python's
+//! `sqlite3` does and the board compares it by Python's `==`; no type is
+//! refused here. `create_run`, `bootstrap_run` and `bootstrap_join` (the
+//! transactional halves of `create` and `_bootstrap`, and `_bootstrap`'s
+//! join, which the differential harness drives) exist only in `test` and
+//! `test-support` builds: a production build parses none of them and
+//! refuses each as an unknown method.
+//!
+//! What S12 must keep when it adds the summaries Python answers with:
+//!
+//! - `create` commits and then calls `summary()`, which can still raise: a
+//!   created run answered with a refusal.
+//! - `_bootstrap`'s join ends every branch with `coordinator.summary()`,
+//!   after its writes commit, so an admitted or re-activated member can be
+//!   answered with a refusal too.
+//! - The join's already-live branch writes nothing and still ends with
+//!   `coordinator.summary()`, whose gate can refuse (a coordinator that is
+//!   nobody, or dead). `Joined::AlreadyLive` carries the coordinator the
+//!   join read, so S12 runs that gate as it without reading the run again.
+//!
+//! `JoinRun` composes `AdmitMember` and `ActivateMember` by a deliberate
+//! decision (#2271 round-1 review L3): Python's `join_process` calls those
+//! two `Workbench` methods, so the use case sequences them, and the
+//! dispatcher still calls one use case per method.
 //!
 //! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] (DEBUG for
 //! a read-only method, INFO otherwise) with the
@@ -32,11 +54,18 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 
+use crate::application::swarm::dto::{
+    ActivateMemberRequest, AdmissionDecision, AdmitMemberRequest, LaunchIdentity, MemberRow,
+    RecordMemberLaunchRequest, RegisterMemberSocketRequest, ReleaseUnlaunchedMemberRequest,
+    RunSnapshotView, RunStatusView,
+};
 #[cfg(any(test, feature = "test-support"))]
-use crate::application::swarm::dto::{BootstrapRunRequest, CreateBranch, CreateRunRequest};
-use crate::application::swarm::dto::{MemberRow, RunSnapshotView, RunStatusView};
+use crate::application::swarm::dto::{
+    BootstrapRunRequest, CreateBranch, CreateRunRequest, JoinRunRequest, Joined,
+};
 use crate::application::swarm::use_cases::{
-    BootstrapRun, CreateRun, ReadRunSnapshot, ReadRunStatus,
+    ActivateMember, AdmitMember, BootstrapRun, CreateRun, JoinRun, ReadRunSnapshot, ReadRunStatus,
+    RecordMemberLaunch, RegisterMemberSocket, ReleaseUnlaunchedMember,
 };
 use crate::domain::redaction::Redacted;
 use crate::domain::swarm::BoardError;
@@ -53,6 +82,14 @@ pub struct SwarmBoardHandles {
     pub bootstrap_run: Arc<BootstrapRun>,
     pub read_run_status: Arc<ReadRunStatus>,
     pub read_run_snapshot: Arc<ReadRunSnapshot>,
+    pub admit_member: Arc<AdmitMember>,
+    pub activate_member: Arc<ActivateMember>,
+    pub record_member_launch: Arc<RecordMemberLaunch>,
+    pub release_unlaunched_member: Arc<ReleaseUnlaunchedMember>,
+    pub register_member_socket: Arc<RegisterMemberSocket>,
+    /// Served only in test builds as `bootstrap_join` until S12 adds the
+    /// summary `_bootstrap` answers with.
+    pub join_run: Arc<JoinRun>,
 }
 
 impl std::fmt::Debug for SwarmBoardHandles {
@@ -68,10 +105,17 @@ impl std::fmt::Debug for SwarmBoardHandles {
 enum Method {
     Status,
     Snapshot,
+    Admit,
+    Activate,
+    RecordLaunch,
+    ReleaseUnlaunched,
+    Socket,
     #[cfg(any(test, feature = "test-support"))]
     CreateRun,
     #[cfg(any(test, feature = "test-support"))]
     BootstrapRun,
+    #[cfg(any(test, feature = "test-support"))]
+    BootstrapJoin,
 }
 
 /// The telemetry level of a call (#2270 round-3 review N3): a method that
@@ -90,7 +134,6 @@ struct Parameter {
     default: Option<fn() -> Value>,
 }
 
-#[cfg(any(test, feature = "test-support"))]
 const fn required(name: &'static str) -> Parameter {
     Parameter {
         name,
@@ -98,15 +141,39 @@ const fn required(name: &'static str) -> Parameter {
     }
 }
 
+const ADMIT: [Parameter; 2] = [required("member"), required("reservation")];
+const ACTIVATE: [Parameter; 5] = [
+    required("member"),
+    required("reservation"),
+    required("pid"),
+    required("started"),
+    required("socket"),
+];
+const RECORD_LAUNCH: [Parameter; 4] = [
+    required("member"),
+    required("reservation"),
+    required("pid"),
+    required("started"),
+];
+const RELEASE_UNLAUNCHED: [Parameter; 1] = [required("member")];
+const SOCKET: [Parameter; 1] = [required("socket")];
+
 impl Method {
     fn parse(name: &str) -> Option<Self> {
         match name {
             "_status" => Some(Self::Status),
             "_snapshot" => Some(Self::Snapshot),
+            "_admit" => Some(Self::Admit),
+            "_activate" => Some(Self::Activate),
+            "_record_launch" => Some(Self::RecordLaunch),
+            "_release_unlaunched" => Some(Self::ReleaseUnlaunched),
+            "_socket" => Some(Self::Socket),
             #[cfg(any(test, feature = "test-support"))]
             "create_run" => Some(Self::CreateRun),
             #[cfg(any(test, feature = "test-support"))]
             "bootstrap_run" => Some(Self::BootstrapRun),
+            #[cfg(any(test, feature = "test-support"))]
+            "bootstrap_join" => Some(Self::BootstrapJoin),
             _ => None,
         }
     }
@@ -115,10 +182,17 @@ impl Method {
         match self {
             Self::Status => "_status",
             Self::Snapshot => "_snapshot",
+            Self::Admit => "_admit",
+            Self::Activate => "_activate",
+            Self::RecordLaunch => "_record_launch",
+            Self::ReleaseUnlaunched => "_release_unlaunched",
+            Self::Socket => "_socket",
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => "create_run",
             #[cfg(any(test, feature = "test-support"))]
             Self::BootstrapRun => "bootstrap_run",
+            #[cfg(any(test, feature = "test-support"))]
+            Self::BootstrapJoin => "bootstrap_join",
         }
     }
 
@@ -126,8 +200,13 @@ impl Method {
     fn level(self) -> Level {
         match self {
             Self::Status | Self::Snapshot => Level::Read,
+            Self::Admit
+            | Self::Activate
+            | Self::RecordLaunch
+            | Self::ReleaseUnlaunched
+            | Self::Socket => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
-            Self::CreateRun | Self::BootstrapRun => Level::Mutation,
+            Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin => Level::Mutation,
         }
     }
 
@@ -135,10 +214,17 @@ impl Method {
     fn parameters(self) -> &'static [Parameter] {
         match self {
             Self::Status | Self::Snapshot => &[],
+            Self::Admit => &ADMIT,
+            Self::Activate => &ACTIVATE,
+            Self::RecordLaunch => &RECORD_LAUNCH,
+            Self::ReleaseUnlaunched => &RELEASE_UNLAUNCHED,
+            Self::Socket => &SOCKET,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => &test_only::CREATE,
             #[cfg(any(test, feature = "test-support"))]
             Self::BootstrapRun => &test_only::BOOTSTRAP,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::BootstrapJoin => &test_only::JOIN,
         }
     }
 }
@@ -151,6 +237,14 @@ struct Served {
 
 /// Invokes `method` as `member` with `args`: one use case, its result in
 /// Python's JSON shape.
+///
+/// `args` must be the member's JSON text as `py_json::decode` reads it
+/// (`PyJson::to_value`), never `serde_json::from_str`: serde's default
+/// float parser is not correctly rounded (`9007199254740993.0` parses as
+/// `9007199254740994.0`, where Python's `json.loads` gives
+/// `9007199254740992.0`), so the board's `python_equal` would compare a
+/// value Python never held and answer a retry or a refusal differently
+/// (S13/S14; pinned by `serde_float_parsing_would_change_python_equal`).
 ///
 /// # Errors
 /// An unknown method or an argument that does not bind (this module's
@@ -297,11 +391,118 @@ fn serve(
             value: snapshot(handles.read_run_snapshot.execute(member)?)?,
             decision: "read",
         }),
+        Method::Admit => admit(handles, member, arguments),
+        Method::Activate => activate(handles, member, arguments),
+        Method::RecordLaunch => record_launch(handles, member, arguments),
+        Method::ReleaseUnlaunched => release_unlaunched(handles, member, arguments),
+        Method::Socket => socket(handles, member, arguments),
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => test_only::create_run(handles, member, arguments),
         #[cfg(any(test, feature = "test-support"))]
         Method::BootstrapRun => test_only::bootstrap_run(handles, member, arguments),
+        #[cfg(any(test, feature = "test-support"))]
+        Method::BootstrapJoin => test_only::bootstrap_join(handles, member, arguments),
     }
+}
+
+/// `_admit(member, reservation)`: the member's row, as `dict(row)`. The
+/// member stays the JSON value passed, which the board bounds.
+fn admit(
+    handles: &SwarmBoardHandles,
+    actor: &str,
+    arguments: Vec<Value>,
+) -> Result<Served, BoardError> {
+    let [member, reservation] = take(arguments)?;
+    let admitted = handles.admit_member.execute(AdmitMemberRequest {
+        actor: actor.to_owned(),
+        member,
+        reservation,
+    })?;
+    Ok(Served {
+        value: member_row(admitted.row),
+        decision: match admitted.decision {
+            AdmissionDecision::Reserved => "reserved",
+            AdmissionDecision::Retry => "retry",
+        },
+    })
+}
+
+fn activate(
+    handles: &SwarmBoardHandles,
+    actor: &str,
+    arguments: Vec<Value>,
+) -> Result<Served, BoardError> {
+    let [member, reservation, pid, started, socket] = take(arguments)?;
+    handles.activate_member.execute(ActivateMemberRequest {
+        actor: actor.to_owned(),
+        member,
+        reservation,
+        launch: LaunchIdentity { pid, started },
+        socket,
+    })?;
+    Ok(done("activated"))
+}
+
+fn record_launch(
+    handles: &SwarmBoardHandles,
+    actor: &str,
+    arguments: Vec<Value>,
+) -> Result<Served, BoardError> {
+    let [member, reservation, pid, started] = take(arguments)?;
+    handles
+        .record_member_launch
+        .execute(RecordMemberLaunchRequest {
+            actor: actor.to_owned(),
+            member,
+            reservation,
+            launch: LaunchIdentity { pid, started },
+        })?;
+    Ok(done("recorded"))
+}
+
+fn release_unlaunched(
+    handles: &SwarmBoardHandles,
+    actor: &str,
+    arguments: Vec<Value>,
+) -> Result<Served, BoardError> {
+    let [member] = take(arguments)?;
+    handles
+        .release_unlaunched_member
+        .execute(ReleaseUnlaunchedMemberRequest {
+            actor: actor.to_owned(),
+            member,
+        })?;
+    Ok(done("released"))
+}
+
+fn socket(
+    handles: &SwarmBoardHandles,
+    actor: &str,
+    arguments: Vec<Value>,
+) -> Result<Served, BoardError> {
+    let [socket] = take(arguments)?;
+    handles
+        .register_member_socket
+        .execute(RegisterMemberSocketRequest {
+            actor: actor.to_owned(),
+            socket,
+        })?;
+    Ok(done("registered"))
+}
+
+/// A method that returns `None`, and the decision it took.
+fn done(decision: &'static str) -> Served {
+    Served {
+        value: Value::Null,
+        decision,
+    }
+}
+
+/// The bound arguments as an array of the signature's length.
+fn take<const N: usize>(arguments: Vec<Value>) -> Result<[Value; N], BoardError> {
+    arguments
+        .try_into()
+        .map_err(|_| BoardError::new("swarm board bound the wrong number of arguments"))
 }
 
 /// The test-only methods: their signatures and their serving.
@@ -310,8 +511,8 @@ mod test_only {
     use serde_json::Value;
 
     use super::{
-        BootstrapRunRequest, CreateBranch, CreateRunRequest, Parameter, Served, SwarmBoardHandles,
-        required,
+        BootstrapRunRequest, CreateBranch, CreateRunRequest, JoinRunRequest, Joined,
+        LaunchIdentity, Parameter, Served, SwarmBoardHandles, done, required, take,
     };
     use crate::domain::swarm::BoardError;
 
@@ -324,6 +525,16 @@ mod test_only {
     ];
     pub(super) const BOOTSTRAP: [Parameter; 3] =
         [required("pid"), required("started"), required("socket")];
+    /// `_bootstrap(pid, started, socket, reservation=None)`'s signature.
+    pub(super) const JOIN: [Parameter; 4] = [
+        required("pid"),
+        required("started"),
+        required("socket"),
+        Parameter {
+            name: "reservation",
+            default: Some(|| Value::Null),
+        },
+    ];
 
     pub(super) fn create_run(
         handles: &SwarmBoardHandles,
@@ -372,11 +583,25 @@ mod test_only {
         })
     }
 
-    /// The bound arguments as an array of the signature's length.
-    fn take<const N: usize>(arguments: Vec<Value>) -> Result<[Value; N], BoardError> {
-        arguments
-            .try_into()
-            .map_err(|_| BoardError::new("swarm board bound the wrong number of arguments"))
+    /// `join_process` for the calling member: `null`, as the driver alias
+    /// answers until S12 adds the summary.
+    pub(super) fn bootstrap_join(
+        handles: &SwarmBoardHandles,
+        member: &str,
+        arguments: Vec<Value>,
+    ) -> Result<Served, BoardError> {
+        let [pid, started, socket, reservation] = take(arguments)?;
+        let joined = handles.join_run.execute(JoinRunRequest {
+            member: member.to_owned(),
+            reservation,
+            launch: LaunchIdentity { pid, started },
+            socket,
+        })?;
+        Ok(done(match joined {
+            Joined::Admitted => "admitted",
+            Joined::AlreadyLive { .. } => "already_live",
+            Joined::Reactivated => "reactivated",
+        }))
     }
 }
 

@@ -11,6 +11,7 @@ use super::error::DomainError;
 pub mod notification;
 pub mod owner;
 pub mod policy;
+pub mod python_value;
 pub mod records;
 pub mod usage;
 pub mod validation;
@@ -25,8 +26,10 @@ pub use owner::{
 };
 pub use policy::{
     Access, PROPOSED_OUTCOMES, STOP_STATUSES, admission, authorize, completion, describe, expired,
-    require_budget, require_unsubmitted, resume_blockers, revalidation, validate_extension,
+    require_budget, require_unsubmitted, resume_blockers, revalidation, status_is_alive,
+    validate_extension,
 };
+pub use python_value::{python_equal, python_truthy};
 pub use records::{
     Criterion, CriterionKind, EvidenceRow, MemberRecord, MemberState, RunRecord, RunState,
     TaskRecord, TaskState,

@@ -10,7 +10,8 @@ use std::sync::Arc;
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
 use crate::application::swarm::use_cases::{
-    BootstrapRun, CreateRun, ReadRunSnapshot, ReadRunStatus,
+    ActivateMember, AdmitMember, BootstrapRun, CreateRun, JoinRun, ReadRunSnapshot, ReadRunStatus,
+    RecordMemberLaunch, RegisterMemberSocket, ReleaseUnlaunchedMember,
 };
 use crate::infrastructure::persistence::swarm_board::encoding::PyJsonEncoding;
 use crate::infrastructure::persistence::swarm_board::ids::Uuid4Ids;
@@ -33,6 +34,8 @@ pub fn build_swarm_board_handles_with(
     clock: Arc<dyn Clock + Send + Sync>,
     ids: Arc<dyn IdSource>,
 ) -> SwarmBoardHandles {
+    let admit_member = Arc::new(AdmitMember::new(repository.clone(), clock.clone()));
+    let activate_member = Arc::new(ActivateMember::new(repository.clone(), clock.clone()));
     SwarmBoardHandles {
         create_run: Arc::new(CreateRun::new(
             repository.clone(),
@@ -40,9 +43,27 @@ pub fn build_swarm_board_handles_with(
             ids.clone(),
             Arc::new(PyJsonEncoding),
         )),
-        bootstrap_run: Arc::new(BootstrapRun::new(repository.clone(), clock.clone(), ids)),
+        bootstrap_run: Arc::new(BootstrapRun::new(
+            repository.clone(),
+            clock.clone(),
+            ids.clone(),
+        )),
         read_run_status: Arc::new(ReadRunStatus::new(repository.clone())),
-        read_run_snapshot: Arc::new(ReadRunSnapshot::new(repository, clock)),
+        read_run_snapshot: Arc::new(ReadRunSnapshot::new(repository.clone(), clock.clone())),
+        record_member_launch: Arc::new(RecordMemberLaunch::new(repository.clone(), clock.clone())),
+        release_unlaunched_member: Arc::new(ReleaseUnlaunchedMember::new(
+            repository.clone(),
+            clock.clone(),
+        )),
+        register_member_socket: Arc::new(RegisterMemberSocket::new(repository.clone(), clock)),
+        join_run: Arc::new(JoinRun::new(
+            repository,
+            ids,
+            admit_member.clone(),
+            activate_member.clone(),
+        )),
+        admit_member,
+        activate_member,
     }
 }
 

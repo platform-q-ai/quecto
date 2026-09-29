@@ -39,6 +39,17 @@
 //! codec reads at least what Python reads, up to [`DECODE_MAX_DEPTH`], and
 //! writes up to [`ENCODE_MAX_DEPTH`] for lists and dicts alike, so all it
 //! writes it can read. Parser and writer use explicit stacks.
+//!
+//! **Relation to `domain::swarm::python_value`.** This codec models Python's
+//! `json` *text*: how a value is read from and written to the board's
+//! columns, byte for byte. `python_value` models Python's *semantics* over
+//! values already read (`==` and truthiness), which the board's use cases
+//! decide refusals with. Both exist because they sit on opposite sides of
+//! the dependency rule: the domain compares `serde_json::Value`s and cannot
+//! depend on this infrastructure codec, while the codec must hold what a
+//! `Value` cannot (non-finite floats, big integers, lone surrogates). A member's
+//! argument must reach `python_value` only after this codec decodes it (see
+//! `swarm_board_dispatch::call`), so that it is the value Python holds.
 
 mod parse;
 mod value;

@@ -3,6 +3,8 @@
 //! names, so each refuses as Python's comparisons do, and the refusals
 //! write it `None`, as Python's f-strings do. A NULL member status is the
 //! owner-decided `unknown_member_status_is_not_alive` divergence (#2295).
+use serde_json::json;
+
 use super::*;
 use crate::domain::swarm::records::MemberState;
 
@@ -73,7 +75,7 @@ fn a_null_status_never_expires() {
 #[test]
 fn admission_refuses_a_null_status() {
     assert_eq!(
-        message(admission(&unset(), None, Some("r"), 0, 0.0)),
+        message(admission(&unset(), None, &json!("r"), 0, 0.0)),
         "run is None; no new admission"
     );
 }
@@ -111,7 +113,7 @@ fn a_null_member_status_is_not_alive() {
         Ok(())
     );
     assert_eq!(
-        message(admission(&running, Some(&unknown), Some("r"), 0, 0.0)),
+        message(admission(&running, Some(&unknown), &json!("r"), 0, 0.0)),
         "member identity already used; choose a stable new identity"
     );
 }

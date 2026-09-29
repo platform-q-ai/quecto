@@ -373,3 +373,226 @@ fn a_secret_shaped_member_id_is_redacted_in_telemetry() {
     assert!(log.contains("op=\"_snapshot\""), "{log}");
     assert!(!log.contains(secret), "{log}");
 }
+
+/// A running run of three coordinated by `parent` (#2271).
+fn running(handles: &SwarmBoardHandles) {
+    call(handles, "parent", "create_run", create_args()).unwrap();
+}
+
+/// `_admit` answers the member's row as `dict(row)`, in table order; the
+/// other membership methods answer `null`.
+#[test]
+fn membership_methods_render_pythons_shape() {
+    let (_dir, handles) = board(1_000.0);
+    running(&handles);
+    let row = call(&handles, "parent", "_admit", json!(["worker", "r"])).unwrap();
+    assert_eq!(
+        serde_json::to_string(&row).unwrap(),
+        r#"{"id":"worker","reservation":"r","status":"reserved","pid":null,"started":null,"socket":null,"launcher":"parent"}"#
+    );
+    for (method, args) in [
+        ("_record_launch", json!(["worker", "r", 7, "t"])),
+        (
+            "_activate",
+            json!({"member": "worker", "reservation": "r", "pid": 7, "started": "t", "socket": null}),
+        ),
+        ("_socket", json!(["/p.sock"])),
+    ] {
+        assert_eq!(
+            call(&handles, "parent", method, args).unwrap(),
+            Value::Null,
+            "{method}"
+        );
+    }
+    call(&handles, "parent", "_admit", json!(["spare", "s"])).unwrap();
+    assert_eq!(
+        call(&handles, "parent", "_release_unlaunched", json!(["spare"])).unwrap(),
+        Value::Null
+    );
+    // The spare's death freed its place: the join is admitted into it.
+    assert_eq!(
+        call(&handles, "joiner", "bootstrap_join", json!([9, "t", null])).unwrap(),
+        Value::Null
+    );
+    assert_eq!(
+        call(&handles, "late", "bootstrap_join", json!([10, "t", null])).unwrap_err(),
+        BoardError::new("swarm limit 3, current usage 3; reuse the existing pool")
+    );
+}
+
+/// Every membership argument reaches the board as the member passed it
+/// (#2271 round-1 review M1): Python's `sqlite3` binds the member,
+/// reservation, pid, start time and socket untyped, the column affinity
+/// decides what is stored, and the board compares with Python's `==`. No
+/// type is refused as calling syntax; only an argument `sqlite3` cannot
+/// bind is refused, as Python's store refuses it.
+#[test]
+fn membership_arguments_reach_the_board_as_given() {
+    let (_dir, handles) = board(1_000.0);
+    running(&handles);
+    let row = call(&handles, "parent", "_admit", json!(["w", 5])).unwrap();
+    assert_eq!(row["reservation"], json!("5"), "{row}");
+    assert_eq!(
+        call(
+            &handles,
+            "parent",
+            "_record_launch",
+            json!(["w", null, 7, "t"])
+        )
+        .unwrap_err(),
+        BoardError::new("stale launch reservation")
+    );
+    for (args, answer) in [
+        (json!(["w", "5", "7", "t", null]), Ok(Value::Null)),
+        (json!(["w", "5", 7.0, "t", null]), Ok(Value::Null)),
+        (
+            json!(["w", "5", true, "t", null]),
+            Err(BoardError::new(
+                "member already active in a different process",
+            )),
+        ),
+        (
+            json!(["w", 5, 7, "t", null]),
+            Err(BoardError::new("unknown or stale launch reservation")),
+        ),
+    ] {
+        assert_eq!(
+            call(&handles, "parent", "_activate", args.clone()),
+            answer,
+            "{args}"
+        );
+    }
+    assert_eq!(
+        call(&handles, "w", "_socket", json!([5])).unwrap(),
+        Value::Null
+    );
+    let row = call(&handles, "parent", "_admit", json!(["n", null])).unwrap();
+    assert_eq!(row["reservation"], Value::Null, "{row}");
+    assert_eq!(
+        call(
+            &handles,
+            "parent",
+            "_activate",
+            json!(["n", null, [1], "t", null])
+        )
+        .unwrap_err(),
+        BoardError::new(
+            "coordination store unavailable or contended: \
+             Error binding parameter 1: type 'list' is not supported"
+        )
+    );
+    assert_eq!(
+        call(&handles, "parent", "_release_unlaunched", json!([5])).unwrap_err(),
+        BoardError::new("only an unlaunched reservation may be released")
+    );
+    let snapshot = call(&handles, "parent", "_snapshot", json!([])).unwrap();
+    let worker = &snapshot["members"][1];
+    assert_eq!(
+        (&worker["pid"], &worker["started"], &worker["socket"]),
+        (&json!(7), &json!("t"), &json!("5")),
+        "{snapshot}"
+    );
+    assert_eq!(
+        call(&handles, "parent", "_socket", json!([])).unwrap_err(),
+        BoardError::new("_socket: missing required argument socket")
+    );
+    assert_eq!(
+        call(&handles, "parent", "_admit", json!([5, "r"])).unwrap_err(),
+        BoardError::new("member must be nonempty and at most 128 bytes")
+    );
+}
+
+/// Each membership call leaves one INFO record with its decision, and no
+/// argument text: a secret-shaped reservation, start time or socket never
+/// reaches the log (#2271).
+#[test]
+fn membership_calls_record_their_decisions_without_argument_text() {
+    let secret = "sk-ant-api03-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+    let other = "sk-ant-api03-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
+    let log = captured(9, |handles| {
+        running(handles);
+        call(handles, "parent", "_admit", json!(["worker", secret])).unwrap();
+        call(handles, "parent", "_admit", json!(["worker", secret])).unwrap();
+        call(
+            handles,
+            "parent",
+            "_record_launch",
+            json!(["worker", secret, 7, secret]),
+        )
+        .unwrap();
+        call(
+            handles,
+            "parent",
+            "_activate",
+            json!(["worker", secret, 7, secret, secret]),
+        )
+        .unwrap();
+        call(handles, "worker", "_socket", json!([secret])).unwrap();
+        call(handles, "parent", "_release_unlaunched", json!(["worker"])).unwrap_err();
+        call(
+            handles,
+            "joiner",
+            "bootstrap_join",
+            json!([8, secret, secret, other]),
+        )
+        .unwrap();
+        call(
+            handles,
+            "joiner",
+            "bootstrap_join",
+            json!([8, secret, secret]),
+        )
+        .unwrap();
+    });
+    let records: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains(TELEMETRY_TARGET))
+        .collect();
+    let expected = [
+        ("create_run", "ok", "fresh"),
+        ("_admit", "ok", "reserved"),
+        ("_admit", "ok", "retry"),
+        ("_record_launch", "ok", "recorded"),
+        ("_activate", "ok", "activated"),
+        ("_socket", "ok", "registered"),
+        ("_release_unlaunched", "refused", "none"),
+        ("bootstrap_join", "ok", "admitted"),
+        ("bootstrap_join", "ok", "already_live"),
+    ];
+    assert_eq!(records.len(), expected.len(), "{log}");
+    for (record, (op, outcome, decision)) in records.iter().zip(expected) {
+        for field in [
+            " INFO ".to_owned(),
+            format!("op=\"{op}\""),
+            format!("outcome=\"{outcome}\""),
+            format!("decision=\"{decision}\""),
+            "duration_us=".to_owned(),
+        ] {
+            assert!(record.contains(&field), "{field} missing from {record}");
+        }
+    }
+    assert!(!log.contains(secret) && !log.contains(other), "{log}");
+    assert!(!log.contains("sk-ant"), "{log}");
+}
+
+/// Why `call` takes its arguments from `py_json::decode`: serde's default
+/// float parser rounds `2^53 + 1` up, Python's `json.loads` rounds it to
+/// even, and `python_equal` then answers differently against the integer
+/// Python compares it with.
+#[test]
+fn serde_float_parsing_would_change_python_equal() {
+    use crate::domain::swarm::python_equal;
+    use crate::infrastructure::persistence::swarm_board::py_json;
+
+    let literal = "9007199254740993.0";
+    let python = py_json::decode(literal).unwrap().to_value().unwrap();
+    let serde: Value = serde_json::from_str(literal).unwrap();
+    let stored = json!(9_007_199_254_740_992_i64);
+    assert_eq!(python.as_f64(), Some(9_007_199_254_740_992.0));
+    assert!(python_equal(&python, &stored));
+    assert!(
+        !python_equal(&serde, &stored),
+        "serde parsed {serde}; if it now rounds correctly, the S13/S14 \
+         caution on `call` may be relaxed"
+    );
+}

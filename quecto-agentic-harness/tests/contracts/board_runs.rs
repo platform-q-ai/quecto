@@ -205,3 +205,41 @@ fn loosely_typed_run_columns_read_as_stored() {
         assert_eq!(read.is_ok(), deadline == "7", "{deadline}: {read:?}");
     }
 }
+
+/// #2271: `join_process` reads the coordinator column alone (`SELECT
+/// coordinator FROM run`): no run is `None`, a NULL or non-text one is
+/// `Some(None)`, and a column it does not read never refuses it.
+#[test]
+fn the_coordinator_is_read_alone() {
+    let (dir, repository) = board();
+    within(&repository, true, |transaction| {
+        assert_eq!(transaction.run_coordinator()?, None);
+        transaction.insert_run(&NewRun {
+            id: "abc".into(),
+            contract: contract("first", 0.0),
+            coordinator: "parent".into(),
+            integrator: "parent".into(),
+            status: RunState::SETUP,
+        })?;
+        assert_eq!(transaction.run_coordinator()?, Some(Some("parent".into())));
+        Ok(())
+    });
+    let edit = |sql: &str| {
+        rusqlite::Connection::open(dir.path().join("swarm.sqlite"))
+            .unwrap()
+            .execute_batch(sql)
+            .unwrap();
+    };
+    edit("UPDATE run SET goal=CAST(x'ff' AS TEXT), member_limit='many'");
+    within(&repository, false, |transaction| {
+        assert_eq!(transaction.run_coordinator()?, Some(Some("parent".into())));
+        Ok(())
+    });
+    for value in ["NULL", "x'706172656e74'"] {
+        edit(&format!("UPDATE run SET coordinator={value}"));
+        within(&repository, false, |transaction| {
+            assert_eq!(transaction.run_coordinator()?, Some(None), "{value}");
+            Ok(())
+        });
+    }
+}
