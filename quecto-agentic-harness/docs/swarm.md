@@ -940,7 +940,10 @@ to `quecto swarm report` (#2305), which can fold each member's `swarm_op` lines
 of a run offline.
 
 It carries counts, kinds, durations and ids only, never board text, and leaves
-one `tracing` record (`swarm run summary`, INFO) on `quecto::swarm_board`.
+one `tracing` record (`swarm run summary`, INFO) on `quecto::swarm_board`. Being
+written once, off every board call's path, it waits up to 2 s for the log's
+write gate (a `swarm_op` record waits 50 ms); held off past that, it is dropped
+and counted in the next `swarm_ops_dropped` note, as a record is.
 Select a run's summary as its records
 are selected:
 

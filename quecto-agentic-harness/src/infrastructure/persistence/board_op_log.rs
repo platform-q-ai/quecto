@@ -45,11 +45,18 @@ const TARGET: &str = "quecto::swarm_board";
 /// wait this long means the log is stuck, and the board call goes on.
 pub const SWARM_OP_GATE_WAIT: Duration = Duration::from_millis(50);
 
+/// How long a run's `swarm_run_summary` waits for the write gate (#2313
+/// review L1): it is written once per run, when the run settles, off every
+/// board call's path, so it waits longer than a record before it is
+/// dropped (and counted as a record is).
+pub const SUMMARY_GATE_WAIT: Duration = Duration::from_secs(2);
+
 /// [`BoardOpLog`] over a session's event log.
 #[derive(Debug)]
 pub struct EventLogBoardOps {
     line: AuditCrashLine,
     gate_wait: Duration,
+    summary_wait: Duration,
     warned: AtomicBool,
     /// Records dropped at the gate and not yet noted in the log.
     dropped: AtomicU64,
@@ -60,6 +67,7 @@ impl EventLogBoardOps {
         Self {
             line,
             gate_wait: SWARM_OP_GATE_WAIT,
+            summary_wait: SUMMARY_GATE_WAIT,
             warned: AtomicBool::new(false),
             dropped: AtomicU64::new(0),
         }
@@ -68,6 +76,12 @@ impl EventLogBoardOps {
     /// The same adapter, waiting at most `bound` for the log's write gate.
     pub fn with_gate_wait(mut self, bound: Duration) -> Self {
         self.gate_wait = bound;
+        self
+    }
+
+    /// The same adapter, a summary waiting at most `bound` for the gate.
+    pub fn with_summary_wait(mut self, bound: Duration) -> Self {
+        self.summary_wait = bound;
         self
     }
 
@@ -119,13 +133,21 @@ impl BoardOpLog for EventLogBoardOps {
         }
     }
 
-    /// Filed under no turn, as a record is (#2313). A summary the gate
-    /// held off, the cap refused or a write failed is dropped with the
-    /// log's one warning: it is written once, and never retried.
+    /// Filed under no turn, as a record is (#2313). It waits for the gate
+    /// up to [`SUMMARY_GATE_WAIT`] (review L1); held off past that, it is
+    /// dropped and counted as a record is, so the next record written
+    /// notes it in `swarm_ops_dropped`. One the cap refused or a write
+    /// failed is dropped with the log's one warning. It is written once,
+    /// and never retried.
     fn summarize(&self, summary: SwarmRunSummary) {
         let event = AuditEvent::SwarmRunSummary(summary);
-        if let Err(error) = self.line.append(None, vec![event], self.gate_wait) {
-            self.warn(&error);
+        match self.line.append(None, vec![event], self.summary_wait) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                self.count_dropped(1);
+                self.warn(&error);
+            }
+            Err(error) => self.warn(&error),
         }
     }
 }
