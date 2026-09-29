@@ -206,35 +206,53 @@ fn a_session_log_is_recorded_in_only_while_the_event_log_is_on() {
 }
 
 /// A board call blocks (a contended store waits up to its busy timeout),
-/// so a wake accepted on an async worker is a harness bug: the
-/// supervisor accepts wakes on the blocking pool only.
+/// so a board call made on an async worker is a harness bug: every caller
+/// makes it on the blocking pool (`call_work::spawn_blocking_in_call`) or
+/// outside any runtime (#2278 review L6). The debug assertion is the
+/// board's own, so it covers every method, a context's and a hosted
+/// store's alike.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[cfg(debug_assertions)]
-async fn accepting_a_wake_on_an_async_worker_is_refused_in_debug_builds() {
+async fn a_board_call_on_an_async_worker_is_refused_in_debug_builds() {
     let checkout = tempfile::tempdir().unwrap();
     let parent = context(
         checkout.path(),
         "parent",
         crate::composition::swarm::swarm_board(),
     );
-    create(&parent);
-    let on_worker = tokio::spawn(async move { parent.accept_wake(0) }).await;
+    let setup = parent.clone();
+    crate::infrastructure::tools::call_work::spawn_blocking_in_call(move || create(&setup))
+        .await
+        .unwrap();
+    let on_worker = tokio::spawn({
+        let parent = parent.clone();
+        async move { parent.summary() }
+    })
+    .await;
     assert!(
         on_worker.is_err_and(|error| error.is_panic()),
-        "a wake accepted on an async worker panics in a debug build"
+        "a context's read on an async worker panics in a debug build"
     );
-    let checkout = tempfile::tempdir().unwrap();
-    let parent = context(
-        checkout.path(),
-        "parent",
+    let hosted = crate::infrastructure::tools::swarm_bridge::HostedStore::at(
+        checkout.path().to_path_buf(),
         crate::composition::swarm::swarm_board(),
     );
-    create(&parent);
-    // On the blocking pool the call is made: whatever the board answers,
-    // nothing panics.
-    let _answer = crate::infrastructure::tools::call_work::spawn_blocking_in_call(move || {
-        parent.accept_wake(0)
+    let on_worker = tokio::spawn({
+        let hosted = hosted.clone();
+        async move { hosted.hosted_run().map(|_| ()) }
     })
-    .await
-    .unwrap();
+    .await;
+    assert!(
+        on_worker.is_err_and(|error| error.is_panic()),
+        "a hosted store's read on an async worker panics in a debug build"
+    );
+    // On the blocking pool the same calls are made.
+    let (summary, run) =
+        crate::infrastructure::tools::call_work::spawn_blocking_in_call(move || {
+            (parent.summary(), hosted.hosted_run())
+        })
+        .await
+        .unwrap();
+    assert_eq!(summary.unwrap()["goal"], "ship");
+    assert_eq!(run.unwrap().expect("a created run").coordinator, "parent");
 }
