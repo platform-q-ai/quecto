@@ -22,8 +22,9 @@ pub(super) struct CallbackLimits {
     /// Largest request line, its line ending included. A real callback line
     /// (path, code, state, scope) is well under 2 KiB.
     pub(super) request_line_bytes: usize,
-    /// Most head bytes (line plus headers) read before a login is ended.
-    /// Browsers cap a request head near 256 KiB; these bytes are discarded.
+    /// Most head bytes (line plus headers, through the blank line's LF) a
+    /// connection may send; it is never read past. Browsers cap a request
+    /// head near 256 KiB; these bytes are discarded.
     pub(super) head_bytes: usize,
     /// How long one connection may take to deliver what the listener needs,
     /// counted from its accept. It never outlasts the login deadline.
@@ -88,6 +89,10 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     pub(super) fn new(stream: S, limits: &'a CallbackLimits, login_deadline: Instant) -> Self {
+        assert!(
+            limits.request_line_bytes <= limits.head_bytes,
+            "the request line is part of the head, so its cap fits the head's"
+        );
         let read_until = std::cmp::min(login_deadline, Instant::now() + limits.connection_budget);
         Self {
             stream,
@@ -138,16 +143,26 @@ where
         let mut bytes = std::mem::take(&mut self.pending);
         let mut chunk = [0u8; READ_CHUNK_BYTES];
         loop {
+            // `bytes` are the last head bytes read, so the first of them is
+            // head byte `head_read - bytes.len() + 1`.
+            assert!(bytes.len() <= self.head_read, "scanned bytes were read");
+            let first_position = self.head_read - bytes.len() + 1;
             for (index, byte) in bytes.iter().enumerate() {
                 scan = scan.next(*byte);
                 match scan {
                     HeadScan::Ended => {
-                        self.pending = bytes.split_off(index + 1);
-                        return Framed::Ready(());
+                        // The head, its blank line's LF included, must fit.
+                        let position = first_position + index;
+                        if position <= self.limits.head_bytes {
+                            self.pending = bytes.split_off(index + 1);
+                            return Framed::Ready(());
+                        }
+                        return Framed::Refused(HEAD_TOO_LARGE_RESPONSE);
                     }
                     HeadScan::AtLineStart | HeadScan::AfterLineStartCr | HeadScan::InLine => {}
                 }
             }
+            // The cap's worth was read and the head has not ended.
             if self.head_read >= self.limits.head_bytes {
                 return Framed::Refused(HEAD_TOO_LARGE_RESPONSE);
             }
@@ -177,12 +192,25 @@ where
         drain(&mut self.stream, until, self.limits.linger_bytes).await;
     }
 
+    /// Read head bytes into `chunk`, never past the head cap: each read
+    /// asks for at most what the cap still allows. Call only while the cap
+    /// allows at least one more byte.
     async fn read(&mut self, chunk: &mut [u8]) -> Read {
-        let read = tokio::time::timeout_at(self.read_until, self.stream.read(chunk)).await;
+        assert!(
+            self.head_read < self.limits.head_bytes,
+            "a read is asked for only while the head cap allows one"
+        );
+        let want = std::cmp::min(chunk.len(), self.limits.head_bytes - self.head_read);
+        let buffer = &mut chunk[..want];
+        let read = tokio::time::timeout_at(self.read_until, self.stream.read(buffer)).await;
         match read {
             Ok(Ok(n)) if n > 0 => {
-                assert!(n <= chunk.len(), "a read cannot exceed its buffer");
+                assert!(n <= want, "a read cannot exceed its buffer");
                 self.head_read += n;
+                assert!(
+                    self.head_read <= self.limits.head_bytes,
+                    "no read goes past the head cap"
+                );
                 Read::Bytes(n)
             }
             Ok(Ok(_)) | Ok(Err(_)) => Read::Ended,
