@@ -8,9 +8,10 @@ async fn terminal_reports_are_admitted_only_for_the_retained_coordinator() {
         let directory = tempfile::tempdir().unwrap();
         let parent = context(&directory);
         create(&parent, 2);
-        parent
-            .call("stop", json!([status, "retain diagnostic report"]))
-            .unwrap();
+        crate::infrastructure::tools::call_work::off_the_runtime(|| {
+            parent.call("stop", json!([status, "retain diagnostic report"]))
+        })
+        .unwrap();
         assert!(
             parent.check().await.is_ok(),
             "coordinator report unavailable for {status}"
@@ -32,7 +33,10 @@ async fn terminal_tool_admission_allows_only_native_read_operations() {
     let directory = tempfile::tempdir().unwrap();
     let parent = context(&directory);
     create(&parent, 2);
-    parent.call("stop", json!(["failed", "report"])).unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        parent.call("stop", json!(["failed", "report"]))
+    })
+    .unwrap();
     for op in ["summary", "events", "usage"] {
         assert!(
             parent
@@ -95,7 +99,7 @@ async fn a_resumed_coordinator_runs_python_again_after_ending_the_run() {
         "an ended run refuses by its pause, not by a stopped registry: {}",
         refused.content
     );
-    context.resume_external().unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.resume_external()).unwrap();
     let again = tool
         .execute(r#"{"code":"from swarm import board; print(board.summary()['status'])"}"#)
         .await

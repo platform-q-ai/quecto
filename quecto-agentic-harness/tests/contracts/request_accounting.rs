@@ -33,7 +33,9 @@ async fn real_accounting_redelivery_counts_once_and_rejects_changed_measurements
     };
     context.record(&observation).await.unwrap();
     context.record(&observation).await.unwrap();
-    let usage = context.usage_report().unwrap();
+    let usage =
+        quecto::infrastructure::tools::call_work::off_the_runtime(|| context.usage_report())
+            .unwrap();
     assert_eq!(usage["totals"]["requests"], 1);
     assert_eq!(
         usage["recent_requests"][0]["observation"]["started_unix_ms"],
@@ -47,7 +49,8 @@ async fn real_accounting_redelivery_counts_once_and_rejects_changed_measurements
     observation.output_tokens = Some(3);
     assert!(context.record(&observation).await.is_err());
     assert_eq!(
-        context.usage_report().unwrap()["totals"]["observed_tokens"],
+        quecto::infrastructure::tools::call_work::off_the_runtime(|| context.usage_report())
+            .unwrap()["totals"]["observed_tokens"],
         12
     );
 }

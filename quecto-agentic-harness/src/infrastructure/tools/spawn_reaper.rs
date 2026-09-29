@@ -64,13 +64,13 @@ pub fn spawn_reaper_task(
             }
         }
         if let Some((context, member)) = swarm_member {
-            let _ = tokio::task::spawn_blocking(move || {
+            let _ = tokio::task::spawn_blocking(super::call_work::blocking(move || {
                 if let Err(error) =
                     super::swarm_lifecycle::member_exited(&context, &member, member_exit)
                 {
                     tracing::error!(%error, member, "swarm reaper could not confirm the member's death; capacity retained");
                 }
-            })
+            }))
             .await;
         }
         // The exit was published and every cleanup ran: the handle's slot

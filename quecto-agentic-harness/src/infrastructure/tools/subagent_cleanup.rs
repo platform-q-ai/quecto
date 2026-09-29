@@ -121,7 +121,9 @@ async fn run_cleanup_jobs(jobs: Vec<CleanupJob>, finalizer: MemberFinalizer) {
     if !has_work {
         return;
     }
-    let handle = tokio::task::spawn_blocking(move || run_cleanup_jobs_sync(jobs, finalizer));
+    let handle = tokio::task::spawn_blocking(super::call_work::blocking(move || {
+        run_cleanup_jobs_sync(jobs, finalizer)
+    }));
     let _ = handle.await;
 }
 

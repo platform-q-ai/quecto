@@ -521,15 +521,17 @@ async fn another_member_cannot_prune_a_live_foreground_result() {
         member: "coordinator".into(),
         ..worker.clone()
     };
-    parent
-        .call("_admit", serde_json::json!(["worker", "reservation"]))
-        .unwrap();
-    parent
-        .call(
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        parent.call("_admit", serde_json::json!(["worker", "reservation"]))
+    })
+    .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        parent.call(
             "_activate",
             serde_json::json!(["worker", "reservation", 123, "start", null]),
         )
-        .unwrap();
+    })
+    .unwrap();
     let slow = SwarmTool::new(
         Arc::new(tmp.path().to_path_buf()),
         Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),

@@ -3,12 +3,17 @@ use quecto::application::providers::ports::RequestAdmission;
 async fn real_admission_tracks_pause_resume_and_terminal_actor() {
     let (_directory, context) = super::swarm_control_fixture::context();
     context.check().await.unwrap();
-    context.pause("approval").unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| context.pause("approval"))
+        .unwrap();
     assert!(context.check().await.is_err());
-    assert!(context.resume().is_err(), "members cannot resume (#1729)");
-    context.resume_external().unwrap();
+    assert!(
+        quecto::infrastructure::tools::call_work::off_the_runtime(|| context.resume()).is_err(),
+        "members cannot resume (#1729)"
+    );
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| context.resume_external())
+        .unwrap();
     context.check().await.unwrap();
-    context.cancel_run().unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| context.cancel_run()).unwrap();
     context.check().await.unwrap();
     let unknown = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
         member: "unknown".into(),

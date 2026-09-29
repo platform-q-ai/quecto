@@ -14,7 +14,11 @@ pub fn context() -> (tempfile::TempDir, SwarmContext) {
         .unwrap()
         .as_secs()
         + 300;
-    context.create_run(&serde_json::json!({"goal":"contract", "constraints":[], "criteria":[{"id":"tests","kind":"command","description":"pass"}], "member_limit":2, "deadline":deadline}),
-        &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap() }, None).unwrap();
+    // Setup off any async worker: a board call blocks (#2278).
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.create_run(&serde_json::json!({"goal":"contract", "constraints":[], "criteria":[{"id":"tests","kind":"command","description":"pass"}], "member_limit":2, "deadline":deadline}),
+            &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap() }, None)
+    })
+    .unwrap();
     (directory, context)
 }

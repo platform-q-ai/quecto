@@ -155,8 +155,12 @@ impl ProcessControl for RuntimeProcesses<'_> {
         super::swarm::suspend_context_jobs(self.0, snapshot.control_generation);
     }
     fn suspend_local_inference(&self, snapshot: &crate::domain::swarm::Snapshot) {
+        // The suspension verifies the run's control status on the board
+        // before it acts, so it runs off the async workers (#2278 L6).
         if let Some(cancel) = LOCAL_SUSPEND.get() {
-            cancel(snapshot.status, snapshot.control_generation);
+            let (cancel, status, generation) =
+                (cancel.clone(), snapshot.status, snapshot.control_generation);
+            run_off_the_workers(move || cancel(status, generation));
         }
     }
     fn cancel_local_executions(&self) {
@@ -242,6 +246,20 @@ pub(super) fn observe(
     participation.set(crate::domain::swarm::participates(snapshot.deadline));
 }
 
+/// Runs `job`, which makes board calls, off the async workers (#2278
+/// review L6): here when this thread may block, else on the blocking
+/// pool, where it runs to completion on its own (the caller cannot wait:
+/// a drop, or a synchronous port method on an async worker).
+pub(super) fn run_off_the_workers(job: impl FnOnce() + Send + 'static) {
+    use super::call_work::{blocking, may_block};
+    match (may_block(), tokio::runtime::Handle::try_current()) {
+        (false, Ok(runtime)) => {
+            let _detached = runtime.spawn_blocking(blocking(job));
+        }
+        (true, _) | (false, Err(_)) => job(),
+    }
+}
+
 /// A per-process watcher also observes outcomes set by other members. This
 /// cancels detached local jobs even if a remote turn-abort leaves them alive.
 pub fn supervise(
@@ -253,7 +271,10 @@ pub fn supervise(
     if STARTED.set(()).is_err() {
         return;
     }
-    std::thread::spawn(move || {
+    // The watcher's own thread, never an async worker: it blocks on the
+    // board between ticks and drives a runtime of its own only for its
+    // settlement, so its board calls are marked as blocking work (#2278).
+    std::thread::spawn(super::call_work::blocking(move || {
         let mut suspended = None;
         loop {
             observe(&context, &mut snapshot, &participation);
@@ -293,7 +314,7 @@ pub fn supervise(
             }
             Err(error) => tracing::error!(%error, "swarm settlement runtime failed"),
         }
-    });
+    }));
 }
 
 /// How long a member waits after settling for its launcher to end it: the

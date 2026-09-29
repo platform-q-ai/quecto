@@ -100,12 +100,13 @@ async fn op_run_before_create_points_the_founder_at_op_create() {
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
     };
-    context
-        .call(
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call(
             "_bootstrap",
             serde_json::json!([1, "start", "/tmp/unused.sock"]),
         )
-        .unwrap();
+    })
+    .unwrap();
     let tool = super::super::SwarmTool::new(
         workspace.clone(),
         std::sync::Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(

@@ -328,7 +328,7 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
         let result = if display_pid.0 == 0 {
             Err(DomainError::Tool("swarm child has no pid".into()))
         } else {
-            reservation.launched(display_pid.0)
+            reservation.launched(display_pid.0).await
         };
         if let Err(error) = result {
             let outcome = child
@@ -357,7 +357,7 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
                 }
             };
             if let Some(exit) = exit {
-                reservation.rolled_back(exit)?;
+                reservation.rolled_back(exit).await?;
             }
             return Err(error);
         }

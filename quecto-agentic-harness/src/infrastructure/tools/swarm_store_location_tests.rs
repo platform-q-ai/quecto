@@ -78,7 +78,11 @@ fn created_run(checkout: &Path) -> (SwarmContext, String) {
 
 /// The run's id, as the store reports it.
 fn run_id(context: &SwarmContext) -> String {
-    context.call("_status", serde_json::json!([])).unwrap()["id"].to_string()
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("_status", serde_json::json!([]))
+    })
+    .unwrap()["id"]
+        .to_string()
 }
 
 /// The board belongs to the checkout's own git directory whenever it has

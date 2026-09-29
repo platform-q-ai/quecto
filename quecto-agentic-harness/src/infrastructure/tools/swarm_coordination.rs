@@ -247,7 +247,7 @@ impl crate::application::providers::ports::RequestAccounting for SwarmContext {
         let context = self.clone();
         let observation = observation.clone();
         Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
+            crate::infrastructure::tools::call_work::spawn_blocking_in_call(move || {
                 let mut value = serde_json::to_value(observation).map_err(invalid)?;
                 value["runtime"] =
                     serde_json::to_value(crate::infrastructure::runtime_identity::current())

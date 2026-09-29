@@ -27,7 +27,11 @@ pub fn tool(
             .unwrap()
             .as_secs()
             + 300;
-        context.call("create", serde_json::json!(["test execution", [], [{"id":"tests","kind":"command","description":"pass"}], 10, deadline])).unwrap();
+        // Test setup: the board call made off any async worker (#2278).
+        super::call_work::off_the_runtime(|| {
+            context.call("create", serde_json::json!(["test execution", [], [{"id":"tests","kind":"command","description":"pass"}], 10, deadline]))
+        })
+        .unwrap();
     }
     SwarmTool::new(workspace, sandbox, config).with_context(Some(context))
 }

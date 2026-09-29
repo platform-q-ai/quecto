@@ -16,8 +16,11 @@ fn context(directory: &tempfile::TempDir) -> SwarmContext {
 
 fn create(context: &SwarmContext, limit: u64) {
     std::fs::create_dir_all(context.checkout.join(".quecto")).unwrap();
-    context.call("create", json!(["ship", [], [{"id":"tests","kind":"command","description":"pass"}], limit,
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 300])).unwrap();
+    super::call_work::off_the_runtime(|| {
+        context.call("create", json!(["ship", [], [{"id":"tests","kind":"command","description":"pass"}], limit,
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 300]))
+    })
+    .unwrap();
 }
 
 #[test]
@@ -129,7 +132,7 @@ fn failed_launch_releases_capacity_but_live_reservation_does_not() {
         super::swarm_admission::LaunchReservation::reserve(context.clone()).unwrap();
     let mut command = tokio::process::Command::new("true");
     reservation.configure(&mut command);
-    reservation.launched(std::process::id()).unwrap();
+    futures::executor::block_on(reservation.launched(std::process::id())).unwrap();
     drop(reservation);
     assert_eq!(
         super::swarm_lifecycle::reconcile(&context).unwrap()["usage"],
@@ -241,22 +244,30 @@ async fn run_creation_requires_authorized_container_and_bounded_policy() {
         + 300;
     let created = tool.execute(&json!({"op":"create","goal":"ship","constraints":[],"criteria":[{"id":"test","kind":"command","description":"pass"}],"member_limit":25,"deadline":deadline}).to_string()).await.unwrap();
     assert!(!created.is_error, "{}", created.content);
-    assert_eq!(context.summary().unwrap()["usage"], 1);
+    assert_eq!(
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap()["usage"],
+        1
+    );
     for index in 1..25 {
-        context
-            .call(
+        crate::infrastructure::tools::call_work::off_the_runtime(|| {
+            context.call(
                 "_admit",
                 json!([format!("worker-{index}"), format!("r-{index}")]),
             )
-            .unwrap();
+        })
+        .unwrap();
     }
-    assert_eq!(context.summary().unwrap()["usage"], 25);
+    assert_eq!(
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap()["usage"],
+        25
+    );
     assert!(
-        context
-            .call("_admit", json!(["worker-25", "r-25"]))
-            .unwrap_err()
-            .to_string()
-            .contains("reuse")
+        crate::infrastructure::tools::call_work::off_the_runtime(
+            || context.call("_admit", json!(["worker-25", "r-25"]))
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("reuse")
     );
 }
 
@@ -271,9 +282,10 @@ async fn expired_budget_retains_coordinator_when_abort_endpoint_is_unavailable()
         .spawn()
         .unwrap();
     let pid = child.id().unwrap();
-    let summary = context.summary().unwrap();
-    context
-        .call(
+    let summary =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call(
             "_activate",
             json!([
                 "parent",
@@ -283,10 +295,12 @@ async fn expired_budget_retains_coordinator_when_abort_endpoint_is_unavailable()
                 directory.path().join("missing.sock")
             ]),
         )
-        .unwrap();
-    context
-        .call("stop", json!(["budget-exhausted", "deadline"]))
-        .unwrap();
+    })
+    .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("stop", json!(["budget-exhausted", "deadline"]))
+    })
+    .unwrap();
     let _ = super::swarm_lifecycle::settle(context).await;
     let exit = tokio::time::timeout(std::time::Duration::from_millis(500), child.wait()).await;
     assert!(
@@ -314,9 +328,10 @@ async fn failed_run_cancels_coordinator_detached_jobs() {
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
     };
-    coordinator
-        .register_endpoint(socket.to_str().unwrap())
-        .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        coordinator.register_endpoint(socket.to_str().unwrap())
+    })
+    .unwrap();
     let start = tool.execute(r#"{"code":"import time, pathlib; pathlib.Path('writer-ready').touch()\nwhile not pathlib.Path('release-writer').exists(): time.sleep(0.01)\nopen('late-write','w').write('unsafe')","background":true}"#).await.unwrap();
     assert!(!start.is_error, "{}", start.content);
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -403,13 +418,18 @@ async fn terminal_notifications_do_not_queue_impossible_inbox_work() {
     create(&context, 2);
     let socket = directory.path().join("worker.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    context.call("_admit", json!(["worker", "r"])).unwrap();
-    context
-        .call("_activate", json!(["worker", "r", 123, "identity", socket]))
-        .unwrap();
-    context
-        .call("stop", json!(["blocked", "report partial result"]))
-        .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("_admit", json!(["worker", "r"]))
+    })
+    .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("_activate", json!(["worker", "r", 123, "identity", socket]))
+    })
+    .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("stop", json!(["blocked", "report partial result"]))
+    })
+    .unwrap();
     let warnings = super::swarm_lifecycle::notify(&context).await;
     assert!(warnings.is_empty());
     assert!(
@@ -418,7 +438,8 @@ async fn terminal_notifications_do_not_queue_impossible_inbox_work() {
             .is_err(),
         "an ended run queued another wake hint"
     );
-    let summary = context.summary().unwrap();
+    let summary =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap();
     assert_eq!(
         (summary["status"].as_str(), summary["outcome"].as_str()),
         (Some("paused"), Some("blocked"))
@@ -432,13 +453,18 @@ async fn live_wake_hint_is_coalesced_and_carries_an_actionable_generation() {
     create(&context, 2);
     let socket = directory.path().join("worker.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    context.call("_admit", json!(["worker", "r"])).unwrap();
-    context
-        .call("_activate", json!(["worker", "r", 123, "identity", socket]))
-        .unwrap();
-    context
-        .call("task_create", json!(["work", "implement", ["pass"]]))
-        .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("_admit", json!(["worker", "r"]))
+    })
+    .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("_activate", json!(["worker", "r", 123, "identity", socket]))
+    })
+    .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("task_create", json!(["work", "implement", ["pass"]]))
+    })
+    .unwrap();
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let (read, mut write) = tokio::io::split(stream);
@@ -513,7 +539,7 @@ async fn foreground_terminal_watcher(outcome: &str) {
     .with_context(Some(context.clone()));
     super::swarm_lifecycle::supervise(
         context.clone(),
-        context.snapshot().unwrap(),
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.snapshot()).unwrap(),
         super::swarm_bridge::Participation::none(),
     );
     let terminal = if outcome == "succeeded" {
@@ -534,7 +560,8 @@ async fn foreground_terminal_watcher(outcome: &str) {
     );
     // Completion ends the run as a resumable pause holding `succeeded`;
     // cancellation stays terminal (#1729).
-    let summary = context.summary().unwrap();
+    let summary =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap();
     let expected = if outcome == "succeeded" {
         ("paused", Some("succeeded"))
     } else {
@@ -578,7 +605,9 @@ async fn summary_cursor_suppresses_unchanged_tool_payload_and_rejects_bad_cursor
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
     create(&context, 1);
-    let cursor = context.summary().unwrap()["event_cursor"].clone();
+    let cursor = crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary())
+        .unwrap()["event_cursor"]
+        .clone();
     let delta = super::swarm_control::control(context.clone(), "summary", json!({"since":cursor}))
         .await
         .unwrap();
@@ -620,11 +649,14 @@ async fn resumed_swarm_can_start_python_jobs_after_suspension() {
         member: "coordinator".into(),
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),
     };
-    context.pause("inspect retained state").unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.pause("inspect retained state")
+    })
+    .unwrap();
     super::swarm_lifecycle::settle(context.clone())
         .await
         .unwrap();
-    context.resume_external().unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.resume_external()).unwrap();
     let result = tool
         .execute(r#"{"code":"print('resumed')"}"#)
         .await
@@ -642,8 +674,11 @@ async fn paused_summary_delta_is_read_only_and_stays_compact() {
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
     create(&context, 1);
-    context.pause("inspection").unwrap();
-    let cursor = context.summary().unwrap()["event_cursor"].clone();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("inspection"))
+        .unwrap();
+    let cursor = crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary())
+        .unwrap()["event_cursor"]
+        .clone();
     let delta = super::swarm_control::control(context.clone(), "summary", json!({"since":cursor}))
         .await
         .unwrap();

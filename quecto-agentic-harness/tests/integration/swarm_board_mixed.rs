@@ -623,7 +623,10 @@ async fn python_member_programs_and_rust_harness_share_one_board() {
     let checkout = root
         .path()
         .join(".quecto/container-environments/environment/workspace/repo");
-    std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
+    std::fs::create_dir_all(quecto::infrastructure::tools::call_work::off_the_runtime(
+        || checkout.join(".quecto"),
+    ))
+    .unwrap();
     let context = |member: &str| SwarmContext {
         checkout: checkout.clone(),
         member: member.into(),
@@ -643,28 +646,36 @@ async fn python_member_programs_and_rust_harness_share_one_board() {
     let deadline = (now + 3_600.0).floor();
     let contract = json!({"goal": "mixed", "constraints": [], "criteria": [{"id": "tests", "kind": "command", "description": "pass"}], "member_limit": 3, "deadline": deadline});
     // The harness (Rust) creates the run and admits the worker.
-    coordinator.create_run(&contract, &identity, None).unwrap();
-    coordinator.reserve_member("worker", "res-w").unwrap();
-    worker.join(&identity, None, Some("res-w")).unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        coordinator.create_run(&contract, &identity, None)
+    })
+    .unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        coordinator.reserve_member("worker", "res-w")
+    })
+    .unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        worker.join(&identity, None, Some("res-w"))
+    })
+    .unwrap();
     // 1. A Python member program creates and claims a task.
     run_program(&worker, "from swarm import board; t = board.task_create('r1', 'first', ['tests pass']); board.claim(t['id'])").await;
     // 2. The harness's Rust summary sees it.
-    let summary = tokio::task::spawn_blocking({
-        let coordinator = coordinator.clone();
-        move || coordinator.summary()
-    })
-    .await
-    .unwrap()
-    .unwrap();
+    let summary =
+        quecto::infrastructure::tools::call_work::off_the_runtime(|| coordinator.summary())
+            .unwrap();
     assert_eq!(summary["tasks"][0]["status"], "claimed", "{summary}");
     assert_eq!(summary["tasks"][0]["owner"], "worker");
     // 3. The harness's Rust `_confirmed_dead` blocks it.
-    coordinator
-        .confirm_dead("worker", MemberExit::Orderly)
-        .unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        coordinator.confirm_dead("worker", MemberExit::Orderly)
+    })
+    .unwrap();
     // 4. A Python `recover` reopens it.
     run_program(&coordinator, "from swarm import board; board.recover(1)").await;
-    let summary = coordinator.summary().unwrap();
+    let summary =
+        quecto::infrastructure::tools::call_work::off_the_runtime(|| coordinator.summary())
+            .unwrap();
     assert_eq!(summary["tasks"][0]["status"], "ready", "{summary}");
 
     // 5. The same sequence on the pure-Python board: every call the

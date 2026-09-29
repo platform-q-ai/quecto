@@ -39,7 +39,7 @@ async fn settled_descendants(background: bool, success: bool) {
         .unwrap()
         .as_secs()
         + 120;
-    context.call("create", json!(["settled checkout",[],[{"id":"tests","kind":"command","description":"pass"}],1,deadline])).unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.call("create", json!(["settled checkout",[],[{"id":"tests","kind":"command","description":"pass"}],1,deadline]))).unwrap();
     let tool = SwarmTool::new(
         workspace.clone(),
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
@@ -90,7 +90,7 @@ async fn settled_descendants(background: bool, success: bool) {
         );
     }
     assert_eq!(
-        context.summary().unwrap()["status"],
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap()["status"],
         if success { "paused" } else { "cancelled" },
         "completion ends the run as a resumable pause (#1729)"
     );

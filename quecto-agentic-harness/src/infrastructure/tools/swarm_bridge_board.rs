@@ -6,8 +6,9 @@
 //! Every board call is a direct call of the Rust dispatcher
 //! ([`swarm_board_dispatch::call`]) on the caller's thread: the store's
 //! calls are blocking (a contended transaction waits up to its 500 ms busy
-//! timeout), so every production caller is already on a blocking thread,
-//! as it was for the Python interpreter this replaced. Nothing here
+//! timeout), so every caller makes it on the blocking pool or outside any
+//! runtime, as it did for the Python interpreter this replaced; a debug
+//! build asserts it on every call ([`SwarmBoard::call`]). Nothing here
 //! constructs a repository, a clock, an id source or a use case: the
 //! builder is composition's (`composition::swarm::build_swarm_board_handles`).
 use std::sync::{Arc, Mutex, OnceLock};
@@ -129,6 +130,14 @@ impl SwarmBoard {
         method: &str,
         args: Value,
     ) -> Result<Value, DomainError> {
+        // A board call blocks (a contended transaction waits up to the
+        // store's busy timeout): every caller makes it on the blocking pool
+        // (`call_work::spawn_blocking_in_call`) or outside any runtime,
+        // never on an async worker (#2278 review L6).
+        debug_assert!(
+            crate::infrastructure::tools::call_work::may_block(),
+            "a board call ({method}) is made off the async workers (#2278)"
+        );
         let handles = self.handles(location);
         swarm_board_dispatch::call(&handles, member, method, args).map_err(|refusal| {
             DomainError::Tool(format!(

@@ -46,12 +46,13 @@ fn create_running_swarm(checkout: &std::path::Path) -> SwarmContext {
         .unwrap()
         .as_secs()
         + 600;
-    context
-        .call(
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call(
             "create",
             json!(["ship", [], [{"id":"tests","kind":"command","description":"pass"}], 3, deadline]),
         )
-        .unwrap();
+    })
+    .unwrap();
     context
 }
 
@@ -59,9 +60,10 @@ fn create_running_swarm(checkout: &std::path::Path) -> SwarmContext {
 fn bootstrap_placeholder(checkout: &std::path::Path) -> SwarmContext {
     let context = store_context(checkout);
     std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
-    context
-        .call("_bootstrap", json!([std::process::id(), "1", null]))
-        .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("_bootstrap", json!([std::process::id(), "1", null]))
+    })
+    .unwrap();
     context
 }
 
@@ -149,10 +151,13 @@ async fn coordinator_connection_closed_retains_environment_and_pauses_run() {
         SubagentStatus::Exited
     );
     assert!(context.database().is_file(), "the store survives");
-    let summary = context.summary().unwrap();
+    let summary =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap();
     assert_eq!(summary["status"], "paused", "{summary}");
     assert_eq!(summary["outcome"], "failed", "{summary}");
-    let receipt = context.control_status().unwrap();
+    let receipt =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.control_status())
+            .unwrap();
     let blockers = receipt["resume_blockers"].as_array().unwrap();
     assert!(
         blockers
@@ -161,7 +166,10 @@ async fn coordinator_connection_closed_retains_environment_and_pauses_run() {
         "resume blockers must name the lost coordinator: {receipt}"
     );
     // A supervisor resume through the port refuses while the coordinator is lost.
-    let error = context.resume_external().unwrap_err().to_string();
+    let error =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.resume_external())
+            .unwrap_err()
+            .to_string();
     assert!(error.contains("lost coordinator"), "{error}");
     // Only an explicit kill_container may run the retained kill now.
     assert!(environments.begin_kill(&env_ref).is_ok());
@@ -224,9 +232,10 @@ async fn coordinator_connection_closed_after_an_orderly_end_retains_without_a_lo
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
-    context
-        .call("stop", json!(["blocked", "needs the master"]))
-        .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("stop", json!(["blocked", "needs the master"]))
+    })
+    .unwrap();
     let log = dir.path().join("kill-log.txt");
     let kill = write_kill_script(dir.path(), &log);
     let (environments, env_ref) = environment(kill, &checkout);
@@ -245,20 +254,26 @@ async fn coordinator_connection_closed_after_an_orderly_end_retains_without_a_lo
     assert_eq!(record.status, EnvironmentStatus::Retained);
     let reason = record.metadata["retained"].as_str().unwrap();
     assert!(reason.starts_with("run ended: blocked"), "{reason}");
-    let summary = context.summary().unwrap();
+    let summary =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap();
     assert_eq!(
         summary["outcome"], "blocked",
         "the held outcome is untouched"
     );
-    let receipt = context.control_status().unwrap();
+    let receipt =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.control_status())
+            .unwrap();
     assert_eq!(
         receipt["resume_blockers"],
         json!([]),
         "an orderly end adds no lost-coordinator blocker: {receipt}"
     );
     // The supervisor can still resume the run through the port.
-    context.resume_external().unwrap();
-    assert_eq!(context.summary().unwrap()["status"], "running");
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.resume_external()).unwrap();
+    assert_eq!(
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap()["status"],
+        "running"
+    );
 }
 
 #[tokio::test]
@@ -327,7 +342,7 @@ async fn rejected_checkout_keeps_the_box(advertised: impl FnOnce(&std::path::Pat
     let reason = record.metadata["retained"].as_str().unwrap();
     assert!(reason.contains("could not be read"), "{reason}");
     assert_eq!(
-        _live.summary().unwrap()["status"],
+        crate::infrastructure::tools::call_work::off_the_runtime(|| _live.summary()).unwrap()["status"],
         "running",
         "the store at the advertised place was never opened"
     );
@@ -398,12 +413,17 @@ async fn run_control_receipt_decodes_the_lost_coordinator_blocker() {
         checkout.clone(),
         crate::composition::swarm::swarm_board(),
     );
-    let hosted = store.hosted_run().unwrap().unwrap();
+    let hosted = crate::infrastructure::tools::call_work::off_the_runtime(|| store.hosted_run())
+        .unwrap()
+        .unwrap();
     assert_eq!((hosted.status, hosted.outcome), (RunStatus::Running, None));
     // The observation names the run (#2033 round 4): the store's own id,
     // the same one the loss receipt carries.
     assert_eq!(hosted.id.len(), 32, "{hosted:?}");
-    let loss = store.record_lost_coordinator("coordinator").unwrap();
+    let loss = crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        store.record_lost_coordinator("coordinator")
+    })
+    .unwrap();
     assert_eq!(loss.run.id, hosted.id);
 
     // Through the same port the parent's `swarm_control status` uses.
@@ -416,7 +436,9 @@ async fn run_control_receipt_decodes_the_lost_coordinator_blocker() {
         "{receipt:?}"
     );
     // The host-side observation decodes the held outcome as well.
-    let hosted = store.hosted_run().unwrap().unwrap();
+    let hosted = crate::infrastructure::tools::call_work::off_the_runtime(|| store.hosted_run())
+        .unwrap()
+        .unwrap();
     assert_eq!(
         (hosted.status, hosted.outcome),
         (RunStatus::Paused, Some(RunStatus::Failed))
@@ -463,9 +485,15 @@ async fn coordinator_connection_closed_after_close_removes_the_container() {
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
-    context.call("stop", json!(["blocked", "done"])).unwrap();
-    context.close().unwrap();
-    assert_eq!(context.summary().unwrap()["status"], "blocked");
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("stop", json!(["blocked", "done"]))
+    })
+    .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.close()).unwrap();
+    assert_eq!(
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap()["status"],
+        "blocked"
+    );
     let log = dir.path().join("kill-log.txt");
     let kill = write_kill_script(dir.path(), &log);
     let (environments, env_ref) = environment(kill, &checkout);
@@ -478,7 +506,11 @@ async fn coordinator_connection_closed_after_close_removes_the_container() {
         environments.get(&env_ref).unwrap().status,
         EnvironmentStatus::Stopped
     );
-    assert_eq!(context.summary().unwrap()["status"], "blocked", "untouched");
+    assert_eq!(
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap()["status"],
+        "blocked",
+        "untouched"
+    );
 }
 
 #[tokio::test]
@@ -488,10 +520,14 @@ async fn coordinator_connection_closed_after_cancel_retains_the_cancelled_run() 
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
-    context
-        .call("stop", json!(["cancelled", "operator"]))
-        .unwrap();
-    assert_eq!(context.summary().unwrap()["status"], "cancelled");
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("stop", json!(["cancelled", "operator"]))
+    })
+    .unwrap();
+    assert_eq!(
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap()["status"],
+        "cancelled"
+    );
     let log = dir.path().join("kill-log.txt");
     let kill = write_kill_script(dir.path(), &log);
     let (environments, env_ref) = environment(kill, &checkout);
@@ -526,7 +562,10 @@ async fn expired_deadline_is_observed_before_the_loss_is_recorded() {
         crate::composition::swarm::swarm_board(),
     );
     assert_eq!(
-        store.hosted_run().unwrap().unwrap().status,
+        crate::infrastructure::tools::call_work::off_the_runtime(|| store.hosted_run())
+            .unwrap()
+            .unwrap()
+            .status,
         crate::domain::swarm::RunStatus::Running,
         "the membership-free status read does not run the expiry check"
     );
@@ -542,9 +581,12 @@ async fn expired_deadline_is_observed_before_the_loss_is_recorded() {
         reason.starts_with("run ended: budget-exhausted"),
         "{reason}"
     );
-    let summary = context.summary().unwrap();
+    let summary =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap();
     assert_eq!(summary["outcome"], "budget-exhausted", "{summary}");
-    let receipt = context.control_status().unwrap();
+    let receipt =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.control_status())
+            .unwrap();
     let blockers = receipt["resume_blockers"].as_array().unwrap();
     assert!(
         blockers
@@ -562,9 +604,10 @@ async fn supervisor_kill_of_the_coordinator_retains_the_environment() {
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
-    context
-        .call("stop", json!(["blocked", "for review"]))
-        .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("stop", json!(["blocked", "for review"]))
+    })
+    .unwrap();
     let log = dir.path().join("kill-log.txt");
     let kill = write_kill_script(dir.path(), &log);
     let (environments, env_ref) = environment(kill, &checkout);
@@ -595,7 +638,7 @@ async fn supervisor_kill_of_the_coordinator_retains_the_environment() {
         "{reason}"
     );
     assert_eq!(
-        context.summary().unwrap()["outcome"],
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap()["outcome"],
         "blocked",
         "no quarantine"
     );
@@ -697,6 +740,10 @@ async fn symlinked_checkout_pointing_outside_the_workspace_is_not_opened() {
             std::fs::read_to_string(&log).unwrap_or_default().is_empty(),
             "{metadata}: nothing killed"
         );
-        assert_eq!(_live.summary().unwrap()["status"], "running", "{metadata}");
+        assert_eq!(
+            crate::infrastructure::tools::call_work::off_the_runtime(|| _live.summary()).unwrap()["status"],
+            "running",
+            "{metadata}"
+        );
     }
 }

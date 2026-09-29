@@ -78,12 +78,6 @@ impl SwarmContext {
     }
 
     pub fn accept_wake(&self, generation: u64) -> Result<bool, DomainError> {
-        // Its only caller, the supervisor's wake control, runs it on the
-        // blocking pool: a board call blocks up to its busy timeout.
-        debug_assert!(
-            super::call_work::may_block(),
-            "a wake is accepted off the async workers (#2278)"
-        );
         self.rpc("_accept_wake", json!([generation]))?
             .as_bool()
             .ok_or_else(|| DomainError::Tool("invalid wake receipt".into()))

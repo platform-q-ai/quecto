@@ -85,20 +85,23 @@ async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
     let (directory, context) = crate::swarm_control_fixture::context();
     let socket = directory.path().join("worker.sock");
     let (sink, stop) = wake_sink(&socket);
-    context
-        .call("_admit", serde_json::json!(["worker", "r"]))
-        .unwrap();
-    context
-        .call(
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("_admit", serde_json::json!(["worker", "r"]))
+    })
+    .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call(
             "_activate",
             serde_json::json!(["worker", "r", 123, "identity", socket]),
         )
+    })
+    .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("member failed"))
         .unwrap();
-    context.pause("member failed").unwrap();
     let receipt = context.apply(RunControlAction::Resume).await.unwrap();
     assert_eq!(receipt.status, crate::domain::swarm::RunStatus::Running);
     assert!(receipt.wake_warnings.is_empty(), "{receipt:?}");
-    context.pause("again").unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("again")).unwrap();
     // The coordinator's own `swarm resume` op is refused (#1729); only the
     // supervisor's control port resumes, and it wakes everyone.
     let refused =
@@ -117,7 +120,8 @@ async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
     assert_eq!(generations, [receipt.generation, second.generation]);
     // A member that cannot be reached is reported, not fatal.
     std::fs::remove_file(&socket).unwrap();
-    context.pause("and again").unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("and again"))
+        .unwrap();
     let receipt = context.apply(RunControlAction::Resume).await.unwrap();
     assert_eq!(receipt.status, crate::domain::swarm::RunStatus::Running);
     assert_eq!(receipt.wake_warnings.len(), 1, "{receipt:?}");

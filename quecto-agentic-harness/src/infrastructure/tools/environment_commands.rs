@@ -432,7 +432,12 @@ impl HostedSwarmRunObservation for HostedStoreObservation {
         &'a self,
         record: &'a EnvironmentRecord,
     ) -> PortFuture<'a, SwarmRunObservation> {
-        Box::pin(async move { self.inspect_hosted_run(record) })
+        let (observation, record) = (self.clone(), record.clone());
+        Box::pin(async move {
+            off_the_workers(move || observation.inspect_hosted_run(&record))
+                .await
+                .unwrap_or_else(SwarmRunObservation::Unreadable)
+        })
     }
 
     fn record_lost_coordinator<'a>(
@@ -440,14 +445,28 @@ impl HostedSwarmRunObservation for HostedStoreObservation {
         record: &'a EnvironmentRecord,
         hosted: &'a HostedSwarmRun,
     ) -> PortFuture<'a, Result<CoordinatorLoss, String>> {
+        let store = hosted_store(record, &self.board);
+        let coordinator = hosted.coordinator.clone();
         Box::pin(async move {
-            let store = hosted_store(record, &self.board)
-                .ok_or_else(|| "environment advertises no checkout".to_string())?;
-            store
-                .record_lost_coordinator(&hosted.coordinator)
-                .map_err(|error| error.to_string())
+            let store = store.ok_or_else(|| "environment advertises no checkout".to_string())?;
+            off_the_workers(move || {
+                store
+                    .record_lost_coordinator(&coordinator)
+                    .map_err(|error| error.to_string())
+            })
+            .await?
         })
     }
+}
+
+/// Runs `job`, whose board calls block, off the async workers (#2278
+/// review L6); a job cancelled with its runtime answers why.
+async fn off_the_workers<T: Send + 'static>(
+    job: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, String> {
+    super::call_work::off_the_workers(job)
+        .await
+        .map_err(|error| format!("hosted swarm run read did not finish: {error}"))
 }
 
 impl HostedSwarmRunInspection for HostedStoreObservation {

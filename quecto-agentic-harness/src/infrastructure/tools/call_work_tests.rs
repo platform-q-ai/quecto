@@ -89,3 +89,33 @@ async fn a_thread_started_in_a_call_runs_in_it_and_its_panic_is_the_calls() {
         "what the hook records there lands on the call"
     );
 }
+
+/// #2278 review L6: blocking work reaches a thread that may block. From an
+/// async worker it runs on the blocking pool, marked; outside any runtime,
+/// or on a thread already marked, it runs where it is.
+#[tokio::test]
+async fn blocking_work_runs_off_the_async_workers() {
+    assert!(!may_block(), "a test's async worker may not block");
+    let worker = std::thread::current().id();
+    let (may, thread) = off_the_workers(|| (may_block(), std::thread::current().id()))
+        .await
+        .unwrap();
+    assert!(may, "the job may block where it runs");
+    assert_ne!(thread, worker, "not on the async worker");
+    let (may, same) = spawn_blocking_in_call(|| {
+        let here = std::thread::current().id();
+        futures::executor::block_on(off_the_workers(move || {
+            (may_block(), std::thread::current().id() == here)
+        }))
+        .unwrap()
+    })
+    .await
+    .unwrap();
+    assert!(may && same, "already on the blocking pool: run in place");
+    let outside =
+        std::thread::spawn(|| futures::executor::block_on(off_the_workers(may_block)).unwrap())
+            .join()
+            .unwrap();
+    assert!(outside, "outside any runtime: run in place");
+    assert!(off_the_runtime(may_block), "a test's own thread may block");
+}
