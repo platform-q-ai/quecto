@@ -1411,6 +1411,9 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "RunSummary",
     "SummaryCounts",
     "CountedTask",
+    // The read models' telemetry (#2277 review M2).
+    "SummaryScan",
+    "TaskPage",
 ];
 
 fn application_path_allowed(path: &str) -> bool {
