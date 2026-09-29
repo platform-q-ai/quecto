@@ -5,8 +5,8 @@ use serde_json::Value;
 
 use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::owned;
-use crate::application::swarm::dto::{TaskTransition, TaskUpdate, UnblockTaskRequest};
+use crate::application::swarm::board_tasks::{owned, stored_id};
+use crate::application::swarm::dto::{TaskChange, TaskTransition, TaskUpdate, UnblockTaskRequest};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::validation::TEXT_MAX_BYTES;
 use crate::domain::swarm::{Access, BoardError, RefusalKind, bounded};
@@ -30,7 +30,7 @@ impl UnblockTask {
     /// The resolution's bound, an authorisation or budget refusal,
     /// `unknown task`, `stale or unowned claim`, `only blocked or claimed
     /// work may resume`, or the store's.
-    pub fn execute(&self, request: UnblockTaskRequest) -> Result<TaskTransition, BoardError> {
+    pub fn execute(&self, request: UnblockTaskRequest) -> Result<TaskChange, BoardError> {
         let reason = bounded(&request.reason, "resolution", TEXT_MAX_BYTES)?;
         let actor = request.actor.as_str();
         let running = Access {
@@ -44,8 +44,12 @@ impl UnblockTask {
             running,
             |transaction, _| {
                 let task = owned(transaction, &request.task_id, &request.token, actor)?;
+                let changed = |transition| TaskChange {
+                    task_id: stored_id(&task),
+                    transition,
+                };
                 match task.text("status") {
-                    Some("claimed") => Ok(TaskTransition::Unchanged),
+                    Some("claimed") => Ok(changed(TaskTransition::Unchanged)),
                     Some("blocked") => {
                         transaction.update_task_status(&request.task_id, &TaskUpdate::Unblock)?;
                         transaction.event(
@@ -57,7 +61,7 @@ impl UnblockTask {
                                 ("reason", Value::from(reason)),
                             ]),
                         )?;
-                        Ok(TaskTransition::Applied)
+                        Ok(changed(TaskTransition::Applied))
                     }
                     _ => Err(BoardError::new(
                         RefusalKind::WrongState,

@@ -5,8 +5,8 @@ use serde_json::Value;
 
 use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::{owned, unsubmitted};
-use crate::application::swarm::dto::{BlockTaskRequest, TaskTransition, TaskUpdate};
+use crate::application::swarm::board_tasks::{owned, stored_id, unsubmitted};
+use crate::application::swarm::dto::{BlockTaskRequest, TaskChange, TaskTransition, TaskUpdate};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::validation::TEXT_MAX_BYTES;
 use crate::domain::swarm::{Access, BoardError, bounded, python_equal};
@@ -30,7 +30,7 @@ impl BlockTask {
     /// The reason's bound, an authorisation or budget refusal, `unknown
     /// task`, `stale or unowned claim`, the submitted evidence's
     /// immutability, or the store's.
-    pub fn execute(&self, request: BlockTaskRequest) -> Result<TaskTransition, BoardError> {
+    pub fn execute(&self, request: BlockTaskRequest) -> Result<TaskChange, BoardError> {
         let reason = bounded(&request.reason, "blocker", TEXT_MAX_BYTES)?;
         let actor = request.actor.as_str();
         let running = Access {
@@ -44,12 +44,16 @@ impl BlockTask {
             running,
             |transaction, _| {
                 let task = owned(transaction, &request.task_id, &request.token, actor)?;
+                let changed = |transition| TaskChange {
+                    task_id: stored_id(&task),
+                    transition,
+                };
                 unsubmitted(&task)?;
                 let same_blocker = task
                     .get("blocker")
                     .is_some_and(|blocker| python_equal(blocker, &request.reason));
                 if task.text("status") == Some("blocked") && same_blocker {
-                    return Ok(TaskTransition::Unchanged);
+                    return Ok(changed(TaskTransition::Unchanged));
                 }
                 let update = TaskUpdate::Block {
                     reason: reason.to_owned(),
@@ -64,7 +68,7 @@ impl BlockTask {
                         ("reason", Value::from(reason)),
                     ]),
                 )?;
-                Ok(TaskTransition::Applied)
+                Ok(changed(TaskTransition::Applied))
             },
         )
     }

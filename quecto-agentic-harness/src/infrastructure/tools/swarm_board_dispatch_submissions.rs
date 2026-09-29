@@ -3,12 +3,15 @@
 //! reaches the use case as the JSON value passed (Python binds a task id
 //! or a token untyped and type-checks the rest at run time), and each
 //! method answers `None`. The decision names whether the call changed the
-//! task or found it already as asked.
+//! task or found it already as asked; the record names the task by the id
+//! its row holds (#2303), as the task methods' records do.
 use serde_json::Value;
 
+use super::tasks::acted_on;
 use super::{Parameter, Served, required, take};
 use crate::application::swarm::dto::{
-    BlockTaskRequest, SubmitTaskRequest, TaskTransition, UnblockTaskRequest, VerifyTaskRequest,
+    BlockTaskRequest, SubmitTaskRequest, TaskChange, TaskTransition, UnblockTaskRequest,
+    VerifyTaskRequest,
 };
 use crate::application::swarm::use_cases::{BlockTask, SubmitTask, UnblockTask, VerifyTask};
 use crate::domain::swarm::BoardError;
@@ -24,15 +27,16 @@ pub(super) const VERIFY_TASK: [Parameter; 3] =
     [required("task_id"), required("token"), required("revision")];
 
 /// `None`, with `applied` as the decision of a change and `unchanged` for
-/// a call that found the task already as asked.
-fn answered(transition: TaskTransition, applied: &'static str) -> Served {
+/// a call that found the task already as asked, recording the task the
+/// row holds (#2303).
+fn answered(change: TaskChange, applied: &'static str) -> Served {
     Served {
         value: Value::Null,
-        decision: match transition {
+        decision: match change.transition {
             TaskTransition::Applied => applied,
             TaskTransition::Unchanged => "unchanged",
         },
-        task_id: None,
+        task_id: acted_on(Some(&change.task_id)),
         message_id: None,
         cursor_moved: None,
     }
@@ -44,13 +48,13 @@ pub(super) fn block(
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id, token, reason] = take(arguments)?;
-    let transition = block_task.execute(BlockTaskRequest {
+    let change = block_task.execute(BlockTaskRequest {
         actor: actor.to_owned(),
         task_id,
         token,
         reason,
     })?;
-    Ok(answered(transition, "blocked"))
+    Ok(answered(change, "blocked"))
 }
 
 pub(super) fn unblock(
@@ -59,13 +63,13 @@ pub(super) fn unblock(
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id, token, reason] = take(arguments)?;
-    let transition = unblock_task.execute(UnblockTaskRequest {
+    let change = unblock_task.execute(UnblockTaskRequest {
         actor: actor.to_owned(),
         task_id,
         token,
         reason,
     })?;
-    Ok(answered(transition, "unblocked"))
+    Ok(answered(change, "unblocked"))
 }
 
 pub(super) fn submit(
@@ -74,13 +78,13 @@ pub(super) fn submit(
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id, token, evidence] = take(arguments)?;
-    let transition = submit_task.execute(SubmitTaskRequest {
+    let change = submit_task.execute(SubmitTaskRequest {
         actor: actor.to_owned(),
         task_id,
         token,
         evidence,
     })?;
-    Ok(answered(transition, "submitted"))
+    Ok(answered(change, "submitted"))
 }
 
 pub(super) fn verify_task(
@@ -89,13 +93,13 @@ pub(super) fn verify_task(
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id, token, revision] = take(arguments)?;
-    let transition = verify_task.execute(VerifyTaskRequest {
+    let change = verify_task.execute(VerifyTaskRequest {
         actor: actor.to_owned(),
         task_id,
         token,
         revision,
     })?;
-    Ok(answered(transition, "verified"))
+    Ok(answered(change, "verified"))
 }
 
 #[cfg(test)]

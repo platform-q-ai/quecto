@@ -4,7 +4,7 @@ use super::UnblockTask;
 use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
-use crate::application::swarm::dto::{TaskTransition, UnblockTaskRequest};
+use crate::application::swarm::dto::{TaskChange, TaskTransition, UnblockTaskRequest};
 use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// Task 1 blocked, task 2 claimed and task 3 submitted, all by the worker
@@ -47,13 +47,18 @@ fn a_resolved_blocker_resumes_the_original_claim() {
                 json!("approval received")
             ))
             .unwrap(),
-        TaskTransition::Applied
+        TaskChange {
+            task_id: json!(1),
+            transition: TaskTransition::Applied,
+        },
+        "the task acted on is the id its row holds"
     );
     for task in [1, 2] {
         assert_eq!(
             service
                 .execute(unblock(json!(task), "stored-token", json!("again")))
-                .unwrap(),
+                .unwrap()
+                .transition,
             TaskTransition::Unchanged,
             "{task}"
         );

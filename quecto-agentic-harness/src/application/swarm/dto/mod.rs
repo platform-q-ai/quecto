@@ -23,7 +23,8 @@ pub use run::{
     RunStatusRow, RunStatusView,
 };
 pub use submissions::{
-    BlockTaskRequest, SubmitTaskRequest, TaskTransition, UnblockTaskRequest, VerifyTaskRequest,
+    BlockTaskRequest, SubmitTaskRequest, TaskChange, TaskTransition, UnblockTaskRequest,
+    VerifyTaskRequest,
 };
 pub use tasks::{
     ClaimTaskRequest, CreateTaskRequest, CreatedTask, NewTask, ReadTaskRequest, ReleaseTaskRequest,

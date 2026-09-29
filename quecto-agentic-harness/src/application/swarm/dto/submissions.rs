@@ -17,6 +17,15 @@ pub enum TaskTransition {
     Unchanged,
 }
 
+/// What an owner operation did, and to which task (#2303): the id its row
+/// holds, which the caller's id (`"2"`, `true`) only binds to, for the
+/// op's telemetry record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskChange {
+    pub task_id: Value,
+    pub transition: TaskTransition,
+}
+
 /// `Tasks.block(task_id, token, reason)` as `actor`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockTaskRequest {

@@ -152,6 +152,31 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "WrongState",
     ),
     (
+        "src/application/swarm/use_cases/submit_task.rs:evidence",
+        "artifact and revision evidence required",
+        "Invalid",
+    ),
+    (
+        "src/application/swarm/use_cases/unblock_task.rs:UnblockTask::execute",
+        "only blocked or claimed work may resume",
+        "WrongState",
+    ),
+    (
+        "src/application/swarm/use_cases/verify_task.rs:VerifyTask::execute",
+        "stale claim or work not submitted",
+        "StaleToken",
+    ),
+    (
+        "src/application/swarm/use_cases/verify_task.rs:current_revision",
+        "stale evidence revision",
+        "StaleRevision",
+    ),
+    (
+        "src/application/swarm/use_cases/verify_task.rs:current_revision",
+        "stored evidence is not a list of revisioned entries",
+        "Store",
+    ),
+    (
         "src/domain/swarm/dependencies.rs:acyclic",
         "cyclic dependencies",
         "DependencyCycle",

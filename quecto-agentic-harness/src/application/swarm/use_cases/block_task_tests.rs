@@ -4,7 +4,7 @@ use super::BlockTask;
 use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
-use crate::application::swarm::dto::{BlockTaskRequest, TaskTransition};
+use crate::application::swarm::dto::{BlockTaskRequest, TaskChange, TaskTransition};
 use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// Task 1 claimed by the worker (token `stored-token`), task 2 submitted
@@ -42,18 +42,24 @@ fn the_owner_blocks_its_claim_once_per_reason() {
         service
             .execute(block(json!("1"), "stored-token", reason.clone()))
             .unwrap(),
-        TaskTransition::Applied
+        TaskChange {
+            task_id: json!(1),
+            transition: TaskTransition::Applied,
+        },
+        "the task acted on is the id its row holds"
     );
     assert_eq!(
         service
             .execute(block(json!(1), "stored-token", reason.clone()))
-            .unwrap(),
+            .unwrap()
+            .transition,
         TaskTransition::Unchanged
     );
     assert_eq!(
         service
             .execute(block(json!(1), "stored-token", json!("another")))
-            .unwrap(),
+            .unwrap()
+            .transition,
         TaskTransition::Applied
     );
     let state = board.snapshot();

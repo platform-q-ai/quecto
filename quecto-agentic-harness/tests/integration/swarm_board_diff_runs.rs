@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use serde_json::{Map, Value, json};
 use swarm_board_diff::Outcome;
 use swarm_board_diff::dump::{Dump, first_difference, logical_dump};
-use swarm_board_diff::scenario::{Hold, held, run_both, step, try_run_both};
+use swarm_board_diff::scenario::{Hold, held, run_both, sql, step, try_run_both};
 
 pub(crate) const NOW: f64 = 1_700_000_000.25;
 const HOUR: f64 = 3_600.0;
@@ -359,4 +359,36 @@ fn the_comparator_covers_the_schema_rows_counts_and_pragmas() {
     let (_f, second) =
         dump_of("CREATE TABLE t (x); INSERT INTO t VALUES('b'); INSERT INTO t VALUES('a');");
     assert!(first_difference(&first, &second).is_some());
+}
+
+/// A NULL `run.status` (#2270 review L2) reads as Python reads it:
+/// `_snapshot` answers `status: null`, `_status` answers it too, and
+/// `create` over it is refused as over any run not in setup.
+#[test]
+fn a_null_run_status_reads_as_python_reads_it() {
+    run_both(&[
+        step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+        sql("UPDATE run SET status=NULL"),
+        step("parent", "_snapshot", json!([]), NOW + 1.0),
+        step("supervisor", "_status", json!([]), NOW + 2.0),
+        step(
+            "parent",
+            "create_run",
+            json!(["g", [], [{"id": "c", "kind": "review", "description": "d"}], 5, NOW + 3_600.0]),
+            NOW + 3.0,
+        ),
+        sql("UPDATE run SET deadline=0.5"),
+        step("parent", "_snapshot", json!([]), NOW + 4.0),
+    ]);
+}
+
+/// A run with no row for `_status` to read, after one existed.
+#[test]
+fn status_after_the_run_row_is_deleted_is_identical() {
+    run_both(&[
+        step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+        sql("DELETE FROM run"),
+        step("supervisor", "_status", json!([]), NOW + 1.0),
+        step("parent", "_snapshot", json!([]), NOW + 2.0),
+    ]);
 }

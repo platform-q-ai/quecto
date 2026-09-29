@@ -110,14 +110,16 @@ fn a_submission_is_immutable_under_its_claim() {
     assert_eq!(
         service
             .execute(submit(json!("1"), "stored-token", evidence.clone()))
-            .unwrap(),
+            .unwrap()
+            .transition,
         TaskTransition::Applied
     );
     let same = json!([{"n": 1.0, "revision": "R1", "artifact": "reviewed-A"}]);
     assert_eq!(
         service
             .execute(submit(json!(1), "stored-token", same))
-            .unwrap(),
+            .unwrap()
+            .transition,
         TaskTransition::Unchanged
     );
     assert_eq!(

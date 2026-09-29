@@ -92,13 +92,15 @@ fn the_coordinator_verifies_the_current_submission_once() {
     assert_eq!(
         service
             .execute(verify("parent", json!("1"), "stored-token", json!("R1")))
-            .unwrap(),
+            .unwrap()
+            .transition,
         TaskTransition::Applied
     );
     assert_eq!(
         service
             .execute(verify("parent", json!(1), "stored-token", json!("R1")))
-            .unwrap(),
+            .unwrap()
+            .transition,
         TaskTransition::Unchanged
     );
     assert_eq!(

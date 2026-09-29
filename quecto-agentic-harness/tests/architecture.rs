@@ -1533,6 +1533,7 @@ fn application_path_allowed(path: &str) -> bool {
             // Blockers, submissions and verification (#2272).
             | "BlockTaskRequest"
             | "SubmitTaskRequest"
+            | "TaskChange"
             | "TaskTransition"
             | "UnblockTaskRequest"
             | "VerifyTaskRequest",
