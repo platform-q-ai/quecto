@@ -63,6 +63,10 @@ pub(super) const ROUND_FIVE: &[(&str, &str)] = &[
         "ftp://anonymous@ftp.example/pub",
         "ftp://anonymous@ftp.example/pub",
     ),
+    (
+        "pull from https://***@host/r failed",
+        "pull from https://***@host/r failed",
+    ),
     // M3: a URL password holding `/`, `#`, `?` or `"`, to the last `@`
     // before the host.
     (
@@ -321,6 +325,12 @@ fn the_round_five_trade_offs_are_pinned() {
             "the key is Zq8vB2mNx4LpW7rT9yK3",
             "the key is Zq8vB2mNx4LpW7rT9yK3",
         ),
+        // An XML element is only redacted up to its closing tag on the
+        // same line; one left open there is not (a generic,
+        // `Option<Secret>,`, has no closing tag either).
+        ("<password>hunter2", "<password>hunter2"),
+        // `gh secret set NAME` is no fish `set -x NAME value`.
+        ("gh secret set API_TOKEN", "gh secret set API_TOKEN"),
         // A lower-case userinfo with no digits reads as a username.
         ("https://deploybot@host/x", "https://deploybot@host/x"),
     ] {

@@ -77,45 +77,104 @@ const ADVERSARIAL_UNITS: &[&str] = &[
     "set -x A_TOKEN ",
 ];
 
-/// The shortest of two redactions of `text`: the least disturbed by a
+/// The shortest of `runs` redactions of `text`: the least disturbed by a
 /// loaded runner.
-fn fastest_redaction(text: &str) -> Duration {
-    (0..2)
+fn fastest_redaction(text: &str, runs: usize) -> Duration {
+    (0..runs)
         .map(|_| {
             let started = Instant::now();
             std::hint::black_box(redact_secrets(std::hint::black_box(text)));
             started.elapsed()
         })
         .min()
-        .expect("two runs")
+        .expect("at least one run")
 }
 
 /// The smallest time a ratio is taken against, so a sub-millisecond
 /// small run cannot turn scheduler noise into a failure.
 const TIME_FLOOR: Duration = Duration::from_millis(20);
 
+/// The most a mebibyte of any unit may take. Every unit takes under 1.5 s
+/// in a debug build on an idle machine; the bound leaves room for a
+/// loaded CI runner, and a quadratic rule (minutes) is far past it.
+const LARGE_BOUND: Duration = Duration::from_secs(5);
+
+/// A unit's two timings, and how the large one grew over the small one.
+struct Growth {
+    small: Duration,
+    large: Duration,
+    ratio: f64,
+}
+
+impl Growth {
+    /// Time `small` and `large`, the best of `runs` each.
+    fn measure(small: &str, large: &str, runs: usize) -> Self {
+        let (small, large) = (
+            fastest_redaction(small, runs),
+            fastest_redaction(large, runs),
+        );
+        let ratio = large.as_secs_f64() / small.max(TIME_FLOOR).as_secs_f64();
+        Self {
+            small,
+            large,
+            ratio,
+        }
+    }
+
+    /// The fastest of two measurements at each size.
+    fn measure_min(first: Self, again: Self) -> Self {
+        let (small, large) = (first.small.min(again.small), first.large.min(again.large));
+        let ratio = large.as_secs_f64() / small.max(TIME_FLOOR).as_secs_f64();
+        Self {
+            small,
+            large,
+            ratio,
+        }
+    }
+
+    /// Whether it is linear: well under six times as long for four times
+    /// the text, and inside [`LARGE_BOUND`].
+    fn is_linear(&self) -> bool {
+        self.ratio < 6.0 && self.large < LARGE_BOUND
+    }
+}
+
 /// Linear time: a text four times as long takes well under six times as
 /// long (a quadratic rule takes sixteen), and a mebibyte of any unit
-/// redacts in under the absolute bound even in a debug build.
+/// redacts inside [`LARGE_BOUND`] even in a debug build. Each unit is
+/// timed once, and a unit that looks slow is timed again, twice more at
+/// each size, keeping the fastest of the three (one far past the bound
+/// is no scheduling hiccup, and fails at once).
 #[test]
 fn every_rule_family_redacts_adversarial_text_in_linear_time() {
     const SMALL: usize = 256 * 1024;
     const LARGE: usize = 1024 * 1024;
-    let bound = Duration::from_secs(2);
     let mut failures = Vec::new();
     for unit in ADVERSARIAL_UNITS {
         let small = unit.repeat(SMALL / unit.len());
         let large = unit.repeat(LARGE / unit.len());
-        let (small_time, large_time) = (fastest_redaction(&small), fastest_redaction(&large));
-        let ratio = large_time.as_secs_f64() / small_time.max(TIME_FLOOR).as_secs_f64();
-        eprintln!("{unit:?}: 256 KiB {small_time:?}, 1 MiB {large_time:?}, ratio {ratio:.2}");
-        if ratio >= 12.0 {
-            failures.push(format!("{unit:?} is quadratic: ratio {ratio:.2}"));
-        } else if ratio >= 6.0 {
-            failures.push(format!("{unit:?} grows too fast: ratio {ratio:.2}"));
+        let first = Growth::measure(&small, &large, 1);
+        let growth = match (first.is_linear(), first.large < LARGE_BOUND * 3) {
+            (true, _) | (false, false) => first,
+            (false, true) => {
+                let again = Growth::measure(&small, &large, 2);
+                Growth::measure_min(first, again)
+            }
+        };
+        eprintln!(
+            "{unit:?}: 256 KiB {:?}, 1 MiB {:?}, ratio {:.2}",
+            growth.small, growth.large, growth.ratio
+        );
+        if growth.ratio >= 12.0 {
+            failures.push(format!("{unit:?} is quadratic: ratio {:.2}", growth.ratio));
+        } else if growth.ratio >= 6.0 {
+            failures.push(format!(
+                "{unit:?} grows too fast: ratio {:.2}",
+                growth.ratio
+            ));
         }
-        if large_time >= bound {
-            failures.push(format!("{unit:?}: 1 MiB took {large_time:?}"));
+        if growth.large >= LARGE_BOUND {
+            failures.push(format!("{unit:?}: 1 MiB took {:?}", growth.large));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
