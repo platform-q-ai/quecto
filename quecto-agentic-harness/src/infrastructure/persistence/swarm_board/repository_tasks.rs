@@ -1,9 +1,8 @@
-//! `BoardTasks`, `BoardRequests` and `BoardFiles` over the SQLite store
-//! (#2272): the `tasks` rows, the request ledger and a claim's file
-//! reservations, by Python's SQL (`swarm_tasks.py`, `swarm_store.py`). A
-//! task id, a claim token or a file's task is the caller's value, bound as
-//! Python's `sqlite3` binds it ([`loose`]), so the column affinity finds
-//! rows as Python's board does.
+//! `BoardTasks` and `BoardRequests` over the SQLite store (#2272): the
+//! `tasks` rows and the request ledger, by Python's SQL (`swarm_tasks.py`,
+//! `swarm_store.py`). A task id or a claim token is the caller's value,
+//! bound as Python's `sqlite3` binds it ([`loose`]), so the column
+//! affinity finds rows as Python's board does.
 //!
 //! A task row is fetched as Python fetches it (every column decoded, text
 //! that is not UTF-8 refused with Python's text), and its `acceptance`,
@@ -21,7 +20,7 @@ use super::py_json::{self, PyJson};
 use super::repository::{SqliteBoard, cell_at, encoded, failed, fetched, loose, refused, text};
 use super::store::TransactionError;
 use crate::application::swarm::dto::{NewTask, TaskRow, TaskUpdate};
-use crate::application::swarm::ports::{BoardFiles, BoardRequests, BoardTasks, RequestAction};
+use crate::application::swarm::ports::{BoardRequests, BoardTasks, RequestAction};
 use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// The task columns `_task` loads from JSON.
@@ -139,6 +138,10 @@ impl BoardTasks for SqliteBoard<'_> {
                 "UPDATE tasks SET status='completed' WHERE id=?",
                 &[loose(1, id)?],
             ),
+            TaskUpdate::Reopen => self.run_on_task(
+                "UPDATE tasks SET status='ready',owner=NULL,token=NULL,blocker=NULL,evidence='[]' WHERE id=?",
+                &[loose(1, id)?],
+            ),
         }
     }
 }
@@ -163,17 +166,6 @@ impl BoardRequests for SqliteBoard<'_> {
         answer
             .to_value()
             .map_err(|stored| BoardError::new(RefusalKind::Store, stored.to_string()))
-    }
-}
-
-impl BoardFiles for SqliteBoard<'_> {
-    fn delete_claim_files(&self, task: &Value, claim: &Value) -> Result<(), BoardError> {
-        // Any number of reservations, none included.
-        self.run(
-            "DELETE FROM files WHERE task=? AND claim=?",
-            &[loose(1, task)?, loose(2, claim)?],
-        )
-        .map(|_| ())
     }
 }
 

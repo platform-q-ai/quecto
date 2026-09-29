@@ -10,11 +10,14 @@
 //!   either sits in one of the pin table's own tests, checking the `Err`
 //!   (the receiver of `.unwrap_err()` or `.expect_err(..)`), or in the
 //!   harness's own `run_both`, without either (round-4 L2). A pin table's
-//!   own test is a top-level `#[test]` function of
-//!   `swarm_board_diff_loose.rs` named in `PERMITTED_DIVERGENCES` and not
-//!   pinned elsewhere (`EXTERNAL_PINS` names neither it nor its test), or
-//!   the explicit `outside_edited_evidence` supplemental pin in
-//!   `swarm_board_diff_submissions.rs`, and
+//!   own test is a top-level `#[test]` function of a file the pin table
+//!   lists in `PIN_TABLE_FILES` (`swarm_board_diff_loose.rs` itself, and
+//!   each file holding a pin of its own, #2275; a file is a pin table
+//!   only by being listed, PR #2321 final review), named by a divergence
+//!   of `PERMITTED_DIVERGENCES` not pinned elsewhere (`EXTERNAL_PINS`
+//!   names neither it nor its test), or by the second pin `SECOND_PINS`
+//!   gives such a divergence (#2273's `outside_edited_evidence` pin in
+//!   `swarm_board_diff_submissions.rs`); and
 //!   the harness's `run_both` is the top-level function of that name in
 //!   the harness's file.
 //!
@@ -35,13 +38,22 @@ const HARNESS_RUNNER: &str = "run_both";
 const SELF_TEST_PREFIX: &str = "harness_self_test_";
 /// The file holding the pin table.
 const PIN_TABLE: &str = "tests/integration/swarm_board_diff_loose.rs";
+/// The folder the pin table's `include_str!` paths are relative to.
+const PIN_TABLE_DIR: &str = "tests/integration/";
+/// The pin table's constant listing, by `include_str!`, the files that
+/// hold its pins: itself and every other file holding one (#2275). The one
+/// source of truth for which files may expect a difference (PR #2321 final
+/// review).
+const PIN_TABLE_FILES: &str = "PIN_TABLE_FILES";
+/// The pin table's constant naming, for a divergence it pins, a second
+/// pinning test of another name: `(divergence, test)` pairs.
+const SECOND_PINS: &str = "SECOND_PINS";
 /// The file defining the harness and its `run_both`.
 const HARNESS_FILE: &str = "tests/common/swarm_board_diff/scenario.rs";
-/// One additional pin for `outside_edited_evidence`, kept in its focused
-/// submission scenarios rather than extending the size-limited pin table.
+/// The file holding `outside_edited_evidence`'s second pin, listed in
+/// `PIN_TABLE_FILES`, and that pin's test.
 const EVIDENCE_PIN_FILE: &str = "tests/integration/swarm_board_diff_submissions.rs";
 const EVIDENCE_PIN_TEST: &str = "edited_string_evidence_raises_in_python_and_is_refused_in_rust";
-const EVIDENCE_DIVERGENCE: &str = "outside_edited_evidence";
 /// The methods that check a harness call's `Err`.
 const EXPECTING_DIFFERENCE: [&str; 2] = ["unwrap_err", "expect_err"];
 /// A test file that is neither.
@@ -69,63 +81,131 @@ impl<'ast> Visit<'ast> for Literals {
     }
 }
 
-/// The string literals of the pin table's constant `name`.
-fn constant_literals(file: &syn::File, name: &str) -> Vec<String> {
-    let found: Vec<Vec<String>> = file
+/// The value of the pin table's constant `name`.
+fn constant<'file>(file: &'file syn::File, name: &str) -> &'file syn::Expr {
+    let found: Vec<&syn::Expr> = file
         .items
         .iter()
         .filter_map(|item| match item {
-            syn::Item::Const(constant) if constant.ident == name => {
-                let mut literals = Literals::default();
-                literals.visit_expr(&constant.expr);
-                Some(literals.0)
-            }
+            syn::Item::Const(constant) if constant.ident == name => Some(&*constant.expr),
             _ => None,
         })
         .collect();
     assert_eq!(found.len(), 1, "{PIN_TABLE} defines {name} once");
-    found.into_iter().flatten().collect()
+    found[0]
+}
+
+/// The string literals of the pin table's constant `name`.
+fn constant_literals(file: &syn::File, name: &str) -> Vec<String> {
+    let mut literals = Literals::default();
+    literals.visit_expr(constant(file, name));
+    literals.0
+}
+
+/// The pin table's file, parsed.
+fn pin_table() -> syn::File {
+    let source = std::fs::read_to_string(PIN_TABLE)
+        .unwrap_or_else(|error| panic!("read {PIN_TABLE}: {error}"));
+    syn::parse_file(&source).expect("the pin table parses")
+}
+
+/// The files the pin table lists in `PIN_TABLE_FILES`, as paths relative
+/// to the crate: each entry must be `include_str!("<file>.rs")` naming a
+/// file beside the pin table, and the pin table must list itself.
+fn pin_table_files() -> Vec<String> {
+    let file = pin_table();
+    let syn::Expr::Array(array) = constant(&file, PIN_TABLE_FILES) else {
+        panic!("{PIN_TABLE_FILES} is an array of include_str! calls");
+    };
+    let listed: Vec<String> = array
+        .elems
+        .iter()
+        .map(|element| {
+            let name = match element {
+                syn::Expr::Macro(call) if call.mac.path.is_ident("include_str") => call
+                    .mac
+                    .parse_body::<syn::LitStr>()
+                    .expect("include_str! takes one string literal")
+                    .value(),
+                _ => panic!("{PIN_TABLE_FILES} holds only include_str! calls"),
+            };
+            let plain = name.ends_with(".rs")
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.');
+            assert!(
+                plain,
+                "{PIN_TABLE_FILES} names a file beside the pin table: {name}"
+            );
+            let path = format!("{PIN_TABLE_DIR}{name}");
+            assert!(Path::new(&path).is_file(), "{PIN_TABLE_FILES} names {path}");
+            path
+        })
+        .collect();
+    assert!(
+        listed.iter().any(|path| path == PIN_TABLE),
+        "{PIN_TABLE_FILES} lists the pin table itself"
+    );
+    listed
+}
+
+/// The `(divergence, test)` pairs of the pin table's `SECOND_PINS`: an
+/// array of two-string tuples.
+fn second_pins(file: &syn::File) -> Vec<(String, String)> {
+    let syn::Expr::Array(array) = constant(file, SECOND_PINS) else {
+        panic!("{SECOND_PINS} is an array of (divergence, test) pairs");
+    };
+    array
+        .elems
+        .iter()
+        .map(|element| {
+            let mut literals = Literals::default();
+            literals.visit_expr(element);
+            match (element, literals.0.as_slice()) {
+                (syn::Expr::Tuple(_), [divergence, test]) => (divergence.clone(), test.clone()),
+                _ => panic!("{SECOND_PINS} holds only (divergence, test) pairs"),
+            }
+        })
+        .collect()
 }
 
 /// The test names the pin table allows to expect a difference: the
-/// divergences it pins itself, so none `EXTERNAL_PINS` names.
+/// divergences it pins itself, so none `EXTERNAL_PINS` names, and the
+/// second pins `SECOND_PINS` gives them.
 fn pinned_tests() -> Vec<String> {
-    let source = std::fs::read_to_string(PIN_TABLE)
-        .unwrap_or_else(|error| panic!("read {PIN_TABLE}: {error}"));
-    let file = syn::parse_file(&source).expect("the pin table parses");
+    let file = pin_table();
     let external = constant_literals(&file, EXTERNAL);
     assert!(!external.is_empty(), "{EXTERNAL} names its pins");
-    let pinned: Vec<String> = constant_literals(&file, PERMITTED)
+    let mut pinned: Vec<String> = constant_literals(&file, PERMITTED)
         .into_iter()
         .filter(|name| !external.contains(name))
         .collect();
     assert!(!pinned.is_empty(), "the pin table pins divergences itself");
+    for (divergence, test) in second_pins(&file) {
+        assert!(
+            pinned.contains(&divergence),
+            "{SECOND_PINS}: {test} pins {divergence}, which the pin table does not pin itself"
+        );
+        pinned.push(test);
+    }
     pinned
-}
-
-fn evidence_pin_is_registered() -> bool {
-    let source = std::fs::read_to_string(PIN_TABLE)
-        .unwrap_or_else(|error| panic!("read {PIN_TABLE}: {error}"));
-    let file = syn::parse_file(&source).expect("the pin table parses");
-    constant_literals(&file, PERMITTED).contains(&EVIDENCE_DIVERGENCE.to_owned())
-        && !constant_literals(&file, EXTERNAL).contains(&EVIDENCE_DIVERGENCE.to_owned())
 }
 
 /// What the file being checked is to the harness.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Role {
     PinTable,
-    EvidencePin,
     Harness,
     Other,
 }
 
 impl Role {
-    fn of(path: &str) -> Self {
+    /// A pin table only when `pin_tables` (the pin table's
+    /// `PIN_TABLE_FILES`) lists `path` exactly.
+    fn of(path: &str, pin_tables: &[String]) -> Self {
         match path {
-            PIN_TABLE => Self::PinTable,
-            EVIDENCE_PIN_FILE => Self::EvidencePin,
             HARNESS_FILE => Self::Harness,
+            _ if pin_tables.iter().any(|listed| listed == path) => Self::PinTable,
             _ => Self::Other,
         }
     }
@@ -197,7 +277,6 @@ impl Calls {
                 && test
                 && match self.role {
                     Role::PinTable => self.pinned.contains(&name),
-                    Role::EvidencePin => name == EVIDENCE_PIN_TEST && evidence_pin_is_registered(),
                     Role::Harness | Role::Other => false,
                 },
             runner: top_level && self.role == Role::Harness && name == HARNESS_RUNNER,
@@ -328,7 +407,7 @@ fn harness_tokens(tokens: TokenStream) -> usize {
 /// a plain import is a violation of its own.
 fn violations(path: &str, source: &str) -> Vec<String> {
     let file = syn::parse_file(source).expect("the test file parses");
-    let mut calls = Calls::new(pinned_tests(), Role::of(path));
+    let mut calls = Calls::new(pinned_tests(), Role::of(path, &pin_table_files()));
     calls.visit_file(&file);
     let mut found: Vec<String> = calls
         .violations
@@ -417,16 +496,12 @@ fn the_hook_checker_rejects_tampering_outside_self_tests() {
         }
     "#;
     assert_eq!(violations(PIN_TABLE, pinned), Vec::<String>::new());
-    let evidence_pin = r#"
-        #[test]
-        fn edited_string_evidence_raises_in_python_and_is_refused_in_rust() {
-            let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
-        }
-    "#;
-    assert_eq!(
-        violations(EVIDENCE_PIN_FILE, evidence_pin),
-        Vec::<String>::new()
-    );
+    // A second pin, in the listed file holding it.
+    let evidence_pin = pinned.replace("outside_edited_columns", EVIDENCE_PIN_TEST);
+    let found = violations(EVIDENCE_PIN_FILE, &evidence_pin);
+    assert_eq!(found, Vec::<String>::new());
+    // Only there: a file the pin table does not list holds no pin.
+    assert_eq!(violations(ELSEWHERE, &evidence_pin).len(), 1);
 
     let ordinary = r#"
         #[test]
@@ -475,6 +550,23 @@ fn the_hook_checker_requires_expected_differences_to_be_pinned() {
         }
     "#;
     assert_eq!(violations(PIN_TABLE, pinned), Vec::<String>::new());
+    // A sibling of the pin table may hold a slice's pins (#2275) when the
+    // pin table lists it in `PIN_TABLE_FILES`; a file merely named like
+    // one, below a folder so named, or unlisted (PR #2321 final review:
+    // `_probe.rs`, and `_runs.rs` and `_completion.rs`, which hold only
+    // pins of `EXTERNAL_PINS`) may not.
+    let sibling = "tests/integration/swarm_board_diff_loose_files.rs";
+    assert_eq!(violations(sibling, pinned), Vec::<String>::new());
+    for elsewhere in [
+        "tests/integration/swarm_board_diff_loose_files.txt",
+        "tests/integration/swarm_board_diff_loose_x/files.rs",
+        "tests/integration/swarm_board_diff_loosely.rs",
+        "tests/integration/swarm_board_diff_loose_probe.rs",
+        "tests/integration/swarm_board_diff_loose_runs.rs",
+        "tests/integration/swarm_board_diff_loose_completion.rs",
+    ] {
+        assert_eq!(violations(elsewhere, pinned).len(), 2, "{elsewhere}");
+    }
 
     for unpinned in [
         "fn a_scenario() { let d = try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
@@ -617,4 +709,35 @@ fn the_hook_checker_permits_only_the_pin_tables_own_tests() {
             "{path}: {bypass}: {found:?}"
         );
     }
+}
+
+/// The pin tables are the files the pin table lists in `PIN_TABLE_FILES`
+/// (PR #2321 final review), read from its `include_str!` calls: itself,
+/// the #2275 sibling holding pins and the submission scenarios holding
+/// `outside_edited_evidence`'s second pin, and not the siblings holding
+/// only pins of `EXTERNAL_PINS`. The second pin is a test of that file.
+#[test]
+fn the_pin_tables_are_the_files_pin_table_files_lists() {
+    let listed = pin_table_files();
+    for path in [
+        PIN_TABLE,
+        "tests/integration/swarm_board_diff_loose_files.rs",
+        EVIDENCE_PIN_FILE,
+    ] {
+        assert!(listed.iter().any(|file| file == path), "{path}: {listed:?}");
+        assert!(Role::of(path, &listed) == Role::PinTable, "{path}");
+    }
+    for path in [
+        "tests/integration/swarm_board_diff_loose_runs.rs",
+        "tests/integration/swarm_board_diff_loose_completion.rs",
+    ] {
+        assert!(listed.iter().all(|file| file != path), "{path}: {listed:?}");
+        assert!(Role::of(path, &listed) == Role::Other, "{path}");
+    }
+    let evidence = ("outside_edited_evidence", EVIDENCE_PIN_TEST);
+    let seconds = second_pins(&pin_table());
+    assert_eq!(seconds, [(evidence.0.to_owned(), evidence.1.to_owned())]);
+    let source = std::fs::read_to_string(EVIDENCE_PIN_FILE).expect("the second pin's file");
+    assert!(source.contains(&format!("#[test]\nfn {EVIDENCE_PIN_TEST}()")));
+    assert!(pinned_tests().contains(&EVIDENCE_PIN_TEST.to_owned()));
 }

@@ -11,11 +11,12 @@ use serde_json::Value;
 
 pub use self::control::{paused, recorded, usage};
 pub use self::evidence::accepted;
+pub use self::files::{LexicalCheckout, StoredMessage};
 pub use self::tasks::{StoredFile, StoredRequest, stored_task};
 use crate::application::swarm::dto::{
-    AmendedContract, EvidenceEntry, LaunchIdentity, MemberClaimCounts, MemberRow, NewMember,
-    NewRequestUsage, NewRun, RunContract, RunOwnerRow, RunStatusRow, StoredContract, TaskRow,
-    UsageReport,
+    AmendedContract, EvidenceEntry, LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow,
+    NewMember, NewRequestUsage, NewRun, RunContract, RunOwnerRow, RunStatusRow, StoredContract,
+    TaskRow, UsageReport,
 };
 use crate::application::swarm::ports::{
     BoardEncoding, BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
@@ -57,6 +58,7 @@ pub struct BoardState {
     pub request_usage: Vec<NewRequestUsage>,
     /// The `evidence` rows, each with the actor that recorded it.
     pub evidence: Vec<(String, EvidenceEntry)>,
+    pub messages: Vec<StoredMessage>,
 }
 
 /// A journal shared by the board and the id source, so a test reads the
@@ -368,6 +370,12 @@ impl BoardMembers for MemoryTransaction<'_> {
             .cloned())
     }
 
+    fn member_status(&self, id: &Value) -> Result<Option<MemberStatusRow>, BoardError> {
+        Ok(self.member_row(id, None)?.map(|row| MemberStatusRow {
+            status: row.text("status").map(str::to_owned),
+        }))
+    }
+
     fn reserve_member(
         &self,
         id: &str,
@@ -554,6 +562,9 @@ mod control;
 
 #[path = "board_test_support_evidence.rs"]
 mod evidence;
+
+#[path = "board_test_support_files.rs"]
+mod files;
 
 /// Readings in order, then the last one forever.
 pub struct SteppingClock {

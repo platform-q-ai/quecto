@@ -5,6 +5,7 @@
 
 pub mod completion;
 pub mod control;
+pub mod files;
 pub mod location;
 pub mod measure;
 pub mod membership;
@@ -22,6 +23,10 @@ pub use control::{
     ControlAnswer, ControlReceipt, ExtendRunDeadlineRequest, PauseRunRequest, RecentRequest,
     RunTransition, StopRunRequest, UsageReport, UsageRow,
 };
+pub use files::{
+    FileRow, ListFileOwnersRequest, NewReservation, RecoverTaskRequest, Recovered,
+    ReleaseFilesRequest, Reservation, ReserveFilesRequest, Revocation, RevokeTaskRequest, Revoked,
+};
 pub use location::BoardLocation;
 pub use measure::{CallMeasure, RunRoles};
 pub use membership::{
@@ -31,8 +36,8 @@ pub use membership::{
 };
 pub use run::{
     BootstrapRunRequest, Bootstrapped, CreateBranch, CreateRunRequest, CreatedRun,
-    MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow, RunSnapshotView,
-    RunStatusRow, RunStatusView,
+    MemberClaimCounts, MemberRow, MemberStatusRow, NewMember, NewRun, RunContract, RunOwnerRow,
+    RunSnapshotView, RunStatusRow, RunStatusView,
 };
 pub use submissions::{
     BlockTaskRequest, SubmitTaskRequest, TaskChange, TaskTransition, UnblockTaskRequest,

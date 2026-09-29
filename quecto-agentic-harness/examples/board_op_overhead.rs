@@ -32,6 +32,7 @@ use quecto::infrastructure::persistence::swarm_board::ids::Uuid4Ids;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::swarm_board_dispatch::call;
 use quecto::infrastructure::tools::swarm_lifecycle::SystemClock;
+use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 use serde_json::json;
 
 const WARM_UP: usize = 500;
@@ -64,6 +65,7 @@ fn handles(dir: &Path, arm: &Arm<'_>) -> SwarmBoardHandles {
             SqliteBoardRepository::new(&location),
             Arc::new(SystemClock),
             Arc::new(Uuid4Ids),
+            Arc::new(ResolvedCheckout::new(dir)),
             Arc::new(Discarded),
         ),
         Arm::On(log) => build_swarm_board_handles(location, board_op_log(true, log)),

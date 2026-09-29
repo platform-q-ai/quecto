@@ -35,7 +35,9 @@
 //! (#2273) by [`control`]; `complete`, `revalidate_task`, `amend` and the
 //! criterion `evidence` success needs (#2273) by [`completion`]; the
 //! usage methods `usage_budget`, `_record_request` and
-//! `_request_admission` (#2274) by [`usage`].
+//! `_request_admission` (#2274) by [`usage`]; and the file reservations
+//! `reserve`, `release_files` and `file_owners`, with the coordinator's
+//! `recover` and `revoke` (#2275), by [`reservations`].
 //!
 //! What S12 must keep when it adds the summaries Python answers with:
 //!
@@ -88,11 +90,11 @@ use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardReposito
 use crate::application::swarm::use_cases::{
     ActivateMember, AdmitMember, AmendRunContract, BlockTask, BootstrapRun, ClaimTask, CloseRun,
     CompleteRun, ConfigureUsageBudget, CreateRun, CreateTask, ExtendRunDeadline, JoinRun,
-    OverRepository, PauseRun, ReadControlStatus, ReadRequestAdmission, ReadRunSnapshot,
-    ReadRunStatus, ReadTask, ReadUsageReport, RecordEvidence, RecordMemberLaunch,
-    RecordRequestUsage, RegisterMemberSocket, ReleaseTask, ReleaseUnlaunchedMember, ResumeRun,
-    ResumeRunExternally, RevalidateTask, SetTaskDependencies, StopRun, SubmitTask, UnblockTask,
-    VerifyTask,
+    ListFileOwners, OverRepository, PauseRun, ReadControlStatus, ReadRequestAdmission,
+    ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport, RecordEvidence, RecordMemberLaunch,
+    RecordRequestUsage, RecoverTask, RegisterMemberSocket, ReleaseFiles, ReleaseTask,
+    ReleaseUnlaunchedMember, ReserveFiles, ResumeRun, ResumeRunExternally, RevalidateTask,
+    RevokeTask, SetTaskDependencies, StopRun, SubmitTask, UnblockTask, VerifyTask,
 };
 use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
 
@@ -143,6 +145,11 @@ pub struct SwarmBoardHandles {
     pub configure_usage_budget: Arc<ConfigureUsageBudget>,
     pub record_request_usage: Arc<RecordRequestUsage>,
     pub read_request_admission: Arc<ReadRequestAdmission>,
+    pub reserve_files: Arc<ReserveFiles>,
+    pub release_files: Arc<ReleaseFiles>,
+    pub list_file_owners: Arc<ListFileOwners>,
+    pub recover_task: Arc<RecoverTask>,
+    pub revoke_task: Arc<RevokeTask>,
     /// Each call's `swarm_op` record and its measure (#2303), only when
     /// the event log is switched on (`telemetry.event_log.enabled`, owner
     /// decision T1): `None` measures and writes nothing.
@@ -199,6 +206,11 @@ pub const BOARD_OPS: &[&str] = &[
     "usage_budget",
     "_record_request",
     "_request_admission",
+    "reserve",
+    "release_files",
+    "file_owners",
+    "recover",
+    "revoke",
     #[cfg(any(test, feature = "test-support"))]
     "create_run",
     #[cfg(any(test, feature = "test-support"))]
@@ -483,6 +495,23 @@ fn serve(
         Method::RequestAdmission => {
             usage::request_admission(&serving(&*handles.read_request_admission, over), member)
         }
+        Method::Reserve => {
+            reservations::reserve(&serving(&*handles.reserve_files, over), member, arguments)
+        }
+        Method::ReleaseFiles => {
+            reservations::release_files(&serving(&*handles.release_files, over), member, arguments)
+        }
+        Method::FileOwners => reservations::file_owners(
+            &serving(&*handles.list_file_owners, over),
+            member,
+            arguments,
+        ),
+        Method::Recover => {
+            reservations::recover(&serving(&*handles.recover_task, over), member, arguments)
+        }
+        Method::Revoke => {
+            reservations::revoke(&serving(&*handles.revoke_task, over), member, arguments)
+        }
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)
@@ -607,6 +636,8 @@ mod control;
 #[path = "swarm_board_dispatch_completion.rs"]
 mod completion;
 
+#[path = "swarm_board_dispatch_reservations.rs"]
+mod reservations;
 #[path = "swarm_board_dispatch_usage.rs"]
 mod usage;
 

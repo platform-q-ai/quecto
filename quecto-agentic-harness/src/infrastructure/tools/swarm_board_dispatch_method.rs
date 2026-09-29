@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::Level;
 #[cfg(any(test, feature = "test-support"))]
 use super::test_only;
-use super::{completion, control, members, submissions, tasks, usage};
+use super::{completion, control, members, reservations, submissions, tasks, usage};
 use crate::domain::swarm::BoardRole;
 
 /// The board methods this dispatcher serves.
@@ -43,6 +43,11 @@ pub(super) enum Method {
     UsageBudget,
     RecordRequest,
     RequestAdmission,
+    Reserve,
+    ReleaseFiles,
+    FileOwners,
+    Recover,
+    Revoke,
     #[cfg(any(test, feature = "test-support"))]
     CreateRun,
     #[cfg(any(test, feature = "test-support"))]
@@ -100,6 +105,11 @@ impl Method {
             "usage_budget" => Some(Self::UsageBudget),
             "_record_request" => Some(Self::RecordRequest),
             "_request_admission" => Some(Self::RequestAdmission),
+            "reserve" => Some(Self::Reserve),
+            "release_files" => Some(Self::ReleaseFiles),
+            "file_owners" => Some(Self::FileOwners),
+            "recover" => Some(Self::Recover),
+            "revoke" => Some(Self::Revoke),
             #[cfg(any(test, feature = "test-support"))]
             "create_run" => Some(Self::CreateRun),
             #[cfg(any(test, feature = "test-support"))]
@@ -144,6 +154,11 @@ impl Method {
             Self::UsageBudget => "usage_budget",
             Self::RecordRequest => "_record_request",
             Self::RequestAdmission => "_request_admission",
+            Self::Reserve => "reserve",
+            Self::ReleaseFiles => "release_files",
+            Self::FileOwners => "file_owners",
+            Self::Recover => "recover",
+            Self::Revoke => "revoke",
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => "create_run",
             #[cfg(any(test, feature = "test-support"))]
@@ -166,7 +181,8 @@ impl Method {
             | Self::Snapshot
             | Self::ControlStatus
             | Self::UsageReport
-            | Self::RequestAdmission => Level::Read,
+            | Self::RequestAdmission
+            | Self::FileOwners => Level::Read,
             Self::Admit
             | Self::Activate
             | Self::RecordLaunch
@@ -191,7 +207,11 @@ impl Method {
             | Self::Amend
             | Self::Evidence
             | Self::UsageBudget
-            | Self::RecordRequest => Level::Mutation,
+            | Self::RecordRequest
+            | Self::Reserve
+            | Self::ReleaseFiles
+            | Self::Recover
+            | Self::Revoke => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
@@ -235,7 +255,12 @@ impl Method {
             | Self::RevalidateTask
             | Self::Amend
             | Self::Evidence
-            | Self::UsageBudget => None,
+            | Self::UsageBudget
+            | Self::Reserve
+            | Self::ReleaseFiles
+            | Self::FileOwners
+            | Self::Recover
+            | Self::Revoke => None,
             // Test-only halves the differential harness drives as the host;
             // the member-facing `create`, `_bootstrap` and `task` S12 serves
             // record the caller's own role.
@@ -282,7 +307,12 @@ impl Method {
             | Self::Evidence
             | Self::UsageBudget
             | Self::RecordRequest
-            | Self::RequestAdmission => true,
+            | Self::RequestAdmission
+            | Self::Reserve
+            | Self::ReleaseFiles
+            | Self::FileOwners
+            | Self::Recover
+            | Self::Revoke => true,
             // A member's own resume is refused before any gate (#2273), so
             // it never answers.
             Self::Resume => false,
@@ -343,6 +373,11 @@ impl Method {
             Self::Evidence => &completion::EVIDENCE,
             Self::UsageBudget => &usage::USAGE_BUDGET,
             Self::RecordRequest => &usage::RECORD_REQUEST,
+            Self::Reserve => &reservations::RESERVE,
+            Self::ReleaseFiles => &reservations::RELEASE_FILES,
+            Self::FileOwners => &reservations::FILE_OWNERS,
+            Self::Recover => &reservations::RECOVER,
+            Self::Revoke => &reservations::REVOKE,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => &test_only::CREATE,
             #[cfg(any(test, feature = "test-support"))]

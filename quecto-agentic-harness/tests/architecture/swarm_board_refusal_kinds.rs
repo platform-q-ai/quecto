@@ -55,6 +55,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "RunMissing",
     ),
     (
+        "src/application/swarm/board_recovery.rs:python_str",
+        "a task id that finds a task is text or a number",
+        "Internal",
+    ),
+    (
         "src/application/swarm/board_tasks.rs:owned",
         "stale or unowned claim",
         "StaleToken",
@@ -175,6 +180,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "LaunchConflict",
     ),
     (
+        "src/application/swarm/use_cases/list_file_owners.rs:ListFileOwners::execute",
+        "file page requires nonnegative offset and limit 1 through 100",
+        "Invalid",
+    ),
+    (
         "src/application/swarm/use_cases/record_evidence.rs:RecordEvidence::execute",
         "coordination run missing",
         "RunMissing",
@@ -220,9 +230,39 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "RequestIdReused",
     ),
     (
+        "src/application/swarm/use_cases/recover_task.rs:RecoverTask::execute",
+        "only abandoned active work can be recovered",
+        "WrongState",
+    ),
+    (
+        "src/application/swarm/use_cases/recover_task.rs:RecoverTask::execute",
+        "recovery requires confirmed worker death; revoke(id, reason) reassigns a live owner",
+        "WrongState",
+    ),
+    (
+        "src/application/swarm/use_cases/recover_task.rs:RecoverTask::execute",
+        "reservations retained after an abrupt exit; recover(id, release_files=True) frees them, or revoke(id, reason)",
+        "WrongState",
+    ),
+    (
         "src/application/swarm/use_cases/release_unlaunched_member.rs:ReleaseUnlaunchedMember::execute",
         "only an unlaunched reservation may be released",
         "WrongState",
+    ),
+    (
+        "src/application/swarm/use_cases/reserve_files.rs:ReserveFiles::execute",
+        "file already reserved: {path}; acquire the entire set or release and retry",
+        "ReservedByOther",
+    ),
+    (
+        "src/application/swarm/use_cases/reserve_files.rs:ReserveFiles::execute",
+        "file reservation board full (1000); release settled work",
+        "CapacityFull",
+    ),
+    (
+        "src/application/swarm/use_cases/reserve_files.rs:ReserveFiles::normalized",
+        "reserve 1 through 100 paths together",
+        "Invalid",
     ),
     (
         "src/application/swarm/use_cases/resume_run.rs:ResumeRun::execute",
@@ -248,6 +288,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "src/application/swarm/use_cases/revalidate_task.rs:RevalidateTask::execute",
         "unknown task",
         "NotFound",
+    ),
+    (
+        "src/application/swarm/use_cases/revoke_task.rs:RevokeTask::execute",
+        "only claimed, blocked or submitted work can be revoked",
+        "WrongState",
     ),
     (
         "src/application/swarm/use_cases/set_task_dependencies.rs:SetTaskDependencies::execute",
@@ -535,6 +580,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
+        "src/infrastructure/persistence/swarm_board/repository_reservations.rs:SqliteBoard::bound_count",
+        "a count answered no row",
+        "Internal",
+    ),
+    (
         "src/infrastructure/persistence/swarm_board/repository_tasks.rs:SqliteBoard::retry",
         "expr: error . to_string ()",
         "Invalid",
@@ -593,6 +643,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "src/infrastructure/tools/swarm_board_dispatch.rs:take",
         "swarm board bound the wrong number of arguments",
         "Internal",
+    ),
+    (
+        "src/infrastructure/workspace/checkout_paths.rs:ResolvedCheckout::normalize",
+        "file must resolve inside the shared checkout",
+        "Invalid",
     ),
 ];
 

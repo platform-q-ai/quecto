@@ -19,6 +19,7 @@ use crate::domain::swarm::{
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 struct Fixed(f64);
 impl Clock for Fixed {
@@ -118,11 +119,14 @@ fn location(dir: &tempfile::TempDir) -> BoardLocation {
     }
 }
 
+/// The handles over `repository`, without the event log; no call here
+/// reserves a file, so the checkout is the system's temporary directory.
 fn plain(repository: Arc<dyn BoardRepository>) -> SwarmBoardHandles {
     build_swarm_board_handles_with(
         repository,
         Arc::new(Fixed(1_000.0)),
         Arc::new(Counter::default()),
+        Arc::new(ResolvedCheckout::new(std::env::temp_dir())),
     )
 }
 
@@ -133,6 +137,7 @@ fn recorded(dir: &tempfile::TempDir, log: Arc<dyn BoardOpLog>) -> SwarmBoardHand
         SqliteBoardRepository::new(&location(dir)),
         Arc::new(Fixed(1_000.0)),
         Arc::new(Counter::default()),
+        Arc::new(ResolvedCheckout::new(dir.path())),
         log,
     )
 }

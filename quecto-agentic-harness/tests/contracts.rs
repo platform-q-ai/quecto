@@ -49,6 +49,8 @@ mod board_evidence;
 mod board_files;
 #[path = "contracts/board_members.rs"]
 mod board_members;
+#[path = "contracts/board_messages.rs"]
+mod board_messages;
 #[path = "contracts/board_op_log.rs"]
 mod board_op_log;
 #[path = "contracts/board_repository.rs"]
@@ -71,6 +73,8 @@ mod catalogue_consumers;
 mod catalogue_inputs_loader;
 #[path = "contracts/catalogue_source.rs"]
 mod catalogue_source;
+#[path = "contracts/checkout_paths.rs"]
+mod checkout_paths;
 #[path = "contracts/config_document_store.rs"]
 mod config_document_store;
 #[path = "contracts/config_document_writer.rs"]

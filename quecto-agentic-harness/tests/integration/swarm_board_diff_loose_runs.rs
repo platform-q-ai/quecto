@@ -6,13 +6,21 @@
 //! in its `EXTERNAL_PINS`).
 use serde_json::json;
 
-use crate::swarm_board_diff_loose::create_text;
 use crate::swarm_board_diff_membership::{at, create};
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
     run_both, run_rust, sql, step, step_text,
 };
+
+/// `create_run`'s arguments as JSON text, a criterion's extra key `w`
+/// written as `extra`.
+pub(crate) fn create_text(extra: &str) -> String {
+    format!(
+        r#"["g", [], [{{"id": "c", "kind": "review", "description": "d", "w": {extra}}}], 5, {}]"#,
+        NOW + 3_600.0
+    )
+}
 
 /// `_bootstrap` asks only whether a run exists (`SELECT 1 FROM run`) and
 /// `create` fetches the whole run row but uses only its status and

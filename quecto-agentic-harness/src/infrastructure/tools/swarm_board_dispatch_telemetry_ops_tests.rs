@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use super::super::{BOARD_OPS, Method, SwarmBoardHandles, call};
 use super::{Recorded, create_args, logged, only};
 use crate::domain::swarm::BoardRole;
+use std::path::Path;
 use std::sync::Arc;
 
 /// Every `Method` the dispatcher has. The `match` is exhaustive, so a new
@@ -42,6 +43,11 @@ fn every_method() -> Vec<Method> {
         Method::UsageBudget,
         Method::RecordRequest,
         Method::RequestAdmission,
+        Method::Reserve,
+        Method::ReleaseFiles,
+        Method::FileOwners,
+        Method::Recover,
+        Method::Revoke,
         Method::CreateRun,
         Method::BootstrapRun,
         Method::BootstrapJoin,
@@ -79,6 +85,11 @@ fn every_method() -> Vec<Method> {
             | Method::UsageBudget
             | Method::RecordRequest
             | Method::RequestAdmission
+            | Method::Reserve
+            | Method::ReleaseFiles
+            | Method::FileOwners
+            | Method::Recover
+            | Method::Revoke
             | Method::CreateRun
             | Method::BootstrapRun
             | Method::BootstrapJoin
@@ -141,6 +152,7 @@ fn accepted(handles: &SwarmBoardHandles) {
 fn acted_on(
     method: Method,
     handles: &SwarmBoardHandles,
+    database: &Path,
 ) -> (Value, Option<i64>, Option<i64>, Option<bool>) {
     let admitted = || call(handles, "parent", "_admit", json!(["worker", "r1"])).unwrap();
     let stopped = || {
@@ -251,6 +263,34 @@ fn acted_on(
             None,
         ),
         Method::RequestAdmission => (json!([]), None, None, None),
+        Method::Reserve => {
+            let token = claimed(handles);
+            (json!(["1", token, ["a.rs"]]), Some(1), None, None)
+        }
+        Method::ReleaseFiles => {
+            let token = claimed(handles);
+            let reserved = call(handles, "parent", "reserve", json!([1, token, ["a.rs"]])).unwrap();
+            (json!([true, token, reserved["token"]]), Some(1), None, None)
+        }
+        Method::FileOwners => (json!([]), None, None, None),
+        Method::Recover => {
+            running(handles);
+            call(handles, "parent", "_admit", json!(["worker", "r1"])).unwrap();
+            call(
+                handles,
+                "parent",
+                "_activate",
+                json!(["worker", "r1", 7, "s", "/w.sock"]),
+            )
+            .unwrap();
+            claimed_by_worker(handles);
+            confirmed_dead(database, "worker");
+            (json!(["1"]), Some(1), None, None)
+        }
+        Method::Revoke => {
+            claimed(handles);
+            (json!([true, "reassign"]), Some(1), None, None)
+        }
         Method::CreateRun => (create_args(), None, None, None),
         Method::BootstrapRun => (json!([1, "s", null]), None, None, None),
         Method::BootstrapJoin => (json!([1, "s", null]), None, None, None),
@@ -268,9 +308,10 @@ fn acted_on(
 fn every_answered_op_records_what_it_acted_on() {
     for method in every_method() {
         let log = Arc::new(Recorded::default());
-        let (_dir, handles) = logged(&log);
+        let (dir, handles) = logged(&log);
         call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
-        let (args, task_id, message_id, cursor_moved) = acted_on(method, &handles);
+        let database = dir.path().join("swarm.sqlite");
+        let (args, task_id, message_id, cursor_moved) = acted_on(method, &handles, &database);
         log.clear();
         let answer = call(&handles, "parent", method.name(), args);
         assert_eq!(
@@ -428,6 +469,59 @@ fn usage_records_the_coordinator_or_the_host() {
         call(&handles, "parent", method, args).unwrap();
         assert_eq!(only(&log).role, Some(role), "{method}");
     }
+}
+
+/// Reservations, recovery and revocation (#2275) are member-facing, so
+/// each records the caller's role in the run: a worker's reservations and
+/// page read, the coordinator's recovery and revocation.
+#[test]
+fn reservations_record_the_callers_run_role() {
+    let log = Arc::new(Recorded::default());
+    let (dir, handles) = logged(&log);
+    call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
+    running(&handles);
+    call(&handles, "parent", "_admit", json!(["worker", "r1"])).unwrap();
+    call(
+        &handles,
+        "parent",
+        "_activate",
+        json!(["worker", "r1", 7, "s", "/w.sock"]),
+    )
+    .unwrap();
+    let token = claimed_by_worker(&handles);
+    log.clear();
+    let reserved = call(&handles, "worker", "reserve", json!([1, token, ["a.rs"]])).unwrap();
+    assert_eq!(only(&log).role, Some(BoardRole::Worker), "reserve");
+    for (member, method, args, role) in [
+        ("worker", "file_owners", json!([]), BoardRole::Worker),
+        (
+            "worker",
+            "release_files",
+            json!([1, token, reserved["token"]]),
+            BoardRole::Worker,
+        ),
+    ] {
+        log.clear();
+        call(&handles, member, method, args).unwrap();
+        assert_eq!(only(&log).role, Some(role), "{member} {method}");
+    }
+    confirmed_dead(&dir.path().join("swarm.sqlite"), "worker");
+    log.clear();
+    call(&handles, "parent", "recover", json!([1])).unwrap();
+    assert_eq!(only(&log).role, Some(BoardRole::Coordinator), "recover");
+    log.clear();
+    call(&handles, "parent", "revoke", json!([1, "why"])).unwrap();
+    assert_eq!(only(&log).role, Some(BoardRole::Coordinator), "revoke");
+}
+
+/// `member`'s death confirmed on the board file at `database`, as the
+/// harness's `_confirmed_dead` (S12) writes it.
+fn confirmed_dead(database: &Path, member: &str) {
+    let changed = rusqlite::Connection::open(database)
+        .unwrap()
+        .execute("UPDATE members SET status='dead' WHERE id=?", [member])
+        .unwrap();
+    assert_eq!(changed, 1, "{member} is a member");
 }
 
 /// Task 1 on `handles`' board (a running run), created by the parent and

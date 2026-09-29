@@ -560,3 +560,61 @@ fn lost_members_are_those_quarantined_after_their_latest_activation() {
     })
     .unwrap();
 }
+
+/// #2275 (PR #2321 review): `member_status` is Python's `SELECT status
+/// FROM members WHERE id=?`. Only the status is read, so another column
+/// holding what the board never writes (text that is not UTF-8) does not
+/// refuse it. The status is its text, or none for NULL or bytes (TEXT
+/// affinity keeps no number); a missing row (or a NULL id) is none; the
+/// id binds as Python's `sqlite3` binds it; a status that is not UTF-8 is
+/// Python's refusal.
+#[test]
+fn a_member_status_is_read_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let repository = repository_in(&dir);
+    within(&repository, true, |transaction| {
+        for id in ["5", "live", "blob", "null", "bad"] {
+            transaction.reserve_member(id, &json!(format!("{id}-r")), "parent")?;
+        }
+        Ok(())
+    })
+    .unwrap();
+    rusqlite::Connection::open(dir.path().join("swarm.sqlite"))
+        .unwrap()
+        .execute_batch(
+            "UPDATE members SET socket=CAST(X'FF' AS TEXT);
+             UPDATE members SET status='live' WHERE id='live';
+             UPDATE members SET status=CAST('live' AS BLOB) WHERE id='blob';
+             UPDATE members SET status=NULL WHERE id='null';
+             UPDATE members SET status=CAST(X'FF' AS TEXT) WHERE id='bad';",
+        )
+        .unwrap();
+    within(&repository, false, |transaction| {
+        let status = |id: Value| {
+            transaction
+                .member_status(&id)
+                .map(|found| found.map(|row| row.status))
+        };
+        assert_eq!(status(json!(5))?, Some(Some("reserved".to_owned())));
+        assert_eq!(status(json!("live"))?, Some(Some("live".to_owned())));
+        for id in ["blob", "null"] {
+            assert_eq!(status(json!(id))?, Some(None), "{id}");
+        }
+        assert_eq!(status(json!("stranger"))?, None);
+        assert_eq!(status(Value::Null)?, None);
+        let undecodable = status(json!("bad")).unwrap_err();
+        assert!(
+            undecodable
+                .message()
+                .contains("Could not decode to UTF-8 column 'status'"),
+            "{undecodable:?}"
+        );
+        let unbindable = status(json!([5])).unwrap_err();
+        assert!(
+            unbindable.message().contains("Error binding parameter 1"),
+            "{unbindable:?}"
+        );
+        Ok(())
+    })
+    .unwrap();
+}

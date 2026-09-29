@@ -1216,6 +1216,149 @@ fn application_paths_allowed(paths: Option<Vec<String>>) -> bool {
     paths.is_some_and(|paths| paths.iter().all(|path| application_path_allowed(path)))
 }
 
+/// The board use cases infrastructure may name (#2270, epic #2265; each
+/// later slice adds its own), for [`application_path_allowed`].
+const SWARM_BOARD_USE_CASES: &[&str] = &[
+    "ActivateMember",
+    "AdmitMember",
+    "BootstrapRun",
+    "CreateRun",
+    "JoinRun",
+    "OverRepository",
+    "ReadRunSnapshot",
+    "ReadRunStatus",
+    "RecordMemberLaunch",
+    "RegisterMemberSocket",
+    "ReleaseUnlaunchedMember",
+    // Tasks and claims (#2272).
+    "ClaimTask",
+    "CreateTask",
+    "ReadTask",
+    "ReleaseTask",
+    "SetTaskDependencies",
+    // Blockers, submissions and verification (#2272).
+    "BlockTask",
+    "SubmitTask",
+    "UnblockTask",
+    "VerifyTask",
+    // Run control and the control receipt (#2273).
+    "CloseRun",
+    "ExtendRunDeadline",
+    "PauseRun",
+    "ReadControlStatus",
+    "ReadUsageReport",
+    "ResumeRun",
+    "ResumeRunExternally",
+    "StopRun",
+    // Completion, revalidation, amendment and evidence (#2273).
+    "AmendRunContract",
+    "CompleteRun",
+    "RecordEvidence",
+    "RevalidateTask",
+    // Usage accounting and the inference admission (#2274).
+    "ConfigureUsageBudget",
+    "ReadRequestAdmission",
+    "RecordRequestUsage",
+    // Reservations, recovery and revocation (#2275).
+    "ListFileOwners",
+    "RecoverTask",
+    "ReleaseFiles",
+    "ReserveFiles",
+    "RevokeTask",
+];
+
+/// The board DTOs infrastructure may name (#2270, epic #2265; each later
+/// slice adds its own), for [`application_path_allowed`].
+const SWARM_BOARD_DTOS: &[&str] = &[
+    "ActivateMemberRequest",
+    "AdmissionDecision",
+    "AdmitMemberRequest",
+    "AdmittedMember",
+    "BoardLocation",
+    "BootstrapRunRequest",
+    "CreateBranch",
+    "CreateRunRequest",
+    "JoinRunRequest",
+    "Joined",
+    "LaunchIdentity",
+    "MemberClaimCounts",
+    "MemberRow",
+    "NewMember",
+    "NewRun",
+    "RecordMemberLaunchRequest",
+    "RegisterMemberSocketRequest",
+    "ReleaseUnlaunchedMemberRequest",
+    "RunContract",
+    "RunOwnerRow",
+    "RunSnapshotView",
+    "RunStatusView",
+    "RunStatusRow",
+    // Tasks and claims (#2272).
+    "ClaimTaskRequest",
+    "CreateTaskRequest",
+    "CreatedTask",
+    "NewTask",
+    "ReadTaskRequest",
+    "ReleaseTaskRequest",
+    "SetTaskDependenciesRequest",
+    "TaskRow",
+    "TaskUpdate",
+    // The measure the store's meter hands back (#2303), and the
+    // run roles it keeps for a member-facing op's caller role.
+    "CallMeasure",
+    "RunRoles",
+    // Blockers, submissions and verification (#2272).
+    "BlockTaskRequest",
+    "SubmitTaskRequest",
+    "TaskChange",
+    "TaskTransition",
+    "UnblockTaskRequest",
+    "VerifyTaskRequest",
+    // Run control and the control receipt (#2273).
+    "ControlAnswer",
+    "ControlReceipt",
+    "ExtendRunDeadlineRequest",
+    "PauseRunRequest",
+    "RecentRequest",
+    "RunTransition",
+    "StopRunRequest",
+    "UsageReport",
+    "UsageRow",
+    // Completion, revalidation, amendment and evidence (#2273).
+    "AmendRunContractRequest",
+    "AmendedContract",
+    "CompleteRunRequest",
+    "CompletionState",
+    "EvidenceEntry",
+    "EvidenceTransition",
+    "NewEvidence",
+    "PriorEvidence",
+    "RecordEvidenceRequest",
+    "RevalidateTaskRequest",
+    "StoredContract",
+    // Usage accounting and the inference admission (#2274).
+    "BudgetChange",
+    "BudgetEffect",
+    "ConfigureUsageBudgetRequest",
+    "NewRequestUsage",
+    "RecordRequestUsageRequest",
+    "RequestDelivery",
+    "StoredRequestUsage",
+    // Reservations, recovery and revocation (#2275).
+    "FileRow",
+    "ListFileOwnersRequest",
+    "MemberStatusRow",
+    "NewReservation",
+    "RecoverTaskRequest",
+    "Recovered",
+    "ReleaseFilesRequest",
+    "Reservation",
+    "ReserveFilesRequest",
+    "Revocation",
+    "RevokeTaskRequest",
+    "Revoked",
+];
+
 fn application_path_allowed(path: &str) -> bool {
     let parts: Vec<_> = path.split("::").collect();
     match parts.as_slice() {
@@ -1460,132 +1603,8 @@ fn application_path_allowed(path: &str) -> bool {
         // carry. Each later slice adds its own names. While the event log
         // is on, the dispatcher serves a composed use case over the call's
         // metered repository (`OverRepository`, #2303), constructing none.
-        [
-            "crate",
-            "application",
-            "swarm",
-            "use_cases",
-            "ActivateMember"
-            | "AdmitMember"
-            | "BootstrapRun"
-            | "CreateRun"
-            | "JoinRun"
-            | "OverRepository"
-            | "ReadRunSnapshot"
-            | "ReadRunStatus"
-            | "RecordMemberLaunch"
-            | "RegisterMemberSocket"
-            | "ReleaseUnlaunchedMember"
-            // Tasks and claims (#2272).
-            | "ClaimTask"
-            | "CreateTask"
-            | "ReadTask"
-            | "ReleaseTask"
-            | "SetTaskDependencies"
-            // Blockers, submissions and verification (#2272).
-            | "BlockTask"
-            | "SubmitTask"
-            | "UnblockTask"
-            | "VerifyTask"
-            // Run control and the control receipt (#2273).
-            | "CloseRun"
-            | "ExtendRunDeadline"
-            | "PauseRun"
-            | "ReadControlStatus"
-            | "ReadUsageReport"
-            | "ResumeRun"
-            | "ResumeRunExternally"
-            | "StopRun"
-            // Completion, revalidation, amendment and evidence (#2273).
-            | "AmendRunContract"
-            | "CompleteRun"
-            | "RecordEvidence"
-            | "RevalidateTask"
-            // Usage accounting and the inference admission (#2274).
-            | "ConfigureUsageBudget"
-            | "ReadRequestAdmission"
-            | "RecordRequestUsage",
-        ]
-        | [
-            "crate",
-            "application",
-            "swarm",
-            "dto",
-            "ActivateMemberRequest"
-            | "AdmissionDecision"
-            | "AdmitMemberRequest"
-            | "AdmittedMember"
-            | "BoardLocation"
-            | "BootstrapRunRequest"
-            | "CreateBranch"
-            | "CreateRunRequest"
-            | "JoinRunRequest"
-            | "Joined"
-            | "LaunchIdentity"
-            | "MemberClaimCounts"
-            | "MemberRow"
-            | "NewMember"
-            | "NewRun"
-            | "RecordMemberLaunchRequest"
-            | "RegisterMemberSocketRequest"
-            | "ReleaseUnlaunchedMemberRequest"
-            | "RunContract"
-            | "RunOwnerRow"
-            | "RunSnapshotView"
-            | "RunStatusView"
-            | "RunStatusRow"
-            // Tasks and claims (#2272).
-            | "ClaimTaskRequest"
-            | "CreateTaskRequest"
-            | "CreatedTask"
-            | "NewTask"
-            | "ReadTaskRequest"
-            | "ReleaseTaskRequest"
-            | "SetTaskDependenciesRequest"
-            | "TaskRow"
-            | "TaskUpdate"
-            // The measure the store's meter hands back (#2303), and the
-            // run roles it keeps for a member-facing op's caller role.
-            | "CallMeasure"
-            | "RunRoles"
-            // Blockers, submissions and verification (#2272).
-            | "BlockTaskRequest"
-            | "SubmitTaskRequest"
-            | "TaskChange"
-            | "TaskTransition"
-            | "UnblockTaskRequest"
-            | "VerifyTaskRequest"
-            // Run control and the control receipt (#2273).
-            | "ControlAnswer"
-            | "ControlReceipt"
-            | "ExtendRunDeadlineRequest"
-            | "PauseRunRequest"
-            | "RecentRequest"
-            | "RunTransition"
-            | "StopRunRequest"
-            | "UsageReport"
-            | "UsageRow"
-            // Completion, revalidation, amendment and evidence (#2273).
-            | "AmendRunContractRequest"
-            | "AmendedContract"
-            | "CompleteRunRequest"
-            | "CompletionState"
-            | "EvidenceEntry"
-            | "EvidenceTransition"
-            | "NewEvidence"
-            | "PriorEvidence"
-            | "RecordEvidenceRequest"
-            | "RevalidateTaskRequest"
-            | "StoredContract"
-            // Usage accounting and the inference admission (#2274).
-            | "BudgetChange"
-            | "BudgetEffect"
-            | "ConfigureUsageBudgetRequest"
-            | "NewRequestUsage"
-            | "RecordRequestUsageRequest"
-            | "RequestDelivery"
-            | "StoredRequestUsage",
-        ] => true,
+        ["crate", "application", "swarm", "use_cases", name] => SWARM_BOARD_USE_CASES.contains(name),
+        ["crate", "application", "swarm", "dto", name] => SWARM_BOARD_DTOS.contains(name),
         ["crate", "application", ..] => false,
         // Every other crate path must start at a layer infrastructure
         // may name: a root alias (`pub use application::x as y;` in
@@ -6346,6 +6365,10 @@ const SWARM_BOARD_PORTS: &[&str] = &[
     "BoardCallMeter",
     "MeteredCall",
     "BoardOpLog",
+    // Revocation tells the previous owner (#2275; S11 extends it), and
+    // reservations normalise paths in the checkout, an effect (#2275).
+    "BoardMessages",
+    "CheckoutPaths",
     // The usage report the control receipt carries (#2273; S9 adds the
     // budget's writes).
     "BoardUsage",
