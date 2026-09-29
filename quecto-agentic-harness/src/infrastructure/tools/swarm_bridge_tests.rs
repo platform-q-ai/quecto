@@ -546,10 +546,25 @@ async fn foreground_terminal_watcher(outcome: &str) {
     // program made ends the run, now made beside it; the watcher settles it.
     let code = "import pathlib, time; pathlib.Path('interpreter-ready').touch(); time.sleep(2); open('late-write','w').write('escaped')";
     let foreground = tool.execute(&json!({"code":code, "timeout_seconds":10}).to_string());
-    let terminal = async {
-        while !workspace.join("interpreter-ready").exists() {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    tokio::pin!(foreground);
+    // The terminal call waits for the interpreter's ready signal; a run that
+    // returns before signalling never reached the interpreter, so it fails
+    // here at once rather than as a later timeout.
+    let ready_by = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !workspace.join("interpreter-ready").exists() {
+        tokio::select! {
+            early = &mut foreground => panic!(
+                "the foreground run returned before its interpreter signalled ready: {:?}",
+                early.map(|result| result.content)
+            ),
+            () = tokio::time::sleep(std::time::Duration::from_millis(10)) => {}
         }
+        assert!(
+            std::time::Instant::now() < ready_by,
+            "the foreground interpreter never signalled ready"
+        );
+    }
+    let terminal = async {
         let (ctx, outcome) = (context.clone(), outcome.to_owned());
         tokio::task::spawn_blocking(move || match outcome.as_str() {
             "succeeded" => {
@@ -565,10 +580,10 @@ async fn foreground_terminal_watcher(outcome: &str) {
         .unwrap()
     };
     let (result, _) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        tokio::join!(foreground, terminal)
+        tokio::join!(&mut foreground, terminal)
     })
     .await
-    .expect("the foreground interpreter returns");
+    .expect("the foreground interpreter returns once the run ends");
     let result = result.unwrap();
     assert!(
         !workspace.join("late-write").exists(),

@@ -31,7 +31,8 @@ fn recovery_script(turn: &Turn) -> Reply {
         }
         (u, true) if u.contains("Launch the worker") => Reply::Text("LAUNCHED"),
         // A refused op answers text, not JSON, which reads as `Null`: the
-        // claim stops at once, so a failed step is not a later wait timeout.
+        // claim stops at once, and `wait_summary` fails on this answer at its
+        // next poll instead of timing out.
         (u, _) if u.contains(WORKER_TASK) && turn.tool_results.iter().any(Value::is_null) => {
             Reply::Text(CLAIM_FAILED)
         }
@@ -109,6 +110,12 @@ async fn wait_summary(
     let until = tokio::time::Instant::now() + Duration::from_secs(30);
     let mut contended = 0;
     loop {
+        if let Some(failure) = runtime.text_starting(CLAIM_FAILED) {
+            panic!(
+                "board never became {what}: the worker's claim was refused: {failure}\n--- coordinator stderr ---\n{}",
+                runtime.stderr_tail()
+            );
+        }
         // A poll of the board reads it as production's settlement watch
         // does (`swarm_lifecycle::watch_until_ended`): a read the store
         // refused as contended past its busy timeout is sat out and retried
