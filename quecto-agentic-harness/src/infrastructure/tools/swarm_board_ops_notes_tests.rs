@@ -1,7 +1,7 @@
 //! #2279 review M1: what the post-call lifecycle leaves on a structured
 //! op's answer. An answer that is not an object rides beside the notes as
 //! `{"result": …}`, and a lifecycle that fails rides the answer as
-//! `coordination_error`. And (review M2) a store the gate cannot read
+//! `coordination_error`; a refusal keeps both (review L4). And (review M2) a store the gate cannot read
 //! refuses the op as the op's own store refusal.
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -106,4 +106,48 @@ async fn a_store_the_gate_cannot_read_refuses_the_op_as_its_own() {
         "{records:?}"
     );
     assert_eq!(outcome("_status").len(), 1, "{records:?}");
+}
+
+/// Review L4: a refused op whose call still moved the cursor (another
+/// member wrote meanwhile) keeps the lifecycle's notes, as `op=run` keeps
+/// them whatever the program's outcome: the refusal text as the board
+/// refused, then the notes as Python writes them.
+#[test]
+fn a_refusal_keeps_the_lifecycle_notes() {
+    let mut notes = serde_json::Map::new();
+    notes.insert(
+        "notification_warnings".to_owned(),
+        json!(["wake hint failed for worker; durable board is authoritative"]),
+    );
+    notes.insert("coordination_error".to_owned(), json!("tool error: gone"));
+    let refusal = crate::domain::error::DomainError::Tool(r#"swarm: "unknown task""#.to_owned());
+    let result = super::super::answered(
+        &crate::composition::swarm::board_wire(),
+        Err(refusal),
+        notes,
+    )
+    .unwrap();
+    assert!(result.is_error, "{}", result.content);
+    assert_eq!(
+        result.content,
+        concat!(
+            r#"tool error: swarm: "unknown task""#,
+            "\n",
+            r#"{"notification_warnings": ["wake hint failed for worker; durable board is authoritative"], "coordination_error": "tool error: gone"}"#
+        )
+    );
+}
+
+/// Without notes a refusal is exactly the board's.
+#[test]
+fn a_refusal_without_notes_is_the_boards() {
+    let refusal = crate::domain::error::DomainError::Tool(r#"swarm: "unknown task""#.to_owned());
+    let result = super::super::answered(
+        &crate::composition::swarm::board_wire(),
+        Err(refusal),
+        serde_json::Map::new(),
+    )
+    .unwrap();
+    assert!(result.is_error);
+    assert_eq!(result.content, r#"tool error: swarm: "unknown task""#);
 }

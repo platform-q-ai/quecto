@@ -450,10 +450,7 @@ async fn serve(
     if let Some(before) = before {
         lifecycle(context, before, record, &mut notes).await?;
     }
-    match answer {
-        Ok(value) => answered(&request.wire, value, notes),
-        Err(refusal) => tool_err(refusal.to_string()),
-    }
+    answered(&request.wire, answer, notes)
 }
 
 /// The gate's `_status` read or the first `_event_cursor` read failed
@@ -546,12 +543,17 @@ async fn lifecycle(
 
 /// The board's answer, with the lifecycle's notes: added to an answer that
 /// is an object, else beside it as `{"result": answer, …}` (only when there
-/// are notes, so an answer is otherwise exactly the board method's).
+/// are notes, so an answer is otherwise exactly the board method's). A
+/// refusal is answered as the board refused it.
 fn answered(
     wire: &BoardWire,
-    value: Value,
+    answer: Result<Value, DomainError>,
     notes: Map<String, Value>,
 ) -> Result<ToolResult, DomainError> {
+    let value = match answer {
+        Ok(value) => value,
+        Err(refusal) => return tool_err(refusal.to_string()),
+    };
     let value = match (value, notes.is_empty()) {
         (value, true) => value,
         (Value::Object(mut fields), false) => {
