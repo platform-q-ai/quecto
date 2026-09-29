@@ -566,15 +566,18 @@ async fn foreground_terminal_watcher(outcome: &str) {
     }
     let terminal = async {
         let (ctx, outcome) = (context.clone(), outcome.to_owned());
-        tokio::task::spawn_blocking(move || match outcome.as_str() {
-            "succeeded" => {
-                ctx.call("evidence", json!(["tests", "proof", "R1", "command", true]))
-                    .unwrap();
-                ctx.call("complete", json!(["R1"])).unwrap()
+        // Off the async workers, as every board call is (#2278).
+        crate::infrastructure::tools::call_work::spawn_blocking_in_call(move || {
+            match outcome.as_str() {
+                "succeeded" => {
+                    ctx.call("evidence", json!(["tests", "proof", "R1", "command", true]))
+                        .unwrap();
+                    ctx.call("complete", json!(["R1"])).unwrap()
+                }
+                _ => ctx
+                    .call("stop", json!(["cancelled", "operator request"]))
+                    .unwrap(),
             }
-            _ => ctx
-                .call("stop", json!(["cancelled", "operator request"]))
-                .unwrap(),
         })
         .await
         .unwrap()
