@@ -73,6 +73,15 @@ pub enum TaskUpdate {
     /// `release`: the task is `ready` again, without owner, token or
     /// blocker.
     Release,
+    /// `block`: the task is `blocked` by `reason`.
+    Block { reason: String },
+    /// `unblock`: the task is `claimed` again, without blocker.
+    Unblock,
+    /// `submit`: the task is `submitted` with `evidence` (stored with the
+    /// board's `encode()`), without blocker.
+    Submit { evidence: Value },
+    /// `verify_task`: the task is `completed`.
+    Complete,
 }
 
 /// `Tasks.task_create(request, title, acceptance, dependencies=None)` as

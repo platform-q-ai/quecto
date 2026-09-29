@@ -80,6 +80,9 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   For a completed dependency with invalid JSON in `acceptance`, Python's
 ///   `claim` loads the dependency's full `_task` and raises `JSONDecodeError`;
 ///   Rust reads only its status and claims the dependent task (pinned below).
+/// - `outside_edited_evidence` (#2272): stored evidence that is not a list
+///   of objects each carrying `revision` (only an edit holds it) meets
+///   `verify_task` as a refusal, where Python raises or iterates the value.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
@@ -93,10 +96,11 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   membership methods (#2271) keep it: `_activate` and `_record_launch`
 ///   take such a member's reservation as stale, where Python goes on
 ///   (pinned by `activate_member_tests` and `record_member_launch_tests`).
-pub const PERMITTED_DIVERGENCES: [&str; 6] = [
+pub const PERMITTED_DIVERGENCES: [&str; 7] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
     "outside_edited_columns",
+    "outside_edited_evidence",
     "outside_edited_task_columns",
     "real_to_text_digits",
     "unknown_member_status_is_not_alive",
@@ -727,5 +731,34 @@ fn outside_edited_task_columns() {
             "unhashable type: 'list'",
             rust,
         );
+    }
+}
+
+/// `outside_edited_evidence`: Python raises, or verifies an empty dict or
+/// text, where the Rust board refuses.
+#[test]
+fn outside_edited_evidence() {
+    let task = at(1.0, "parent", "task_create", json!(["r", "t", ["ok"]]));
+    let mut steps = vec![create(5), task];
+    for (evidence, python) in [
+        (r#"[{"artifact":"a"}]"#, "raised KeyError"),
+        (r#"{"revision":"R1"}"#, "raised TypeError"),
+        ("null", "raised TypeError"),
+        ("{}", "python Ok(Null)"),
+        (r#""""#, "python Ok(Null)"),
+    ] {
+        steps.truncate(2);
+        let edit = format!("UPDATE tasks SET status='submitted',token='t',evidence='{evidence}'");
+        steps.extend([
+            sql(&edit),
+            at(2.0, "parent", "verify_task", json!([1, "t", "R1"])),
+        ]);
+        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        assert!(
+            difference.starts_with("step 4: verify_task") && difference.contains(python),
+            "{evidence}: {difference}"
+        );
+        let outcome = format!("{:?}", run_rust(&steps));
+        assert!(outcome.contains("not a list of revisioned"), "{outcome}");
     }
 }

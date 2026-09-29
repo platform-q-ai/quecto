@@ -151,6 +151,20 @@ impl BoardTasks for MemoryTransaction<'_> {
                 row.set("token", Value::Null);
                 row.set("blocker", Value::Null);
             }
+            TaskUpdate::Block { reason } => {
+                row.set("status", Value::from("blocked"));
+                row.set("blocker", Value::from(reason.clone()));
+            }
+            TaskUpdate::Unblock => {
+                row.set("status", Value::from("claimed"));
+                row.set("blocker", Value::Null);
+            }
+            TaskUpdate::Submit { evidence } => {
+                row.set("status", Value::from("submitted"));
+                row.set("evidence", evidence.clone());
+                row.set("blocker", Value::Null);
+            }
+            TaskUpdate::Complete => row.set("status", Value::from("completed")),
         });
         Ok(())
     }

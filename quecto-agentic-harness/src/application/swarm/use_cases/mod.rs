@@ -13,6 +13,7 @@ use crate::application::swarm::ports::BoardRepository;
 
 mod activate_member;
 mod admit_member;
+mod block_task;
 mod bootstrap_run;
 mod claim_task;
 mod create_run;
@@ -26,9 +27,13 @@ mod register_member_socket;
 mod release_task;
 mod release_unlaunched_member;
 mod set_task_dependencies;
+mod submit_task;
+mod unblock_task;
+mod verify_task;
 
 pub use activate_member::ActivateMember;
 pub use admit_member::AdmitMember;
+pub use block_task::BlockTask;
 pub use bootstrap_run::BootstrapRun;
 pub use claim_task::ClaimTask;
 pub use create_run::CreateRun;
@@ -42,6 +47,9 @@ pub use register_member_socket::RegisterMemberSocket;
 pub use release_task::ReleaseTask;
 pub use release_unlaunched_member::ReleaseUnlaunchedMember;
 pub use set_task_dependencies::SetTaskDependencies;
+pub use submit_task::SubmitTask;
+pub use unblock_task::UnblockTask;
+pub use verify_task::VerifyTask;
 
 /// A board use case served over another repository (#2303): the same use
 /// case, with every other port as composition bound it. A seam between

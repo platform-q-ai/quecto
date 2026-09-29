@@ -123,6 +123,10 @@ impl BoardTasks for SqliteBoard<'_> {
                 "UPDATE tasks SET status='ready',owner=NULL,token=NULL,blocker=NULL WHERE id=?",
                 &[loose(1, id)?],
             ),
+            TaskUpdate::Block { .. }
+            | TaskUpdate::Unblock
+            | TaskUpdate::Submit { .. }
+            | TaskUpdate::Complete => Err(BoardError::new(RefusalKind::Internal, "pending #2272")),
         }
     }
 }

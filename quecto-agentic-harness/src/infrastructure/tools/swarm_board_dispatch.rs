@@ -28,7 +28,8 @@
 //! refuses each as an unknown method. The task and claim methods
 //! `task_create`, `dependencies`, `claim` and `release` (#2272) are served
 //! by [`tasks`], with the test-only `task_raw` (`Tasks._task` inside a
-//! read-only operation, before S12 adds owner liveness to `task`).
+//! read-only operation, before S12 adds owner liveness to `task`); `block`,
+//! `unblock`, `submit` and `verify_task` by [`submissions`].
 //!
 //! What S12 must keep when it adds the summaries Python answers with:
 //!
@@ -78,9 +79,10 @@ use serde_json::{Map, Value};
 use crate::application::swarm::dto::{MemberRow, RunSnapshotView, RunStatusView};
 use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardRepository};
 use crate::application::swarm::use_cases::{
-    ActivateMember, AdmitMember, BootstrapRun, ClaimTask, CreateRun, CreateTask, JoinRun,
-    OverRepository, ReadRunSnapshot, ReadRunStatus, ReadTask, RecordMemberLaunch,
-    RegisterMemberSocket, ReleaseTask, ReleaseUnlaunchedMember, SetTaskDependencies,
+    ActivateMember, AdmitMember, BlockTask, BootstrapRun, ClaimTask, CreateRun, CreateTask,
+    JoinRun, OverRepository, ReadRunSnapshot, ReadRunStatus, ReadTask, RecordMemberLaunch,
+    RegisterMemberSocket, ReleaseTask, ReleaseUnlaunchedMember, SetTaskDependencies, SubmitTask,
+    UnblockTask, VerifyTask,
 };
 use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
 
@@ -111,6 +113,10 @@ pub struct SwarmBoardHandles {
     /// Served only in test builds as `task_raw` until S12 adds the owner
     /// liveness `task` answers with.
     pub read_task: Arc<ReadTask>,
+    pub block_task: Arc<BlockTask>,
+    pub unblock_task: Arc<UnblockTask>,
+    pub submit_task: Arc<SubmitTask>,
+    pub verify_task: Arc<VerifyTask>,
     /// Each call's `swarm_op` record and its measure (#2303), only when
     /// the event log is switched on (`telemetry.event_log.enabled`, owner
     /// decision T1): `None` measures and writes nothing.
@@ -148,6 +154,10 @@ pub const BOARD_OPS: &[&str] = &[
     "dependencies",
     "claim",
     "release",
+    "block",
+    "unblock",
+    "submit",
+    "verify_task",
     #[cfg(any(test, feature = "test-support"))]
     "create_run",
     #[cfg(any(test, feature = "test-support"))]
@@ -172,6 +182,10 @@ enum Method {
     Dependencies,
     Claim,
     Release,
+    Block,
+    Unblock,
+    Submit,
+    VerifyTask,
     #[cfg(any(test, feature = "test-support"))]
     CreateRun,
     #[cfg(any(test, feature = "test-support"))]
@@ -210,6 +224,10 @@ impl Method {
             "dependencies" => Some(Self::Dependencies),
             "claim" => Some(Self::Claim),
             "release" => Some(Self::Release),
+            "block" => Some(Self::Block),
+            "unblock" => Some(Self::Unblock),
+            "submit" => Some(Self::Submit),
+            "verify_task" => Some(Self::VerifyTask),
             #[cfg(any(test, feature = "test-support"))]
             "create_run" => Some(Self::CreateRun),
             #[cfg(any(test, feature = "test-support"))]
@@ -235,6 +253,10 @@ impl Method {
             Self::Dependencies => "dependencies",
             Self::Claim => "claim",
             Self::Release => "release",
+            Self::Block => "block",
+            Self::Unblock => "unblock",
+            Self::Submit => "submit",
+            Self::VerifyTask => "verify_task",
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => "create_run",
             #[cfg(any(test, feature = "test-support"))]
@@ -258,7 +280,11 @@ impl Method {
             | Self::TaskCreate
             | Self::Dependencies
             | Self::Claim
-            | Self::Release => Level::Mutation,
+            | Self::Release
+            | Self::Block
+            | Self::Unblock
+            | Self::Submit
+            | Self::VerifyTask => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
@@ -279,7 +305,14 @@ impl Method {
             | Self::RecordLaunch
             | Self::ReleaseUnlaunched
             | Self::Socket => Some(BoardRole::Host),
-            Self::TaskCreate | Self::Dependencies | Self::Claim | Self::Release => None,
+            Self::TaskCreate
+            | Self::Dependencies
+            | Self::Claim
+            | Self::Release
+            | Self::Block
+            | Self::Unblock
+            | Self::Submit
+            | Self::VerifyTask => None,
             // Test-only halves the differential harness drives as the host;
             // the member-facing `create`, `_bootstrap` and `task` S12 serves
             // record the caller's own role.
@@ -308,7 +341,11 @@ impl Method {
             | Self::TaskCreate
             | Self::Dependencies
             | Self::Claim
-            | Self::Release => true,
+            | Self::Release
+            | Self::Block
+            | Self::Unblock
+            | Self::Submit
+            | Self::VerifyTask => true,
             // `create_run` and `bootstrap_run` make the caller the run's
             // coordinator; `bootstrap_join` admits and activates it, or
             // finds its own live row; `task_raw` passes the gate.
@@ -330,6 +367,9 @@ impl Method {
             Self::Dependencies => &tasks::DEPENDENCIES,
             Self::Claim => &tasks::CLAIM,
             Self::Release => &tasks::RELEASE,
+            Self::Block | Self::Unblock => &submissions::BLOCK,
+            Self::Submit => &submissions::SUBMIT,
+            Self::VerifyTask => &submissions::VERIFY_TASK,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => &test_only::CREATE,
             #[cfg(any(test, feature = "test-support"))]
@@ -553,6 +593,18 @@ fn serve(
         Method::Release => {
             tasks::release(&serving(&*handles.release_task, over), member, arguments)
         }
+        Method::Block => {
+            submissions::block(&serving(&*handles.block_task, over), member, arguments)
+        }
+        Method::Unblock => {
+            submissions::unblock(&serving(&*handles.unblock_task, over), member, arguments)
+        }
+        Method::Submit => {
+            submissions::submit(&serving(&*handles.submit_task, over), member, arguments)
+        }
+        Method::VerifyTask => {
+            submissions::verify_task(&serving(&*handles.verify_task, over), member, arguments)
+        }
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)
@@ -659,6 +711,9 @@ mod members;
 
 #[path = "swarm_board_dispatch_tasks.rs"]
 mod tasks;
+
+#[path = "swarm_board_dispatch_submissions.rs"]
+mod submissions;
 
 /// The test-only methods: their signatures and their serving.
 #[cfg(any(test, feature = "test-support"))]

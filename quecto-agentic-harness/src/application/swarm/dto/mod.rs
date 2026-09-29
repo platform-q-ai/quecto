@@ -7,6 +7,7 @@ pub mod location;
 pub mod measure;
 pub mod membership;
 pub mod run;
+pub mod submissions;
 pub mod tasks;
 
 pub use location::BoardLocation;
@@ -20,6 +21,9 @@ pub use run::{
     BootstrapRunRequest, Bootstrapped, CreateBranch, CreateRunRequest, CreatedRun,
     MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow, RunSnapshotView,
     RunStatusRow, RunStatusView,
+};
+pub use submissions::{
+    BlockTaskRequest, SubmitTaskRequest, TaskTransition, UnblockTaskRequest, VerifyTaskRequest,
 };
 pub use tasks::{
     ClaimTaskRequest, CreateTaskRequest, CreatedTask, NewTask, ReadTaskRequest, ReleaseTaskRequest,
