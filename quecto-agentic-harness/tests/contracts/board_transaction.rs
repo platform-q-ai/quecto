@@ -97,3 +97,38 @@ fn every_role_shares_one_transaction() {
         })
         .unwrap();
 }
+
+/// A board transaction takes the write lock at `BEGIN` (#2272 review L3):
+/// `BEGIN IMMEDIATE`, not a deferred `BEGIN` that locks at its first
+/// write. While a transaction that has written nothing is open, another
+/// connection's `BEGIN IMMEDIATE` is refused as busy at once; after it
+/// commits, the same `BEGIN IMMEDIATE` succeeds.
+#[test]
+fn a_board_transaction_holds_the_write_lock_from_its_begin() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("swarm.sqlite");
+    let repository = SqliteBoardRepository::new(&BoardLocation {
+        database: database.clone(),
+        checkout: dir.path().to_path_buf(),
+    });
+    repository.atomic(true, &mut |_| Ok(())).unwrap();
+    let other = rusqlite::Connection::open(&database).unwrap();
+    other.busy_timeout(std::time::Duration::ZERO).unwrap();
+
+    let mut refused = None;
+    repository
+        .atomic(false, &mut |_| {
+            refused = Some(other.execute_batch("BEGIN IMMEDIATE"));
+            Ok(())
+        })
+        .unwrap();
+    let error = refused
+        .expect("the body ran")
+        .expect_err("the board transaction holds the write lock");
+    assert_eq!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy),
+        "{error}"
+    );
+    other.execute_batch("BEGIN IMMEDIATE; ROLLBACK").unwrap();
+}

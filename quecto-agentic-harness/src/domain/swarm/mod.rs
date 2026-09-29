@@ -8,6 +8,7 @@
 //! budget. No I/O and no storage format.
 use super::error::DomainError;
 
+pub mod dependencies;
 pub mod notification;
 pub mod owner;
 pub mod policy;
@@ -16,6 +17,7 @@ pub mod records;
 pub mod usage;
 pub mod validation;
 
+pub use dependencies::{DEPENDENCIES_MAX, dependency_list, validate_dependencies};
 pub use notification::{
     NotificationEvent, NotificationState, OWNERSHIP_ACTIONS, READY_WORK_ACTIONS, TaskSummary,
     WORK_HOLDING_STATUSES, WORKING_STATUSES, notification_targets, ready_work_takers,

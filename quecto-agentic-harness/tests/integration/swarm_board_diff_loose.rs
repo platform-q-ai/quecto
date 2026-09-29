@@ -8,11 +8,12 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use crate::swarm_board_diff_membership::{at, create};
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::rust::RustBoard;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, run_both, sql, step, step_text, try_run_both,
+    Step, run_both, run_rust, sql, step, step_text, try_run_both,
 };
 
 /// Every way the Rust board may differ from the Python board on the
@@ -29,9 +30,9 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   must parse member input with `py_json`, as the harness does; a
 ///   `PyJson` dispatcher would end this divergence.
 /// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
-///   within u64 (a `pid`, `started` or `socket`, or a membership method's
-///   member or reservation, #2271) makes Python's `sqlite3` raise
-///   `OverflowError` when it is bound, which is not an `sqlite3.Error`,
+///   within u64 (a `pid`, `started` or `socket`, a membership method's
+///   member or reservation, #2271, or a task id, #2272) makes Python's
+///   `sqlite3` raise `OverflowError` when it is bound, which is not an `sqlite3.Error`,
 ///   so the store does not turn it into a refusal and the call raises.
 ///   The Rust board refuses it as a store failure naming Python's
 ///   parameter position. (Compared before it is bound, such an integer
@@ -60,6 +61,25 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   proportion to a board no harness writes); a NULL run or member status, a NULL
 ///   coordinator, a NULL member id, added member columns and loosely typed
 ///   pids are read as they are stored.
+/// - `outside_edited_task_columns` (#2272), values only a file edited
+///   outside the board holds: a task's `acceptance`, `dependencies` or
+///   `evidence` that is not JSON text is refused as a store failure where
+///   Python's `json.loads` raises (`JSONDecodeError`, `TypeError`).
+///   Stored dependencies are read as a list of task ids and anything else
+///   as none, where Python iterates what it loaded: a dict's keys
+///   (`{"2":1}` names task 2, so the task reads blocked and `claim`
+///   refuses `unmet dependencies`; Rust reads it ready and claims it), a
+///   text's characters (`"12"` names tasks 1 and 2), `null` or a number
+///   (`TypeError` in `_task`), and a list entry (`[[2]]` raises
+///   "unhashable" in the cycle check, where Rust keys it by its JSON text).
+///   A stored dependency naming no task is incomplete: a ready task reads
+///   blocked, where Python's `fetchone()[0]` raises `TypeError`; and
+///   `claim` refuses `unmet dependencies`, where for a task that is not
+///   ready (whose dependencies `_task` does not check) Python's claim
+///   reads the missing dependency with `_task` and refuses `unknown task`.
+///   For a completed dependency with invalid JSON in `acceptance`, Python's
+///   `claim` loads the dependency's full `_task` and raises `JSONDecodeError`;
+///   Rust reads only its status and claims the dependent task (pinned below).
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
@@ -73,10 +93,11 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   membership methods (#2271) keep it: `_activate` and `_record_launch`
 ///   take such a member's reservation as stale, where Python goes on
 ///   (pinned by `activate_member_tests` and `record_member_launch_tests`).
-pub const PERMITTED_DIVERGENCES: [&str; 5] = [
+pub const PERMITTED_DIVERGENCES: [&str; 6] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
     "outside_edited_columns",
+    "outside_edited_task_columns",
     "real_to_text_digits",
     "unknown_member_status_is_not_alive",
 ];
@@ -381,11 +402,15 @@ fn integer_beyond_i64_is_refused() {
             ))
         );
     }
-    // The membership methods (#2271) bind their arguments the same way.
+    // The membership methods (#2271) and the task methods (#2272) bind
+    // their arguments the same way.
     let bootstrap = json!([7, "s", null]);
     for (method, args, position) in [
         ("_socket", json!([u64::MAX]), 1),
         ("_release_unlaunched", json!([u64::MAX]), 1),
+        // A task id (#2272), read under the read-only gate a setup run
+        // passes.
+        ("task_raw", json!([u64::MAX]), 1),
         // `bootstrap_run` draws the run's id, then the reservation.
         (
             "_activate",
@@ -602,3 +627,105 @@ const EXTERNAL_PINS: [(&str, &str, &str); 5] = [
         "an_unknown_member_status_records_no_launch",
     ),
 ];
+
+/// `outside_edited_task_columns`: each hand edit of task 1 (after
+/// `before`), then the `probe` where the boards differ: `python` is in
+/// Python's side of the difference, `rust` in the Rust board's answer.
+#[test]
+fn outside_edited_task_columns() {
+    let setup = [
+        create(5),
+        at(1.0, "parent", "_admit", json!(["w1", "r1"])),
+        at(
+            2.0,
+            "parent",
+            "_activate",
+            json!(["w1", "r1", 11, "t", null]),
+        ),
+        at(3.0, "parent", "_admit", json!(["w2", "r2"])),
+        at(
+            4.0,
+            "parent",
+            "_activate",
+            json!(["w2", "r2", 12, "t", null]),
+        ),
+        at(5.0, "w1", "task_create", json!(["a", "one", ["ok"]])),
+        at(6.0, "w1", "task_create", json!(["b", "two", ["ok"]])),
+    ];
+    let pinned = |before: &[Step], edit: &str, probe: Step, python: &str, rust: &str| {
+        let mut steps = setup.to_vec();
+        steps.extend_from_slice(before);
+        let prefix = format!("step {}: {}", steps.len() + 1, probe.method);
+        steps.extend([sql(&format!("UPDATE tasks SET {edit} WHERE id=1")), probe]);
+        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let python_side = difference.split("\n  rust").next().unwrap_or_default();
+        assert!(
+            difference.starts_with(&prefix) && python_side.contains(python),
+            "{edit}: {difference}"
+        );
+        let outcome = format!("{:?}", run_rust(&steps));
+        assert!(outcome.contains(rust), "{edit}: {outcome}");
+    };
+    let raw = || at(7.0, "parent", "task_raw", json!([1]));
+    let claim = |member| at(8.0, member, "claim", json!([1]));
+    let (ready, blocked) = (
+        r#""status": String("ready")"#,
+        r#""status": String("blocked")"#,
+    );
+    for (edit, python, rust) in [
+        ("acceptance='not json'", "raised JSONDecodeError", CONTENDED),
+        ("evidence=NULL", "raised TypeError", CONTENDED),
+        ("dependencies='[99]'", "raised TypeError", blocked),
+        (r#"dependencies='{"2":1}'"#, blocked, ready),
+        (r#"dependencies='"12"'"#, blocked, ready),
+        ("dependencies='null'", "raised TypeError", ready),
+        ("dependencies='5'", "raised TypeError", ready),
+    ] {
+        pinned(&[], edit, raw(), python, rust);
+    }
+    let unknown = r#"python Refused("unknown task")"#;
+    let unmet = r#"Refused("unmet dependencies")"#;
+    pinned(
+        &[claim("w1")],
+        "dependencies='[99]'",
+        claim("w2"),
+        unknown,
+        unmet,
+    );
+    // Claim checks the completed dependency using Python's full `_task`,
+    // including its acceptance JSON; Rust reads only its status.
+    pinned(
+        &[
+            at(7.0, "w1", "dependencies", json!([2, [1]])),
+            sql("UPDATE tasks SET status='completed' WHERE id=1"),
+        ],
+        "acceptance='not json'",
+        at(8.0, "w2", "claim", json!([2])),
+        "raised JSONDecodeError",
+        r#""status": String("claimed")"#,
+    );
+    let claimed = r#""status": String("claimed")"#;
+    pinned(
+        &[],
+        r#"dependencies='{"2":1}'"#,
+        claim("w1"),
+        unmet,
+        claimed,
+    );
+    // The cycle check walks task 1's stored `[[2]]` from a new edge to it.
+    for (probe, rust) in [
+        (
+            at(9.0, "w1", "task_create", json!(["c", "three", ["ok"], [1]])),
+            blocked,
+        ),
+        (at(9.0, "w1", "dependencies", json!([2, [1]])), "Ok("),
+    ] {
+        pinned(
+            &[],
+            "dependencies='[[2]]'",
+            probe,
+            "unhashable type: 'list'",
+            rust,
+        );
+    }
+}

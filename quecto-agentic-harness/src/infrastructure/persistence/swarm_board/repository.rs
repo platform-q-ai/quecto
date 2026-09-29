@@ -266,7 +266,7 @@ fn decoded<'r>(row: &Row<'_>, index: usize, bytes: &'r [u8]) -> rusqlite::Result
 
 /// The text `name` holds, `None` for any other storage class: Python
 /// compares it with a string, which a number, bytes or `None` never equals.
-fn text(row: &Row<'_>, name: &str) -> rusqlite::Result<Option<String>> {
+pub(super) fn text(row: &Row<'_>, name: &str) -> rusqlite::Result<Option<String>> {
     use rusqlite::types::ValueRef;
     let index = row.as_ref().column_index(name)?;
     match row.get_ref(index)? {
@@ -283,7 +283,7 @@ fn cell(row: &Row<'_>, name: &str) -> rusqlite::Result<Value> {
 }
 
 /// The column at `index` as [`cell`] reads it.
-fn cell_at(row: &Row<'_>, index: usize) -> rusqlite::Result<Value> {
+pub(super) fn cell_at(row: &Row<'_>, index: usize) -> rusqlite::Result<Value> {
     use rusqlite::types::ValueRef;
     let name = row.as_ref().column_name(index)?;
     let invalid = |kind: rusqlite::types::Type| {
@@ -328,7 +328,7 @@ pub(super) fn member_row(row: &Row<'_>) -> rusqlite::Result<MemberRow> {
 }
 
 /// The board's `encode(value)` of a JSON argument.
-fn encoded(value: &Value) -> Result<SqlValue, BoardError> {
+pub(super) fn encoded(value: &Value) -> Result<SqlValue, BoardError> {
     let value = PyJson::try_from(value).map_err(|error| BoardError::new(error.to_string()))?;
     py_json::encode(&value)
         .map(SqlValue::Text)
@@ -339,7 +339,7 @@ pub(super) fn failed(error: rusqlite::Error) -> BoardError {
     BoardError(contended(&error).0)
 }
 
-fn refused(error: TransactionError) -> BoardError {
+pub(super) fn refused(error: TransactionError) -> BoardError {
     match error {
         TransactionError::Board(message) => BoardError(message),
         TransactionError::Sqlite(error) => failed(error),

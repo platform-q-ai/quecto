@@ -1459,7 +1459,13 @@ fn application_path_allowed(path: &str) -> bool {
             | "ReadRunStatus"
             | "RecordMemberLaunch"
             | "RegisterMemberSocket"
-            | "ReleaseUnlaunchedMember",
+            | "ReleaseUnlaunchedMember"
+            // Tasks and claims (#2272).
+            | "ClaimTask"
+            | "CreateTask"
+            | "ReadTask"
+            | "ReleaseTask"
+            | "SetTaskDependencies",
         ]
         | [
             "crate",
@@ -1488,7 +1494,17 @@ fn application_path_allowed(path: &str) -> bool {
             | "RunOwnerRow"
             | "RunSnapshotView"
             | "RunStatusView"
-            | "RunStatusRow",
+            | "RunStatusRow"
+            // Tasks and claims (#2272).
+            | "ClaimTaskRequest"
+            | "CreateTaskRequest"
+            | "CreatedTask"
+            | "NewTask"
+            | "ReadTaskRequest"
+            | "ReleaseTaskRequest"
+            | "SetTaskDependenciesRequest"
+            | "TaskRow"
+            | "TaskUpdate",
         ] => true,
         ["crate", "application", ..] => false,
         // Every other crate path must start at a layer infrastructure
@@ -6239,6 +6255,11 @@ const SWARM_BOARD_PORTS: &[&str] = &[
     // The board bounds a JSON argument by the text it stores (#2270): the
     // codec is infrastructure, so the size is asked of it.
     "BoardEncoding",
+    // Tasks and claims (#2272): the task rows, the request ledger and the
+    // claim's file reservations.
+    "BoardTasks",
+    "BoardRequests",
+    "BoardFiles",
 ];
 
 /// Where the swarm capability declares ports: `ports.rs` (and a

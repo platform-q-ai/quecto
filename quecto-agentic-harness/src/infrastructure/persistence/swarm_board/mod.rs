@@ -16,5 +16,6 @@ pub mod ledger;
 pub mod py_json;
 pub mod repository;
 mod repository_members;
+mod repository_tasks;
 pub mod schema;
 pub mod store;

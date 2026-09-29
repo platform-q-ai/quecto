@@ -10,8 +10,8 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use super::dto::{
-    LaunchIdentity, MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow,
-    RunStatusRow,
+    LaunchIdentity, MemberClaimCounts, MemberRow, NewMember, NewRun, NewTask, RunContract,
+    RunOwnerRow, RunStatusRow, TaskRow, TaskUpdate,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -220,10 +220,71 @@ pub trait BoardEvents {
     fn control_generation(&self) -> Result<i64, BoardError>;
 }
 
-/// Every role over one transaction.
-pub trait BoardTransaction: BoardRuns + BoardMembers + BoardEvents {}
+/// The `tasks` rows (#2272). A task id is the caller's value, bound as
+/// Python's `sqlite3` binds it (`"3"` finds task 3 through the column's
+/// INTEGER affinity, `true` finds task 1, NULL finds nothing); a value it
+/// cannot bind is refused naming its parameter.
+pub trait BoardTasks {
+    /// `SELECT * FROM tasks WHERE id=?` as `dict(row)`, with `acceptance`,
+    /// `dependencies` and `evidence` loaded from their JSON (`_task`
+    /// before it derives a blocked status).
+    fn task(&self, id: &Value) -> Result<Option<TaskRow>, BoardError>;
+    /// `SELECT status FROM tasks WHERE id=?`: the text, `None` for a
+    /// missing row or a status that is not text.
+    fn task_status(&self, id: &Value) -> Result<Option<String>, BoardError>;
+    /// `SELECT * FROM tasks`: every task's id and its loaded dependencies,
+    /// in store order (`_dependencies`' graph).
+    fn all_task_dependencies(&self) -> Result<Vec<(i64, Value)>, BoardError>;
+    fn task_count(&self) -> Result<i64, BoardError>;
+    /// A new `ready` task with no evidence; its id.
+    fn insert_task(&self, task: &NewTask) -> Result<i64, BoardError>;
+    /// The task's dependencies, stored with the board's `encode()`. This and
+    /// each task update after it change the one task `id` finds, which the
+    /// caller has read in this transaction (the adapter asserts it).
+    fn set_task_dependencies(&self, id: &Value, dependencies: &Value) -> Result<(), BoardError>;
+    /// The task is `claimed` by `owner` under `token`.
+    fn update_task_claim(&self, id: &Value, owner: &str, token: &str) -> Result<(), BoardError>;
+    /// The task's status changes as `update` says.
+    fn update_task_status(&self, id: &Value, update: &TaskUpdate) -> Result<(), BoardError>;
+}
 
-impl<T: BoardRuns + BoardMembers + BoardEvents + ?Sized> BoardTransaction for T {}
+/// The work a new request runs: its result, which the ledger stores.
+pub type RequestAction<'a> = dyn FnMut() -> Result<Value, BoardError> + 'a;
+
+/// The request ledger (`Store.retry`, #2272): idempotent retries of a
+/// member's request id.
+pub trait BoardRequests {
+    /// A request `actor` made before replays its stored result when
+    /// `payload` encodes to the same text, and is refused with
+    /// `request id reused with different payload` otherwise; a new one
+    /// runs `action` and stores its result, while the ledger has room.
+    /// The replayed result is the stored text as `json.loads` reads it.
+    fn retry(
+        &self,
+        actor: &str,
+        request: &str,
+        payload: &Value,
+        action: &mut RequestAction<'_>,
+    ) -> Result<Value, BoardError>;
+}
+
+/// The `files` reservations (#2272; S10 extends it).
+pub trait BoardFiles {
+    /// `DELETE FROM files WHERE task=? AND claim=?`: the reservations made
+    /// under that claim of that task, and no other, each bound as given.
+    fn delete_claim_files(&self, task: &Value, claim: &Value) -> Result<(), BoardError>;
+}
+
+/// Every role over one transaction.
+pub trait BoardTransaction:
+    BoardRuns + BoardMembers + BoardEvents + BoardTasks + BoardRequests + BoardFiles
+{
+}
+
+impl<T> BoardTransaction for T where
+    T: BoardRuns + BoardMembers + BoardEvents + BoardTasks + BoardRequests + BoardFiles + ?Sized
+{
+}
 
 /// The work one board transaction runs.
 pub type BoardWork<'w> = dyn FnMut(&dyn BoardTransaction) -> Result<(), BoardError> + 'w;

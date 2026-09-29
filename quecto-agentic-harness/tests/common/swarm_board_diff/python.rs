@@ -18,8 +18,9 @@
 //! the Rust dispatcher's test names (`create_run` is `create` without its
 //! closing summary, `bootstrap_run` is `_bootstrap` without its join, and
 //! `bootstrap_join` is that join, `join_process`, bound by `_bootstrap`'s
-//! signature and without the coordinator's closing summary); they live
-//! here, never in the `.py` sources.
+//! signature and without the coordinator's closing summary, and
+//! `task_raw` is `Tasks._task` inside a read-only operation, before S12's
+//! owner liveness); they live here, never in the `.py` sources.
 //!
 //! `create_run` stops where Python's real `create` commits: `create`'s
 //! transaction commits and only then does it call `summary()`, which can
@@ -121,7 +122,14 @@ def _bootstrap_join(board, args):
     finally:
         swarm.Workbench.summary = saved
 
-_ALIASES = {'create_run': _create_run, 'bootstrap_run': _bootstrap_run, 'bootstrap_join': _bootstrap_join}
+def _task_raw(board, args):
+    def raw(task_id):
+        with board.store.operation(active=False, read_only=True) as (db, _):
+            return board._task(db, task_id)
+    return _invoke(raw, args)
+
+_ALIASES = {'create_run': _create_run, 'bootstrap_run': _bootstrap_run, 'bootstrap_join': _bootstrap_join,
+            'task_raw': _task_raw}
 
 for _line in sys.stdin:
     _member, _method, _args_text, _step_now = json.loads(_line)

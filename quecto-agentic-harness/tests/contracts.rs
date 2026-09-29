@@ -41,12 +41,18 @@ mod authority_service_manager;
 mod board_encoding;
 #[path = "contracts/board_events.rs"]
 mod board_events;
+#[path = "contracts/board_files.rs"]
+mod board_files;
 #[path = "contracts/board_members.rs"]
 mod board_members;
 #[path = "contracts/board_repository.rs"]
 mod board_repository;
+#[path = "contracts/board_requests.rs"]
+mod board_requests;
 #[path = "contracts/board_runs.rs"]
 mod board_runs;
+#[path = "contracts/board_tasks.rs"]
+mod board_tasks;
 #[path = "contracts/board_transaction.rs"]
 mod board_transaction;
 #[path = "common/catalogue_conformance.rs"]
