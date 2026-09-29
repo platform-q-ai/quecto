@@ -18,10 +18,12 @@ use crate::domain::tool::ToolResult;
 use crate::infrastructure::tools::swarm::SwarmTool;
 use crate::infrastructure::tools::swarm_bridge::SwarmContext;
 
-/// The real lifecycle, counting its settlements.
+/// The real lifecycle, counting its settlements; its settlement fails
+/// while `fail_settle` is set.
 #[derive(Debug, Default)]
 pub(super) struct CountingLifecycle {
     pub(super) settled: AtomicUsize,
+    pub(super) fail_settle: std::sync::atomic::AtomicBool,
 }
 
 impl SwarmLifecycle for CountingLifecycle {
@@ -54,7 +56,15 @@ impl SwarmLifecycle for CountingLifecycle {
         observation: &'a (dyn ProcessObservation + Sync),
     ) -> PortFuture<'a, Result<(), DomainError>> {
         self.settled.fetch_add(1, Ordering::SeqCst);
-        crate::application::swarm::LifecycleService.settle(snapshot, actor, processes, observation)
+        match self.fail_settle.load(Ordering::SeqCst) {
+            true => Box::pin(async { Err(DomainError::Tool("settlement unavailable".into())) }),
+            false => crate::application::swarm::LifecycleService.settle(
+                snapshot,
+                actor,
+                processes,
+                observation,
+            ),
+        }
     }
     fn settlement_step(
         &self,
@@ -469,7 +479,7 @@ async fn clashing_field_names_bind_to_the_op_named() {
 }
 
 /// A worker whose endpoint refuses every wake hint.
-fn rejecting_worker(context: &SwarmContext) -> std::thread::JoinHandle<()> {
+pub(super) fn rejecting_worker(context: &SwarmContext) -> std::thread::JoinHandle<()> {
     use std::io::Write;
     let socket = context.checkout.join("worker.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
@@ -626,3 +636,6 @@ async fn an_op_before_create_points_the_founder_at_op_create() {
 
 #[path = "swarm_board_ops_input_tests.rs"]
 mod input;
+
+#[path = "swarm_board_ops_notes_tests.rs"]
+mod notes;
