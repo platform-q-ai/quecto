@@ -30,8 +30,9 @@ const SECRET: &str = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 /// Each refused call records one event on the board's telemetry target with
 /// its refusal kind, and whether it named a removed workbench op, and,
-/// while the event log is on, one `swarm_op` record: op `unknown`, refused
-/// as `calling`, by the caller's redacted ref. The member's text (an op
+/// while the event log is on, one `swarm_op` record: op `unknown` (an
+/// internal board method's name included), refused as `calling` (`invalid`
+/// for arguments that are not JSON), by the caller's redacted ref. The member's text (an op
 /// name or a code string holding a secret) is never recorded.
 #[tokio::test]
 async fn each_refused_op_records_its_kind_and_never_the_members_text() {
@@ -55,13 +56,61 @@ async fn each_refused_op_records_its_kind_and_never_the_members_text() {
         .finish();
     let guard = tracing::subscriber::set_default(subscriber);
     tracing::callsite::rebuild_interest_cache();
-    let requests = [
-        format!(r#"{{"op":"run","code":"print('{SECRET}')"}}"#),
-        format!(r#"{{"op":"{SECRET}"}}"#),
-        format!(r#"{{"code":"print('{SECRET}')"}}"#),
-        format!(r#"{{"op":3,"code":"print('{SECRET}')"}}"#),
+    // (request, tracing refusal, removed workbench op, swarm_op kind)
+    let cases = [
+        (
+            format!(r#"{{"op":"run","code":"print('{SECRET}')"}}"#),
+            "unknown_op",
+            true,
+            "calling",
+        ),
+        (
+            format!(r#"{{"op":"{SECRET}"}}"#),
+            "unknown_op",
+            false,
+            "calling",
+        ),
+        // A call with code and no op was the implicit op=run.
+        (
+            format!(r#"{{"code":"print('{SECRET}')"}}"#),
+            "op_required",
+            true,
+            "calling",
+        ),
+        (
+            format!(r#"{{"op":"{SECRET}-x"}}"#),
+            "unknown_op",
+            false,
+            "calling",
+        ),
+        (
+            format!(r#"{{"op":3,"code":"print('{SECRET}')"}}"#),
+            "op_not_a_string",
+            false,
+            "calling",
+        ),
+        // Internal board methods are no ops a member has: recorded as
+        // `unknown`, never under the method's own name (#2282 final review).
+        (
+            r#"{"op":"_close"}"#.to_owned(),
+            "unknown_op",
+            false,
+            "calling",
+        ),
+        (
+            r#"{"op":"_status"}"#.to_owned(),
+            "unknown_op",
+            false,
+            "calling",
+        ),
+        (
+            format!(r#"not-json print('{SECRET}')"#),
+            "invalid_json",
+            false,
+            "invalid",
+        ),
     ];
-    for request in &requests {
+    for (request, ..) in &cases {
         let result = tool.execute(request).await.unwrap();
         assert!(result.is_error, "{request}: {}", result.content);
     }
@@ -71,18 +120,18 @@ async fn each_refused_op_records_its_kind_and_never_the_members_text() {
         .lines()
         .filter(|line| line.contains("swarm op refused"))
         .collect();
-    assert_eq!(refusals.len(), requests.len(), "{log}");
-    for line in &refusals {
+    assert_eq!(refusals.len(), cases.len(), "{log}");
+    for (line, (request, refusal, removed, _)) in refusals.iter().zip(&cases) {
         assert!(line.contains("quecto::swarm_board"), "{line}");
+        assert!(
+            line.contains(&format!("refusal=\"{refusal}\"")),
+            "{request}: {line}"
+        );
+        assert!(
+            line.contains(&format!("removed_workbench_op={removed}")),
+            "{request}: {line}"
+        );
     }
-    assert!(refusals[0].contains("refusal=\"unknown_op\""), "{log}");
-    assert!(refusals[0].contains("removed_workbench_op=true"), "{log}");
-    assert!(refusals[1].contains("refusal=\"unknown_op\""), "{log}");
-    assert!(refusals[1].contains("removed_workbench_op=false"), "{log}");
-    assert!(refusals[2].contains("refusal=\"op_required\""), "{log}");
-    assert!(refusals[2].contains("removed_workbench_op=false"), "{log}");
-    assert!(refusals[3].contains("refusal=\"op_not_a_string\""), "{log}");
-    assert!(refusals[3].contains("removed_workbench_op=false"), "{log}");
     assert!(!log.contains("sk-ant"), "a secret reached the log: {log}");
     assert!(
         !log.contains("print("),
@@ -90,12 +139,12 @@ async fn each_refused_op_records_its_kind_and_never_the_members_text() {
     );
     let recorded = swarm_ops(base.path());
     let refused = &recorded[before..];
-    assert_eq!(refused.len(), requests.len(), "{recorded:?}");
-    for record in refused {
-        assert_eq!(record["op"], "unknown", "{record}");
-        assert_eq!(record["outcome"], "refused", "{record}");
-        assert_eq!(record["kind"], "calling", "{record}");
-        assert_eq!(record["actor_ref"], "coordinator", "{record}");
+    assert_eq!(refused.len(), cases.len(), "{recorded:?}");
+    for (record, (request, _, _, kind)) in refused.iter().zip(&cases) {
+        assert_eq!(record["op"], "unknown", "{request}: {record}");
+        assert_eq!(record["outcome"], "refused", "{request}: {record}");
+        assert_eq!(record["kind"], *kind, "{request}: {record}");
+        assert_eq!(record["actor_ref"], "coordinator", "{request}: {record}");
     }
     let written =
         std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:refusals")).unwrap();
