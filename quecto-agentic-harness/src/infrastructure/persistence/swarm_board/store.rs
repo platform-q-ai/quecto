@@ -155,13 +155,19 @@ impl BoardStore {
             // A metered connection's busy handler points at the call's
             // tally: it is unregistered first, so SQLite never holds that
             // pointer past this transaction (#2303 round-3 review L6). The
-            // connection closes either way.
-            let unwaited = tally.map_or(Ok(()), |_| meter::unwait_metered(&connection));
+            // connection closes either way. Clearing a handler on a live
+            // handle cannot fail, and its outcome is never the op's: a
+            // committed op is not refused over it (round-4 review N1).
+            if tally.is_some() {
+                let unwaited = meter::unwait_metered(&connection);
+                debug_assert!(
+                    unwaited.is_ok(),
+                    "clearing a busy handler cannot fail: {unwaited:?}"
+                );
+            }
             let closed = connection
                 .close()
-                .map_err(|(_, error)| error)
-                .and(unwaited)
-                .map_err(|error| (contended(&error), Some(failure(&error))));
+                .map_err(|(_, error)| (contended(&error), Some(failure(&error))));
             let value = outcome.map_err(|error| {
                 let failure = match &error {
                     TransactionError::Board(_) => None,

@@ -668,7 +668,7 @@ body, evidence, reason, path or other board text:
 | `op` | The board method (`unknown` for a name that is none) |
 | `actor_ref` | The caller's member id: the id the caller chose for itself on the board (`members.id`), redacted if it looks like a credential, and cut to its first 128 characters (a refused call can name any id) |
 | `role` | `coordinator`, `worker`, `integrator`, or `host` for the harness's own ops |
-| `run_id` | The run the op found, when it found one |
+| `run_id` | The run the op found, when it found one and its id is one the board generates (32 lowercase hex digits); `null` otherwise, so an id edited into the board from outside is never recorded |
 | `task_id`, `message_id` | The task or message the op acted on; left out when it acted on none |
 | `outcome` | `ok` or `refused` |
 | `kind` | For a refusal, its stable kind: `run_missing`, `not_coordinator`, `not_member`, `not_running`, `budget_exhausted` (the deadline has passed, or the run is paused or ended as `budget-exhausted`), `member_limit`, `identity_taken`, `run_exists`, `completion_unmet`, `stale_revision`, `immutable`, `wrong_state`, `not_owner`, `stale_token`, `reserved_by_other`, `dependency_cycle`, `not_found` (a task, message or recipient the board does not hold), `capacity_full` (a bounded board table is full: tasks, file reservations, an inbox or a request ledger), `supervisor_only` (resume, close or extend, which only the supervisor takes), `launch_conflict` (a launch whose process identity conflicts with the member's), `request_id_reused` (a request id reused with different data), `invalid`, `calling` (no such method, or arguments that do not bind), `contended` (the database stayed busy or locked past 500 ms: the write lock at `BEGIN`, a reader holding off the commit, or `SQLITE_LOCKED`), `store_missing`, `store` (any other store failure) or `internal` |
@@ -683,6 +683,21 @@ Kinds are additive: a later release may add a kind (each refusal the Python
 board raises already has one), but never renames or reuses one. A consumer of
 the event log must accept a `kind` it does not know, rather than reject the
 record.
+
+Because a kind can never be renamed, the borderline refusals were assigned
+deliberately:
+
+- "run not created yet; nothing to cancel" is `run_missing`, as "coordination
+  run missing" is: the board holds no run row at all, which is not a run in the
+  wrong state (`not_running`).
+- "only a message to the same recipient can be {status}" is `wrong_state`:
+  the message named exists and is the caller's own, but is addressed to another
+  recipient, so it is in the wrong state for the op; the argument itself is
+  well formed (`invalid` is kept for malformed arguments).
+- "paused run has no pause record" is `internal`: the board writes a pause
+  record whenever it pauses a run, so a paused run without one is a broken
+  board invariant, not a store failure (`store` is kept for SQLite's own
+  failures).
 
 A zero is always a measure, never a stand-in for "not measured". The waits are
 summed over the op's own transactions and only those: each op is measured on a

@@ -12,6 +12,9 @@ pub const CRITERIA_MAX_BYTES: usize = 16384;
 pub const CRITERION_ID_MAX_BYTES: usize = 128;
 /// `bounded`'s default maximum.
 pub const TEXT_MAX_BYTES: usize = 8192;
+/// The most bytes a member id may take (`Workbench._admit`'s
+/// `bounded(member, 'member', 128)`): no longer id is ever a member's.
+pub const MEMBER_ID_MAX_BYTES: usize = 128;
 
 /// Python `str.isspace` for one character: the characters `str.strip()`
 /// removes. Unlike Rust's `char::is_whitespace` it includes the information

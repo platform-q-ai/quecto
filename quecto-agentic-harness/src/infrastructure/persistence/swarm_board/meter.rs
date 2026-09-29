@@ -28,6 +28,7 @@ use super::store::{BUSY_TIMEOUT, BoardStore};
 use crate::application::swarm::dto::CallMeasure;
 use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, BoardWork, MeteredCall};
 use crate::domain::swarm::BoardError;
+use crate::domain::swarm::telemetry::board_run_id;
 
 /// The production [`BoardCallMeter`]: a metered call per call over the
 /// board file of `repository`.
@@ -108,9 +109,11 @@ impl Tally {
     }
 
     /// A transaction found the run `id` (or none): kept when no run id was
-    /// found before.
+    /// found before, and only when it is one the board generates
+    /// ([`board_run_id`], #2303 round-4 review L3); an id edited from
+    /// outside is never recorded.
     pub(super) fn run_seen(&self, id: Option<&str>) {
-        if let Some(id) = id {
+        if let Some(id) = id.filter(|id| board_run_id(id)) {
             let mut measure = self.held();
             if measure.run_id.is_none() {
                 measure.run_id = Some(id.to_owned());

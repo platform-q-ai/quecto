@@ -8,13 +8,14 @@
 //! member id, admitted or not. What was not measured, or does not apply,
 //! is `None` (`null`), never a zero or a `false`.
 use std::collections::HashMap;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use serde_json::Value;
 
 use crate::application::swarm::dto::CallMeasure;
 use crate::domain::redaction::Redacted;
+use crate::domain::swarm::validation::MEMBER_ID_MAX_BYTES;
 use crate::domain::swarm::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind};
 
 /// The `tracing` target of every board call record.
@@ -77,41 +78,66 @@ pub(super) fn actor_ref(member: &str) -> Redacted {
 }
 
 /// The most member ids an [`ActorRefs`] keeps (#2303 round-3 review M1):
-/// a run's members are bounded by the board, and a refused call's id is
-/// redacted anew rather than kept.
+/// a run's members are bounded by the board (at most 25), and only a
+/// member's ref is ever kept.
 pub const ACTOR_REF_CACHE: usize = 64;
 
+/// Who the board found the caller to be, for [`ActorRefs::of`] (#2303
+/// round-4 review L1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Caller {
+    /// The board accepted the call from a member of its run: an op that
+    /// checks membership (or makes the caller one) answered it.
+    Member,
+    /// Anything else: a refusal, or a membership-free op, which any id
+    /// can make.
+    Unproven,
+}
+
 /// Each member's [`actor_ref`], redacted once per member rather than once
-/// per call (#2303 round-3 review M1), for at most [`ACTOR_REF_CACHE`]
-/// members.
+/// per call (#2303 round-3 review M1). Only a [`Caller::Member`] whose id
+/// is within the board's [`MEMBER_ID_MAX_BYTES`] is kept (round-4 review
+/// L1, L2), for at most [`ACTOR_REF_CACHE`] members; any other caller's
+/// id is redacted afresh on every call and never stored, so no id a
+/// caller makes up can take a member's place.
 #[derive(Debug, Default)]
 pub struct ActorRefs {
     known: Mutex<HashMap<String, Redacted>>,
 }
 
 impl ActorRefs {
-    /// `member`'s [`actor_ref`]: the one kept for it, or redacted now, and
-    /// kept while fewer than [`ACTOR_REF_CACHE`] members are.
-    pub(super) fn of(&self, member: &str) -> Redacted {
-        let mut known = self.known.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(kept) = known.get(member) {
+    /// `member`'s [`actor_ref`]: the one kept for it, or redacted now,
+    /// outside the lock (round-4 review N4), and kept when `caller` is a
+    /// member with an id within the member-id bound, while fewer than
+    /// [`ACTOR_REF_CACHE`] members are.
+    pub(super) fn of(&self, member: &str, caller: Caller) -> Redacted {
+        if let Some(kept) = self.held().get(member) {
             return kept.clone();
         }
         let redacted = actor_ref(member);
-        if known.len() < ACTOR_REF_CACHE {
-            known.insert(member.to_owned(), redacted.clone());
+        let keep = caller == Caller::Member && member.len() <= MEMBER_ID_MAX_BYTES;
+        if keep {
+            let mut known = self.held();
+            if known.len() < ACTOR_REF_CACHE {
+                known
+                    .entry(member.to_owned())
+                    .or_insert_with(|| redacted.clone());
+            }
+            debug_assert!(known.len() <= ACTOR_REF_CACHE, "the kept refs are bounded");
         }
-        debug_assert!(known.len() <= ACTOR_REF_CACHE, "the kept refs are bounded");
         redacted
+    }
+
+    /// The kept refs, also after a panic elsewhere left the lock poisoned:
+    /// nothing is ever left half-updated under it.
+    fn held(&self) -> MutexGuard<'_, HashMap<String, Redacted>> {
+        self.known.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// How many members' refs are kept.
     #[cfg(test)]
-    fn len(&self) -> usize {
-        self.known
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .len()
+    pub(super) fn len(&self) -> usize {
+        self.held().len()
     }
 }
 
@@ -157,7 +183,8 @@ pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>, actor: O
 /// `served` is what it answered and acted on (`None` for a refusal), the
 /// answer sized as the compact JSON it renders to; `measure` is `None`
 /// when the call began no transaction, and its waits are then `null`. The
-/// run id is the board's own (a uuid it generated), recorded as found.
+/// run id is the board's own (a uuid it generated): the meter records
+/// only such an id (`board_run_id`), never one edited from outside.
 pub(super) fn observation(
     call: &Finished<'_>,
     actor: Redacted,

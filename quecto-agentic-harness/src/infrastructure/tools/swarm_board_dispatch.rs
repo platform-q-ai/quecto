@@ -63,9 +63,11 @@
 //! board row names, bounded by the board), not a secret; it is still
 //! passed through `Redacted` so an id shaped like a credential is masked,
 //! as every telemetry field that carries caller-chosen text is, once per
-//! member ([`ActorRefs`]). A method a later slice adds is
-//! recorded with no further code: it gets an arm in [`Method::role`] and
-//! an entry in [`BOARD_OPS`], which the one-record-per-op test walks.
+//! member ([`ActorRefs`]: only a caller the board accepted as a member,
+//! per [`Method::answers_members_only`], is kept). A method a later slice
+//! adds is recorded with no further code: it gets an arm in
+//! [`Method::role`] and [`Method::answers_members_only`] and an entry in
+//! [`BOARD_OPS`], which the one-record-per-op test walks.
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -89,7 +91,7 @@ use crate::application::swarm::use_cases::{
 use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
 
 pub use super::swarm_board_telemetry::{ActorRefs, TELEMETRY_TARGET};
-use super::swarm_board_telemetry::{Finished, Level, Served, observation, trace};
+use super::swarm_board_telemetry::{Caller, Finished, Level, Served, observation, trace};
 
 /// One handle per board use case, composed once per board file. The
 /// `create_run` and `bootstrap_run` handles are served only in test builds
@@ -287,6 +289,19 @@ impl Method {
         }
     }
 
+    /// Whether an answer proves the caller a member of the run (#2303
+    /// round-4 review L1): the op checks membership, or makes the caller
+    /// the run's coordinator. `_status` is membership-free, so any id can
+    /// have it answered.
+    fn answers_members_only(self) -> bool {
+        match self {
+            Self::Status => false,
+            Self::Snapshot => true,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::CreateRun | Self::BootstrapRun => true,
+        }
+    }
+
     /// The Python signature, `self` left out.
     fn parameters(self) -> &'static [Parameter] {
         match self {
@@ -367,7 +382,11 @@ pub fn call(
     };
     match &handles.telemetry {
         Some(telemetry) => {
-            let actor = telemetry.actors.of(member);
+            let caller = match (&answer, known.map(Method::answers_members_only)) {
+                (Ok(_), Some(true)) => Caller::Member,
+                _ => Caller::Unproven,
+            };
+            let actor = telemetry.actors.of(member, caller);
             trace(&finished, measure.as_ref(), Some(&actor));
             let observation = observation(&finished, actor, answer.as_ref().ok(), measure);
             telemetry.log.record(observation);

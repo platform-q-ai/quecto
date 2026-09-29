@@ -144,9 +144,12 @@ pub(super) const PYTHON_REFUSALS: &[(&str, &[&str])] = &[
         "new artifact evidence must match the revalidated revision",
         &["invalid"],
     ),
+    // The superseded message is the caller's own and exists, but is
+    // addressed elsewhere: a message in the wrong state for the op, not a
+    // malformed argument (round-4 review L5, `docs/swarm.md`).
     (
         "only a message to the same recipient can be {status}",
-        &["invalid"],
+        &["wrong_state"],
     ),
     ("only a paused run may resume", &["wrong_state"]),
     (
@@ -172,9 +175,9 @@ pub(super) const PYTHON_REFUSALS: &[(&str, &[&str])] = &[
         &["run_exists"],
     ),
     ("only your own message can be {status}", &["not_owner"]),
-    // A pause record the board should hold and does not: a corrupt or
-    // outside-edited board.
-    ("paused run has no pause record", &["store"]),
+    // A pause record the board itself should have written and did not:
+    // a broken board invariant, not a store failure (round-4 review L5).
+    ("paused run has no pause record", &["internal"]),
     (
         "recipient inbox full (100 unconsumed messages)",
         &["capacity_full"],
@@ -236,9 +239,11 @@ pub(super) const PYTHON_REFUSALS: &[(&str, &[&str])] = &[
         "run is {run['status']}; nothing to extend",
         &["not_running"],
     ),
+    // No run row at all, as "coordination run missing" (round-4 review
+    // L5): not a run in the wrong state.
     (
         "run not created yet; nothing to cancel. To start one: swarm op=create",
-        &["not_running"],
+        &["run_missing"],
     ),
     ("run stopped before activation", &["not_running"]),
     (
@@ -318,7 +323,10 @@ fn argument(source: &str, open: usize) -> &str {
 }
 
 /// The literal starting at `at` (an optional `f` prefix, then a quote):
-/// its text, unescaped, and where it ends.
+/// its text, with its escapes decoded as Python decodes them, and where it
+/// ends. Decoded, not normalised (#2303 round-4 review N3): the Rust side's
+/// text is `syn`'s decoded value, so both tables compare the text each
+/// board actually raises.
 fn literal(argument: &str, at: usize) -> Option<(String, usize)> {
     let bytes = argument.as_bytes();
     let start = match (bytes.get(at), bytes.get(at + 1)) {
@@ -331,7 +339,10 @@ fn literal(argument: &str, at: usize) -> Option<(String, usize)> {
     let mut chars = argument[start + 1..].char_indices();
     while let Some((offset, character)) = chars.next() {
         match character {
-            '\\' => text.extend(chars.next().map(|(_, escaped)| escaped)),
+            '\\' => {
+                let (_, escaped) = chars.next()?;
+                decode_escape(escaped, &mut text);
+            }
             _ if character as u32 == u32::from(quote) => {
                 return Some((text, start + 1 + offset + 1));
             }
@@ -339,6 +350,22 @@ fn literal(argument: &str, at: usize) -> Option<(String, usize)> {
         }
     }
     None
+}
+
+/// Appends what Python's `\<escaped>` stands for in a (non-raw) string
+/// literal. An allowlist: only the escapes the board's texts may use are
+/// decoded, and any other (numeric, named, or one Python keeps whole)
+/// fails the scan rather than be misread.
+fn decode_escape(escaped: char, text: &mut String) {
+    match escaped {
+        'n' => text.push('\n'),
+        't' => text.push('\t'),
+        'r' => text.push('\r'),
+        '\\' | '\'' | '"' => text.push(escaped),
+        // A backslash before a line break continues the literal.
+        '\n' => {}
+        other => panic!("the refusal scan does not decode the escape \\{other}"),
+    }
 }
 
 /// The end of the expression starting at `at`: the next `+` outside
@@ -609,4 +636,12 @@ raise SwarmError('line\nnext \\ back \' single \" double \tab')
     );
     assert_eq!(blanked("run is {describe(run)}; no"), "run is {}; no");
     assert_eq!(snake("NotRunning"), "not_running");
+}
+
+/// An escape the scan does not decode fails it rather than be misread
+/// (#2303 round-4 review N3).
+#[test]
+#[should_panic(expected = "does not decode the escape \\x")]
+fn an_undecoded_escape_fails_the_scan() {
+    let _ = refusals_in(r"raise SwarmError('byte \x41')");
 }

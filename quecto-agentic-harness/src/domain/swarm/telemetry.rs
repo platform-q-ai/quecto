@@ -149,8 +149,10 @@ pub struct BoardOpObservation {
     /// like a credential.
     pub actor_ref: Redacted,
     pub role: BoardRole,
-    /// The run the op found, when it found one: the id the board
-    /// generated for it, never caller text, so it is not redacted.
+    /// The run the op found, when it found one and its id is one the
+    /// board generates ([`board_run_id`]); any other id (a board edited
+    /// from outside) is `None`, so it is never caller text and is not
+    /// redacted.
     pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<i64>,
@@ -179,6 +181,16 @@ pub struct BoardOpObservation {
     /// always the size of Python's `json.dumps` text (whose separators
     /// carry spaces).
     pub result_bytes: u64,
+}
+
+/// Whether `id` is a run id the boards generate (#2303 round-4 review
+/// L3): Python's `uuid.uuid4().hex`, and the Rust port's `IdSource`, is
+/// 32 lowercase hex digits. Only such an id is recorded.
+pub fn board_run_id(id: &str) -> bool {
+    id.len() == 32
+        && id
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 #[cfg(test)]
