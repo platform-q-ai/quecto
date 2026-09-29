@@ -133,6 +133,7 @@ fn turn() -> ExternalAgentTurn {
         list_price_cost_micro_usd: 7,
         list_price_total_micro_usd: 7,
         task_id: None,
+        cost_drop: None,
     }
 }
 

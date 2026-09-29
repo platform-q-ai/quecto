@@ -234,5 +234,8 @@ mod redacted_cov_tests {
     }
 }
 #[cfg(test)]
+#[path = "redaction_command_line_tests.rs"]
+mod command_line_tests;
+#[cfg(test)]
 #[path = "redaction_encodings_tests.rs"]
 mod encodings_tests;

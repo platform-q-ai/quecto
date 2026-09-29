@@ -32,6 +32,7 @@ fn turn(turn: u64) -> ExternalAgentTurn {
         list_price_cost_micro_usd: 0,
         list_price_total_micro_usd: 0,
         task_id: None,
+        cost_drop: None,
     }
 }
 

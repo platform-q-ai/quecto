@@ -26,6 +26,16 @@ pub const DIAGNOSTIC_KIND_CAPACITY: usize = 64;
 /// The `terminal_reason` of a turn that spent its budget.
 const BUDGET_EXHAUSTED: &str = "budget_exhausted";
 
+/// How a turn ended, for its record.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TurnCut<'a> {
+    /// The session settled it: on its result (`Some`), or on an accepted
+    /// interrupt that left none (`None`: `aborted`).
+    Settled(Option<&'a TurnOutcome>),
+    /// Its process's output ended first: `exited`.
+    Exited,
+}
+
 #[derive(Debug)]
 struct PendingTool {
     record: ExternalAgentTool,
@@ -198,24 +208,26 @@ impl SessionTelemetry {
         }
     }
 
-    /// Turn `turn` ended with `outcome` (`None`: its process exited, or it
-    /// was stopped without a result): its calls still open are recorded
+    /// Turn `turn` ended as `cut` says: its calls still open are recorded
     /// unanswered, then the turn.
     pub(crate) fn turn_ended(
         &mut self,
         turn: u64,
-        outcome: Option<&TurnOutcome>,
-        exited: bool,
+        cut: TurnCut<'_>,
         now: AgentClockInstant,
         records: &mut Vec<SessionRecord>,
     ) {
         while let Some(pending) = self.pending.pop_front() {
             records.push(finished(pending, "unanswered", 0, now));
         }
-        let (turn_end, reason_kind) = match (outcome, exited) {
-            (Some(outcome), _) => end_kind(&outcome.end),
-            (None, true) => ("exited", None),
-            (None, false) => ("aborted", None),
+        let outcome = match cut {
+            TurnCut::Settled(outcome) => outcome,
+            TurnCut::Exited => None,
+        };
+        let (turn_end, reason_kind) = match cut {
+            TurnCut::Settled(Some(outcome)) => end_kind(&outcome.end),
+            TurnCut::Settled(None) => ("aborted", None),
+            TurnCut::Exited => ("exited", None),
         };
         let tokens = outcome.map(|o| o.usage.tokens).unwrap_or_default();
         records.push(SessionRecord::TurnReported(Box::new(ExternalAgentTurn {
@@ -235,6 +247,7 @@ impl SessionTelemetry {
             list_price_cost_micro_usd: outcome.map_or(0, |o| o.usage.cost_micro_usd),
             list_price_total_micro_usd: outcome.map_or(0, |o| o.usage.total_cost_micro_usd),
             task_id: None,
+            cost_drop: None,
         })));
     }
 }

@@ -49,7 +49,7 @@ use super::dto::{
     USER_TURNS_PER_TURN_CAPACITY, UserTurnId,
 };
 use super::projection::Projector;
-use super::session_telemetry::SessionTelemetry;
+use super::session_telemetry::{SessionTelemetry, TurnCut};
 use crate::domain::external_agent::stream::{
     AssistantContent, ExternalAgentEvent, InterruptReceipt,
 };
@@ -454,8 +454,7 @@ impl SessionCore {
     ) {
         self.telemetry.turn_ended(
             turn,
-            step.turn_end.as_ref(),
-            false,
+            TurnCut::Settled(step.turn_end.as_ref()),
             now,
             &mut folded.records,
         );

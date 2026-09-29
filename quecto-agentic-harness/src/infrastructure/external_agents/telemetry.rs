@@ -126,14 +126,37 @@ impl ExternalAgentTelemetry for EventLogExternalAgentTelemetry {
     }
 }
 
-impl Drop for EventLogExternalAgentTelemetry {
+/// How the event log's writer ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriterEnd {
+    /// It wrote what it held.
+    Drained,
+    /// It panicked.
+    Panicked,
+    /// It was still writing when the bound ran out: it is left behind.
+    TimedOut,
+}
+
+impl EventLogExternalAgentTelemetry {
+    /// The same adapter, whose end waits at most `bound` for its writer.
+    pub fn with_drain_bound(self, bound: std::time::Duration) -> Self {
+        let _ = bound;
+        self
+    }
+
     /// Close the queue and wait for the writer to file what it holds.
-    fn drop(&mut self) {
+    pub fn finish(&mut self) -> WriterEnd {
         drop(self.queue.take());
-        if let Some(writer) = self.writer.take() {
-            let joined = writer.join();
-            debug_assert!(joined.is_ok(), "the event log writer does not panic");
+        match self.writer.take().map(std::thread::JoinHandle::join) {
+            Some(Err(_)) => WriterEnd::Panicked,
+            Some(Ok(())) | None => WriterEnd::Drained,
         }
+    }
+}
+
+impl Drop for EventLogExternalAgentTelemetry {
+    fn drop(&mut self) {
+        self.finish();
     }
 }
 

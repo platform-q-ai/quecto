@@ -122,6 +122,16 @@ async fn golden(name: &str) {
     let scenario = fixtures().join(format!("{name}.stream.jsonl"));
     let lines = run_member(root.path(), &scenario, None).await;
     let produced: Vec<String> = lines.iter().map(|line| normalized(line)).collect();
+    // What the normalisation takes out was there: the member's end, timed.
+    let ended: Vec<serde_json::Value> = lines
+        .iter()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|value| value["kind"] == "ended")
+        .collect();
+    let [ended] = ended.as_slice() else {
+        panic!("{name}: one end is recorded: {lines:?}")
+    };
+    assert!(ended["wall_ms"].is_u64(), "{name}: {ended}");
     let golden = fixtures().join(format!("telemetry/{name}.events.jsonl"));
     if std::env::var_os("QUECTO_BLESS_GOLDEN").is_some() {
         std::fs::create_dir_all(golden.parent().unwrap()).unwrap();
@@ -244,4 +254,41 @@ async fn no_credential_proxy_value_or_transcript_reaches_the_log() {
     ] {
         assert!(!log.contains(secret), "{secret} leaked: {log}");
     }
+}
+
+/// The ref a record carries is the swarm's name for the member when it is
+/// a recordable name, else the member's own session name (#2304 review).
+#[test]
+fn the_member_ref_is_the_swarm_s_name_only_when_it_is_a_recordable_name() {
+    let environment =
+        |value: &str| vec![(OsString::from("QUECTO_SWARM_MEMBER"), OsString::from(value))];
+    assert_eq!(member_ref(&environment("C3"), "w1"), "C3");
+    for unrecordable in ["", " ", "C 3", "C3/../x", &"x".repeat(65)] {
+        assert_eq!(
+            member_ref(&environment(unrecordable), "w1"),
+            "w1",
+            "{unrecordable:?}"
+        );
+    }
+    assert_eq!(member_ref(&[], "w1"), "w1");
+}
+
+/// Every credential variable a member can run under has a mode.
+#[test]
+fn every_credential_variable_names_its_mode_and_never_its_value() {
+    let modes: Vec<&str> = CREDENTIAL_VARIABLES
+        .iter()
+        .map(|name| {
+            credential_mode(&CredentialEnv {
+                name: name.to_string(),
+                value: "secret".into(),
+            })
+        })
+        .collect();
+    assert_eq!(modes, ["oauth_token", "api_key"]);
+    let unset = CredentialEnv {
+        name: CREDENTIAL_VARIABLES[0].to_string(),
+        value: String::new(),
+    };
+    assert_eq!(credential_mode(&unset), "none");
 }

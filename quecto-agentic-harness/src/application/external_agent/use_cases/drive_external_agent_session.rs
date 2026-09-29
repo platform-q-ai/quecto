@@ -62,6 +62,7 @@ use crate::application::external_agent::ports::{
 use crate::application::external_agent::session_core::{
     AbortDecision, Admission, SessionCore, Wait,
 };
+use crate::application::external_agent::session_telemetry::TurnCut;
 
 type Process = Arc<dyn ExternalAgentProcess>;
 
@@ -424,7 +425,7 @@ impl DriveExternalAgentSession {
             let mut core = self.core();
             if let Some(turn) = core.running_turn() {
                 core.telemetry
-                    .turn_ended(turn, None, true, now, &mut reported);
+                    .turn_ended(turn, TurnCut::Exited, now, &mut reported);
             }
             let wall_ms = core.telemetry.wall_ms(now);
             (core.end().0, wall_ms)
