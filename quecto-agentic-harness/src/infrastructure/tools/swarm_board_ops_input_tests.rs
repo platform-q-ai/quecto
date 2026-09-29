@@ -261,3 +261,37 @@ async fn structured_ops_are_recorded_without_argument_text() {
         assert!(line.contains("quecto::swarm_board"), "{line}");
     }
 }
+
+static BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn counted(
+    location: crate::application::swarm::dto::BoardLocation,
+    log: Option<Arc<dyn crate::application::swarm::ports::BoardOpLog>>,
+) -> crate::infrastructure::tools::swarm_board_dispatch::SwarmBoardHandles {
+    BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    crate::composition::swarm::build_swarm_board_handles(location, log)
+}
+
+/// #2279 review L5: `execute` reads which op a request names with the
+/// board's constant codec, on the async worker, without resolving the
+/// board's location or building its handles: a harness op (`status`) that
+/// never calls the board builds none.
+#[tokio::test]
+async fn reading_a_request_builds_no_board_handles() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: crate::infrastructure::tools::swarm_bridge::SwarmBoard::new(
+            counted as crate::infrastructure::tools::swarm_bridge::SwarmBoardHandlesBuilder,
+        ),
+        checkout: directory.path().to_path_buf(),
+        member: "worker".into(),
+        lifecycle: Arc::new(crate::application::swarm::LifecycleService),
+    };
+    let result = execute(&context, r#"{"op": "status", "job_id": "none"}"#).await;
+    assert_eq!(
+        BUILDS.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "{}",
+        result.content
+    );
+}
