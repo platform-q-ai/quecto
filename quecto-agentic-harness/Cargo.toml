@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.107.168"
+version = "0.107.169"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
@@ -36,6 +36,11 @@ serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 # unlike std's `{:e}`, it breaks an exact tie between two shortest digit
 # strings to even, as Python's `repr` does.
 ryu = "1"
+
+# The swarm board's SQLite driver (#2269): the same file format the Python
+# board writes. `bundled` compiles SQLite itself, so no system libsqlite3 is
+# needed; `limits` reads the variable limit the store checks on open.
+rusqlite = { version = "0.40", features = ["bundled", "limits"] }
 
 # Utilities
 uuid = { version = "1", features = ["v4"] }
