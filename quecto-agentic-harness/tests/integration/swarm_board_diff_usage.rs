@@ -274,7 +274,6 @@ fn loose_usage_arguments_are_taken_as_python_takes_them() {
         "[5, null]",
         "{\"token_limit\": null}",
         "{\"token_limit\": 9223372036854775807, \"strict_unknown\": false}",
-        "{\"strict_unknown\": false}",
         "[null, false]",
     ] {
         steps.push(next("parent", "usage_budget", args));

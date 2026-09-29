@@ -2,6 +2,7 @@
 //! decision and the validation of one request's usage record.
 use serde_json::{Map, Value};
 
+use super::python_value::python_equal;
 use super::{BoardError, RefusalKind};
 
 /// A run's token budget.
@@ -151,8 +152,58 @@ pub fn redelivery(
     current: &Map<String, Value>,
     same_actor: bool,
 ) -> Redelivery {
-    let _ = (previous, current, same_actor);
-    Redelivery::Different
+    let null = Value::Null;
+    let previous_runtime = previous.get(RUNTIME).unwrap_or(&null);
+    let current_runtime = current.get(RUNTIME).unwrap_or(&null);
+    let same_runtime = match (previous_runtime, current_runtime) {
+        (Value::Object(previous), Value::Object(current)) => {
+            python_equal(&stable(previous), &stable(current))
+                && digest_known_or_equal(previous, current)
+        }
+        (previous, current) => python_equal(previous, current),
+    };
+    if !(same_actor && same_records(previous, current) && same_runtime) {
+        return Redelivery::Different;
+    }
+    match current_runtime.get(SHA256) {
+        Some(Value::String(_)) => Redelivery::DigestKnown,
+        _ => Redelivery::Same,
+    }
+}
+
+const RUNTIME: &str = "runtime";
+const SHA256: &str = "executable_sha256";
+const DIGEST_PENDING: &str = "executable_digest_pending";
+
+/// `previous == current` with `runtime` popped from both.
+fn same_records(previous: &Map<String, Value>, current: &Map<String, Value>) -> bool {
+    let without = |record: &Map<String, Value>| {
+        Value::Object(
+            record
+                .iter()
+                .filter(|(key, _)| key.as_str() != RUNTIME)
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        )
+    };
+    python_equal(&without(previous), &without(current))
+}
+
+/// `dict(value, executable_digest_pending=None, executable_sha256=None)`.
+fn stable(runtime: &Map<String, Value>) -> Value {
+    let mut stable = runtime.clone();
+    stable.insert(DIGEST_PENDING.to_owned(), Value::Null);
+    stable.insert(SHA256.to_owned(), Value::Null);
+    Value::Object(stable)
+}
+
+/// `previous.get('executable_sha256') in (None, current.get(...))`: a
+/// stored digest that is unknown, or the same.
+fn digest_known_or_equal(previous: &Map<String, Value>, current: &Map<String, Value>) -> bool {
+    match previous.get(SHA256) {
+        None | Some(Value::Null) => true,
+        Some(stored) => python_equal(stored, current.get(SHA256).unwrap_or(&Value::Null)),
+    }
 }
 
 /// A request id of 1 through 128 characters.

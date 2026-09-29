@@ -148,6 +148,7 @@ fn outside_edited_control_records() {
     assert_eq!(
         run_rust(&[
             create(5),
+            at(0.5, "parent", "usage_report", json!([])),
             sql(
                 r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 1, "strict_unknown": false}')"#
             ),

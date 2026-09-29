@@ -207,7 +207,7 @@ fn the_budget_payload_is_stored_as_json_dumps_writes_it() {
         [vec![
             rusqlite::types::Value::Integer(1),
             rusqlite::types::Value::Text(
-                r#"{"warned": true, "token_limit": 9223372036854775807, "strict_unknown": false, "é": "é"}"#
+                r#"{"warned": true, "token_limit": 9223372036854775807, "strict_unknown": false, "\u00e9": "\u00e9"}"#
                     .to_owned()
             ),
         ]]
@@ -269,7 +269,7 @@ fn a_request_row_round_trips_its_payload_bytes() {
             Sql::Text("r1".to_owned()),
             Sql::Text("worker".to_owned()),
             Sql::Text(
-                r#"{"duration_ms":1.5,"model":"mé","outcome":"succeeded","request_id":"r1","runtime":{"process_instance_id":"p"}}"#
+                r#"{"duration_ms":1.5,"model":"m\u00e9","outcome":"succeeded","request_id":"r1","runtime":{"process_instance_id":"p"}}"#
                     .to_owned()
             ),
             Sql::Integer(80),
@@ -296,8 +296,8 @@ fn a_request_row_round_trips_its_payload_bytes() {
 }
 
 /// The count the 10,000-row cap reads counts every row, including rows
-/// only a file edited outside the board wrote; a stored actor that is not
-/// text is read as stored.
+/// only a file edited outside the board wrote; a row's actor is read as
+/// stored (the column's TEXT affinity keeps the number 7 as `'7'`).
 #[test]
 fn the_ledger_count_reads_every_row() {
     let (_dir, database, repository) = usage_board();
@@ -321,7 +321,7 @@ fn the_ledger_count_reads_every_row() {
         .atomic(false, &mut |transaction| {
             assert_eq!(transaction.request_usage_count()?, 10_000);
             let stored = transaction.request_usage("fill-9999")?.unwrap();
-            assert_eq!((stored.actor, stored.payload), (json!(7), json!({})));
+            assert_eq!((stored.actor, stored.payload), (json!("7"), json!({})));
             Ok(())
         })
         .unwrap();

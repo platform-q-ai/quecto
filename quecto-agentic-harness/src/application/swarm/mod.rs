@@ -12,6 +12,7 @@ mod board_operation;
 mod board_tasks;
 #[cfg(test)]
 pub(crate) mod board_test_support;
+mod board_usage;
 pub mod dto;
 pub mod ports;
 pub mod use_cases;

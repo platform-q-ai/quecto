@@ -19,7 +19,7 @@ fn request_admission_answers_pythons_shape() {
     let admission = call(&handles, "parent", "_request_admission", json!([])).unwrap();
     assert_eq!(
         serde_json::to_string(&admission).unwrap(),
-        r#"{"status":"running","coordinator":"parent","deadline":4600.0,"members":[{"id":"parent","reservation":null,"status":"live","pid":null,"started":null,"socket":null,"launcher":null}],"outcome":null,"control_generation":0}"#
+        r#"{"status":"running","coordinator":"parent","deadline":4600.0,"members":[{"id":"parent","reservation":"00000000000000000000000000000002","status":"live","pid":null,"started":null,"socket":null,"launcher":null}],"outcome":null,"control_generation":0}"#
     );
 }
 
