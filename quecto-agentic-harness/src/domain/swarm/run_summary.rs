@@ -17,8 +17,10 @@ use super::Snapshot;
 use super::telemetry::{BoardOpObservation, BoardOpOutcome, RefusalKind, board_run_id};
 use crate::domain::redaction::Redacted;
 
-/// The most samples of each measure an op keeps for its percentiles; the
-/// samples past it are counted in [`OpSummary::unsampled`].
+/// The most samples of each measure an op keeps for its percentiles: a
+/// uniform sample of all its records (reservoir sampling, #2313 review
+/// L2), the records not held counted in [`OpSummary::unsampled`]. The max
+/// is exact whatever was held.
 pub const SAMPLES_PER_OP: usize = 4_096;
 
 /// The most ops a summary keeps apart; a record of any other op is counted
@@ -55,8 +57,9 @@ pub struct OpSummary {
     pub busy_wait_us: Percentiles,
     /// Records whose store's busy handler fired.
     pub busy: u64,
-    /// Records past [`SAMPLES_PER_OP`], counted but in no percentile; left
-    /// out when there were none.
+    /// Records not held in the op's sample of [`SAMPLES_PER_OP`] (a
+    /// uniform sample over all its records, from which the p50 and p95 are
+    /// taken; the max is exact), counted; left out when there were none.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub unsampled: u64,
 }
@@ -120,31 +123,104 @@ fn is_zero(count: &u64) -> bool {
     *count == 0
 }
 
-/// An op's records folded so far: its counts and its kept samples.
+/// An op's records folded so far: its counts and its measures' samples.
 #[derive(Clone, Debug, Default)]
 struct OpFold {
     ok: u64,
     refused: BTreeMap<RefusalKind, u64>,
     busy: u64,
-    unsampled: u64,
-    durations: Vec<u64>,
+    durations: Samples,
     lock_waits: Samples,
     busy_waits: Samples,
 }
 
-/// One measure's kept samples, and the records that did not measure it.
+/// One measure over an op's records: a uniform sample of at most
+/// [`SAMPLES_PER_OP`] of the values measured (reservoir sampling), how
+/// many were measured, their exact max, and the records that did not
+/// measure it.
 #[derive(Clone, Debug, Default)]
 struct Samples {
     kept: Vec<u64>,
+    measured: u64,
+    max: Option<u64>,
     unmeasured: u64,
 }
 
 impl Samples {
+    /// Folds one record's `value` of the measure (`None`: not measured).
+    /// Once the sample is full, the record's value replaces a held one
+    /// with probability [`SAMPLES_PER_OP`] over the values measured so
+    /// far, so every value is equally likely to be held.
+    fn observe(&mut self, value: Option<u64>, draw: &mut Draw) {
+        let Some(value) = value else {
+            self.unmeasured = self.unmeasured.saturating_add(1);
+            return;
+        };
+        self.measured = self.measured.saturating_add(1);
+        self.max = Some(self.max.map_or(value, |max| max.max(value)));
+        match self.kept.len() < SAMPLES_PER_OP {
+            true => self.kept.push(value),
+            false => {
+                let at = draw.below(self.measured);
+                if let Some(held) = usize::try_from(at)
+                    .ok()
+                    .and_then(|at| self.kept.get_mut(at))
+                {
+                    *held = value;
+                }
+            }
+        }
+        debug_assert!(
+            self.kept.len() <= SAMPLES_PER_OP,
+            "a measure keeps at most SAMPLES_PER_OP samples"
+        );
+    }
+
+    /// The values measured but not held in the sample.
+    fn unsampled(&self) -> u64 {
+        let kept = u64::try_from(self.kept.len()).unwrap_or(u64::MAX);
+        self.measured.saturating_sub(kept)
+    }
+
     fn percentiles(&self) -> Percentiles {
         Percentiles {
+            max: self.max,
             unmeasured: self.unmeasured,
             ..percentiles(&self.kept)
         }
+    }
+}
+
+/// The fold's pseudo-random draws (splitmix64), seeded from the run's id:
+/// the same records give the same summary, and nothing reads a clock or
+/// the system's entropy.
+#[derive(Clone, Debug)]
+struct Draw(u64);
+
+impl Draw {
+    /// Seeded by the FNV-1a hash of `run_id`.
+    fn for_run(run_id: &str) -> Self {
+        let seed = run_id
+            .bytes()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+            });
+        Self(seed)
+    }
+
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut mixed = self.0;
+        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        mixed ^ (mixed >> 31)
+    }
+
+    /// A draw in `0..bound` (`bound` at least 1), by Lemire's multiply.
+    fn below(&mut self, bound: u64) -> u64 {
+        debug_assert!(bound > 0, "a draw below nothing");
+        let wide = u128::from(self.next()) * u128::from(bound);
+        u64::try_from(wide >> 64).unwrap_or(0)
     }
 }
 
@@ -160,6 +236,7 @@ pub struct RunSummaryFold {
     requests: Vec<RequestUsage>,
     unlisted_ops: u64,
     unlisted_requests: u64,
+    draw: Draw,
 }
 
 impl RunSummaryFold {
@@ -180,6 +257,7 @@ impl RunSummaryFold {
             requests: Vec::new(),
             unlisted_ops: 0,
             unlisted_requests: 0,
+            draw: Draw::for_run(run_id),
         }
     }
 
@@ -211,6 +289,7 @@ impl RunSummaryFold {
             true => fold_op(
                 self.ops.entry(observation.op.clone()).or_default(),
                 observation,
+                &mut self.draw,
             ),
             false => self.unlisted_ops = self.unlisted_ops.saturating_add(1),
         }
@@ -297,8 +376,8 @@ impl RunSummaryFold {
     }
 }
 
-/// Folds `observation` into its op's `fold`.
-fn fold_op(fold: &mut OpFold, observation: &BoardOpObservation) {
+/// Folds `observation` into its op's `fold`, drawing from `draw`.
+fn fold_op(fold: &mut OpFold, observation: &BoardOpObservation, draw: &mut Draw) {
     match observation.outcome {
         BoardOpOutcome::Ok => fold.ok = fold.ok.saturating_add(1),
         BoardOpOutcome::Refused { kind, .. } => {
@@ -309,35 +388,20 @@ fn fold_op(fold: &mut OpFold, observation: &BoardOpObservation) {
     if observation.busy == Some(true) {
         fold.busy = fold.busy.saturating_add(1);
     }
-    if fold.durations.len() >= SAMPLES_PER_OP {
-        fold.unsampled = fold.unsampled.saturating_add(1);
-        return;
-    }
-    fold.durations.push(observation.duration_us);
-    for (samples, measured) in [
-        (&mut fold.lock_waits, observation.lock_wait_us),
-        (&mut fold.busy_waits, observation.busy_wait_us),
-    ] {
-        match measured {
-            Some(value) => samples.kept.push(value),
-            None => samples.unmeasured = samples.unmeasured.saturating_add(1),
-        }
-    }
-    debug_assert!(
-        fold.durations.len() <= SAMPLES_PER_OP,
-        "an op keeps at most SAMPLES_PER_OP samples"
-    );
+    fold.durations.observe(Some(observation.duration_us), draw);
+    fold.lock_waits.observe(observation.lock_wait_us, draw);
+    fold.busy_waits.observe(observation.busy_wait_us, draw);
 }
 
 fn summarized(fold: &OpFold) -> OpSummary {
     OpSummary {
         ok: fold.ok,
         refused: fold.refused.clone(),
-        duration_us: percentiles(&fold.durations),
+        duration_us: fold.durations.percentiles(),
         lock_wait_us: fold.lock_waits.percentiles(),
         busy_wait_us: fold.busy_waits.percentiles(),
         busy: fold.busy,
-        unsampled: fold.unsampled,
+        unsampled: fold.durations.unsampled(),
     }
 }
 

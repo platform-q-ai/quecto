@@ -908,7 +908,7 @@ for that run, so its counts are those records':
 |---|---|
 | `run_id` | The run, as the board generated its id |
 | `records` | The run's `swarm_op` records folded |
-| `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50`, `p95` and `max` of `duration_us`, `lock_wait_us` and `busy_wait_us` (a record that did not measure a wait is left out of its percentiles and counted in that wait's `unmeasured`), `busy` (records whose busy handler fired), and `unsampled` (records past the 4096 samples an op keeps, counted but in no percentile; left out when none) |
+| `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50` and `p95` and the exact `max` of `duration_us`, `lock_wait_us` and `busy_wait_us` (a record that did not measure a wait is left out of its percentiles and counted in that wait's `unmeasured`), `busy` (records whose busy handler fired), and `unsampled` (the percentiles are taken from a uniform sample of at most 4096 of an op's records, drawn over the whole run; the records not held are counted here, and left out when none) |
 | `busy` | Records whose busy handler fired, over every op |
 | `tasks` | Tasks `created`, `claimed`, `released`, `blocked`, `submitted` and `accepted` (verified), by the decisions of the answered ops |
 | `messages` | Messages `sent`, `acked` (consumed) and `withdrawn`, likewise |
