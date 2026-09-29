@@ -6,7 +6,9 @@
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::{at, create};
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_both, sql};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
+    Step, run_both, run_rust, sql, try_run_both,
+};
 
 /// A running run of five coordinated by `parent`, with `worker` live and
 /// holding the claim of task 1 under [`token`]`(3)` (`create` drew ids 1
@@ -319,6 +321,52 @@ fn verification_is_checked_identically() {
         at(16.0, "parent", "verify_task", json!([3, null, "anything"])),
         at(17.0, "parent", "verify_task", json!([3, "x", "anything"])),
     ]));
+}
+
+/// A file-edited nonempty JSON string is iterable in Python, but its first
+/// character cannot be indexed with `revision`. Rust deliberately refuses
+/// this malformed stored evidence instead of raising (the documented
+/// `outside_edited_evidence` divergence).
+#[test]
+fn edited_string_evidence_raises_in_python_and_is_refused_in_rust() {
+    let steps = [
+        create(5),
+        at(1.0, "parent", "task_create", json!(["r", "t", ["ok"]])),
+        sql(r#"UPDATE tasks SET status='submitted',token='t',evidence='"R1"' WHERE id=1"#),
+        at(2.0, "parent", "verify_task", json!([1, "t", "R1"])),
+    ];
+    let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+    assert!(
+        difference.starts_with("step 3: verify_task")
+            && difference.contains("Python raised TypeError: string indices must be integers"),
+        "{difference}"
+    );
+    let rust = format!("{:?}", run_rust(&steps));
+    assert!(
+        rust.contains("stored evidence is not a list of revisioned entries"),
+        "{rust}"
+    );
+}
+
+/// Python short-circuits on the first stale revision before indexing the
+/// malformed later entry. The Rust board must return the same refusal and
+/// leave the submitted task unchanged after the failed verification.
+#[test]
+fn edited_stale_first_malformed_later_evidence_is_refused_identically() {
+    let steps = [
+        create(5),
+        at(1.0, "parent", "task_create", json!(["r", "t", ["ok"]])),
+        sql(
+            r#"UPDATE tasks SET status='submitted',token='t',evidence='[{"revision":"X"},"junk"]' WHERE id=1"#,
+        ),
+        at(2.0, "parent", "verify_task", json!([1, "t", "R1"])),
+    ];
+    run_both(&steps);
+    let rust = format!("{:?}", run_rust(&steps));
+    assert_eq!(rust, "Refused(\"stale evidence revision\")");
+    let mut read_back = steps.to_vec();
+    read_back.push(raw(3.0, json!(1)));
+    run_both(&read_back);
 }
 
 /// The gate: a dead member neither blocks nor submits, the coordinator

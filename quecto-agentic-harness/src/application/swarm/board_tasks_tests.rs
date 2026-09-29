@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::{owned, read_task};
+use super::{owned, read_task, unsubmitted};
 use crate::application::swarm::board_operation::atomic;
 use crate::application::swarm::board_test_support::{MemoryBoard, running_board, stored_task};
 use crate::domain::swarm::{BoardError, RefusalKind};
@@ -84,4 +84,36 @@ fn owned_requires_the_token_the_owner_and_a_held_claim() {
         Ok(())
     })
     .unwrap();
+}
+
+#[test]
+fn unsubmitted_uses_only_status_and_refuses_submitted_evidence() {
+    let mut claimed = stored_task(1, "claimed", json!([]), Some("worker"));
+    claimed.set("id", Value::Null);
+    claimed.set("evidence", json!({"extra": "not a list"}));
+    assert_eq!(unsubmitted(&claimed), Ok(()));
+
+    let submitted = stored_task(2, "submitted", json!([]), Some("worker"));
+    assert_eq!(
+        unsubmitted(&submitted),
+        Err(BoardError::new(
+            RefusalKind::Immutable,
+            "submitted evidence is immutable; release and reclaim before revising"
+        ))
+    );
+}
+
+#[test]
+#[should_panic(expected = "only a held claim is checked")]
+fn unsubmitted_asserts_a_held_status_even_in_release() {
+    let ready = stored_task(1, "ready", json!([]), None);
+    let _ = unsubmitted(&ready);
+}
+
+#[test]
+#[should_panic(expected = "only a held claim is checked")]
+fn unsubmitted_asserts_when_status_is_missing() {
+    let mut task = stored_task(1, "claimed", json!([]), Some("worker"));
+    task.set("status", Value::Null);
+    let _ = unsubmitted(&task);
 }

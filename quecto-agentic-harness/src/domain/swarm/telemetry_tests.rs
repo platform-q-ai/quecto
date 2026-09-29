@@ -138,13 +138,10 @@ fn every_domain_refusal_carries_its_kind() {
             RefusalKind::Invalid,
         ),
         (
-            kind(require_unsubmitted(&task(TaskState::SUBMITTED))),
+            kind(require_unsubmitted("submitted")),
             RefusalKind::Immutable,
         ),
-        (
-            kind(require_unsubmitted(&task(TaskState::new("lost")))),
-            RefusalKind::WrongState,
-        ),
+        (kind(require_unsubmitted("lost")), RefusalKind::WrongState),
         (kind(bounded(&json!(""), "title", 10)), RefusalKind::Invalid),
         (kind(criteria(&json!([]), 2)), RefusalKind::Invalid),
         (

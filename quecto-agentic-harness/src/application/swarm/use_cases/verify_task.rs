@@ -50,12 +50,12 @@ impl VerifyTask {
                     .is_some_and(|token| python_equal(token, &request.token));
                 let status = task.text("status");
                 let reviewable = matches!(status, Some("submitted" | "completed"));
-                if !(current && reviewable) {
+                let (true, true) = (current, reviewable) else {
                     return Err(BoardError::new(
                         RefusalKind::StaleToken,
                         "stale claim or work not submitted",
                     ));
-                }
+                };
                 current_revision(&task, &request.revision)?;
                 if status == Some("completed") {
                     return Ok(TaskTransition::Unchanged);

@@ -12,7 +12,9 @@
 //!   harness's own `run_both`, without either (round-4 L2). A pin table's
 //!   own test is a top-level `#[test]` function of
 //!   `swarm_board_diff_loose.rs` named in `PERMITTED_DIVERGENCES` and not
-//!   pinned elsewhere (`EXTERNAL_PINS` names neither it nor its test), and
+//!   pinned elsewhere (`EXTERNAL_PINS` names neither it nor its test), or
+//!   the explicit `outside_edited_evidence` supplemental pin in
+//!   `swarm_board_diff_submissions.rs`, and
 //!   the harness's `run_both` is the top-level function of that name in
 //!   the harness's file.
 //!
@@ -35,6 +37,11 @@ const SELF_TEST_PREFIX: &str = "harness_self_test_";
 const PIN_TABLE: &str = "tests/integration/swarm_board_diff_loose.rs";
 /// The file defining the harness and its `run_both`.
 const HARNESS_FILE: &str = "tests/common/swarm_board_diff/scenario.rs";
+/// One additional pin for `outside_edited_evidence`, kept in its focused
+/// submission scenarios rather than extending the size-limited pin table.
+const EVIDENCE_PIN_FILE: &str = "tests/integration/swarm_board_diff_submissions.rs";
+const EVIDENCE_PIN_TEST: &str = "edited_string_evidence_raises_in_python_and_is_refused_in_rust";
+const EVIDENCE_DIVERGENCE: &str = "outside_edited_evidence";
 /// The methods that check a harness call's `Err`.
 const EXPECTING_DIFFERENCE: [&str; 2] = ["unwrap_err", "expect_err"];
 /// A test file that is neither.
@@ -96,10 +103,19 @@ fn pinned_tests() -> Vec<String> {
     pinned
 }
 
+fn evidence_pin_is_registered() -> bool {
+    let source = std::fs::read_to_string(PIN_TABLE)
+        .unwrap_or_else(|error| panic!("read {PIN_TABLE}: {error}"));
+    let file = syn::parse_file(&source).expect("the pin table parses");
+    constant_literals(&file, PERMITTED).contains(&EVIDENCE_DIVERGENCE.to_owned())
+        && !constant_literals(&file, EXTERNAL).contains(&EVIDENCE_DIVERGENCE.to_owned())
+}
+
 /// What the file being checked is to the harness.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Role {
     PinTable,
+    EvidencePin,
     Harness,
     Other,
 }
@@ -108,6 +124,7 @@ impl Role {
     fn of(path: &str) -> Self {
         match path {
             PIN_TABLE => Self::PinTable,
+            EVIDENCE_PIN_FILE => Self::EvidencePin,
             HARNESS_FILE => Self::Harness,
             _ => Self::Other,
         }
@@ -176,7 +193,13 @@ impl Calls {
     fn in_function(&mut self, name: String, test: bool, walk: impl FnOnce(&mut Self)) {
         let top_level = self.function.is_none();
         let function = Function {
-            pinned: top_level && test && self.role == Role::PinTable && self.pinned.contains(&name),
+            pinned: top_level
+                && test
+                && match self.role {
+                    Role::PinTable => self.pinned.contains(&name),
+                    Role::EvidencePin => name == EVIDENCE_PIN_TEST && evidence_pin_is_registered(),
+                    Role::Harness | Role::Other => false,
+                },
             runner: top_level && self.role == Role::Harness && name == HARNESS_RUNNER,
             name,
         };
@@ -394,6 +417,16 @@ fn the_hook_checker_rejects_tampering_outside_self_tests() {
         }
     "#;
     assert_eq!(violations(PIN_TABLE, pinned), Vec::<String>::new());
+    let evidence_pin = r#"
+        #[test]
+        fn edited_string_evidence_raises_in_python_and_is_refused_in_rust() {
+            let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        }
+    "#;
+    assert_eq!(
+        violations(EVIDENCE_PIN_FILE, evidence_pin),
+        Vec::<String>::new()
+    );
 
     let ordinary = r#"
         #[test]
@@ -457,6 +490,16 @@ fn the_hook_checker_requires_expected_differences_to_be_pinned() {
             "{unpinned}: {found:?}"
         );
     }
+
+    // Another test in the focused file is not licensed to expect a difference.
+    let ordinary_in_pin_file = r#"
+        #[test]
+        fn edited_stale_first_malformed_later_evidence_is_refused_identically() {
+            try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        }
+    "#;
+    let found = violations(EVIDENCE_PIN_FILE, ordinary_in_pin_file);
+    assert_eq!(found.len(), 1, "{found:?}");
 
     // A pinned test compares the boards as they are: it may not tamper.
     let tampering = r#"

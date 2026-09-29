@@ -9,6 +9,7 @@ use syn::visit::Visit;
 use super::cfg_test_gated;
 
 const DISPATCH: &str = "src/infrastructure/tools/swarm_board_dispatch.rs";
+const METHODS: &str = "src/infrastructure/tools/swarm_board_dispatch_method.rs";
 
 /// Method names only a test or `test-support` build serves, by the
 /// `Method` variant each parses to.
@@ -112,8 +113,29 @@ fn gating(entries: &[(String, bool)], name: &str) -> Option<bool> {
 
 #[test]
 fn test_only_board_methods_are_refused_by_a_production_build() {
-    let source = std::fs::read_to_string(DISPATCH).expect("read the dispatcher");
-    let file = syn::parse_file(&source).expect("the dispatcher parses");
+    let dispatch = std::fs::read_to_string(DISPATCH).expect("read the dispatcher");
+    let dispatch = syn::parse_file(&dispatch).expect("the dispatcher parses");
+    assert!(
+        dispatch.items.iter().any(|item| matches!(
+            item,
+            syn::Item::Mod(module)
+                if module.ident == "method"
+                    && module.attrs.iter().any(|attr| matches!(
+                        &attr.meta,
+                        syn::Meta::NameValue(value)
+                            if value.path.is_ident("path")
+                                && matches!(
+                                    &value.value,
+                                    syn::Expr::Lit(syn::ExprLit {
+                                        lit: syn::Lit::Str(path), ..
+                                    }) if path.value() == "swarm_board_dispatch_method.rs"
+                                )
+                    ))
+        )),
+        "the dispatcher must load the method definitions being checked"
+    );
+    let source = std::fs::read_to_string(METHODS).expect("read the method sibling");
+    let file = syn::parse_file(&source).expect("the method sibling parses");
     let variants = variants(&file);
     let arms = parse_arms(&file);
     for (name, variant) in TEST_ONLY {
