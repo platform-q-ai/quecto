@@ -494,6 +494,22 @@ fn the_starter_containerfile_is_tooling_neutral() {
     assert_eq!(instructions, INSTRUCTIONS);
 }
 
+/// #2283 (epic #2265 P6, confirmed by the owner 2026-09-28): the harness
+/// needs no Python, so the starter offers none. No instruction or comment
+/// names it: no interpreter package, no venv, no "Python for scripts".
+#[test]
+fn standard_container_starter_has_no_python() {
+    let starter = fs::read_to_string(
+        root().join("quecto-agentic-harness/assets/standard-container/Containerfile"),
+    )
+    .unwrap();
+    let named: Vec<&str> = starter
+        .lines()
+        .filter(|line| line.to_ascii_lowercase().contains("python"))
+        .collect();
+    assert!(named.is_empty(), "the starter names Python: {named:?}");
+}
+
 /// The values of every `LABEL ai.quecto.required-tools="…"` instruction.
 fn declared_tools(containerfile: &str) -> Vec<&str> {
     containerfile

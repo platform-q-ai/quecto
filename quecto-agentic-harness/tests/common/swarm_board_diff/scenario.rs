@@ -14,6 +14,7 @@ use serde_json::Value;
 
 use super::Outcome;
 use super::dump::{first_difference, logical_dump};
+use super::golden::{Answer, FULL_DUMP_LIMIT, Golden, canonical, file_state};
 use super::python::PyBoard;
 use super::rust::{RecordedOps, RustBoard};
 
@@ -502,4 +503,74 @@ fn recorded(log: &RecordedOps, dispatched: bool, hold: Option<Hold>) -> Result<(
             )),
         },
     }
+}
+
+/// Runs `steps` on a fresh board through `call` (each step held as it
+/// says) and records the fixture: each answer, the board file after each
+/// step, and the final dump. `call` answers a board call and, for a
+/// result, its wire text.
+fn record(
+    steps: &[Step],
+    side: &Side,
+    mut call: impl FnMut(&Step) -> (Outcome, Option<String>),
+) -> Golden {
+    let mut golden = Golden {
+        answers: Vec::with_capacity(steps.len()),
+        files: Vec::with_capacity(steps.len()),
+        dump: None,
+    };
+    for step in steps {
+        let answer = if step.method == SQL_STEP {
+            edit(&side.database, &step.args);
+            Answer::Ok("null".to_owned())
+        } else if step.method == FS_STEP {
+            shape(&side.root, &step.args);
+            Answer::Ok("null".to_owned())
+        } else {
+            let (outcome, text) = with_lock(&side.database, step.hold, || call(step));
+            match (side.neutral(outcome), text) {
+                (Outcome::Ok(_), Some(text)) => Answer::Ok(text),
+                (Outcome::Ok(value), None) => {
+                    panic!("{step:?}: a result without its text: {value}")
+                }
+                (Outcome::Refused(text), _) => Answer::Refused(text),
+                (Outcome::Raised(text), _) => Answer::Raised(text),
+            }
+        };
+        golden.answers.push(answer);
+        golden.files.push(file_state(&side.database));
+    }
+    golden.dump = match golden.files.last() {
+        Some(Some(state)) if state.starts_with("dump:") => {
+            Some(canonical(&logical_dump(&side.database))).filter(|dump| {
+                serde_json::to_string(dump).map_or(0, |text| text.len()) <= FULL_DUMP_LIMIT
+            })
+        }
+        _ => None,
+    };
+    golden
+}
+
+/// The fixture the Rust board would record for `steps`: for the harness's
+/// own tests, which need a fixture whose every value is known to match.
+pub fn record_rust(steps: &[Step]) -> Golden {
+    let dir = tempfile::tempdir().expect("a directory for the board");
+    let side = Side::new(dir.path(), "rust");
+    let rust = RustBoard::open(&side.database, &side.root);
+    record(steps, &side, |step| {
+        let (outcome, _) = rust.call_text(&step.member, &step.method, &step.args, step.now);
+        let text = match &outcome {
+            Outcome::Ok(value) => Some(rust.wire_text(value)),
+            Outcome::Refused(_) | Outcome::Raised(_) => None,
+        };
+        (outcome, text)
+    })
+}
+
+/// Runs `steps` on the Rust board against the fixture `scenario` holds
+/// under `dir`, as it is on disk; the first difference is the error.
+/// (#2283 red phase: not yet compared.)
+pub fn try_run_golden_in(dir: &Path, scenario: &str, steps: &[Step]) -> Result<(), String> {
+    let _golden = Golden::load(dir, scenario, steps)?;
+    Ok(())
 }

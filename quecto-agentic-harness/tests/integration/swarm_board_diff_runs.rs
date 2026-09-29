@@ -229,6 +229,64 @@ fn harness_self_test_detects_a_difference() {
     assert!(difference.contains("boards differ"), "{difference}");
 }
 
+/// #2283: the golden comparison can fail. A fixture recorded from the
+/// board itself passes; the same fixture with one value changed, in a
+/// copy (an answer, a step's file digest, a cell of the final dump), fails
+/// the replay at the step it names.
+#[test]
+fn golden_replay_detects_a_changed_rust_result() {
+    use swarm_board_diff::golden::fixture_path;
+    use swarm_board_diff::scenario::{record_rust, try_run_golden_in};
+    let steps = [
+        step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+        step("supervisor", "_status", json!([]), NOW + 1.0),
+        step("parent", "_snapshot", json!([]), NOW + 2.0),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    record_rust(&steps).save(dir.path(), "self_test", &steps);
+    assert_eq!(try_run_golden_in(dir.path(), "self_test", &steps), Ok(()));
+    let path = fixture_path(dir.path(), "self_test", &steps);
+    let recorded = std::fs::read_to_string(&path).unwrap();
+    let corrupt = |change: &dyn Fn(&mut Value)| {
+        let mut golden: Value = serde_json::from_str(&recorded).unwrap();
+        change(&mut golden);
+        std::fs::write(&path, serde_json::to_string(&golden).unwrap()).unwrap();
+        try_run_golden_in(dir.path(), "self_test", &steps)
+    };
+    // An answer: `bootstrap_run` answered `null`.
+    let difference = corrupt(&|golden| golden["answers"][0] = json!({"ok": "1"})).unwrap_err();
+    assert!(
+        difference.starts_with("step 0: bootstrap_run") && difference.contains("results differ"),
+        "{difference}"
+    );
+    // A refusal's text.
+    let difference =
+        corrupt(&|golden| golden["answers"][1] = json!({"refused": "no"})).unwrap_err();
+    assert!(
+        difference.starts_with("step 1: _status") && difference.contains("results differ"),
+        "{difference}"
+    );
+    // A step's board file.
+    let difference = corrupt(&|golden| golden["files"][0] = json!("dump:0")).unwrap_err();
+    assert!(
+        difference.starts_with("step 0: bootstrap_run") && difference.contains("boards differ"),
+        "{difference}"
+    );
+    // A cell of the final dump, shown row by row.
+    let difference = corrupt(&|golden| {
+        let text = golden["dump"]
+            .to_string()
+            .replacen("container_setup", "tampered", 1);
+        golden["dump"] = serde_json::from_str(&text).unwrap();
+        golden["files"][2] = json!("dump:0");
+    })
+    .unwrap_err();
+    assert!(
+        difference.starts_with("step 2: _snapshot") && difference.contains("tampered"),
+        "{difference}"
+    );
+}
+
 /// The result comparison can fail (#2270 review M1): a Rust answer that
 /// differs while both files still match is reported as a result
 /// difference, not passed over.

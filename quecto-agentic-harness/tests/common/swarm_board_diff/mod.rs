@@ -22,6 +22,7 @@
 //! that text against Python's.
 
 pub mod dump;
+pub mod golden;
 pub mod python;
 pub mod rust;
 pub mod scenario;
