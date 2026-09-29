@@ -84,3 +84,6 @@ fn without_a_configuration_the_event_log_is_off_before_admission() {
     flags.configuration = None;
     assert!(!decided_before_admission(&ctx, &flags));
 }
+
+#[path = "event_log_admission_tests.rs"]
+mod admission;
