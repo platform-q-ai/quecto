@@ -19,6 +19,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use quote::ToTokens;
+
+use super::dependency_scan;
 use syn::visit::Visit;
 
 /// `(file:function, text, kind)` for every construction site in the
@@ -185,7 +187,7 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
-        "src/infrastructure/persistence/swarm_board/repository.rs:SqliteBoardRepository::atomic",
+        "src/infrastructure/persistence/swarm_board/repository.rs:atomic_on",
         "expr: refusal . 0",
         "expr: store_kind (failure)",
     ),
@@ -247,13 +249,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
 ];
 
 /// The files a refusal table entry may come from: production sources only
-/// (a test builds refusals of any kind it likes).
+/// (a test builds refusals of any kind it likes). An allowlist (#2303
+/// round-3 review L5): a file is production only when the crate's module
+/// tree mounts it outside `#[cfg(test)]`, whatever its name.
 fn production(path: &str) -> bool {
-    let test_only = path.ends_with("_tests.rs")
-        || path.ends_with("/tests.rs")
-        || path.contains("/tests/")
-        || path.ends_with("board_test_support.rs");
-    path.starts_with("src/") && !test_only
+    dependency_scan::production_file(path)
 }
 
 /// One `BoardError::new(kind, text)` site: the function it is in

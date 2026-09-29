@@ -11,9 +11,9 @@
 //! The dispatcher holds composed handles only ([`SwarmBoardHandles`], built
 //! by `composition::swarm`): it never constructs a use case or an adapter,
 //! and never sequences two use cases. While the event log is on, each call
-//! is served by handles composition builds for that call alone
-//! ([`BoardTelemetry::compose`]) over the call's own metered repository.
-//! It serves `_status` and `_snapshot`
+//! is served by the composed use case [`OverRepository::over`] the call's
+//! own metered repository: the graph is composed once, and only the
+//! repository is the call's. It serves `_status` and `_snapshot`
 //! (#2270) and the harness's membership methods `_admit`, `_activate`,
 //! `_record_launch`, `_release_unlaunched` and `_socket` (#2271); later
 //! slices add methods, and S13 wires it into `SwarmContext`. Every
@@ -62,7 +62,8 @@
 //! board identity the caller chose for itself (the `members.id` every
 //! board row names, bounded by the board), not a secret; it is still
 //! passed through `Redacted` so an id shaped like a credential is masked,
-//! as every telemetry field that carries caller-chosen text is. A method a later slice adds is
+//! as every telemetry field that carries caller-chosen text is, once per
+//! member ([`ActorRefs`]). A method a later slice adds is
 //! recorded with no further code: it gets an arm in [`Method::role`] and
 //! an entry in [`BOARD_OPS`], which the one-record-per-op test walks.
 use std::sync::Arc;
@@ -82,12 +83,12 @@ use crate::application::swarm::dto::{
 };
 use crate::application::swarm::use_cases::{
     ActivateMember, AdmitMember, BootstrapRun, ClaimTask, CreateRun, CreateTask, JoinRun,
-    ReadRunSnapshot, ReadRunStatus, ReadTask, RecordMemberLaunch, RegisterMemberSocket,
-    ReleaseTask, ReleaseUnlaunchedMember, SetTaskDependencies,
+    OverRepository, ReadRunSnapshot, ReadRunStatus, ReadTask, RecordMemberLaunch,
+    RegisterMemberSocket, ReleaseTask, ReleaseUnlaunchedMember, SetTaskDependencies,
 };
 use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
 
-pub use super::swarm_board_telemetry::TELEMETRY_TARGET;
+pub use super::swarm_board_telemetry::{ActorRefs, TELEMETRY_TARGET};
 use super::swarm_board_telemetry::{Finished, Level, Served, observation, trace};
 
 /// One handle per board use case, composed once per board file. The
@@ -121,19 +122,14 @@ pub struct SwarmBoardHandles {
 }
 
 /// The event log a board call records in, the meter that measures it and
-/// the composition that serves it over its own metered repository
-/// (#2303): all or none, so a record is never written with waits that
-/// were not measured.
+/// each caller's kept ref (#2303): all or none, so a record is never
+/// written with waits that were not measured.
 #[derive(Clone)]
 pub struct BoardTelemetry {
     pub log: Arc<dyn BoardOpLog>,
     pub meter: Arc<dyn BoardCallMeter>,
-    pub compose: BoardComposer,
+    pub actors: Arc<ActorRefs>,
 }
-
-/// Composition's board graph over a given repository: the handles one
-/// metered call is served by, their `telemetry` `None`.
-pub type BoardComposer = Arc<dyn Fn(Arc<dyn BoardRepository>) -> SwarmBoardHandles + Send + Sync>;
 
 impl std::fmt::Debug for SwarmBoardHandles {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -339,29 +335,25 @@ pub fn call(
 ) -> Result<Value, BoardError> {
     let started = Instant::now();
     let known = Method::parse(method);
-    let answer_with = |handles: &SwarmBoardHandles| match known {
-        Some(known) => bind(known, known.parameters(), args)
-            .and_then(|arguments| serve(handles, member, known, arguments)),
+    // While the event log is on: this call's own measure, which is the
+    // repository it is served over, so nothing is shared with another call.
+    let metered = handles
+        .telemetry
+        .as_ref()
+        .map(|telemetry| telemetry.meter.open());
+    let answer = match known {
+        Some(known) => bind(known, known.parameters(), args).and_then(|arguments| {
+            let over = metered
+                .clone()
+                .map(|metered| metered as Arc<dyn BoardRepository>);
+            serve(handles, over, member, known, arguments)
+        }),
         None => Err(BoardError::new(
             RefusalKind::Calling,
             format!("swarm board has no method {method}"),
         )),
     };
-    let (answer, measure) = match &handles.telemetry {
-        Some(telemetry) => {
-            // This call's own measure, and handles over its own metered
-            // repository: nothing is shared with another call.
-            let metered = telemetry.meter.open();
-            let own = (telemetry.compose)(metered.repository());
-            debug_assert!(
-                own.telemetry.is_none(),
-                "a call's own handles record nothing"
-            );
-            let answer = answer_with(&own);
-            (answer, metered.measure())
-        }
-        None => (answer_with(handles), None),
-    };
+    let measure = metered.and_then(|metered| metered.measure());
     let finished = Finished {
         op: known.map_or("unknown", Method::name),
         level: known.map_or(Level::Mutation, Method::level),
@@ -373,13 +365,14 @@ pub fn call(
             .map_err(BoardError::kind),
         elapsed: started.elapsed(),
     };
-    trace(&finished, measure.as_ref());
-    if let Some(telemetry) = &handles.telemetry {
-        telemetry.log.record(observation(
-            &finished,
-            answer.as_ref().ok(),
-            measure.as_ref(),
-        ));
+    match &handles.telemetry {
+        Some(telemetry) => {
+            let actor = telemetry.actors.of(member);
+            trace(&finished, measure.as_ref(), Some(&actor));
+            let observation = observation(&finished, actor, answer.as_ref().ok(), measure);
+            telemetry.log.record(observation);
+        }
+        None => trace(&finished, None, None),
     }
     answer.map(|served| served.value)
 }
@@ -437,8 +430,39 @@ fn bind(method: Method, parameters: &[Parameter], args: Value) -> Result<Vec<Val
         .collect()
 }
 
+/// The composed use case, or the same one over a metered call's own
+/// repository when there is one.
+enum Serving<'a, U> {
+    Composed(&'a U),
+    Over(U),
+}
+
+impl<U> std::ops::Deref for Serving<'_, U> {
+    type Target = U;
+
+    fn deref(&self) -> &U {
+        match self {
+            Self::Composed(composed) => composed,
+            Self::Over(over) => over,
+        }
+    }
+}
+
+fn serving<'a, U: OverRepository>(
+    composed: &'a U,
+    over: Option<&Arc<dyn BoardRepository>>,
+) -> Serving<'a, U> {
+    match over {
+        Some(repository) => Serving::Over(composed.over(repository.clone())),
+        None => Serving::Composed(composed),
+    }
+}
+
+/// Serves `method`, over `over` (the call's metered repository) when the
+/// event log is on.
 fn serve(
     handles: &SwarmBoardHandles,
+    over: Option<Arc<dyn BoardRepository>>,
     member: &str,
     method: Method,
     arguments: Vec<Value>,
@@ -448,16 +472,17 @@ fn serve(
         method.parameters().len(),
         "every parameter is bound"
     );
+    let over = over.as_ref();
     match method {
         Method::Status => Ok(Served {
-            value: status(handles.read_run_status.execute()?),
+            value: status(serving(&*handles.read_run_status, over).execute()?),
             decision: "read",
             task_id: None,
             message_id: None,
             cursor_moved: None,
         }),
         Method::Snapshot => Ok(Served {
-            value: snapshot(handles.read_run_snapshot.execute(member)?)?,
+            value: snapshot(serving(&*handles.read_run_snapshot, over).execute(member)?)?,
             decision: "read",
             task_id: None,
             message_id: None,
@@ -473,9 +498,13 @@ fn serve(
         Method::Claim => tasks::claim(handles, member, arguments),
         Method::Release => tasks::release(handles, member, arguments),
         #[cfg(any(test, feature = "test-support"))]
-        Method::CreateRun => test_only::create_run(handles, member, arguments),
+        Method::CreateRun => {
+            test_only::create_run(&serving(&*handles.create_run, over), member, arguments)
+        }
         #[cfg(any(test, feature = "test-support"))]
-        Method::BootstrapRun => test_only::bootstrap_run(handles, member, arguments),
+        Method::BootstrapRun => {
+            test_only::bootstrap_run(&serving(&*handles.bootstrap_run, over), member, arguments)
+        }
         #[cfg(any(test, feature = "test-support"))]
         Method::BootstrapJoin => test_only::bootstrap_join(handles, member, arguments),
         #[cfg(any(test, feature = "test-support"))]
@@ -594,8 +623,9 @@ mod test_only {
     use serde_json::Value;
 
     use super::{
-        BootstrapRunRequest, CreateBranch, CreateRunRequest, JoinRunRequest, Joined,
-        LaunchIdentity, Parameter, Served, SwarmBoardHandles, done, required, take,
+        BootstrapRun, BootstrapRunRequest, CreateBranch, CreateRun, CreateRunRequest,
+        JoinRunRequest, Joined, LaunchIdentity, Parameter, Served, SwarmBoardHandles, done,
+        required, take,
     };
     use crate::domain::swarm::{BoardError, RefusalKind};
 
@@ -620,12 +650,12 @@ mod test_only {
     ];
 
     pub(super) fn create_run(
-        handles: &SwarmBoardHandles,
+        create_run: &CreateRun,
         member: &str,
         arguments: Vec<Value>,
     ) -> Result<Served, BoardError> {
         let [goal, constraints, criteria, member_limit, deadline] = take(arguments)?;
-        let created = handles.create_run.execute(CreateRunRequest {
+        let created = create_run.execute(CreateRunRequest {
             member: member.to_owned(),
             goal,
             constraints,
@@ -648,12 +678,12 @@ mod test_only {
     /// The three values reach the store as the member passed them: Python
     /// binds them untyped (epic P3), so a type is never refused here.
     pub(super) fn bootstrap_run(
-        handles: &SwarmBoardHandles,
+        bootstrap_run: &BootstrapRun,
         member: &str,
         arguments: Vec<Value>,
     ) -> Result<Served, BoardError> {
         let [pid, started, socket] = take(arguments)?;
-        let bootstrapped = handles.bootstrap_run.execute(BootstrapRunRequest {
+        let bootstrapped = bootstrap_run.execute(BootstrapRunRequest {
             member: member.to_owned(),
             pid,
             started,

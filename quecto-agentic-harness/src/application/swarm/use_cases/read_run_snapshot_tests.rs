@@ -2,6 +2,7 @@ use super::ReadRunSnapshot;
 use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board,
 };
+use crate::application::swarm::use_cases::OverRepository;
 use crate::domain::swarm::{BoardError, RefusalKind};
 
 #[test]
@@ -58,4 +59,20 @@ fn snapshot_refuses_an_unknown_member_and_a_missing_run() {
         refused,
         BoardError::new(RefusalKind::RunMissing, "coordination run missing")
     );
+}
+
+/// Served over another repository (#2303 round-3 review M1), the use case
+/// reads that board with the clock it was composed with: at the deadline,
+/// the run is paused.
+#[test]
+fn over_reads_the_given_board_on_the_composed_clock() {
+    let composed_over = MemoryBoard::with(BoardState::default());
+    let other = MemoryBoard::with(running_board(100.0));
+    let snapshot = ReadRunSnapshot::new(composed_over.clone(), SteppingClock::fixed(100.0))
+        .over(other.clone())
+        .execute("parent")
+        .unwrap();
+    assert_eq!(snapshot.status.as_deref(), Some("paused"));
+    assert_eq!(other.transactions(), [false, false]);
+    assert!(composed_over.transactions().is_empty());
 }

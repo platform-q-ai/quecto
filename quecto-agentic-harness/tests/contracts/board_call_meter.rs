@@ -2,7 +2,8 @@
 //! measure, sharing nothing with another call; a fresh measure has
 //! measured nothing (never reported as zero); only the transactions begun
 //! through a call's own repository are its measure, whatever else runs on
-//! the same thread or another.
+//! the same thread or another. A call is itself the repository it
+//! measures.
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -27,7 +28,7 @@ pub(crate) fn board() -> (
     (dir, repository, meter)
 }
 
-fn transact(repository: &Arc<dyn BoardRepository>) {
+fn transact(repository: &dyn BoardRepository) {
     repository.atomic(false, &mut |_| Ok(())).unwrap();
 }
 
@@ -42,13 +43,12 @@ fn a_call_measures_its_own_transactions() {
     let (_dir, plain, meter) = board();
     let call = meter.open();
     let other = meter.open();
-    let repository = call.repository();
-    transact(&repository);
+    transact(&*call);
     // Neither the plain repository's transaction nor another call's is
     // this call's, though they run on the same thread in between.
     plain.atomic(false, &mut |_| Ok(())).unwrap();
-    transact(&other.repository());
-    transact(&repository);
+    transact(&*other);
+    transact(&*call);
     let measure = call.measure().expect("two transactions began");
     assert_eq!(measure.transactions, 2, "{measure:?}");
     assert!(!measure.busy, "{measure:?}");
@@ -68,13 +68,13 @@ fn calls_on_other_threads_are_not_this_calls() {
             thread::spawn(move || {
                 let other = meter.open();
                 for _ in 0..3 {
-                    transact(&other.repository());
+                    transact(&*other);
                 }
                 other.measure().unwrap().transactions
             })
         })
         .collect();
-    transact(&call.repository());
+    transact(&*call);
     for other in others {
         assert_eq!(other.join().unwrap(), 3);
     }

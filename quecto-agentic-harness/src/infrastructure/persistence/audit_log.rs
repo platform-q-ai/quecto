@@ -164,6 +164,10 @@ impl AuditCrashLine {
     /// log as it was: a dying process does not cap it.
     pub fn write(&self, turn: u32, event: AuditEvent) -> std::io::Result<()> {
         let line = self.line(Some(turn), event)?;
+        // The gate is a plain (non-reentrant) mutex: when the panic began
+        // on a thread that holds it (a panic inside a write), this waits
+        // the whole [`CRASH_GATE_WAIT`] (1 s) for a gate that thread will
+        // never let go, then gives up its line rather than deadlock.
         let appended = self.gate.append(
             &self.file,
             self.cap_bytes,
@@ -367,6 +371,12 @@ impl AuditLog {
         let line = appender
             .line(Some(turn), event)
             .map_err(|e| DomainError::Other(e.to_string()))?;
+        // The write is detached on the blocking pool: once spawned it runs
+        // to completion even if this future is cancelled (dropped) before
+        // it is joined. So a cancelled `emit`'s line can still land, after
+        // a line a later `emit` or another writer has written meanwhile:
+        // lines stay whole and within the cap, but a cancelled caller's
+        // line is not ordered before later ones.
         let appended = tokio::task::spawn_blocking(move || {
             let capped = || {
                 let cap_bytes = appender.cap_bytes;

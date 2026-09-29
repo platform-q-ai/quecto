@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::{BOARD_OPS, BoardComposer, BoardTelemetry, Method, SwarmBoardHandles, call};
+use super::{ActorRefs, BOARD_OPS, BoardTelemetry, Method, SwarmBoardHandles, call};
 use crate::application::swarm::dto::{BoardLocation, CallMeasure};
 use crate::application::swarm::ports::{
     BoardCallMeter, BoardOpLog, BoardRepository, Clock, IdSource, MeteredCall,
@@ -78,31 +78,28 @@ impl Unmeasured {
 }
 
 impl BoardCallMeter for Unmeasured {
-    fn open(&self) -> Box<dyn MeteredCall> {
+    fn open(&self) -> Arc<dyn MeteredCall> {
         *self.opened.lock().unwrap() += 1;
-        Box::new(NothingMeasured(self.repository.clone()))
+        Arc::new(NothingMeasured(self.repository.clone()))
     }
 }
 
 struct NothingMeasured(Arc<dyn BoardRepository>);
 
-impl MeteredCall for NothingMeasured {
-    fn repository(&self) -> Arc<dyn BoardRepository> {
-        self.0.clone()
-    }
-
-    fn nested(&self) -> Box<dyn MeteredCall> {
-        Box::new(Self(self.0.clone()))
-    }
-
-    fn measure(&self) -> Option<CallMeasure> {
-        None
+impl BoardRepository for NothingMeasured {
+    fn atomic(
+        &self,
+        create: bool,
+        work: &mut crate::application::swarm::ports::BoardWork<'_>,
+    ) -> Result<(), BoardError> {
+        self.0.atomic(create, work)
     }
 }
 
-/// The test graph over a given repository, as composition builds it.
-fn composer() -> BoardComposer {
-    Arc::new(plain)
+impl MeteredCall for NothingMeasured {
+    fn measure(&self) -> Option<CallMeasure> {
+        None
+    }
 }
 
 /// Telemetry recording in `log`, measured by `meter`.
@@ -110,7 +107,7 @@ fn telemetry(log: &Arc<Recorded>, meter: &Arc<Unmeasured>) -> Option<BoardTeleme
     Some(BoardTelemetry {
         log: log.clone(),
         meter: meter.clone(),
-        compose: composer(),
+        actors: Arc::new(ActorRefs::default()),
     })
 }
 

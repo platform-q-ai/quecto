@@ -2,6 +2,7 @@
 //! reads them.
 use std::sync::Arc;
 
+use super::OverRepository;
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::RunSnapshotView;
 use crate::application::swarm::ports::{BoardRepository, Clock};
@@ -45,6 +46,15 @@ impl ReadRunSnapshot {
                 })
             },
         )
+    }
+}
+
+impl OverRepository for ReadRunSnapshot {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

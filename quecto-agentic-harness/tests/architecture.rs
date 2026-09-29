@@ -1453,7 +1453,9 @@ fn application_path_allowed(path: &str) -> bool {
         // invokes the board use cases through the handles composition
         // builds, and builds their requests and renders their views; the
         // SQLite repository implements the board ports over the rows they
-        // carry. Each later slice adds its own names.
+        // carry. Each later slice adds its own names. While the event log
+        // is on, the dispatcher serves a composed use case over the call's
+        // metered repository (`OverRepository`, #2303), constructing none.
         [
             "crate",
             "application",
@@ -1464,6 +1466,7 @@ fn application_path_allowed(path: &str) -> bool {
             | "BootstrapRun"
             | "CreateRun"
             | "JoinRun"
+            | "OverRepository"
             | "ReadRunSnapshot"
             | "ReadRunStatus"
             | "RecordMemberLaunch"

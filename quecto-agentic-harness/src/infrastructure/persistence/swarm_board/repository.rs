@@ -20,8 +20,6 @@
 //! refused the same way as a store failure, with the driver's conversion
 //! error where Python would answer the value (the differential suite's
 //! `outside_edited_columns` divergence).
-use std::sync::Arc;
-
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::Value;
@@ -60,63 +58,67 @@ pub(super) const PYTHON_PID_PARAMETER: usize = 3;
 pub(super) const PYTHON_STARTED_PARAMETER: usize = 4;
 pub(super) const PYTHON_SOCKET_PARAMETER: usize = 5;
 
-/// The board file of one run.
+/// The board file of one run. It measures nothing: a metered call (#2303)
+/// runs its transactions through its own [`MeteredCall`] instead
+/// (`meter.rs`), over the same [`atomic_on`].
 ///
-/// Built with [`Self::new`] it measures nothing. A metered call (#2303)
-/// gets its own instance ([`Self::metered`]) carrying that call's tally:
-/// only the transactions begun through it are measured, and only onto it.
+/// [`MeteredCall`]: crate::application::swarm::ports::MeteredCall
 #[derive(Clone, Debug)]
 pub struct SqliteBoardRepository {
     store: BoardStore,
-    tally: Option<Arc<Tally>>,
 }
 
 impl SqliteBoardRepository {
     pub fn new(location: &BoardLocation) -> Self {
         Self {
             store: BoardStore::new(&location.database),
-            tally: None,
         }
     }
 
-    /// The same board file, every transaction measured on `tally`.
-    pub(super) fn metered(&self, tally: Arc<Tally>) -> Self {
-        Self {
-            store: self.store.clone(),
-            tally: Some(tally),
-        }
+    /// The board file this repository opens.
+    pub(super) fn into_store(self) -> BoardStore {
+        self.store
     }
 }
 
 impl BoardRepository for SqliteBoardRepository {
-    /// A refusal keeps its kind (#2303): `work`'s own refusal is returned
-    /// as it was raised, and the store's is classified by why it failed.
     fn atomic(&self, create: bool, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
-        let mut refused: Option<BoardError> = None;
-        let tally = self.tally.as_deref();
-        self.store
-            .measured(create, tally, |transaction| {
-                let board = SqliteBoard {
-                    connection: transaction,
-                    tally,
-                };
-                let done = work(&board);
-                // Only a metered op that never read the run row asks for its
-                // id.
-                if let Some(tally) = tally.filter(|tally| tally.wants_run_id()) {
-                    tally.run_seen(board.run_id().as_deref());
-                }
-                done.map_err(|refusal| {
-                    let message = refusal.message().to_owned();
-                    refused = Some(refusal);
-                    TransactionError::Board(message)
-                })
-            })
-            .map_err(|(refusal, failure)| match (failure, refused) {
-                (None, Some(refused)) => refused,
-                (failure, _) => BoardError::new(store_kind(failure), refusal.0),
-            })
+        atomic_on(&self.store, None, create, work)
     }
+}
+
+/// `BoardRepository::atomic` on `store`, measured on `tally` when there is
+/// one (#2303). A refusal keeps its kind: `work`'s own refusal is returned
+/// as it was raised, and the store's is classified by why it failed.
+pub(super) fn atomic_on(
+    store: &BoardStore,
+    tally: Option<&Tally>,
+    create: bool,
+    work: &mut BoardWork<'_>,
+) -> Result<(), BoardError> {
+    let mut refused: Option<BoardError> = None;
+    store
+        .measured(create, tally, |transaction| {
+            let board = SqliteBoard {
+                connection: transaction,
+                tally,
+            };
+            let done = work(&board);
+            // Only a metered op that never read the run row asks for its
+            // id.
+            if let Some(tally) = tally.filter(|tally| tally.wants_run_id()) {
+                tally.run_seen(board.run_id().as_deref());
+            }
+            done.map_err(|refusal| {
+                let message = refusal.message().to_owned();
+                refused = Some(refusal);
+                TransactionError::Board(message)
+            })
+        })
+        .map_err(|(refusal, failure)| match (failure, refused) {
+            (None, Some(refused)) => refused,
+            (failure, _) => BoardError::new(store_kind(failure), refusal.0),
+        })
 }
 
 /// The kind of a refusal the store raised itself; `None` (a body refusal

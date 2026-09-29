@@ -671,13 +671,18 @@ body, evidence, reason, path or other board text:
 | `run_id` | The run the op found, when it found one |
 | `task_id`, `message_id` | The task or message the op acted on; left out when it acted on none |
 | `outcome` | `ok` or `refused` |
-| `kind` | For a refusal, its stable kind: `run_missing`, `not_coordinator`, `not_member`, `not_running`, `budget_exhausted` (the deadline has passed, or the run is paused or ended as `budget-exhausted`), `member_limit`, `identity_taken`, `run_exists`, `completion_unmet`, `stale_revision`, `immutable`, `wrong_state`, `not_owner`, `stale_token`, `reserved_by_other`, `dependency_cycle`, `invalid`, `calling` (no such method, or arguments that do not bind), `contended` (the database stayed busy or locked past 500 ms: the write lock at `BEGIN`, a reader holding off the commit, or `SQLITE_LOCKED`), `store_missing`, `store` (any other store failure) or `internal` |
+| `kind` | For a refusal, its stable kind: `run_missing`, `not_coordinator`, `not_member`, `not_running`, `budget_exhausted` (the deadline has passed, or the run is paused or ended as `budget-exhausted`), `member_limit`, `identity_taken`, `run_exists`, `completion_unmet`, `stale_revision`, `immutable`, `wrong_state`, `not_owner`, `stale_token`, `reserved_by_other`, `dependency_cycle`, `not_found` (a task, message or recipient the board does not hold), `capacity_full` (a bounded board table is full: tasks, file reservations, an inbox or a request ledger), `supervisor_only` (resume, close or extend, which only the supervisor takes), `launch_conflict` (a launch whose process identity conflicts with the member's), `request_id_reused` (a request id reused with different data), `invalid`, `calling` (no such method, or arguments that do not bind), `contended` (the database stayed busy or locked past 500 ms: the write lock at `BEGIN`, a reader holding off the commit, or `SQLITE_LOCKED`), `store_missing`, `store` (any other store failure) or `internal` |
 | `duration_us` | The whole op, in microseconds |
 | `lock_wait_us` | From `BEGIN IMMEDIATE` issued to acquired (or given up), summed over the op's transactions; `null` when the op began no transaction, so nothing was measured |
 | `busy_wait_us` | The time the store's busy handler slept for the op, whichever statement found the database busy (`BEGIN`, a read or the commit); `null` when nothing was measured |
 | `busy` | Whether the busy handler fired at all: another connection held a lock the op needed (the write lock, or, at commit, a reader); `null` when nothing was measured |
 | `cursor_moved` | Whether the op moved the caller's message cursor; `null` for an op that has no cursor to move, and for a refusal |
 | `result_bytes` | The size of the JSON the op answered, as its compact serialization (`serde_json`'s, which is not the size of Python's `json.dumps` text with its spaced separators); 0 for a refusal |
+
+Kinds are additive: a later release may add a kind (each refusal the Python
+board raises already has one), but never renames or reuses one. A consumer of
+the event log must accept a `kind` it does not know, rather than reject the
+record.
 
 A zero is always a measure, never a stand-in for "not measured". The waits are
 summed over the op's own transactions and only those: each op is measured on a

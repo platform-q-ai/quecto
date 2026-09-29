@@ -8,6 +8,7 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::{CreateBranch, CreateRunRequest};
 use crate::application::swarm::ports::BoardEncoding;
+use crate::application::swarm::use_cases::OverRepository;
 use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 const NOW: f64 = 1_000.0;
@@ -360,4 +361,25 @@ fn constraints_are_bounded_on_their_ascii_escaped_encoding() {
         .encode(&json!({"b": ["é😀"], "a": 1}))
         .unwrap();
     assert_eq!(encoded, r#"{"a":1,"b":["\u00e9\ud83d\ude00"]}"#);
+}
+
+/// Served over another repository (#2303 round-3 review M1), create writes
+/// to that board, drawing ids from the source it was composed with.
+#[test]
+fn over_creates_on_the_given_board_with_the_composed_ports() {
+    let composed_over = MemoryBoard::with(BoardState::default());
+    let other = MemoryBoard::with(BoardState::default());
+    let composed = create_run(&composed_over, SteppingClock::fixed(NOW));
+    let created = composed.over(other.clone()).execute(request("parent"));
+    assert_eq!(created.unwrap().branch, CreateBranch::Fresh);
+    assert!(other.snapshot().run.is_some());
+    assert!(composed_over.transactions().is_empty());
+    assert!(composed_over.snapshot().run.is_none());
+    assert!(
+        composed_over
+            .journal()
+            .iter()
+            .any(|entry| entry.starts_with("draw ")),
+        "the composed id source drew the run's ids"
+    );
 }

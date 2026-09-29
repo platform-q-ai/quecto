@@ -318,25 +318,19 @@ pub trait BoardEncoding: Send + Sync {
 /// dispatcher opens one around a call only while the event log is on
 /// (owner decision T1).
 ///
-/// Nothing is ambient: a call is measured only through the repository its
-/// own [`MeteredCall`] hands out, so no call's transactions, on this
-/// thread or another, are mixed into another's measure.
+/// Nothing is ambient: a call is measured only through its own
+/// [`MeteredCall`], which is the repository the call runs its transactions
+/// through, so no call's transactions, on this thread or another, are
+/// mixed into another's measure.
 pub trait BoardCallMeter: Send + Sync {
     /// A fresh measure for one call, sharing nothing with any other.
-    fn open(&self) -> Box<dyn MeteredCall>;
+    fn open(&self) -> Arc<dyn MeteredCall>;
 }
 
 /// Port: one board call's measure (#2303), and the repository whose
-/// transactions it counts.
-pub trait MeteredCall: Send + Sync {
-    /// The repository the call runs its transactions through: each one it
-    /// begins is measured here.
-    fn repository(&self) -> Arc<dyn BoardRepository>;
-    /// A measure nested in this one: its own, and everything it measures
-    /// is added to this one too (lock wait, busy wait and transactions
-    /// summed, `busy` or-ed, this one's run id kept when it has one), so
-    /// an outer call's wait includes every wait it sat through.
-    fn nested(&self) -> Box<dyn MeteredCall>;
+/// transactions it counts: each transaction begun through it is measured
+/// here, and only those.
+pub trait MeteredCall: BoardRepository {
     /// What was measured so far; `None` while no transaction has begun,
     /// so nothing was measured.
     fn measure(&self) -> Option<CallMeasure>;

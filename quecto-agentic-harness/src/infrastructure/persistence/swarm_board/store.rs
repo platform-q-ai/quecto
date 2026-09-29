@@ -33,6 +33,7 @@
 use std::ffi::CStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rusqlite::limits::Limit;
@@ -82,15 +83,18 @@ impl TransactionError {
     }
 }
 
-/// The board file one run coordinates through.
+/// The board file one run coordinates through. Its path is shared, so a
+/// metered call's copy (#2303) costs a reference count, not the path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardStore {
-    path: PathBuf,
+    path: Arc<Path>,
 }
 
 impl BoardStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: Arc::from(path.into()),
+        }
     }
 
     /// The path as given (absolutised per transaction, as Python does).
@@ -148,9 +152,16 @@ impl BoardStore {
                 connection.is_autocommit(),
                 "a board transaction is committed or rolled back before its connection closes"
             );
+            // A metered connection's busy handler points at the call's
+            // tally: it is unregistered first, so SQLite never holds that
+            // pointer past this transaction (#2303 round-3 review L6). The
+            // connection closes either way.
+            let unwaited = tally.map_or(Ok(()), |_| meter::unwait_metered(&connection));
             let closed = connection
                 .close()
-                .map_err(|(_, error)| (contended(&error), Some(failure(&error))));
+                .map_err(|(_, error)| error)
+                .and(unwaited)
+                .map_err(|error| (contended(&error), Some(failure(&error))));
             let value = outcome.map_err(|error| {
                 let failure = match &error {
                     TransactionError::Board(_) => None,

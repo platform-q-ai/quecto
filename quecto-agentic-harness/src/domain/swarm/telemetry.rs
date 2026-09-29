@@ -1,7 +1,8 @@
 //! Board op telemetry (#2303, epic #2265): what one board op did, as the
 //! event log records it (`swarm_op`). Pure values: ids, kinds, durations
 //! and sizes only. No board text (titles, bodies, evidence, reasons,
-//! paths) is ever a field, and the two caller-chosen ids are [`Redacted`].
+//! paths) is ever a field, and the caller-chosen id is [`Redacted`]; the
+//! run id is the board's own (a uuid it generated), recorded as found.
 use serde::{Deserialize, Serialize};
 
 use crate::domain::redaction::Redacted;
@@ -10,6 +11,12 @@ use crate::domain::redaction::Redacted;
 /// refusal the board raises. The message text is for the member, never
 /// telemetry. `BoardError` cannot be built without one, so a new refusal
 /// without a kind does not compile.
+///
+/// The kinds cover every refusal the Python board raises (#2303 round-3
+/// review L4; `tests/architecture/swarm_board_python_refusals.rs` maps each
+/// Python text to its kind, for the slices that port them). Kinds are
+/// additive: one is added, never renamed or reused, and a consumer must
+/// accept a kind it does not know.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RefusalKind {
@@ -36,9 +43,10 @@ pub enum RefusalKind {
     StaleRevision,
     /// Submitted evidence, which cannot be revised.
     Immutable,
-    /// A task in a state the op does not apply to.
+    /// A task, message, reservation or run in a state the op does not
+    /// apply to.
     WrongState,
-    /// A task owned by another member.
+    /// A task or message owned by another member.
     NotOwner,
     /// A reservation or claim token that is no longer current.
     StaleToken,
@@ -46,6 +54,20 @@ pub enum RefusalKind {
     ReservedByOther,
     /// A dependency that would close a cycle.
     DependencyCycle,
+    /// A task, message or recipient the board does not hold.
+    NotFound,
+    /// A bounded board table is full: the task or file reservation board,
+    /// a recipient's inbox, or a request ledger.
+    CapacityFull,
+    /// An op only the supervisor, outside the swarm, may take (resume,
+    /// close, extend).
+    SupervisorOnly,
+    /// A launch whose process identity conflicts with the member's
+    /// recorded one.
+    LaunchConflict,
+    /// A request id (or request observation id) reused with different
+    /// data.
+    RequestIdReused,
     /// An argument the board refuses (shape, type, bound).
     Invalid,
     /// A call that names no board method or does not bind to its signature.
@@ -81,6 +103,11 @@ impl RefusalKind {
             Self::StaleToken => "stale_token",
             Self::ReservedByOther => "reserved_by_other",
             Self::DependencyCycle => "dependency_cycle",
+            Self::NotFound => "not_found",
+            Self::CapacityFull => "capacity_full",
+            Self::SupervisorOnly => "supervisor_only",
+            Self::LaunchConflict => "launch_conflict",
+            Self::RequestIdReused => "request_id_reused",
             Self::Invalid => "invalid",
             Self::Calling => "calling",
             Self::Contended => "contended",
@@ -122,8 +149,9 @@ pub struct BoardOpObservation {
     /// like a credential.
     pub actor_ref: Redacted,
     pub role: BoardRole,
-    /// The run the op found, when it found one.
-    pub run_id: Option<Redacted>,
+    /// The run the op found, when it found one: the id the board
+    /// generated for it, never caller text, so it is not redacted.
+    pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

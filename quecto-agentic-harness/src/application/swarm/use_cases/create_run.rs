@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
 use crate::application::swarm::board_operation::{atomic, detail, text};
 use crate::application::swarm::dto::{
     CreateBranch, CreateRunRequest, CreatedRun, NewMember, NewRun, RunContract, RunOwnerRow,
@@ -202,6 +203,17 @@ fn take_over_setup(
         ));
     }
     transaction.update_run_contract(contract)
+}
+
+impl OverRepository for CreateRun {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+            ids: self.ids.clone(),
+            encoding: self.encoding.clone(),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -7,9 +7,7 @@
 //! bounded to [`ACTOR_REF_CHARS`] characters, since a call can name any
 //! member id, admitted or not. What was not measured, or does not apply,
 //! is `None` (`null`), never a zero or a `false`.
-#[cfg(test)] // Red: wired in the fix commit.
 use std::collections::HashMap;
-#[cfg(test)] // Red: wired in the fix commit.
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
@@ -81,31 +79,34 @@ pub(super) fn actor_ref(member: &str) -> Redacted {
 /// The most member ids an [`ActorRefs`] keeps (#2303 round-3 review M1):
 /// a run's members are bounded by the board, and a refused call's id is
 /// redacted anew rather than kept.
-#[cfg(test)] // Red: wired in the fix commit.
 pub const ACTOR_REF_CACHE: usize = 64;
 
 /// Each member's [`actor_ref`], redacted once per member rather than once
 /// per call (#2303 round-3 review M1), for at most [`ACTOR_REF_CACHE`]
 /// members.
-#[cfg(test)] // Red: wired in the fix commit.
 #[derive(Debug, Default)]
 pub struct ActorRefs {
     known: Mutex<HashMap<String, Redacted>>,
 }
 
-#[cfg(test)] // Red: wired in the fix commit.
 impl ActorRefs {
-    /// `member`'s [`actor_ref`].
+    /// `member`'s [`actor_ref`]: the one kept for it, or redacted now, and
+    /// kept while fewer than [`ACTOR_REF_CACHE`] members are.
     pub(super) fn of(&self, member: &str) -> Redacted {
-        // Red stub: every id is kept.
         let mut known = self.known.lock().unwrap_or_else(PoisonError::into_inner);
-        known
-            .entry(member.to_owned())
-            .or_insert_with(|| actor_ref(member))
-            .clone()
+        if let Some(kept) = known.get(member) {
+            return kept.clone();
+        }
+        let redacted = actor_ref(member);
+        if known.len() < ACTOR_REF_CACHE {
+            known.insert(member.to_owned(), redacted.clone());
+        }
+        debug_assert!(known.len() <= ACTOR_REF_CACHE, "the kept refs are bounded");
+        redacted
     }
 
     /// How many members' refs are kept.
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.known
             .lock()
@@ -119,11 +120,12 @@ fn micros(duration: Duration) -> u64 {
 }
 
 /// The call's `tracing` record, with its waits when they were measured.
-pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>) {
+/// `actor` is the caller's ref when it is already at hand (the event log
+/// is on); otherwise it is redacted only if the record is written.
+pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>, actor: Option<&Redacted>) {
     let (op, duration_us) = (call.op, micros(call.elapsed));
-    // Redacted only when the record is written: a field's value is
-    // evaluated only for an enabled callsite.
-    let member = || actor_ref(call.member);
+    // A field's value is evaluated only for an enabled callsite.
+    let member = || actor.map_or_else(|| actor_ref(call.member), Redacted::clone);
     let (outcome, decision, kind) = match call.outcome {
         Ok(decision) => ("ok", decision, "none"),
         Err(kind) => ("refused", "none", kind.as_str()),
@@ -151,26 +153,29 @@ pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>) {
     }
 }
 
-/// The call's `swarm_op` record. `served` is what it answered and acted
-/// on (`None` for a refusal), the answer sized as the compact JSON it
-/// renders to; `measure` is `None` when the call began no transaction, and
-/// its waits are then `null`.
+/// The call's `swarm_op` record, by `actor` (its [`actor_ref`]).
+/// `served` is what it answered and acted on (`None` for a refusal), the
+/// answer sized as the compact JSON it renders to; `measure` is `None`
+/// when the call began no transaction, and its waits are then `null`. The
+/// run id is the board's own (a uuid it generated), recorded as found.
 pub(super) fn observation(
     call: &Finished<'_>,
+    actor: Redacted,
     served: Option<&Served>,
-    measure: Option<&CallMeasure>,
+    measure: Option<CallMeasure>,
 ) -> BoardOpObservation {
     debug_assert!(
-        measure.is_none_or(|measure| measure.lock_wait <= call.elapsed),
+        measure
+            .as_ref()
+            .is_none_or(|measure| measure.lock_wait <= call.elapsed),
         "a call's lock wait is part of its duration"
     );
+    let measure = measure.as_ref();
     BoardOpObservation {
         op: call.op.to_owned(),
-        actor_ref: actor_ref(call.member),
+        actor_ref: actor,
         role: call.role,
-        run_id: measure
-            .and_then(|measure| measure.run_id.as_deref())
-            .map(Redacted::from),
+        run_id: measure.and_then(|measure| measure.run_id.clone()),
         task_id: served.and_then(|served| served.task_id),
         message_id: served.and_then(|served| served.message_id),
         outcome: match call.outcome {

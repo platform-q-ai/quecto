@@ -1,6 +1,15 @@
 //! The coordination board's use cases (epic #2265), one per file. Each is
 //! constructed only by `composition::swarm`; the dispatcher
 //! (`infrastructure::tools::swarm_board_dispatch`) holds injected handles.
+//!
+//! While the event log is on (#2303), a call is served over its own
+//! metered repository: the dispatcher asks the composed handle for the
+//! same use case [`OverRepository::over`] that repository, which keeps
+//! every other port composition bound and constructs nothing else, so the
+//! graph is composed once, not per call (round-3 review M1).
+use std::sync::Arc;
+
+use crate::application::swarm::ports::BoardRepository;
 
 mod activate_member;
 mod admit_member;
@@ -33,3 +42,12 @@ pub use register_member_socket::RegisterMemberSocket;
 pub use release_task::ReleaseTask;
 pub use release_unlaunched_member::ReleaseUnlaunchedMember;
 pub use set_task_dependencies::SetTaskDependencies;
+
+/// A board use case served over another repository (#2303): the same use
+/// case, with every other port as composition bound it. A seam between
+/// the board's use cases and their dispatcher, not a port: nothing outside
+/// the crate implements it.
+pub(crate) trait OverRepository: Sized {
+    /// This use case over `repository`.
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self;
+}

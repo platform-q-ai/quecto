@@ -6,6 +6,8 @@
 //! resolved against the file's place in the module tree. A fully-qualified
 //! `crate::infrastructure::…` anywhere in the code fails, not only on a
 //! `use` line.
+use syn::visit::Visit;
+
 use super::dependency_scan;
 
 /// The files checked: the dispatcher and its telemetry records.
@@ -28,17 +30,87 @@ fn allowed(path: &str) -> bool {
     ALLOWED.iter().any(|prefix| path.starts_with(prefix))
 }
 
-/// Every crate path `source` names, resolved from `module`.
+/// Every crate path `source` names, resolved from `module`: each leaf of
+/// a `use` tree, each path of the syntax tree whose first segment is
+/// `crate`, `super` or `self`, and each such path in a macro's tokens. A
+/// crate alias (`use crate as c`) or an `extern crate` cannot be followed,
+/// and is [`dependency_scan::UNRESOLVABLE`], which no allowlist admits.
 fn crate_paths(source: &str, module: &[String]) -> Vec<String> {
-    // Red stub (#2303 round-3 L5): the `use crate::` lines only.
-    let _ = module;
-    source
-        .lines()
-        .map(str::trim_start)
-        .filter_map(|line| line.strip_prefix("use "))
-        .filter(|line| line.starts_with("crate::"))
-        .map(|line| line.trim_end_matches(';').to_owned())
-        .collect()
+    let file = syn::parse_file(source).expect("a crate source parses");
+    let mut found = Paths {
+        module: module.to_vec(),
+        paths: Vec::new(),
+    };
+    found.visit_file(&file);
+    found.paths
+}
+
+/// The crate paths found so far, and the module the visit is in (an inline
+/// `mod` is entered, so its `super::` names the file's module).
+struct Paths {
+    module: Vec<String>,
+    paths: Vec<String>,
+}
+
+impl Paths {
+    /// Keeps `path` when it is crate-relative, resolved to `crate::…`.
+    fn keep(&mut self, path: &str) {
+        let first = path.split("::").next().unwrap_or_default();
+        if matches!(first, "crate" | "super" | "self") {
+            self.paths
+                .push(dependency_scan::resolve_relative(&self.module, path));
+        } else if path == dependency_scan::UNRESOLVABLE {
+            self.paths.push(path.to_owned());
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for Paths {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        self.module.push(item.ident.to_string());
+        syn::visit::visit_item_mod(self, item);
+        self.module.pop();
+    }
+
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        let mut leaves = Vec::new();
+        dependency_scan::expand_use_tree(&item.tree, "", &mut leaves);
+        for leaf in leaves {
+            self.keep(&leaf);
+        }
+    }
+
+    /// A visibility (`pub(super)`, `pub(in crate::x)`) names where an item
+    /// is seen, not a dependency.
+    fn visit_visibility(&mut self, _: &'ast syn::Visibility) {}
+
+    fn visit_item_extern_crate(&mut self, _: &'ast syn::ItemExternCrate) {
+        self.paths.push(dependency_scan::UNRESOLVABLE.to_owned());
+    }
+
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        // A lone `self` is a method's receiver (`match self`), not a path
+        // into the crate; every crate path has two segments or more.
+        if path.segments.len() < 2 {
+            syn::visit::visit_path(self, path);
+            return;
+        }
+        let text = path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>()
+            .join("::");
+        self.keep(&text);
+        syn::visit::visit_path(self, path);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        for path in dependency_scan::crate_paths_in_tokens(mac.tokens.clone()) {
+            self.keep(&path);
+        }
+        syn::visit::visit_macro(self, mac);
+    }
 }
 
 #[test]
@@ -71,7 +143,8 @@ fn the_scan_finds_crate_paths_anywhere_in_the_code() {
             tracing::warn!("{}", crate::infrastructure::c());
             match x { crate::infrastructure::D::E => {} _ => {} }
         }
-        mod test_only { use super::Served; }
+        mod test_only { use super::Served; pub(super) fn g() { let _ = super::super::x(); } }
+        impl Method { fn name(self) -> u8 { match self { _ => 0 } } }
         "#,
         &here,
     );
@@ -85,6 +158,8 @@ fn the_scan_finds_crate_paths_anywhere_in_the_code() {
         "crate::infrastructure::persistence::B",
         "crate::infrastructure::c",
         "crate::infrastructure::D::E",
+        "crate::infrastructure::tools::swarm_board_dispatch::Served",
+        "crate::infrastructure::tools::x",
     ] {
         assert!(
             found.iter().any(|path| path == expected),
@@ -92,7 +167,7 @@ fn the_scan_finds_crate_paths_anywhere_in_the_code() {
         );
     }
     let outside: Vec<_> = found.iter().filter(|path| !allowed(path)).collect();
-    assert_eq!(outside.len(), 6, "{outside:?}");
+    assert_eq!(outside.len(), 7, "{outside:?}");
 }
 
 #[test]

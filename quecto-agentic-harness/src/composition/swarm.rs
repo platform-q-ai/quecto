@@ -23,7 +23,7 @@ use crate::infrastructure::persistence::swarm_board::ids::Uuid4Ids;
 use crate::infrastructure::persistence::swarm_board::meter::SqliteBoardCallMeter;
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 pub use crate::infrastructure::tools::swarm_board_dispatch::SwarmBoardHandles;
-use crate::infrastructure::tools::swarm_board_dispatch::{BoardComposer, BoardTelemetry};
+use crate::infrastructure::tools::swarm_board_dispatch::{ActorRefs, BoardTelemetry};
 use crate::infrastructure::tools::swarm_lifecycle::SystemClock;
 
 /// The board handles over the SQLite file at `location`, recording each
@@ -118,26 +118,22 @@ pub fn build_swarm_board_handles_with(
 /// `telemetry.event_log.enabled` is on (owner decision T1): without it
 /// nothing is measured or written.
 ///
-/// Each call is served by the same graph composed for it alone over a
-/// metered instance of the repository ([`SqliteBoardCallMeter`]) that
-/// carries that call's own measure: no call's measure is shared, and none
-/// passes through ambient state. The handles' own use cases (unmetered)
-/// serve nothing while the log is on.
+/// The graph is composed once. Each call is served by the same use cases
+/// over a metered call of its own ([`SqliteBoardCallMeter`]) that carries
+/// that call's own measure: no call's measure is shared, and none passes
+/// through ambient state.
 pub fn with_event_log(
     repository: SqliteBoardRepository,
     clock: Arc<dyn Clock + Send + Sync>,
     ids: Arc<dyn IdSource>,
     event_log: Arc<dyn BoardOpLog>,
 ) -> SwarmBoardHandles {
-    let compose: BoardComposer = Arc::new(move |repository| {
-        build_swarm_board_handles_with(repository, clock.clone(), ids.clone())
-    });
-    let handles = compose(Arc::new(repository.clone()));
+    let handles = build_swarm_board_handles_with(Arc::new(repository.clone()), clock, ids);
     SwarmBoardHandles {
         telemetry: Some(BoardTelemetry {
             log: event_log,
             meter: Arc::new(SqliteBoardCallMeter::new(repository)),
-            compose,
+            actors: Arc::new(ActorRefs::default()),
         }),
         ..handles
     }

@@ -42,7 +42,7 @@ fn created() -> (
 
 /// One empty transaction on `call`'s own repository.
 fn transact(call: &dyn MeteredCall) -> Result<(), BoardError> {
-    call.repository().atomic(false, &mut |_| Ok(()))
+    call.atomic(false, &mut |_| Ok(()))
 }
 
 /// The call's measure, which a call that began a transaction has.
@@ -209,9 +209,8 @@ fn calls_on_two_threads_measure_apart() {
 fn a_panic_inside_a_call_leaves_nothing_behind() {
     let (_dir, _store, _plain, meter) = created();
     let call = meter.open();
-    let repository = call.repository();
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _never = repository.atomic(false, &mut |_| panic!("the work panics"));
+        let _never = call.atomic(false, &mut |_| panic!("the work panics"));
     }));
     assert!(panicked.is_err());
     assert_eq!(measured(&*call).transactions, 1, "the lock was taken");
@@ -265,38 +264,4 @@ fn the_busy_schedule_is_sqlites_default_under_the_timeout() {
         delays.iter().sum::<u64>(),
         u64::try_from(BUSY_TIMEOUT.as_millis()).unwrap()
     );
-}
-
-/// Measures nest: an inner measure is its own, and it is added to the
-/// outer one, which sat through it (#2303 review H2).
-#[test]
-fn a_nested_measure_is_its_own_and_adds_to_the_outer() {
-    let (_dir, _store, _plain, meter) = created();
-    let outer = meter.open();
-    transact(&*outer).unwrap();
-    let inner = outer.nested();
-    transact(&*inner).unwrap();
-    let (inner, outer) = (measured(&*inner), measured(&*outer));
-    assert_eq!(inner.transactions, 1, "{inner:?}");
-    assert_eq!(
-        outer.transactions, 2,
-        "the outer counts the inner's: {outer:?}"
-    );
-    assert!(outer.lock_wait >= inner.lock_wait, "{outer:?} {inner:?}");
-    assert!(inner.lock_wait > Duration::ZERO, "{inner:?}");
-}
-
-/// The inner measure's busy wait reaches the outer one, and its busy flag.
-#[test]
-fn a_nested_busy_wait_is_the_outer_calls_too() {
-    let (_dir, store, _plain, meter) = created();
-    let holder = Holder::take(&store);
-    let outer = meter.open();
-    let inner = outer.nested();
-    transact(&*inner).unwrap_err();
-    holder.release();
-    let (inner, outer) = (measured(&*inner), measured(&*outer));
-    assert!(inner.busy && outer.busy, "{outer:?}");
-    assert_eq!(outer.busy_wait, inner.busy_wait);
-    assert_eq!(outer.lock_wait, inner.lock_wait);
 }

@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
 use crate::application::swarm::board_operation::atomic;
 use crate::application::swarm::dto::RunStatusView;
 use crate::application::swarm::ports::BoardRepository;
@@ -49,6 +50,12 @@ impl ReadRunStatus {
                 },
             })
         })
+    }
+}
+
+impl OverRepository for ReadRunStatus {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self { repository }
     }
 }
 

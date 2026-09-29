@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
 use crate::application::swarm::board_operation::{atomic, detail, text};
 use crate::application::swarm::dto::{
     BootstrapRunRequest, Bootstrapped, NewMember, NewRun, RunContract,
@@ -76,6 +77,16 @@ impl BootstrapRun {
             )?;
             Ok(Bootstrapped { created: true })
         })
+    }
+}
+
+impl OverRepository for BootstrapRun {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+            ids: self.ids.clone(),
+        }
     }
 }
 
