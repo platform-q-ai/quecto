@@ -59,6 +59,7 @@ fn on_task(value: Value, decision: &'static str, task_id: &Value) -> Served {
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     }
 }
 
@@ -119,6 +120,7 @@ pub(super) fn file_owners(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 

@@ -18,7 +18,7 @@ use crate::domain::redaction::Redacted;
 use crate::domain::swarm::telemetry::{decision_kind, run_role};
 use crate::domain::swarm::validation::MEMBER_ID_MAX_BYTES;
 use crate::domain::swarm::{
-    BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
+    BoardError, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
 };
 
 /// The `tracing` target of every board call record.
@@ -73,6 +73,32 @@ pub(super) struct Served {
     /// What the decision found and did, as counts and kinds (#2277 review
     /// M1); [`BoardOpDetail::NONE`] for an op whose decision carries none.
     pub detail: BoardOpDetail,
+    /// A refusal the op answers after its writes committed (#2277 review
+    /// M2: `create`'s summary): the call answers it, and its record keeps
+    /// the decision and detail, marked committed. `None` for an answer.
+    pub refused: Option<BoardError>,
+}
+
+/// A served call split into what it answers and, for a refusal it
+/// answered after its writes committed (#2277 review M2: `create`'s
+/// summary), what its record keeps: the call answers the refusal, and
+/// the record the decision and detail, marked committed.
+pub(super) fn split_committed(
+    answer: Result<Served, BoardError>,
+) -> (Result<Served, BoardError>, Option<Served>) {
+    match answer {
+        Ok(mut served) => match served.refused.take() {
+            Some(refusal) => {
+                debug_assert!(
+                    served.value.is_null(),
+                    "a committed refusal answers nothing"
+                );
+                (Err(refusal), Some(served))
+            }
+            None => (Ok(served), None),
+        },
+        refused => (refused, None),
+    }
 }
 
 /// `member` redacted, then cut to its first [`ACTOR_REF_CHARS`]
@@ -188,8 +214,10 @@ pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>, actor: O
 }
 
 /// The call's `swarm_op` record, by `actor` (its [`actor_ref`]).
-/// `served` is what it answered and acted on (`None` for a refusal), the
-/// answer sized as the compact JSON it renders to; `measure` is `None`
+/// `served` is what it answered and acted on (`None` for a refusal, but
+/// for one after its writes committed, whose decision and detail are
+/// recorded and whose refusal is marked committed), an answer sized as
+/// the compact JSON it renders to; `measure` is `None`
 /// when the call began no transaction, and its waits are then `null`. The
 /// run id is the board's own (a uuid it generated): the meter records
 /// only such an id (`board_run_id`), never one edited from outside.
@@ -209,10 +237,9 @@ pub(super) fn observation(
         served.is_none_or(|served| decision_kind(served.decision)),
         "a decision is a kind, never text"
     );
-    debug_assert_eq!(
-        served.is_some(),
-        call.outcome.is_ok(),
-        "only an answered call served anything"
+    debug_assert!(
+        served.is_some() || call.outcome.is_err(),
+        "an answered call served its answer"
     );
     let measure = measure.as_ref();
     BoardOpObservation {
@@ -233,7 +260,7 @@ pub(super) fn observation(
             Ok(_) => BoardOpOutcome::Ok,
             Err(kind) => BoardOpOutcome::Refused {
                 kind,
-                committed: false,
+                committed: served.is_some(),
             },
         },
         duration_us: micros(call.elapsed),
@@ -241,7 +268,10 @@ pub(super) fn observation(
         busy_wait_us: measure.map(|measure| micros(measure.busy_wait)),
         busy: measure.map(|measure| measure.busy),
         cursor_moved: served.and_then(|served| served.cursor_moved),
-        result_bytes: served.map_or(0, |served| rendered_bytes(&served.value)),
+        result_bytes: match (call.outcome, served) {
+            (Ok(_), Some(served)) => rendered_bytes(&served.value),
+            _ => 0,
+        },
         decision: served.map(|served| served.decision.to_owned()),
         detail: served.map_or(BoardOpDetail::NONE, |served| served.detail.clone()),
     }

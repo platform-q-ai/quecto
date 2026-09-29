@@ -40,6 +40,7 @@ fn answered(change: TaskChange, applied: &'static str) -> Served {
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     }
 }
 

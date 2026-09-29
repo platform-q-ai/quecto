@@ -198,7 +198,8 @@ pub struct BoardOpObservation {
     /// The decision the op took (#2277 review M1): a snake_case kind the
     /// dispatcher names from its own allowlist (`recorded`,
     /// `grace_pending`, `already_dead`, ...), never argument or board
-    /// text; `None` (left out) for a refusal.
+    /// text; `None` (left out) for a refusal, but for one after the op's
+    /// writes committed (#2277 review M2), whose decision is recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<String>,
     /// What the decision found and did, as counts and kinds only (#2277

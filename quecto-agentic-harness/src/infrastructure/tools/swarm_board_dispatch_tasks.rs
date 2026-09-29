@@ -64,6 +64,7 @@ pub(super) fn task_create(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 
@@ -85,6 +86,7 @@ pub(super) fn dependencies(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 
@@ -107,6 +109,7 @@ pub(super) fn claim(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 
@@ -128,6 +131,7 @@ pub(super) fn release(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 
@@ -151,6 +155,7 @@ pub(super) fn task(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 

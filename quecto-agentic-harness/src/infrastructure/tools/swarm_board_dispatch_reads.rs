@@ -3,19 +3,25 @@
 //! `_bootstrap` answer with, their Python signatures and their serving,
 //! and the summary rendered in Python's key order. Every argument reaches
 //! the use case as the JSON value passed (Python type-checks a cursor, an
-//! offset or a limit at run time). A record names no task or message.
+//! offset or a limit at run time). A record names no task or message; its
+//! decision says which branch the op took, and its detail (#2277 review
+//! M2) the owners it read, the page it answered, whether `events` has
+//! more, whether a cursor moved or an owner turned idle defeated the
+//! summary's fast path, and whether `_bootstrap` wrote the placeholder:
+//! counts and flags only. A `create` whose summary refuses after the run
+//! committed answers that refusal, recorded as committed.
 use serde_json::{Map, Value};
 
 use super::{Parameter, Served, done, member_row, required, take};
 use crate::application::swarm::dto::{
     BootstrapMemberRequest, CreateBranch, CreateRunRequest, CreatedRun, EventPage, FullSummary,
     JoinRunRequest, Joined, LaunchIdentity, ListTasksRequest, ReadRunEventsRequest,
-    ReadRunSummaryRequest, RunSummary,
+    ReadRunSummaryRequest, RunSummary, SummaryScan, TaskPage,
 };
 use crate::application::swarm::use_cases::{
     BootstrapMember, CreateRun, JoinMember, ListTasks, ReadRunEvents, ReadRunSummary,
 };
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, BoardOpDetail};
 
 /// `summary(since=None)`.
 pub(super) const SUMMARY: [Parameter; 1] = [Parameter {
@@ -91,11 +97,30 @@ pub(super) fn summary(
         actor: actor.to_owned(),
         since,
     })?;
-    let decision = match summary {
-        RunSummary::Unchanged { .. } => "unchanged",
-        RunSummary::Full(_) => "full",
+    let (decision, scan, page_size) = match &summary {
+        RunSummary::Unchanged { scan, .. } => ("unchanged", *scan, None),
+        RunSummary::Full(full) => ("full", full.scan, Some(count(full.tasks.len()))),
     };
-    Ok(answered(rendered(summary), decision))
+    let mut served = answered(rendered(summary), decision);
+    served.cursor_moved = scan.cursor_moved;
+    served.detail = scanned(scan, page_size);
+    Ok(served)
+}
+
+/// A length as a telemetry count.
+fn count(length: usize) -> u64 {
+    u64::try_from(length).unwrap_or(u64::MAX)
+}
+
+/// The detail of a summary that read as `scan`, holding `page_size` tasks
+/// (`None` for the fast path's answer, which holds none).
+fn scanned(scan: SummaryScan, page_size: Option<u64>) -> BoardOpDetail {
+    BoardOpDetail {
+        owners_scanned: Some(scan.owners_scanned),
+        page_size,
+        fast_path_defeated: scan.fast_path_defeated,
+        ..BoardOpDetail::NONE
+    }
 }
 
 /// `{events, cursor, has_more}`, each event as `dict(row)`.
@@ -115,11 +140,18 @@ pub(super) fn events(
         limit,
     })?;
     let mut page = Map::new();
+    let page_size = count(events.len());
     let events = events.into_iter().map(|event| event.into_value()).collect();
     page.insert("events".to_owned(), Value::Array(events));
     page.insert("cursor".to_owned(), Value::from(cursor));
     page.insert("has_more".to_owned(), Value::Bool(has_more));
-    Ok(answered(Value::Object(page), "read"))
+    let mut served = answered(Value::Object(page), "read");
+    served.detail = BoardOpDetail {
+        page_size: Some(page_size),
+        has_more: Some(has_more),
+        ..BoardOpDetail::NONE
+    };
+    Ok(served)
 }
 
 /// The page of tasks, each with its owner's liveness.
@@ -129,13 +161,23 @@ pub(super) fn tasks(
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [offset, limit] = take(arguments)?;
-    let page = list_tasks.execute(ListTasksRequest {
+    let TaskPage {
+        tasks,
+        owners_scanned,
+    } = list_tasks.execute(ListTasksRequest {
         actor: actor.to_owned(),
         offset,
         limit,
     })?;
-    let page = page.into_iter().map(|task| task.into_value()).collect();
-    Ok(answered(Value::Array(page), "read"))
+    let page_size = count(tasks.len());
+    let page = tasks.into_iter().map(|task| task.into_value()).collect();
+    let mut served = answered(Value::Array(page), "read");
+    served.detail = BoardOpDetail {
+        owners_scanned: Some(owners_scanned),
+        page_size: Some(page_size),
+        ..BoardOpDetail::NONE
+    };
+    Ok(served)
 }
 
 /// The run `create` made (or took over), before its summary.
@@ -171,7 +213,15 @@ pub(super) fn create(
 ) -> Result<Served, BoardError> {
     let created = created(create_run, member, arguments)?;
     let decision = branch(&created);
-    Ok(answered(rendered(created.summary?), decision))
+    Ok(match created.summary {
+        Ok(summary) => answered(rendered(summary), decision),
+        // The run is committed: the call answers the refusal, and its
+        // record says what the op decided before it.
+        Err(refusal) => Served {
+            refused: Some(refusal),
+            ..done(decision)
+        },
+    })
 }
 
 fn joined(joined: &Joined) -> &'static str {
@@ -197,7 +247,12 @@ pub(super) fn bootstrap(
         reservation,
     })?;
     let decision = joined(&answer.joined);
-    Ok(answered(rendered(answer.summary), decision))
+    let mut served = answered(rendered(answer.summary), decision);
+    served.detail = BoardOpDetail {
+        placeholder_created: Some(answer.created),
+        ..BoardOpDetail::NONE
+    };
+    Ok(served)
 }
 
 /// The coordinator's summary.
@@ -230,6 +285,7 @@ fn rendered(summary: RunSummary) -> Value {
             event_cursor,
             status,
             next_liveness_check_at,
+            scan: _,
         } => {
             answer.insert("unchanged".to_owned(), Value::Bool(true));
             answer.insert("event_cursor".to_owned(), Value::from(event_cursor));

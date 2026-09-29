@@ -49,9 +49,26 @@ pub enum RunSummary {
         /// `run['status']` as stored.
         status: Value,
         next_liveness_check_at: Option<f64>,
+        /// What it read (telemetry; Python answers none of it).
+        scan: SummaryScan,
     },
     /// The whole summary.
     Full(Box<FullSummary>),
+}
+
+/// What a summary read to answer, for telemetry (#2277 review M2):
+/// counts and flags only, which Python never answers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SummaryScan {
+    /// The task owners whose liveness it read, one per owned task: the
+    /// liveness watch's, then, for the whole summary, its page's.
+    pub owners_scanned: u64,
+    /// For a cursor that is the board's: whether an owner turned idle by
+    /// the clock alone since it, which defeats the `unchanged` fast path;
+    /// `None` for no cursor, or one that is not the board's.
+    pub fast_path_defeated: Option<bool>,
+    /// For a cursor given: whether the board's cursor is no longer it.
+    pub cursor_moved: Option<bool>,
 }
 
 /// The whole summary: `dict(run)` (its `constraints` and `criteria`
@@ -73,6 +90,8 @@ pub struct FullSummary {
     pub control_generation: i64,
     pub event_cursor: i64,
     pub counts: SummaryCounts,
+    /// What it read (telemetry; Python answers none of it).
+    pub scan: SummaryScan,
 }
 
 /// `summary()['counts']`: the tasks per status (a `ready` task with an
@@ -104,6 +123,15 @@ pub struct EventPage {
     pub events: Vec<DictRow>,
     pub cursor: i64,
     pub has_more: bool,
+}
+
+/// What `tasks` answered: the page, each task with its owner's
+/// liveness, and how many task owners it read (telemetry, #2277 review
+/// M2).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskPage {
+    pub tasks: Vec<TaskRow>,
+    pub owners_scanned: u64,
 }
 
 /// `Tasks.tasks(offset=0, limit=50)` as `actor`.

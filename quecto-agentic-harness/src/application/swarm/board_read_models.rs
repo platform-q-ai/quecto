@@ -16,7 +16,7 @@ use serde_json::Value;
 use super::board_control::edited;
 use super::board_operation::{atomic, operation};
 use super::board_tasks::{HELD_CLAIM, read_task};
-use super::dto::{CountedTask, FullSummary, RunSummary, SummaryCounts, TaskRow};
+use super::dto::{CountedTask, FullSummary, RunSummary, SummaryCounts, SummaryScan, TaskRow};
 use super::ports::{
     BoardEvents, BoardMembers, BoardRepository, BoardTasks, BoardTransaction, Clock,
 };
@@ -108,7 +108,8 @@ fn owned(task: &TaskRow) -> bool {
 /// the owner's latest board event, by the reader's clock), `owner_state`,
 /// and `contact` (how `send` reaches an owner it accepts) or, for any
 /// other owner, `contact` `null` and `recovery`. Unowned tasks carry none
-/// of these. Nothing is written.
+/// of these. Nothing is written. How many owners it read (one per owned
+/// task), for telemetry.
 ///
 /// # Errors
 /// An event time that is not a number, or the store's.
@@ -116,12 +117,12 @@ pub(crate) fn with_owner_liveness(
     transaction: &(impl BoardMembers + BoardEvents + ?Sized),
     clock: &dyn Clock,
     tasks: &mut [TaskRow],
-) -> Result<(), BoardError> {
+) -> Result<u64, BoardError> {
     let held: Vec<usize> = (0..tasks.len())
         .filter(|&index| owned(&tasks[index]))
         .collect();
     if held.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     let now = clock.now_seconds();
     let owners: Vec<Value> = held
@@ -148,21 +149,41 @@ pub(crate) fn with_owner_liveness(
             task.set("recovery", Value::from(owner_recovery(state)));
         }
     }
-    Ok(())
+    Ok(count(held.len()))
+}
+
+/// A length as a telemetry count.
+fn count(length: usize) -> u64 {
+    u64::try_from(length).unwrap_or(u64::MAX)
+}
+
+/// What [`liveness_watch`] found.
+struct Watch {
+    /// When the earliest still-active owner turns idle.
+    next: Option<f64>,
+    /// Whether an owner turned idle by the clock alone since the cursor.
+    crossed: bool,
+    /// The owners it read.
+    scanned: u64,
 }
 
 /// `Workbench._liveness_watch(db, cursor)`: when the earliest still-active
 /// owner turns idle (`None` when none will), and whether an owner is idle
 /// now but was not at the time of event `cursor` (it turned idle by the
-/// clock alone, so no event moved the cursor). Nothing is written.
+/// clock alone, so no event moved the cursor), with how many owners it
+/// read. Nothing is written.
 fn liveness_watch(
     transaction: &(impl BoardMembers + BoardEvents + BoardTasks + ?Sized),
     clock: &dyn Clock,
     cursor: i64,
-) -> Result<(Option<f64>, bool), BoardError> {
+) -> Result<Watch, BoardError> {
     let owners = transaction.claim_owners()?;
     if owners.is_empty() {
-        return Ok((None, false));
+        return Ok(Watch {
+            next: None,
+            crossed: false,
+            scanned: 0,
+        });
     }
     let now = clock.now_seconds();
     let cursor_time = transaction.event_time(cursor)?.unwrap_or(Value::from(0.0));
@@ -174,8 +195,14 @@ fn liveness_watch(
                 crossed |= last + OWNER_IDLE_AFTER > then;
             }
             (OwnerState::Active, last) => {
-                // An active owner turns idle after `now`; Python's `min`
-                // would raise on a `None` no active owner can have.
+                // An active owner has `now - last` below the threshold, so
+                // it turns idle after `now`: `last + OWNER_IDLE_AFTER`
+                // rounds above `now` when the two times share a binade
+                // (Sterbenz: the subtraction is exact, and both times and
+                // the threshold are multiples of that binade's ulp), which
+                // holds for real clocks. Only times an edit wrote far
+                // apart can leave `None`, on which Python's `min` would
+                // raise; that owner is passed over here.
                 if let Some(at) = idle_transition(last, now, OWNER_IDLE_AFTER) {
                     next = Some(next.map_or(at, |earlier| earlier.min(at)));
                 }
@@ -183,7 +210,11 @@ fn liveness_watch(
             _ => {}
         }
     }
-    Ok((next, crossed))
+    Ok(Watch {
+        next,
+        crossed,
+        scanned: count(owners.len()),
+    })
 }
 
 /// `Workbench.summary(since)` as `actor`, through the read-only gate: the
@@ -211,15 +242,26 @@ pub(crate) fn summary(
     };
     operation(repository, clock, actor, reading(), |transaction, run| {
         let cursor = transaction.event_generation()?;
-        let (next, crossed) = liveness_watch(transaction, clock, cursor)?;
+        let Watch {
+            next,
+            crossed,
+            scanned,
+        } = liveness_watch(transaction, clock, cursor)?;
         let row = transaction
             .run_row()?
             .ok_or_else(|| BoardError::new(RefusalKind::RunMissing, "coordination run missing"))?;
-        if since == Some(cursor) && !crossed {
+        let current = since == Some(cursor);
+        let mut scan = SummaryScan {
+            owners_scanned: scanned,
+            fast_path_defeated: current.then_some(crossed),
+            cursor_moved: since.map(|_| !current),
+        };
+        if current && !crossed {
             return Ok(RunSummary::Unchanged {
                 event_cursor: cursor,
                 status: row.get("status").cloned().unwrap_or(Value::Null),
                 next_liveness_check_at: next,
+                scan,
             });
         }
         let members = transaction.members()?;
@@ -232,7 +274,8 @@ pub(crate) fn summary(
             .iter()
             .map(|id| read_task(transaction, id))
             .collect::<Result<Vec<_>, _>>()?;
-        with_owner_liveness(transaction, clock, &mut tasks)?;
+        let page_owners = with_owner_liveness(transaction, clock, &mut tasks)?;
+        scan.owners_scanned = scan.owners_scanned.saturating_add(page_owners);
         Ok(RunSummary::Full(Box::new(FullSummary {
             run: row,
             next_liveness_check_at: next,
@@ -246,6 +289,7 @@ pub(crate) fn summary(
             control_generation: transaction.control_generation()?,
             event_cursor: cursor,
             counts: counts(transaction, run.coordinator.as_deref())?,
+            scan,
         })))
     })
 }

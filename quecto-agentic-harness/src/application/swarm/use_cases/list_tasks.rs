@@ -6,7 +6,7 @@ use super::OverRepository;
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::board_read_models::{page_bounds, reading, with_owner_liveness};
 use crate::application::swarm::board_tasks::read_task;
-use crate::application::swarm::dto::{ListTasksRequest, TaskRow};
+use crate::application::swarm::dto::{ListTasksRequest, TaskPage};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{BoardError, RefusalKind};
 
@@ -26,7 +26,7 @@ impl ListTasks {
 
     /// # Errors
     /// The page's bounds, an authorisation refusal, or the store's.
-    pub fn execute(&self, request: ListTasksRequest) -> Result<Vec<TaskRow>, BoardError> {
+    pub fn execute(&self, request: ListTasksRequest) -> Result<TaskPage, BoardError> {
         let Some((offset, limit)) = page_bounds(&request.offset, &request.limit) else {
             return Err(BoardError::new(
                 RefusalKind::Invalid,
@@ -45,8 +45,11 @@ impl ListTasks {
                     .iter()
                     .map(|id| read_task(transaction, id))
                     .collect::<Result<Vec<_>, _>>()?;
-                with_owner_liveness(transaction, clock, &mut page)?;
-                Ok(page)
+                let owners_scanned = with_owner_liveness(transaction, clock, &mut page)?;
+                Ok(TaskPage {
+                    tasks: page,
+                    owners_scanned,
+                })
             },
         )
     }

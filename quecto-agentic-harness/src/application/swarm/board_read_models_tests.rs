@@ -4,7 +4,7 @@ use super::{page_bounds, summary, with_owner_liveness};
 use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, RecordedEvent, SteppingClock, member_row, running_board, stored_task,
 };
-use crate::application::swarm::dto::{RunSummary, TaskRow};
+use crate::application::swarm::dto::{RunSummary, SummaryScan, TaskRow};
 use crate::application::swarm::ports::BoardRepository;
 use crate::domain::swarm::{BoardError, RefusalKind};
 
@@ -56,7 +56,7 @@ fn liveness(board: &MemoryBoard, now: f64) -> Vec<TaskRow> {
     let mut tasks = board.snapshot().tasks;
     board
         .atomic(false, &mut |transaction| {
-            with_owner_liveness(transaction, &*SteppingClock::fixed(now), &mut tasks)
+            with_owner_liveness(transaction, &*SteppingClock::fixed(now), &mut tasks).map(|_| ())
         })
         .unwrap();
     tasks
@@ -164,6 +164,11 @@ fn the_fast_path_answers_unchanged_until_an_owner_turns_idle() {
             event_cursor: 1,
             status: json!("running"),
             next_liveness_check_at: Some(400.0),
+            scan: SummaryScan {
+                owners_scanned: 1,
+                fast_path_defeated: Some(false),
+                cursor_moved: Some(false),
+            },
         }
     );
     let RunSummary::Full(crossed) = summarised(state.clone(), 400.0, Some(1)).unwrap() else {
@@ -171,6 +176,15 @@ fn the_fast_path_answers_unchanged_until_an_owner_turns_idle() {
     };
     assert_eq!(crossed.next_liveness_check_at, None);
     assert_eq!(crossed.event_cursor, 1);
+    assert_eq!(
+        crossed.scan,
+        SummaryScan {
+            owners_scanned: 2,
+            fast_path_defeated: Some(true),
+            cursor_moved: Some(false),
+        },
+        "the watch's owner and the page's; the cursor held"
+    );
     let RunSummary::Full(full) = summarised(state, 399.0, None).unwrap() else {
         panic!("no cursor given");
     };

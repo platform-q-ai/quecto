@@ -36,6 +36,8 @@ fn a_page_carries_its_owners_liveness() {
     let tasks = ListTasks::new(board.clone(), SteppingClock::fixed(10.0))
         .execute(page(json!(1), json!(5)))
         .unwrap();
+    assert_eq!(tasks.owners_scanned, 2, "one owner per owned task");
+    let tasks = tasks.tasks;
     let ids: Vec<_> = tasks.iter().map(|task| task.get("id").cloned()).collect();
     assert_eq!(ids, [Some(json!(2)), Some(json!(3))]);
     assert!(

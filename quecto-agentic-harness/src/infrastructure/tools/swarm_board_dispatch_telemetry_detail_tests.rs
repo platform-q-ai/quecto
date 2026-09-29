@@ -44,7 +44,7 @@ pub(super) fn decided(method: Method) -> (Option<&'static str>, BoardOpDetail) {
             },
         ),
         // #2277 review M2: the read models over the bootstrapped run,
-        // which holds no task and the placeholder's two events.
+        // which holds no task and the placeholder's one event.
         Method::Summary => (
             Some("full"),
             BoardOpDetail {
@@ -64,7 +64,7 @@ pub(super) fn decided(method: Method) -> (Option<&'static str>, BoardOpDetail) {
         Method::Events => (
             Some("read"),
             BoardOpDetail {
-                page_size: Some(2),
+                page_size: Some(1),
                 has_more: Some(false),
                 ..BoardOpDetail::NONE
             },

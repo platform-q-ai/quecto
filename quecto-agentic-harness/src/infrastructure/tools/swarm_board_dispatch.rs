@@ -103,7 +103,9 @@ use crate::domain::swarm::{BoardError, BoardOpDetail, BoardRole, RefusalKind};
 
 use self::method::{Method, Parameter, required};
 pub use super::swarm_board_telemetry::{ActorRefs, TELEMETRY_TARGET};
-use super::swarm_board_telemetry::{Caller, Finished, Level, Served, observation, trace};
+use super::swarm_board_telemetry::{
+    Caller, Finished, Level, Served, observation, split_committed, trace,
+};
 
 /// One handle per board use case, composed once per board file. The
 /// `create_run` and `bootstrap_run` handles are served only in test builds
@@ -295,6 +297,7 @@ pub fn call(
             format!("swarm board has no method {method}"),
         )),
     };
+    let (answer, committed) = split_committed(answer);
     let measure = metered.and_then(|metered| metered.measure());
     let finished = Finished {
         op: known.map_or("unknown", Method::name),
@@ -319,7 +322,8 @@ pub fn call(
             };
             let actor = telemetry.actors.of(member, caller);
             trace(&finished, measure.as_ref(), Some(&actor));
-            let observation = observation(&finished, actor, answer.as_ref().ok(), measure);
+            let served = answer.as_ref().ok().or(committed.as_ref());
+            let observation = observation(&finished, actor, served, measure);
             telemetry.log.record(observation);
         }
         None => trace(&finished, None, None),
@@ -431,6 +435,7 @@ fn serve(
             message_id: None,
             cursor_moved: None,
             detail: BoardOpDetail::NONE,
+            refused: None,
         }),
         Method::Snapshot => Ok(Served {
             value: snapshot(serving(&*handles.read_run_snapshot, over).execute(member)?)?,
@@ -439,6 +444,7 @@ fn serve(
             message_id: None,
             cursor_moved: None,
             detail: BoardOpDetail::NONE,
+            refused: None,
         }),
         Method::Admit => members::admit(&serving(&*handles.admit_member, over), member, arguments),
         Method::Activate => {
@@ -624,6 +630,7 @@ fn done(decision: &'static str) -> Served {
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     }
 }
 

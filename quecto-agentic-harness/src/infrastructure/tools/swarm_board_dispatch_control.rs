@@ -38,6 +38,7 @@ fn answered(answer: ControlAnswer, applied: &'static str) -> Served {
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     }
 }
 
@@ -110,6 +111,7 @@ pub(super) fn control_status(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 
@@ -124,6 +126,7 @@ pub(super) fn usage_report(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 

@@ -31,6 +31,7 @@ fn on_cursor(value: Value, decision: &'static str, cursor_moved: bool) -> Served
         message_id: None,
         cursor_moved: Some(cursor_moved),
         detail: BoardOpDetail::NONE,
+        refused: None,
     }
 }
 

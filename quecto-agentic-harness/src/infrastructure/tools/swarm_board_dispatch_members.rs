@@ -55,6 +55,7 @@ pub(super) fn admit(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 
