@@ -20,6 +20,8 @@ use crate::infrastructure::tools::swarm_bridge::SwarmContext;
 struct Recorded {
     ops: Mutex<Vec<BoardOpObservation>>,
     summaries: Mutex<Vec<SwarmRunSummary>>,
+    /// Each note of records dropped before they reached this log.
+    drops: Mutex<Vec<u64>>,
 }
 
 impl BoardOpLog for Recorded {
@@ -29,6 +31,15 @@ impl BoardOpLog for Recorded {
 
     fn summarize(&self, summary: SwarmRunSummary) {
         self.summaries.lock().unwrap().push(summary);
+    }
+
+    fn dropped(&self, records: u64) {
+        self.drops.lock().unwrap().push(records);
+    }
+
+    /// Nothing is ever dropped here, so nothing is left unnoted.
+    fn take_unnoted(&self) -> u64 {
+        0
     }
 }
 
@@ -43,6 +54,10 @@ impl Recorded {
 
     fn summaries(&self) -> Vec<SwarmRunSummary> {
         self.summaries.lock().unwrap().clone()
+    }
+
+    fn drops(&self) -> Vec<u64> {
+        self.drops.lock().unwrap().clone()
     }
 }
 
@@ -227,6 +242,8 @@ fn the_records_held_before_the_log_opens_are_bounded() {
     assert!(board.record_in(recorded.clone()));
     assert_eq!(recorded.ops().len(), PENDING_RECORDS);
     assert_eq!(recorded.ops()[0], "create", "the first are kept");
+    // #2313 review L4: the drop is noted in the log, not only traced.
+    assert_eq!(recorded.drops(), [1], "the one summary past the bound");
 }
 
 /// A writer into a shared buffer, for the `tracing` records.
@@ -294,3 +311,6 @@ fn a_run_summary_is_traced_on_the_boards_target() {
 
 #[path = "swarm_bridge_board_summary_tests.rs"]
 mod summary;
+
+#[path = "swarm_bridge_board_flush_tests.rs"]
+mod flush;
