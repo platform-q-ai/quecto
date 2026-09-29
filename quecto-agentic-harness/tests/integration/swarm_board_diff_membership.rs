@@ -9,10 +9,10 @@ use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::rust::RustBoard;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_both, sql, step};
 
-const HOUR: f64 = 3_600.0;
+pub(crate) const HOUR: f64 = 3_600.0;
 
 /// `parent` creates a running run of `member_limit` members, an hour long.
-fn create(member_limit: i64) -> Step {
+pub(crate) fn create(member_limit: i64) -> Step {
     step(
         "parent",
         "create_run",
@@ -27,11 +27,11 @@ fn create(member_limit: i64) -> Step {
     )
 }
 
-fn at(offset: f64, member: &str, method: &str, args: Value) -> Step {
+pub(crate) fn at(offset: f64, member: &str, method: &str, args: Value) -> Step {
     step(member, method, args, NOW + offset)
 }
 
-fn snapshot(offset: f64) -> Step {
+pub(crate) fn snapshot(offset: f64) -> Step {
     at(offset, "parent", "_snapshot", json!([]))
 }
 

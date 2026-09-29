@@ -121,6 +121,22 @@ fn a_process_is_the_same_only_when_pid_and_start_time_are() {
         &recorded(json!(1e300), json!("t")),
         &launch(i64::MAX, "t")
     ));
+    // 2^63 is the first float beyond i64: a saturating conversion would
+    // make it i64::MAX, which Python's exact comparison never does
+    // (#2271 round-1 review M2).
+    let two_to_the_63 = 9_223_372_036_854_775_808.0_f64;
+    assert!(!same_process(
+        &recorded(json!(two_to_the_63), json!("t")),
+        &launch(i64::MAX, "t")
+    ));
+    assert!(!same_process(
+        &recorded(json!(-two_to_the_63 * 2.0), json!("t")),
+        &launch(i64::MIN, "t")
+    ));
+    assert!(same_process(
+        &recorded(json!(-two_to_the_63), json!("t")),
+        &launch(i64::MIN, "t")
+    ));
 }
 
 #[test]

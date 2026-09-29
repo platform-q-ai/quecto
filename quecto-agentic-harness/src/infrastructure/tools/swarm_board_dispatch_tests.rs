@@ -420,105 +420,86 @@ fn membership_methods_render_pythons_shape() {
     );
 }
 
-/// The launch identity binds as the Rust callers pass it
-/// (`swarm_coordination.rs`): the pid an INTEGER, `started` and a
-/// reservation TEXT, a socket TEXT or null (epic P2: calling syntax with
-/// this module's own text). `_admit`'s member stays loose: the board
-/// bounds it with Python's text.
+/// Every membership argument reaches the board as the member passed it
+/// (#2271 round-1 review M1): Python's `sqlite3` binds the member,
+/// reservation, pid, start time and socket untyped, the column affinity
+/// decides what is stored, and the board compares with Python's `==`. No
+/// type is refused as calling syntax; only an argument `sqlite3` cannot
+/// bind is refused, as Python's store refuses it.
 #[test]
-fn launch_identities_bind_as_the_harness_passes_them() {
+fn membership_arguments_reach_the_board_as_given() {
     let (_dir, handles) = board(1_000.0);
     running(&handles);
-    for (method, args, message) in [
+    let row = call(&handles, "parent", "_admit", json!(["w", 5])).unwrap();
+    assert_eq!(row["reservation"], json!("5"), "{row}");
+    assert_eq!(
+        call(
+            &handles,
+            "parent",
+            "_record_launch",
+            json!(["w", null, 7, "t"])
+        )
+        .unwrap_err(),
+        BoardError::new("stale launch reservation")
+    );
+    for (args, answer) in [
+        (json!(["w", "5", "7", "t", null]), Ok(Value::Null)),
+        (json!(["w", "5", 7.0, "t", null]), Ok(Value::Null)),
         (
-            "_activate",
-            json!(["w", "r", "7", "t", null]),
-            "_activate: pid must be an integer",
+            json!(["w", "5", true, "t", null]),
+            Err(BoardError::new(
+                "member already active in a different process",
+            )),
         ),
         (
-            "_activate",
-            json!(["w", "r", true, "t", null]),
-            "_activate: pid must be an integer",
-        ),
-        (
-            "_activate",
-            json!(["w", "r", 7.0, "t", null]),
-            "_activate: pid must be an integer",
-        ),
-        (
-            "_activate",
-            json!(["w", "r", 7, 5, null]),
-            "_activate: started must be a string",
-        ),
-        (
-            "_activate",
-            json!(["w", "r", 7, "t", 5]),
-            "_activate: socket must be a string or null",
-        ),
-        (
-            "_activate",
-            json!([5, "r", 7, "t", null]),
-            "_activate: member must be a string",
-        ),
-        (
-            "_activate",
             json!(["w", 5, 7, "t", null]),
-            "_activate: reservation must be a string or null",
-        ),
-        (
-            "_record_launch",
-            json!(["w", null, 7, "t"]),
-            "_record_launch: reservation must be a string",
-        ),
-        (
-            "_record_launch",
-            json!(["w", "r", null, "t"]),
-            "_record_launch: pid must be an integer",
-        ),
-        (
-            "_admit",
-            json!(["w", 5]),
-            "_admit: reservation must be a string",
-        ),
-        (
-            "_release_unlaunched",
-            json!([null]),
-            "_release_unlaunched: member must be a string",
-        ),
-        (
-            "_socket",
-            json!([["/p"]]),
-            "_socket: socket must be a string or null",
-        ),
-        (
-            "bootstrap_join",
-            json!([7, "t", null, 5]),
-            "bootstrap_join: reservation must be a string or null",
-        ),
-        (
-            "_socket",
-            json!([]),
-            "_socket: missing required argument socket",
+            Err(BoardError::new("unknown or stale launch reservation")),
         ),
     ] {
         assert_eq!(
-            call(&handles, "parent", method, args.clone()).unwrap_err(),
-            BoardError::new(message),
-            "{method} {args}"
+            call(&handles, "parent", "_activate", args.clone()),
+            answer,
+            "{args}"
         );
     }
+    assert_eq!(
+        call(&handles, "w", "_socket", json!([5])).unwrap(),
+        Value::Null
+    );
+    let row = call(&handles, "parent", "_admit", json!(["n", null])).unwrap();
+    assert_eq!(row["reservation"], Value::Null, "{row}");
+    assert_eq!(
+        call(
+            &handles,
+            "parent",
+            "_activate",
+            json!(["n", null, [1], "t", null])
+        )
+        .unwrap_err(),
+        BoardError::new(
+            "coordination store unavailable or contended: \
+             Error binding parameter 1: type 'list' is not supported"
+        )
+    );
+    assert_eq!(
+        call(&handles, "parent", "_release_unlaunched", json!([5])).unwrap_err(),
+        BoardError::new("only an unlaunched reservation may be released")
+    );
+    let snapshot = call(&handles, "parent", "_snapshot", json!([])).unwrap();
+    let worker = &snapshot["members"][1];
+    assert_eq!(
+        (&worker["pid"], &worker["started"], &worker["socket"]),
+        (&json!(7), &json!("t"), &json!("5")),
+        "{snapshot}"
+    );
+    assert_eq!(
+        call(&handles, "parent", "_socket", json!([])).unwrap_err(),
+        BoardError::new("_socket: missing required argument socket")
+    );
     assert_eq!(
         call(&handles, "parent", "_admit", json!([5, "r"])).unwrap_err(),
         BoardError::new("member must be nonempty and at most 128 bytes")
     );
-    // `bootstrap_join`'s reservation defaults to none, as `_bootstrap`'s.
-    call(
-        &handles,
-        "joiner",
-        "bootstrap_join",
-        json!([9, "t", "/j.sock"]),
-    )
-    .unwrap();
 }
 
 /// Each membership call leaves one INFO record with its decision, and no
