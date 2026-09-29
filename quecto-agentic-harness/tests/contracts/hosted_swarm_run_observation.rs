@@ -64,8 +64,9 @@ fn create_run(context: &SwarmContext) {
         .unwrap()
         .as_secs()
         + 600;
-    context
-        .create_run(
+    // Setup off any async worker: a board call blocks (#2278).
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.create_run(
             &serde_json::json!({"goal":"ship", "constraints":[], "criteria":[{"id":"tests","kind":"command","description":"pass"}], "member_limit":3, "deadline":deadline}),
             &quecto::domain::swarm::ProcessIdentity {
                 pid: std::process::id(),
@@ -76,7 +77,8 @@ fn create_run(context: &SwarmContext) {
             },
             None,
         )
-        .unwrap();
+    })
+    .unwrap();
 }
 
 #[tokio::test]

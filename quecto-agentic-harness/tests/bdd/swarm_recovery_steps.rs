@@ -88,7 +88,9 @@ async fn wait_summary(
     let context = context(workspace, "coordinator");
     let until = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
-        let summary = context.summary().unwrap();
+        let summary =
+            quecto::infrastructure::tools::call_work::off_the_runtime(|| context.summary())
+                .unwrap();
         if accept(&summary) {
             return summary;
         }
@@ -206,7 +208,10 @@ async fn control_status(runtime: &fixture::Runtime) -> Value {
 }
 
 fn events(workspace: &Path) -> Vec<Value> {
-    context(workspace, "coordinator").events(0, 100).unwrap()["events"]
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context(workspace, "coordinator").events(0, 100)
+    })
+    .unwrap()["events"]
         .as_array()
         .cloned()
         .unwrap_or_default()
@@ -356,7 +361,10 @@ async fn exercise_kill(workspace: PathBuf) -> Value {
         "other_reconcile_passes": other_passes.load(std::sync::atomic::Ordering::SeqCst),
         "reclaimed_by": reclaimed,
     });
-    context(&workspace, "coordinator").cancel_run().unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context(&workspace, "coordinator").cancel_run()
+    })
+    .unwrap();
     runtime.finish().await;
     evidence
 }
@@ -429,7 +437,10 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
     // first pass only starts the grace (its reaper would normally confirm a
     // death first); a pass past the grace records the loss.
     reconcile(&runtime, "Reconcile the board").await;
-    let observed = context(&workspace, "coordinator").summary().unwrap();
+    let observed = quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context(&workspace, "coordinator").summary()
+    })
+    .unwrap();
     tokio::time::sleep(Duration::from_secs(11)).await;
     reconcile(&runtime, "Reconcile the board once more").await;
     let paused = wait_summary(&runtime, &workspace, "paused by the loss", |s| {
@@ -444,7 +455,10 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
     // The same vanished pid is observed again after the resume: the
     // coordinator's reconcile (a tool call and its answer) runs to the end.
     reconcile(&runtime, "Reconcile the board again").await;
-    let after = context(&workspace, "coordinator").summary().unwrap();
+    let after = quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context(&workspace, "coordinator").summary()
+    })
+    .unwrap();
     let status = control_status(&runtime).await;
     let recover = python(
         &workspace,
@@ -486,7 +500,10 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
         "revoked": count(&events, "revoked"),
         "reclaimed_by": reclaimed,
     });
-    context(&workspace, "coordinator").cancel_run().unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context(&workspace, "coordinator").cancel_run()
+    })
+    .unwrap();
     runtime.finish().await;
     evidence
 }
