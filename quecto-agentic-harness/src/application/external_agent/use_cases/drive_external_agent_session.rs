@@ -114,6 +114,8 @@ struct PendingExit {
 pub struct DriveExternalAgentSession {
     launcher: Arc<dyn ExternalAgentLauncher>,
     telemetry: Arc<dyn ExternalAgentTelemetry>,
+    /// Every record goes through it: none is kept after the member's end.
+    records: Arc<RecordGate>,
     clock: Arc<dyn ExternalAgentClock>,
     spawner: Arc<dyn ExternalAgentSpawner>,
     settings: ExternalAgentSessionSettings,
@@ -149,6 +151,7 @@ impl DriveExternalAgentSession {
     ) -> Self {
         Self {
             launcher,
+            records: Arc::new(RecordGate::new(telemetry.clone())),
             telemetry,
             clock,
             spawner,
@@ -190,8 +193,9 @@ impl DriveExternalAgentSession {
             Err(error) => {
                 self.core().end();
                 self.ended.send_replace(true);
-                self.record(SessionRecord::StartRefused { kind: error.kind() });
                 // Nothing ran: nothing more is recorded of it.
+                self.records
+                    .record_last(&SessionRecord::StartRefused { kind: error.kind() });
                 self.end_recorded.send_replace(true);
                 Err(SessionRefusal::Launch(error))
             }
@@ -286,19 +290,21 @@ impl DriveExternalAgentSession {
                 SessionPhase::NotStarted => return Err(SessionRefusal::NotStarted),
                 SessionPhase::Ended => return Err(SessionRefusal::Ended),
             };
+            // Recorded with the core held: a fold decided first is
+            // recorded first, and none is folded after.
+            for record in cut {
+                self.record(record);
+            }
+            self.record(SessionRecord::Closed {
+                turn,
+                dropped_follow_ups: dropped,
+            });
             (turn, dropped, core.telemetry.started_at())
         };
         let exit = PendingExit {
             process: self.release_process(),
             started_at,
         };
-        for record in cut {
-            self.record(record);
-        }
-        self.record(SessionRecord::Closed {
-            turn,
-            dropped_follow_ups,
-        });
         self.record_exit(Some(exit));
         self.until_end_recorded().await;
         Ok(AbortOutcome {
@@ -481,6 +487,7 @@ impl DriveExternalAgentSession {
                 (Ok(()), false) => {
                     let waiting = core.interrupting(turn, deadline);
                     assert!(waiting, "a member that has not ended waits");
+                    self.record(SessionRecord::Interrupted { turn, cause });
                     Some(true)
                 }
                 (Err(_), false) => Some(false),
@@ -491,7 +498,6 @@ impl DriveExternalAgentSession {
                 // A reader waiting on the turn's events waits for the
                 // deadline instead.
                 self.wait_changed.send_modify(|n| *n = n.wrapping_add(1));
-                self.record(SessionRecord::Interrupted { turn, cause });
                 Interrupt::Written
             }
             Some(false) => Interrupt::Abandoned(self.abandon(turn)),
@@ -524,25 +530,25 @@ impl DriveExternalAgentSession {
     fn abandon(&self, turn: u64) -> Option<PendingExit> {
         let now = self.clock.now();
         let mut cut = Vec::new();
-        let ended = {
+        let started_at = {
             let mut core = self.core();
             match core.ended() {
                 false => {
-                    let (_, dropped) = core.end_cut(TurnCut::Abandoned, now, &mut cut);
-                    Some((dropped, core.telemetry.started_at()))
+                    let (_, dropped_follow_ups) = core.end_cut(TurnCut::Abandoned, now, &mut cut);
+                    // Recorded with the core held, as `close` does.
+                    for record in cut {
+                        self.record(record);
+                    }
+                    self.record(SessionRecord::Abandoned {
+                        turn,
+                        dropped_follow_ups,
+                    });
+                    Some(core.telemetry.started_at())
                 }
                 true => None,
             }
-        };
-        let (dropped_follow_ups, started_at) = ended?;
+        }?;
         let process = self.release_process();
-        for record in cut {
-            self.record(record);
-        }
-        self.record(SessionRecord::Abandoned {
-            turn,
-            dropped_follow_ups,
-        });
         Some(PendingExit {
             process,
             started_at,
@@ -558,7 +564,7 @@ impl DriveExternalAgentSession {
         drop(process);
         let now = self.clock.now();
         let mut reported = Vec::new();
-        let (turn, wall_ms) = {
+        let turn = {
             let mut core = self.core();
             // `close` or an abandon ended the member meanwhile, and
             // records its end.
@@ -566,21 +572,24 @@ impl DriveExternalAgentSession {
                 return None;
             }
             let wall_ms = core.telemetry.wall_ms(now);
-            (core.end_cut(TurnCut::Exited, now, &mut reported).0, wall_ms)
+            let turn = core.end_cut(TurnCut::Exited, now, &mut reported).0;
+            // Recorded with the core held, as `close` does; the end last.
+            for record in reported {
+                self.record(record);
+            }
+            if let Some(turn) = turn {
+                self.record(SessionRecord::TurnEnded {
+                    turn,
+                    outcome: "exited",
+                    duration_ms: None,
+                    cost_micro_usd: 0,
+                });
+            }
+            self.records
+                .record_last(&ended_record(Some(&exit), wall_ms));
+            turn
         };
         drop(self.release_process());
-        for record in reported {
-            self.record(record);
-        }
-        if let Some(turn) = turn {
-            self.record(SessionRecord::TurnEnded {
-                turn,
-                outcome: "exited",
-                duration_ms: None,
-                cost_micro_usd: 0,
-            });
-        }
-        self.record(ended_record(Some(&exit), wall_ms));
         self.end_recorded.send_replace(true);
         Some(SessionStep::Ended { turn, exit })
     }
@@ -594,14 +603,6 @@ impl DriveExternalAgentSession {
         let undone = (self.unfolded_slot().take(), self.unwritten_slot().take());
         drop(undone);
         process
-    }
-
-    /// Take the write gate. A follow-up whose turn has begun but whose
-    /// user turn a dropped holder left unqueued is written first.
-    async fn gate(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        let writes = self.writes.lock().await;
-        self.start_follow_up().await;
-        writes
     }
 
     /// Whether a dropped step left an event unfolded or a follow-up
@@ -618,86 +619,32 @@ impl DriveExternalAgentSession {
         let Some((event, now, grace_end)) = self.unfolded_slot().take() else {
             return;
         };
-        let folded = self.core().fold(&event, now, grace_end);
-        self.core().surface(SessionStep::Folded(folded.step));
-        for record in &folded.records {
-            self.telemetry.record(record);
-        }
+        let (abandon, follow_up) = {
+            let mut core = self.core();
+            // An event read before the member ended is not folded: its
+            // end is recorded, and nothing after it (#2304 swarm review).
+            if core.ended() {
+                return;
+            }
+            let folded = core.fold(&event, now, grace_end);
+            core.surface(SessionStep::Folded(folded.step));
+            // Recorded with the core held: an end decided after this fold
+            // is recorded after its records.
+            for record in folded.records {
+                self.record(record);
+            }
+            (folded.abandon, folded.follow_up)
+        };
         // claude's state became unknown: the member ends, and the reader
         // is told after the fold.
-        if let Some(turn) = folded.abandon {
+        if let Some(turn) = abandon {
             let exit = self.abandon(turn);
             self.core().surface(SessionStep::Abandoned { turn });
             self.record_exit(exit);
         }
-        if let Some(follow_up) = folded.follow_up {
+        if let Some(follow_up) = follow_up {
             *self.unwritten_slot() = Some(follow_up);
             self.start_follow_up().await;
-        }
-    }
-
-    /// Write the follow-up whose turn has begun, if any; the caller holds
-    /// the write gate. Dropped before it is queued, it is kept for the
-    /// next holder.
-    async fn start_follow_up(&self) {
-        let Some((turn, text)) = self.unwritten_slot().take() else {
-            return;
-        };
-        let accepted = PromptAccepted::Started { turn };
-        if let Err(refusal) = self.write(accepted, &text, Undo::Keep { turn }).await {
-            self.record(SessionRecord::FollowUpFailed {
-                turn,
-                bytes: text.len(),
-                refusal: refusal.kind(),
-            });
-            self.core()
-                .surface(SessionStep::FollowUpFailed { turn, refusal });
-        }
-    }
-
-    /// Write `accepted`'s text to the agent, unless the member ends first.
-    /// Once queued it is part of the conversation, and owed a result;
-    /// `undo` says what a caller dropped before then leaves behind.
-    async fn write(
-        &self,
-        accepted: PromptAccepted,
-        text: &str,
-        undo: Undo,
-    ) -> Result<(), SessionRefusal> {
-        let process = self.slot().clone().ok_or(SessionRefusal::Ended)?;
-        let mut unqueued = Unqueued {
-            session: self,
-            text,
-            undo: Some(undo),
-        };
-        let queued = tokio::select! {
-            biased;
-            () = self.until_ended() => Err(SessionRefusal::Ended),
-            queued = process.queue_user_turn(text) => queued.map_err(SessionRefusal::Input),
-        };
-        unqueued.undo = None;
-        let queued = match queued {
-            Ok(queued) => queued,
-            Err(refusal) => {
-                self.core().write_failed(accepted);
-                return Err(refusal);
-            }
-        };
-        let id = queued.id.clone();
-        self.core().written(queued.id, text);
-        let written = tokio::select! {
-            biased;
-            () = self.until_ended() => Err(SessionRefusal::Ended),
-            written = queued.written => written.map_err(SessionRefusal::Input),
-        };
-        match written {
-            Ok(()) => Ok(()),
-            Err(refusal) => {
-                let mut core = self.core();
-                core.not_written(&id);
-                core.write_failed(accepted);
-                Err(refusal)
-            }
         }
     }
 
@@ -708,8 +655,11 @@ impl DriveExternalAgentSession {
         let _ = ended.wait_for(|ended| *ended).await;
     }
 
+    /// Record `record`, unless the member's end is recorded. Records made
+    /// while the session core is held are in the order the core decided
+    /// them: a fold's before an end's (#2304 swarm review).
     fn record(&self, record: SessionRecord) {
-        self.telemetry.record(&record);
+        self.records.record(&record);
     }
 
     fn core(&self) -> std::sync::MutexGuard<'_, SessionCore> {
@@ -740,39 +690,13 @@ impl DriveExternalAgentSession {
     }
 }
 
-/// What a write whose caller is dropped before its user turn is queued
-/// leaves behind.
-#[derive(Clone, Copy)]
-enum Undo {
-    /// The prompt's admission is undone: a turn it began never started.
-    Admission(PromptAccepted),
-    /// Follow-up turn `turn` is kept, for the next holder of the gate.
-    Keep { turn: u64 },
-}
-
-/// Armed until a write's user turn is queued or refused: dropped armed,
-/// the write's caller was, and its [`Undo`] is done.
-struct Unqueued<'a> {
-    session: &'a DriveExternalAgentSession,
-    text: &'a str,
-    undo: Option<Undo>,
-}
-
-impl Drop for Unqueued<'_> {
-    fn drop(&mut self) {
-        match self.undo.take() {
-            Some(Undo::Admission(accepted)) => self.session.core().write_failed(accepted),
-            Some(Undo::Keep { turn }) => {
-                *self.session.unwritten_slot() = Some((turn, self.text.to_string()));
-            }
-            None => {}
-        }
-    }
-}
-
 #[path = "drive_external_agent_session_exit.rs"]
 mod exit;
-use self::exit::ended_record;
+use self::exit::{RecordGate, ended_record};
+
+#[path = "drive_external_agent_session_write.rs"]
+mod write;
+use self::write::Undo;
 
 #[cfg(test)]
 #[path = "drive_external_agent_session_rig_tests.rs"]

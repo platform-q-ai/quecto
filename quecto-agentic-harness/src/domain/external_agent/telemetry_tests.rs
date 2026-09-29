@@ -1,5 +1,5 @@
 //! The event log's records of a claude-code member (#2304): what each
-//! stream event feeds, how a tool call is summarised, and that each record
+//! stream event feeds, what a tool call keeps, and that each record
 //! round-trips through the log.
 
 use super::*;
@@ -135,35 +135,14 @@ fn every_stream_event_type_maps_to_a_telemetry_outcome() {
     }
 }
 
+/// Only a board tool's call names a task, and only its `task_id` is kept
+/// of its input.
 #[test]
-fn a_bash_summary_is_its_command_redacted_and_bounded() {
-    let command = format!(
-        "export ANTHROPIC_API_KEY=sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUV; curl https://user:hunter2@proxy.example:3128 {}",
-        "x".repeat(400)
-    );
-    let summary = tool_summary("Bash", &serde_json::json!({ "command": command }))
-        .expect("a Bash call has a summary");
-    assert!(summary.len() <= TOOL_SUMMARY_BYTES);
-    assert!(summary.starts_with("export"), "{summary}");
-    for secret in ["ABCDEFGHIJKLMNOPQRSTUV", "hunter2"] {
-        assert!(!summary.contains(secret), "{summary}");
-    }
-}
-
-#[test]
-fn only_allowlisted_tools_and_fields_are_summarised() {
+fn only_a_board_call_names_a_task() {
     let input = serde_json::json!({
         "file_path": "/w/a.rs",
-        "content": "the file's words",
         "task_id": 42,
-        "url": "https://example.com",
     });
-    assert_eq!(tool_summary("Edit", &input).as_deref(), Some("/w/a.rs"));
-    assert_eq!(
-        tool_summary("mcp__quecto__claim", &input).as_deref(),
-        Some("42")
-    );
-    assert_eq!(tool_summary("WebFetch", &input), None);
     assert_eq!(
         board_task_id("mcp__quecto__claim", &input).as_deref(),
         Some("42")
@@ -181,14 +160,6 @@ fn only_allowlisted_tools_and_fields_are_summarised() {
         None,
         "only a board tool names a task"
     );
-    assert_eq!(
-        tool_summary("Bash", &serde_json::json!({"cmd": "ls"})),
-        None
-    );
-    // A multi-byte character at the cut is never split.
-    let long = serde_json::json!({ "command": "é".repeat(300) });
-    let summary = tool_summary("Bash", &long).unwrap();
-    assert_eq!(summary.len(), TOOL_SUMMARY_BYTES);
 }
 
 #[test]
@@ -237,7 +208,6 @@ fn every_external_agent_event_round_trips_through_the_log() {
                 rule_id: Some("rm-rf".into()),
                 argument_bytes: 10,
                 result_bytes: 20,
-                summary: Some(Redacted::from("ls")),
                 task_id: None,
             }),
         },
@@ -275,24 +245,6 @@ fn every_external_agent_event_round_trips_through_the_log() {
         let back: AuditEvent = serde_json::from_value(json).unwrap();
         assert_eq!(back, event);
     }
-}
-
-#[test]
-fn a_board_call_is_summarised_by_its_ids_and_recipient_never_its_token() {
-    let send = serde_json::json!({"to": "coordinator", "text": "the message's words"});
-    assert_eq!(
-        tool_summary("mcp__board__board_send", &send).as_deref(),
-        Some("coordinator")
-    );
-    let ack = serde_json::json!({"id": 1});
-    assert_eq!(
-        tool_summary("mcp__quecto__board_ack", &ack).as_deref(),
-        Some("1")
-    );
-    let submit = serde_json::json!({"task_id": "T1", "token": "06f61158", "evidence": "words"});
-    let summary = tool_summary("mcp__board__board_submit", &submit).unwrap();
-    assert_eq!(summary.as_str(), "T1");
-    assert!(!summary.contains("06f61158"), "{summary}");
 }
 
 #[test]

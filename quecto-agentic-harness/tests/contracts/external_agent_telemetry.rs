@@ -147,7 +147,6 @@ fn tool() -> ExternalAgentTool {
         rule_id: None,
         argument_bytes: 10,
         result_bytes: 5,
-        summary: None,
         task_id: None,
     }
 }

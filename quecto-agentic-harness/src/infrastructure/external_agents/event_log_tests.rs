@@ -46,7 +46,6 @@ fn tool() -> ExternalAgentTool {
         rule_id: None,
         argument_bytes: 1,
         result_bytes: 1,
-        summary: None,
         task_id: None,
     }
 }

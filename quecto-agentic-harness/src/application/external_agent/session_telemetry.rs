@@ -6,13 +6,15 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+use sha2::{Digest, Sha256};
+
 use super::dto::{AgentClockInstant, SessionRecord, TurnOutcome};
 use crate::domain::external_agent::stream::{
     AssistantContent, ExternalAgentEvent, SkippedLineReason, ToolResultEvent,
 };
 use crate::domain::external_agent::telemetry::{
     ExternalAgentStreamDiagnostic, ExternalAgentTool, ExternalAgentTurn, board_task_id,
-    error_reason_kind, recorded_name, tool_summary,
+    error_reason_kind, fingerprint, is_recorded_name, recorded_id, recorded_text,
 };
 use crate::domain::external_agent::turn::{FailureKind, TurnEnd};
 
@@ -55,8 +57,19 @@ impl TurnCut<'_> {
 
 #[derive(Debug)]
 struct PendingTool {
+    /// The SHA-256 digest of the call's id as the stream gave it: a
+    /// result is paired on the whole id (#2304 swarm review), in a fixed
+    /// 32 bytes however long the id; the record's id is for display only.
+    key: CallKey,
     record: ExternalAgentTool,
     called_at: AgentClockInstant,
+}
+
+/// A tool call's id as calls and results are paired on it.
+type CallKey = [u8; 32];
+
+fn call_key(id: &str) -> CallKey {
+    Sha256::digest(id.as_bytes()).into()
 }
 
 /// The session's measurements.
@@ -103,11 +116,11 @@ impl SessionTelemetry {
     ) {
         match event {
             ExternalAgentEvent::Init(init) => {
-                self.claude_session_id = init.session_id.as_deref().map(recorded_name);
-                self.model = init.model.as_deref().map(recorded_name);
+                self.claude_session_id = init.session_id.as_deref().and_then(recorded_text);
+                self.model = init.model.as_deref().and_then(recorded_text);
                 if std::mem::take(&mut self.awaiting_init) {
                     records.push(SessionRecord::Initialized {
-                        cli_version: init.cli_version.as_deref().map(recorded_name),
+                        cli_version: init.cli_version.as_deref().and_then(recorded_text),
                         claude_session_id: self.claude_session_id.clone(),
                         model: self.model.clone(),
                     });
@@ -118,14 +131,17 @@ impl SessionTelemetry {
                 ..
             } => self.called(turn, (id, name, input), now, records),
             ExternalAgentEvent::ToolResult(result) => self.answered(result, now, records),
+            // Any text may stand as an unknown event's type: only its
+            // print is kept, and counted.
             ExternalAgentEvent::Unknown { kind } => {
-                self.diagnose("unknown_event", kind, None, turn, records);
+                self.diagnose("unknown_event", fingerprint(kind), None, turn, records);
             }
             ExternalAgentEvent::LineSkipped(line) => {
                 let reason = match line.reason {
                     SkippedLineReason::OverCap => "over_cap",
                     SkippedLineReason::NotUtf8 => "not_utf8",
                 };
+                let reason = reason.to_string();
                 self.diagnose("skipped_line", reason, Some(line.bytes), turn, records);
             }
             // They feed `external_agent_turn` (the table's word), through
@@ -159,17 +175,18 @@ impl SessionTelemetry {
         {
             records.push(finished(oldest, "unanswered", 0, now));
         }
+        // Its name, id and sizes only: never its input's text.
         self.pending.push_back(PendingTool {
+            key: call_key(id),
             record: ExternalAgentTool {
                 member_turn: turn,
-                tool: recorded_name(name),
-                tool_use_id: recorded_name(id),
+                tool: recorded_id(name),
+                tool_use_id: recorded_id(id),
                 duration_ms: 0,
                 outcome: String::new(),
                 rule_id: None,
                 argument_bytes: input.to_string().len(),
                 result_bytes: 0,
-                summary: tool_summary(name, input),
                 task_id: board_task_id(name, input),
             },
             called_at: now,
@@ -177,7 +194,8 @@ impl SessionTelemetry {
         assert!(self.pending.len() <= PENDING_TOOL_CAPACITY);
     }
 
-    /// A result answers the call it names, else the oldest open one.
+    /// A result answers the call its whole id names, else (it names none)
+    /// the oldest open one.
     fn answered(
         &mut self,
         result: &ToolResultEvent,
@@ -186,10 +204,8 @@ impl SessionTelemetry {
     ) {
         let position = match &result.tool_use_id {
             Some(id) => {
-                let id = recorded_name(id);
-                self.pending
-                    .iter()
-                    .position(|pending| pending.record.tool_use_id == id)
+                let key = call_key(id);
+                self.pending.iter().position(|pending| pending.key == key)
             }
             None => self.pending.front().map(|_| 0),
         };
@@ -208,12 +224,13 @@ impl SessionTelemetry {
     fn diagnose(
         &mut self,
         kind: &'static str,
-        name: &str,
+        name: String,
         bytes: Option<usize>,
         turn: Option<u64>,
         records: &mut Vec<SessionRecord>,
     ) {
-        let key = (kind, recorded_name(name));
+        assert!(is_recorded_name(&name), "a diagnostic's name is recordable");
+        let key = (kind, name);
         let room = self.diagnostics.len() < DIAGNOSTIC_KIND_CAPACITY;
         let count = match (self.diagnostics.get_mut(&key), room) {
             (Some(count), _) => {
@@ -321,16 +338,17 @@ fn end_kind(end: &TurnEnd) -> (&'static str, Option<String>) {
         Some(GENERIC_TERMINAL_REASON) | None => None,
         Some(reason) => Some(reason),
     };
+    // Each is kept only as `recorded_text` keeps it: else the next.
     let reason = specific_reason
-        .map(recorded_name)
+        .and_then(recorded_text)
         .or_else(|| {
             failure
                 .api_error_status
                 .map(|status| format!("api_{status}"))
         })
-        .or_else(|| failure.assistant_error.as_deref().map(recorded_name))
+        .or_else(|| failure.assistant_error.as_deref().and_then(recorded_text))
         .or_else(|| error_reason_kind(&failure.errors))
-        .or_else(|| failure.terminal_reason.as_deref().map(recorded_name));
+        .or_else(|| failure.terminal_reason.as_deref().and_then(recorded_text));
     let kind = match (failure.kind, failure.terminal_reason.as_deref()) {
         (FailureKind::Aborted, _) => "aborted",
         (FailureKind::Error, Some(BUDGET_EXHAUSTED)) => "budget_exceeded",

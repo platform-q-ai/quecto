@@ -4,9 +4,10 @@
 //! with or without having run — the end is recorded (as an unknown exit
 //! when the work did not get to observe one) and marked recorded, so
 //! `close` and `finish` are released; and they wait at most [`EXIT_GRACE`] plus
-//! [`END_RECORD_MARGIN`] even for work the spawner never runs.
+//! [`END_RECORD_MARGIN`] even for work the spawner never runs. Every record
+//! passes a [`RecordGate`], which keeps none after the end.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use super::{DriveExternalAgentSession, PendingExit};
 use crate::application::external_agent::dto::{
@@ -14,6 +15,52 @@ use crate::application::external_agent::dto::{
 };
 use crate::application::external_agent::ports::{ExternalAgentClock, ExternalAgentTelemetry};
 use crate::application::external_agent::session_telemetry::wall_ms_since;
+
+/// The member's records, in the order they are made, until its last
+/// (#2304 swarm review): once its end is recorded, nothing more is (a
+/// late refusal, a racing step), so the end is the log's last lifecycle
+/// record. The telemetry port never blocks, so a record is made under the
+/// gate's lock, and the session's under its core's (lock order: core,
+/// then gate).
+pub(super) struct RecordGate {
+    telemetry: Arc<dyn ExternalAgentTelemetry>,
+    /// Records are kept: the member's last is not yet recorded.
+    open: Mutex<bool>,
+}
+
+impl RecordGate {
+    pub(super) fn new(telemetry: Arc<dyn ExternalAgentTelemetry>) -> Self {
+        Self {
+            telemetry,
+            open: Mutex::new(true),
+        }
+    }
+
+    /// Record `record`, while the gate is open.
+    pub(super) fn record(&self, record: &SessionRecord) {
+        let open = self.lock();
+        if *open {
+            self.telemetry.record(record);
+        }
+    }
+
+    /// Record the member's last record, `record`, and close the gate; a
+    /// last record once one is made is not kept.
+    pub(super) fn record_last(&self, record: &SessionRecord) {
+        let mut open = self.lock();
+        if *open {
+            self.telemetry.record(record);
+            *open = false;
+        }
+        assert!(!*open, "nothing is recorded after the last record");
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, bool> {
+        self.open
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
 
 /// Records the member's end, then marks it recorded, when dropped: the
 /// exit's work owns it, so it is dropped however that work ends, even
@@ -27,10 +74,10 @@ struct EndRecordedOnDrop {
     unrecorded: Option<UnrecordedEnd>,
 }
 
-/// An end still to record: the telemetry port, the clock and the
-/// member's start, for its wall time.
+/// An end still to record: the member's records, the clock and its
+/// start, for its wall time.
 struct UnrecordedEnd {
-    telemetry: Arc<dyn ExternalAgentTelemetry>,
+    records: Arc<RecordGate>,
     clock: Arc<dyn ExternalAgentClock>,
     started_at: Option<AgentClockInstant>,
 }
@@ -39,7 +86,7 @@ impl UnrecordedEnd {
     /// Record the member's end with the exit `exit` (`None`: none observed).
     fn record(self, exit: Option<&ExternalAgentExit>) {
         let wall_ms = wall_ms_since(self.started_at, self.clock.now());
-        self.telemetry.record(&ended_record(exit, wall_ms));
+        self.records.record_last(&ended_record(exit, wall_ms));
     }
 }
 
@@ -86,7 +133,7 @@ impl DriveExternalAgentSession {
         let mut recorded = EndRecordedOnDrop {
             recorded: self.end_recorded.clone(),
             unrecorded: Some(UnrecordedEnd {
-                telemetry: self.telemetry.clone(),
+                records: self.records.clone(),
                 clock: clock.clone(),
                 started_at,
             }),

@@ -10,7 +10,7 @@ use crate::application::external_agent::dto::SessionRecord;
 use crate::domain::external_agent::stream::{
     AssistantContent, ExternalAgentEvent, InitEvent, ResultEvent, TokenCounts, ToolResultEvent,
 };
-use crate::domain::external_agent::telemetry::{ExternalAgentTool, ExternalAgentTurn};
+use crate::domain::external_agent::telemetry::{ExternalAgentTool, ExternalAgentTurn, fingerprint};
 
 const SECRET: &str = "sk-ant-api03-TOOLSECRETTOOLSECRETTOOLSECRET";
 
@@ -76,7 +76,7 @@ fn costed(total_usd: f64, input: u64, output: u64) -> ExternalAgentEvent {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_tool_call_is_recorded_once_answered_with_its_sizes_and_a_redacted_summary() {
+async fn a_tool_call_is_recorded_once_answered_with_its_sizes() {
     let rig = started().await;
     rig.session.prompt("one", None).await.unwrap();
     let input = serde_json::json!({"command": format!("curl -H 'x-api-key: {SECRET}' {SECRET}")});
@@ -97,11 +97,6 @@ async fn a_tool_call_is_recorded_once_answered_with_its_sizes_and_a_redacted_sum
     assert_eq!((tool.duration_ms, tool.outcome.as_str()), (250, "ok"));
     assert_eq!(tool.argument_bytes, input.to_string().len());
     assert_eq!(tool.result_bytes, 5);
-    let summary = tool
-        .summary
-        .expect("a Bash call is summarised by its command");
-    assert!(summary.starts_with("curl"), "{summary}");
-    assert!(!summary.contains("TOOLSECRET"), "{summary}");
 }
 
 #[tokio::test]
@@ -130,24 +125,17 @@ async fn a_denied_an_erring_and_an_unanswered_call_each_say_so() {
     rig.feed(tool_result("t1", "denied by rule", true, true))
         .await;
     rig.feed(completed("done")).await;
-    let outcomes: Vec<(String, String, Option<String>)> = tools(&rig)
+    let outcomes: Vec<(String, String)> = tools(&rig)
         .into_iter()
-        .map(|tool| {
-            (
-                tool.tool_use_id,
-                tool.outcome,
-                tool.summary.map(|s| s.to_string()),
-            )
-        })
+        .map(|tool| (tool.tool_use_id, tool.outcome))
         .collect();
     assert_eq!(
         outcomes,
         [
-            ("t2".into(), "error".into(), Some("false".into())),
-            ("t1".into(), "denied".into(), Some("/w/a.rs".into())),
-            ("t3".into(), "unanswered".into(), None),
-        ],
-        "a file tool is summarised by its path only; another tool not at all"
+            ("t2".into(), "error".into()),
+            ("t1".into(), "denied".into()),
+            ("t3".into(), "unanswered".into()),
+        ]
     );
 }
 
@@ -257,10 +245,11 @@ async fn unknown_events_and_skipped_lines_are_counted_and_rate_limited() {
             _ => None,
         })
         .collect();
+    // An unknown type is kept only as its print.
     let unknown = |count| {
         (
             "unknown_event".to_string(),
-            "system?brand_new?".to_string(),
+            fingerprint("system/brand_new\u{1b}"),
             count,
             None,
         )

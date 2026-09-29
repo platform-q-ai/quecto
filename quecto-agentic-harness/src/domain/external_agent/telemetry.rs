@@ -1,8 +1,10 @@
 //! What a claude-code member's event log records (#2304): its turns, its
 //! tool calls, its lifecycle and what its stream said that the vocabulary
 //! could not read. Ids, kinds, sizes and durations only: never a prompt, an
-//! assistant's text or thinking, or a credential; a tool's summary is
-//! redacted ([`crate::domain::redaction`]) and bounded.
+//! assistant's text or thinking, a tool's arguments or output, or a
+//! credential. Text from the stream (a name, an id, a reason) is kept only
+//! bounded to an allowlist and when it does not look like a secret
+//! ([`recorded_text`]); an unknown event's type only as a [`fingerprint`].
 //!
 //! Each record is filed as an `external_agent_*` event of
 //! [`crate::domain::audit::AuditEvent`] beside the `member_ref` it belongs
@@ -10,13 +12,11 @@
 //! own turn is its `member_turn` (the envelope's is 32 bits wide).
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::stream::{AssistantContent, ExternalAgentEvent};
 use super::usage::CostDrop;
-use crate::domain::redaction::{Redacted, redact_secrets, redact_url_userinfo};
-
-/// The most of a tool call's summary a record keeps, in bytes.
-pub const TOOL_SUMMARY_BYTES: usize = 256;
+use crate::domain::redaction::redact_secrets;
 
 /// The most of a name or an id from the stream a record keeps, in bytes.
 pub const RECORDED_NAME_BYTES: usize = 64;
@@ -71,12 +71,16 @@ pub struct ExternalAgentTurn {
     pub cost_drop: Option<CostDrop>,
 }
 
-/// One tool call, once answered (or once its turn ended without an answer).
+/// One tool call, once answered (or once its turn ended without an
+/// answer): its name, id and sizes, never its arguments or output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExternalAgentTool {
     #[serde(default)]
     pub member_turn: Option<u64>,
+    /// The tool's name ([`recorded_id`]).
     pub tool: String,
+    /// The call's id ([`recorded_id`]): for display only; results are
+    /// paired with calls on the id as the stream gave it.
     pub tool_use_id: String,
     /// From the call to its result, on the session's clock.
     pub duration_ms: u64,
@@ -86,12 +90,11 @@ pub struct ExternalAgentTool {
     /// The denylist rule that refused it, once a hook names one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule_id: Option<String>,
+    /// The call's input, as JSON, in bytes.
     pub argument_bytes: usize,
+    /// Its result's text, in bytes.
     pub result_bytes: usize,
-    /// For Bash the command, for a file tool the path, for a board tool its
-    /// ids: redacted and at most [`TOOL_SUMMARY_BYTES`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summary: Option<Redacted>,
+    /// The board task a board tool's call names ([`board_task_id`]).
     #[serde(default)]
     pub task_id: Option<String>,
 }
@@ -155,7 +158,8 @@ pub struct ExternalAgentStreamDiagnostic {
     /// `skipped_line` or `unknown_event`.
     pub kind: String,
     /// A skipped line's reason (`over_cap`, `not_utf8`), or an unknown
-    /// event's type.
+    /// event's type's [`fingerprint`] (never the type: any text may stand
+    /// there).
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<usize>,
@@ -230,16 +234,61 @@ pub fn recorded_name(name: &str) -> String {
     recorded
 }
 
-/// Text from the stream as a record keeps it (#2304 review): its
-/// [`recorded_name`], unless the text looks like a secret. Red-phase stub.
+/// How much of a text [`recorded_text`] judges as it came: every byte a
+/// [`recorded_name`] can keep (each of its characters is at most four
+/// bytes), so a label before them is seen.
+const JUDGED_TEXT_BYTES: usize = 4 * RECORDED_NAME_BYTES;
+
+/// Text from the stream as a record keeps it (#2304 swarm review): its
+/// [`recorded_name`], only when neither the text as it came (its first
+/// [`JUDGED_TEXT_BYTES`]) nor the name looks like a secret to the shared
+/// redaction ([`redact_secrets`]); else `None`. Bounding and filtering
+/// alone are no redaction: `sk-ant-…` is all allowlisted characters.
 pub fn recorded_text(text: &str) -> Option<String> {
-    Some(recorded_name(text))
+    let recorded = recorded_name(text);
+    let judged = char_prefix(text, JUDGED_TEXT_BYTES);
+    let clean = |text: &str| redact_secrets(text) == text;
+    match (clean(judged), clean(&recorded)) {
+        (true, true) => Some(recorded),
+        _ => None,
+    }
 }
 
-/// A fixed-size stand-in for text a record must never keep. Red-phase
-/// stub.
+/// An id or a name a record must hold: its [`recorded_text`], else its
+/// [`fingerprint`].
+pub fn recorded_id(text: &str) -> String {
+    let id = recorded_text(text).unwrap_or_else(|| fingerprint(text));
+    assert!(id.len() <= RECORDED_NAME_BYTES && id.is_ascii());
+    id
+}
+
+/// The hex digits of a [`fingerprint`]'s digest kept.
+const FINGERPRINT_HEX_DIGITS: usize = 16;
+
+/// A fixed-size stand-in for text a record must never keep: `sha256:` and
+/// the first [`FINGERPRINT_HEX_DIGITS`] hex digits of the text's SHA-256
+/// digest. The same text has the same print, so kinds are still told
+/// apart and counted.
 pub fn fingerprint(text: &str) -> String {
-    recorded_name(text)
+    let digest = Sha256::digest(text.as_bytes());
+    let hex: String = digest
+        .iter()
+        .flat_map(|byte| [byte >> 4, byte & 0xf])
+        .take(FINGERPRINT_HEX_DIGITS)
+        .map(|nibble| char::from_digit(u32::from(nibble), 16).expect("a nibble is a hex digit"))
+        .collect();
+    let print = format!("sha256:{hex}");
+    assert_eq!(print.len(), "sha256:".len() + FINGERPRINT_HEX_DIGITS);
+    print
+}
+
+/// At most `bytes` of `text`, cut on a character boundary.
+fn char_prefix(text: &str, bytes: usize) -> &str {
+    let mut cut = bytes.min(text.len());
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    &text[..cut]
 }
 
 /// The most of a reason taken from a result's `errors[]` a record keeps,
@@ -279,7 +328,8 @@ pub fn error_reason_kind(errors: &[String]) -> Option<String> {
     assert!(kind.len() <= ERROR_REASON_BYTES && kind.is_ascii());
     match kind.len() {
         0 => None,
-        _ => Some(kind),
+        // Words that together look like a secret are not kept either.
+        _ => recorded_text(&kind),
     }
 }
 
@@ -288,62 +338,18 @@ pub fn error_reason_kind(errors: &[String]) -> Option<String> {
 /// it once #2289 gives members quecto's own board server.
 const BOARD_TOOL_PREFIXES: &[&str] = &["mcp__quecto__", "mcp__board__"];
 
-/// The input fields a tool's summary is taken from, by tool: the command,
-/// the path, or a board tool's ids and recipient (never its claim
-/// `token`, nor a message's text). Any other tool has none.
-fn summary_fields(tool: &str) -> &'static [&'static str] {
-    match tool {
-        "Bash" => &["command"],
-        "Edit" | "MultiEdit" | "Write" | "Read" | "NotebookEdit" => &["file_path", "notebook_path"],
-        board
-            if BOARD_TOOL_PREFIXES
-                .iter()
-                .any(|prefix| board.starts_with(prefix)) =>
-        {
-            &["task_id", "id", "member", "to", "message_id"]
-        }
-        _ => &[],
-    }
-}
-
-/// The board task a board tool's call names (its `task_id`), bounded as
-/// [`recorded_name`] bounds it; `None` for any other tool.
+/// The board task a board tool's call names (its `task_id`): a number, or
+/// text [`recorded_text`] keeps; `None` for any other tool, or an id that
+/// looks like a secret. Nothing else of a call's input is kept.
 pub fn board_task_id(tool: &str, input: &serde_json::Value) -> Option<String> {
     let board = BOARD_TOOL_PREFIXES
         .iter()
         .any(|prefix| tool.starts_with(prefix));
     match (board, input.get("task_id")) {
-        (true, Some(serde_json::Value::String(id))) => Some(recorded_name(id)),
-        (true, Some(serde_json::Value::Number(id))) => Some(recorded_name(&id.to_string())),
+        (true, Some(serde_json::Value::String(id))) => recorded_text(id),
+        (true, Some(serde_json::Value::Number(id))) => recorded_text(&id.to_string()),
         _ => None,
     }
-}
-
-/// A tool call's summary: its [`summary_fields`], redacted, then cut to
-/// [`TOOL_SUMMARY_BYTES`] on a character boundary; `None` when it has none.
-pub fn tool_summary(tool: &str, input: &serde_json::Value) -> Option<Redacted> {
-    let parts: Vec<String> = summary_fields(tool)
-        .iter()
-        .filter_map(|field| match input.get(*field) {
-            Some(serde_json::Value::String(text)) => Some(text.clone()),
-            Some(serde_json::Value::Number(number)) => Some(number.to_string()),
-            _ => None,
-        })
-        .collect();
-    let [_, ..] = parts.as_slice() else {
-        return None;
-    };
-    // Master's redaction, cut on a character boundary (#2322 holds the
-    // rewrite this used).
-    let mut text = redact_url_userinfo(&parts.join(" "));
-    let mut cut = TOOL_SUMMARY_BYTES.min(text.len());
-    while !text.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    text.truncate(cut);
-    let summary = Redacted::from(text);
-    assert!(summary.len() <= TOOL_SUMMARY_BYTES);
-    Some(summary)
 }
 
 #[cfg(test)]

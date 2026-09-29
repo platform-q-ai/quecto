@@ -53,7 +53,7 @@ use super::session_telemetry::{SessionTelemetry, TurnCut};
 use crate::domain::external_agent::stream::{
     AssistantContent, ExternalAgentEvent, InterruptReceipt,
 };
-use crate::domain::external_agent::telemetry::recorded_name;
+use crate::domain::external_agent::telemetry::recorded_id;
 use crate::domain::external_agent::turn::{FailureKind, TurnEnd};
 
 #[derive(Debug, Default)]
@@ -295,6 +295,8 @@ impl SessionCore {
         now: AgentClockInstant,
         grace_end: AgentClockInstant,
     ) -> Folded {
+        // The session discards an event read before an end (#2304).
+        assert!(!self.ended(), "an ended member folds nothing");
         let turn = self.running_turn();
         let mut folded = Folded::default();
         self.skipped_last = None;
@@ -310,7 +312,7 @@ impl SessionCore {
                 ..
             } => folded.records.push(SessionRecord::ToolCalled {
                 turn,
-                tool: recorded_name(name),
+                tool: recorded_id(name),
             }),
             ExternalAgentEvent::LineSkipped(line) => {
                 self.skipped_last = turn.map(|_| grace_end);
