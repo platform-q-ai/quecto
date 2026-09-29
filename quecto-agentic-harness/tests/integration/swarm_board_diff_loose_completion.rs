@@ -31,6 +31,39 @@ fn edited_evidence_rows_are_compared_as_python_compares_them() {
     ]);
 }
 
+/// `outside_edited_contract` (#2273): after criterion evidence is accepted,
+/// a completed task whose evidence was hand-edited to contain an entry
+/// without `revision` makes Python's `complete` raise while Rust refuses
+/// stale task evidence. The row is never written by the board itself.
+#[test]
+fn complete_with_outside_edited_task_evidence() {
+    // Independent Python swarm_policy.completion probe: the first edit
+    // raises KeyError('revision'); the second raises TypeError("'int'
+    // object is not subscriptable"). No harness difference hook is needed
+    // for this Rust-only pin of the deliberately permitted divergence.
+    for evidence in [r#"[{"artifact":"a"}]"#, "[1]"] {
+        let steps = [
+            create(5),
+            sql("INSERT INTO evidence VALUES('t','a','R1','command','parent',1)"),
+            at(
+                1.0,
+                "parent",
+                "task_create",
+                json!(["task", "title", ["ok"]]),
+            ),
+            sql(&format!(
+                "UPDATE tasks SET status='completed', evidence='{evidence}' WHERE id=1"
+            )),
+            at(2.0, "parent", "complete", json!(["R1"])),
+        ];
+        assert_eq!(
+            run_rust(&steps),
+            Outcome::Refused("task evidence refers to stale revision".to_owned()),
+            "{evidence}"
+        );
+    }
+}
+
 /// `outside_edited_contract` (#2273), a contract only a file edited
 /// outside the board holds: criteria that are not a list of objects each
 /// with a text id and a `command` or `review` kind are refused naming the

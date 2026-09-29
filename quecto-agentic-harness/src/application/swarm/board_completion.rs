@@ -3,58 +3,16 @@
 //! as the domain's `completion`, `revalidation` and the `evidence` method
 //! read them. Capability-internal helpers, not a use case and not a port.
 //!
-//! The board writes criteria only through `create` and `amend`, which
-//! validate them: a list of objects with a text id and a `command` or
-//! `review` kind. Criteria in any other shape are found only in a file
-//! edited outside the board and are refused naming the record, where
-//! Python raises or compares what it finds (the `outside_edited_contract`
-//! divergence).
+//! Stored criteria are read by the domain's `stored_criteria` rule, which
+//! deliberately differs from input validation for externally edited records
+//! (the `outside_edited_contract` divergence).
 use serde_json::{Map, Value};
 
 use super::dto::{EvidenceEntry, TaskRow};
 use crate::domain::swarm::{
-    BoardError, Criterion, CriterionKind, EvidenceRow, TaskRecord, TaskState, python_equal,
-    python_truthy,
+    BoardError, CriterionKind, EvidenceRow, TaskRecord, TaskState, python_equal, python_truthy,
 };
-
-/// The refusal of criteria the board never writes.
-pub(crate) fn edited_criteria() -> BoardError {
-    BoardError::new("the board's run criteria is not as the board writes it")
-}
-
-/// The run's criteria as `completion` reads them: each entry's id and kind
-/// (the description is not read, and is kept only when it is text).
-///
-/// # Errors
-/// [`edited_criteria`] for anything but a list of objects each with a text
-/// id and a known kind.
-pub(crate) fn criteria(value: &Value) -> Result<Vec<Criterion>, BoardError> {
-    let Value::Array(entries) = value else {
-        return Err(edited_criteria());
-    };
-    entries
-        .iter()
-        .map(|entry| {
-            let id = entry.get("id").and_then(Value::as_str);
-            let kind = entry
-                .get("kind")
-                .and_then(Value::as_str)
-                .and_then(CriterionKind::parse);
-            match (entry.is_object(), id, kind) {
-                (true, Some(id), Some(kind)) => Ok(Criterion {
-                    id: id.to_owned(),
-                    kind,
-                    description: entry
-                        .get("description")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                }),
-                _ => Err(edited_criteria()),
-            }
-        })
-        .collect()
-}
+pub(crate) use crate::domain::swarm::{edited_criteria, stored_criteria as criteria};
 
 /// The evidence rows that can satisfy a criterion: those whose criterion,
 /// revision and kind are text and whose kind is known. Any other row (only

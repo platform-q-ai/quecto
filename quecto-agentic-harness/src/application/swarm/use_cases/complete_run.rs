@@ -7,7 +7,7 @@ use crate::application::swarm::board_completion::{criteria, evidence_rows, task_
 use crate::application::swarm::board_operation::{detail, end, operation};
 use crate::application::swarm::dto::CompleteRunRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, RunState, completion};
+use crate::domain::swarm::{Access, BoardError, RunState, completion, completion_revision};
 
 /// Through the operation gate for the coordinator (a running run): the
 /// completion state is read and judged by the domain's `completion` (the
@@ -43,6 +43,10 @@ impl CompleteRun {
             coordinating,
             |transaction, _| {
                 let state = transaction.completion_state()?;
+                // Python's completion policy checks the revision first, even if
+                // stored criteria were edited outside the board. The policy
+                // repeats this guard so its own callers keep the invariant.
+                completion_revision(&request.revision)?;
                 let tasks: Vec<_> = state.tasks.iter().map(task_record).collect();
                 let outcome = completion(
                     &criteria(&state.criteria)?,

@@ -36,9 +36,9 @@ const RUN: &str = r#"INSERT INTO run(id,goal,constraints,criteria,coordinator,in
     VALUES('r','g','[]','[{"description":"d","id":"t","kind":"command"}]','parent','parent',3,10.0,'running');"#;
 
 /// Completion reads the criteria loaded, every evidence row as stored,
-/// every task by id with only its evidence loaded as `Transaction.task`
-/// does it (the stored status, never a derived one), and whether any file
-/// reservation is left.
+/// every task by id with its JSON columns loaded (Python loads only the
+/// evidence; see `outside_edited_contract`), the stored status rather than a
+/// derived one, and whether any file reservation is left.
 #[test]
 fn completion_state_reads_what_python_reads() {
     let seed = format!(

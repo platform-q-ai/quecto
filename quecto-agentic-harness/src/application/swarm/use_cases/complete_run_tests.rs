@@ -194,6 +194,21 @@ fn only_the_coordinator_completes_a_running_run() {
     );
 }
 
+/// Python checks the revision before reading even externally-corrupted criteria.
+#[test]
+fn invalid_revision_precedes_corrupted_criteria() {
+    let mut state = memory_repository();
+    state.run.as_mut().unwrap().contract.criteria = json!([{"id": "test", "kind": "other"}]);
+    let board = MemoryBoard::with(state);
+    let service = CompleteRun::new(board.clone(), SteppingClock::fixed(50.0));
+    assert_eq!(
+        service.execute(complete("parent", json!(" "))).unwrap_err(),
+        BoardError::new("completion revision required")
+    );
+    assert_eq!(outcome(&board), (Some(RunState::RUNNING), None));
+    assert!(board.snapshot().events.is_empty());
+}
+
 /// Criteria only a file edited outside the board holds (an entry without
 /// a text id, or with a kind that is neither `command` nor `review`) are
 /// refused naming the record (`outside_edited_contract`); an evidence row

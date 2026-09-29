@@ -205,3 +205,59 @@ fn criteria_accepts_distinct_command_and_review_entries() {
         ]
     );
 }
+
+#[test]
+fn stored_criteria_keep_loose_completion_read_rules() {
+    use super::stored_criteria;
+    use crate::domain::swarm::CriterionKind;
+    use serde_json::json;
+    let read = stored_criteria(&json!([
+        {"id": "same", "kind": "command", "description": 42},
+        {"id": "same", "kind": "review", "description": "d", "extra": true},
+        {"id": "", "kind": "command"}
+    ]))
+    .unwrap();
+    assert_eq!(
+        read.iter()
+            .map(|c| (c.id.as_str(), c.kind, c.description.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("same", CriterionKind::Command, ""),
+            ("same", CriterionKind::Review, "d"),
+            ("", CriterionKind::Command, "")
+        ]
+    );
+    for invalid in [
+        json!(null),
+        json!({}),
+        json!([null]),
+        json!([{"id": 1, "kind": "command"}]),
+        json!([{"id": "t", "kind": "other"}]),
+        json!([{"kind": "review"}]),
+    ] {
+        assert_eq!(
+            stored_criteria(&invalid).unwrap_err().to_string(),
+            "the board's run criteria is not as the board writes it"
+        );
+    }
+    assert!(stored_criteria(&json!([])).unwrap().is_empty());
+}
+
+#[test]
+fn completion_revision_validates_before_completion_policy() {
+    use crate::domain::swarm::completion_revision;
+    use serde_json::json;
+    assert_eq!(completion_revision(&json!(" r ")).unwrap(), " r ");
+    for invalid in [
+        json!(null),
+        json!(1),
+        json!(""),
+        json!(" \t\n"),
+        json!("\u{001c}"),
+    ] {
+        assert_eq!(
+            completion_revision(&invalid).unwrap_err().to_string(),
+            "completion revision required"
+        );
+    }
+}

@@ -83,14 +83,25 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 /// - `outside_edited_evidence` (#2272): stored evidence that is not a list
 ///   of objects each carrying `revision` (only an edit holds it) meets
 ///   `verify_task` as a refusal, where Python raises or iterates the value.
-/// - `outside_edited_contract` (#2273, pinned in
-///   `swarm_board_diff_loose_completion.rs`): criteria that are not a list
-///   of objects with a text id and a `command` or `review` kind, or a
-///   contract column that is not JSON text, are refused naming the record
-///   (or as a store failure) by `complete`, `evidence` and `amend`, where
-///   Python compares what it finds or raises; a task's acceptance or
-///   dependencies that are not JSON are refused there too, where Python's
-///   `Transaction.task` loads only the evidence.
+/// - `outside_edited_contract` (#2273, pinned here and in
+///   `swarm_board_diff_loose_completion.rs`): malformed stored JSON in
+///   criteria is a store refusal in Rust, while Python's `json.loads`
+///   raises in `complete` and `evidence`; `amend` likewise loads stored
+///   constraints and criteria as JSON, but validates neither shape.
+///   `complete` validates the criteria shape in Rust, where Python checks
+///   each criterion's `id` and `kind` only when it reaches that entry
+///   (or rejects missing evidence first). `evidence` checks a matching
+///   criterion's kind in Rust: a missing kind is refused, where Python
+///   raises; a non-text id equal to the requested id can match. Task
+///   acceptance and dependencies are not loaded by Python's `complete`
+///   (`Transaction.task` loads only evidence), but Rust's `task_row`
+///   loads all three JSON columns and refuses malformed acceptance or
+///   dependencies as a store failure. Malformed task evidence JSON raises
+///   in Python and is a store refusal in Rust. A completed task's
+///   hand-edited nonempty evidence list with an entry lacking `revision`
+///   makes Python `complete` raise `KeyError` (or `TypeError` for a
+///   non-object entry), while Rust refuses stale task evidence; pinned
+///   by `complete_with_outside_edited_task_evidence` in the completion suite.
 /// - `outside_edited_control_records` (#2273, pinned in
 ///   `swarm_board_diff_loose_runs.rs` and `extend_run_deadline_tests`): a
 ///   pause record whose `started` is not a number (a boolean included), or
@@ -718,6 +729,61 @@ fn outside_edited_task_columns() {
             "unhashable type: 'list'",
             rust,
         );
+    }
+}
+
+/// A file edit can put malformed JSON into the contract or task columns,
+/// or omit a criterion's kind. Pin each read independently: Python's
+/// `complete` loads criteria and task evidence only, while Rust additionally
+/// loads task acceptance and dependencies; `evidence` looks up the
+/// criterion's kind.
+#[test]
+fn outside_edited_contract_malformed_fields_are_pinned() {
+    let cases = [
+        (
+            "UPDATE run SET criteria='not json'",
+            "complete",
+            json!(["R1"]),
+            CONTENDED,
+        ),
+        (
+            "UPDATE run SET criteria='not json'",
+            "evidence",
+            json!(["c", "a", "R1", "review", true]),
+            CONTENDED,
+        ),
+        (
+            "UPDATE tasks SET acceptance='not json'",
+            "complete",
+            json!(["R1"]),
+            CONTENDED,
+        ),
+        (
+            "UPDATE tasks SET dependencies='not json'",
+            "complete",
+            json!(["R1"]),
+            CONTENDED,
+        ),
+        (
+            r#"UPDATE run SET criteria='[{"id":"c"}]'"#,
+            "evidence",
+            json!(["c", "a", "R1", "review", true]),
+            "the board's run criteria is not as the board writes it",
+        ),
+    ];
+    for (edit, method, args, rust) in cases {
+        let steps = [
+            create(5),
+            at(1.0, "parent", "task_create", json!(["r", "t", ["ok"]])),
+            sql(edit),
+            at(2.0, "parent", method, args),
+        ];
+        // Python's independent Transaction.completion_state/task probe:
+        // malformed criteria raises JSONDecodeError; missing kind raises
+        // KeyError; malformed acceptance/dependencies are not loaded, so
+        // the unmet criterion produces the ordinary completion refusal.
+        let outcome = run_rust(&steps);
+        assert!(format!("{outcome:?}").contains(rust), "{edit}: {outcome:?}");
     }
 }
 
