@@ -110,23 +110,23 @@ pub const NAMES_TURNS_SINCE: [u64; 3] = [2, 1, 280];
 /// the interrupt's answer, rather than run afterwards.
 pub const CANCEL_QUEUED_CAPABILITY: &str = "interrupt_cancel_queued_v1";
 
-/// A version's `major.minor.patch`, read from its leading digits (a
-/// pre-release suffix such as `-beta.1` is ignored); `None` for anything
-/// else.
+/// A plain release's `major.minor.patch`: exactly three dot-separated
+/// runs of ASCII digits. Anything else is `None`, which fails safe (not
+/// known to name turns): a pre-release such as `2.1.280-beta.1` precedes
+/// its release, so it is not the version verified, and a build or other
+/// suffix is not a version this reads.
 fn release(version: &str) -> Option<[u64; 3]> {
-    let mut parts = version.splitn(3, '.');
-    let mut next = |last: bool| -> Option<u64> {
-        let part = parts.next()?;
-        let digits = match last {
-            true => part.split(|c: char| !c.is_ascii_digit()).next()?,
-            false => part,
-        };
-        match digits.bytes().all(|b| b.is_ascii_digit()) && !digits.is_empty() {
-            true => digits.parse().ok(),
+    let mut parts = version.split('.').map(|part| {
+        match !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()) {
+            true => part.parse::<u64>().ok(),
             false => None,
         }
-    };
-    Some([next(false)?, next(false)?, next(true)?])
+    });
+    let release = [parts.next()??, parts.next()??, parts.next()??];
+    match parts.next() {
+        None => Some(release),
+        Some(_) => None,
+    }
 }
 
 /// One MCP server's connection status in `system/init`.
