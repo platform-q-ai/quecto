@@ -161,14 +161,15 @@ fn replaced_per_byte(bytes: &[u8]) -> String {
 /// "'utf-8' codec can't decode byte ...", where this is "the stored result
 /// is not UTF-8 JSON". `ledger_tests.rs` pins both.
 fn utf8_json(bytes: &[u8]) -> Result<&str, TransactionError> {
-    let wide = bytes.starts_with(b"\xff\xfe")
-        || bytes.starts_with(b"\xfe\xff")
-        || bytes.starts_with(b"\x00\x00\xfe\xff")
-        || match bytes {
-            [first, second, _, _, ..] => *first == 0 || *second == 0,
-            [first, second] => *first == 0 || *second == 0,
-            _ => false,
-        };
+    // `detect_encoding` reads UTF-16 or UTF-32 from a BOM or, for exactly
+    // two or at least four bytes, a NUL in the first two. Only the NUL test
+    // is needed here: the UTF-16 BOMs and the UTF-32 LE BOM begin with 0xFF
+    // or 0xFE, which UTF-8 never holds, and the UTF-32 BE BOM begins with
+    // NUL. A three-byte input is UTF-8 whatever it holds, as in Python.
+    let wide = match bytes {
+        [first, second, _, _, ..] | [first, second] => *first == 0 || *second == 0,
+        _ => false,
+    };
     let text = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
     match (wide, std::str::from_utf8(text)) {
         (false, Ok(text)) => Ok(text),

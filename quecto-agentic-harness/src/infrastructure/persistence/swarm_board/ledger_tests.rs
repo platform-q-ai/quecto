@@ -334,3 +334,53 @@ fn a_stored_blob_result_python_cannot_read_is_refused_with_this_module_s_text() 
         );
     }
 }
+
+#[test]
+fn a_stored_blob_result_is_utf8_or_wide_by_json_loads_detect_encoding() {
+    use rusqlite::types::Value;
+    // Python 3.14's json.loads on the BLOB read back through sqlite3: bytes
+    // it reads as UTF-8 give these values or errors.
+    let utf8: [(&[u8], Result<PyJson, StoreRefusal>); 6] = [
+        (b"1", Ok(json("1"))),
+        (b"12", Ok(json("12"))),
+        (b"123", Ok(json("123"))),
+        (b"\xef\xbb\xbf12", Ok(json("12"))),
+        (
+            b"\x00ab",
+            Err(StoreRefusal(
+                "Expecting value: line 1 column 1 (char 0)".into(),
+            )),
+        ),
+        (
+            b"a\x00b",
+            Err(StoreRefusal(
+                "Expecting value: line 1 column 1 (char 0)".into(),
+            )),
+        ),
+    ];
+    // Bytes Python reads as UTF-16 or UTF-32 (a BOM, or a NUL in the first
+    // two of exactly two or at least four bytes); Python decodes each to 1
+    // or 12, and this module refuses them with its own text (P3).
+    let wide: [&[u8]; 10] = [
+        b"1\x00",
+        b"\x001",
+        b"1\x002\x00",
+        b"\x001\x002",
+        b"\x00\x00\x001",
+        b"1\x00\x00\x00",
+        b"\xff\xfe1\x00",
+        b"\xfe\xff\x001",
+        b"\xff\xfe\x00\x001\x00\x00\x00",
+        b"\x00\x00\xfe\xff\x00\x00\x001",
+    ];
+    let refused = || Err(StoreRefusal("the stored result is not UTF-8 JSON".into()));
+    let cases = utf8
+        .into_iter()
+        .chain(wide.into_iter().map(|bytes| (bytes, refused())));
+    for (blob, expected) in cases {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = created(&dir);
+        stored_request(&store, Value::Text("{}".into()), Value::Blob(blob.to_vec()));
+        assert_eq!(replay(&store), expected, "{blob:?}");
+    }
+}

@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 use rusqlite::Connection;
 
 use super::{
-    BoardStore, StoreRefusal, TransactionError, absolutised, file_uri, opening_message,
-    secure_delete_checked, sqlite_message, variable_limit_checked,
+    BoardStore, CREATE_FLAGS, OPEN_FLAGS, StoreRefusal, TransactionError, absolutised, file_uri,
+    opening_message, secure_delete_checked, sqlite_message, variable_limit_checked,
 };
 use crate::infrastructure::persistence::swarm_board::binding::bound_statement;
 use crate::infrastructure::persistence::swarm_board::ledger::event;
@@ -605,4 +605,26 @@ fn a_store_refuses_a_sqlite_built_without_secure_delete() {
     assert_eq!(secure_delete_checked(0), refusal(0));
     assert_eq!(secure_delete_checked(2), refusal(2));
     assert_eq!(secure_delete_checked(1), Ok(()));
+}
+
+#[test]
+fn a_board_opens_with_exactly_python_s_uri_read_write_flags() {
+    // sqlite3.connect(uri, uri=True) with mode=rw[c]: SQLITE_OPEN_URI (0x40)
+    // and SQLITE_OPEN_READWRITE (0x02), plus SQLITE_OPEN_CREATE (0x04) to
+    // create; nothing else (no mutex or cache flag).
+    assert_eq!(OPEN_FLAGS.bits(), 0x40 | 0x02);
+    assert_eq!(CREATE_FLAGS.bits(), 0x40 | 0x02 | 0x04);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_path_s_uri_percent_encodes_each_byte() {
+    use std::os::unix::ffi::OsStrExt;
+    // Python: Path(os.fsdecode(b'/b\xff\xfe/s.sqlite')).as_uri()
+    assert_eq!(
+        file_uri(Path::new(std::ffi::OsStr::from_bytes(
+            b"/b\xff\xfe/s.sqlite"
+        ))),
+        "file:///b%FF%FE/s.sqlite"
+    );
 }

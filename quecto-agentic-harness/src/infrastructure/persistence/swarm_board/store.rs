@@ -31,6 +31,7 @@
 //!   conversion of `binding` (M1) are recorded in those modules.
 
 use std::ffi::CStr;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -196,20 +197,20 @@ fn secure_delete_checked(secure_delete: i64) -> Result<(), StoreRefusal> {
     }
 }
 
+/// The flags `sqlite3.connect(uri, uri=True)` opens an existing board with:
+/// a URI filename, read-write. Built with `union` so the combination is one
+/// constant that `store_tests.rs` pins bit for bit.
+const OPEN_FLAGS: OpenFlags = OpenFlags::SQLITE_OPEN_URI.union(OpenFlags::SQLITE_OPEN_READ_WRITE);
+
+/// [`OPEN_FLAGS`] plus create, for `mode=rwc`.
+const CREATE_FLAGS: OpenFlags = OPEN_FLAGS.union(OpenFlags::SQLITE_OPEN_CREATE);
+
 /// `sqlite3.connect(path.as_uri() + '?mode=rw[c]', uri=True, timeout=0.5)`.
 fn open(path: &Path, create: bool) -> Result<Connection, StoreRefusal> {
     let (mode, flags) = if create {
-        (
-            "rwc",
-            OpenFlags::SQLITE_OPEN_URI
-                | OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE,
-        )
+        ("rwc", CREATE_FLAGS)
     } else {
-        (
-            "rw",
-            OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_READ_WRITE,
-        )
+        ("rw", OPEN_FLAGS)
     };
     let uri = format!("{}?mode={mode}", file_uri(path));
     let connection = Connection::open_with_flags(&uri, flags)
@@ -314,7 +315,9 @@ fn column_names(connection: &Connection, table: &str) -> rusqlite::Result<Vec<St
 fn file_uri(path: &Path) -> String {
     debug_assert!(path.is_absolute(), "only an absolute path has a file URI");
     let mut uri = String::from("file://");
-    for &byte in path_bytes(path).iter() {
+    // The harness is Unix-only (as the Python board is POSIX-only), so a
+    // path's bytes are its `OsStr` bytes, non-UTF-8 ones included.
+    for &byte in path.as_os_str().as_bytes() {
         if byte.is_ascii_alphanumeric() || b"_.-~/".contains(&byte) {
             uri.push(char::from(byte));
         } else {
@@ -322,17 +325,6 @@ fn file_uri(path: &Path) -> String {
         }
     }
     uri
-}
-
-#[cfg(unix)]
-fn path_bytes(path: &Path) -> std::borrow::Cow<'_, [u8]> {
-    use std::os::unix::ffi::OsStrExt;
-    std::borrow::Cow::Borrowed(path.as_os_str().as_bytes())
-}
-
-#[cfg(not(unix))]
-fn path_bytes(path: &Path) -> std::borrow::Cow<'_, [u8]> {
-    std::borrow::Cow::Owned(path.to_string_lossy().into_owned().into_bytes())
 }
 
 /// `SwarmError(f'coordination store unavailable or contended: {error}')`,

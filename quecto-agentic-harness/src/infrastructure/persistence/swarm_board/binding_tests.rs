@@ -1,6 +1,6 @@
 use rusqlite::{Connection, params_from_iter, types::Value};
 
-use super::{BindingError, bind, bind_all};
+use super::{BindingError, bind, bind_all, bound_statement};
 use crate::infrastructure::persistence::swarm_board::py_json::{self, PyJson, PyStr};
 
 fn json(text: &str) -> PyJson {
@@ -195,4 +195,48 @@ fn a_float_reaching_text_affinity_reads_as_the_bundled_sqlite_writes_it() {
         )
         .expect("the title reads");
     assert_eq!(stored, ("text".into(), "0.33333333333333332".into()));
+}
+
+#[test]
+fn bound_statement_binds_each_parameter_at_its_own_position() {
+    // Python: execute('SELECT ?1+0, ?2, ?3, typeof(?3)', (10, 'b', 2.5))
+    // fetches (10, 'b', 2.5, 'real').
+    let connection = Connection::open_in_memory().expect("in-memory SQLite opens");
+    let parameters = bind_all(&[json("10"), json("\"b\""), json("2.5")]).expect("scalars bind");
+    let mut statement =
+        bound_statement(&connection, "SELECT ?1+0, ?2, ?3, typeof(?3)", &parameters)
+            .expect("three parameters bind to three placeholders");
+    let mut rows = statement.raw_query();
+    let row = rows.next().expect("the query runs").expect("one row");
+    let fetched: (i64, String, f64, String) = (
+        row.get(0).expect("column 0"),
+        row.get(1).expect("column 1"),
+        row.get(2).expect("column 2"),
+        row.get(3).expect("column 3"),
+    );
+    assert_eq!(fetched, (10, "b".into(), 2.5, "real".into()));
+}
+
+#[test]
+fn bound_statement_reports_the_true_given_and_needed_counts() {
+    // Python's ProgrammingError for each: "... The current statement uses
+    // {needed}, and there are {given} supplied."
+    let connection = Connection::open_in_memory().expect("in-memory SQLite opens");
+    let cases: [(&str, usize, usize, usize); 4] = [
+        ("SELECT ?,?,?", 2, 2, 3),
+        ("SELECT ?,?,?", 5, 5, 3),
+        ("SELECT ?", 0, 0, 1),
+        ("SELECT 1", 2, 2, 0),
+    ];
+    for (sql, supplied, given, needed) in cases {
+        let parameters = vec![Value::Integer(7); supplied];
+        let refused = bound_statement(&connection, sql, &parameters).map(|_| ());
+        assert!(
+            matches!(
+                refused,
+                Err(rusqlite::Error::InvalidParameterCount(g, n)) if (g, n) == (given, needed)
+            ),
+            "{sql} with {supplied}: {refused:?}"
+        );
+    }
 }
