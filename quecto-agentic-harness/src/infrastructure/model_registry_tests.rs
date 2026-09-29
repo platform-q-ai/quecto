@@ -183,31 +183,56 @@ fn builtin_claude_sonnet_5_resolves_for_api_key_and_oauth_with_published_limits(
 #[test]
 fn builtin_openai_reasoning_tiers_resolve_for_api_key_and_oauth_with_published_limits() {
     let registry = ModelRegistry::builtin();
-    // (id, input $/1M, output $/1M)
+    // (id, input $/1M, output $/1M, cache-read $/1M override)
     let tiers = [
-        ("gpt-6-astra", 10.0, 50.0),
-        ("gpt-6-sol", 2.0, 10.0),
-        ("gpt-6-luna", 0.1, 0.5),
-        ("gpt-5.6-sol", 5.0, 30.0),
-        ("gpt-5.6-terra", 2.5, 15.0),
-        ("gpt-5.6-luna", 1.0, 6.0),
+        ("gpt-6-astra", 10.0, 50.0, None),
+        ("gpt-6-sol", 2.0, 10.0, None),
+        ("gpt-6.1-sol", 2.0, 10.0, Some(0.1)),
+        ("gpt-6-luna", 0.1, 0.5, None),
+        ("gpt-5.6-sol", 5.0, 30.0, None),
+        ("gpt-5.6-terra", 2.5, 15.0, None),
+        ("gpt-5.6-luna", 1.0, 6.0, None),
     ];
     for provider in ["openai-api", "openai-oauth"] {
-        for (id, input, output) in tiers {
+        for (id, input, output, cache_read) in tiers {
             let m = registry
                 .find(provider, id)
-                .expect("provider/id should be built in");
+                .unwrap_or_else(|| panic!("{provider}/{id} should be built in"));
             assert_eq!(m.api, ProviderApi::OpenAiCompletions);
+            if id == "gpt-6.1-sol" {
+                assert_eq!(m.qualified_id(), format!("{provider}/{id}"));
+                assert_eq!(m.input, vec!["text".to_string(), "image".to_string()]);
+                assert_eq!(
+                    m.auth,
+                    if provider == "openai-api" {
+                        AuthMode::ApiKey
+                    } else {
+                        AuthMode::OAuth
+                    }
+                );
+                assert_eq!(
+                    m.oauth_provider.as_deref(),
+                    if provider == "openai-oauth" {
+                        Some("openai")
+                    } else {
+                        None
+                    }
+                );
+            }
             // Published limits (OpenAI, 2026-07-09): shared across the tiers.
             assert_eq!(m.context_window, 1_050_000, "{id} context window");
             assert!(m.context_window_explicit, "{id} context window is explicit");
             assert_eq!(m.max_tokens, 128_000, "{id} max output");
             assert!(m.max_tokens_explicit, "{id} max output is explicit");
             assert!(m.reasoning, "{id} is a reasoning model");
-            // Per-tier pricing; cache read 0.10x input, cache write 1.25x input.
+            // Existing tiers use 0.10x input for cache read; 6.1-sol publishes $0.10/1M.
             assert_eq!(m.cost.input, input, "{id} input price");
             assert_eq!(m.cost.output, output, "{id} output price");
-            assert_eq!(m.cost.cache_read, input * 0.10, "{id} cache-read price");
+            assert_eq!(
+                m.cost.cache_read,
+                cache_read.unwrap_or(input * 0.10),
+                "{id} cache-read price"
+            );
             assert_eq!(m.cost.cache_write, input * 1.25, "{id} cache-write price");
         }
     }
