@@ -181,6 +181,7 @@ fn observation(outcome: BoardOpOutcome) -> BoardOpObservation {
 fn a_swarm_op_record_is_flat_and_round_trips() {
     let refused = AuditEvent::SwarmOp(observation(BoardOpOutcome::Refused {
         kind: RefusalKind::NotMember,
+        committed: false,
     }));
     let line = serde_json::to_value(&refused).unwrap();
     assert_eq!(
@@ -418,6 +419,11 @@ fn a_decision_and_its_detail_are_recorded_as_kinds_and_counts() {
             exit: Some(MemberExit::Abrupt),
             reservations_retained: Some(2),
             ended_by_loss: Some(true),
+            owners_scanned: Some(3),
+            page_size: Some(4),
+            has_more: Some(false),
+            fast_path_defeated: Some(true),
+            placeholder_created: Some(false),
         },
         ..observation(BoardOpOutcome::Ok)
     });
@@ -437,6 +443,23 @@ fn a_decision_and_its_detail_are_recorded_as_kinds_and_counts() {
             &json!(true)
         )
     );
+    // #2277 review M2: the read models' counts and flags.
+    assert_eq!(
+        (
+            &line["owners_scanned"],
+            &line["page_size"],
+            &line["has_more"],
+            &line["fast_path_defeated"],
+            &line["placeholder_created"]
+        ),
+        (
+            &json!(3),
+            &json!(4),
+            &json!(false),
+            &json!(true),
+            &json!(false)
+        )
+    );
     assert_eq!(
         serde_json::from_value::<AuditEvent>(line).unwrap(),
         recorded
@@ -448,6 +471,12 @@ fn a_decision_and_its_detail_are_recorded_as_kinds_and_counts() {
         "exit",
         "reservations_retained",
         "ended_by_loss",
+        "owners_scanned",
+        "page_size",
+        "has_more",
+        "fast_path_defeated",
+        "placeholder_created",
+        "committed",
     ] {
         assert_eq!(bare.get(field), None, "{field}: {bare}");
     }
@@ -491,4 +520,24 @@ fn a_decision_kind_is_snake_case_only() {
     for text in ["", "Recorded", "grace pending", "sk-ant", "é"] {
         assert!(!decision_kind(text), "{text}");
     }
+}
+
+/// A refusal after the op's writes committed (#2277 review M2: `create`'s
+/// summary) is marked, and reads back as written; a plain refusal carries
+/// no marker.
+#[test]
+fn a_committed_refusal_is_marked() {
+    let committed = AuditEvent::SwarmOp(observation(BoardOpOutcome::Refused {
+        kind: RefusalKind::NotMember,
+        committed: true,
+    }));
+    let line = serde_json::to_value(&committed).unwrap();
+    assert_eq!(
+        (&line["outcome"], &line["kind"], &line["committed"]),
+        (&json!("refused"), &json!("not_member"), &json!(true))
+    );
+    assert_eq!(
+        serde_json::from_value::<AuditEvent>(line).unwrap(),
+        committed
+    );
 }

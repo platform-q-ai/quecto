@@ -135,7 +135,15 @@ pub enum BoardRole {
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum BoardOpOutcome {
     Ok,
-    Refused { kind: RefusalKind },
+    Refused {
+        kind: RefusalKind,
+        /// Whether the op's writes committed before it refused (#2277
+        /// review M2: `create` commits the run, then its summary can
+        /// refuse), so a record tells it from a refusal that wrote
+        /// nothing; written only when true.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        committed: bool,
+    },
 }
 
 /// One board op, as the event log's `swarm_op` record holds it. The
@@ -264,6 +272,26 @@ pub struct BoardOpDetail {
     /// coordinator's confirmed death).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended_by_loss: Option<bool>,
+    /// For `summary` and `tasks` (#2277 review M2): the task owners whose
+    /// liveness the op read, one per owned task (a summary's liveness
+    /// watch and its page each count theirs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owners_scanned: Option<u64>,
+    /// For a page the op answered (`summary`'s tasks, `tasks`, `events`):
+    /// how many rows it holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u64>,
+    /// For `events`: whether a later page holds more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_more: Option<bool>,
+    /// For a `summary` given the board's own cursor: whether an owner
+    /// turned idle by the clock alone since it, which defeats the
+    /// `unchanged` fast path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_path_defeated: Option<bool>,
+    /// For `_bootstrap`: whether it wrote the container's placeholder run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder_created: Option<bool>,
 }
 
 impl BoardOpDetail {
@@ -273,6 +301,11 @@ impl BoardOpDetail {
         exit: None,
         reservations_retained: None,
         ended_by_loss: None,
+        owners_scanned: None,
+        page_size: None,
+        has_more: None,
+        fast_path_defeated: None,
+        placeholder_created: None,
     };
 }
 

@@ -231,7 +231,10 @@ pub(super) fn observation(
         message_id: served.and_then(|served| served.message_id),
         outcome: match call.outcome {
             Ok(_) => BoardOpOutcome::Ok,
-            Err(kind) => BoardOpOutcome::Refused { kind },
+            Err(kind) => BoardOpOutcome::Refused {
+                kind,
+                committed: false,
+            },
         },
         duration_us: micros(call.elapsed),
         lock_wait_us: measure.map(|measure| micros(measure.lock_wait)),
