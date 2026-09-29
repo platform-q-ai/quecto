@@ -71,6 +71,31 @@ pub(super) fn result(line: &Object) -> ResultEvent {
             .collect(),
         num_turns: count(line, "num_turns").and_then(|n| u32::try_from(n).ok()),
         duration_ms: count(line, "duration_ms"),
+        user_turn_ids: user_turn_ids(line),
+    }
+}
+
+/// The user turns a result names (#2287): `user_message_uuids` (every one
+/// the turn consumed), else `user_message_uuid`; an id that is not a
+/// non-empty string is dropped.
+fn user_turn_ids(line: &Object) -> Vec<String> {
+    let named = |value: &Value| {
+        value
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+    };
+    let all: Vec<String> = list(line, "user_message_uuids")
+        .iter()
+        .filter_map(named)
+        .collect();
+    match all.as_slice() {
+        [] => line
+            .get("user_message_uuid")
+            .and_then(named)
+            .into_iter()
+            .collect(),
+        [_, ..] => all,
     }
 }
 

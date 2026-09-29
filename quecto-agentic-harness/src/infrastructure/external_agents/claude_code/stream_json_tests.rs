@@ -130,6 +130,18 @@ fn init_carries_the_session_configuration() {
             status: "connected".into()
         }]
     );
+    // #2287 review round 3 (L1, L3): the version and the capabilities.
+    assert_eq!(init.cli_version.as_deref(), Some("2.1.280"));
+    assert_eq!(
+        init.capabilities,
+        [
+            "interrupt_receipt_v1",
+            "interrupt_cancel_queued_v1",
+            "msg_lifecycle_v1",
+            "mcp_read_resource_v1",
+            "mcp_tool_ui_meta_v1",
+        ]
+    );
     let inits = events
         .iter()
         .filter(|e| matches!(e, ExternalAgentEvent::Init(_)))
@@ -489,3 +501,67 @@ mod projection;
 #[cfg(test)]
 #[path = "stream_json_tolerance_tests.rs"]
 mod tolerance;
+
+/// A result names the user turns it consumed (#2287): claude 2.1.280's
+/// `user_message_uuids` (every one, folded ones included), else its
+/// `user_message_uuid`; ids of the wrong shape are dropped.
+#[test]
+fn a_result_names_the_user_turns_it_consumed() {
+    let ids = |line: serde_json::Value| match decode(&line.to_string()).unwrap().as_slice() {
+        [ExternalAgentEvent::Result(result)] => result.user_turn_ids.clone(),
+        other => panic!("one result: {other:?}"),
+    };
+    let base = json!({"type": "result", "subtype": "success", "is_error": false});
+    let with = |fields: serde_json::Value| {
+        let mut line = base.clone();
+        line.as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        line
+    };
+    assert_eq!(
+        ids(with(
+            json!({"user_message_uuid": "b", "user_message_uuids": ["a", "b"]})
+        )),
+        ["a", "b"]
+    );
+    assert_eq!(ids(with(json!({"user_message_uuid": "c"}))), ["c"]);
+    assert_eq!(
+        ids(with(json!({"user_message_uuids": ["a", 1, "", null]}))),
+        ["a"]
+    );
+    assert!(ids(base.clone()).is_empty());
+}
+
+/// The answer to an interrupt (#2287): what it withdrew, and whether it
+/// was accepted. An older CLI answers success with no payload.
+#[test]
+fn an_interrupt_answer_decodes() {
+    use crate::domain::external_agent::stream::InterruptReceipt;
+    let receipt = |line: serde_json::Value| match decode(&line.to_string()).unwrap().as_slice() {
+        [ExternalAgentEvent::InterruptAnswered(receipt)] => receipt.clone(),
+        other => panic!("one answer: {other:?}"),
+    };
+    assert_eq!(
+        receipt(json!({"type": "control_response", "response": {
+            "subtype": "success", "request_id": "r1",
+            "response": {"still_queued": [], "cancelled": ["u2", "u3"]}}})),
+        InterruptReceipt {
+            accepted: true,
+            cancelled: vec!["u2".into(), "u3".into()],
+        }
+    );
+    assert_eq!(
+        receipt(json!({"type": "control_response", "response": {
+            "subtype": "success", "request_id": "r1"}})),
+        InterruptReceipt {
+            accepted: true,
+            cancelled: Vec::new(),
+        }
+    );
+    assert_eq!(
+        receipt(json!({"type": "control_response", "response": {
+            "subtype": "error", "request_id": "r1", "error": "no"}})),
+        InterruptReceipt::default()
+    );
+}

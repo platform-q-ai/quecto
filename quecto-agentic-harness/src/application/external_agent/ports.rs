@@ -1,8 +1,9 @@
 //! Capability-local effect ports of the external-agent capability (#2286).
 //!
-//! The session use case (S3) starts, and for the abort fallback restarts,
-//! the agent through [`ExternalAgentLauncher`] and drives it through
-//! [`ExternalAgentProcess`]. Signatures name only domain types and this
+//! The session use case (#2287) starts the agent through
+//! [`ExternalAgentLauncher`], drives it through [`ExternalAgentProcess`],
+//! records its decisions through [`ExternalAgentTelemetry`] and times its
+//! waits through [`ExternalAgentClock`]. Signatures name only domain types and this
 //! capability's DTOs: no process, pipe, runtime or wire vocabulary crosses
 //! this boundary. Each port has a contract suite in
 //! `tests/contracts/<port>.rs`, proven on the production adapter against a
@@ -10,13 +11,24 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
 
 use super::dto::{
-    ExternalAgentExit, ExternalAgentInputError, ExternalAgentLaunchError, ExternalAgentLaunchSpec,
+    AgentClockInstant, ExternalAgentExit, ExternalAgentInputError, ExternalAgentLaunchError,
+    ExternalAgentLaunchSpec, SessionRecord, UserTurnId,
 };
 use crate::domain::external_agent::stream::ExternalAgentEvent;
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// A user turn [`ExternalAgentProcess::queue_user_turn`] queued.
+pub struct QueuedUserTurn<'a> {
+    /// The id the agent's results name it by.
+    pub id: UserTurnId,
+    /// Resolves once it is written, or failed to be (the input closed or
+    /// its writer failed first). Dropping it does not withdraw the turn.
+    pub written: PortFuture<'a, Result<(), ExternalAgentInputError>>,
+}
 
 /// Starts one external agent process per call.
 pub trait ExternalAgentLauncher: Send + Sync {
@@ -31,11 +43,39 @@ pub trait ExternalAgentLauncher: Send + Sync {
 /// One running external agent: turns in, events out. Dropping it closes
 /// its input and has its process ended.
 pub trait ExternalAgentProcess: Send + Sync {
-    /// Write one user turn. Several turns go to one process.
+    /// Queue one user turn for writing. Several turns go to one process,
+    /// also while one runs: the agent folds a turn written mid-turn into
+    /// the running one, or runs it as its own turn once that ends.
+    ///
+    /// Cancel-safe in two steps (#2287 review 5): dropped before it
+    /// answers, nothing is queued; once it answers, the turn is queued
+    /// under the id answered, by which the agent's results name it
+    /// ([`crate::domain::external_agent::stream::ResultEvent::user_turn_ids`]),
+    /// and is written whole unless the input closes or fails first,
+    /// whether or not [`QueuedUserTurn::written`] is awaited.
+    fn queue_user_turn<'a>(
+        &'a self,
+        text: &'a str,
+    ) -> PortFuture<'a, Result<QueuedUserTurn<'a>, ExternalAgentInputError>>;
+
+    /// Queue one user turn and wait until it is written; answers its id
+    /// (see [`Self::queue_user_turn`]).
     fn send_user_turn<'a>(
         &'a self,
         text: &'a str,
-    ) -> PortFuture<'a, Result<(), ExternalAgentInputError>>;
+    ) -> PortFuture<'a, Result<UserTurnId, ExternalAgentInputError>> {
+        Box::pin(async move {
+            let queued = self.queue_user_turn(text).await?;
+            queued.written.await.map(|()| queued.id)
+        })
+    }
+
+    /// Ask the agent to stop its running turn and withdraw every user turn
+    /// still queued. It answers with an
+    /// [`ExternalAgentEvent::InterruptAnswered`]; a stopped turn still
+    /// ends with its one `result`. Idle, nothing is stopped and no
+    /// `result` follows. Written in order with the user turns.
+    fn interrupt(&self) -> PortFuture<'_, Result<(), ExternalAgentInputError>>;
 
     /// The next event of the agent's stream, in order; `None` once its
     /// output has ended. A line the adapter cannot read (too long, not
@@ -67,4 +107,21 @@ pub trait ExternalAgentProcess: Send + Sync {
     /// The last [`super::dto::EXTERNAL_AGENT_STDERR_TAIL_BYTES`] of its
     /// stderr, for diagnostics.
     fn stderr_tail(&self) -> String;
+}
+
+/// Where a member session records each of its decisions and effects
+/// (#2287): a [`SessionRecord`] carries ids, kinds, sizes and durations
+/// only. Recording never fails the session and never blocks it.
+pub trait ExternalAgentTelemetry: Send + Sync {
+    fn record(&self, record: &SessionRecord);
+}
+
+/// The session's time (#2287): how long it waits on a quiet stream. The
+/// adapter picks the scale; the session only compares its own instants.
+pub trait ExternalAgentClock: Send + Sync {
+    /// Now, on the adapter's monotonic scale.
+    fn now(&self) -> AgentClockInstant;
+
+    /// Resolves once `duration` has passed on the same scale.
+    fn sleep(&self, duration: Duration) -> PortFuture<'_, ()>;
 }

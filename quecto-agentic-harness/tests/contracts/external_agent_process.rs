@@ -2,7 +2,8 @@
 //! `ClaudeCodeProcess` against the mock `claude`: several turns over one
 //! process, an API-error turn that leaves the process running, a clean
 //! exit at input EOF, a bounded stderr, no turn after the input is
-//! closed, and a discarding wait that never hangs on unread output. The
+//! closed, a queued turn written without its wait awaited, and a
+//! discarding wait that never hangs on unread output. The
 //! events fold through the capability's `Projector`, which the
 //! session tells of every spawn (`process_started`).
 use quecto::application::external_agent::dto::{
@@ -234,4 +235,104 @@ async fn waiting_for_the_exit_while_discarding_does_not_hang_on_unread_output() 
         .await
         .expect("exited_discarding_output() does not hang on output no one reads");
     assert_eq!(exit, ExternalAgentExit::Code(0));
+}
+
+/// A result names the user turn it answers by the id its send returned,
+/// and an interrupt is answered in the stream: the running turn still ends
+/// with its one (stopped) `result`, and the process keeps taking turns
+/// (#2287).
+#[tokio::test]
+async fn a_result_names_its_turn_and_an_interrupt_is_answered() {
+    use quecto::domain::external_agent::stream::{ExternalAgentEvent, InterruptReceipt};
+    let root = tempfile::tempdir().unwrap();
+    let scenario = root.path().join("interrupt.jsonl");
+    std::fs::write(
+        &scenario,
+        concat!(
+            r#"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","user_message_uuids":["@UUID@"]}"#,
+            "\n",
+            r#"{"type":"system","subtype":"thinking_tokens","estimated_tokens":5}"#,
+            "\n@await-interrupt\n",
+            r#"{"type":"result","subtype":"success","is_error":true,"terminal_reason":"aborted_streaming","user_message_uuids":["@UUID@"]}"#,
+            "\n",
+            r#"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","user_message_uuids":["@UUID@"]}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let rig = MockClaudeRig::replaying(&scenario);
+    let process = rig.start("m1").await;
+    let ids_of_last = |events: Vec<ExternalAgentEvent>| match events.last() {
+        Some(ExternalAgentEvent::Result(result)) => result.user_turn_ids.clone(),
+        other => panic!("the turn ends with its result: {other:?}"),
+    };
+
+    let first = process.send_user_turn("one").await.unwrap();
+    assert_eq!(
+        ids_of_last(events_to_turn_end(process.as_ref()).await),
+        std::slice::from_ref(&first.0)
+    );
+
+    let second = process.send_user_turn("two").await.unwrap();
+    assert_ne!(first, second);
+    let thinking = tokio::time::timeout(BOUND, process.next_event())
+        .await
+        .expect("bounded");
+    assert!(
+        matches!(thinking, Some(ExternalAgentEvent::ThinkingTokens { .. })),
+        "{thinking:?}"
+    );
+    process.interrupt().await.expect("the interrupt is written");
+    let answer = tokio::time::timeout(BOUND, process.next_event())
+        .await
+        .expect("bounded");
+    assert_eq!(
+        answer,
+        Some(ExternalAgentEvent::InterruptAnswered(InterruptReceipt {
+            accepted: true,
+            cancelled: Vec::new(),
+        }))
+    );
+    let stopped = events_to_turn_end(process.as_ref()).await;
+    match stopped.last() {
+        Some(ExternalAgentEvent::Result(result)) => {
+            assert_eq!(result.user_turn_ids, std::slice::from_ref(&second.0));
+            assert_eq!(result.terminal_reason.as_deref(), Some("aborted_streaming"));
+        }
+        other => panic!("the stopped turn ends with its result: {other:?}"),
+    }
+
+    let third = process.send_user_turn("three").await.unwrap();
+    assert_eq!(
+        ids_of_last(events_to_turn_end(process.as_ref()).await),
+        [third.0]
+    );
+    assert_eq!(exit_of(process.as_ref()).await, ExternalAgentExit::Code(0));
+}
+
+/// A queued user turn is written whether or not its write is awaited
+/// (#2287 review 5): its result names the id `queue_user_turn` answered.
+#[tokio::test]
+async fn a_queued_user_turn_is_written_without_its_wait() {
+    use quecto::domain::external_agent::stream::ExternalAgentEvent;
+    let root = tempfile::tempdir().unwrap();
+    let scenario = root.path().join("queued.jsonl");
+    std::fs::write(
+        &scenario,
+        concat!(
+            r#"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","user_message_uuids":["@UUID@"]}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let rig = MockClaudeRig::replaying(&scenario);
+    let process = rig.start("m1").await;
+    let queued = process.queue_user_turn("go").await.unwrap();
+    let id = queued.id.clone();
+    drop(queued);
+    match events_to_turn_end(process.as_ref()).await.last() {
+        Some(ExternalAgentEvent::Result(result)) => assert_eq!(result.user_turn_ids, [id.0]),
+        other => panic!("the turn ends with its result: {other:?}"),
+    }
+    assert_eq!(exit_of(process.as_ref()).await, ExternalAgentExit::Code(0));
 }

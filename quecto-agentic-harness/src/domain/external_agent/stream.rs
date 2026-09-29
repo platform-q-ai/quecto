@@ -42,6 +42,10 @@ pub enum ExternalAgentEvent {
     RateLimit(RateLimitInfo),
     /// `result`: the end of one user turn.
     Result(ResultEvent),
+    /// `control_response`: the answer to an interrupt, the only control
+    /// request a member sends (#2287). The stopped turn's own `result`, if
+    /// a turn was running, may come before or after it.
+    InterruptAnswered(InterruptReceipt),
     /// An event type (or `system` subtype, or assistant block type) this
     /// vocabulary does not know. Logged by the codec, never a panic.
     Unknown { kind: String },
@@ -69,6 +73,16 @@ pub enum SkippedLineReason {
     NotUtf8,
 }
 
+/// What an interrupt's `control_response` says.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct InterruptReceipt {
+    /// Whether the agent accepted the interrupt (`subtype: success`).
+    pub accepted: bool,
+    /// The ids of queued user turns the interrupt withdrew
+    /// (`cancel_queued`): no `result` will ever name them.
+    pub cancelled: Vec<String>,
+}
+
 /// `system/init`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct InitEvent {
@@ -78,6 +92,41 @@ pub struct InitEvent {
     pub mcp_servers: Vec<McpServerStatus>,
     pub api_key_source: Option<String>,
     pub permission_mode: Option<String>,
+    /// `claude_code_version`: the CLI's version, e.g. `2.1.280`.
+    pub cli_version: Option<String>,
+    /// `capabilities`: the protocol capabilities the CLI advertises (an
+    /// open set; absent on older CLIs).
+    pub capabilities: Vec<String>,
+}
+
+/// The first Claude Code version known to name, in every result of a turn
+/// it ran, the user turns it consumed (`user_message_uuids`): 2.1.280, the
+/// version spike #2264 and #2287 were verified against. The CLI advertises
+/// no capability for it, so the version is the only word before a result.
+pub const NAMES_TURNS_SINCE: [u64; 3] = [2, 1, 280];
+
+/// The capability of a CLI whose interrupt honours `cancel_queued`: the
+/// user turns queued behind the running turn are withdrawn, and named in
+/// the interrupt's answer, rather than run afterwards.
+pub const CANCEL_QUEUED_CAPABILITY: &str = "interrupt_cancel_queued_v1";
+
+/// A plain release's `major.minor.patch`: exactly three dot-separated
+/// runs of ASCII digits. Anything else is `None`, which fails safe (not
+/// known to name turns): a pre-release such as `2.1.280-beta.1` precedes
+/// its release, so it is not the version verified, and a build or other
+/// suffix is not a version this reads.
+fn release(version: &str) -> Option<[u64; 3]> {
+    let mut parts = version.split('.').map(|part| {
+        match !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()) {
+            true => part.parse::<u64>().ok(),
+            false => None,
+        }
+    });
+    let release = [parts.next()??, parts.next()??, parts.next()??];
+    match parts.next() {
+        None => Some(release),
+        Some(_) => None,
+    }
 }
 
 /// One MCP server's connection status in `system/init`.
@@ -91,6 +140,24 @@ pub struct McpServerStatus {
 pub const MCP_SERVER_CONNECTED: &str = "connected";
 
 impl InitEvent {
+    /// Whether this CLI names the user turns its results consumed: its
+    /// version is at least [`NAMES_TURNS_SINCE`]. An absent or unreadable
+    /// version is not known to.
+    pub fn names_turns(&self) -> bool {
+        self.cli_version
+            .as_deref()
+            .and_then(release)
+            .is_some_and(|version| version >= NAMES_TURNS_SINCE)
+    }
+
+    /// Whether this CLI's interrupt withdraws the queued user turns: it
+    /// advertises [`CANCEL_QUEUED_CAPABILITY`].
+    pub fn cancels_queued(&self) -> bool {
+        self.capabilities
+            .iter()
+            .any(|capability| capability == CANCEL_QUEUED_CAPABILITY)
+    }
+
     /// Whether every MCP server reports [`MCP_SERVER_CONNECTED`]: the
     /// launch check a member must pass before its first turn.
     pub fn mcp_servers_connected(&self) -> bool {
@@ -249,6 +316,10 @@ pub struct ResultEvent {
     pub permission_denials: Vec<PermissionDenial>,
     pub num_turns: Option<u32>,
     pub duration_ms: Option<u64>,
+    /// The ids of the user turns this turn consumed
+    /// (`user_message_uuids`, else `user_message_uuid`): a turn's own and
+    /// every one folded into it mid-turn. Empty when the CLI names none.
+    pub user_turn_ids: Vec<String>,
 }
 
 /// Token counts: one turn's (`result.usage`) or cumulative (`modelUsage`).

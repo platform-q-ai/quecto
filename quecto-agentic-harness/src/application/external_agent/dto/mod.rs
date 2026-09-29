@@ -10,6 +10,7 @@ pub mod process;
 pub mod report;
 pub mod session;
 pub mod step;
+pub mod telemetry;
 pub mod turn;
 
 pub use self::audit::{
@@ -23,10 +24,15 @@ pub use self::message::{
     TRUNCATION_MARKER,
 };
 pub use self::process::{
-    EXTERNAL_AGENT_STDERR_TAIL_BYTES, ExternalAgentExit, ExternalAgentInputError,
-    ExternalAgentLaunchError,
+    AgentClockInstant, EXTERNAL_AGENT_STDERR_TAIL_BYTES, ExternalAgentExit,
+    ExternalAgentInputError, ExternalAgentLaunchError, UserTurnId,
 };
 pub use self::report::{FINAL_REPORT_PAGE_BYTES, FinalReport};
-pub use self::session::SessionTotals;
+pub use self::session::{
+    AbortOutcome, ExternalAgentSessionSettings, FOLLOW_UP_QUEUE_CAPACITY, INTERRUPT_GRACE,
+    PromptAccepted, SKIPPED_LINE_GRACE, SessionPhase, SessionRefusal, SessionStep, SessionTotals,
+    SessionView, StreamingBehavior, USER_TURNS_PER_TURN_CAPACITY,
+};
 pub use self::step::ProjectionStep;
+pub use self::telemetry::{SessionRecord, TOOL_NAME_RECORD_BYTES};
 pub use self::turn::{TurnOutcome, TurnWarning};

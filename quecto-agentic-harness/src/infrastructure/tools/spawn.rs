@@ -453,7 +453,7 @@ impl SpawnTool {
             has("write") && has("edit")
         };
 
-        Ok(SubagentConfig {
+        let config = SubagentConfig {
             task,
             container,
             agent_id,
@@ -466,7 +466,18 @@ impl SpawnTool {
             effort,
             disable_tools,
             read_only,
-        })
+            backend: super::spawn_launch_args::parse_backend_arg(args.get("backend"))?,
+        };
+        crate::domain::external_agent::backend::validate_backend(
+            &config,
+            super::spawn_launch_args::backend_launch_context(self, &config),
+        )
+        .map_err(|e| match e {
+            DomainError::Tool(reason) => reason,
+            other => other.to_string(),
+        })?;
+        super::spawn_launch_args::refuse_unserved_backend(config.backend)?;
+        Ok(config)
     }
 
     async fn launch_uds_agent(&self, config: &SubagentConfig) -> Result<ToolResult, DomainError> {

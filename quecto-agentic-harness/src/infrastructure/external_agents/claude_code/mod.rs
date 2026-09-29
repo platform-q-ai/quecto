@@ -4,6 +4,7 @@
 
 mod arguments;
 pub mod environment;
+mod input_json;
 mod json_fields;
 pub mod process;
 mod result_json;

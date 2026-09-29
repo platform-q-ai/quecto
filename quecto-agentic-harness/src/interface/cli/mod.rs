@@ -3,6 +3,7 @@ pub mod admission_handles;
 mod agent;
 mod auth;
 pub mod catalogue_handles;
+pub mod claude_member;
 mod commands;
 mod config_cmd;
 mod config_flag;
@@ -340,6 +341,9 @@ pub struct CliContext {
     /// the children it launched when it ends in an orderly way. Without it
     /// the run returns and its children run their parent-loss shutdown.
     pub run_end_fleet: Option<run_end_fleet::RunEndFleetBuilder>,
+    /// Composition's claude-code member builder (#2287); an agent run with
+    /// `--backend claude-code` refuses to start without it.
+    pub claude_member: Option<claude_member::ClaudeMemberHandlesBuilder>,
     /// Output reaches the real terminal (`run`, not `run_with_output`): a
     /// one-shot run writes its answer out before it settles its children.
     pub live_output: bool,
@@ -428,6 +432,7 @@ pub struct CliComposition {
     /// does not carry it onto `CliContext` yet: nothing would read it until
     /// S13 (#2278) threads it through `CliContext` into `SwarmContext`.
     pub swarm_board: swarm_board_handles::SwarmBoardHandlesBuilder,
+    pub claude_member: claude_member::ClaudeMemberHandlesBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -441,31 +446,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         }
     };
     let stdin_is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
-    let ctx = CliContext {
-        config_path,
-        cwd: std::env::current_dir().ok(),
-        stdin_is_tty: Some(stdin_is_tty),
-        web_fetch_tool_factory: Some(composition.web_fetch_tool_factory),
-        teardown_graph: Some(composition.teardown_graph),
-        kill_tool: Some(composition.kill_tool),
-        sessions: Some(composition.sessions),
-        retention: Some(composition.retention),
-        fresh_session_identity: Some(composition.fresh_session_identity),
-        configuration: Some(composition.configuration),
-        admission: Some(composition.admission),
-        catalogue: Some(composition.catalogue),
-        provider_runtime: Some(composition.provider_runtime),
-        tool_policy_persistence: Some(composition.tool_policy_persistence),
-        container_configs: Some(composition.container_configs),
-        container_doctor: Some(composition.container_doctor),
-        environment_registry: Some(composition.environment_registry),
-        container_inventory: Some(composition.container_inventory),
-        container_init: Some(composition.container_init),
-        container_status: Some(composition.container_status),
-        run_end_fleet: Some(composition.run_end_fleet),
-        live_output: true,
-        ..Default::default()
-    };
+    let ctx = composed_context(composition, config_path, stdin_is_tty);
 
     // Enter the live REPL when no command remains after global options.
     // `run_with_output` intentionally uses captured input, so this decision must
@@ -495,6 +476,41 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         eprint!("{}", output.stderr);
     }
     output.exit_code
+}
+
+/// The context a real run's commands see: every builder `main` composed,
+/// the process's working directory and stdin, and live output.
+fn composed_context(
+    composition: CliComposition,
+    config_path: Option<PathBuf>,
+    stdin_is_tty: bool,
+) -> CliContext {
+    CliContext {
+        config_path,
+        cwd: std::env::current_dir().ok(),
+        stdin_is_tty: Some(stdin_is_tty),
+        web_fetch_tool_factory: Some(composition.web_fetch_tool_factory),
+        teardown_graph: Some(composition.teardown_graph),
+        kill_tool: Some(composition.kill_tool),
+        sessions: Some(composition.sessions),
+        retention: Some(composition.retention),
+        fresh_session_identity: Some(composition.fresh_session_identity),
+        configuration: Some(composition.configuration),
+        admission: Some(composition.admission),
+        catalogue: Some(composition.catalogue),
+        provider_runtime: Some(composition.provider_runtime),
+        tool_policy_persistence: Some(composition.tool_policy_persistence),
+        container_configs: Some(composition.container_configs),
+        container_doctor: Some(composition.container_doctor),
+        environment_registry: Some(composition.environment_registry),
+        container_inventory: Some(composition.container_inventory),
+        container_init: Some(composition.container_init),
+        container_status: Some(composition.container_status),
+        run_end_fleet: Some(composition.run_end_fleet),
+        claude_member: Some(composition.claude_member),
+        live_output: true,
+        ..Default::default()
+    }
 }
 
 /// Run the CLI with the given args and context, capturing all output for testing.

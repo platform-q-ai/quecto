@@ -120,6 +120,7 @@ pub(super) fn test_flags(
         ),
         stdin_is_tty: false,
         environment_registry: None,
+        backend: None,
     }
 }
 

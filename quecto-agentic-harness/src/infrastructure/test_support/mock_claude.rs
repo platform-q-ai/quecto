@@ -7,6 +7,22 @@
 //! reads on stdin, and exits 0 at stdin EOF, as `claude -p
 //! --input-format stream-json` does.
 //!
+//! It follows claude 2.1.280 (#2287 review round 2):
+//! - `@UUID@` in a turn's lines is the `uuid` of the user line that
+//!   started it (`user_message_uuid`); `@UUIDS@` is the quoted,
+//!   comma-separated `uuid`s of every user line the turn consumed, its own
+//!   first and then each folded into it, at most 64 of them
+//!   (`user_message_uuids`);
+//! - an interrupt line (`"type":"control_request"`) starts no turn: it is
+//!   answered at once with a success `control_response`. With
+//!   `"cancel_queued":true` the user lines queued behind the running turn
+//!   are withdrawn, listed as `cancelled`, and never run; without it they
+//!   are listed as `still_queued` and run, together, as the next turn once
+//!   the stopped one has ended: a merged batch, whose turn is its LAST
+//!   member's (`@UUID@`), and whose `@UUIDS@` keeps the batch's first 64
+//!   with, past that, the last member's in slot 63, as claude's collector
+//!   does. Idle, it withdraws nothing.
+//!
 //! - `QUECTO_MOCK_CLAUDE_SCRIPT` is the scenario: an NDJSON capture whose
 //!   Nth turn is the lines up to and including its Nth `result` line.
 //!   Directives, test-only, are never emitted as they are:
@@ -27,7 +43,15 @@
 //!     itself exits;
 //!   - `@stderr-after <secs> <text>` (anywhere) starts a background
 //!     grandchild that writes `<text>` to stderr `<secs>` after the start:
-//!     last words that arrive after the mock itself may have exited.
+//!     last words that arrive after the mock itself may have exited;
+//!   - `@await-interrupt` holds its turn there, running, until an
+//!     interrupt line comes: user lines read meanwhile queue behind the
+//!     turn; the interrupt is answered, then the rest of the turn (its
+//!     stopped `result`) is written;
+//!   - `@await-steers <n>` (n at most 150) holds its turn there until `n`
+//!     more user lines come, which fold into it (`@UUIDS@`), as claude
+//!     folds a queued message between tool rounds; an interrupt line
+//!     meanwhile is answered and ends the hold.
 //! - `QUECTO_MOCK_CLAUDE_ARGS_OUT`, when not empty, is where the mock
 //!   writes, at start: its working directory (`cwd=`), pid (`pid=`),
 //!   process group (`pgid=`), the `ls -ld` mode of `$HOME` (`home_mode=`)
@@ -130,15 +154,57 @@ if [ -n "$QUECTO_MOCK_CLAUDE_ARGS_OUT" ]; then
   mv "$QUECTO_MOCK_CLAUDE_ARGS_OUT.tmp" "$QUECTO_MOCK_CLAUDE_ARGS_OUT"
 fi
 if [ -n "$stall" ]; then sleep "$stall"; fi
-turn=0
-while IFS= read -r line; do
-  turn=$((turn + 1))
+recorded() {{
   if [ -n "$QUECTO_MOCK_CLAUDE_ARGS_OUT" ]; then
-    printf 'input=%s\n' "$line" >> "$QUECTO_MOCK_CLAUDE_ARGS_OUT"
+    printf 'input=%s\n' "$1" >> "$QUECTO_MOCK_CLAUDE_ARGS_OUT"
   fi
-  awk -v want="$turn" -v record="$QUECTO_MOCK_CLAUDE_ARGS_OUT" '
-    BEGIN {{ current = 1; block = ""; for (i = 0; i < 1024; i++) block = block "x" }}
+}}
+uuid_of() {{
+  printf '%s' "$1" | sed -n 's/.*"uuid":"\([^"]*\)".*/\1/p'
+}}
+# The quoted, comma-separated JSON list of the words of $1, at most 64.
+json_list() {{
+  for word in $1; do printf '%s\n' "$word"; done | head -n 64 | awk 'NF {{ printf "%s\"%s\"", (n++ ? "," : ""), $0 }}'
+}}
+# The uuids a merged batch $1 names, as claude's collector keeps them: the
+# first 64, and past that the batch's own (its last member's) in slot 63.
+batch_of() {{
+  for word in $1; do printf '%s\n' "$word"; done | awk 'NF {{ w[++n] = $0 }} END {{ for (i = 1; i <= n && i <= 63; i++) print w[i]; if (n >= 64) print w[n] }}'
+}}
+answer_control() {{
+  rid=$(printf '%s' "$1" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+  case "$1" in
+    *'"cancel_queued":true'*) still=; cancelled=$(json_list "$queued"); queued= ;;
+    *) still=$(json_list "$queued"); cancelled= ;;
+  esac
+  printf '{{"type":"control_response","response":{{"subtype":"success","request_id":"%s","response":{{"still_queued":[%s],"cancelled":[%s]}}}}}}\n' "$rid" "$still" "$cancelled"
+}}
+# Hold the running turn for an interrupt ($1 = interrupt) or for $1 user
+# lines to fold into it; other user lines queue behind it.
+hold() {{
+  want=$1
+  while IFS= read -r held; do
+    recorded "$held"
+    case "$held" in
+      *'"type":"control_request"'*) answer_control "$held"; return 0 ;;
+    esac
+    if [ "$want" = interrupt ]; then
+      queued="$queued $(uuid_of "$held")"
+    else
+      uuids="$uuids $(uuid_of "$held")"
+      want=$((want - 1))
+      if [ "$want" -le 0 ]; then return 0; fi
+    fi
+  done
+  return 1
+}}
+replay() {{
+  awk -v want="$turn" -v part="$1" -v uuid="$uuid" -v uuids="$(json_list "$uuids")" -v record="$QUECTO_MOCK_CLAUDE_ARGS_OUT" '
+    BEGIN {{ current = 1; after = 0; block = ""; for (i = 0; i < 1024; i++) block = block "x" }}
     /^@stubborn$/ || /^@stall-input [0-9]+$/ || /^@linger / || /^@stderr-after / {{ next }}
+    current == want && /^@await-interrupt$/ {{ if (part == 1) {{ fflush(); exit 3 }} after = 1; next }}
+    current == want && /^@await-steers [0-9]+$/ {{ if (part == 1) {{ fflush(); exit 100 + $2 }} after = 1; next }}
+    current == want && part == 2 && !after {{ next }}
     current == want && /^@stderr-fill [0-9]+$/ {{
       n = $2 + 0
       while (n >= 1024) {{ printf "%s", block > "/dev/stderr"; n -= 1024 }}
@@ -152,9 +218,42 @@ while IFS= read -r line; do
       if (record != "") {{ print "record=" substr($0, 9) >> record; close(record) }}
       next
     }}
-    current == want {{ print }}
+    current == want {{ gsub(/@UUIDS@/, uuids); gsub(/@UUID@/, uuid); print }}
     /"type": *"result"/ {{ current++ }}
   ' "$QUECTO_MOCK_CLAUDE_SCRIPT"
+}}
+# Run turn $turn, started by $uuid, consuming $uuids.
+run_turn() {{
+  replay 1
+  code=$?
+  if [ $code -eq 3 ]; then
+    hold interrupt
+    replay 2
+  elif [ $code -gt 100 ]; then
+    hold $((code - 100))
+    replay 2
+  fi
+}}
+turn=0
+queued=
+uuids=
+while IFS= read -r line; do
+  recorded "$line"
+  case "$line" in
+    *'"type":"control_request"'*) answer_control "$line"; continue ;;
+  esac
+  turn=$((turn + 1))
+  uuid=$(uuid_of "$line")
+  uuids=$uuid
+  run_turn
+  # What an interrupt left queued runs, together, as the next turn.
+  while [ -n "$queued" ]; do
+    turn=$((turn + 1))
+    uuids=$(batch_of "$queued")
+    queued=
+    uuid=$(for word in $uuids; do printf '%s\n' "$word"; done | tail -n 1)
+    run_turn
+  done
 done
 if [ -n "$stubborn" ]; then
   while :; do sleep 1; done

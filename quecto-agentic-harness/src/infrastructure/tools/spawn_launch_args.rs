@@ -7,7 +7,58 @@
 use std::ffi::OsString;
 use std::path::Path;
 
+use crate::domain::external_agent::backend::{BackendLaunchContext, MemberBackend};
 use crate::domain::subagent::SubagentConfig;
+
+/// Parse the spawn tool's `backend` argument (#2287): absent or null is
+/// quecto; otherwise one of [`MemberBackend::SPAWN_VALUES`]. Whether the
+/// launch may use it is the domain's rule, checked on the whole config.
+/// Parsed but not yet in the tool's schema: #2288 (S4), which serves the
+/// member, advertises it.
+pub(super) fn parse_backend_arg(arg: Option<&serde_json::Value>) -> Result<MemberBackend, String> {
+    match arg {
+        None | Some(serde_json::Value::Null) => Ok(MemberBackend::Quecto),
+        Some(value) => value
+            .as_str()
+            .and_then(MemberBackend::from_spawn_value)
+            .ok_or_else(|| format!("backend must be one of: {}", MemberBackend::SPAWN_VALUES)),
+    }
+}
+
+/// The refusal for a `claude_code` launch the backend rule allows, until
+/// S4 (#2288) serves the member: without its endpoint the child could only
+/// start and fail, so it is refused before anything runs. S4 removes it.
+pub(super) const CLAUDE_CODE_NOT_AVAILABLE_YET: &str =
+    "claude_code members are not available yet (#2288)";
+
+/// Whether `backend` can serve a member yet: only quecto's, until #2288.
+pub(super) fn refuse_unserved_backend(backend: MemberBackend) -> Result<(), String> {
+    match backend {
+        MemberBackend::Quecto => Ok(()),
+        MemberBackend::ClaudeCode => Err(CLAUDE_CODE_NOT_AVAILABLE_YET.to_string()),
+    }
+}
+
+/// Who launches `config`, as the backend rule asks (#2287): a swarm
+/// participant, under an inherited tool policy, and forwarding a config.
+/// What the launch would hand the child outside `config` is part of the
+/// rule, so a restricted launcher cannot shed its restrictions (#957).
+pub(super) fn backend_launch_context(
+    tool: &super::spawn::SpawnTool,
+    config: &SubagentConfig,
+) -> BackendLaunchContext {
+    BackendLaunchContext {
+        launcher_is_swarm_participant: tool.launches_swarm_worker(),
+        inherited_tool_policy: super::spawn_inherited_policy::snapshot(&tool.inherited_tool_policy)
+            .is_some(),
+        forwards_config: super::spawn_entry::forwarded_config_path(
+            &config.container,
+            config.config_path.as_ref(),
+            tool.parent_config_path.as_ref(),
+        )
+        .is_some(),
+    }
+}
 
 /// Write `data` to `path`, creating it privately: `O_CREAT|O_EXCL` (so a
 /// pre-planted symlink at the path is rejected rather than followed) with
@@ -135,10 +186,17 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         parent_control_path,
     } = *spec;
 
-    let mut args: Vec<OsString> = vec![
-        "agent".into(),
-        "--mode".into(),
-        "uds".into(),
+    let mut args: Vec<OsString> = vec!["agent".into(), "--mode".into(), "uds".into()];
+    // The child's brain (#2287), right after the mode it requires; a
+    // quecto child's argv is unchanged.
+    match config.backend {
+        MemberBackend::Quecto => {}
+        MemberBackend::ClaudeCode => {
+            args.push("--backend".into());
+            args.push(config.backend.flag_value().into());
+        }
+    }
+    args.extend::<[OsString; 5]>([
         "-s".into(),
         session_name.into(),
         "--socket".into(),
@@ -146,7 +204,7 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         // Explicit internal provenance flag (#1319). Always set for SpawnTool
         // children; never inferred from --parent-id / session / env / UDS.
         "--spawned".into(),
-    ];
+    ]);
     // Deliberately no `--persist` (#1937): a launcher-created child is
     // lifetime-scoped to its launcher through the parent control binding
     // (`--parent-control`, #1935). It ignores ordinary client churn because

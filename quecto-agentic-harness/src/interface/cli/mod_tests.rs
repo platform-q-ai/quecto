@@ -55,7 +55,61 @@ fn test_composition() -> CliComposition {
         container_status: crate::composition::standard_container::build_container_status,
         run_end_fleet: crate::composition::subagent_teardown::build_run_end_fleet,
         swarm_board: crate::composition::swarm::build_swarm_board_handles,
+        claude_member: crate::composition::claude_member::build_claude_member_handles,
     }
+}
+
+/// A real run's context carries every builder `main` composed (a command
+/// whose builder is missing refuses as uncomposed), the process's working
+/// directory and stdin, and live output.
+#[test]
+fn a_real_runs_context_carries_every_composed_builder() {
+    let ctx = composed_context(test_composition(), Some("/cfg.json".into()), true);
+    assert_eq!(ctx.config_path, Some(PathBuf::from("/cfg.json")));
+    assert_eq!(ctx.cwd, std::env::current_dir().ok());
+    assert!(ctx.cwd.is_some());
+    assert_eq!(ctx.stdin_is_tty, Some(true));
+    assert_eq!(
+        composed_context(test_composition(), None, false).stdin_is_tty,
+        Some(false)
+    );
+    assert!(ctx.live_output);
+    let composed = [
+        (
+            "web_fetch_tool_factory",
+            ctx.web_fetch_tool_factory.is_some(),
+        ),
+        ("teardown_graph", ctx.teardown_graph.is_some()),
+        ("kill_tool", ctx.kill_tool.is_some()),
+        ("sessions", ctx.sessions.is_some()),
+        ("retention", ctx.retention.is_some()),
+        (
+            "fresh_session_identity",
+            ctx.fresh_session_identity.is_some(),
+        ),
+        ("configuration", ctx.configuration.is_some()),
+        ("admission", ctx.admission.is_some()),
+        ("catalogue", ctx.catalogue.is_some()),
+        ("provider_runtime", ctx.provider_runtime.is_some()),
+        (
+            "tool_policy_persistence",
+            ctx.tool_policy_persistence.is_some(),
+        ),
+        ("container_configs", ctx.container_configs.is_some()),
+        ("container_doctor", ctx.container_doctor.is_some()),
+        ("environment_registry", ctx.environment_registry.is_some()),
+        ("container_inventory", ctx.container_inventory.is_some()),
+        ("container_init", ctx.container_init.is_some()),
+        ("container_status", ctx.container_status.is_some()),
+        ("run_end_fleet", ctx.run_end_fleet.is_some()),
+        ("claude_member", ctx.claude_member.is_some()),
+    ];
+    let present: Vec<_> = composed
+        .iter()
+        .filter_map(|(name, present)| present.then_some(*name))
+        .collect();
+    let every: Vec<_> = composed.iter().map(|(name, _)| *name).collect();
+    assert_eq!(present, every, "every builder is composed");
 }
 
 #[test]

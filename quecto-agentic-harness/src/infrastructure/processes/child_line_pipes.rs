@@ -272,6 +272,18 @@ impl StdinLines {
     /// sent; dropped after, the line is still written whole unless the
     /// input closes first.
     pub async fn write_line(&self, line: String) -> Result<(), LineWriteError> {
+        self.queue_line(line).await?.await
+    }
+
+    /// Queue `line` — exactly one whole line — answering, once it is
+    /// queued, the wait for it to be written. Cancel-safe: dropped before
+    /// it answers, nothing is queued; once it answers, the line is written
+    /// whole unless the input closes first, whether or not the wait is
+    /// awaited.
+    pub async fn queue_line(
+        &self,
+        line: String,
+    ) -> Result<impl Future<Output = Result<(), LineWriteError>> + Send + '_, LineWriteError> {
         assert!(
             line.ends_with('\n') && line.matches('\n').count() == 1,
             "the writer is given exactly one whole line"
@@ -292,10 +304,12 @@ impl StdinLines {
         let (written, answer) = oneshot::channel();
         // The sender given back must not keep the queue open past a close.
         drop(permit.send(QueuedLine { line, written }));
-        match answer.await {
-            Ok(outcome) => outcome,
-            Err(_) => Err(self.writer_gone()),
-        }
+        Ok(async move {
+            match answer.await {
+                Ok(outcome) => outcome,
+                Err(_) => Err(self.writer_gone()),
+            }
+        })
     }
 
     /// The writer ended without answering. A failed write, recorded

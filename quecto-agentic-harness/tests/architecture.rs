@@ -1430,7 +1430,14 @@ fn application_path_allowed(path: &str) -> bool {
             | "ExternalAgentLaunchError"
             | "ExternalAgentInputError"
             | "ExternalAgentExit"
-            | "EXTERNAL_AGENT_STDERR_TAIL_BYTES",
+            | "EXTERNAL_AGENT_STDERR_TAIL_BYTES"
+            // The session telemetry adapter (#2287) logs the records the
+            // capability's telemetry port is given.
+            | "SessionRecord"
+            // The id a user turn is written under, and the clock
+            // adapter's instants (#2287).
+            | "UserTurnId"
+            | "AgentClockInstant",
             ..,
         ] => true,
         // The coordination board (#2270, epic #2265): the dispatcher
@@ -5813,12 +5820,97 @@ fn external_agent_application_dependency_allowed(path: &str) -> bool {
         // The process ports (#2286): boxed futures, and the path values
         // a launch spec carries (never a filesystem call).
         ["std", "future", "Future"] | ["std", "pin", "Pin"] | ["std", "path", "PathBuf"] => true,
+        // The session use case (#2287): its shared state, the write gate,
+        // the end signal, and the durations it hands its clock port. No
+        // I/O, no spawn, no timer and no clock read of its own: time is
+        // the `ExternalAgentClock` port's. tokio's async locks and signal
+        // are plain synchronisation, as `sessions` (`RwLock`, `Semaphore`)
+        // and `extensions` (`oneshot`) use them.
+        ["std", "sync", "Arc" | "Mutex" | "MutexGuard"] | ["std", "time", "Duration"] => true,
+        ["tokio", "select"] | ["tokio", "sync", "Mutex" | "MutexGuard" | "watch", ..] => true,
         // A name already in scope (prelude, local item or checked import)
         // and an associated item of one (`Self::…`, `MessageRole::User`).
         [single] => single.starts_with(char::is_alphabetic),
         [first, ..] => first.starts_with(|c: char| c.is_ascii_uppercase()),
         [] => false,
     }
+}
+
+/// The paths `source` (at `path`) names that the external-agent
+/// application may not.
+fn external_agent_application_refusals(path: &str, source: &str) -> Vec<String> {
+    let mut refused: Vec<String> = dependency_paths_at(path, source)
+        .unwrap_or_else(|| panic!("parse {path}"))
+        .into_iter()
+        .filter(|dep| !external_agent_application_dependency_allowed(dep))
+        .collect();
+    // Paths inside a macro's tokens (`tokio::select!`) are read by the
+    // parse above only when crate-relative: every other one is read here,
+    // however it is spaced, so the session's time is its clock port's,
+    // never tokio's (#2287 review round 2).
+    let file = syn::parse_file(source).unwrap_or_else(|_| panic!("parse {path}"));
+    refused.extend(
+        macro_token_paths(&file)
+            .into_iter()
+            .filter(|dep| !external_agent_application_dependency_allowed(dep)),
+    );
+    refused
+}
+
+/// Every path of two or more segments spelt inside a macro's tokens whose
+/// root is not `crate`, `super` or `self` (those the dependency parse reads
+/// and resolves): `tokio :: time :: sleep` and `::std::time::Instant`
+/// alike.
+fn macro_token_paths(file: &syn::File) -> Vec<String> {
+    use proc_macro2::TokenTree;
+    use syn::visit::Visit;
+    fn paths_in(stream: proc_macro2::TokenStream, found: &mut Vec<String>) {
+        let tokens: Vec<TokenTree> = stream.into_iter().collect();
+        let mut at = 0;
+        while at < tokens.len() {
+            let first = match &tokens[at] {
+                TokenTree::Group(group) => {
+                    paths_in(group.stream(), found);
+                    at += 1;
+                    continue;
+                }
+                TokenTree::Ident(first) => first.to_string(),
+                TokenTree::Punct(_) | TokenTree::Literal(_) => {
+                    at += 1;
+                    continue;
+                }
+            };
+            let mut segments = vec![first];
+            let mut next = at + 1;
+            while let (
+                Some(TokenTree::Punct(a)),
+                Some(TokenTree::Punct(b)),
+                Some(TokenTree::Ident(segment)),
+            ) = (tokens.get(next), tokens.get(next + 1), tokens.get(next + 2))
+            {
+                if a.as_char() != ':' || b.as_char() != ':' {
+                    break;
+                }
+                segments.push(segment.to_string());
+                next += 3;
+            }
+            let crate_relative = matches!(segments[0].as_str(), "crate" | "super" | "self");
+            if segments.len() > 1 && !crate_relative {
+                found.push(segments.join("::"));
+            }
+            at = next;
+        }
+    }
+    struct Macros(Vec<String>);
+    impl<'ast> Visit<'ast> for Macros {
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            paths_in(mac.tokens.clone(), &mut self.0);
+            syn::visit::visit_macro(self, mac);
+        }
+    }
+    let mut macros = Macros(Vec::new());
+    macros.visit_file(file);
+    macros.0
 }
 
 #[test]
@@ -5828,12 +5920,34 @@ fn external_agent_application_depends_only_inward() {
     assert!(!files.is_empty(), "the external_agent context has sources");
     for file in &files {
         let (path, source) = file.split_once(":\n").expect("a file entry");
-        let refused: Vec<_> = dependency_paths_at(path, source)
-            .unwrap_or_else(|| panic!("parse {path}"))
-            .into_iter()
-            .filter(|dep| !external_agent_application_dependency_allowed(dep))
-            .collect();
+        let refused = external_agent_application_refusals(path, source);
         assert!(refused.is_empty(), "{path} depends outward: {refused:?}");
+    }
+    // #2287 review round 2: tokio's time is refused however it is spelt,
+    // in an import tree or inside a macro's tokens (`tokio::select!`).
+    let file = "src/application/external_agent/use_cases/drive_external_agent_session.rs";
+    for source in [
+        "use tokio::{time};",
+        "use tokio::{time::sleep, sync::Mutex};",
+        "use ::tokio::time::Instant;",
+        "async fn f() { tokio::select! { () = tokio :: time :: sleep(d) => {} } }",
+        "async fn f() { tokio::select! { () = ::tokio::time::sleep(d) => {} } }",
+        "fn f() { let _ = format!(\"{:?}\", std::time::Instant::now()); }",
+    ] {
+        assert!(
+            !external_agent_application_refusals(file, source).is_empty(),
+            "the guard must refuse: {source}"
+        );
+    }
+    for source in [
+        "async fn f() { tokio::select! { biased; () = self.until_ended() => {} } }",
+        "fn f() { assert_eq!(self.phase, SessionPhase::Idle, \"tokio::time\"); }",
+    ] {
+        assert_eq!(
+            external_agent_application_refusals(file, source),
+            Vec::<String>::new(),
+            "the guard must accept: {source}"
+        );
     }
     for dep in [
         "crate::infrastructure::external_agents::claude_code::stream_json::StreamJsonDecoder",
@@ -5849,6 +5963,15 @@ fn external_agent_application_depends_only_inward() {
         "std::future::ready",
         "futures::Stream",
         "std::error::request_ref",
+        "tokio::spawn",
+        "tokio::task::spawn_blocking",
+        "tokio::time::Instant",
+        "std::time::Instant",
+        "std::sync::atomic::AtomicBool",
+        "tokio::sync::mpsc::channel",
+        "tokio::time::sleep",
+        "tokio::time::timeout",
+        "std::time::SystemTime",
     ] {
         assert!(
             !external_agent_application_dependency_allowed(dep),
@@ -5866,6 +5989,9 @@ fn external_agent_application_depends_only_inward() {
         "std::pin::Pin",
         "std::path::PathBuf",
         "std::error::Error",
+        "std::sync::Arc",
+        "std::time::Duration",
+        "tokio::sync::watch::Sender",
     ] {
         assert!(
             external_agent_application_dependency_allowed(dep),
@@ -5876,7 +6002,12 @@ fn external_agent_application_depends_only_inward() {
 
 /// The ports the external-agent capability declares (#2286), and nothing
 /// else. Later slices of epic #2284 append theirs.
-const EXTERNAL_AGENT_PORTS: &[&str] = &["ExternalAgentLauncher", "ExternalAgentProcess"];
+const EXTERNAL_AGENT_PORTS: &[&str] = &[
+    "ExternalAgentLauncher",
+    "ExternalAgentProcess",
+    "ExternalAgentTelemetry",
+    "ExternalAgentClock",
+];
 
 #[test]
 fn external_agent_ports_are_capability_local_and_contracted() {
@@ -5935,6 +6066,8 @@ const EXTERNAL_AGENT_PROCESS_DTOS: &[&str] = &[
     "ExternalAgentLaunchError",
     "ExternalAgentInputError",
     "ExternalAgentExit",
+    "UserTurnId",
+    "AgentClockInstant",
 ];
 
 /// Where each of [`EXTERNAL_AGENT_PROCESS_DTOS`] is declared as a
