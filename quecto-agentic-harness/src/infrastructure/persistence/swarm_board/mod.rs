@@ -23,5 +23,6 @@ mod repository_messages;
 mod repository_reservations;
 mod repository_tasks;
 mod repository_usage;
+mod repository_wakes;
 pub mod schema;
 pub mod store;

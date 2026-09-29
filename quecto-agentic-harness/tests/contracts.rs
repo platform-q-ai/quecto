@@ -65,6 +65,8 @@ mod board_tasks;
 mod board_transaction;
 #[path = "contracts/board_usage.rs"]
 mod board_usage;
+#[path = "contracts/board_wakes.rs"]
+mod board_wakes;
 #[path = "common/catalogue_conformance.rs"]
 mod catalogue_conformance;
 #[path = "contracts/catalogue_consumers.rs"]

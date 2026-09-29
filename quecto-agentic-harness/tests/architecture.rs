@@ -1270,6 +1270,9 @@ const SWARM_BOARD_USE_CASES: &[&str] = &[
     "ReadInbox",
     "SendMessage",
     "WithdrawMessage",
+    // Wake notifications (#2276).
+    "AcceptWake",
+    "ClaimNotifications",
 ];
 
 /// The board DTOs infrastructure may name (#2270, epic #2265; each later
@@ -1368,6 +1371,12 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "NewMessage",
     "ReadInboxRequest",
     "SendMessageRequest",
+    // Wake notifications (#2276).
+    "AcceptWakeRequest",
+    "ClaimNotificationsRequest",
+    "NotificationBatch",
+    "NotificationCursor",
+    "WakeAccepted",
 ];
 
 fn application_path_allowed(path: &str) -> bool {
@@ -6380,6 +6389,8 @@ const SWARM_BOARD_PORTS: &[&str] = &[
     // reservations normalise paths in the checkout, an effect (#2275).
     "BoardMessages",
     "CheckoutPaths",
+    // The wake frontiers (#2276): notification and wake cursors.
+    "BoardWakes",
     // The usage report the control receipt carries (#2273; S9 adds the
     // budget's writes).
     "BoardUsage",

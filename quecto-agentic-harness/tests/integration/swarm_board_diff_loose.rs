@@ -91,8 +91,8 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 /// - `outside_edited_evidence` (#2272): stored evidence that is not a list
 ///   of objects each carrying `revision` (only an edit holds it) meets
 ///   `verify_task` as a refusal, where Python raises or iterates the value.
-/// - `outside_edited_messages` (#2276): a BLOB in a `messages` column, as
-///   `swarm_board_diff_loose_messages.rs` describes and pins it.
+/// - #2276's `outside_edited_messages`, `outside_edited_wake_records` and
+///   `wake_target_sort_error_order`: see `swarm_board_diff_loose_messages.rs`.
 /// - `outside_edited_contract` (#2273, listed case by case and pinned in
 ///   `swarm_board_diff_loose_completion.rs`): a run contract, a criterion
 ///   or a task's evidence only a file edited outside the board holds
@@ -133,7 +133,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   and `_record_launch` take such a member's reservation as stale, where
 ///   Python goes on; and so does `send` (#2276), refusing such a recipient
 ///   as out of the swarm, where Python sends to it.
-pub const PERMITTED_DIVERGENCES: [&str; 12] = [
+pub const PERMITTED_DIVERGENCES: [&str; 14] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
     "multi_conflict_names_the_smallest_path",
@@ -144,8 +144,10 @@ pub const PERMITTED_DIVERGENCES: [&str; 12] = [
     "outside_edited_evidence",
     "outside_edited_messages",
     "outside_edited_task_columns",
+    "outside_edited_wake_records",
     "real_to_text_digits",
     "unknown_member_status_is_not_alive",
+    "wake_target_sort_error_order",
 ];
 
 /// `bootstrap_run` with `args` on a fresh board, then the snapshot that

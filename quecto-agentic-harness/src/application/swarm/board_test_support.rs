@@ -60,6 +60,10 @@ pub struct BoardState {
     /// The `evidence` rows, each with the actor that recorded it.
     pub evidence: Vec<(String, EvidenceEntry)>,
     pub messages: Vec<StoredMessage>,
+    /// Each actor's notification cursor, in write order.
+    pub notification_cursors: Vec<(String, i64)>,
+    /// Each actor's wake cursor; `None` until a claim creates the table.
+    pub wake_cursors: Option<Vec<(String, i64)>>,
 }
 
 /// A journal shared by the board and the id source, so a test reads the
@@ -569,6 +573,9 @@ mod files;
 
 #[path = "board_test_support_messages.rs"]
 mod messages;
+
+#[path = "board_test_support_wakes.rs"]
+mod wakes;
 
 /// Readings in order, then the last one forever.
 pub struct SteppingClock {

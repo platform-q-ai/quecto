@@ -89,3 +89,58 @@ fn message_methods_render_pythons_shape() {
         "message 1 is already consumed"
     );
 }
+
+/// Each wake call (#2276) leaves one DEBUG record (both run as Python's
+/// read-only operation) with its decision and no argument text; the
+/// answers are Python's shapes.
+#[test]
+fn wake_calls_record_their_decisions_without_argument_text() {
+    let secret = "sk-ant-api03-FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
+    let log = captured(6, |handles| {
+        running(handles);
+        let body = format!("body {secret}");
+        call(handles, "parent", "send", json!(["a", "parent", body])).unwrap();
+        let batch = call(handles, "parent", "_notifications", json!([true])).unwrap();
+        assert_eq!(batch, json!({"members": [], "generation": 2}));
+        assert_eq!(
+            call(
+                handles,
+                "parent",
+                "_notifications",
+                json!({"with_generation": secret})
+            )
+            .unwrap(),
+            json!({"members": [], "generation": 2})
+        );
+        assert_eq!(
+            call(handles, "parent", "_accept_wake", json!([2])).unwrap(),
+            json!(false)
+        );
+        call(handles, "parent", "_accept_wake", json!([secret])).unwrap_err();
+    });
+    let records: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains(TELEMETRY_TARGET))
+        .skip(2)
+        .collect();
+    let expected = [
+        ("_notifications", "ok", "quiet"),
+        ("_notifications", "ok", "quiet"),
+        ("_accept_wake", "ok", "not_woken"),
+        ("_accept_wake", "refused", "none"),
+    ];
+    assert_eq!(records.len(), expected.len(), "{log}");
+    for (record, (op, outcome, decision)) in records.iter().zip(expected) {
+        for field in [
+            " DEBUG ".to_owned(),
+            format!("op=\"{op}\""),
+            format!("outcome=\"{outcome}\""),
+            format!("decision=\"{decision}\""),
+            "member=\"parent\"".to_owned(),
+        ] {
+            assert!(record.contains(&field), "{field} missing from {record}");
+        }
+    }
+    assert!(!log.contains(secret), "{log}");
+    assert!(!log.contains("body "), "argument text never logged: {log}");
+}
