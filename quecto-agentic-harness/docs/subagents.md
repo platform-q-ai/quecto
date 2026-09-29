@@ -846,15 +846,17 @@ any other `libc::kill`, `kill(`, `start_kill`, process-group signal or
 
 | Effect | Owner |
 | --- | --- |
-| TERM/KILL of a directly launched, unreaped child | `infrastructure/processes/owned_child_supervisor.rs` |
+| TERM/KILL of a directly launched, unreaped child, and the own process group a `ProcessGroup::Own` spawn leads | `infrastructure/processes/owned_child_supervisor.rs` |
 | `PR_SET_PDEATHSIG` armed on a spawned process | `infrastructure/processes/parent_death_signal.rs` |
-| `PR_SET_PDEATHSIG` a persistent swarm-board interpreter arms on itself (its own prelude; the harness sends it nothing) | `infrastructure/tools/swarm_board_worker.rs` |
 | Bash tool invocation containment (its own process group) | `infrastructure/tools/bash/mod.rs` |
-| Python `ExecutionScope` job containment | `infrastructure/tools/swarm_process.rs`, `swarm_scope.rs`, the job cancel in `swarm.rs` |
+| Python `ExecutionScope` containment of the legacy execution jobs (removed with them in #2282) | `infrastructure/tools/swarm_process.rs`, `infrastructure/tools/swarm_scope.rs`, and the job cancel in `infrastructure/tools/swarm.rs` |
 | Signal-0 liveness observation | `infrastructure/persistence/session_ownership.rs` |
-| Retained-environment command adapter (its own script child) | `infrastructure/tools/environment_commands.rs` |
-| Tool-child containment (`rg`, `fd`) | `infrastructure/tools/grep.rs`, `find_fd.rs` |
-| `/proc` observation (member start time, own executable, socket table) | `swarm_bridge.rs`, `runtime_identity.rs`, `interface/cli/uds_socket.rs` |
+| Container-script runner: its own script child on timeout, and the process group of a create whose spawn was cancelled | `infrastructure/processes/containers/script_stderr.rs` |
+| Tool-child containment (`rg`, `fd`) | `infrastructure/tools/grep_run.rs`, `infrastructure/tools/find_fd.rs` |
+| `/proc` observation (member start time, own executable, socket table) | `infrastructure/tools/swarm_bridge.rs`, `infrastructure/runtime_identity.rs`, `interface/cli/uds_socket.rs` |
+
+The swarm board runs in the harness process (ADR-0030), so it has no
+interpreter of its own to contain.
 
 - **Socket cleanup**: socket files are removed by the child's UDS server on
   a graceful exit. Dead auto-generated sockets are reaped by liveness check

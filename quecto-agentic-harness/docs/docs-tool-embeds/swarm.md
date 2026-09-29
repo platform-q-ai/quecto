@@ -1,4 +1,4 @@
-# Swarm workbench
+# Swarm coordination
 
 `swarm` coordinates one fixed pool of 1–25 agents, including its coordinator,
 in a shared container and checkout. The host master uses `spawn` to launch the
@@ -43,20 +43,14 @@ containers to evade its limit. See `docs {"name":"subagents"}` for launching.
   `quecto container gc` sweeps exited leftovers), then the container-runtime
   rollback if the repo should lose its config.
 
-## Python versus external commands
+## Bash for commands, board ops for coordination
 
-The default Python process limit is **RLIMIT_NPROC=1**. `swarm` Python is for
-in-process computation and `from swarm import board` coordination. Subprocesses
-such as `subprocess.run(['git', ...])`, grep, or Bash may fail with
-`BlockingIOError: [Errno 11] Resource temporarily unavailable` even when the
-container has available capacity. This is a configured execution restriction,
-not proof that the container is full. Privileged processes may be exempt.
-
-Use the existing **bash** tool for Git, tests and external commands, subject to
-its configured policy. Read the resulting artifacts with normal file tools and
-record their references on the board. Only the integrator may change branches,
-commit or integrate. `tools.swarm.max_processes` is operator configuration; do
-not raise limits or route around policy from agent code. An optional observed-token budget is described below.
+Use the **bash** tool for Git, builds, tests, scripts and any other command or
+computation, subject to its configured policy. Read the resulting artifacts
+with normal file tools and record their references on the board with the
+board ops below. Only the integrator may change branches, commit or
+integrate. Do not raise limits or route around policy from agent code. An
+optional observed-token budget is described below.
 
 ## Create once
 
@@ -65,7 +59,7 @@ Call `swarm` with `op=create` and these fields:
 | Field | Type and constraints |
 |---|---|
 | `goal` | Nonempty string |
-| `constraints` | Optional `list[str]`; omitted or `null` is an empty list |
+| `constraints` | Optional list of strings; omitted or `null` is an empty list |
 | `criteria` | Nonempty list of objects: `id`, `description`, `kind` (`command` or `review`) |
 | `member_limit` | Integer 1–25; coordinator and idle/reserved workers count |
 | `deadline_in_seconds` | Seconds from now, at most seven days; use this instead of `deadline` when you do not know the current Unix time |
@@ -74,78 +68,126 @@ Call `swarm` with `op=create` and these fields:
 Example criteria: `[{"id":"tests","kind":"command","description":"Acceptance tests pass"},{"id":"review","kind":"review","description":"Independent reviewer accepts the final revision"}]`.
 
 Example: `swarm {"op":"create","goal":"Review PR 1400","constraints":["read-only"],"criteria":[{"id":"tests","kind":"command","description":"Acceptance tests pass"}],"member_limit":3,"deadline_in_seconds":3600}`.
-Until a run is created it is in `setup`: `op=run` (Python, including `board`) is
-refused, so `board.create` is not the way to start one.
+Until a run is created it is in `setup`, and every board op is refused.
 
-## Python calls
+## Board ops
 
-Use `swarm {"op":"run","code":"from swarm import board; print(board.summary())"}`.
-Each invocation is a fresh Python process; store durable work on the board.
-Exactly one of `code: str` or `path: str` is required. Optional execution fields:
-`args: list[str]`, `stdin: str`, `timeout_seconds: int`, `max_output_bytes: int`,
-and `background: bool`. A background launch returns `job_id`; use `op=status`,
-`op=output` (optional byte `offset`/`limit`) or `op=cancel` with that ID.
+The board is a SQLite store the harness serves in-process. Every board call
+is one `swarm` call: `{"op":"<name>", ...fields}`, with the op's arguments as
+named JSON fields. The answer is the op's JSON result (`null` for an op that
+returns nothing). Durable state lives on the board, not in your context.
 
-In the signatures below, IDs are task/message integers; member IDs and tokens
-are strings returned by the API. `Evidence` is a nonempty list of
-`{"artifact": "tests.log", "revision": "actual-commit-id"}` objects. Store large
-content in artifacts, not messages or evidence fields.
+- **Send the schema's types.** Task and message ids, `offset`, `limit` and
+  `supersedes` are JSON integers: send `3`, not `true` or `3.0` (these bind
+  loosely as they always did: `true` reads task 1, `3.0` reads task 3).
+  `passed`, `release_files` and `include_consumed` are booleans. For `passed`
+  and `release_files` only `true` counts as true; `include_consumed` binds
+  loosely, so any nonzero number (such as `1`) also returns consumed history.
+  `acceptance`, `constraints` and `paths` are lists of strings, and
+  `acceptance` refuses an empty list and a blank string; `dependencies` is a
+  list of task ids. `revision`, `supersedes` and `dependencies` also admit
+  `null`, even where the field is required. `evidence` is a
+  nonempty list of `{"artifact":"tests.log","revision":"<commit>"}` objects.
+  Member ids and tokens are the strings the ops return.
+- **Fields bind by name.** A missing required field is refused
+  (`claim: missing required argument task_id`), and so is a field the op
+  does not take (`claim: unexpected argument id`). A field with a default
+  may be left out.
+- **Values the board cannot hold exactly are refused up front.** An
+  integer outside i64 and u64 (such as `18446744073709551616`), a number
+  that overflows (`1e400`) and a string holding a lone surrogate
+  (`"\ud800"`) are refused with
+  `tool error: swarm: "arguments: not representable as a serde_json value: <why>"`,
+  and the board never sees the call. `-0` is the integer 0.
+- **`NaN`, `Infinity` and `-Infinity` are not JSON.** A call holding one is
+  not run at all: you get `the arguments for tool 'swarm' were not a JSON
+  object, so it was not run ... Received: <your text>`. Resend it with a
+  JSON number.
+- **Board ops need a running run within its deadline.** While the run is in
+  `setup`, paused, ended or past its deadline, every board op (reads, `inbox`
+  and `ack` included) is refused with a message naming what is allowed now:
+  `summary`, `events` and `usage` always are (`usage_report` is a board op,
+  so it needs a running run like the others).
+- **Refusals keep the board's text**: you see `tool error: swarm: "<message>"`
+  (a member-input refusal has the same prefix).
+- After an op that changed the board, the harness sends the wake hints (or
+  settles a run that ended). A hint that could not be delivered is added to
+  the answer as `notification_warnings`, and a failure of that step as
+  `coordination_error`; the op itself was done. When the answer is not an
+  object, it moves under `result` beside them. When the op was refused but
+  its call still moved the board's cursor, or the cursor could not be read
+  after the call, they follow the refusal text on the next line, as one JSON
+  object.
 
-| Call | Input and behavior |
+Any member:
+
+| Example | Behavior |
 |---|---|
-| `summary(since=None)` | Current goal, members, counts (task statuses plus `members_without_claim` and `members_dead`), first 50 tasks/files and evidence; no history. Reuse `event_cursor` as `since` for a compact unchanged response; an owner turning idle by clock alone since that cursor yields a full summary instead, and `next_liveness_check_at` says when the next one would |
-| `events(after=0, limit=25)` | Explicit chronological history; limit 1–100 |
-| `tasks(offset=0, limit=50)` / `file_owners(offset=0, limit=50)` | Integer offset ≥0; integer limit 1–100 |
-| `task_create(request, title, acceptance, dependencies=None)` | Stable request string, title string, **nonempty `list[str]` acceptance**, optional `list[int]` dependency IDs; returns a task |
-| `task(id)` / `dependencies(id, ids)` | Read task; change dependency `list[int]` before claiming. A claimed, blocked or submitted row (also from `tasks()` and the summary) adds `owner_last_activity` (seconds since the owner's last board event) and `owner_state`: `active` or `idle` (live member; idle = no board event for 300 s, a prompt to look, not proof of a stall), `reserved` (never launched), `lost` (harness loss recorded; resume, then revoke), `dead` (exit confirmed by its launcher's harness) or `unknown`. An active or idle owner is named in `contact` (`board.send(request, '<owner id>', body)`); otherwise `contact` is null and `recovery` names the coordinator's move. A provider suspension is not visible on the board: use `agent_cmd status` |
-| `claim(id)` | Returns owned task with a new claim `token`; unmet dependencies reject |
-| `block(id, token, reason)` | Nonempty string reason |
-| `unblock(id, token, reason)` | Resume your blocked claim, preserving token and reservations; submitted work cannot be reopened |
-| `release(id, token)` | Release own claim/files; future claim gets a new token |
-| `submit(id, token, evidence)` | Submit `Evidence` for coordinator verification; submission is not completion |
-| `reserve(id, token, paths)` | `list[str]`, 1–100 checkout-contained paths, all-or-nothing; returns reservation token |
-| `release_files(id, token, reservation)` | Release that reservation token for this claim |
-| `send(request, recipient, body, revision=None, supersedes=None)` | Any member may message any other member directly; a question about a task you depend on belongs with that task's owner (`contact` on its row). Stable request string, member ID, **string** body ≤8192 UTF-8 bytes; optional revision the message is about; optional id of your own earlier unread message to the same recipient, which becomes `superseded` in the same transaction; returns message ID/status |
-| `withdraw(message_id)` | Withdraw your own unread message; it leaves the recipient's inbox and wake path and stays in the audit as `withdrawn` |
-| `inbox(include_consumed=False)` / `ack(message_id)` | Read at most 100 own unread messages (`revision`, `supersedes`, `superseded_by` included); `include_consumed=True` adds consumed, superseded and withdrawn history; acknowledge after reading |
-| `evidence(criterion, artifact, revision, kind, passed)` | Strings plus `passed: bool`; workers record proposals with **accepted=0**. Only coordinator calls with `passed=True` accept evidence |
+| `{"op":"task","task_id":3}` | Read one task. A claimed, blocked or submitted row (also from `tasks` and the summary) adds `owner_last_activity` (seconds since the owner's last board event) and `owner_state`: `active` or `idle` (live member; idle = no board event for 300 s, a prompt to look, not proof of a stall), `reserved` (never launched), `lost` (harness loss recorded; resume, then revoke), `dead` (exit confirmed by its launcher's harness) or `unknown` (anything else, including an owner id that is not text). An active or idle owner is named in `contact` (send it an `op=send` with that id as `recipient`); otherwise `contact` is null and `recovery` names the coordinator's move. A provider suspension is not visible on the board: use `agent_cmd status` |
+| `{"op":"tasks","offset":0,"limit":50}` | Page the tasks; `offset` integer ≥0 (default 0), `limit` integer 1–100 (default 50) |
+| `{"op":"file_owners","offset":0,"limit":50}` | Page the file reservations; same paging |
+| `{"op":"task_create","request":"implement-v1","title":"Implement behavior","acceptance":["Acceptance tests pass"],"dependencies":[]}` | Stable request string, title string, **nonempty list of strings** as `acceptance`, optional list of task ids as `dependencies` (default `null`, none); answers the task. A retry needs the same request **and** payload |
+| `{"op":"dependencies","task_id":3,"dependencies":[1,2]}` | Replace a task's dependencies before it is claimed; missing, self and cyclic dependencies are refused |
+| `{"op":"claim","task_id":3}` | Answers the task you now own, with a new claim `token`; unmet dependencies refuse |
+| `{"op":"block","task_id":3,"token":"<token>","reason":"needs the schema decision"}` | Nonempty string reason |
+| `{"op":"unblock","task_id":3,"token":"<token>","reason":"schema decided"}` | Resume your blocked claim, keeping token and reservations; submitted work cannot be reopened |
+| `{"op":"release","task_id":3,"token":"<token>"}` | Release your claim and its files; a later claim gets a new token |
+| `{"op":"submit","task_id":3,"token":"<token>","evidence":[{"artifact":"tests.log","revision":"<commit>"}]}` | Submit evidence for coordinator verification; submission is not completion |
+| `{"op":"reserve","task_id":3,"token":"<token>","paths":["src/example.rs"]}` | 1–100 checkout-contained paths, all or nothing; answers `{token, paths}` with the reservation token |
+| `{"op":"release_files","task_id":3,"token":"<token>","reservation":"<reservation token>"}` | Release that reservation of this claim |
+| `{"op":"send","request":"schema-question-v1","recipient":"<member id>","body":"Which schema version?","revision":null,"supersedes":null}` | Any member may message any other member directly; a question about a task you depend on belongs with that task's owner (`contact` on its row). Stable request string, member id, **string** body ≤8192 UTF-8 bytes; optional `revision` the message is about; optional `supersedes`, the id of your own earlier unread message to the same recipient, which becomes `superseded` in the same transaction. Answers `{id, status}`; a retry needs the same request and payload |
+| `{"op":"withdraw","message_id":7}` | Withdraw your own unread message; it leaves the recipient's inbox and wake path and stays in the audit as `withdrawn` |
+| `{"op":"inbox","include_consumed":false}` | At most 100 of your unread messages (`revision`, `supersedes`, `superseded_by` included); `true` adds consumed, superseded and withdrawn history |
+| `{"op":"ack","message_id":7}` | Acknowledge a message after reading it |
+| `{"op":"evidence","criterion":"tests","artifact":"tests.log","revision":"<commit>","kind":"command","passed":true}` | `kind` is `command` or `review`. A worker's call records a proposal with **accepted=0**; only the coordinator's `passed: true` accepts evidence |
+| `{"op":"usage_report"}` | Per-member usage totals and recent request diagnostics (the same report as `op=usage`, which works whatever the run's state; `usage_report` needs a running run) |
 
-For example:
+The harness's own ops: `{"op":"summary"}` (goal, members, counts of task
+statuses plus `members_without_claim` and `members_dead`, the first 50
+tasks/files and evidence; add `"since":<event_cursor>` for a compact
+`unchanged` answer, which an owner turning idle by the clock alone since that
+cursor turns into a full summary again, and `next_liveness_check_at` says
+when the next one would), `{"op":"events","after":0,"limit":25}` (explicit
+chronological history; limit 1–100), `{"op":"usage"}`, `op=reconcile` and
+`op=cancel_run`.
 
-```python
-from swarm import board
-work = board.task_create('implement-v1', 'Implement behavior', ['Acceptance tests pass'], [])
-claim = board.claim(work['id'])
-board.reserve(work['id'], claim['token'], ['src/example.rs'])
-# Use normal edit/bash tools to perform work and run checks.
-# In a later invocation, retrieve the task and its claim token again.
-board.submit(work['id'], claim['token'], [{'artifact': 'tests.log', 'revision': 'actual-commit-id'}])
+A working sequence (each line is one call; later calls reuse the ids and
+tokens earlier answers returned):
+
+```json
+{"op":"task_create","request":"implement-v1","title":"Implement behavior","acceptance":["Acceptance tests pass"],"dependencies":[]}
+{"op":"claim","task_id":1}
+{"op":"reserve","task_id":1,"token":"<claim token>","paths":["src/example.rs"]}
+{"op":"submit","task_id":1,"token":"<claim token>","evidence":[{"artifact":"tests.log","revision":"<commit>"}]}
 ```
 
-A string such as `acceptance='tests pass'` is invalid; use `['tests pass']`.
-Dictionary message bodies are invalid; serialize the intended message to a string.
-Do not reserve `/tmp` or paths outside the checkout. Ownership is cooperative,
-not a filesystem lock. Stale tokens cannot mutate someone else's work.
-Retrying `task_create` or `send` requires the same request ID **and** payload.
+Edit and test with the normal edit and bash tools between the `reserve` and
+the `submit`. In a later turn, read the task again for its claim token. A
+string `acceptance` such as `"tests pass"` is invalid; use `["tests pass"]`.
+An object `body` is invalid; serialize the message to a string. Do not
+reserve `/tmp` or paths outside the checkout. Ownership is cooperative, not a
+filesystem lock. Stale tokens cannot mutate someone else's work. Store large
+content in artifacts, not messages or evidence fields.
 
 ## Coordinator verification and control
 
-- `verify_task(id, token, revision)` accepts submitted task evidence at that revision.
-- `revalidate_task(id, revision, fresh_evidence)` requires a completed task and new
-  `Evidence` matching the final revision after later dependent work changes it.
-- `amend(goal, constraints, criteria, reason)` updates scope with a string reason
-  and invalidates prior overall evidence.
-- `complete(revision)` requires every criterion accepted and every task verified
-  at that revision, with no outstanding work or file reservations.
-- `stop(status, reason)` accepts `blocked`, `failed`, `cancelled`, or
-  `budget-exhausted`; use tool `op=cancel_run` for parent cancellation.
-- `revoke(id, reason)` takes a claim back from a member that will not finish
+| Example | Behavior |
+|---|---|
+| `{"op":"verify_task","task_id":3,"token":"<claim token>","revision":"<commit>"}` | Accepts the submitted task's evidence at that revision |
+| `{"op":"revalidate_task","task_id":3,"revision":"<final commit>","evidence":[{"artifact":"tests-final.log","revision":"<final commit>"}]}` | Needs a completed task and fresh nonempty evidence matching the final revision, after later dependent work changed it |
+| `{"op":"amend","goal":"...","constraints":["read-only"],"criteria":[{"id":"tests","kind":"command","description":"Acceptance tests pass"}],"reason":"scope narrowed"}` | Updates the contract with a string reason and invalidates prior overall evidence |
+| `{"op":"complete","revision":"<commit>"}` | Needs every criterion accepted and every task verified at that revision, with no outstanding work or file reservations |
+| `{"op":"stop","status":"blocked","reason":"..."}` | `status` is `blocked`, `failed`, `cancelled` or `budget-exhausted`; use `op=cancel_run` for parent cancellation |
+| `{"op":"revoke","task_id":3,"reason":"member silent"}` | Takes a claim back (see below); answers the task |
+| `{"op":"recover","task_id":3,"release_files":false}` | Reopens work whose owner's death was confirmed (see below) |
+
+- `revoke` takes a claim back from a member that will not finish
   (suspended, hung, silent), alive or not: the task returns to `ready` with no
   owner, token, blocker or evidence, its file reservations go, the audit records
   the reason and previous owner, and the previous owner is messaged. Its stale
   token then fails with `stale or unowned claim`. A repeat on an unowned task is
   a no-op.
-- `recover(id, release_files=False)` reopens work whose owner's death the
+- `recover` reopens work whose owner's death the
   harness confirmed: a member you launched that exited (on its own or by your
   `agent_cmd kill`) is marked dead by your harness, its tasks block with
   `worker death confirmed; coordinator recovery required`, and the run keeps
@@ -153,8 +195,8 @@ Retrying `task_create` or `send` requires the same request ID **and** payload.
   releases its reservations; an abrupt one (a signal nobody here sent, an
   unobservable exit) retains them because Bash tool children in their own
   process groups may still be writing those paths — the tasks say
-  `reservations retained`, and only `revoke(id, reason)` or
-  `recover(id, release_files=True)` frees them; both need a running run
+  `reservations retained`, and only `revoke` or `recover` with
+  `"release_files":true` frees them; both need a running run
   (resume first). A vanished harness seen by `op=reconcile` is not a confirmed
   death: only the member's launcher (or anyone, once that launcher is dead)
   records the loss, after a ten-second grace in which the launcher's reaper
@@ -178,8 +220,8 @@ ready work if there is any: you are not woken for work that became ready while
 you held your claim. Otherwise yield. On a file
 reservation conflict, release the task and yield instead of holding it. **First use op=summary**
 when receiving a hint. If running, inspect inbox/ready tasks and acknowledge read
-messages. If terminal, do not call `op=run` for inbox/ack: Python execution is
-closed. Report the final summary and remain available for supervisor requests,
+messages. If the run is no longer running, board ops (`inbox` and `ack`
+included) are refused: do not retry them. Report the final summary and remain available for supervisor requests,
 with export handled through the supervisor channel. A queued hint can arrive after completion.
 Do not repeatedly poll, sleep or acknowledge an empty inbox.
 
@@ -187,14 +229,9 @@ Do not repeatedly poll, sleep or acknowledge an empty inbox.
 coordinator's latest report with `agent_cmd.get_report`; add `export_raw:true`
 to export retained records. Export is explicit, not automatic. Preserve evidence before environment disposal.
 
-Returned artifact paths use **workspace-relative** references. `artifact_base`
-names the execution workspace inside the container; join it with each
-`artifact_paths` entry, e.g. `.git/quecto/swarm/<execution_id>/stdout.txt`. Status,
-output paging and synchronous spills use the same namespace. These are not host
-paths. The SQLite board is in the checkout's git directory
+The SQLite board is in the checkout's git directory
 (`.git/quecto/swarm.sqlite`; `.quecto/swarm.sqlite` only where there is no git
-directory), with execution artifacts beside it, out of reach of git commands;
-old execution directories may be pruned, so copy important evidence to durable
+directory), out of reach of git commands. Copy important evidence to durable
 report files before cleanup. Never delete the board or its directory: the run
 cannot continue, and every call fails with `coordination store missing at <path>`.
 
@@ -217,11 +254,12 @@ a bound spec) is not torn down, so create the run before spawning members. A
 host-local master may still use a workflow to supervise the swarm.
 
 For a clarification or approval, keep the run **running**, mark the affected task
-with `board.block(task_id, claim_token, reason)`, report the exact question to the
-master and yield the turn. Do not sleep/poll or use `board.stop('blocked', ...)`
-to wait for one task: a blocked **run** is a pause holding `blocked` that only
+with `{"op":"block","task_id":3,"token":"<claim token>","reason":"<the question>"}`,
+report the exact question to the master and yield the turn. Do not sleep/poll
+or use `{"op":"stop","status":"blocked","reason":"..."}` to wait for one task: a blocked **run** is a pause holding `blocked` that only
 the master can resume or close. A blocked **task** retains its claim and can be
-submitted after the answer arrives and work is completed. The original deadline
+unblocked (`op=unblock`) and submitted after the answer arrives and work is
+completed. The original deadline
 continues to apply.
 
 The master sends the answer with `agent_cmd` `prompt` when idle, or `steer` when
@@ -315,7 +353,7 @@ Do not repeatedly wake or retry ahead of a provider's reset horizon.
 
 Coordinators of an ended or terminal run remain available for reports. Their
 tool execution is restricted to native read-only swarm `summary`, `events`, and
-`usage`; Python, Bash, spawning and board mutations are unavailable until the
+`usage`; Bash, spawning and board ops are unavailable until the
 master resumes the run. Export through the supervisor channel and preserve the
 container until the user authorizes teardown.
 
@@ -326,6 +364,6 @@ prompt or steer. Do not pause a run because one member failed: resume the run
 and, only if the member is still stuck, steer it. For a member that holds a
 claim it will not finish, no process is prescribed: an explicit `agent_cmd`
 `steer`/`follow_up` re-arms a provider-suspended member (#1712), `agent_cmd`
-`set_model` moves it off a failing provider, `revoke(id, reason)` reassigns its
-work, and `recover(id)` applies once its death is confirmed.
+`set_model` moves it off a failing provider, `op=revoke` reassigns its
+work, and `op=recover` applies once its death is confirmed.
 Terminal completion notices do not trigger automatic report turns.
