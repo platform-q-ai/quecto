@@ -43,7 +43,8 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   member or reservation, #2271, a task id, #2272, a message id,
 ///   `withdraw`'s, `ack`'s or `send`'s `supersedes`, `send`'s `recipient`
 ///   or `inbox`'s `include_consumed`, #2276, `_quarantine`'s or
-///   `_confirmed_dead`'s member, #2277) makes Python's
+///   `_confirmed_dead`'s member, `events`' cursor or `tasks`' offset,
+///   #2277) makes Python's
 ///   `sqlite3` raise `OverflowError` when it is bound, which is not an
 ///   `sqlite3.Error`, so the store does not turn it into a refusal and the
 ///   call raises.

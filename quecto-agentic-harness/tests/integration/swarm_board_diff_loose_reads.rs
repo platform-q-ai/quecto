@@ -13,6 +13,8 @@
 //!   refused naming the record, where Python raises `KeyError`, and a
 //!   dependency naming no task counts the task blocked (Python's `_task`
 //!   raises `TypeError` reading it first).
+//! - `integer_beyond_i64_is_refused` (#2277 review L1), as the pin table
+//!   describes it, for `events`' cursor and `tasks`' offset.
 //! - `outside_edited_loss_records`, as `swarm_board_diff_loose_loss.rs`
 //!   describes it, for the owner liveness too: an owner's latest event
 //!   time that is not a number is refused naming the record, where Python
@@ -124,4 +126,30 @@ fn outside_edited_loss_records() {
         run_rust(&steps),
         Outcome::Refused("the board's event time is not as the board writes it".to_owned())
     );
+}
+
+/// `events`' cursor and `tasks`' offset beyond i64 but within u64:
+/// Python's `sqlite3` raises `OverflowError` binding it; the Rust board
+/// refuses it as a store failure naming Python's parameter position.
+#[test]
+fn integer_beyond_i64_is_refused() {
+    for (method, parameter) in [("events", 1), ("tasks", 2)] {
+        let steps = joined([at(3.0, "parent", method, json!([u64::MAX, 5]))]);
+        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        assert!(
+            difference.starts_with(&format!("step 3: {method} as parent"))
+                && difference.contains(
+                    "Python raised OverflowError: Python int too large to convert to SQLite INTEGER"
+                ),
+            "{difference}"
+        );
+        assert_eq!(
+            run_rust(&steps),
+            Outcome::Refused(format!(
+                "coordination store unavailable or contended: Error binding parameter \
+                 {parameter}: Python int too large to convert to SQLite INTEGER"
+            )),
+            "{method}"
+        );
+    }
 }
