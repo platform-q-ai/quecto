@@ -68,10 +68,6 @@ fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
         "events",
         "usage",
         "usage_budget",
-        "run",
-        "status",
-        "output",
-        "cancel",
     ]
     .into_iter()
     .chain(
@@ -80,7 +76,7 @@ fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
             .map(|spec| spec.name),
     )
     .collect();
-    assert_eq!(expected.len(), 13 + 25, "the harness's ops and the table's");
+    assert_eq!(expected.len(), 9 + 25, "the harness's ops and the table's");
     let mut ops = VALID_OPS.to_vec();
     expected.sort_unstable();
     ops.sort_unstable();
@@ -212,6 +208,86 @@ fn a_refusal_that_allows_usage_says_usage_report_is_not_it() {
         assert!(
             message.contains("usage (op=usage; the board op usage_report needs a running run)"),
             "{message}"
+        );
+    }
+}
+
+/// The swarm tool over a created, running run, as the tests above build it.
+fn running_tool(directory: &tempfile::TempDir) -> super::super::SwarmTool {
+    let workspace = std::sync::Arc::new(directory.path().to_path_buf());
+    super::super::super::swarm_test_support::tool(
+        workspace.clone(),
+        std::sync::Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
+            Some(workspace.as_ref().clone()),
+        )),
+        super::super::SwarmConfig::default(),
+        crate::composition::swarm::swarm_board(),
+    )
+}
+
+/// #2282: the Python workbench ops are gone. Each is an unknown op whose
+/// refusal lists the valid ops, the structured board ops among them, and
+/// never runs anything.
+#[tokio::test]
+async fn removed_ops_are_unknown_and_name_the_structured_alternative() {
+    use crate::application::tools::ports::Tool;
+    let directory = tempfile::tempdir().unwrap();
+    let tool = running_tool(&directory);
+    for (op, request) in [
+        ("run", r#"{"op":"run","code":"open('ran','w').write('x')"}"#),
+        ("status", r#"{"op":"status","job_id":"job_1"}"#),
+        ("output", r#"{"op":"output","job_id":"job_1"}"#),
+        ("cancel", r#"{"op":"cancel","job_id":"job_1"}"#),
+    ] {
+        let result = tool.execute(request).await.unwrap();
+        assert!(result.is_error, "{request}: {}", result.content);
+        let prefix = format!("unknown op {op}; valid ops: ");
+        assert!(result.content.contains(&prefix), "{request}: {}", result.content);
+        assert!(result.content.contains("claim"), "{}", result.content);
+        assert!(!directory.path().join("ran").exists(), "{request} ran code");
+    }
+    for removed in ["run", "status", "output", "cancel"] {
+        assert!(!VALID_OPS.contains(&removed), "{removed} is still valid");
+    }
+}
+
+/// #2282: a call without an op no longer defaults to running Python; it is
+/// refused with the valid ops, and nothing runs.
+#[tokio::test]
+async fn a_call_without_an_op_is_refused_with_the_valid_ops() {
+    use crate::application::tools::ports::Tool;
+    let directory = tempfile::tempdir().unwrap();
+    let tool = running_tool(&directory);
+    for request in [r#"{"code":"open('ran','w').write('x')"}"#, r#"{"op":3}"#, "{}"] {
+        let result = tool.execute(request).await.unwrap();
+        assert!(result.is_error, "{request}: {}", result.content);
+        assert!(
+            result.content.contains("op is required; valid ops: create, "),
+            "{request}: {}",
+            result.content
+        );
+        assert!(!directory.path().join("ran").exists(), "{request} ran code");
+    }
+}
+
+/// #2282: the schema carries no execution argument.
+#[test]
+fn the_schema_has_no_execution_arguments() {
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("swarm_helpers/tool_schema.json")).unwrap();
+    for removed in [
+        "code",
+        "path",
+        "args",
+        "stdin",
+        "timeout_seconds",
+        "max_output_bytes",
+        "background",
+        "job_id",
+    ] {
+        assert!(
+            schema["properties"].get(removed).is_none(),
+            "the schema still offers {removed}"
         );
     }
 }

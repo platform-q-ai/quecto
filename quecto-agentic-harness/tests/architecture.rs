@@ -5095,8 +5095,8 @@ fn legacy_mixed_web_fetch_path_is_retired() {
 /// Production launch and transport modules of the subagent capability. None
 /// of them may hold a `tokio::process::Child`, wait on one, or signal a pid:
 /// the supervisor is the one owner and the only signaller. Sibling process
-/// users outside this list (bash invocation containment, the Python swarm
-/// execution scope) are out of this slice's ratchet by design.
+/// users outside this list (bash invocation containment) are out of this
+/// slice's ratchet by design.
 const SUBAGENT_PROCESS_MODULES: &[&str] = &[
     "src/infrastructure/tools/spawn.rs",
     "src/infrastructure/tools/spawn_container.rs",
@@ -6812,9 +6812,8 @@ fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
     let adapter = production_source("src/infrastructure/tools/swarm_member_termination.rs");
     assert!(adapter.contains("KillDelegatedAgentRequest"));
     assert!(adapter.contains("shutdown_over_socket("));
-    // The only pid-signalling helper left in the swarm tool is execution
-    // containment for the jobs it spawned itself, and nothing named
-    // `terminate_member` survives.
+    // Nothing named `terminate_member` survives (and the swarm tool has no
+    // pid-signalling helper at all: `swarm_tool_has_no_pid_signalling`).
     let mut files = Vec::new();
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
@@ -6840,6 +6839,79 @@ fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
     );
     assert!(composition.contains("DelegatedSwarmMemberTermination::new("));
     assert!(composition.contains("DelegatedMemberShutdown::new("));
+}
+
+/// #2282: the Python workbench is gone, so the swarm tool spawns nothing and
+/// signals nothing. No production swarm file names a pid-signalling helper
+/// or effect; members are ended by protocol or an owned handle
+/// (`swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid`)
+/// and the board runs in-process (ADR-0030).
+#[test]
+fn swarm_tool_has_no_pid_signalling() {
+    let mut swarm_files: Vec<String> = teardown_authority::production_files()
+        .into_iter()
+        .filter(|path| {
+            Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("swarm") && name.ends_with(".rs"))
+                && path.starts_with("src/infrastructure/tools/")
+        })
+        .collect();
+    swarm_files.sort();
+    assert!(
+        swarm_files.len() > 20,
+        "the swarm tool's production files must be scanned: {swarm_files:?}"
+    );
+    for gone in [
+        "src/infrastructure/tools/swarm_process.rs",
+        "src/infrastructure/tools/swarm_scope.rs",
+        "src/infrastructure/tools/swarm_registry.rs",
+        "src/infrastructure/tools/swarm_support.rs",
+        "src/infrastructure/tools/swarm_result.rs",
+        "src/infrastructure/tools/swarm_job_output.rs",
+        "src/infrastructure/tools/swarm_config.rs",
+    ] {
+        assert!(!Path::new(gone).exists(), "{gone} survives");
+    }
+    for path in &swarm_files {
+        let source = production_source(path);
+        for forbidden in [
+            "kill_pid",
+            "cancel_job_process",
+            "libc::kill",
+            "kill_on_drop",
+            "setpgid",
+            "process_group(",
+            "Command::new(\"python3\")",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} names `{forbidden}`: the swarm tool spawns and signals nothing"
+            );
+        }
+    }
+    // The execution ports are gone with the jobs they cancelled; the port
+    // keeps its inference suspension and member termination.
+    let ports = production_source("src/application/swarm/ports.rs");
+    for gone in ["fn cancel_local_executions", "fn suspend_local_executions"] {
+        assert!(!ports.contains(gone), "ProcessControl still has `{gone}`");
+    }
+    assert!(ports.contains("fn suspend_local_inference(&self, snapshot: &Snapshot);"));
+}
+
+/// #2282: no production code of the harness starts `python3`.
+#[test]
+fn no_production_code_starts_python() {
+    let files = teardown_authority::production_files();
+    assert!(files.len() > 200, "the crate's production files must be scanned");
+    for path in &files {
+        let source = production_source(path);
+        assert!(
+            !source.contains("\"python3\""),
+            "{path} names the python3 interpreter"
+        );
+    }
 }
 
 /// The consolidated `integration` and `docs` targets run every former per-file
