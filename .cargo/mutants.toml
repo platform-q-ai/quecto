@@ -1,7 +1,7 @@
-# cargo-mutants configuration (https://mutants.rs/). CI's "Mutation Testing
-# (diff)" workflow (.github/workflows/mutation.yml) mutates only the lines a PR
-# changes: `cargo mutants --in-diff pr.diff --shard k/N --in-place`.
-# Do not run it on a workstation: every mutant is a rebuild plus a test run.
+# cargo-mutants configuration (https://mutants.rs/) for optional local runs on
+# a change's own diff (see CONTRIBUTIONS.md, "Mutation testing"). CI does not
+# run mutation testing. Scope a run with `--in-diff` and a nextest filter, and
+# run it under a memory cap: every mutant is a rebuild plus a test run.
 
 # The same shape as CI's Workspace Tests job and the `workspace` rust-cache
 # entry cache-warm.yml saves: `--workspace --features
@@ -27,8 +27,8 @@ additional_cargo_args = [
     "--test", "integration",
 ]
 
-# Timeouts are passed explicitly by CI (`--baseline=skip --timeout
-# --build-timeout`, see mutation.yml): without a baseline run there is no
+# Pass timeouts explicitly (`--baseline=skip --timeout
+# --build-timeout`): without a baseline run there is no
 # measured test time to multiply.
 
 # `#[cfg(test)]` items and modules are skipped by cargo-mutants itself. These
