@@ -29,9 +29,9 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   must parse member input with `py_json`, as the harness does; a
 ///   `PyJson` dispatcher would end this divergence.
 /// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
-///   within u64 (a `pid`, `started` or `socket`, or a membership method's
-///   member or reservation, #2271) makes Python's `sqlite3` raise
-///   `OverflowError` when it is bound, which is not an `sqlite3.Error`,
+///   within u64 (a `pid`, `started` or `socket`, a membership method's
+///   member or reservation, #2271, or a task id, #2272) makes Python's
+///   `sqlite3` raise `OverflowError` when it is bound, which is not an `sqlite3.Error`,
 ///   so the store does not turn it into a refusal and the call raises.
 ///   The Rust board refuses it as a store failure naming Python's
 ///   parameter position. (Compared before it is bound, such an integer
@@ -391,11 +391,15 @@ fn integer_beyond_i64_is_refused() {
             ))
         );
     }
-    // The membership methods (#2271) bind their arguments the same way.
+    // The membership methods (#2271) and the task methods (#2272) bind
+    // their arguments the same way.
     let bootstrap = json!([7, "s", null]);
     for (method, args, position) in [
         ("_socket", json!([u64::MAX]), 1),
         ("_release_unlaunched", json!([u64::MAX]), 1),
+        // A task id (#2272), read under the read-only gate a setup run
+        // passes.
+        ("task_raw", json!([u64::MAX]), 1),
         // `bootstrap_run` draws the run's id, then the reservation.
         (
             "_activate",
