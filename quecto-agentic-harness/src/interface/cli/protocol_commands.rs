@@ -316,6 +316,7 @@ pub enum AgentCommand {
         since: Option<u64>,
     },
     /// Terminate and remove every tracked sub-agent.
+    #[serde(rename = "kill_all_subagents", alias = "delete_all_subagents")]
     DeleteAllSubagents {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -473,7 +474,7 @@ impl AgentCommand {
             Self::RewindTo { .. } => "rewind_to",
             Self::SetWorkflowAutomation { .. } => "set_workflow_automation",
             Self::GetSubagents { .. } => "get_subagents",
-            Self::DeleteAllSubagents { .. } => "delete_all_subagents",
+            Self::DeleteAllSubagents { .. } => "kill_all_subagents",
             Self::GetMessage { .. } => "get_message",
         }
     }

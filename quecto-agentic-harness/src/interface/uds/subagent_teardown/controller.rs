@@ -34,7 +34,7 @@ use crate::application::subagents::dto::{
     TerminateDelegatedAgentError, TerminationRouted,
 };
 use crate::application::subagents::use_cases::{
-    ExecuteHarnessShutdown, PrepareHarnessShutdown, TerminateDelegatedAgent,
+    ExecuteHarnessShutdown, KillDelegatedAgent, PrepareHarnessShutdown, TerminateDelegatedAgent,
 };
 
 use super::mapping::{TeardownRequest, map_command};
@@ -107,9 +107,27 @@ pub struct SubagentTeardownController {
     prepare: Arc<PrepareHarnessShutdown>,
     execute: Arc<ExecuteHarnessShutdown>,
     terminate: Arc<TerminateDelegatedAgent>,
+    kill: Option<Arc<KillDelegatedAgent>>,
 }
 
 impl SubagentTeardownController {
+    pub fn with_kill(mut self, kill: Arc<KillDelegatedAgent>) -> Self {
+        self.kill = Some(kill);
+        self
+    }
+
+    pub async fn kill_agent(
+        &self,
+        reference: String,
+    ) -> Result<crate::application::subagents::dto::KillDelegatedAgentOutcome, String> {
+        let Some(kill) = &self.kill else {
+            return Err("no sub-agent registry available".to_owned());
+        };
+        kill.execute(crate::application::subagents::dto::KillDelegatedAgentRequest { reference })
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     pub fn new(
         prepare: Arc<PrepareHarnessShutdown>,
         execute: Arc<ExecuteHarnessShutdown>,
@@ -119,6 +137,7 @@ impl SubagentTeardownController {
             prepare,
             execute,
             terminate,
+            kill: None,
         }
     }
 

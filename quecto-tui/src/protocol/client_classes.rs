@@ -54,7 +54,8 @@ impl Command {
             Self::ClearHistory { .. } => "clear_history",
             Self::RewindTo { .. } => "rewind_to",
             Self::GetSubagents { .. } => "get_subagents",
-            Self::DeleteAllSubagents { .. } => "delete_all_subagents",
+            Self::KillAllSubagents { .. } => "kill_all_subagents",
+            Self::KillAgent { .. } => "kill_agent",
             Self::Sync { .. } => "sync",
         }
     }

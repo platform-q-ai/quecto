@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::subagents::use_cases::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
-    OwnerConclusionPorts, PrepareHarnessShutdown, TerminateAllDelegatedAgents,
-    TerminateAllDelegatedAgentsPorts, TerminateDelegatedAgent,
+    KillDelegatedAgent, KillDelegatedAgentPorts, OwnerConclusionPorts, PrepareHarnessShutdown,
+    TerminateAllDelegatedAgents, TerminateAllDelegatedAgentsPorts, TerminateDelegatedAgent,
 };
 use crate::domain::ids::AgentUuid;
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
@@ -160,15 +160,24 @@ pub fn build_teardown_graph(inputs: TeardownLoopInputs) -> TeardownHandles {
         super::environments::build_member_finalizer,
     ));
     let terminate = Arc::new(
-        TerminateDelegatedAgent::new(lifecycle, routing).with_owner_conclusion(
+        TerminateDelegatedAgent::new(lifecycle.clone(), routing).with_owner_conclusion(
             OwnerConclusionPorts {
                 registry: agents.clone(),
                 termination: Arc::new(SupervisedChildTermination::new(registry_for_claims)),
-                compensation: agents,
+                compensation: agents.clone(),
             },
         ),
     );
-    let controller = Arc::new(SubagentTeardownController::new(prepare, execute, terminate));
+    let kill = Arc::new(KillDelegatedAgent::new(
+        terminate.clone(),
+        KillDelegatedAgentPorts {
+            registry: agents.clone(),
+            lifecycle,
+            compensation: agents,
+        },
+    ));
+    let controller =
+        Arc::new(SubagentTeardownController::new(prepare, execute, terminate).with_kill(kill));
     TeardownHandles {
         connections: Arc::new(ConnectionTeardown {
             binding: Arc::new(Mutex::new(inputs.binding)),

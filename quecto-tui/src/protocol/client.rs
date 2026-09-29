@@ -197,8 +197,13 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    KillAgent {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        agent_id: String,
+    },
     /// Terminate and remove every tracked sub-agent.
-    DeleteAllSubagents {
+    KillAllSubagents {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },

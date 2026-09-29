@@ -129,7 +129,8 @@ pub(super) async fn dispatch_fieldless_command(
     // here. Idle path only; a busy harness answers from the reader task.
     if matches!(cmd, AgentCommand::DeleteAllSubagents { .. }) {
         let fleet = ctx.fleet_teardown.clone();
-        let event = super::super::uds_delete_all_subagents::respond(fleet.as_ref(), id).await;
+        let event =
+            super::super::uds_delete_all_subagents::respond_named(fleet.as_ref(), id, tn).await;
         emit_response_or_frame_limit_error(ctx, id, tn, event).await;
         return Some(false);
     }

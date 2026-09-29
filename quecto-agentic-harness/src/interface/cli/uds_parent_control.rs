@@ -141,6 +141,7 @@ pub(crate) fn may_be_control_line(line: &str) -> bool {
     BindParentControlWire::may_be_presentation(line)
         || line.contains(SHUTDOWN_COMMAND)
         || line.contains(TERMINATE_DELEGATED_AGENT_COMMAND)
+        || line.contains("kill_agent")
         || line.contains("\\u00")
 }
 
@@ -154,6 +155,43 @@ pub(crate) async fn intercept_line(mut ctx: LineContext<'_>, line: &str) -> Inte
         Err(detail) => {
             tracing::warn!(client_id = ctx.client_id, %detail, "closing connection: malformed parent control presentation");
             return Intercept::Close;
+        }
+    }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+        if value.get("type").and_then(serde_json::Value::as_str) == Some("kill_agent") {
+            let id = value.get("id").and_then(serde_json::Value::as_str);
+            let event = match value.get("agent_id").and_then(serde_json::Value::as_str) {
+                Some(agent_id)
+                    if crate::domain::subagent::validate_agent_id_format(agent_id).is_ok() =>
+                {
+                    match ctx
+                        .teardown
+                        .controller
+                        .kill_agent(agent_id.to_owned())
+                        .await
+                    {
+                        Ok(outcome) => super::protocol::AgentEvent::ok(
+                            id,
+                            "kill_agent",
+                            Some(serde_json::json!({
+                                "target": outcome.target.uuid.as_str(),
+                                "result": outcome.result.as_str(),
+                                "killed": outcome.removed.iter().map(|agent| agent.as_str()).collect::<Vec<_>>(),
+                            })),
+                        ),
+                        Err(error) => {
+                            super::protocol::AgentEvent::err(id, "kill_agent", &error.to_string())
+                        }
+                    }
+                }
+                _ => super::protocol::AgentEvent::err(id, "kill_agent", "invalid agent_id"),
+            };
+            let mut writer = ctx.writer.lock().await;
+            let Ok(line) = serde_json::to_string(&event) else {
+                return Intercept::Handled;
+            };
+            let _ = super::uds_wire::write_event_line(&mut *writer, &line, ctx.wire_mode).await;
+            return Intercept::Handled;
         }
     }
     let writer = ConnectionAckWriter {

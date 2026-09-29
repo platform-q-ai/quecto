@@ -87,23 +87,24 @@ pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
             write_event(clients, client_id, id.as_deref(), "get_subagents", &ev).await;
             true
         }
-        Some("delete_all_subagents") => {
+        Some("kill_all_subagents" | "delete_all_subagents") => {
             // The fleet teardown is bounded but not instant (protocol ACK,
             // exit budget, fallback): answer from a detached task so the
             // reader stays responsive, and never behind the in-flight turn.
+            let command = value["type"]
+                .as_str()
+                .unwrap_or("kill_all_subagents")
+                .to_owned();
             let fleet = fleet.cloned();
             let clients = clients.clone();
             tokio::spawn(async move {
-                let ev =
-                    super::uds_delete_all_subagents::respond(fleet.as_ref(), id.as_deref()).await;
-                write_event(
-                    &clients,
-                    client_id,
+                let ev = super::uds_delete_all_subagents::respond_named(
+                    fleet.as_ref(),
                     id.as_deref(),
-                    "delete_all_subagents",
-                    &ev,
+                    &command,
                 )
                 .await;
+                write_event(&clients, client_id, id.as_deref(), &command, &ev).await;
             });
             true
         }

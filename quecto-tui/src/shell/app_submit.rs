@@ -46,8 +46,12 @@ impl App {
                     self.render_full();
                     return;
                 }
-                "/delete-all-subagents" => {
+                "/kill_all_subagents" => {
                     self.delete_all_subagents();
+                    return;
+                }
+                "/kill_agent" => {
+                    self.kill_selected_agent();
                     return;
                 }
                 "/workflow" => {

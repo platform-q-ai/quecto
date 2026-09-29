@@ -17,17 +17,24 @@ use crate::domain::subagent_teardown::ShutdownReason;
 
 use super::protocol::AgentEvent;
 
-const COMMAND: &str = "delete_all_subagents";
-
 /// Run the fleet teardown for an operator and present the correlated
 /// response. A harness without a fleet teardown (no subagent registry) has
 /// nothing to delete and answers with a correlated error.
+#[cfg(test)]
 pub(super) async fn respond(
     fleet: Option<&Arc<TerminateAllDelegatedAgents>>,
     id: Option<&str>,
 ) -> AgentEvent {
+    respond_named(fleet, id, "delete_all_subagents").await
+}
+
+pub(super) async fn respond_named(
+    fleet: Option<&Arc<TerminateAllDelegatedAgents>>,
+    id: Option<&str>,
+    command: &str,
+) -> AgentEvent {
     let Some(fleet) = fleet else {
-        return AgentEvent::err(id, COMMAND, "no sub-agent registry available");
+        return AgentEvent::err(id, command, "no sub-agent registry available");
     };
     match fleet
         .execute(TerminateAllDelegatedAgentsRequest {
@@ -37,9 +44,9 @@ pub(super) async fn respond(
         })
         .await
     {
-        Ok(outcome) => AgentEvent::ok(id, COMMAND, Some(present(&outcome))),
+        Ok(outcome) => AgentEvent::ok(id, command, Some(present(&outcome))),
         Err(FleetTeardownError::Interrupted) => {
-            AgentEvent::err(id, COMMAND, FleetTeardownError::Interrupted.to_string())
+            AgentEvent::err(id, command, FleetTeardownError::Interrupted.to_string())
         }
     }
 }

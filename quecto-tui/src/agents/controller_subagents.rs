@@ -13,9 +13,53 @@ const OPTIMISTIC_SUBAGENT_GRACE: Duration = Duration::from_secs(30);
 const DELETE_ALL_RECONCILE_ID: &str = "delete-all-reconcile";
 
 impl App {
+    pub(super) fn kill_selected_agent(&mut self) {
+        let Some(agent_id) = self.ac().roster.active_agent_id.clone() else {
+            self.notify(
+                "Select an individual subagent before using /kill_agent",
+                NotifyLevel::Error,
+            );
+            return;
+        };
+        assert!(
+            !agent_id.is_empty(),
+            "selected agent identity must be nonempty"
+        );
+        let Some(entry) = self.ac().roster.tracked.get(&agent_id) else {
+            self.notify(
+                "Selected subagent is unavailable; refresh the roster",
+                NotifyLevel::Error,
+            );
+            return;
+        };
+        let eligible = matches!(entry.info.status.as_str(), "starting" | "running" | "idle")
+            && !entry.optimistic
+            && entry
+                .info
+                .agent_uuid
+                .as_deref()
+                .is_some_and(|uuid| !uuid.is_empty());
+        if !eligible {
+            self.notify(
+                "Selected subagent is not a confirmed live target; refresh the roster",
+                NotifyLevel::Error,
+            );
+            return;
+        }
+        let target_uuid = entry
+            .info
+            .agent_uuid
+            .clone()
+            .expect("eligible target has a UUID");
+        self.send_command(Command::KillAgent {
+            id: Some("kill-agent".into()),
+            agent_id: target_uuid,
+        });
+    }
+
     pub(super) fn delete_all_subagents(&mut self) {
-        if !self.send_command(Command::DeleteAllSubagents {
-            id: Some("delete-all-subagents".to_string()),
+        if !self.send_command(Command::KillAllSubagents {
+            id: Some("kill-all-subagents".to_string()),
         }) {
             return;
         }
