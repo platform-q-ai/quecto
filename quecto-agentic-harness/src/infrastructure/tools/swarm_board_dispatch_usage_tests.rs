@@ -198,3 +198,23 @@ fn an_admission_read_that_warns_or_pauses_records_at_info() {
         }
     }
 }
+
+/// Only the usage methods raise their level for the budget's `paused` or
+/// `warned`: another method's decision of the same name keeps its own
+/// level, and a usage method's other decisions keep the method's.
+#[test]
+fn only_a_usage_method_is_raised_by_the_budgets_decision() {
+    use super::super::Level;
+    use super::super::method::Method;
+    for decision in ["paused", "warned"] {
+        assert_eq!(
+            Method::RequestAdmission.served_level(decision),
+            Level::Mutation
+        );
+        for method in [Method::Status, Method::Snapshot, Method::UsageReport] {
+            assert_eq!(method.served_level(decision), Level::Read, "{method:?}");
+        }
+    }
+    assert_eq!(Method::RequestAdmission.served_level("read"), Level::Read);
+    assert_eq!(Method::Pause.served_level("paused"), Level::Mutation);
+}

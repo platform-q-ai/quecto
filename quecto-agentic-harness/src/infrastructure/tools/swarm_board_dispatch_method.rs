@@ -295,12 +295,18 @@ impl Method {
     }
 
     /// The level a served call records at: [`Method::level`], raised to
-    /// [`Level::Mutation`] when the decision is the budget's own (`paused`
-    /// ends the run as `budget-exhausted`, `warned` writes the warning), so
-    /// a read that changes the run is visible at INFO.
+    /// [`Level::Mutation`] for a method the token budget applies in when
+    /// the decision is the budget's own (`paused` ends the run as
+    /// `budget-exhausted`, `warned` writes the warning), so a read that
+    /// changes the run is visible at INFO. Only the usage methods decide
+    /// `paused` or `warned` as the budget's; another method's decision of
+    /// the same name (`pause`'s `paused`) keeps its own level.
     pub(super) fn served_level(self, decision: &str) -> Level {
-        match decision {
-            "paused" | "warned" => Level::Mutation,
+        match (self, decision) {
+            (
+                Self::UsageBudget | Self::RecordRequest | Self::RequestAdmission,
+                "paused" | "warned",
+            ) => Level::Mutation,
             _ => self.level(),
         }
     }
