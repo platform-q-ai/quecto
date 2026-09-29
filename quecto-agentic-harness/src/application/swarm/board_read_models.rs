@@ -196,13 +196,18 @@ fn liveness_watch(
             }
             (OwnerState::Active, last) => {
                 // An active owner has `now - last` below the threshold, so
-                // it turns idle after `now`: `last + OWNER_IDLE_AFTER`
-                // rounds above `now` when the two times share a binade
-                // (Sterbenz: the subtraction is exact, and both times and
-                // the threshold are multiples of that binade's ulp), which
-                // holds for real clocks. Only times an edit wrote far
-                // apart can leave `None`, on which Python's `min` would
-                // raise; that owner is passed over here.
+                // it turns idle after `now`. The subtraction is exact when
+                // Sterbenz's condition holds (`last / 2 <= now <= 2 *
+                // last`), as it does for real clocks, so `last +
+                // OWNER_IDLE_AFTER` exceeds `now` as a real number, and
+                // rounding it cannot fall below `now`. It lands on `now`
+                // only in a half-ulp tie rounded down, which needs `last`
+                // below a binade boundary and `now` at or above it (for
+                // Unix times, the 2^31 s crossing in 2038, where the ulp
+                // doubles): vanishingly rare. There, or with times an edit
+                // wrote outside Sterbenz's condition, `None` is left, on
+                // which Python's `min` would raise; that owner is passed
+                // over here.
                 if let Some(at) = idle_transition(last, now, OWNER_IDLE_AFTER) {
                     next = Some(next.map_or(at, |earlier| earlier.min(at)));
                 }
