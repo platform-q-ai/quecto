@@ -252,5 +252,11 @@ mod corpus_tests;
 #[path = "redaction_encodings_tests.rs"]
 mod encodings_tests;
 #[cfg(test)]
+#[path = "redaction_linearity_tests.rs"]
+mod linearity_tests;
+#[cfg(test)]
 #[path = "redaction_newline_tests.rs"]
 mod newline_tests;
+#[cfg(test)]
+#[path = "redaction_round5_tests.rs"]
+mod round5_tests;
