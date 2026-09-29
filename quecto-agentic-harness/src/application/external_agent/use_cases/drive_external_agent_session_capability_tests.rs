@@ -2,6 +2,8 @@
 //! round 3): whether it names the user turns its results consumed (L1)
 //! and whether its interrupt withdraws the queued ones (L3); and the
 //! result and interrupt answers the earlier rounds left untested (L4).
+//! Round 4: init's word only admits steers (L1), and a refused interrupt
+//! ends the member at once (N2).
 //!
 //! What claude 2.1.280 says of itself (its bundle, see the PR):
 //! - `system/init` carries `claude_code_version` and `capabilities`, "so
@@ -31,11 +33,55 @@ async fn the_first_turn_can_be_steered_once_init_says_the_cli_names_turns() {
         Ok(PromptAccepted::Steered { turn: 1 })
     );
     assert_eq!(rig.wire.sent(), ["one", "two"]);
-    // Named from init: an id-less success is a turn of claude's own.
-    rig.feed(answered(&[], "completed", "claude's own")).await;
-    assert_eq!(rig.phase(), SessionPhase::Busy { turn: 1 });
     rig.feed(answered(&["u1", "u2"], "completed", "both")).await;
     assert_eq!(rig.phase(), SessionPhase::Idle);
+}
+
+// #2287 review round 4 (L1): init's version only admits steers. How a
+// result is read is learnt from a result that names its turns: until one
+// has, an id-less success answers the turn, which ends (no hang).
+#[tokio::test]
+async fn an_id_less_success_ends_the_turn_until_a_result_names_turns() {
+    let rig = started().await;
+    rig.session.prompt("one", None).await.unwrap();
+    rig.feed(capable_init()).await;
+    let SessionStep::Folded(step) = rig.feed(completed("first")).await else {
+        panic!("the result is folded")
+    };
+    assert!(step.turn_end.is_some(), "it ends turn 1");
+    assert_eq!(rig.phase(), SessionPhase::Idle);
+    assert_eq!(
+        rig.session.prompt("two", None).await,
+        Ok(PromptAccepted::Started { turn: 2 })
+    );
+}
+
+// #2287 review round 4 (L1): a steer taken on init's word, then an
+// id-less success. Either claude does not name turns after all (and
+// whether that result answered the steer is unknown) or it ran a turn of
+// its own and is still working on the member's. Ending the turn could
+// write the next prompt into a busy claude; holding it could wait for a
+// result that never comes. claude's state is unknown: the member ends.
+#[tokio::test]
+async fn a_steer_taken_on_init_s_word_then_an_id_less_success_ends_the_member() {
+    let rig = started().await;
+    rig.session.prompt("one", None).await.unwrap();
+    rig.feed(capable_init()).await;
+    rig.session.steer("two").await.unwrap();
+    rig.session.follow_up("three").await.unwrap();
+    let SessionStep::Folded(step) = rig.feed(completed("first")).await else {
+        panic!("the result is folded")
+    };
+    assert!(step.turn_end.is_none(), "the turn is not taken for ended");
+    assert_eq!(rig.step().await, Some(SessionStep::Abandoned { turn: 1 }));
+    assert_eq!(rig.phase(), SessionPhase::Ended);
+    assert_eq!(rig.wire.sent(), ["one", "two"], "nothing more is written");
+    assert!(rig.wire.dropped());
+    assert!(rig.records.all().contains(&SessionRecord::Abandoned {
+        turn: 1,
+        dropped_follow_ups: 1,
+    }));
+    assert_eq!(rig.step().await, None);
 }
 
 // L1 fallback: an init from an older CLI, or one naming no version, says
@@ -133,37 +179,33 @@ async fn an_id_less_result_without_is_error_ends_the_running_turn() {
 }
 
 // L4: an interrupt claude refuses (`accepted: false`) withdraws nothing,
-// whatever its answer lists: the turn still owes its results, and the
-// interrupt's grace still bounds it.
+// whatever its answer lists. #2287 review round 4 (N2): claude will not
+// stop a turn that still owes a result, so the member ends at once rather
+// than after the interrupt's grace.
 #[tokio::test(start_paused = true)]
-async fn a_refused_interrupt_withdraws_nothing() {
+async fn a_refused_interrupt_ends_the_member_at_once() {
     let rig = named_started().await;
     rig.session.prompt("one", None).await.unwrap();
     rig.session.steer("two").await.unwrap();
     rig.session.abort().await.unwrap();
     rig.feed(answered(&["u2"], "aborted_tools", "stopped"))
         .await;
+    let began = tokio::time::Instant::now();
     rig.feed(ExternalAgentEvent::InterruptAnswered(InterruptReceipt {
         accepted: false,
         cancelled: vec!["u3".into()],
     }))
     .await;
-    assert_eq!(
-        rig.phase(),
-        SessionPhase::Interrupting { turn: 2 },
-        "the steer is still owed"
-    );
-    assert_eq!(
-        rig.paused_step().await,
-        Some(SessionStep::Abandoned { turn: 2 })
-    );
+    assert_eq!(rig.step().await, Some(SessionStep::Abandoned { turn: 2 }));
+    assert!(began.elapsed() < INTERRUPT, "not after the grace");
     assert_eq!(rig.phase(), SessionPhase::Ended);
+    assert!(rig.wire.dropped());
 }
 
-// L4: a refused interrupt followed by the result it owes ends the turn as
-// usual.
+// N2: an empty refusal (an older CLI's error answer) ends it too; the
+// result that comes after is never read.
 #[tokio::test]
-async fn a_refused_interrupt_then_the_owed_result_ends_the_turn() {
+async fn a_refused_interrupt_leaves_no_result_to_wait_for() {
     let rig = named_started().await;
     rig.session.prompt("one", None).await.unwrap();
     rig.session.abort().await.unwrap();
@@ -171,9 +213,9 @@ async fn a_refused_interrupt_then_the_owed_result_ends_the_turn() {
         InterruptReceipt::default(),
     ))
     .await;
-    assert_eq!(rig.phase(), SessionPhase::Interrupting { turn: 2 });
-    rig.feed(answered(&["u2"], "completed", "finished anyway"))
-        .await;
-    assert_eq!(rig.phase(), SessionPhase::Idle);
-    assert!(!rig.wire.dropped(), "the member lives on");
+    assert_eq!(rig.step().await, Some(SessionStep::Abandoned { turn: 2 }));
+    rig.wire
+        .emit(answered(&["u2"], "completed", "finished anyway"));
+    assert_eq!(rig.step().await, None);
+    assert_eq!(rig.phase(), SessionPhase::Ended);
 }
