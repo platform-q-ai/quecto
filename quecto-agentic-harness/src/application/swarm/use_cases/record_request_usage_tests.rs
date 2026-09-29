@@ -2,7 +2,8 @@ use serde_json::{Value, json};
 
 use super::RecordRequestUsage;
 use crate::application::swarm::board_test_support::{
-    BoardState, CompactEncoding, MemoryBoard, SteppingClock, member_row, running_board, usage,
+    BoardState, CompactEncoding, MemoryBoard, SteppingClock, UsageReads, member_row, running_board,
+    usage,
 };
 use crate::application::swarm::dto::{
     BudgetEffect, NewRequestUsage, RecordRequestUsageRequest, RequestDelivery,
@@ -201,5 +202,35 @@ fn the_budget_warns_once_then_pauses() {
     assert_eq!(
         state.events[1].actor, "worker",
         "the recording member ends it"
+    );
+}
+
+/// #2340: a recorded request reads the ledger once, for the budget's
+/// standing, and never the whole usage report (its per-member aggregates
+/// and latest observations), whose cost grows with the run; the receipt
+/// reuses the totals the budget decided on, even when the budget warns
+/// and pauses the run in between.
+#[test]
+fn a_recorded_request_reads_the_ledger_once_and_never_the_whole_report() {
+    let mut state = with_worker();
+    state.usage = Some(usage(
+        json!({"token_limit": 100, "strict_unknown": true, "warned": false}),
+        0,
+        0,
+    ));
+    let (board, service) = service(state);
+    let mut expected = UsageReads::default();
+    for (request_id, tokens) in [("r1", 70), ("r2", 20)] {
+        let mut observed = measured();
+        observed["request_id"] = json!(request_id);
+        observed["context_input_tokens"] = json!(tokens);
+        service.execute(record("worker", observed)).unwrap();
+        expected.standings += 1;
+        assert_eq!(board.snapshot().usage_reads, expected, "{request_id}");
+    }
+    assert_eq!(
+        board.snapshot().run.unwrap().record.status,
+        Some(RunState::PAUSED),
+        "the second request paused the run, and its receipt listed blockers"
     );
 }

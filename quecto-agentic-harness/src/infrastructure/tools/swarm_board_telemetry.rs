@@ -284,6 +284,7 @@ pub(super) fn observation(
         lock_wait_us: measure.map(|measure| micros(measure.lock_wait)),
         busy_wait_us: measure.map(|measure| micros(measure.busy_wait)),
         busy: measure.map(|measure| measure.busy),
+        commit_us: None,
         cursor_moved: served.and_then(|served| served.cursor_moved),
         result_bytes: match (call.outcome, served) {
             (Ok(_), Some(served)) => rendered_bytes(&served.value),

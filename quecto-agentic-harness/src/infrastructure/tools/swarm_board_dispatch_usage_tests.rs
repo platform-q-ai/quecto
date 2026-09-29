@@ -138,6 +138,7 @@ fn usage_calls_record_their_decisions_without_argument_text() {
             format!("op=\"{op}\""),
             format!("outcome=\"{outcome}\""),
             format!("decision=\"{decision}\""),
+            "commit_us=".to_owned(),
             "member=\"parent\"".to_owned(),
             "duration_us=".to_owned(),
         ] {
@@ -328,4 +329,65 @@ fn a_retry_or_tool_gate_read_that_warns_or_pauses_records_the_budget() {
             assert!(record.contains(&field), "{field} missing from {record}");
         }
     }
+/// A request record shaped as the harness sends one (about 1 KiB
+/// encoded, as `RequestObservation` with its `runtime` is).
+fn harness_record(index: usize) -> Value {
+    json!({
+        "request_id": format!("{index:08}-7c1d-4f7e-9d2a-5b6c7d8e9f00"),
+        "started_unix_ms": 1_790_000_000_000_u64, "finished_unix_ms": 1_790_000_004_000_u64,
+        "attempt_diagnostics": [{"attempt": 1, "status": 200, "duration_ms": 4000}],
+        "model": "claude-opus-5-5", "provider": "anthropic", "outcome": "succeeded",
+        "error_class": null, "input_tokens": 1200, "context_input_tokens": 1,
+        "output_tokens": 1, "cache_read_tokens": 39_000, "cache_write_tokens": 700,
+        "estimated_cost_micro_usd": 21_000, "estimated_context_tokens": 41_500,
+        "instrumented_attempts": 1, "oauth_retries": 0, "duration_ms": 4000,
+        "first_token_ms": 900, "harness_prefix_sha256": "0f".repeat(32),
+        "harness_prefix_bytes": 18_000, "harness_prefix_unchanged": true,
+        "runtime": {"process_instance_id": "7f0c1e7e-8b6a-4c3e-9a55-1f2e3d4c5b6a",
+            "package_version": "0.107.190", "build_source_revision": "a".repeat(40),
+            "build_dirty": false, "executable_digest_pending": false,
+            "executable_sha256": "ab".repeat(32)},
+    })
+}
+
+/// #2340: recording a request costs the same at the end of a long run as
+/// at its start. Before the fix each call read the whole usage report
+/// twice (both aggregates over the ledger, a sort by actor, and the ten
+/// latest observations decoded), so its cost grew with every request the
+/// run recorded: about 1.1 ms per thousand, three times its starting cost
+/// by the thousandth. The bound is generous (a loaded CI runner, a board
+/// on a disk whose `fsync` jitters): the latest hundred calls' p95 within
+/// 2.5 times the first hundred's, over two thousand calls.
+#[test]
+fn recording_a_request_does_not_grow_with_the_ledger() {
+    const CALLS: usize = 2_000;
+    const WINDOW: usize = 100;
+    let (_dir, handles) = board(1_000.0);
+    running(&handles);
+    let p95 = |samples: &mut Vec<std::time::Duration>| {
+        samples.sort();
+        samples[samples.len() * 95 / 100 - 1]
+    };
+    let (mut first, mut last) = (Vec::new(), Vec::new());
+    for index in 0..CALLS {
+        let started = std::time::Instant::now();
+        call(
+            &handles,
+            "parent",
+            "_record_request",
+            json!([harness_record(index)]),
+        )
+        .unwrap();
+        let elapsed = started.elapsed();
+        if index < WINDOW {
+            first.push(elapsed);
+        } else if index >= CALLS - WINDOW {
+            last.push(elapsed);
+        }
+    }
+    let (first, last) = (p95(&mut first), p95(&mut last));
+    assert!(
+        last <= first * 5 / 2,
+        "the last {WINDOW} calls' p95 {last:?} is beyond 2.5 times the first {WINDOW}'s {first:?}"
+    );
 }

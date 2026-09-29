@@ -326,3 +326,94 @@ fn the_ledger_count_reads_every_row() {
         })
         .unwrap();
 }
+
+/// #2340: the standing is the report's budget and its two totals, by the
+/// same SQL: on a fresh board it creates the same tables as the report
+/// (and writes no budget row); over stored requests, a REAL or negative
+/// token count only an edit holds included, each total is the report's,
+/// value and type. It reads nothing else, so a latest observation that
+/// is not JSON, or an actor that is not UTF-8, which the report refuses,
+/// does not refuse it.
+#[test]
+fn the_standing_is_the_reports_budget_and_totals_by_the_same_sql() {
+    let standing = |repository: &SqliteBoardRepository| {
+        let mut read = None;
+        repository
+            .atomic(false, &mut |transaction| {
+                read = Some(transaction.usage_standing()?);
+                Ok(())
+            })
+            .unwrap();
+        read.unwrap()
+    };
+    let report = |repository: &SqliteBoardRepository| {
+        let mut read = None;
+        let answered = repository.atomic(false, &mut |transaction| {
+            read = Some(transaction.usage_report()?);
+            Ok(())
+        });
+        answered.map(|()| read.unwrap())
+    };
+    let (_dir, database, repository) = usage_board();
+    let before = tables(&database);
+    let fresh = standing(&repository);
+    assert_eq!(
+        fresh.budget.to_string(),
+        r#"{"token_limit":null,"strict_unknown":false,"warned":false}"#
+    );
+    assert_eq!(
+        (fresh.observed_tokens, fresh.unknown_usage_requests),
+        (json!(0), json!(0))
+    );
+    let (_other, other_database, other) = usage_board();
+    report(&other).unwrap();
+    assert_eq!(
+        tables(&database),
+        tables(&other_database),
+        "the standing creates the report's tables"
+    );
+    assert!(tables(&database).len() > before.len());
+    assert!(raw_rows(&database, "SELECT * FROM usage_budget").is_empty());
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO usage_budget VALUES(1, '{\"token_limit\": 50, \"strict_unknown\": true, \"warned\": false}');
+             INSERT INTO request_usage VALUES('r1','a','{}',7,1,1,NULL,NULL,NULL,NULL);
+             INSERT INTO request_usage VALUES('r2','b','{}',5,0,1,NULL,NULL,NULL,NULL);",
+        )
+        .unwrap();
+    for edit in [
+        "",
+        "INSERT INTO request_usage VALUES('r3','a','{}',1.5,0,1,NULL,NULL,NULL,NULL);",
+        "INSERT INTO request_usage VALUES('r4','a','{}',-30,2,1,NULL,NULL,NULL,NULL);",
+    ] {
+        connection.execute_batch(edit).unwrap();
+        let (standing, report) = (standing(&repository), report(&repository).unwrap());
+        assert_eq!(standing.budget, report.budget, "{edit}");
+        assert_eq!(
+            [
+                Some(&standing.observed_tokens),
+                Some(&standing.unknown_usage_requests)
+            ],
+            [
+                report.totals.get("observed_tokens"),
+                report.totals.get("unknown_usage_requests")
+            ],
+            "{edit}"
+        );
+    }
+    let summed = standing(&repository);
+    assert_eq!(
+        (summed.observed_tokens, summed.unknown_usage_requests),
+        (json!(-16.5), json!(3)),
+        "a REAL sum passes through as the report's does"
+    );
+    for edit in [
+        "INSERT INTO request_usage VALUES('r5','a','x',1,0,1,NULL,NULL,NULL,NULL);",
+        "INSERT INTO request_usage VALUES('r6',CAST(x'ff' AS TEXT),'{}',1,0,1,NULL,NULL,NULL,NULL);",
+    ] {
+        connection.execute_batch(edit).unwrap();
+        assert!(report(&repository).is_err(), "{edit}");
+        standing(&repository);
+    }
+}

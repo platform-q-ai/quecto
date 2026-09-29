@@ -335,6 +335,50 @@ fn outside_edited_control_records() {
         ]),
         refused("usage budget")
     );
+    // #2340: the receipt and the budget read only the budget and the two
+    // totals, so a ledger row whose payload is not JSON, or whose actor is
+    // not UTF-8, is not read by them: `_control_status` and
+    // `_record_request` answer, where Python's `usage_report` raises a
+    // `JSONDecodeError` for the payload among the ten latest and refuses
+    // the actor with `Could not decode to UTF-8` (the report itself still
+    // refuses both, as Python does).
+    for edit in [
+        "INSERT INTO request_usage VALUES('e','parent','x',1,0,1,NULL,NULL,NULL,NULL)",
+        "INSERT INTO request_usage VALUES('e',CAST(x'ff' AS TEXT),'{}',1,0,1,NULL,NULL,NULL,NULL)",
+    ] {
+        for (method, args) in [
+            ("_control_status", json!([])),
+            (
+                "_record_request",
+                json!([{"request_id": "r", "instrumented_attempts": 1, "outcome": "failed"}]),
+            ),
+        ] {
+            let answered = run_rust(&[
+                create(5),
+                at(0.5, "parent", "usage_report", json!([])),
+                sql(edit),
+                at(1.0, "parent", method, args),
+            ]);
+            let Outcome::Ok(receipt) = answered else {
+                panic!("{edit}: {method}: {answered:?}");
+            };
+            assert_eq!(
+                receipt["budget"]["observed_tokens"],
+                json!(1),
+                "{edit}: {method}"
+            );
+        }
+        let reported = run_rust(&[
+            create(5),
+            at(0.5, "parent", "usage_report", json!([])),
+            sql(edit),
+            at(1.0, "parent", "usage_report", json!([])),
+        ]);
+        assert!(
+            matches!(reported, Outcome::Refused(_)),
+            "{edit}: {reported:?}"
+        );
+    }
     // A budget without `token_limit`, or without `strict_unknown` where the
     // limit is the one asked for, meets `usage_budget`'s idempotence check,
     // where Python raises a `KeyError`.

@@ -16,7 +16,7 @@ use super::py_json::{self, PyJson};
 use super::repository::{SqliteBoard, cell_at, failed, fetched};
 use super::repository_tasks::loaded;
 use crate::application::swarm::dto::{
-    NewRequestUsage, RecentRequest, StoredRequestUsage, UsageReport, UsageRow,
+    NewRequestUsage, RecentRequest, StoredRequestUsage, UsageReport, UsageRow, UsageStanding,
 };
 use crate::application::swarm::ports::BoardUsage;
 use crate::domain::swarm::{BoardError, RefusalKind};
@@ -79,6 +79,14 @@ impl BoardUsage for SqliteBoard<'_> {
                 "SELECT actor member, {AGGREGATES} FROM request_usage GROUP BY actor ORDER BY actor"
             )),
         }
+    }
+
+    fn usage_standing(&self) -> Result<UsageStanding, BoardError> {
+        // #2340 red: not yet implemented.
+        Err(BoardError::new(
+            RefusalKind::Internal,
+            "usage_standing is not implemented yet",
+        ))
     }
 
     fn usage_budget(&self) -> Result<Value, BoardError> {

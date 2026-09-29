@@ -57,6 +57,8 @@ pub struct BoardState {
     pub usage: Option<UsageReport>,
     /// The `request_usage` rows written, in order.
     pub request_usage: Vec<NewRequestUsage>,
+    /// How often the ledger was read, and how (#2340).
+    pub usage_reads: UsageReads,
     /// The `evidence` rows, each with the actor that recorded it.
     pub evidence: Vec<(String, EvidenceEntry)>,
     pub messages: Vec<StoredMessage>,
@@ -67,6 +69,15 @@ pub struct BoardState {
     /// A board an older writer created, lacking a column only a write
     /// transaction adds (#2338); an `atomic` adds them.
     pub columns_stale: bool,
+}
+
+/// The ledger reads a board served (#2340): each `usage_report` reads the
+/// whole ledger (both aggregates and the latest observations), each
+/// `usage_standing` one aggregate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UsageReads {
+    pub whole_reports: usize,
+    pub standings: usize,
 }
 
 /// A journal shared by the board and the id source, so a test reads the
