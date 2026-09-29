@@ -1,10 +1,10 @@
 //! The coordination board's graph (#2270, epic #2265): the only place its
 //! use cases are constructed. `build_swarm_board_handles` binds the SQLite
 //! repository of one board file, the wall clock and random ids; `main`
-//! injects it through `CliComposition.swarm_board`, and S13 threads it to
-//! `SwarmContext` and `HostedStore`. `build_swarm_board_handles_with`
-//! composes the same graph over injected ports, for the differential
-//! harness's deterministic clock and ids.
+//! injects it through `CliComposition.swarm_board`, and S13 carries it on
+//! `CliContext` and threads it to `SwarmContext` and `HostedStore`.
+//! `build_swarm_board_handles_with` composes the same graph over injected
+//! ports, for the differential harness's deterministic clock and ids.
 use std::sync::Arc;
 
 use crate::application::swarm::dto::BoardLocation;

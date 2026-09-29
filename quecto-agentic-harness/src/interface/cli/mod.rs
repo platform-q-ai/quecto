@@ -340,9 +340,6 @@ pub struct CliContext {
     /// the children it launched when it ends in an orderly way. Without it
     /// the run returns and its children run their parent-loss shutdown.
     pub run_end_fleet: Option<run_end_fleet::RunEndFleetBuilder>,
-    /// Composition's coordination-board handles builder (#2270). Carried
-    /// for the swarm tools, which S13 wires to it; nothing reads it yet.
-    pub swarm_board: Option<swarm_board_handles::SwarmBoardHandlesBuilder>,
     /// Output reaches the real terminal (`run`, not `run_with_output`): a
     /// one-shot run writes its answer out before it settles its children.
     pub live_output: bool,
@@ -427,6 +424,9 @@ pub struct CliComposition {
     pub container_init: ContainerInitBuilder,
     pub container_status: ContainerStatusBuilder,
     pub run_end_fleet: run_end_fleet::RunEndFleetBuilder,
+    /// Composition's coordination-board handles builder (#2270). `run`
+    /// does not carry it onto `CliContext` yet: nothing would read it until
+    /// S13 (#2278) threads it through `CliContext` into `SwarmContext`.
     pub swarm_board: swarm_board_handles::SwarmBoardHandlesBuilder,
 }
 
@@ -463,7 +463,6 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         container_init: Some(composition.container_init),
         container_status: Some(composition.container_status),
         run_end_fleet: Some(composition.run_end_fleet),
-        swarm_board: Some(composition.swarm_board),
         live_output: true,
         ..Default::default()
     };
