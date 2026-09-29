@@ -1,10 +1,16 @@
-//! RED STUB (#2271).
+//! `Workbench._record_launch` (#2271): the launcher records the process it
+//! started for a member, before the member activates itself.
 use std::sync::Arc;
 
+use crate::application::swarm::board_membership::{alive, launched_elsewhere};
+use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::RecordMemberLaunchRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{Access, BoardError};
 
+/// Through the operation gate (`active=False`): the member's row under the
+/// reservation must be alive (`unknown_member_status_is_not_alive`,
+/// #2295), and a process already recorded must be this one. No event.
 pub struct RecordMemberLaunch {
     repository: Arc<dyn BoardRepository>,
     clock: Arc<dyn Clock + Send + Sync>,
@@ -16,10 +22,26 @@ impl RecordMemberLaunch {
     }
 
     /// # Errors
-    /// Not implemented yet.
-    pub fn execute(&self, _request: RecordMemberLaunchRequest) -> Result<(), BoardError> {
-        let _stubbed = (&self.repository, &self.clock);
-        Err(BoardError::new("not implemented (#2271)"))
+    /// An authorisation refusal, `stale launch reservation`, `conflicting
+    /// launch identity`, or the store's.
+    pub fn execute(&self, request: RecordMemberLaunchRequest) -> Result<(), BoardError> {
+        let member = request.member.as_str();
+        operation(
+            &*self.repository,
+            &*self.clock,
+            &request.actor,
+            Access::default(),
+            |transaction, _run| {
+                let row = transaction.member_row(member, Some(&request.reservation))?;
+                let Some(row) = row.filter(alive) else {
+                    return Err(BoardError::new("stale launch reservation"));
+                };
+                if launched_elsewhere(&row, &request.launch) {
+                    return Err(BoardError::new("conflicting launch identity"));
+                }
+                transaction.record_launch(member, &request.launch)
+            },
+        )
     }
 }
 

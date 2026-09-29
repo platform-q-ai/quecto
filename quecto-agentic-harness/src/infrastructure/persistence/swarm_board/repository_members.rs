@@ -1,13 +1,13 @@
 //! `BoardMembers` over the SQLite store (#2270, #2271): the `members` rows
 //! by Python's SQL (`swarm.py`, `swarm_repository.py`), split out of
 //! `repository.rs` to keep each file within its size budget.
-use rusqlite::OptionalExtension;
 use rusqlite::types::Value as SqlValue;
+use rusqlite::{OptionalExtension, params};
 
 use super::binding;
 use super::repository::{
     ACTIVE_CLAIM, PYTHON_PID_PARAMETER, PYTHON_SOCKET_PARAMETER, PYTHON_STARTED_PARAMETER,
-    SqliteBoard, failed, fetched, loose, member_row,
+    SqliteBoard, failed, fetched, loose, member_row as row_dict,
 };
 use crate::application::swarm::dto::{LaunchIdentity, MemberClaimCounts, MemberRow, NewMember};
 use crate::application::swarm::ports::BoardMembers;
@@ -35,7 +35,7 @@ impl BoardMembers for SqliteBoard<'_> {
             .connection
             .prepare("SELECT * FROM members")
             .map_err(failed)?;
-        let rows = statement.query_map([], member_row).map_err(failed)?;
+        let rows = statement.query_map([], row_dict).map_err(failed)?;
         rows.collect::<rusqlite::Result<_>>().map_err(failed)
     }
 
@@ -91,39 +91,71 @@ impl BoardMembers for SqliteBoard<'_> {
 
     fn member_row(
         &self,
-        _id: &str,
-        _reservation: Option<&str>,
+        id: &str,
+        reservation: Option<&str>,
     ) -> Result<Option<MemberRow>, BoardError> {
-        Err(BoardError::new("not implemented (#2271)"))
+        let found = match reservation {
+            None => self
+                .connection
+                .query_row("SELECT * FROM members WHERE id=?", [id], row_dict),
+            Some(reservation) => self.connection.query_row(
+                "SELECT * FROM members WHERE id=? AND reservation=?",
+                [id, reservation],
+                row_dict,
+            ),
+        };
+        found.optional().map_err(failed)
     }
 
     fn reserve_member(
         &self,
-        _id: &str,
-        _reservation: &str,
-        _launcher: &str,
+        id: &str,
+        reservation: &str,
+        launcher: &str,
     ) -> Result<(), BoardError> {
-        Err(BoardError::new("not implemented (#2271)"))
+        self.write(
+            "INSERT INTO members(id,reservation,status,pid,started,socket,launcher) VALUES(?,?,'reserved',NULL,NULL,NULL,?)",
+            params![id, reservation, launcher],
+        )
     }
 
     fn activate_member(
         &self,
-        _id: &str,
-        _launch: &LaunchIdentity,
-        _socket: Option<&str>,
+        id: &str,
+        launch: &LaunchIdentity,
+        socket: Option<&str>,
     ) -> Result<(), BoardError> {
-        Err(BoardError::new("not implemented (#2271)"))
+        self.write(
+            "UPDATE members SET status='live',pid=?,started=?,socket=? WHERE id=?",
+            params![launch.pid, launch.started, socket, id],
+        )
     }
 
-    fn record_launch(&self, _id: &str, _launch: &LaunchIdentity) -> Result<(), BoardError> {
-        Err(BoardError::new("not implemented (#2271)"))
+    fn record_launch(&self, id: &str, launch: &LaunchIdentity) -> Result<(), BoardError> {
+        self.write(
+            "UPDATE members SET pid=?,started=? WHERE id=?",
+            params![launch.pid, launch.started, id],
+        )
     }
 
-    fn mark_member_dead_unlaunched(&self, _id: &str) -> Result<(), BoardError> {
-        Err(BoardError::new("not implemented (#2271)"))
+    fn mark_member_dead_unlaunched(&self, id: &str) -> Result<(), BoardError> {
+        self.write("UPDATE members SET status='dead' WHERE id=?", params![id])
     }
 
-    fn set_socket(&self, _id: &str, _socket: Option<&str>) -> Result<(), BoardError> {
-        Err(BoardError::new("not implemented (#2271)"))
+    fn set_socket(&self, id: &str, socket: Option<&str>) -> Result<(), BoardError> {
+        self.write(
+            "UPDATE members SET socket=? WHERE id=?",
+            params![socket, id],
+        )
+    }
+}
+
+impl SqliteBoard<'_> {
+    /// One statement of Python's SQL with typed parameters.
+    fn write(&self, sql: &str, parameters: &[&dyn rusqlite::ToSql]) -> Result<(), BoardError> {
+        self.connection
+            .execute(sql, parameters)
+            .map(|_| ())
+            .map_err(failed)
     }
 }

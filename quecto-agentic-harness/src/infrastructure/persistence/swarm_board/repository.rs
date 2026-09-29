@@ -137,7 +137,13 @@ impl BoardRuns for SqliteBoard<'_> {
     }
 
     fn run_coordinator(&self) -> Result<Option<Option<String>>, BoardError> {
-        Err(BoardError::new("not implemented (#2271)"))
+        self.connection
+            .query_row("SELECT coordinator FROM run", [], |row| {
+                fetched(row)?;
+                text(row, "coordinator")
+            })
+            .optional()
+            .map_err(failed)
     }
 
     fn insert_run(&self, run: &NewRun) -> Result<(), BoardError> {

@@ -1,10 +1,14 @@
-//! RED STUB (#2271).
+//! `Workbench._socket` (#2271): a member registers the endpoint its harness
+//! listens on.
 use std::sync::Arc;
 
+use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::RegisterMemberSocketRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{Access, BoardError};
 
+/// Through the operation gate (`active=False`): the actor's own row takes
+/// the socket. No event.
 pub struct RegisterMemberSocket {
     repository: Arc<dyn BoardRepository>,
     clock: Arc<dyn Clock + Send + Sync>,
@@ -16,10 +20,16 @@ impl RegisterMemberSocket {
     }
 
     /// # Errors
-    /// Not implemented yet.
-    pub fn execute(&self, _request: RegisterMemberSocketRequest) -> Result<(), BoardError> {
-        let _stubbed = (&self.repository, &self.clock);
-        Err(BoardError::new("not implemented (#2271)"))
+    /// An authorisation refusal, or the store's.
+    pub fn execute(&self, request: RegisterMemberSocketRequest) -> Result<(), BoardError> {
+        let actor = request.actor.as_str();
+        operation(
+            &*self.repository,
+            &*self.clock,
+            actor,
+            Access::default(),
+            |transaction, _run| transaction.set_socket(actor, request.socket.as_deref()),
+        )
     }
 }
 

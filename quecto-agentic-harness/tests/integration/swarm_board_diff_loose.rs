@@ -48,7 +48,10 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   fetches the whole run row and takes a status or coordinator that is
 ///   not text (a BLOB, or a number without TEXT affinity) as not the setup
 ///   placeholder;
-///   `_bootstrap` reads no column; a NULL run or member status, a NULL
+///   `_bootstrap` reads no column; the join (#2271) reads the
+///   coordinator column alone and takes one that is not text (a BLOB, or
+///   a number without TEXT affinity) as nobody, where Python would act as
+///   that value; a NULL run or member status, a NULL
 ///   coordinator, a NULL member id, added member columns and loosely typed
 ///   pids are read as they are stored.
 /// - `real_to_text_digits` (#2269 review M1, pinned by

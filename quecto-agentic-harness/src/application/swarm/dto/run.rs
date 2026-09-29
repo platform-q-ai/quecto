@@ -112,9 +112,10 @@ pub struct RunStatusView {
 /// may be an INTEGER, a REAL or TEXT (epic P3).
 ///
 /// The row is keyed by column name for `dict(row)` fidelity (#2270 round-4
-/// review N2): `_snapshot` answers it whole, in table order. No production
-/// code reads a column by name; only the test support's in-memory board
-/// does, through [`MemberRow::get`] and [`MemberRow::text`].
+/// review N2): `_snapshot` and `_admit` answer it whole, in table order,
+/// and the membership use cases (#2271) read its `status`, `reservation`,
+/// `pid` and `started` by name, as Python's `row[...]` does, through
+/// [`MemberRow::get`] and [`MemberRow::text`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemberRow {
     pub columns: Vec<(String, Value)>,
