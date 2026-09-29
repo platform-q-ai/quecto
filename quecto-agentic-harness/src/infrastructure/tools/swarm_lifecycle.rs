@@ -149,7 +149,12 @@ async fn send_wake_hints(
     warnings
 }
 
-struct RuntimeProcesses<'a>(&'a SwarmContext);
+/// The process's local-inference suspension, as composition bound it.
+type LocalSuspend = std::sync::Arc<dyn Fn(RunStatus, u64) + Send + Sync>;
+
+/// This process's executions and inference, and the suspension of its
+/// local inference that composition bound, if any.
+struct RuntimeProcesses<'a>(&'a SwarmContext, Option<LocalSuspend>);
 impl ProcessControl for RuntimeProcesses<'_> {
     fn suspend_local_executions(&self, snapshot: &crate::domain::swarm::Snapshot) {
         super::swarm::suspend_context_jobs(self.0, snapshot.control_generation);
@@ -157,7 +162,7 @@ impl ProcessControl for RuntimeProcesses<'_> {
     fn suspend_local_inference(&self, snapshot: &crate::domain::swarm::Snapshot) {
         // The suspension verifies the run's control status on the board
         // before it acts, so it runs off the async workers (#2278 L6).
-        if let Some(cancel) = LOCAL_SUSPEND.get() {
+        if let Some(cancel) = &self.1 {
             let (cancel, status, generation) =
                 (cancel.clone(), snapshot.status, snapshot.control_generation);
             run_off_the_workers(move || cancel(status, generation));
@@ -210,6 +215,14 @@ pub fn bind_member_termination(
 }
 
 pub async fn settle(context: SwarmContext) -> Result<Value, DomainError> {
+    settle_suspending(context, local_suspend()).await
+}
+
+/// [`settle`], suspending this process's local inference through `suspend`.
+async fn settle_suspending(
+    context: SwarmContext,
+    suspend: Option<LocalSuspend>,
+) -> Result<Value, DomainError> {
     let ctx = context.clone();
     let snapshot = super::call_work::spawn_blocking_in_call(move || ctx.snapshot())
         .await
@@ -219,7 +232,7 @@ pub async fn settle(context: SwarmContext) -> Result<Value, DomainError> {
         .settle(
             &snapshot,
             &context.member,
-            &RuntimeProcesses(&context),
+            &RuntimeProcesses(&context, suspend),
             &LinuxProcesses,
         )
         .await?;
@@ -305,7 +318,7 @@ pub fn supervise(
                 if let Err(error) = runtime.block_on(context.lifecycle.settle(
                     &snapshot,
                     &context.member,
-                    &RuntimeProcesses(&context),
+                    &RuntimeProcesses(&context, local_suspend()),
                     &LinuxProcesses,
                 )) {
                     tracing::error!(%error, "swarm terminal settlement failed");
@@ -389,13 +402,13 @@ fn watch_until_ended(context: &SwarmContext, runtime: &tokio::runtime::Runtime) 
             SettlementStep::Wait => runtime.block_on(context.lifecycle.settle(
                 &snapshot,
                 &context.member,
-                &RuntimeProcesses(context),
+                &RuntimeProcesses(context, local_suspend()),
                 &LinuxProcesses,
             )),
             SettlementStep::EndSelf => runtime.block_on(context.lifecycle.settle_overdue(
                 &snapshot,
                 &context.member,
-                &RuntimeProcesses(context),
+                &RuntimeProcesses(context, local_suspend()),
             )),
         };
         match (outcome, step) {
@@ -457,12 +470,16 @@ impl crate::application::providers::ports::RequestAdmission for SwarmContext {
     }
 }
 
-static LOCAL_SUSPEND: std::sync::OnceLock<std::sync::Arc<dyn Fn(RunStatus, u64) + Send + Sync>> =
-    std::sync::OnceLock::new();
+static LOCAL_SUSPEND: std::sync::OnceLock<LocalSuspend> = std::sync::OnceLock::new();
+
+/// The local-inference suspension composition bound, if it bound one.
+fn local_suspend() -> Option<LocalSuspend> {
+    LOCAL_SUSPEND.get().cloned()
+}
 
 /// The CLI composition root supplies active-turn cancellation, without coupling
 /// process lifecycle adapters to the UDS cancellation representation.
-pub fn bind_local_suspension(cancel: std::sync::Arc<dyn Fn(RunStatus, u64) + Send + Sync>) {
+pub fn bind_local_suspension(cancel: LocalSuspend) {
     let _ = LOCAL_SUSPEND.set(cancel);
 }
 
@@ -564,7 +581,7 @@ fn settle_observed_snapshot(
             if let Err(error) = runtime.block_on(context.lifecycle.settle(
                 snapshot,
                 &context.member,
-                &RuntimeProcesses(context),
+                &RuntimeProcesses(context, local_suspend()),
                 &LinuxProcesses,
             )) {
                 tracing::error!(%error, "swarm suspension failed");

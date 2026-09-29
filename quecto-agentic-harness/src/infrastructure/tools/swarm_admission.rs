@@ -106,3 +106,7 @@ impl Drop for LaunchReservation {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "swarm_admission_tests.rs"]
+mod tests;

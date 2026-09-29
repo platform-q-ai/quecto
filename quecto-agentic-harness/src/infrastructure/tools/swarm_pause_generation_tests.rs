@@ -28,7 +28,7 @@ async fn stale_pause_settlement_preserves_resumed_python_job() {
     crate::application::swarm::settle(
         &old,
         &context.member,
-        &RuntimeProcesses(&context),
+        &RuntimeProcesses(&context, local_suspend()),
         &super::LinuxProcesses,
     )
     .await
@@ -59,7 +59,7 @@ async fn stale_pause_settlement_preserves_resumed_python_job() {
 async fn runtime_never_signals_a_member_by_pid_when_it_is_neither_reachable_nor_owned() {
     use std::os::unix::process::CommandExt;
     let (_directory, context) = crate::swarm_control_fixture::context();
-    let processes = RuntimeProcesses(&context);
+    let processes = RuntimeProcesses(&context, local_suspend());
     let mut child = std::process::Command::new("/bin/sleep")
         .arg("30")
         .process_group(0)

@@ -154,3 +154,41 @@ fn a_member_that_cannot_end_itself_stops_trying_after_a_bounded_number_of_attemp
     }
     assert!(budget.self_end_exhausted());
 }
+
+/// Settling a paused run from the swarm tool on an async worker suspends
+/// this process's local inference before the settlement returns (#2329
+/// final review), on either runtime flavor: the turn is suspended by the
+/// time the tool call answers.
+async fn settling_a_pause_suspends_local_inference_before_it_returns() {
+    let (_directory, context) = crate::swarm_control_fixture::context();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("inspect")).unwrap();
+    let suspended = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded = suspended.clone();
+    let suspend: LocalSuspend = std::sync::Arc::new(move |status, generation| {
+        // A suspension that takes a while: it verifies the run on the board.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        recorded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((status, generation));
+    });
+    super::settle_suspending(context, Some(suspend))
+        .await
+        .unwrap();
+    let suspended = suspended
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert_eq!(suspended.len(), 1, "{suspended:?}");
+    assert_eq!(suspended[0].0, RunStatus::Paused);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_settled_pause_has_suspended_local_inference_on_a_multi_thread_worker() {
+    settling_a_pause_suspends_local_inference_before_it_returns().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_settled_pause_has_suspended_local_inference_on_a_current_thread_runtime() {
+    settling_a_pause_suspends_local_inference_before_it_returns().await;
+}
