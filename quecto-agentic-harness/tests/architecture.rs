@@ -66,6 +66,10 @@ mod swarm_board_refusal_kinds;
 /// (#2270 review M2).
 #[path = "architecture/swarm_board_test_methods.rs"]
 mod swarm_board_test_methods;
+/// Each board use case holds one repository and nests no use case, so
+/// `over` meters it whole (#2303 round-4 review L4).
+#[path = "architecture/swarm_board_use_cases.rs"]
+mod swarm_board_use_cases;
 /// Epic #1929 close (#1940): process-effect allowlist, no-pid teardown,
 /// retired-name sweep, single owners and whole-crate layer baselines.
 #[path = "architecture/teardown_authority.rs"]

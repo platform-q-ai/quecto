@@ -319,3 +319,22 @@ fn every_kind_serializes_as_its_stable_text() {
         );
     }
 }
+
+/// #2303 round-4 review L3: a run id is recorded only when it is the
+/// `uuid4().hex` the boards generate: 32 lowercase hex digits.
+#[test]
+fn only_a_generated_run_id_is_a_board_run_id() {
+    assert!(board_run_id("0123456789abcdef0123456789abcdef"));
+    for edited in [
+        "",
+        "0123456789abcdef0123456789abcde",
+        "0123456789abcdef0123456789abcdef0",
+        "0123456789ABCDEF0123456789ABCDEF",
+        "0123456789abcdef0123456789abcdeg",
+        "sk-livedeadbeef0001abcdefghijklm",
+        "0123456789abcdef 123456789abcdef",
+        "é123456789abcdef0123456789abcde",
+    ] {
+        assert!(!board_run_id(edited), "{edited:?}");
+    }
+}

@@ -250,6 +250,34 @@ fn a_long_actor_id_is_recorded_bounded() {
     assert_eq!(only(&log).actor_ref.as_str(), "short");
 }
 
+/// #2303 round-4 review L1: only a call the board accepted from a member
+/// of its run keeps the caller's ref; a refused call, or a call to a
+/// membership-free method, names any id it likes and keeps nothing.
+#[test]
+fn only_an_accepted_members_ref_is_kept() {
+    let log = Arc::new(Recorded::default());
+    let (_dir, handles) = logged(&log);
+    let actors = || {
+        handles
+            .telemetry
+            .as_ref()
+            .expect("the log is on")
+            .actors
+            .len()
+    };
+    let _refused = call(&handles, "early", "_snapshot", json!([]));
+    call(&handles, "parent", "create_run", create_args()).unwrap();
+    assert_eq!(actors(), 1, "the creator is the run's member");
+    for index in 0..8 {
+        let ghost = format!("ghost-{index}");
+        let _refused = call(&handles, &ghost, "_snapshot", json!([])).unwrap_err();
+        call(&handles, &ghost, "_status", json!([])).unwrap();
+    }
+    assert_eq!(actors(), 1, "no refused or membership-free caller is kept");
+    call(&handles, "parent", "_snapshot", json!([])).unwrap();
+    assert_eq!(actors(), 1);
+}
+
 #[test]
 fn board_ops_names_every_method_once() {
     let names: Vec<&str> = every_method().into_iter().map(Method::name).collect();

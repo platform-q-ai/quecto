@@ -490,6 +490,13 @@ fn the_rust_board_raises_a_python_text_with_its_kind() {
         .iter()
         .map(|(text, kinds)| (blanked(text), *kinds))
         .collect();
+    // Two Python texts with one template would let a Rust text match the
+    // wrong row (#2303 round-4 review N2).
+    assert_eq!(
+        python.len(),
+        PYTHON_REFUSALS.len(),
+        "two Python refusal texts share a template"
+    );
     let mut compared = 0;
     for (site, text, variant) in REFUSALS {
         let Some(kinds) = python.get(&blanked(text)) else {
@@ -497,8 +504,18 @@ fn the_rust_board_raises_a_python_text_with_its_kind() {
         };
         compared += 1;
         match variant.strip_prefix("expr: ") {
-            // Chosen at run time: the Python row names more than one kind.
-            Some(_) => assert!(kinds.len() > 1, "{site}: {text:?} has one kind, {kinds:?}"),
+            // Chosen at run time: every kind the chooser can return is one
+            // the Python row names.
+            Some(chooser) => {
+                let chosen = chosen_kinds(site, chooser);
+                assert!(!chosen.is_empty(), "{site}: {chooser} names no kind");
+                for kind in &chosen {
+                    assert!(
+                        kinds.contains(&kind.as_str()),
+                        "{site}: {text:?} may be {kind} in Rust, {kinds:?} in the Python table"
+                    );
+                }
+            }
             None => assert!(
                 kinds.contains(&snake(variant).as_str()),
                 "{site}: {text:?} is {variant} in Rust, {kinds:?} in the Python table"
@@ -506,6 +523,61 @@ fn the_rust_board_raises_a_python_text_with_its_kind() {
         }
     }
     assert!(compared > 20, "the two tables share texts ({compared})");
+}
+
+/// The kinds a run-time chooser can return: every `RefusalKind::X` the
+/// function it calls (the expression's leading name, `not_running (…)`)
+/// names, in the site's file (`file:function`), as snake case.
+fn chosen_kinds(site: &str, chooser: &str) -> BTreeSet<String> {
+    let (file, _) = site.split_once(':').expect("a site is file:function");
+    let source = std::fs::read_to_string(file).unwrap_or_else(|_| panic!("read {file}"));
+    kinds_chosen_in(&source, chooser)
+}
+
+fn kinds_chosen_in(source: &str, chooser: &str) -> BTreeSet<String> {
+    let name = chooser
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .next()
+        .unwrap_or_default();
+    let file = syn::parse_file(source).expect("a crate source parses");
+    let function = file
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Fn(function) if function.sig.ident == name => Some(function),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no chooser fn {name} for {chooser:?}"));
+    let body = quote::ToTokens::to_token_stream(&function.block).to_string();
+    let words: Vec<&str> = body.split_whitespace().collect();
+    words
+        .windows(3)
+        .filter(|window| window[0] == "RefusalKind" && window[1] == "::")
+        .map(|window| snake(window[2]))
+        .collect()
+}
+
+#[test]
+fn a_chooser_returns_the_kinds_its_function_names() {
+    let chosen = kinds_chosen_in(
+        "fn other() -> RefusalKind { RefusalKind::Store }\n\
+         fn not_running(spent: bool) -> RefusalKind {\n\
+             match spent { true => RefusalKind::BudgetExhausted, false => RefusalKind::NotRunning }\n\
+         }",
+        "not_running (budget_spent (run))",
+    );
+    assert_eq!(
+        chosen.into_iter().collect::<Vec<_>>(),
+        ["budget_exhausted", "not_running"]
+    );
+    let policy = chosen_kinds(
+        "src/domain/swarm/policy.rs:admission",
+        "not_running (budget_spent (run) || expired (run , now))",
+    );
+    assert_eq!(
+        policy.into_iter().collect::<Vec<_>>(),
+        ["budget_exhausted", "not_running"]
+    );
 }
 
 #[test]
@@ -521,6 +593,7 @@ raise SwarmError(
     'so this run\'s board is lost') from error
 raise SwarmError('again: ' + '; '.join(blockers))
 raise SwarmError(f"message {m} is already {row['status']}")
+raise SwarmError('line\nnext \\ back \' single \" double \tab')
 "#,
     );
     assert_eq!(
@@ -531,6 +604,7 @@ raise SwarmError(f"message {m} is already {row['status']}")
             "missing at {path}: gone, so this run's board is lost",
             "again: {'; '.join(blockers)}",
             "message {m} is already {row['status']}",
+            "line\nnext \\ back ' single \" double \tab",
         ]
     );
     assert_eq!(blanked("run is {describe(run)}; no"), "run is {}; no");

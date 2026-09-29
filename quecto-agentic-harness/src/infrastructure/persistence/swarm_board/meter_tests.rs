@@ -181,6 +181,45 @@ fn a_call_measures_only_its_own_transactions() {
     assert_eq!(meter.open().measure(), None, "a new call starts afresh");
 }
 
+/// Sets the board's run row to one whose id is `id`.
+fn run_with_id(dir: &tempfile::TempDir, id: &str) {
+    let connection = Connection::open(dir.path().join("swarm.sqlite")).unwrap();
+    connection.execute("DELETE FROM run", []).unwrap();
+    connection
+        .execute(
+            "INSERT INTO run(id,goal,constraints,criteria,coordinator,integrator,member_limit,deadline,status) \
+             VALUES(?1,'','[]','[]','parent','parent',10,0,'setup')",
+            [id],
+        )
+        .unwrap();
+}
+
+/// #2303 round-4 review L3: the run id a call records is the board's own
+/// (`uuid4().hex`); a run id edited from outside, which could hold any
+/// text, is recorded as none.
+#[test]
+fn only_a_generated_run_id_is_recorded() {
+    let (dir, _store, _plain, meter) = created();
+    let generated = "0123456789abcdef0123456789abcdef";
+    run_with_id(&dir, generated);
+    let call = meter.open();
+    transact(&*call).unwrap();
+    assert_eq!(measured(&*call).run_id.as_deref(), Some(generated));
+    for edited in [
+        "sk-livedeadbeef0001abcdefghijklmnop",
+        "0123456789ABCDEF0123456789ABCDEF",
+        "a secret the operator typed",
+    ] {
+        run_with_id(&dir, edited);
+        let call = meter.open();
+        transact(&*call).unwrap();
+        transact(&*call).unwrap();
+        let measure = measured(&*call);
+        assert_eq!(measure.run_id, None, "{edited:?}: {measure:?}");
+        assert_eq!(measure.transactions, 2);
+    }
+}
+
 /// Two calls on two threads at once: each measures its own transactions.
 #[test]
 fn calls_on_two_threads_measure_apart() {
