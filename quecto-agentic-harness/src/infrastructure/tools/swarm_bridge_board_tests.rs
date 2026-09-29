@@ -318,3 +318,31 @@ async fn a_board_call_on_an_async_worker_is_refused_in_debug_builds() {
     assert_eq!(summary.unwrap()["goal"], "ship");
     assert_eq!(run.unwrap().expect("a created run").coordinator, "parent");
 }
+
+/// #2313 review L6: a board built without composition's session log can
+/// never record in a session's log, so once the session's log is attached
+/// it stops recording: what it held since admission is dropped, and later
+/// calls are neither measured nor held.
+#[test]
+fn a_board_without_a_session_log_stops_recording_at_attach() {
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:plain").unwrap();
+    let plain = SwarmBoard::new(
+        build_swarm_board_handles,
+        crate::composition::swarm::board_wire(),
+    );
+    plain.record_from_admission(true);
+    let checkout = tempfile::tempdir().unwrap();
+    let parent = context(checkout.path(), "parent", plain.clone());
+    create(&parent);
+    assert!(format!("{plain:?}").contains("logged: true"), "held");
+    assert!(!plain.record_in_session(true, &log));
+    assert!(
+        format!("{plain:?}").contains("logged: false"),
+        "stopped: {plain:?}"
+    );
+    parent.summary().unwrap();
+    let recorded = Arc::new(Recorded::default());
+    assert!(plain.record_in(recorded.clone()));
+    assert!(recorded.ops().is_empty(), "{:?}", recorded.ops());
+}
