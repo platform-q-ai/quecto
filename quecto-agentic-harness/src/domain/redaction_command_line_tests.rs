@@ -338,3 +338,173 @@ fn redaction_is_idempotent_over_the_quoted_shapes() {
         assert_eq!(redact_secrets(&once), once, "{text:?}");
     }
 }
+
+/// #2304 review round 3 (M1): a credential in a JSON body — a `curl -d`
+/// payload, a config dump — is redacted to its closing quote, keeping its
+/// key, its quotes and the fields after it.
+#[test]
+fn a_json_body_credential_is_redacted_keeping_its_key() {
+    for (text, expected) in [
+        (
+            r#"curl -d '{"password":"hunter2"}' https://api.example"#,
+            r#"curl -d '{"password":"[REDACTED]"}' https://api.example"#,
+        ),
+        (
+            r#"{"token": "tok_0123456789abcdef"}"#,
+            r#"{"token": "[REDACTED]"}"#,
+        ),
+        (
+            r#"{"api_key":"k 1","user":"bob"}"#,
+            r#"{"api_key":"[REDACTED]","user":"bob"}"#,
+        ),
+        (
+            r#"{'secret': 'x y z', 'n': 1}"#,
+            r#"{'secret': '[REDACTED]', 'n': 1}"#,
+        ),
+    ] {
+        assert_eq!(redact_secrets(text), expected, "{text:?}");
+    }
+}
+
+/// #2304 review round 3 (M2): a registry login's `-p` (any tool's `login`
+/// subcommand, `registry login` included) and `redis-cli`'s `-a`/`--pass`
+/// are credentials.
+#[test]
+fn a_login_or_redis_password_is_redacted_keeping_its_flag() {
+    for (text, expected) in [
+        (
+            "docker login -u me -p hunter2 registry.example",
+            "docker login -u me -p [REDACTED] registry.example",
+        ),
+        (
+            "podman login -p hunter2 quay.io",
+            "podman login -p [REDACTED] quay.io",
+        ),
+        (
+            "helm registry login -u me -p hunter2 r.example",
+            "helm registry login -u me -p [REDACTED] r.example",
+        ),
+        (
+            "helm registry login --password hunter2 r.example",
+            "helm registry login --password [REDACTED] r.example",
+        ),
+        (
+            "cd /w && oc login -p 'pa ss' https://api.example",
+            "cd /w && oc login -p '[REDACTED]' https://api.example",
+        ),
+        (
+            "redis-cli -h db -a hunter2 ping",
+            "redis-cli -h db -a [REDACTED] ping",
+        ),
+        (
+            "/usr/bin/redis-cli --pass hunter2 ping",
+            "/usr/bin/redis-cli --pass [REDACTED] ping",
+        ),
+        (
+            "redis-cli --pass=hunter2 ping",
+            "redis-cli --pass=[REDACTED] ping",
+        ),
+    ] {
+        assert_eq!(redact_secrets(text), expected, "{text:?}");
+    }
+    for text in [
+        "docker run -p 8080:80 image",
+        "docker login registry.example",
+        "docker login -u me --password-stdin registry.example",
+        "docker login r.example && docker run -p 8080:80 image",
+        "login -p",
+        "grep -a pattern file",
+        "ls -a /srv",
+        "redis-cli --no-auth-warning ping",
+    ] {
+        assert_eq!(redact_secrets(text), text, "{text:?}");
+    }
+}
+
+/// #2304 review round 3 (M3): a search for a secret's label is no
+/// secret: an empty value, or a quote closing the pattern right after the
+/// `=` or `:`, leaves the whole command as it was.
+#[test]
+fn a_search_for_a_secret_label_survives() {
+    for text in [
+        "grep -n 'password:' config/app.yml",
+        r#"grep -rn "token=" src/ | head -20"#,
+        r#"rg -n "api_key: " ."#,
+        "grep -rn 'DB_PASSWORD=' .env.example",
+        r#"grep -e "the password:" f"#,
+        r#"rg '"token":' fixtures/"#,
+    ] {
+        assert_eq!(redact_secrets(text), text, "{text:?}");
+    }
+}
+
+/// #2304 review round 3 (M3): a value that does follow the label inside
+/// the quote is redacted, up to the quote.
+#[test]
+fn a_value_inside_the_labels_quote_is_redacted_up_to_the_quote() {
+    for (text, expected) in [
+        (
+            "grep -rn 'password: hunter2' config",
+            "grep -rn 'password: [REDACTED]' config",
+        ),
+        (
+            r#"curl -d "token=abc123" https://x"#,
+            r#"curl -d "token=[REDACTED]" https://x"#,
+        ),
+        (
+            r#"sh -c "GITHUB_TOKEN=ghx0123 make""#,
+            r#"sh -c "GITHUB_TOKEN=[REDACTED]""#,
+        ),
+    ] {
+        assert_eq!(redact_secrets(text), expected, "{text:?}");
+    }
+}
+
+/// #2304 review round 3 (nits): `curl -a` is `--append`, never a
+/// credential (httpie's `-a`/`--auth` is); an environment name glued to
+/// its label keeps its name; `Bearer` stops before a closing quote; an
+/// HTTP client's `-u` never reaches into the next line's command.
+#[test]
+fn the_round_three_nits_are_pinned() {
+    for (text, expected) in [
+        ("curl -T up.log -a ftp://h/x", "curl -T up.log -a ftp://h/x"),
+        ("xh --auth alice:s3cret x", "xh --auth [REDACTED] x"),
+        ("https -a alice:s3cret x", "https -a [REDACTED] x"),
+        (
+            "PGPASSWORD=hunter2 psql db",
+            "PGPASSWORD=[REDACTED] psql db",
+        ),
+        (
+            r#"curl -H "Authorization: Bearer abc.def" x"#,
+            r#"curl -H "Authorization: [REDACTED]" x"#,
+        ),
+        (
+            "curl -H 'Authorization: Bearer abc.def' x",
+            "curl -H 'Authorization: [REDACTED]' x",
+        ),
+        (
+            "curl -sS https://x\nsudo -u app:app ls",
+            "curl -sS https://x\nsudo -u app:app ls",
+        ),
+        (
+            "mysql -h db shop\nssh -phost x",
+            "mysql -h db shop\nssh -phost x",
+        ),
+    ] {
+        assert_eq!(redact_secrets(text), expected, "{text:?}");
+    }
+}
+
+/// The round-three shapes redact to themselves.
+#[test]
+fn redaction_is_idempotent_over_the_round_three_shapes() {
+    for text in [
+        r#"curl -d '{"password":"hunter2","token": "t k"}' x"#,
+        "docker login -u me -p hunter2 r && redis-cli -a pw ping",
+        "grep -rn 'password: hunter2' config && PGPASSWORD=x psql",
+        r#"curl -H "Authorization: Bearer abc" x"#,
+    ] {
+        let once = redact_secrets(text);
+        assert_eq!(redact_secrets(&once), once, "{text:?}");
+    }
+}

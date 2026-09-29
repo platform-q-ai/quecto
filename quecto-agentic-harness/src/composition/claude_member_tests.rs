@@ -27,6 +27,7 @@ fn settings(root: &Path, model: Option<&str>) -> ClaudeMemberSettings {
         base_dir: root.join("base"),
         parent: None,
         config_path: None,
+        log_key: Some("cli:w1".into()),
     }
 }
 

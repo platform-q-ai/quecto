@@ -21,7 +21,11 @@ fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/claude_code")
 }
 
-fn settings(root: &Path, config_path: Option<PathBuf>) -> ClaudeMemberSettings {
+fn settings(
+    root: &Path,
+    config_path: Option<PathBuf>,
+    log_key: Option<&str>,
+) -> ClaudeMemberSettings {
     ClaudeMemberSettings {
         member: "w1".into(),
         model: None,
@@ -29,6 +33,7 @@ fn settings(root: &Path, config_path: Option<PathBuf>) -> ClaudeMemberSettings {
         base_dir: root.join("base"),
         parent: Some(PARENT.into()),
         config_path,
+        log_key: log_key.map(str::to_string),
     }
 }
 
@@ -41,6 +46,16 @@ fn switch_on(config: &Path, enabled: bool) {
 /// Run a member over `scenario` for as many turns as it has results, then
 /// close it; answers the event log's lines, if it wrote one.
 async fn run_member(root: &Path, scenario: &Path, config_path: Option<PathBuf>) -> Vec<String> {
+    run_member_as(root, scenario, config_path, Some("cli:w1")).await
+}
+
+/// [`run_member`], its log filed under `log_key` (`None`: it keeps none).
+async fn run_member_as(
+    root: &Path,
+    scenario: &Path,
+    config_path: Option<PathBuf>,
+    log_key: Option<&str>,
+) -> Vec<String> {
     std::fs::create_dir_all(root.join("checkout")).unwrap();
     let turns = std::fs::read_to_string(scenario)
         .unwrap()
@@ -59,7 +74,7 @@ async fn run_member(root: &Path, scenario: &Path, config_path: Option<PathBuf>) 
     .map(|(name, value)| (OsString::from(name), OsString::from(value)))
     .collect();
     let handles = build_over(
-        &settings(root, config_path),
+        &settings(root, config_path, log_key),
         environment,
         Arc::new(OwnedChildSupervisor::new()),
     )
@@ -214,6 +229,20 @@ async fn nothing_is_written_unless_the_event_log_is_switched_on() {
             .await
             .is_empty(),
         "the --config given switches it on"
+    );
+}
+
+/// #2304 review round 3: a member without a log key (`--no-session`)
+/// writes no event log, even with the log switched on.
+#[tokio::test]
+async fn a_member_without_a_log_key_writes_no_log() {
+    let root = tempfile::tempdir().unwrap();
+    switch_on(&root.path().join("base/config.json"), true);
+    let scenario = fixtures().join("rt.stream.jsonl");
+    run_member_as(root.path(), &scenario, None, None).await;
+    assert!(
+        !root.path().join("base/audit").exists(),
+        "not even the log's directory"
     );
 }
 

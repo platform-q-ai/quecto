@@ -49,6 +49,11 @@ pub(super) struct Wire {
     /// The process never exits, even once its input is closed: an
     /// agent wedged in a tool (#2304 review round 2).
     pub(super) hang_exit: AtomicBool,
+    /// Waiting for the process to exit panics: an adapter's bug (#2304
+    /// review round 3).
+    pub(super) panic_exit: AtomicBool,
+    /// Closing the input never returns: a pipe wedged on a full buffer.
+    pub(super) hang_close_input: AtomicBool,
 }
 
 impl Wire {
@@ -158,7 +163,12 @@ impl ExternalAgentProcess for FakeProcess {
     }
 
     fn close_input(&self) -> PortFuture<'_, ()> {
-        Box::pin(async move { self.0.closed.store(true, Ordering::SeqCst) })
+        Box::pin(async move {
+            self.0.closed.store(true, Ordering::SeqCst);
+            if self.0.hang_close_input.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
+        })
     }
 
     fn exited(&self) -> PortFuture<'_, ExternalAgentExit> {
@@ -171,7 +181,10 @@ impl ExternalAgentProcess for FakeProcess {
     }
 
     fn exited_discarding_output(&self) -> PortFuture<'_, ExternalAgentExit> {
-        self.exited()
+        match self.0.panic_exit.load(Ordering::SeqCst) {
+            true => Box::pin(async { panic!("the exit wait panics") }),
+            false => self.exited(),
+        }
     }
 
     fn stderr_tail(&self) -> String {
@@ -290,6 +303,19 @@ pub(super) fn rig_with(refuse: bool) -> Rig {
 
 /// A session under `settings`, whose launcher refuses when `refuse`.
 pub(super) fn rig_over(refuse: bool, settings: ExternalAgentSessionSettings) -> Rig {
+    rig_built(refuse, Arc::new(TokioTasks), settings)
+}
+
+/// A rig whose detached work runs on `spawner`.
+pub(super) fn rig_spawning(refuse: bool, spawner: Arc<dyn ExternalAgentSpawner>) -> Rig {
+    rig_built(refuse, spawner, settings())
+}
+
+fn rig_built(
+    refuse: bool,
+    spawner: Arc<dyn ExternalAgentSpawner>,
+    settings: ExternalAgentSessionSettings,
+) -> Rig {
     let wire = Arc::new(Wire::default());
     let launcher = Arc::new(FakeLauncher {
         wire: wire.clone(),
@@ -301,7 +327,7 @@ pub(super) fn rig_over(refuse: bool, settings: ExternalAgentSessionSettings) -> 
         launcher.clone(),
         records.clone(),
         Arc::new(TokioTime(tokio::time::Instant::now())),
-        Arc::new(TokioTasks),
+        spawner,
         settings,
     ));
     Rig {

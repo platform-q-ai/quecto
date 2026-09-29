@@ -22,20 +22,7 @@ pub(crate) fn run(ctx: &CliContext, flags: &AgentFlags, stderr: &mut String) -> 
         stderr.push_str("agent: the claude-code member capability is not composed\n");
         return 1;
     };
-    let built = build(&ClaudeMemberSettings {
-        member: flags
-            .session_name
-            .clone()
-            .unwrap_or_else(|| DEFAULT_MEMBER.to_string()),
-        model: flags.model_override.clone(),
-        checkout: ctx
-            .cwd
-            .clone()
-            .unwrap_or_else(|| std::path::PathBuf::from(".")),
-        base_dir: ctx.base_dir(),
-        parent: flags.parent_id.clone(),
-        config_path: ctx.config_path.clone(),
-    });
+    let built = build(&member_settings(ctx, flags));
     let handles = match built {
         Ok(handles) => handles,
         Err(refusal) => {
@@ -58,6 +45,24 @@ pub(crate) fn run(ctx: &CliContext, flags: &AgentFlags, stderr: &mut String) -> 
 /// Why a member that started is not left running.
 const NO_ENDPOINT_YET: &str =
     "agent: the claude-code member serves no endpoint yet (#2288); it was ended\n";
+/// What composition builds the member from: `flags` over `ctx`.
+fn member_settings(ctx: &CliContext, flags: &AgentFlags) -> ClaudeMemberSettings {
+    ClaudeMemberSettings {
+        member: flags
+            .session_name
+            .clone()
+            .unwrap_or_else(|| DEFAULT_MEMBER.to_string()),
+        model: flags.model_override.clone(),
+        checkout: ctx
+            .cwd
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from(".")),
+        base_dir: ctx.base_dir(),
+        parent: flags.parent_id.clone(),
+        config_path: ctx.config_path.clone(),
+        log_key: super::agent::member_log_key(flags),
+    }
+}
 
 /// Start the member and end it again: without its UDS server (#2288)
 /// nothing can reach it, so it is not left running. Returns the line that

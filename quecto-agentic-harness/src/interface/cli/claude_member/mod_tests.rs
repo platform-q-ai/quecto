@@ -243,4 +243,29 @@ fn the_member_handles_debug_shows_nothing_of_the_session() {
     })
     .expect("built");
     assert_eq!(format!("{handles:?}"), "ClaudeMemberHandles { .. }");
+fn log_key_for(args: &[&str]) -> Option<String> {
+    let mut stderr = String::new();
+    let mut parts = vec!["--mode", "uds", "--backend", "claude-code"];
+    parts.extend_from_slice(args);
+    let flags = parse_agent_flags(&argv(&parts), &mut stderr).expect("valid flags");
+    member_settings(&CliContext::default(), &flags).log_key
+}
+
+/// #2304 review round 3: a member asked to leave nothing behind
+/// (`--no-session`, `-s -`) keeps no event log.
+#[test]
+fn a_member_asked_to_leave_nothing_behind_keeps_no_log() {
+    assert_eq!(log_key_for(&["--no-session"]), None);
+    assert_eq!(log_key_for(&["-s", "-"]), None);
+}
+
+/// #2304 review round 3: a named member's log is its session's; an
+/// unnamed one's is its own, never another unnamed member's.
+#[test]
+fn each_unnamed_member_keeps_a_log_of_its_own() {
+    assert_eq!(log_key_for(&["-s", "w1"]).as_deref(), Some("cli:w1"));
+    let unnamed = log_key_for(&[]).expect("an unnamed member keeps a log");
+    let own = format!("unkeyed-{}-", std::process::id());
+    assert!(unnamed.starts_with(&own), "{unnamed}");
+    assert_ne!(unnamed, "cli:claude-member");
 }

@@ -77,6 +77,12 @@ pub const INTERRUPT_GRACE: Duration = Duration::from_secs(30);
 /// a turn.
 pub const EXIT_GRACE: Duration = Duration::from_secs(5);
 
+/// How long past [`EXIT_GRACE`] `close` and `finish` wait for the end to
+/// be recorded (#2304 review round 3): the exit's work records it within
+/// the grace, or records nothing when it panicked or was dropped, so a
+/// caller is never held past this.
+pub const END_RECORD_MARGIN: Duration = Duration::from_secs(1);
+
 /// What a member session is started with.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternalAgentSessionSettings {

@@ -29,9 +29,10 @@ pub use self::process::{
 };
 pub use self::report::{FINAL_REPORT_PAGE_BYTES, FinalReport};
 pub use self::session::{
-    AbortOutcome, EXIT_GRACE, ExternalAgentSessionSettings, FOLLOW_UP_QUEUE_CAPACITY,
-    INTERRUPT_GRACE, PromptAccepted, SKIPPED_LINE_GRACE, SessionPhase, SessionRefusal, SessionStep,
-    SessionTotals, SessionView, StreamingBehavior, USER_TURNS_PER_TURN_CAPACITY,
+    AbortOutcome, END_RECORD_MARGIN, EXIT_GRACE, ExternalAgentSessionSettings,
+    FOLLOW_UP_QUEUE_CAPACITY, INTERRUPT_GRACE, PromptAccepted, SKIPPED_LINE_GRACE, SessionPhase,
+    SessionRefusal, SessionStep, SessionTotals, SessionView, StreamingBehavior,
+    USER_TURNS_PER_TURN_CAPACITY,
 };
 pub use self::step::ProjectionStep;
 pub use self::telemetry::{SessionRecord, TOOL_NAME_RECORD_BYTES};

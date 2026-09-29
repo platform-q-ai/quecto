@@ -42,6 +42,14 @@ pub(super) fn one_shot_key(session_name: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
+/// The key a claude-code member's event log is filed under (#2304 review
+/// round 3): none for a member asked to leave nothing behind, its
+/// session's key when it is named, else a key of its own.
+pub(crate) fn member_log_key(flags: &super::AgentFlags) -> Option<String> {
+    let _ = flags;
+    todo!("#2304 review round 3")
+}
+
 /// A key for a session without one: unique to this process and start.
 fn unkeyed() -> String {
     let started = std::time::SystemTime::now()
