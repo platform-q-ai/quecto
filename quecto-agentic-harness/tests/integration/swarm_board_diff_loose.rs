@@ -8,11 +8,12 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use crate::swarm_board_diff_membership::{at, create};
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::rust::RustBoard;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, run_both, sql, step, step_text, try_run_both,
+    Step, run_both, run_rust, sql, step, step_text, try_run_both,
 };
 
 /// Every way the Rust board may differ from the Python board on the
@@ -60,15 +61,22 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   proportion to a board no harness writes); a NULL run or member status, a NULL
 ///   coordinator, a NULL member id, added member columns and loosely typed
 ///   pids are read as they are stored.
-/// - `outside_edited_task_columns` (#2272): a task's `acceptance`,
-///   `dependencies` or `evidence` column that is not JSON text, which only
-///   a file edited outside the board holds, is refused as a store failure
-///   where Python's `json.loads` raises (`JSONDecodeError`, `TypeError`);
-///   a stored dependency that names no task reads as incomplete (the task
-///   is blocked, and `claim` refuses `unmet dependencies`), where Python's
-///   `fetchone()[0]` raises `TypeError`; and stored dependencies that are
-///   not a list have no edges in the cycle check, where Python iterates
-///   the value.
+/// - `outside_edited_task_columns` (#2272), values only a file edited
+///   outside the board holds: a task's `acceptance`, `dependencies` or
+///   `evidence` that is not JSON text is refused as a store failure where
+///   Python's `json.loads` raises (`JSONDecodeError`, `TypeError`).
+///   Stored dependencies are read as a list of task ids and anything else
+///   as none, where Python iterates what it loaded: a dict's keys
+///   (`{"2":1}` names task 2, so the task reads blocked and `claim`
+///   refuses `unmet dependencies`; Rust reads it ready and claims it), a
+///   text's characters (`"12"` names tasks 1 and 2), `null` or a number
+///   (`TypeError` in `_task`), and a list entry (`[[2]]` raises
+///   "unhashable" in the cycle check, where Rust keys it by its JSON text).
+///   A stored dependency naming no task is incomplete: a ready task reads
+///   blocked, where Python's `fetchone()[0]` raises `TypeError`; and
+///   `claim` refuses `unmet dependencies`, where for a task that is not
+///   ready (whose dependencies `_task` does not check) Python's claim
+///   reads the missing dependency with `_task` and refuses `unknown task`.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
@@ -617,59 +625,92 @@ const EXTERNAL_PINS: [(&str, &str, &str); 5] = [
     ),
 ];
 
-/// `outside_edited_task_columns`: a task column the board writes as JSON
-/// holding something else, or a dependency naming no task, makes Python
-/// raise where the Rust board refuses (a JSON column) or answers (the
-/// missing dependency reads as incomplete).
+/// `outside_edited_task_columns`: each hand edit of task 1 (after
+/// `before`), then the `probe` where the boards differ: `python` is in
+/// Python's side of the difference, `rust` in the Rust board's answer.
 #[test]
 fn outside_edited_task_columns() {
     let setup = [
-        step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
-        step(
+        create(5),
+        at(1.0, "parent", "_admit", json!(["w1", "r1"])),
+        at(
+            2.0,
             "parent",
-            "create_run",
-            json!(["g", [], [{"id": "t", "kind": "command", "description": "d"}], 2, NOW + 60.0]),
-            NOW,
+            "_activate",
+            json!(["w1", "r1", 11, "t", null]),
         ),
-        step(
+        at(3.0, "parent", "_admit", json!(["w2", "r2"])),
+        at(
+            4.0,
             "parent",
-            "task_create",
-            json!(["r", "t", ["ok"]]),
-            NOW + 1.0,
+            "_activate",
+            json!(["w2", "r2", 12, "t", null]),
         ),
+        at(5.0, "w1", "task_create", json!(["a", "one", ["ok"]])),
+        at(6.0, "w1", "task_create", json!(["b", "two", ["ok"]])),
     ];
-    let read = step("parent", "task_raw", json!([1]), NOW + 2.0);
-    for (edit, rust_answers) in [
-        ("UPDATE tasks SET acceptance='not json'", false),
-        ("UPDATE tasks SET evidence=NULL", false),
-        ("UPDATE tasks SET dependencies='[99]'", true),
-    ] {
+    let pinned = |before: &[Step], edit: &str, probe: Step, python: &str, rust: &str| {
         let mut steps = setup.to_vec();
-        steps.extend([sql(edit), read.clone()]);
+        steps.extend_from_slice(before);
+        let prefix = format!("step {}: {}", steps.len() + 1, probe.method);
+        steps.extend([sql(&format!("UPDATE tasks SET {edit} WHERE id=1")), probe]);
         let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let python_side = difference.split("\n  rust").next().unwrap_or_default();
         assert!(
-            difference.starts_with("step 4: task_raw") && difference.contains("Python raised"),
+            difference.starts_with(&prefix) && python_side.contains(python),
             "{edit}: {difference}"
         );
-        let dir = tempfile::tempdir().unwrap();
-        let database = dir.path().join("swarm.sqlite");
-        let board = RustBoard::open(&database, dir.path());
-        for step in &setup {
-            let outcome = board.call_text(&step.member, &step.method, &step.args, step.now);
-            assert!(matches!(outcome, Outcome::Ok(_)), "{step:?}: {outcome:?}");
-        }
-        rusqlite::Connection::open(&database)
-            .unwrap()
-            .execute_batch(edit)
-            .unwrap();
-        let outcome = board.call_text(&read.member, &read.method, &read.args, read.now);
-        match (rust_answers, &outcome) {
-            (true, Outcome::Ok(task)) => {
-                assert_eq!(task["status"], json!("blocked"), "{edit}");
-                assert_eq!(task["blocker"], json!("unmet dependencies"), "{edit}");
-            }
-            (false, refused) => assert!(refused_with(refused, CONTENDED), "{edit}: {outcome:?}"),
-            (true, other) => panic!("{edit}: {other:?}"),
-        }
+        let outcome = format!("{:?}", run_rust(&steps));
+        assert!(outcome.contains(rust), "{edit}: {outcome}");
+    };
+    let raw = || at(7.0, "parent", "task_raw", json!([1]));
+    let claim = |member| at(8.0, member, "claim", json!([1]));
+    let (ready, blocked) = (
+        r#""status": String("ready")"#,
+        r#""status": String("blocked")"#,
+    );
+    for (edit, python, rust) in [
+        ("acceptance='not json'", "raised JSONDecodeError", CONTENDED),
+        ("evidence=NULL", "raised TypeError", CONTENDED),
+        ("dependencies='[99]'", "raised TypeError", blocked),
+        (r#"dependencies='{"2":1}'"#, blocked, ready),
+        (r#"dependencies='"12"'"#, blocked, ready),
+        ("dependencies='null'", "raised TypeError", ready),
+        ("dependencies='5'", "raised TypeError", ready),
+    ] {
+        pinned(&[], edit, raw(), python, rust);
+    }
+    let unknown = r#"python Refused("unknown task")"#;
+    let unmet = r#"Refused("unmet dependencies")"#;
+    pinned(
+        &[claim("w1")],
+        "dependencies='[99]'",
+        claim("w2"),
+        unknown,
+        unmet,
+    );
+    let claimed = r#""status": String("claimed")"#;
+    pinned(
+        &[],
+        r#"dependencies='{"2":1}'"#,
+        claim("w1"),
+        unmet,
+        claimed,
+    );
+    // The cycle check walks task 1's stored `[[2]]` from a new edge to it.
+    for (probe, rust) in [
+        (
+            at(9.0, "w1", "task_create", json!(["c", "three", ["ok"], [1]])),
+            blocked,
+        ),
+        (at(9.0, "w1", "dependencies", json!([2, [1]])), "Ok("),
+    ] {
+        pinned(
+            &[],
+            "dependencies='[[2]]'",
+            probe,
+            "unhashable type: 'list'",
+            rust,
+        );
     }
 }

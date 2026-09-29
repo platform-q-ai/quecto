@@ -94,6 +94,24 @@ pub fn run_both(steps: &[Step]) {
     }
 }
 
+/// Runs `steps` on a Rust board alone, each granted but the last: its
+/// answer. For a divergence, whose Python side the comparison shows.
+pub fn run_rust(steps: &[Step]) -> Outcome {
+    let dir = tempfile::tempdir().expect("a directory for the board");
+    let side = Side::new(dir.path(), "rust");
+    let rust = RustBoard::open(&side.database, &side.root);
+    let mut last = Outcome::Ok(Value::Null);
+    for step in steps {
+        assert!(matches!(last, Outcome::Ok(_)), "before {step:?}: {last:?}");
+        last = if step.method == SQL_STEP {
+            edit(&side.database, &step.args)
+        } else {
+            side.neutral(rust.call_text(&step.member, &step.method, &step.args, step.now))
+        };
+    }
+    last
+}
+
 /// Runs `steps` on both boards, calling `after(index, rust_database,
 /// rust_outcome)` once each step has run on both and before they are
 /// compared (the harness's self-tests tamper with the Rust side's file or
