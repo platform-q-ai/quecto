@@ -11,6 +11,7 @@ use serde_json::Value;
 
 pub use self::control::{paused, recorded, usage};
 pub use self::evidence::accepted;
+pub use self::files::{LexicalCheckout, StoredMessage};
 pub use self::tasks::{StoredFile, StoredRequest, stored_task};
 use crate::application::swarm::dto::{
     AmendedContract, EvidenceEntry, LaunchIdentity, MemberClaimCounts, MemberRow, NewMember,
@@ -57,6 +58,7 @@ pub struct BoardState {
     pub request_usage: Vec<NewRequestUsage>,
     /// The `evidence` rows, each with the actor that recorded it.
     pub evidence: Vec<(String, EvidenceEntry)>,
+    pub messages: Vec<StoredMessage>,
 }
 
 /// A journal shared by the board and the id source, so a test reads the
@@ -554,6 +556,9 @@ mod control;
 
 #[path = "board_test_support_evidence.rs"]
 mod evidence;
+
+#[path = "board_test_support_files.rs"]
+mod files;
 
 /// Readings in order, then the last one forever.
 pub struct SteppingClock {

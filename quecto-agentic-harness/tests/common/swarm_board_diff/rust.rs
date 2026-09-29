@@ -1,9 +1,10 @@
 //! The Rust side of the differential harness: the same call interface as
 //! `python.rs`, over `swarm_board_dispatch::call` and handles composed by
 //! `composition::swarm::build_swarm_board_handles_with` on a clock the step
-//! sets and a counter that draws Python's id sequence. The harness never
-//! constructs a use case. [`RustBoard::open_recorded`] composes the same
-//! handles with the event log on (`composition::swarm::with_event_log`,
+//! sets and a counter that draws Python's id sequence, with the file
+//! reservations' paths normalised in the side's own checkout. The harness
+//! never constructs a use case. [`RustBoard::open_recorded`] composes the
+//! same handles with the event log on (`composition::swarm::with_event_log`,
 //! the store's own meter) over an in-memory log, so every scenario also
 //! runs with each call measured and recorded (#2303 review M1).
 use std::path::Path;
@@ -18,6 +19,7 @@ use quecto::domain::swarm::BoardOpObservation;
 use quecto::infrastructure::persistence::swarm_board::py_json;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::swarm_board_dispatch::call;
+use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 use serde_json::Value;
 
 use super::Outcome;
@@ -81,6 +83,7 @@ impl RustBoard {
             SqliteBoardRepository::new(&location(database, checkout)),
             clock.clone(),
             Arc::new(CounterIds::default()),
+            Arc::new(ResolvedCheckout::new(checkout)),
             log,
         );
         Self { handles, clock }
@@ -92,6 +95,7 @@ impl RustBoard {
             Arc::new(SqliteBoardRepository::new(&location(database, checkout))),
             clock.clone(),
             Arc::new(CounterIds::default()),
+            Arc::new(ResolvedCheckout::new(checkout)),
         );
         Self { handles, clock }
     }

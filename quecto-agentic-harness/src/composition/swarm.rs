@@ -6,18 +6,23 @@
 //! `CliContext` and threads it to `SwarmContext` and `HostedStore`, passing
 //! [`board_op_log`] of the session's log. `build_swarm_board_handles_with`
 //! composes the same graph over injected ports, for the differential
-//! harness's deterministic clock and ids.
+//! harness's deterministic clock and ids. The file reservations (#2275)
+//! normalise paths in the board's checkout, through `CheckoutPaths` bound
+//! to `BoardLocation::checkout`.
 use std::sync::Arc;
 
 use crate::application::swarm::dto::BoardLocation;
-use crate::application::swarm::ports::{BoardOpLog, BoardRepository, Clock, IdSource};
+use crate::application::swarm::ports::{
+    BoardOpLog, BoardRepository, CheckoutPaths, Clock, IdSource,
+};
 use crate::application::swarm::use_cases::{
     ActivateMember, AdmitMember, AmendRunContract, BlockTask, BootstrapRun, ClaimTask, CloseRun,
-    CompleteRun, ConfigureUsageBudget, CreateRun, CreateTask, ExtendRunDeadline, JoinRun, PauseRun,
-    ReadControlStatus, ReadRequestAdmission, ReadRunSnapshot, ReadRunStatus, ReadTask,
-    ReadUsageReport, RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RegisterMemberSocket,
-    ReleaseTask, ReleaseUnlaunchedMember, ResumeRun, ResumeRunExternally, RevalidateTask,
-    SetTaskDependencies, StopRun, SubmitTask, UnblockTask, VerifyTask,
+    CompleteRun, ConfigureUsageBudget, CreateRun, CreateTask, ExtendRunDeadline, JoinRun,
+    ListFileOwners, PauseRun, ReadControlStatus, ReadRequestAdmission, ReadRunSnapshot,
+    ReadRunStatus, ReadTask, ReadUsageReport, RecordEvidence, RecordMemberLaunch,
+    RecordRequestUsage, RecoverTask, RegisterMemberSocket, ReleaseFiles, ReleaseTask,
+    ReleaseUnlaunchedMember, ReserveFiles, ResumeRun, ResumeRunExternally, RevalidateTask,
+    RevokeTask, SetTaskDependencies, StopRun, SubmitTask, UnblockTask, VerifyTask,
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::board_op_log::EventLogBoardOps;
@@ -28,6 +33,7 @@ use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepo
 pub use crate::infrastructure::tools::swarm_board_dispatch::SwarmBoardHandles;
 use crate::infrastructure::tools::swarm_board_dispatch::{ActorRefs, BoardTelemetry};
 use crate::infrastructure::tools::swarm_lifecycle::SystemClock;
+use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 /// The board handles over the SQLite file at `location`, recording each
 /// call in `event_log` when there is one ([`board_op_log`]: only while the
@@ -38,9 +44,10 @@ pub fn build_swarm_board_handles(
 ) -> SwarmBoardHandles {
     let repository = SqliteBoardRepository::new(&location);
     let (clock, ids) = (Arc::new(SystemClock), Arc::new(Uuid4Ids));
+    let checkout = Arc::new(ResolvedCheckout::new(location.checkout));
     match event_log {
-        Some(event_log) => with_event_log(repository, clock, ids, event_log),
-        None => build_swarm_board_handles_with(Arc::new(repository), clock, ids),
+        Some(event_log) => with_event_log(repository, clock, ids, checkout, event_log),
+        None => build_swarm_board_handles_with(Arc::new(repository), clock, ids, checkout),
     }
 }
 
@@ -62,6 +69,7 @@ pub fn build_swarm_board_handles_with(
     repository: Arc<dyn BoardRepository>,
     clock: Arc<dyn Clock + Send + Sync>,
     ids: Arc<dyn IdSource>,
+    checkout: Arc<dyn CheckoutPaths>,
 ) -> SwarmBoardHandles {
     SwarmBoardHandles {
         create_run: Arc::new(CreateRun::new(
@@ -133,6 +141,20 @@ pub fn build_swarm_board_handles_with(
             Arc::new(PyJsonEncoding),
         )),
         record_evidence: Arc::new(RecordEvidence::new(repository.clone(), clock.clone())),
+        reserve_files: Arc::new(ReserveFiles::new(
+            repository.clone(),
+            clock.clone(),
+            ids.clone(),
+            checkout,
+        )),
+        release_files: Arc::new(ReleaseFiles::new(repository.clone(), clock.clone())),
+        list_file_owners: Arc::new(ListFileOwners::new(repository.clone(), clock.clone())),
+        recover_task: Arc::new(RecoverTask::new(repository.clone(), clock.clone())),
+        revoke_task: Arc::new(RevokeTask::new(
+            repository.clone(),
+            clock.clone(),
+            Arc::new(PyJsonEncoding),
+        )),
         configure_usage_budget: Arc::new(ConfigureUsageBudget::new(
             repository.clone(),
             clock.clone(),
@@ -166,9 +188,11 @@ pub fn with_event_log(
     repository: SqliteBoardRepository,
     clock: Arc<dyn Clock + Send + Sync>,
     ids: Arc<dyn IdSource>,
+    checkout: Arc<dyn CheckoutPaths>,
     event_log: Arc<dyn BoardOpLog>,
 ) -> SwarmBoardHandles {
-    let handles = build_swarm_board_handles_with(Arc::new(repository.clone()), clock, ids);
+    let handles =
+        build_swarm_board_handles_with(Arc::new(repository.clone()), clock, ids, checkout);
     SwarmBoardHandles {
         telemetry: Some(BoardTelemetry {
             log: event_log,

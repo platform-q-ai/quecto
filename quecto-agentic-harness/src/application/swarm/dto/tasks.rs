@@ -82,6 +82,9 @@ pub enum TaskUpdate {
     Submit { evidence: Value },
     /// `verify_task`: the task is `completed`.
     Complete,
+    /// `recover` and `revoke` (#2275): the task is `ready` again, without
+    /// owner, token or blocker, and its evidence is `[]`.
+    Reopen,
 }
 
 /// `Tasks.task_create(request, title, acceptance, dependencies=None)` as

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::MemoryTransaction;
 use crate::application::swarm::dto::{NewTask, TaskRow, TaskUpdate};
-use crate::application::swarm::ports::{BoardFiles, BoardRequests, BoardTasks, RequestAction};
+use crate::application::swarm::ports::{BoardRequests, BoardTasks, RequestAction};
 use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// One `requests` row.
@@ -47,7 +47,7 @@ pub fn stored_task(id: i64, status: &str, dependencies: Value, owner: Option<&st
 }
 
 /// Roughly the integer an INTEGER PRIMARY KEY compares a bound value as.
-fn affinity(value: &Value) -> Option<i64> {
+pub(super) fn affinity(value: &Value) -> Option<i64> {
     match value {
         Value::Bool(flag) => Some(i64::from(*flag)),
         Value::Number(number) => number.as_i64().or_else(|| {
@@ -165,6 +165,13 @@ impl BoardTasks for MemoryTransaction<'_> {
                 row.set("blocker", Value::Null);
             }
             TaskUpdate::Complete => row.set("status", Value::from("completed")),
+            TaskUpdate::Reopen => {
+                row.set("status", Value::from("ready"));
+                row.set("owner", Value::Null);
+                row.set("token", Value::Null);
+                row.set("blocker", Value::Null);
+                row.set("evidence", Value::Array(Vec::new()));
+            }
         });
         Ok(())
     }
@@ -203,17 +210,5 @@ impl BoardRequests for MemoryTransaction<'_> {
                 Ok(result)
             }
         }
-    }
-}
-
-impl BoardFiles for MemoryTransaction<'_> {
-    fn delete_claim_files(&self, task: &Value, claim: &Value) -> Result<(), BoardError> {
-        self.note(format!("delete_claim_files {task}"));
-        let task = affinity(task);
-        self.state
-            .borrow_mut()
-            .files
-            .retain(|file| !(Some(file.task) == task && claim.as_str() == Some(&file.claim)));
-        Ok(())
     }
 }

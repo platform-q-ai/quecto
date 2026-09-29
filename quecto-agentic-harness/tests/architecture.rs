@@ -1505,6 +1505,12 @@ fn application_path_allowed(path: &str) -> bool {
             | "ConfigureUsageBudget"
             | "ReadRequestAdmission"
             | "RecordRequestUsage",
+            // Reservations, recovery and revocation (#2275).
+            | "ListFileOwners"
+            | "RecoverTask"
+            | "ReleaseFiles"
+            | "ReserveFiles"
+            | "RevokeTask",
         ]
         | [
             "crate",
@@ -1585,6 +1591,18 @@ fn application_path_allowed(path: &str) -> bool {
             | "RecordRequestUsageRequest"
             | "RequestDelivery"
             | "StoredRequestUsage",
+            // Reservations, recovery and revocation (#2275).
+            | "FileRow"
+            | "ListFileOwnersRequest"
+            | "NewReservation"
+            | "RecoverTaskRequest"
+            | "Recovered"
+            | "ReleaseFilesRequest"
+            | "Reservation"
+            | "ReserveFilesRequest"
+            | "Revocation"
+            | "RevokeTaskRequest"
+            | "Revoked",
         ] => true,
         ["crate", "application", ..] => false,
         // Every other crate path must start at a layer infrastructure
@@ -6346,6 +6364,10 @@ const SWARM_BOARD_PORTS: &[&str] = &[
     "BoardCallMeter",
     "MeteredCall",
     "BoardOpLog",
+    // Revocation tells the previous owner (#2275; S11 extends it), and
+    // reservations normalise paths in the checkout, an effect (#2275).
+    "BoardMessages",
+    "CheckoutPaths",
     // The usage report the control receipt carries (#2273; S9 adds the
     // budget's writes).
     "BoardUsage",

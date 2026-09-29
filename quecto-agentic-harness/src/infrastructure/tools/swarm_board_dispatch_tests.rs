@@ -8,6 +8,7 @@ use crate::application::swarm::ports::{Clock, IdSource};
 use crate::composition::swarm::build_swarm_board_handles_with;
 use crate::domain::swarm::{BoardError, RefusalKind};
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 struct Fixed(f64);
 impl Clock for Fixed {
@@ -36,6 +37,7 @@ pub(super) fn board(now: f64) -> (tempfile::TempDir, SwarmBoardHandles) {
         Arc::new(SqliteBoardRepository::new(&location)),
         Arc::new(Fixed(now)),
         Arc::new(Counter::default()),
+        Arc::new(ResolvedCheckout::new(&location.checkout)),
     );
     (dir, handles)
 }

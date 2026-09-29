@@ -86,6 +86,46 @@ pub fn sql(statement: &str) -> Step {
     }
 }
 
+/// The method name of a [`mkdir`] or [`symlink`] step: never a board
+/// method either.
+const FS_STEP: &str = "<fs>";
+
+/// Not a board call: the directory `path` (relative) is made in both
+/// sides' checkouts, and the step answers `null` on both.
+pub fn mkdir(path: &str) -> Step {
+    fs_step(&serde_json::json!(["mkdir", path]))
+}
+
+/// Not a board call: `link` (relative) becomes a symlink to the text
+/// `target` in both sides' checkouts, and the step answers `null` on both.
+pub fn symlink(link: &str, target: &str) -> Step {
+    fs_step(&serde_json::json!(["symlink", link, target]))
+}
+
+fn fs_step(args: &Value) -> Step {
+    Step {
+        member: String::new(),
+        method: FS_STEP.to_owned(),
+        args: args.to_string(),
+        now: 0.0,
+    }
+}
+
+/// Runs an [`FS_STEP`]'s change in the checkout `root`.
+fn shape(root: &Path, args: &str) -> Outcome {
+    let args: Vec<String> = serde_json::from_str(args).expect("a filesystem step's arguments");
+    match args.as_slice() {
+        [kind, path] if kind == "mkdir" => std::fs::create_dir_all(root.join(path))
+            .unwrap_or_else(|error| panic!("mkdir {path}: {error}")),
+        [kind, link, target] if kind == "symlink" => {
+            std::os::unix::fs::symlink(target, root.join(link))
+                .unwrap_or_else(|error| panic!("symlink {link} -> {target}: {error}"));
+        }
+        other => panic!("an unknown filesystem step: {other:?}"),
+    }
+    Outcome::Ok(Value::Null)
+}
+
 /// Runs a [`sql`] step's statement on `database`.
 fn edit(database: &Path, statement: &str) -> Outcome {
     rusqlite::Connection::open(database)
@@ -186,6 +226,8 @@ pub fn run_rust(steps: &[Step]) -> Outcome {
         assert!(matches!(last, Outcome::Ok(_)), "before {step:?}: {last:?}");
         last = if step.method == SQL_STEP {
             edit(&side.database, &step.args)
+        } else if step.method == FS_STEP {
+            shape(&side.root, &step.args)
         } else {
             side.neutral(
                 rust.call_text(&step.member, &step.method, &step.args, step.now)
@@ -238,6 +280,11 @@ fn run_in(
                 edit(&python_side.database, &step.args),
                 edit(&rust_side.database, &step.args),
                 false,
+            )
+        } else if step.method == FS_STEP {
+            (
+                shape(&python_side.root, &step.args),
+                shape(&rust_side.root, &step.args),
             )
         } else {
             let python_outcome = with_lock(&python_side.database, step.hold, || {

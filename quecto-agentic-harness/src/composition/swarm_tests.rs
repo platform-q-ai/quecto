@@ -72,3 +72,53 @@ fn the_board_records_in_the_event_log_only_when_it_is_on() {
     assert_eq!(text.lines().count(), 1, "{text}");
     assert!(text.contains(r#""event":"swarm_op""#), "{text}");
 }
+
+/// The production graph normalises reserved paths in the board's checkout
+/// (#2275): `CheckoutPaths` is bound to `BoardLocation::checkout`.
+#[test]
+fn production_handles_normalise_paths_in_the_board_checkout() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(checkout.join("real")).unwrap();
+    std::os::unix::fs::symlink(checkout.join("real"), checkout.join("alias")).unwrap();
+    let handles = build_swarm_board_handles(
+        BoardLocation {
+            database: dir.path().join("swarm.sqlite"),
+            checkout,
+        },
+        None,
+    );
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    call(&handles, "parent", "bootstrap_run", json!([1, "s", "/p"])).unwrap();
+    call(
+        &handles,
+        "parent",
+        "create_run",
+        json!(["goal", [], [{"id": "t", "kind": "review", "description": "d"}], 2, now + 3_600.0]),
+    )
+    .unwrap();
+    call(&handles, "parent", "task_create", json!(["r", "t", ["ok"]])).unwrap();
+    let claim = call(&handles, "parent", "claim", json!([1])).unwrap();
+    let reserved = call(
+        &handles,
+        "parent",
+        "reserve",
+        json!([1, claim["token"], ["alias/x/../a.rs"]]),
+    )
+    .unwrap();
+    assert_eq!(reserved["paths"], json!(["real/a.rs"]));
+    assert_eq!(
+        call(
+            &handles,
+            "parent",
+            "reserve",
+            json!([1, claim["token"], ["../out"]])
+        )
+        .unwrap_err()
+        .0,
+        "file must resolve inside the shared checkout"
+    );
+}

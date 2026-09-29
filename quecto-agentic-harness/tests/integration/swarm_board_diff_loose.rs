@@ -39,12 +39,20 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   end this divergence.
 /// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
 ///   within u64 (a `pid`, `started` or `socket`, a membership method's
-///   member or reservation, #2271, or a task id, #2272) makes Python's
+///   member or reservation, #2271, a task id, #2272, or a `file_owners`
+///   offset, #2275) makes Python's
 ///   `sqlite3` raise `OverflowError` when it is bound, which is not an `sqlite3.Error`,
 ///   so the store does not turn it into a refusal and the call raises.
 ///   The Rust board refuses it as a store failure naming Python's
 ///   parameter position. (Compared before it is bound, such an integer
 ///   answers as Python's: it equals no stored value but an equal REAL.)
+/// - `multi_conflict_names_the_smallest_path` (P3-a, #2275, pinned by
+///   `reserve_files_tests`): a `reserve` meeting several reserved paths
+///   names the smallest in sort order; Python names whichever its
+///   hash-seeded `set` meets first, which varies run to run, so no
+///   differential scenario holds more than one conflict. The rows inserted
+///   are the same set (Rust inserts them sorted, and the comparator orders
+///   `files` by path).
 /// - `outside_edited_columns`: a `run` column `_snapshot` reads as a
 ///   number (`deadline`, `member_limit`) holding anything but the number
 ///   the board writes (NULL, text, a REAL `member_limit`), or a BLOB in
@@ -130,10 +138,14 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   read but not mutate, and is not an idempotent admission retry. The
 ///   membership methods (#2271) keep it: `_activate` and `_record_launch`
 ///   take such a member's reservation as stale, where Python goes on
-///   (pinned by `activate_member_tests` and `record_member_launch_tests`).
-pub const PERMITTED_DIVERGENCES: [&str; 9] = [
+///   (pinned by `activate_member_tests` and `record_member_launch_tests`);
+///   and `revoke` (#2275) tells only a live or reserved previous owner,
+///   where Python messages any owner not `dead` (pinned by
+///   `board_recovery_tests`).
+pub const PERMITTED_DIVERGENCES: [&str; 10] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
+    "multi_conflict_names_the_smallest_path",
     "outside_edited_columns",
     "outside_edited_contract",
     "outside_edited_control_records",
@@ -559,7 +571,17 @@ fn every_permitted_divergence_is_pinned_by_name() {
 
 /// Divergences pinned outside this suite: the name, the test file's
 /// source and the pinning test in it.
-const EXTERNAL_PINS: [(&str, &str, &str); 8] = [
+const EXTERNAL_PINS: [(&str, &str, &str); 10] = [
+    (
+        "multi_conflict_names_the_smallest_path",
+        include_str!("../../src/application/swarm/use_cases/reserve_files_tests.rs"),
+        "multi_conflict_names_the_smallest_path",
+    ),
+    (
+        "unknown_member_status_is_not_alive",
+        include_str!("../../src/application/swarm/board_recovery_tests.rs"),
+        "an_unknown_owner_status_is_not_told",
+    ),
     (
         "outside_edited_contract",
         include_str!("swarm_board_diff_loose_completion.rs"),

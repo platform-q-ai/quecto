@@ -9,6 +9,7 @@ mod board_completion;
 mod board_control;
 mod board_membership;
 mod board_operation;
+mod board_recovery;
 mod board_tasks;
 #[cfg(test)]
 pub(crate) mod board_test_support;
