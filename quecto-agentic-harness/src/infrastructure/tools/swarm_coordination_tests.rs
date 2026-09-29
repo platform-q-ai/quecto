@@ -234,3 +234,48 @@ fn rust_board_notifications_decode_as_wire_members() {
     assert_eq!(decoded.len(), 1, "{list}");
     assert_eq!(decoded[0].id, "parent");
 }
+
+fn panicking_board(
+    _: crate::application::swarm::dto::BoardLocation,
+    _: Option<std::sync::Arc<dyn crate::application::swarm::ports::BoardOpLog>>,
+) -> crate::infrastructure::tools::swarm_board_dispatch::SwarmBoardHandles {
+    panic!("the accounting job panicked")
+}
+
+fn observation() -> crate::domain::request_observation::RequestObservation {
+    serde_json::from_value(json!({
+        "request_id": "r1", "model": "m", "provider": "p", "outcome": "ok",
+        "error_class": null, "input_tokens": null, "context_input_tokens": null,
+        "output_tokens": null, "cache_read_tokens": null, "cache_write_tokens": null,
+        "estimated_cost_micro_usd": null, "estimated_context_tokens": 0,
+        "instrumented_attempts": 1, "oauth_retries": 0, "duration_ms": 1,
+        "harness_prefix_sha256": "", "harness_prefix_bytes": 0,
+        "harness_prefix_unchanged": null
+    }))
+    .unwrap()
+}
+
+/// A request's accounting job that panics is a durable accounting error
+/// the agent loop logs and drops (#2278 final review L3), never a panic
+/// resumed in the loop.
+#[tokio::test]
+async fn a_panicking_accounting_job_is_an_error_not_a_panic_in_the_loop() {
+    use crate::application::providers::ports::RequestAccounting;
+    let directory = tempfile::tempdir().unwrap();
+    let context = SwarmContext {
+        board: crate::infrastructure::tools::swarm_bridge::SwarmBoard::new(panicking_board),
+        checkout: directory.path().to_path_buf(),
+        member: "coordinator".into(),
+        lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
+    };
+    let recorded = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
+        context.record(&observation()),
+    ))
+    .await
+    .expect("the accounting job's panic stays in its job");
+    let error = recorded.unwrap_err();
+    assert!(error.to_string().contains("panicked"), "{error}");
+    // Not the store's contention (`is locked`), which the loop retries: a
+    // durable rejection, which it logs and drops.
+    assert!(!error.to_string().contains("is locked"), "{error}");
+}
