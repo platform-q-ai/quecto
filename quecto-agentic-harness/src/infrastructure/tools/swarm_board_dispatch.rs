@@ -57,7 +57,8 @@
 //! method.
 //!
 //! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] (DEBUG
-//! for a read-only method, INFO otherwise, WARN for a contended refusal or,
+//! for a read-only method, unless the token budget warned or paused the
+//! run in it; INFO otherwise; WARN for a contended refusal or,
 //! while the event log is on, a busy wait over 250 ms) and, when the event
 //! log is switched on ([`SwarmBoardHandles::telemetry`], #2303), one
 //! `swarm_op` record in it, with the lock wait, busy wait and busy flag
@@ -249,7 +250,11 @@ pub fn call(
     let measure = metered.and_then(|metered| metered.measure());
     let finished = Finished {
         op: known.map_or("unknown", Method::name),
-        level: known.map_or(Level::Mutation, Method::level),
+        level: match (known, &answer) {
+            (Some(known), Ok(served)) => known.served_level(served.decision),
+            (Some(known), Err(_)) => known.level(),
+            (None, _) => Level::Mutation,
+        },
         role: known.map_or(Some(BoardRole::Host), Method::role),
         member,
         outcome: answer

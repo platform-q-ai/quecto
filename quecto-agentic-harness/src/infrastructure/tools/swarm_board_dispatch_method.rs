@@ -160,7 +160,8 @@ impl Method {
         match self {
             // The admission read may pause the run by its budget; it runs
             // before every model request, so it records at DEBUG as the
-            // read Python's `read_only` operation makes it.
+            // read Python's `read_only` operation makes it, unless the
+            // budget warned or paused (`served_level`).
             Self::Status
             | Self::Snapshot
             | Self::ControlStatus
@@ -283,6 +284,17 @@ impl Method {
             // finds its own live row; `task_raw` passes the gate.
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin | Self::TaskRaw => true,
+        }
+    }
+
+    /// The level a served call records at: [`Method::level`], raised to
+    /// [`Level::Mutation`] when the decision is the budget's own (`paused`
+    /// ends the run as `budget-exhausted`, `warned` writes the warning), so
+    /// a read that changes the run is visible at INFO.
+    pub(super) fn served_level(self, decision: &str) -> Level {
+        match decision {
+            "paused" | "warned" => Level::Mutation,
+            _ => self.level(),
         }
     }
 
